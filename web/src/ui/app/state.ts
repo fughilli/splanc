@@ -112,6 +112,7 @@ class AppState {
             deviceName: w.deviceName,
             fwGitCommit: w.fwGitCommit,
             fwGitDirty: w.fwGitDirty,
+            fwVersion: w.fwVersion,
           });
           const pending = deviceStore.takePending(dev.id);
           if (pending && pending !== w.deviceName) {
@@ -123,6 +124,7 @@ class AppState {
                   deviceName: nw.deviceName,
                   fwGitCommit: nw.fwGitCommit,
                   fwGitDirty: nw.fwGitDirty,
+                  fwVersion: nw.fwVersion,
                 }),
               )
               .catch(() => undefined);

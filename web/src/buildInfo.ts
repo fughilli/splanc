@@ -17,9 +17,14 @@ export interface BuildInfo {
   gitCommitShort: string;
   /** Whether the tree had uncommitted changes at build time. */
   gitDirty: boolean;
+  /** Release version from the nearest app-v* tag (e.g. "1.2.0"), "0.0.0-dev" for a
+   * dev build, or absent for a device whose firmware doesn't report one. */
+  version?: string;
 }
 
-const REPO_URL = "https://github.com/fughilli/splanc";
+/** `owner/repo` for GitHub API calls (releases enumeration — see githubReleaseRepo). */
+export const REPO_SLUG = "fughilli/splanc";
+const REPO_URL = `https://github.com/${REPO_SLUG}`;
 
 /** This web app's own build info (empty when built without --stamp / in tests). */
 export const appBuildInfo: BuildInfo =

@@ -99,6 +99,39 @@ test("parseFirmwareIndex reads a well-formed index", () => {
   });
 });
 
+test("parseFirmwareIndex applies an index-level version/commit to every entry", () => {
+  const idx = parseFirmwareIndex({
+    revision: "abc1234",
+    version: "1.4.0",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    entries: [
+      { id: "esp32c6", chip: "esp32c6", family: "esp" },
+      { id: "esp32c6_netstack", chip: "esp32c6", family: "esp" },
+    ],
+  });
+  assert.ok(idx);
+  for (const e of idx.entries) {
+    assert.equal(e.version, "1.4.0");
+    assert.equal(e.commit, "0123456789abcdef0123456789abcdef01234567");
+  }
+});
+
+test("parseFirmwareIndex lets a per-entry version/commit override the index-level one", () => {
+  const idx = parseFirmwareIndex({
+    version: "1.4.0",
+    entries: [{ id: "esp32c6", chip: "esp32c6", family: "esp", version: "2.0.0" }],
+  });
+  assert.ok(idx);
+  assert.equal(idx.entries[0]!.version, "2.0.0");
+});
+
+test("parseFirmwareIndex omits version/commit when the index has neither", () => {
+  const idx = parseFirmwareIndex(INDEX_JSON);
+  assert.ok(idx);
+  assert.equal(idx.entries[0]!.version, undefined);
+  assert.equal(idx.entries[0]!.commit, undefined);
+});
+
 test("parseFirmwareIndex defaults manifest name and label", () => {
   const idx = parseFirmwareIndex({ entries: [{ id: "esp32c6", chip: "esp32c6", family: "esp" }] });
   assert.ok(idx);

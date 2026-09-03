@@ -426,6 +426,10 @@ export interface WelcomeMessage {
   fwGitCommit: string;
   /** Whether the firmware was built from a dirty working tree. */
   fwGitDirty: boolean;
+  /** Release version from the nearest firmware-v* tag (e.g. "1.2.0",
+   * or "0.0.0-dev"), stamped in via Bazel --stamp. Empty on older
+   * firmware / an unstamped build. */
+  fwVersion: string;
 }
 
 /** Reply to stop_mapping with solveOnHost=false: capture stopped + log

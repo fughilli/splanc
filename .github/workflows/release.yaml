@@ -1,0 +1,241 @@
+# Release publishing — the ONLY path that ships artifacts to users. Everything is
+# gated on per-component version tags (deploys never happen on a plain push to main;
+# see test.yaml / macos.yaml, which only build + preview per commit):
+#
+#   firmware-vX.Y.Z  -> build both ESP32-C6 flashbundles, attach as Release assets.
+#   pi-vX.Y.Z        -> build the Pi 3 player SD image (.img.zst) + wiring README,
+#                       attach as Release assets.
+#   app-vX.Y.Z       -> deploy the webapp to GitHub Pages + Cloudflare (iOS/TestFlight
+#                       is gated on the same tag in macos.yaml).
+#
+# The webapp's flash tool enumerates the firmware Releases live from the GitHub API
+# (web/src/flash/githubReleaseRepo.ts), so a firmware release becomes selectable in
+# the UI the moment it's published — no webapp redeploy needed.
+#
+# Cut a release by tagging a commit, e.g.:
+#   git tag firmware-v1.0.0 <sha> && git push origin firmware-v1.0.0
+name: Release
+
+on:
+  push:
+    tags:
+      - 'app-v*'
+      - 'firmware-v*'
+      - 'pi-v*'
+
+permissions:
+  contents: write # create GitHub Releases + push gh-pages (webapp)
+
+jobs:
+  # --- firmware-v* : both ESP32-C6 variants as release assets ------------------
+  firmware:
+    if: startsWith(github.ref, 'refs/tags/firmware-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so status.sh `git describe` stamps the version
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-firmware-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-firmware-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-firmware-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-${{ runner.os }}-
+
+      - name: Build both flashbundles (vendor + netstack)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c6_flashbundle \
+            //firmware/player_app:esp32c6_netstack_flashbundle
+
+      # Rename to versioned, variant-tagged asset names the webapp's release source
+      # matches (web/src/flash/githubReleaseRepo.ts ASSET_RE = esp32c6-<variant>-*.tar).
+      - name: Stage release assets
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          mkdir -p _assets
+          cp bazel-bin/firmware/player_app/esp32c6_flashbundle.tar "_assets/esp32c6-vendor-${VER}.tar"
+          cp bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar "_assets/esp32c6-netstack-${VER}.tar"
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: _assets/*.tar
+          generate_release_notes: true
+          # Record the exact tagged commit so the webapp can show + link the build
+          # each firmware asset was cut from (githubReleaseRepo reads this).
+          target_commitish: ${{ github.sha }}
+
+  # --- pi-v* : Pi 3 player SD image + wiring README ---------------------------
+  # Native aarch64 build on GitHub's arm64 Linux runner (the SD image is an
+  # aarch64-linux NixOS closure; an x86 runner would need --cross/QEMU). image_sd
+  # --no-write builds the .img.zst without flashing a device (sbc_deploy.sh).
+  pi:
+    if: startsWith(github.ref, 'refs/tags/pi-v')
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-pi-${{ hashFiles('MODULE.bazel.lock', 'pi/provisioning/nix/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-pi-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-pi-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-pi-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-pi-${{ runner.os }}-
+
+      # image_sd prints "==> Built image: <store-path>.img.zst" on stdout; copy it
+      # out under a versioned name. --no-write skips the dd-to-device step.
+      - name: Build Pi 3 SD image
+        run: |
+          VER="${GITHUB_REF_NAME#pi-v}"
+          bazel run //pi/provisioning:ledmapper_pi3.image_sd \
+            --disk_cache="$HOME/.cache/bazel-disk" -- --no-write 2>&1 | tee /tmp/pi-image.log
+          IMG="$(sed -n 's/^==> Built image: //p' /tmp/pi-image.log | tail -n1)"
+          test -n "$IMG" && test -f "$IMG" || { echo "::error::no .img.zst produced"; exit 1; }
+          mkdir -p _assets
+          cp "$IMG" "_assets/ledmapper-pi3-${VER}.img.zst"
+          cp pi/provisioning/README.md "_assets/README.md"
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            _assets/ledmapper-pi3-*.img.zst
+            _assets/README.md
+          generate_release_notes: true
+
+  # --- app-v* : webapp to GitHub Pages + Cloudflare ---------------------------
+  # (iOS/TestFlight is gated on app-v* in macos.yaml.) Firmware is NOT bundled here:
+  # production selects firmware from Releases; the same-commit "This build (dev)"
+  # bundle is a PR-preview affordance (test.yaml), so stage_site skips /firmware/.
+  webapp:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    environment: Deploy environment
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so status.sh `git describe` stamps the version
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-test-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-test-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-deploy-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-deploy-${{ runner.os }}-
+            bazel-disk-site-${{ runner.os }}-
+            bazel-disk-test-${{ runner.os }}-
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Build developer docs
+        run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
+
+      - name: Stage site
+        env:
+          LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
+        run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
+
+      - name: Deploy to GitHub Pages (main site)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site
+          branch: gh-pages
+          clean: true
+          clean-exclude: |
+            pr-preview/
+
+      - name: Deploy to Cloudflare Pages (production)
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
+        run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

@@ -54,8 +54,20 @@ export interface FirmwareEntry {
   chip: string;
   /** Chip family that selects the flasher backend (see usb.ts). */
   family: ChipFamily;
-  /** Flash-manifest basename within the entry directory (default flash.json). */
+  /** Flash-manifest basename — the entry's flash.json (default flash.json), read
+   * from the entry directory (bundled source) or from inside `tarUrl` (releases). */
   manifest: string;
+  /** GitHub-releases source only: URL of the flashbundle `.tar` asset to fetch +
+   * untar in the browser (see firmwareRepo.loadFlashRequestFromTar). Absent for the
+   * bundled `/firmware/` source, whose images are fetched from the entry directory. */
+  tarUrl?: string;
+  /** Release version of this image (e.g. "1.2.0"), so the flash sheet can show
+   * exactly what's being written. From the release tag (releases source) or the
+   * build's firmware-v* stamp (bundled source). Absent on an unstamped build. */
+  version?: string;
+  /** Full git commit the image was built from, shown + linked on the flash sheet
+   * next to the version. From the release's target commit or the build stamp. */
+  commit?: string;
 }
 
 /** `/firmware/manifest.json` — what this build bundles, and from where. */
@@ -84,6 +96,12 @@ function str(o: Record<string, unknown>, key: string, fallback?: string): string
   if (typeof v === "string" && v.length > 0) return v;
   if (fallback !== undefined) return fallback;
   throw new Error(`manifest: missing string field "${key}"`);
+}
+
+/** A non-empty string field, or undefined — for optional metadata. */
+function optStr(o: Record<string, unknown>, key: string): string | undefined {
+  const v = o[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
 /** Parse a per-image flash.json (throws on anything malformed). */
@@ -126,12 +144,18 @@ export function parseFirmwareIndex(json: unknown): FirmwareIndex | null {
       const family = e["family"];
       if (typeof family !== "string" || !FAMILIES.includes(family as ChipFamily)) continue;
       const id = str(e, "id");
+      // Version/commit stamp the exact build. A single bundled build shares one
+      // stamp, so accept it index-level (o) with an optional per-entry override.
+      const version = optStr(e, "version") ?? optStr(o, "version");
+      const commit = optStr(e, "commit") ?? optStr(o, "commit");
       entries.push({
         id,
         label: str(e, "label", id),
         chip: str(e, "chip"),
         family: family as ChipFamily,
         manifest: str(e, "manifest", "flash.json"),
+        ...(version ? { version } : {}),
+        ...(commit ? { commit } : {}),
       });
     }
     if (entries.length === 0) return null;

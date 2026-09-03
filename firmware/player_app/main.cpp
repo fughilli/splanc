@@ -2270,9 +2270,11 @@ void setup() {
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
   // Build info stamped in at build time (FUG-126): the full git commit + dirty
-  // flag, echoed in every welcome so the app can show + link the device's build.
+  // flag + release version, echoed in every welcome so the app can show + link
+  // the device's build.
   lm_player_set_build_info(reinterpret_cast<const uint8_t *>(LM_GIT_COMMIT), strlen(LM_GIT_COMMIT),
-                           LM_GIT_DIRTY);
+                           LM_GIT_DIRTY, reinterpret_cast<const uint8_t *>(LM_VERSION),
+                           strlen(LM_VERSION));
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");

@@ -213,6 +213,7 @@ function aboutBody(): HTMLElement {
   links.append(
     linkRow("Source code", extLink("github.com/fughilli/splanc", GITHUB_URL)),
     linkRow("Studio", extLink("fug.studio", STUDIO_URL)),
+    linkRow("Version", textValue(appBuildInfo.version || "unknown")),
     linkRow("Build", buildValue(appBuildInfo.gitCommit, appBuildInfo.gitDirty)),
   );
 
@@ -334,6 +335,14 @@ function docLink(
 }
 
 /** A label + value row inside the Links card. */
+/** A plain (non-link) value span for a link row, e.g. the release version. */
+function textValue(text: string): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "about-link-value";
+  span.textContent = text;
+  return span;
+}
+
 function linkRow(label: string, value: HTMLElement): HTMLElement {
   const row = document.createElement("div");
   row.className = "about-link-row";

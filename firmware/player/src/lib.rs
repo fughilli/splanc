@@ -250,10 +250,12 @@ pub struct Player {
     mac: Str64,
     device_name: Str64,
     /// Git commit the firmware was built from (full hash) + whether the tree was
-    /// dirty, set once by the firmware via [`Player::set_build_info`] (it owns the
-    /// stamped `build_info.h`) and echoed in every `welcome`. Empty/false until set.
+    /// dirty + the release version (nearest `firmware-v*` tag), set once by the
+    /// firmware via [`Player::set_build_info`] (it owns the stamped `build_info.h`)
+    /// and echoed in every `welcome`. Empty/false until set.
     fw_git_commit: Str64,
     fw_git_dirty: bool,
+    fw_version: Str64,
     default_led_count: u32,
     active: Option<ActiveCapture>,
     counting: Option<(i64, CountingBlocks)>,
@@ -318,6 +320,7 @@ impl Player {
             device_name: Str64::new(),
             fw_git_commit: Str64::new(),
             fw_git_dirty: false,
+            fw_version: Str64::new(),
             default_led_count,
             active: None,
             counting: None,
@@ -765,10 +768,12 @@ impl Player {
 
     /// Set the firmware build info echoed in `welcome` (called once at init by the
     /// firmware, which owns the stamped `build_info.h`). `commit` is the full git
-    /// hash; `dirty` marks an uncommitted working tree at build time.
-    pub fn set_build_info(&mut self, commit: &str, dirty: bool) {
+    /// hash; `dirty` marks an uncommitted working tree at build time; `version` is
+    /// the release version from the nearest `firmware-v*` tag (e.g. "1.2.0").
+    pub fn set_build_info(&mut self, commit: &str, dirty: bool, version: &str) {
         self.fw_git_commit = s64(commit);
         self.fw_git_dirty = dirty;
+        self.fw_version = s64(version);
     }
 
     /// The player's current display name (after any `set_device_name`), so the
@@ -813,6 +818,7 @@ impl Player {
         w.r#device_name = self.device_name.clone();
         w.r#fw_git_commit = self.fw_git_commit.clone();
         w.r#fw_git_dirty = self.fw_git_dirty;
+        w.r#fw_version = self.fw_version.clone();
         w.set_brightness(self.output_brightness as f64);
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));

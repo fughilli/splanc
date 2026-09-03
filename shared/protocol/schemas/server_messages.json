@@ -32,7 +32,8 @@
         "mac",
         "deviceName",
         "fwGitCommit",
-        "fwGitDirty"
+        "fwGitDirty",
+        "fwVersion"
       ],
       "properties": {
         "type": { "const": "welcome" },
@@ -57,6 +58,10 @@
         "fwGitDirty": {
           "type": "boolean",
           "description": "True when the firmware was built from a dirty working tree (uncommitted changes). Always false from older firmware."
+        },
+        "fwVersion": {
+          "type": "string",
+          "description": "Release version the firmware was built at, from the nearest firmware-v* tag (e.g. \"1.2.0\", or \"1.2.0-<n>-g<sha>\" ahead of it, or \"0.0.0-dev\"), stamped in at build time via Bazel --stamp alongside the commit. Empty from older firmware or an unstamped build."
         }
       }
     },

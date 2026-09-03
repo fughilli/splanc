@@ -94,12 +94,13 @@ test("probeDevice multiplexes onto a live client — no parallel socket", async 
     deviceName: "FugWidget",
     fwGitCommit: "abc1234",
     fwGitDirty: true,
+    fwVersion: "1.2.0",
   });
   connectionRegistry.register(client);
   // node has no global WebSocket, so the transient-probe fallback could NOT
   // produce a welcome — a returned identity proves the prober read the live
   // comms client instead of opening a second handshake. The multiplex path must
-  // also surface the firmware build info (fwGitCommit/fwGitDirty), same as the
+  // also surface the firmware build info (fwGitCommit/fwGitDirty/fwVersion), same as the
   // transient path, so the device sheet shows the build without a 2nd handshake.
   const info = await probeDevice("wss://dev.b/ws");
   assert.deepEqual(info, {
@@ -107,6 +108,7 @@ test("probeDevice multiplexes onto a live client — no parallel socket", async 
     deviceName: "FugWidget",
     fwGitCommit: "abc1234",
     fwGitDirty: true,
+    fwVersion: "1.2.0",
   });
   connectionRegistry.unregister(client);
 });

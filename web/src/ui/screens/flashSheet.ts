@@ -19,6 +19,7 @@ import {
   loadFlashRequest,
   totalBytes,
 } from "../../flash/firmwareRepo";
+import { loadReleaseFirmwareIndex } from "../../flash/githubReleaseRepo";
 import {
   webSerialUnavailableReason,
   requestSerialPort,
@@ -33,9 +34,20 @@ import { summarizeEnv } from "../../flash/env";
 import { identifyUsb, formatUsbId } from "../../flash/usb";
 import { getFlasher, type FlashHooks } from "../../flash/flasher";
 import { isNativePlatform } from "../../net/native";
+import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 
 let openHandle: SheetHandle | null = null;
+
+/** Where firmware comes from: published GitHub releases (default — pick any
+ * version × variant) or the same-commit bundle this build staged under /firmware/
+ * (the "dev" fallback, e.g. a PR preview flashing its exact-commit firmware). */
+type FwSource = "release" | "bundled";
+let currentSource: FwSource = "release";
+
+function loadIndexForSource(source: FwSource): Promise<FirmwareIndex | null> {
+  return source === "release" ? loadReleaseFirmwareIndex() : loadFirmwareIndex();
+}
 
 // Demo/capture mode (FUG-103 docs screenshots): when set, openFlashSheet() shows
 // a canned "flashed" view with a simulated esptool log instead of driving real
@@ -133,13 +145,28 @@ export async function openFlashSheet(): Promise<void> {
     return;
   }
 
-  sheet.body.append(loadingLine("Looking for bundled firmware…"));
-  const index = await loadFirmwareIndex();
+  await showPicker(sheet);
+}
+
+/** Load firmware for the current source and render the picker. On the release
+ * source finding nothing (offline / rate-limited / no release ships firmware yet),
+ * fall back to the bundled source before giving up, so flashing still works. */
+async function showPicker(sheet: SheetHandle): Promise<void> {
+  sheet.body.innerHTML = "";
+  sheet.body.append(
+    loadingLine(currentSource === "release" ? "Fetching firmware releases…" : "Looking for bundled firmware…"),
+  );
+  let index = await loadIndexForSource(currentSource);
+  if (!index && currentSource === "release") {
+    currentSource = "bundled";
+    index = await loadIndexForSource(currentSource);
+  }
   sheet.body.innerHTML = "";
   if (!index) {
     sheet.body.append(
+      sourceField(sheet),
       note(
-        "This build doesn't bundle any firmware. Deploy or serve the app with the firmware bundle staged to enable one-tap flashing.",
+        "No firmware available from this source. Releases need a network connection; the bundled source needs a build with firmware staged.",
       ),
       intro(FLASH_HELP),
       buildDiagnostics(),
@@ -147,6 +174,27 @@ export async function openFlashSheet(): Promise<void> {
     return;
   }
   renderIdle(sheet, index, index.entries[0]!);
+}
+
+/** The "Firmware source" selector (releases vs this build), shown atop the picker. */
+function sourceField(sheet: SheetHandle): HTMLElement {
+  const sel = document.createElement("select");
+  sel.className = "sheet-input";
+  for (const [value, label] of [
+    ["release", "GitHub releases"],
+    ["bundled", "This build (dev)"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    if (value === currentSource) opt.selected = true;
+    sel.append(opt);
+  }
+  sel.addEventListener("change", () => {
+    currentSource = sel.value as FwSource;
+    void showPicker(sheet);
+  });
+  return field("Firmware source", sel);
 }
 
 const FLASH_HELP =
@@ -157,6 +205,9 @@ const FLASH_HELP =
 function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: FirmwareEntry): void {
   sheet.body.innerHTML = "";
   sheet.body.append(intro(FLASH_HELP));
+
+  // Firmware source (GitHub releases vs this build) — switching reloads the picker.
+  sheet.body.append(sourceField(sheet));
 
   // On the WebUSB (Android) path there's a caveat worth stating up front — the
   // board is picked from the WebUSB prompt, and the OS may have claimed it.
@@ -186,7 +237,11 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   card.append(
     kv("Firmware", selected.label),
     kv("Chip", selected.chip),
-    kv("Built at", index.revision ? `revision ${index.revision}` : "unknown revision"),
+    kv("Version", selected.version || "dev (unversioned build)"),
+    // The exact source: link the full commit when known, else the bundled short SHA.
+    selected.commit
+      ? kvCommit("Build", selected.commit)
+      : kv("Built at", index.revision ? `revision ${index.revision}` : "unknown revision"),
   );
   sheet.body.append(card);
 
@@ -426,6 +481,25 @@ function kv(cap: string, value: string): HTMLElement {
   v.className = "flash-kv-val metric";
   v.textContent = value;
   r.append(c, v);
+  return r;
+}
+
+/** Like kv, but the value links to the GitHub commit page (the exact source the
+ * selected image was built from), matching the device card's build row. */
+function kvCommit(cap: string, commit: string): HTMLElement {
+  const r = document.createElement("div");
+  r.className = "flash-kv";
+  const c = document.createElement("span");
+  c.className = "flash-kv-cap";
+  c.textContent = cap;
+  const a = document.createElement("a");
+  a.className = "flash-kv-val metric about-link";
+  a.href = commitUrl(commit);
+  a.textContent = buildLabel(commit, false);
+  a.title = commit;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  r.append(c, a);
   return r;
 }
 

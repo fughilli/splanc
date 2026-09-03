@@ -128,21 +128,24 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      # Build the image AND the self-describing flash bundle (flash.json + bins).
-      # The bundle is the same-revision firmware the webapp flashes over USB
-      # (FUG-60); build-site downloads this artifact and stages it under
-      # /firmware/, so the heavy ESP toolchain lives only in this job.
-      - name: Build firmware image + flash bundle (esp32c6)
+      # Build the self-describing flash bundles (flash.json + bins) for BOTH
+      # variants — vendor Wi-Fi and the heapless netstack — so CI validates the
+      # netstack image compiles too, and the site can bundle both as the "This
+      # build (dev)" flash source (build-site downloads these + stages /firmware/).
+      # The heavy ESP toolchain lives only in this job.
+      - name: Build firmware flash bundles (esp32c6 vendor + netstack)
         run: |
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
-            //firmware/player_app:esp32c6 \
-            //firmware/player_app:esp32c6_flashbundle
+            //firmware/player_app:esp32c6_flashbundle \
+            //firmware/player_app:esp32c6_netstack_flashbundle
 
-      - name: Upload flash bundle artifact
+      - name: Upload flash bundle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: esp32c6-flashbundle
-          path: bazel-bin/firmware/player_app/esp32c6_flashbundle.tar
+          path: |
+            bazel-bin/firmware/player_app/esp32c6_flashbundle.tar
+            bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar
           retention-days: 3
           if-no-files-found: error
 
@@ -266,11 +269,13 @@ jobs:
       # /solver /pulse /fx-compiler /fx-vm, docs at /docs — same layout
       # Cloudflare/the Pi serve).
       - name: Stage site
-        # LEDMAPPER_FLASHBUNDLE points stage_site.lib.sh at the downloaded flash
-        # bundle so it's staged under /firmware/ (FUG-60); LEDMAPPER_DOCS_SITE
-        # points it at the docs built above so they're staged under /docs/.
+        # LEDMAPPER_FLASHBUNDLE(_NETSTACK) point stage_site.lib.sh at the downloaded
+        # flash bundles so both variants are staged under /firmware/ as the "This
+        # build (dev)" flash source (FUG-60); LEDMAPPER_DOCS_SITE points it at the
+        # docs built above so they're staged under /docs/.
         env:
           LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
+          LEDMAPPER_FLASHBUNDLE_NETSTACK: ${{ github.workspace }}/_flashbundle/esp32c6_netstack_flashbundle.tar
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
@@ -340,124 +345,3 @@ jobs:
           preview-branch: gh-pages
           umbrella-dir: pr-preview
           action: remove
-
-  # master merge: publish _site to the gh-pages root (the main site), preserving
-  # the pr-preview/ subtree, AND publish the same tree to Cloudflare production.
-  deploy-production:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build-site
-    runs-on: ubuntu-latest
-    # The Cloudflare secrets live in the "Deploy environment" GitHub Actions
-    # environment; a job only sees environment-scoped secrets if it declares
-    # the environment here (otherwise secrets.CLOUDFLARE_* resolve to empty and
-    # the Cloudflare step below no-ops). GitHub Pages needs no environment.
-    environment: Deploy environment
-    permissions:
-      contents: write
-    concurrency:
-      group: gh-pages-deploy
-      cancel-in-progress: false
-    # Job-level env so the Cloudflare step's `if:` can test whether the secret
-    # is set (a step can't read its own step-level env in `if:`).
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    steps:
-      - name: Setup repository
-        uses: actions/checkout@v4
-
-      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
-      # above (FUG-76). This job runs the //web:deploy_cloudflare Bazel build.
-      - name: Free runner disk space
-        uses: justinthelaw/maximize-github-runner-space@v0.10.0
-
-      - name: Download site artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: site
-          path: _site
-
-      # The Cloudflare deploy re-stages the site from source (below), so it needs
-      # the same-revision flash bundle to bundle firmware under /firmware/ too.
-      - name: Download flash bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: esp32c6-flashbundle
-          path: ${{ github.workspace }}/_flashbundle
-
-      # Publish to the gh-pages root. clean-exclude keeps the open PRs' previews
-      # (pr-preview/) from being wiped by the root deploy.
-      - name: Deploy to GitHub Pages (main site)
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          folder: _site
-          branch: gh-pages
-          clean: true
-          clean-exclude: |
-            pr-preview/
-
-      # Cloudflare production deploy via the existing //web:deploy_cloudflare
-      # target. It shells out to `pnpm dlx wrangler@4`, so node + pnpm need to be
-      # on PATH. Same caching rationale as the test/build-site jobs — this is the
-      # merge-to-main deploy path, so keeping it warm matters for iteration.
-      - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v30
-        with:
-          nix_conf: experimental-features = nix-command flakes
-
-      - name: Cache /nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-test-
-          gc-max-store-size-linux: 5G
-          purge: true
-          purge-prefixes: nix-${{ runner.os }}-test-
-          purge-created: 0
-          purge-primary-key: never
-
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@0.15.0
-        with:
-          bazelisk-cache: true
-          repository-cache: true
-
-      # The //web:deploy_cloudflare build overlaps build-site's action graph, so
-      # fall back to the site (then test) disk cache for a warm start.
-      - name: Cache Bazel disk cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/bazel-disk
-          key: bazel-disk-deploy-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
-          restore-keys: |
-            bazel-disk-deploy-${{ runner.os }}-
-            bazel-disk-site-${{ runner.os }}-
-            bazel-disk-test-${{ runner.os }}-
-
-      # Node 22: package.json pins `packageManager: pnpm@11.8.0`, which
-      # pnpm/action-setup honors, and pnpm 11 needs Node >= 22.13 (it imports the
-      # `node:sqlite` builtin, absent in Node 20). Node 20 here made the deploy
-      # crash with ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite.
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      # The Cloudflare deploy re-stages from source, so build the developer docs
-      # here too (the GitHub Pages deploy above already carries them via the
-      # _site artifact). FUG-104.
-      - name: Build developer docs
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
-
-      # Skips cleanly (rather than failing this whole job, which also did the
-      # GitHub Pages deploy above) until the Cloudflare secrets are configured.
-      - name: Deploy to Cloudflare Pages (production)
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        env:
-          LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
-          LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
-        run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

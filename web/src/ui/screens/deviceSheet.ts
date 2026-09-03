@@ -379,6 +379,7 @@ function openDeviceDetail(dev: KnownDevice): void {
             deviceName: w.deviceName,
             fwGitCommit: w.fwGitCommit,
             fwGitDirty: w.fwGitDirty,
+            fwVersion: w.fwVersion,
           });
           deviceStore.takePending(dev.id);
           toast("Device renamed");
@@ -488,6 +489,7 @@ function openDeviceDetail(dev: KnownDevice): void {
     divider,
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
+    rowFor("Firmware version", cur.fwVersion || "unknown (connect once)"),
     commitRowFor("Firmware build", cur.fwGitCommit ?? "", cur.fwGitDirty ?? false),
     rowFor("Folder", cur.folder || "Ungrouped"),
   );

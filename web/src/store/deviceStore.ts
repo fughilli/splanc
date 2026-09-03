@@ -31,6 +31,10 @@ export interface KnownDevice {
   fwGitCommit?: string;
   /** Whether that firmware build had a dirty working tree. */
   fwGitDirty?: boolean;
+  /** Firmware release version last reported in `welcome` (nearest firmware-v*
+   * tag, e.g. "1.2.0"); absent/"" until seen or on older firmware. Shown on the
+   * device card alongside the commit. */
+  fwVersion?: string;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
@@ -172,7 +176,13 @@ class DeviceStore {
    * user-given name) in so nothing is lost. */
   applyWelcome(
     id: string,
-    welcome: { mac?: string; deviceName?: string; fwGitCommit?: string; fwGitDirty?: boolean },
+    welcome: {
+      mac?: string;
+      deviceName?: string;
+      fwGitCommit?: string;
+      fwGitDirty?: boolean;
+      fwVersion?: string;
+    },
   ): void {
     const list = read();
     const d = list.find((x) => x.id === id);
@@ -186,6 +196,7 @@ class DeviceStore {
     // can change it; "" means older firmware / unstamped — leave prior value).
     if (welcome.fwGitCommit !== undefined) d.fwGitCommit = welcome.fwGitCommit;
     if (welcome.fwGitDirty !== undefined) d.fwGitDirty = welcome.fwGitDirty;
+    if (welcome.fwVersion !== undefined) d.fwVersion = welcome.fwVersion;
     d.lastSeen = new Date().toISOString();
     const dups = welcome.mac ? list.filter((x) => x.id !== id && x.bleMac === welcome.mac) : [];
     for (const dup of dups) {

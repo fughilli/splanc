@@ -31,3 +31,18 @@ echo "STABLE_GIT_COMMIT ${commit}"
 echo "STABLE_GIT_COMMIT_SHORT ${short}"
 echo "STABLE_GIT_DIRTY ${dirty}"
 echo "STABLE_GIT_DIRTY_JSON ${dirty_json}"
+
+# Per-component release version, from the nearest matching tag. Each artifact has
+# its own tag stream (app-v* / firmware-v*), so a build stamps the version of ITS
+# component. On the exact release tag `git describe` yields "1.2.0"; ahead of it,
+# "1.2.0-<n>-g<sha>"; with no such tag reachable (a dev checkout, or CI without
+# tags fetched), "0.0.0-dev". release.yaml checks out with fetch-depth:0 so these
+# resolve on a release build.
+component_version() {
+  local prefix="$1" v
+  v=$(git describe --tags --match "${prefix}-v*" 2>/dev/null || true)
+  v="${v#"${prefix}-v"}"
+  echo "${v:-0.0.0-dev}"
+}
+echo "STABLE_APP_VERSION $(component_version app)"
+echo "STABLE_FIRMWARE_VERSION $(component_version firmware)"

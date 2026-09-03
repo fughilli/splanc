@@ -34,18 +34,33 @@ stage_site() {
   # Captured app screenshots the guide embeds (may be absent on a bare build).
   if [ -d docs/user-guide/img ]; then cp -RL docs/user-guide/img "$out/user-guide/img"; fi
   # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/
-  # (the webapp fetches /firmware/manifest.json). The flash bundle is NOT built
-  # here — it compiles the esp32c6 image from source. CI's firmware job builds it
-  # and hands the tar path in $LEDMAPPER_FLASHBUNDLE; when it's absent (a plain
-  # dev/site build) we skip firmware and the app reports "no bundled firmware".
+  # (the webapp fetches /firmware/manifest.json) — the "This build (dev)" flash
+  # source. The flash bundles are NOT built here; CI's firmware job builds them and
+  # hands the tar paths in $LEDMAPPER_FLASHBUNDLE (vendor) and, optionally,
+  # $LEDMAPPER_FLASHBUNDLE_NETSTACK. When both are absent (a plain dev/site build,
+  # or a production app release that ships firmware via GitHub Releases instead) we
+  # skip firmware and the app reports "no bundled firmware".
   if [[ -n "${LEDMAPPER_FLASHBUNDLE:-}" && -f "${LEDMAPPER_FLASHBUNDLE}" ]]; then
     local rev="${LEDMAPPER_FLASHBUNDLE_REV:-}"
-    if [[ -z "$rev" && -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
-      rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
+    local commit="" fwver=""
+    if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+      [[ -z "$rev" ]] && rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
+      commit="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse HEAD 2>/dev/null || true)"
+      # Same firmware-v* stamp status.sh uses, so the dev flash source names the
+      # version it would write (a plain checkout without the tag → 0.0.0-dev).
+      fwver="$(git -C "$BUILD_WORKSPACE_DIRECTORY" describe --tags --match 'firmware-v*' 2>/dev/null || true)"
+      fwver="${fwver#firmware-v}"
+      [[ -z "$fwver" ]] && fwver="0.0.0-dev"
+    fi
+    local -a images=(--image "esp32c6=${LEDMAPPER_FLASHBUNDLE}")
+    if [[ -n "${LEDMAPPER_FLASHBUNDLE_NETSTACK:-}" && -f "${LEDMAPPER_FLASHBUNDLE_NETSTACK}" ]]; then
+      images+=(--image "esp32c6_netstack=${LEDMAPPER_FLASHBUNDLE_NETSTACK}")
     fi
     tools/stage_firmware --out "$out/firmware" \
       ${rev:+--revision "$rev"} \
-      --image "esp32c6=${LEDMAPPER_FLASHBUNDLE}"
+      ${commit:+--commit "$commit"} \
+      ${fwver:+--fw-version "$fwver"} \
+      "${images[@]}"
   fi
   # Developer documentation (Sphinx site) at /docs/, so the app's About >
   # Documentation tab can link to ./docs/ from every origin. Like the firmware
