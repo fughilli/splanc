@@ -19,7 +19,9 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches:
-      - main
+      - main # CI validation of the macOS/iOS build only (the testflight job is gated off main)
+    tags:
+      - 'app-v*' # a release tag ships the iOS build to TestFlight (testflight job below)
   # Manual "ship a dev build to TestFlight" trigger (the testflight job below).
   workflow_dispatch:
 
@@ -237,7 +239,9 @@ jobs:
   # a distribution cert in CI, and reusing one avoids Apple's cert cap).
   # ---------------------------------------------------------------------------
   testflight-check:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # Ship to TestFlight only on an app-v* release tag (or a manual dev build) —
+    # never on a plain push to main.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/app-v')
     runs-on: ubuntu-latest
     environment: iOS distribution
     outputs:
@@ -346,10 +350,18 @@ jobs:
         run: bash web/ios-config/apply.sh
 
       # TestFlight requires a unique, monotonically increasing build number per
-      # upload; the run number is monotonic per workflow. (Marketing version /
-      # CFBundleShortVersionString is left as-is.)
+      # upload; the run number is monotonic per workflow.
       - name: Set build number
         run: /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" web/ios/App/App/Info.plist
+
+      # Marketing version (CFBundleShortVersionString) from the release tag, e.g.
+      # app-v1.2.0 -> 1.2.0. On a manual dev build (no app-v tag) the plist value
+      # is left as-is.
+      - name: Set marketing version from tag
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        run: |
+          VER="${GITHUB_REF_NAME#app-v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VER}" web/ios/App/App/Info.plist
 
       - name: Sync iOS (cap sync)
         run: pnpm --config.verify-deps-before-run=false --dir web exec cap sync ios
