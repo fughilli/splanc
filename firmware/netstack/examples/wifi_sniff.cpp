@@ -27,6 +27,8 @@ struct Rec {
   uint16_t len;
   uint16_t seq;
   uint8_t fc0, fc1;
+  uint8_t a1_ig;    // A1 (receiver addr) I/G bit: 1 => group/broadcast (e.g. a bcast OFFER)
+  uint8_t pn[6];    // CCMP PN (PN0,PN1,PN2..PN5) if Protected, else zeroed
   uint8_t a2[6];
 };
 volatile uint32_t g_head = 0, g_tail = 0;
@@ -50,6 +52,15 @@ void on_rx(void *buf, wifi_promiscuous_pkt_type_t /*type*/) {
   r.seq = static_cast<uint16_t>((f[23] << 4) | (f[22] >> 4));  // SeqNum bits 15:4
   r.fc0 = f[0];
   r.fc1 = f[1];
+  r.a1_ig = f[4] & 0x01;  // I/G bit of A1: a broadcast/multicast downlink frame
+  memset(r.pn, 0, 6);
+  if (f[1] & 0x40) {  // Protected: pull the CCMP PN from just past the MAC header
+    int hl = ((f[0] & 0xf0) == 0x80) ? 26 : 24;  // QoS Data has a 2-byte QoS Control
+    if (len >= hl + 8) {
+      const uint8_t *c = f + hl;  // CCMP hdr: PN0,PN1,rsvd,keyid,PN2,PN3,PN4,PN5
+      r.pn[0] = c[0]; r.pn[1] = c[1]; r.pn[2] = c[4]; r.pn[3] = c[5]; r.pn[4] = c[6]; r.pn[5] = c[7];
+    }
+  }
   memcpy(r.a2, a2, 6);
   g_head = h + 1;
 }
@@ -76,9 +87,15 @@ void loop() {
     const char *dir = (r.fc1 & 0x01) ? "up" : ((r.fc1 & 0x02) ? "dn" : "??");
     bool qos = (r.fc0 & 0xf0) == 0x80;  // subtype 8 within Data type = QoS Data
     bool prot = r.fc1 & 0x40;
-    Serial.printf("[D] %s fc=%02x%02x %s%s src=%02x:%02x:%02x:%02x:%02x:%02x seq=%u len=%u\n", dir,
-                  r.fc0, r.fc1, qos ? "QOS" : "non", prot ? "/P" : "  ", r.a2[0], r.a2[1], r.a2[2],
-                  r.a2[3], r.a2[4], r.a2[5], r.seq, r.len);
+    // "BCAST" marks a group-addressed downlink (A1 I/G bit) — this is what a broadcast
+    // DHCP OFFER / ARP-for-us / flooded multicast looks like on the air. If one of these
+    // shows up in the DHCP window, the OFFER *is* being sent; a missing lease is then our
+    // RX/decrypt problem, not the AP refusing to answer.
+    Serial.printf("[D] %s fc=%02x%02x %s%s %s src=%02x:%02x:%02x:%02x:%02x:%02x seq=%u len=%u"
+                  " pn=%02x%02x%02x%02x%02x%02x\n", dir, r.fc0, r.fc1, qos ? "QOS" : "non",
+                  prot ? "/P" : "  ", r.a1_ig ? "BCAST" : "ucast", r.a2[0], r.a2[1], r.a2[2],
+                  r.a2[3], r.a2[4], r.a2[5], r.seq, r.len, r.pn[0], r.pn[1], r.pn[2], r.pn[3],
+                  r.pn[4], r.pn[5]);
   }
   delay(40);
 }
