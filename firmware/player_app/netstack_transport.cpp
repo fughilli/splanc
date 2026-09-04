@@ -1348,6 +1348,13 @@ void netstack_loop() {
       strncpy(g_ssid, s, sizeof g_ssid - 1);
       strncpy(g_pass, p, sizeof g_pass - 1);
       g_creds_ready = true;  // trigger association with the provisioner's creds
+      // The provisioned SSID may differ from an AP we already latched — most often the
+      // baked-cred fallback fired first (its 45s grace elapsed while the central was still
+      // connecting) and latched hitl-rig-3. g_ap_latched is a one-shot, so without this the
+      // radio stays aimed at the OLD BSSID/channel and the real network is never attempted.
+      // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
+      g_ap_latched = false;
+      st = AUTH;
       // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
       // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
       ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
