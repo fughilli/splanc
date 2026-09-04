@@ -554,17 +554,30 @@ pub fn build_eapol_key<const N: usize>(
 /// GTK KDE (0xdd, OUI 00-0f-ac, data type 1). Skips the IGTK KDE and 0xdd/0x00
 /// padding. KDE layout: dd | len | OUI(3) | type(1) | [keyid(1) rsv(1) GTK..].
 fn find_gtk_kde(kd: &[u8]) -> Option<&[u8]> {
+    // The (decrypted) M3 key data is a sequence of elements, NOT just KDEs: a real
+    // authenticator prepends its RSN IE (EID 0x30) and may append an IGTK KDE and
+    // AES-key-wrap padding, e.g.  [30 .. RSN IE][dd .. GTK KDE][dd .. IGTK KDE][dd 00..].
+    // So walk every element by (id,len) and SKIP the ones that aren't the GTK KDE —
+    // do not stop at the first non-0xdd byte. (The old code bailed on the leading RSN
+    // IE, so the GTK was never extracted and gtk_len stayed 0 → every group-addressed
+    // frame, including a broadcast DHCP OFFER, failed to decrypt. hostapd rigs hid this
+    // by unicasting the OFFER under the pairwise key, never exercising the GTK.)
     let mut i = 0;
     while i + 2 <= kd.len() {
+        let id = kd[i];
         let l = kd[i + 1] as usize;
-        if kd[i] != 0xdd || l < 4 || i + 2 + l > kd.len() {
-            break; // padding or end of KDEs
+        // AES-key-wrap pads with a 0xdd byte then 0x00s; a zero id or a 0xdd KDE too
+        // short to hold OUI+type is that trailing padding — stop.
+        if id == 0x00 || l == 0 || i + 2 + l > kd.len() {
+            break;
         }
-        let body = &kd[i + 2..i + 2 + l];
-        if body[0..3] == [0x00, 0x0f, 0xac] && body[3] == 0x01 && body.len() > 6 {
-            return Some(&body[6..]); // OUI(3) type(1) keyid(1) rsv(1) then GTK
+        if id == 0xdd && l >= 4 {
+            let body = &kd[i + 2..i + 2 + l];
+            if body[0..3] == [0x00, 0x0f, 0xac] && body[3] == 0x01 && body.len() > 6 {
+                return Some(&body[6..]); // OUI(3) type(1) keyid(1) rsv(1) then GTK
+            }
         }
-        i += 2 + l;
+        i += 2 + l; // skip this element (RSN IE, IGTK KDE, or other) and continue
     }
     None
 }
@@ -603,6 +616,36 @@ mod tests {
             o[i] = (h(b[i * 2]) << 4) | h(b[i * 2 + 1]);
         }
         o
+    }
+
+    #[test]
+    fn gtk_kde_after_rsn_ie() {
+        // A realistic decrypted M3 key data: RSN IE (EID 0x30) FIRST, then the GTK KDE
+        // (dd 16 00-0f-ac 01 keyid rsv <16-byte GTK>), then an IGTK KDE, then key-wrap
+        // padding (dd 00…). The GTK must be found past the leading RSN IE + skipping IGTK.
+        let gtk = [
+            0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad,
+            0xae, 0xaf,
+        ];
+        let mut kd = vec![
+            0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
+            0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00, // RSN IE (22 bytes)
+        ];
+        kd.extend_from_slice(&[0xdd, 0x16, 0x00, 0x0f, 0xac, 0x01, 0x01, 0x00]); // GTK KDE hdr, keyid 1
+        kd.extend_from_slice(&gtk);
+        kd.extend_from_slice(&[0xdd, 0x1c, 0x00, 0x0f, 0xac, 0x09, 0x00, 0x00]); // IGTK KDE (skip it)
+        kd.extend_from_slice(&[0u8; 24]);
+        kd.extend_from_slice(&[0xdd, 0x00]); // key-wrap padding
+        assert_eq!(find_gtk_kde(&kd), Some(&gtk[..]));
+    }
+
+    #[test]
+    fn gtk_kde_lone() {
+        // The minimal (hostapd-style) case the old parser handled: a lone GTK KDE.
+        let mut kd = vec![0xdd, 0x16, 0x00, 0x0f, 0xac, 0x01, 0x02, 0x00];
+        let gtk = [0x11u8; 16];
+        kd.extend_from_slice(&gtk);
+        assert_eq!(find_gtk_kde(&kd), Some(&gtk[..]));
     }
 
     #[test]

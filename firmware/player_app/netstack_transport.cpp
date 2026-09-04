@@ -464,9 +464,14 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
   int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
   uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=g_bssid a2=us a3=broadcast
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  // a3 = g_bssid (unicast to the AP at L2, L3 is still 255.255.255.255) so hardware TX
-  // encrypt uses the pairwise key (it keys off the destination address).
-  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
+  // a3 (the L2 destination in a ToDS frame) MUST be the real broadcast address for a DHCP
+  // DISCOVER/REQUEST — the L3 destination is 255.255.255.255. With a3 = g_bssid the AP saw
+  // the frame as destined to *itself* and never flooded/bridged it to the DHCP server; on a
+  // mesh, if we associated to a satellite node rather than the gateway, the DISCOVER died
+  // inside the wrong node. TX still encrypts with the PAIRWISE key regardless of a3 (uplink
+  // is always pairwise — see sta.rs encrypt_data), so a broadcast a3 is safe here.
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
   tx_l2(hdr, payload, pn, lbl);
@@ -1182,7 +1187,17 @@ void netstack_loop() {
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (apf++ < 12) Serial.printf("  AP->us fc=%02x%02x len=%u\n", rx[0], rx[1], n);
   }
-  if (n >= 24 && memcmp(rx + 4, OUR_MAC, 6) == 0 &&
+  // Accept frames addressed to us (A1 == our MAC) OR group-addressed (A1 I/G bit set:
+  // broadcast/multicast), as long as they come from our AP (A2 == BSSID) — or, for the
+  // legacy unicast path, A3 == BSSID. The group-addressed case is essential: a commercial
+  // AP returns the DHCP OFFER (and ARPs for our IP, and floods IPv4 multicast) as a
+  // BROADCAST data frame with A1 = ff:ff:ff:ff:ff:ff, which the old A1==OUR_MAC-only gate
+  // silently dropped before it could reach the GTK decrypt path below — assoc + 4-way OK,
+  // DISCOVER ACKed, but the OFFER we requested (broadcast flag, build_dhcp) was thrown away
+  // unread. The rig's dnsmasq unicast the OFFER to us, which masked this everywhere.
+  bool a1_us = memcmp(rx + 4, OUR_MAC, 6) == 0;
+  bool a1_group = (rx[4] & 0x01) != 0;
+  if (n >= 24 && (a1_us || a1_group) &&
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
