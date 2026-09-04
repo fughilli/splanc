@@ -16,6 +16,28 @@ use ledmapper_netstack::wpa::PmkDeriv;
 
 static mut RX: RxRing<16> = RxRing::new();
 static mut TX: TxRing<4> = TxRing::new();
+
+/// Per-STA 802.11 transmit sequence number (12-bit, mod 4096). IEEE 802.11 §9.2.4.4
+/// requires it to increment once per transmitted MSDU; a receiver's duplicate cache
+/// keyed on (Address2, SeqNum, FragNum) discards repeats (§10.3.2.14). This stack used
+/// to leave Sequence Control = 0 on every frame — lenient Linux mac80211 APs tolerate
+/// it, but strict commercial APs ACK the first frame then drop all the rest (incl. the
+/// DHCP DISCOVERs) as retransmissions, so DORA never completed. ns_mac_send/_sec stamp
+/// the next value into every mgmt/data frame.
+static mut TX_SEQ: u16 = 0;
+
+/// Stamp the next transmit sequence number into a mgmt/data frame's Sequence Control
+/// field (bytes 22-23: FragNum bits 3:0 = 0, SeqNum bits 15:4). Control frames (which
+/// have no SC) and runts are left alone. Safe for CCMP frames: the CCMP AAD masks the
+/// sequence number, so the MIC is unaffected and the receiver recomputes the same AAD.
+unsafe fn stamp_tx_seq(f: &mut [u8]) {
+    let ftype = f[0] & 0x0c; // 0x00 = management, 0x08 = data (0x04 = control: no SC)
+    if f.len() >= 24 && (ftype == 0x00 || ftype == 0x08) {
+        f[22] = ((TX_SEQ << 4) & 0xff) as u8;
+        f[23] = (TX_SEQ >> 4) as u8;
+        TX_SEQ = (TX_SEQ + 1) & 0x0fff;
+    }
+}
 static mut SUP: Option<Sta> = None;
 
 // Incremental PMK derivation (PBKDF2 c=4096 ~1.8s): driven in small chunks off the transport
@@ -351,7 +373,8 @@ pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
     unsafe {
-        let f = core::slice::from_raw_parts(frame, len as usize);
+        let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
+        stamp_tx_seq(f);
         match TX.load_frame(f, queue as usize) {
             Ok(idx) => {
                 TX.set_rate(idx);
@@ -371,7 +394,8 @@ pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32 {
     unsafe {
-        let f = core::slice::from_raw_parts(frame, len as usize);
+        let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
+        stamp_tx_seq(f);
         match TX.load_frame(f, queue as usize) {
             Ok(idx) => {
                 TX.mark_secure(idx);

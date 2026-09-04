@@ -297,7 +297,13 @@ int build_dhcp(uint8_t *p, const uint8_t *mac, uint32_t xid, uint8_t msg_type,
   dhcp[d++] = 1; dhcp[d++] = 1; dhcp[d++] = 6; dhcp[d++] = 0; // op/htype/hlen/hops
   dhcp[d++] = xid >> 24; dhcp[d++] = xid >> 16; dhcp[d++] = xid >> 8; dhcp[d++] = xid;
   dhcp[d++] = 0; dhcp[d++] = 0;             // secs
-  dhcp[d++] = 0x00; dhcp[d++] = 0x00;       // flags: unicast reply (we can RX unicast)
+  // flags: request a BROADCAST reply (0x8000). Unleased, we have no configured IP, so a
+  // server that honors a unicast-reply request (RFC 2131 §4.1) would ARP for the offered
+  // yiaddr and unicast the OFFER — which we can't answer ARP for yet, so it never arrives
+  // (our ARP responder only knows g_offer_ip, still 0 at DISCOVER). Broadcast comes back
+  // group-addressed and is decrypted via the GTK path. lenient servers (dnsmasq) broadcast
+  // regardless, which is why unicast "worked" on the rig.
+  dhcp[d++] = 0x80; dhcp[d++] = 0x00;       // flags: broadcast reply
   memset(dhcp + d, 0, 16); d += 16;         // ciaddr/yiaddr/siaddr/giaddr
   memcpy(dhcp + d, mac, 6); memset(dhcp + d + 6, 0, 10); d += 16; // chaddr
   memset(dhcp + d, 0, 64 + 128); d += 192;  // sname + file
@@ -431,9 +437,14 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   return el;
 }
 
+uint32_t g_dhcp_xid = 0;  // per-DORA transaction id (random; reused DISCOVER->REQUEST)
 void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id, const char *what) {
-  // One transaction id for the whole DORA so the REQUEST correlates to the OFFER.
-  const uint32_t xid = 0x5e7a9c01;
+  // One transaction id for the whole DORA so the REQUEST correlates to the OFFER. It
+  // MUST be random (RFC 2131 §4.4.1): a fixed constant, identical on every boot and
+  // across sibling DUTs, collides in a server's binding/dedup table so a strict server
+  // can suppress the OFFER. Draw a fresh one when the DISCOVER opens a new transaction.
+  if (msg_type == 1 || g_dhcp_xid == 0) esp_fill_random(&g_dhcp_xid, 4);
+  const uint32_t xid = g_dhcp_xid;
   uint8_t payload[400];
   int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
   uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=g_bssid a2=us a3=broadcast
