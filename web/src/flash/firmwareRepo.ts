@@ -24,12 +24,25 @@ function firmwareBase(): string {
   return assetUrl("firmware");
 }
 
+/** Fetch a firmware JSON file. A missing file under /firmware/ resolves to the SPA
+ * fallback (index.html) on some hosts — a 200 whose body is HTML, not JSON — so a
+ * naive res.json() throws the opaque "Unexpected token '<'". Detect that and report
+ * it plainly: this build simply has no bundled firmware. */
+async function fetchFirmwareJson(url: string, what: string): Promise<unknown> {
+  const res = await fetch(url, { cache: "no-cache" });
+  if (!res.ok) throw new Error(`Couldn't load ${what} (HTTP ${res.status}).`);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("No firmware is bundled with this build — pick a GitHub release instead.");
+  }
+}
+
 /** Load the firmware index, or null when this build bundles none. */
 export async function loadFirmwareIndex(): Promise<FirmwareIndex | null> {
   try {
-    const res = await fetch(`${firmwareBase()}/manifest.json`, { cache: "no-cache" });
-    if (!res.ok) return null;
-    return parseFirmwareIndex(await res.json());
+    return parseFirmwareIndex(await fetchFirmwareJson(`${firmwareBase()}/manifest.json`, "firmware index"));
   } catch {
     return null;
   }
@@ -45,9 +58,7 @@ export async function loadFirmwareIndex(): Promise<FirmwareIndex | null> {
 export async function loadFlashRequest(entry: FirmwareEntry): Promise<FlashRequest> {
   if (entry.tarUrl) return loadFlashRequestFromTar(entry);
   const base = `${firmwareBase()}/${entry.id}`;
-  const manRes = await fetch(`${base}/${entry.manifest}`, { cache: "no-cache" });
-  if (!manRes.ok) throw new Error(`Couldn't load ${entry.manifest} (HTTP ${manRes.status}).`);
-  const manifest = parseFlashManifest(await manRes.json());
+  const manifest = parseFlashManifest(await fetchFirmwareJson(`${base}/${entry.manifest}`, entry.manifest));
 
   const images = await Promise.all(
     manifest.images.map(async (img) => {
