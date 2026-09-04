@@ -170,9 +170,26 @@ impl Sta {
     }
 
     /// CCMP-verify + decrypt an inbound protected data frame into `out`.
+    ///
+    /// Group-addressed frames (multicast/broadcast — addr1's I/G bit set, e.g. a
+    /// broadcast DHCP OFFER, ARP, or IPv4/IPv6 multicast) are encrypted with the GTK,
+    /// NOT the pairwise key. Decrypting them with the PTK fails the MIC, so they were
+    /// silently dropped — invisible on an AP that unicasts the DHCP reply (the rig's
+    /// dnsmasq), but fatal on one that broadcasts it. Select the key by frame type.
     pub fn decrypt_data(&self, frame: &[u8], out: &mut [u8]) -> Option<usize> {
         if !self.have_keys {
             return None;
+        }
+        // 802.11 addr1 (the receiver address) starts at byte 4; its LSB is the I/G bit.
+        let group = frame.len() > 4 && frame[4] & 0x01 != 0;
+        if group {
+            let gtk = self.sup.gtk();
+            if gtk.len() < 16 {
+                return None; // no CCMP group key yet (not installed / TKIP-length)
+            }
+            let mut gk = [0u8; 16];
+            gk.copy_from_slice(&gtk[..16]);
+            return ccmp_decap(frame, &gk, out).map(|(n, _pn)| n);
         }
         let tk = self.sup.ptk().tk;
         ccmp_decap(frame, &tk, out).map(|(n, _pn)| n)
