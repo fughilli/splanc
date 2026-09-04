@@ -502,3 +502,34 @@ flash_bundle(
     flash = ":wifi_auth_replay_flash",
     tags = ["manual"],
 )
+
+# wifi_sniff — promiscuous 802.11 DATA-frame sniffer (diagnostic oracle). Flash on a
+# spare C6 near the AP to see how our STA frames the air (QoS vs non-QoS, seq numbers)
+# vs a real client. Uses the vendor esp_wifi promiscuous API. Not the heapless stack.
+cc_binary(
+    name = "wifi_sniff",
+    srcs = ["examples/wifi_sniff.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_sniff_esp32c6",
+    binary = ":wifi_sniff",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_sniff_flash",
+    app = ":wifi_sniff_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_sniff_flashbundle",
+    flash = ":wifi_sniff_flash",
+    tags = ["manual"],
+)

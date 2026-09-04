@@ -260,6 +260,12 @@ int build_assoc(uint8_t *f) {
   const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00,
                          0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
+  // WMM Information Element (WFA OUI 00-50-f2, OUI-type 2, subtype 0, version 1, QoS
+  // Info 0). Without it the AP admits us as a legacy non-QoS STA; with it we're a QoS
+  // STA, which is what lets us send QoS Data frames the AP will bridge (real clients
+  // are all QoS — confirmed over-the-air; our non-QoS uplink was silently dropped).
+  const uint8_t wmm[] = {0xdd, 0x07, 0x00, 0x50, 0xf2, 0x02, 0x00, 0x01, 0x00};
+  memcpy(f + n, wmm, sizeof(wmm)); n += sizeof(wmm);
   return n;
 }
 int build_eapol_data(uint8_t *f, const uint8_t *e, int el) {
@@ -421,8 +427,17 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     if (label) Serial.printf("%s (HW-enc ppTxPkt %d B, ok=%d)\n", label, 8 + 26 + plen, ok);
     return 8 + 26 + plen;
   }
+  // Send as a QoS Data MPDU (subtype 0x88, 26-byte header + 2-byte QoS Control) so we
+  // look like an ordinary client. Confirmed over-the-air: real clients on these networks
+  // send QoS Data (fc=8841); our legacy non-QoS Data (fc=0841) was ACKed but never
+  // bridged — commercial APs serve QoS STAs and drop a non-QoS STA's encrypted uplink.
+  // ccmp_encap keys the header length + QoS AAD off the subtype; TID 0, normal ack.
+  uint8_t qhdr[26];
+  memcpy(qhdr, hdr, 24);
+  qhdr[0] = 0x88;                     // QoS Data subtype (caller set 0x08)
+  qhdr[24] = 0x00; qhdr[25] = 0x00;   // QoS Control: TID 0, normal ack
   uint8_t enc[1700];
-  uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
+  uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
     ns_mac_send(enc, el, 0);
     static int dbg = 0;

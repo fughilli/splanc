@@ -480,6 +480,17 @@ pub fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8],
 
 const HDR24: usize = 24; // base MAC header (no QoS/A4)
 
+/// MAC header length for `hdr`: 26 for a QoS Data frame (its 2-byte QoS Control field
+/// follows the 24-byte base header), else 24. Detected from the Subtype's QoS bit
+/// (bit 7 of FC octet 0). No A4 / HT-Control in this stack.
+fn mac_hdr_len(hdr: &[u8]) -> usize {
+    if !hdr.is_empty() && hdr[0] & 0x80 != 0 {
+        26
+    } else {
+        HDR24
+    }
+}
+
 fn ccmp_nonce(a2: &[u8], pn: u64) -> [u8; 13] {
     let mut n = [0u8; 13];
     n[0] = 0; // priority/mgmt flags (non-QoS data)
@@ -495,30 +506,39 @@ fn ccmp_hdr(pn: u64, keyid: u8) -> [u8; 8] {
     [p[0], p[1], 0x00, 0x20 | (keyid << 6), p[2], p[3], p[4], p[5]]
 }
 
-/// AAD from the MAC header (non-QoS, no A4): FC (masked) + A1 + A2 + A3 + SC
-/// (seq masked). Returns the AAD and its length.
-fn ccmp_aad(hdr: &[u8]) -> ([u8; 22], usize) {
-    let mut a = [0u8; 22];
+/// AAD from the MAC header (no A4): FC (masked) + A1 + A2 + A3 + SC (seq masked), plus
+/// — for a QoS Data frame — the 2-byte QoS Control field with only the TID (bits 0-3)
+/// kept and the rest masked to 0 (§12.5.3.3.3). Returns the AAD and its used length
+/// (22 for non-QoS, 24 for QoS).
+fn ccmp_aad(hdr: &[u8]) -> ([u8; 24], usize) {
+    let mut a = [0u8; 24];
     a[0] = hdr[0];
     a[1] = (hdr[1] & 0x07) | 0x40; // keep toDS/fromDS/moreFrag, set Protected
     a[2..20].copy_from_slice(&hdr[4..22]); // A1, A2, A3
     a[20] = hdr[22] & 0x0f; // SC: fragment kept, sequence masked
     a[21] = 0;
-    (a, 22)
+    if hdr[0] & 0x80 != 0 && hdr.len() >= 26 {
+        a[22] = hdr[24] & 0x0f; // QoS Control: TID kept, everything else masked
+        a[23] = 0;
+        (a, 24)
+    } else {
+        (a, 22)
+    }
 }
 
 /// CCMP-encapsulate a plaintext MPDU: `out = header || CCMP-header || CTR(payload)
 /// || MIC`. Returns the total length. `hdr` is the (24-byte) MAC header; `payload`
 /// is the frame body to protect.
 pub fn ccmp_encap(hdr: &[u8], tk: &[u8; 16], pn: u64, keyid: u8, payload: &[u8], out: &mut [u8]) -> usize {
-    if hdr.len() < HDR24 {
+    let hlen = mac_hdr_len(hdr);
+    if hdr.len() < hlen {
         return 0;
     }
     let nonce = ccmp_nonce(&hdr[10..16], pn);
     let (aad, alen) = ccmp_aad(hdr);
-    out[..HDR24].copy_from_slice(&hdr[..HDR24]);
-    out[HDR24..HDR24 + 8].copy_from_slice(&ccmp_hdr(pn, keyid));
-    let body = HDR24 + 8;
+    out[..hlen].copy_from_slice(&hdr[..hlen]);
+    out[hlen..hlen + 8].copy_from_slice(&ccmp_hdr(pn, keyid));
+    let body = hlen + 8;
     out[body..body + payload.len()].copy_from_slice(payload);
     let clen = ccm_encrypt(tk, &nonce, &aad[..alen], &mut out[body..], payload.len());
     body + clen
@@ -527,10 +547,11 @@ pub fn ccmp_encap(hdr: &[u8], tk: &[u8; 16], pn: u64, keyid: u8, payload: &[u8],
 /// CCMP-decapsulate: verify + decrypt a protected MPDU in `frame` into `out`.
 /// Returns `Some((plaintext_len, pn))` on a valid MIC, else `None`.
 pub fn ccmp_decap(frame: &[u8], tk: &[u8; 16], out: &mut [u8]) -> Option<(usize, u64)> {
-    if frame.len() < HDR24 + 8 + M {
+    let hlen = mac_hdr_len(frame);
+    if frame.len() < hlen + 8 + M {
         return None;
     }
-    let ch = &frame[HDR24..HDR24 + 8];
+    let ch = &frame[hlen..hlen + 8];
     let pn = (ch[0] as u64)
         | (ch[1] as u64) << 8
         | (ch[4] as u64) << 16
@@ -539,8 +560,8 @@ pub fn ccmp_decap(frame: &[u8], tk: &[u8; 16], out: &mut [u8]) -> Option<(usize,
         | (ch[7] as u64) << 40;
     let nonce = ccmp_nonce(&frame[10..16], pn);
     let (aad, alen) = ccmp_aad(frame);
-    let clen = frame.len() - (HDR24 + 8);
-    let body = HDR24 + 8;
+    let clen = frame.len() - (hlen + 8);
+    let body = hlen + 8;
     out[..clen].copy_from_slice(&frame[body..body + clen]);
     let plen = ccm_decrypt(tk, &nonce, &aad[..alen], &mut out[..clen], clen)?;
     Some((plen, pn))
