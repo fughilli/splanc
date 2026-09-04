@@ -1,5 +1,5 @@
 {
-  "revision": "5543c50",
+  "revision": "e87a79c",
   "builtAt": null,
   "entries": [
     {
@@ -18,5 +18,5 @@
     }
   ],
   "version": "0.0.0-dev",
-  "commit": "5543c50c361db7033962a52d50eb40a834a0eaec"
+  "commit": "e87a79ce704b3448b2048e21408fc574e3793bf6"
 }
