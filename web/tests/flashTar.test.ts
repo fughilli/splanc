@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { untar } from "../src/flash/tar";
+import { untar, looksLikeTar } from "../src/flash/tar";
 
 const enc = new TextEncoder();
 
@@ -35,6 +35,15 @@ function makeTar(files: { name: string; data: Uint8Array }[]): Uint8Array {
   }
   return out;
 }
+
+test("looksLikeTar accepts a ustar archive and rejects an HTML fallback page", () => {
+  const tar = makeTar([{ name: "flash.json", data: enc.encode("{}") }]);
+  assert.equal(looksLikeTar(tar), true);
+  // A proxy/CDN that 200s an HTML page instead of the asset must be rejected
+  // up front (this is the "missing flash.json" red herring, made explicit).
+  assert.equal(looksLikeTar(enc.encode("<!doctype html><html><head>…")), false);
+  assert.equal(looksLikeTar(new Uint8Array(10)), false); // too short
+});
 
 test("untar round-trips a multi-file flashbundle", () => {
   const flashJson = enc.encode('{"chip":"esp32c6","images":[{"offset":"0x0","file":"boot.bin"}]}');
