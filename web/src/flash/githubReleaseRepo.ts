@@ -25,6 +25,18 @@ import type { FirmwareEntry, FirmwareIndex } from "./manifest";
 const ASSET_RE = /^esp32c6-(vendor|netstack)-.+\.tar$/i;
 const VARIANT_LABEL: Record<string, string> = { vendor: "Vendor Wi-Fi", netstack: "Heapless netstack" };
 
+// GitHub release-asset downloads send no CORS headers, so a browser fetch() of the
+// asset URL is blocked ("Failed to fetch"). Route it through our Cloudflare Pages
+// Function (web/functions/gh-asset.js), which re-serves the bytes with CORS. The
+// base is absolute (not relative) so it also works when the app is served from
+// GitHub Pages, which can't run the Function.
+const ASSET_PROXY = "https://splanc.pages.dev/gh-asset";
+
+/** Wrap a GitHub release-asset URL so the browser can fetch it cross-origin. */
+export function proxiedAssetUrl(url: string): string {
+  return `${ASSET_PROXY}?url=${encodeURIComponent(url)}`;
+}
+
 /** Build a firmware index from the GitHub `releases` API payload. Pure — no fetch.
  * Returns null (never throws) when nothing flashable is found or the shape is off. */
 export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {

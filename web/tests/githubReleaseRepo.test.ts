@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
+import { proxiedAssetUrl, releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
 
 function asset(name: string) {
   return { name, browser_download_url: `https://example.test/${name}` };
@@ -57,6 +57,15 @@ test("version comes from the tag; a non-SHA target_commitish yields no commit", 
   const older = idx.entries.find((e) => e.id === "firmware-v1.1.0::vendor")!;
   assert.equal(older.version, "1.1.0");
   assert.equal(older.commit, undefined); // "main" is not a full SHA → omitted
+});
+
+test("proxiedAssetUrl routes an asset URL through the CORS proxy, encoded", () => {
+  const raw = "https://github.com/fughilli/splanc/releases/download/firmware-v1.0.0/esp32c6-vendor-1.0.0.tar";
+  const p = proxiedAssetUrl(raw);
+  assert.ok(p.startsWith("https://splanc.pages.dev/gh-asset?url="));
+  // The original URL must be percent-encoded so its :/ don't corrupt our query.
+  assert.ok(p.includes(encodeURIComponent(raw)));
+  assert.equal(new URL(p).searchParams.get("url"), raw);
 });
 
 test("entry ids are unique across releases and variants", () => {

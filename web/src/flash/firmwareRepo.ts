@@ -16,6 +16,7 @@ import {
   type FirmwareIndex,
 } from "./manifest";
 import { untar } from "./tar";
+import { proxiedAssetUrl } from "./githubReleaseRepo";
 import type { FlashRequest } from "./flasher";
 
 /** Deploy-root URL of the firmware tree (works from origin root or a subpath). */
@@ -63,7 +64,9 @@ export async function loadFlashRequest(entry: FirmwareEntry): Promise<FlashReque
  * browser, then resolve flash.json + the image bytes it names (all stored under
  * their basenames by mk_flashbundle.py) into the same FlashRequest. */
 async function loadFlashRequestFromTar(entry: FirmwareEntry): Promise<FlashRequest> {
-  const res = await fetch(entry.tarUrl!, { cache: "no-cache" });
+  // Fetch through the CORS proxy — GitHub's asset CDN sends no CORS headers, so a
+  // direct fetch of entry.tarUrl is blocked by the browser (see proxiedAssetUrl).
+  const res = await fetch(proxiedAssetUrl(entry.tarUrl!), { cache: "no-cache" });
   if (!res.ok) throw new Error(`Couldn't download firmware (HTTP ${res.status}).`);
   const members = untar(new Uint8Array(await res.arrayBuffer()));
   const manBytes = members.get(entry.manifest);
