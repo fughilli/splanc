@@ -126,6 +126,26 @@ let
   sigrok = import ./sigrok.nix { inherit pkgs; };
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
+  # Make the rig AP behave like a commercial/mesh AP so the heapless netstack meets
+  # on the rig the behaviors a home AP exhibits but the lenient rig default hides.
+  # This is regression protection: the netstack's DHCP OFFER arrived BROADCAST +
+  # GTK-encrypted on a real mesh, and three device-side bugs (group-frame RX gate,
+  # GTK-KDE parse, DHCP a3 addressing) were invisible on the rig only because NM's
+  # dnsmasq unicast the OFFER under the pairwise key. See the netstack "join
+  # commercial mesh APs" fix.
+  #
+  # Broadcast OFFER is ON BY DEFAULT (opt out with SBC_AP_LENIENT=1): with all rigs
+  # broadcasting, the existing netstack HITL gates traverse the group-RX + GTK-decrypt
+  # path on every CI run with no dedicated wiring. It's safe for the vendor stack too
+  # (a normal STA handles a broadcast OFFER fine).
+  #  - dhcp-broadcast: dnsmasq answers DISCOVER/REQUEST by BROADCAST even when the
+  #    client didn't set the flag → the OFFER is group-addressed + GTK-encrypted.
+  # PMF (802.11w) is a separate opt-in (SBC_AP_PMF=1) for exercising that path when
+  # wanted — MFP-capable, not required (our STA doesn't negotiate PMF, and required
+  # would reject it at assoc). Left off by default since it changes mgmt-frame
+  # protection for every DUT, unlike the zero-risk broadcast OFFER.
+  apBroadcastDhcp = builtins.getEnv "SBC_AP_LENIENT" != "1";
+  apPmf = builtins.getEnv "SBC_AP_PMF" == "1";
   # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
   # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
   # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
@@ -373,9 +393,24 @@ in
       key-mgmt = "wpa-psk";
       proto = "rsn";
       psk = apPsk;
+    } // lib.optionalAttrs apPmf {
+      # 802.11w Management Frame Protection: "optional" (MFP-capable, not required) —
+      # advertise like a modern AP without rejecting an STA that doesn't negotiate PMF.
+      pmf = "2";
     };
     ipv4.method = "shared";
     ipv6.method = "ignore";
+  };
+
+  # Force NM's shared-mode dnsmasq to BROADCAST DHCP replies (default; see
+  # apBroadcastDhcp). NM's shared (ipv4.method=shared) dnsmasq reads extra options
+  # from this drop-in dir; with dhcp-broadcast the OFFER/ACK go out group-addressed
+  # (A1=ff:ff:ff:ff:ff:ff) and GTK-encrypted, so every join on this rig exercises the
+  # netstack's group-frame RX + GTK-decrypt path that a unicast OFFER would hide.
+  environment.etc = lib.optionalAttrs apBroadcastDhcp {
+    "NetworkManager/dnsmasq-shared.d/hitl-broadcast-dhcp.conf".text = ''
+      dhcp-broadcast
+    '';
   };
 
   # Let the rig's reservation containers reach DUTs on the AP. NM's shared mode
