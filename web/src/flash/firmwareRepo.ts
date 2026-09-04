@@ -15,7 +15,7 @@ import {
   type FirmwareEntry,
   type FirmwareIndex,
 } from "./manifest";
-import { untar } from "./tar";
+import { untar, looksLikeTar } from "./tar";
 import { proxiedAssetUrl } from "./githubReleaseRepo";
 import type { FlashRequest } from "./flasher";
 
@@ -79,7 +79,14 @@ async function loadFlashRequestFromTar(entry: FirmwareEntry): Promise<FlashReque
   // direct fetch of entry.tarUrl is blocked by the browser (see proxiedAssetUrl).
   const res = await fetch(proxiedAssetUrl(entry.tarUrl!), { cache: "no-cache" });
   if (!res.ok) throw new Error(`Couldn't download firmware (HTTP ${res.status}).`);
-  const members = untar(new Uint8Array(await res.arrayBuffer()));
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  // The download must be the .tar asset. If the proxy is unreachable/undeployed, a
+  // host can 200 an HTML fallback page instead — reject that up front rather than
+  // untarring it into a misleading "missing flash.json".
+  if (!looksLikeTar(bytes)) {
+    throw new Error("Couldn't download the firmware archive (the release proxy may be unavailable — try again).");
+  }
+  const members = untar(bytes);
   const manBytes = members.get(entry.manifest);
   if (!manBytes) throw new Error(`Firmware archive is missing ${entry.manifest}.`);
   const manifest = parseFlashManifest(JSON.parse(new TextDecoder().decode(manBytes)));

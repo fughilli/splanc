@@ -12,6 +12,15 @@
 
 const BLOCK = 512;
 
+/** True if `buf` starts with a ustar header (magic "ustar" at offset 257). Lets the
+ * caller reject a non-archive body — e.g. an HTML error/SPA-fallback page a proxy or
+ * CDN may 200 in place of the asset — before untarring it into a confusing "missing
+ * flash.json". mk_flashbundle.py emits ustar, so this is exact for our bundles. */
+export function looksLikeTar(buf: Uint8Array): boolean {
+  if (buf.length < 265) return false;
+  return String.fromCharCode(...buf.subarray(257, 262)) === "ustar";
+}
+
 function basename(p: string): string {
   const i = p.lastIndexOf("/");
   return i >= 0 ? p.slice(i + 1) : p;
