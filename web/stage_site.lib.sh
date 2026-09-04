@@ -23,11 +23,12 @@ stage_site() {
   rm -rf "$out"
   mkdir -p "$out"
   cp -RL web/dist/. "$out"/
-  # Cloudflare Pages Function(s) — the /gh-asset CORS proxy for release firmware
-  # downloads. Staged at the deploy root so `wrangler pages deploy` compiles them;
-  # on GitHub Pages these are just inert static files (the client uses the absolute
+  # Cloudflare Pages advanced-mode Worker — the /gh-asset CORS proxy for release
+  # firmware downloads. Staged as _worker.js at the deploy root, where Pages always
+  # executes it (a nested functions/ dir was NOT compiled by wrangler on this
+  # project). On GitHub Pages it's an inert static file (the client uses the absolute
   # Cloudflare URL). Absent in a bare local build → skipped.
-  if [ -d web/functions ]; then mkdir -p "$out/functions" && cp -RL web/functions/. "$out/functions/"; fi
+  if [ -f web/_worker.js ]; then cp -L web/_worker.js "$out/_worker.js"; fi
   mkdir -p "$out/solver" && cp -RL solver/solver_web/. "$out/solver/"
   mkdir -p "$out/pulse" && cp -RL firmware/pulse/pulse_web/. "$out/pulse/"
   mkdir -p "$out/fx-compiler" && cp -RL fx_compiler/fx_compiler_web/. "$out/fx-compiler/"
