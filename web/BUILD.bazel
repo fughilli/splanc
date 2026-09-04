@@ -445,10 +445,10 @@ sh_binary(
 SITE_DATA = [
     ":dist",
     "stage_site.lib.sh",
-    # Cloudflare Pages Function: CORS proxy for GitHub release-asset downloads, so
-    # the in-browser flasher can fetch a release firmware .tar (functions/ is
-    # compiled by wrangler on deploy; an inert static file on GitHub Pages).
-    "functions/gh-asset.js",
+    # Cloudflare Pages advanced-mode Worker: the /gh-asset CORS proxy for release
+    # firmware-asset downloads, staged as _worker.js at the deploy root (Pages always
+    # runs it; an inert static file on GitHub Pages).
+    "_worker.js",
     # The generated static user guide (FUG-103), published at /user-guide/,
     # plus its captured screenshots.
     "//docs:user-guide/index.html",
