@@ -251,7 +251,13 @@ int build_assoc(uint8_t *f) {
   memcpy(f + n, g_ssid, sl); n += sl;
   const uint8_t r[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, r, sizeof(r)); n += sizeof(r);
-  const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
+  // RSN IE: group=CCMP, pairwise=CCMP, AKM=PSK, caps=0 (no PMF). The group cipher
+  // (bytes 00-0f-ac-04) MUST be one this stack actually implements — it is CCMP-only,
+  // no TKIP — and match a modern WPA2/WPA3 AP, which uses CCMP/AES for the group key.
+  // It was 00-0f-ac-02 (TKIP): the rig AP tolerated that, but a real home AP rejects
+  // the Association Request with status 41 (INVALID_GROUP_CIPHER) — exactly the
+  // "assoc status=41" seen against a home network.
+  const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00,
                          0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
   return n;
