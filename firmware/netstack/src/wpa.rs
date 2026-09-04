@@ -287,10 +287,14 @@ pub const KEY_INFO_SECURE: u16 = 0x0200;
 pub const KEY_INFO_KEY_TYPE: u16 = 0x0008; // 1 = pairwise key
 
 /// The STA's RSN IE, echoed in EAPOL M2's key data (must match the association
-/// request exactly or the authenticator rejects M2): WPA2-PSK, group TKIP, pairwise
-/// CCMP, AKM PSK.
+/// request exactly or the authenticator rejects M2): WPA2-PSK, group CCMP, pairwise
+/// CCMP, AKM PSK. The group cipher (00-0f-ac-04) MUST equal the one in the
+/// Association Request (build_assoc in netstack_transport.cpp) and be one this
+/// CCMP-only stack implements; it was 00-0f-ac-02 (TKIP), which — once the assoc
+/// request was corrected to CCMP — no longer matched, so the authenticator rejected
+/// M2 and the 4-way handshake timed out (deauth reason 15).
 pub const STA_RSN_IE: [u8; 22] = [
-    0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
+    0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
     0x00, 0x0f, 0xac, 0x02, 0x00, 0x00,
 ];
 
