@@ -6,7 +6,7 @@
  */
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, type ClientOptions } from "../../net/client";
+import { certApprovalUrl, LedMapperClient, type ClientOptions, type SocketFactory } from "../../net/client";
 import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { deviceStore } from "../../store/deviceStore";
@@ -52,7 +52,11 @@ class AppState {
   /** Connect to a device by wss URL, tearing down any current client. Records
    * it in the known-devices list and marks it active. Reconnect + cert-trust
    * are handled here so the pill/sheet reflect them everywhere. */
-  connect(wssUrl: string, label?: string, opts?: { coldRetryLimit?: number }): void {
+  connect(
+    wssUrl: string,
+    label?: string,
+    opts?: { coldRetryLimit?: number; socketFactory?: SocketFactory },
+  ): void {
     this.disconnect();
     const dev = deviceStore.upsert(wssUrl, label);
     deviceStore.setActive(dev.id);
@@ -67,7 +71,9 @@ class AppState {
     // In the native wrapper, route the socket through the cert-pinning bridge so
     // the device's self-signed wss:// is trusted (no manual cert accept). Off
     // native this is undefined and the client uses the browser WebSocket.
-    const factory = nativeSocketFactory();
+    // An explicit factory (BLE transport — connect over Bluetooth, offline) wins
+    // over the native cert-pinning bridge; both make cert-trust meaningless.
+    const factory = opts?.socketFactory ?? nativeSocketFactory();
     if (factory) {
       clientOpts.socketFactory = factory;
       // …and tell the client the trust affordance is meaningless on this

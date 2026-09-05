@@ -27,6 +27,41 @@ static volatile bool g_have_creds = false;
 static char g_ssid[33];
 static char g_pass[65];
 
+// --- Player-protocol transport service (see improv_ble.h) --------------------
+// Splanc-specific 128-bit UUIDs (mirrored in web/src/net/bleTransport.ts). Not
+// advertised — the app filters on the Improv UUID/name and reaches this service
+// via Web Bluetooth optionalServices after connecting.
+static const char *kPlayerSvcUuid = "9f5b0000-8a2e-4c1d-9b3a-1f0e2d3c4b5a";
+static const char *kPlayerRxUuid = "9f5b0001-8a2e-4c1d-9b3a-1f0e2d3c4b5a";  // app→device (write)
+static const char *kPlayerTxUuid = "9f5b0002-8a2e-4c1d-9b3a-1f0e2d3c4b5a";  // device→app (notify)
+
+// Inbound frame cap. The app shards submit_map / submit_topology into <=4 KB
+// UploadChunk windows (net/client.ts CHUNK_BYTES=4096), so those — the large
+// offline-config uploads — arrive as frames of ~4 KB + a small envelope. 4608
+// covers a full window plus typical single-frame messages (rename, set_effect,
+// and compiled effects, which are usually well under this). It is deliberately
+// smaller than the WS handler's kRxCap: the vendor build runs soft-AP + BLE +
+// dual TLS/ws servers on a heap-starved C6 (~10 KB free), and these two static
+// buffers come straight out of that pool — oversizing them fragments the heap
+// enough that Bluedroid can't allocate a notification's tx buffer and the reply
+// is silently dropped (observed on the HITL rig). A frame past the cap is
+// dropped with a log (player_ble_poll never sees it); such a message must go
+// over WS instead.
+static const size_t kBleFrameCap = 4608;
+// Device->app replies (welcome, *_ready acks, perf reports) all fit the shared
+// handler's tx buffer (2048); the notify staging buffer is sized to that, not to
+// the (larger) inbound cap, to keep the heap footprint minimal.
+static const size_t kBleReplyCap = 2048;
+
+static BLECharacteristic *g_player_tx = nullptr;
+// Inbound [u32 BE len][payload] reassembly (written on the BT task).
+static uint8_t g_ble_rx[kBleFrameCap + 256];
+static size_t g_ble_rx_len = 0;
+// One complete frame latched for loop() to dispatch (single in-flight request).
+static uint8_t g_ble_frame[kBleFrameCap];
+static volatile size_t g_ble_frame_len = 0;
+static volatile bool g_ble_frame_ready = false;
+
 namespace {
 
 class RpcHandler : public BLECharacteristicCallbacks {
@@ -90,6 +125,43 @@ class ServerHandler : public BLEServerCallbacks {
 
 ServerHandler g_server_handler;
 
+// Player-transport RX: reassemble the inbound [u32 BE len][payload] byte stream and
+// latch one complete frame for loop() (player_ble_poll) to dispatch. BT-task context —
+// latch only, like the Improv creds path; the player handler runs on the Arduino task.
+class PlayerRxHandler : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *ch) override {
+    String v = ch->getValue();
+    const uint8_t *p = reinterpret_cast<const uint8_t *>(v.c_str());
+    size_t n = v.length();
+    if (n == 0) return;
+    if (g_ble_rx_len + n > sizeof g_ble_rx) {  // overflow/desync — resync on the next frame
+      g_ble_rx_len = 0;
+      return;
+    }
+    memcpy(g_ble_rx + g_ble_rx_len, p, n);
+    g_ble_rx_len += n;
+    for (;;) {
+      if (g_ble_rx_len < 4) return;  // need the length prefix
+      uint32_t flen = ((uint32_t)g_ble_rx[0] << 24) | ((uint32_t)g_ble_rx[1] << 16) |
+                      ((uint32_t)g_ble_rx[2] << 8) | (uint32_t)g_ble_rx[3];
+      if (flen == 0 || flen > kBleFrameCap) {  // bad length — drop the buffer, resync
+        g_ble_rx_len = 0;
+        return;
+      }
+      if (g_ble_rx_len < 4 + flen) return;      // frame not fully arrived yet
+      if (g_ble_frame_ready) return;            // one already in flight; loop() drains it
+      memcpy(g_ble_frame, g_ble_rx + 4, flen);
+      g_ble_frame_len = flen;
+      g_ble_frame_ready = true;
+      size_t consumed = 4 + flen;
+      memmove(g_ble_rx, g_ble_rx + consumed, g_ble_rx_len - consumed);
+      g_ble_rx_len -= consumed;
+    }
+  }
+};
+
+PlayerRxHandler g_player_rx_handler;
+
 }  // namespace
 
 void improv_ble_begin(const char *device_name, uint8_t initial_state) {
@@ -124,6 +196,21 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
   caps->setValue(&cap, 1);
 
   service->start();
+
+  // Player-protocol transport service (offline device configuration; see
+  // improv_ble.h). Request a larger ATT MTU so a notification carries ~244 B
+  // (the central negotiates down if it can't). RX takes writes (with or without
+  // response); TX notifies the length-prefixed reply stream. Not advertised — the
+  // app reaches it via Web Bluetooth optionalServices after connecting on Improv.
+  BLEDevice::setMTU(247);
+  BLEService *player = server->createService(kPlayerSvcUuid);
+  BLECharacteristic *prx = player->createCharacteristic(
+      kPlayerRxUuid, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  prx->setCallbacks(&g_player_rx_handler);
+  g_player_tx = player->createCharacteristic(
+      kPlayerTxUuid, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  g_player_tx->addDescriptor(new BLE2902());
+  player->start();
 
   // Build the advertisement explicitly. Web Bluetooth filters on the
   // 128-bit Improv service UUID, so that UUID MUST be in the primary
@@ -204,4 +291,39 @@ void improv_ble_send_redirect(const char *url) {
   if (n == 0) return;
   g_result->setValue(pkt, n);
   notify_settled(g_result);
+}
+
+// Notify the player-protocol reply as [u32 BE len][payload], chunked to the
+// negotiated MTU and paced so a burst of notifications isn't dropped (the same
+// reliability concern as notify_settled). Sent from the Arduino task (loop()).
+static void player_ble_notify(const uint8_t *data, size_t len) {
+  if (!g_player_tx || len > kBleReplyCap) return;
+  static uint8_t buf[kBleReplyCap + 4];
+  buf[0] = (uint8_t)(len >> 24);
+  buf[1] = (uint8_t)(len >> 16);
+  buf[2] = (uint8_t)(len >> 8);
+  buf[3] = (uint8_t)len;
+  memcpy(buf + 4, data, len);
+  const size_t total = len + 4;
+  const size_t chunk = 180;  // <= negotiated ATT MTU (247) - 3
+  for (size_t off = 0; off < total; off += chunk) {
+    size_t take = (total - off < chunk) ? (total - off) : chunk;
+    g_player_tx->setValue(buf + off, take);
+    // Settle BEFORE notifying: a notify fired immediately after setValue() races
+    // the Bluedroid GATT tx and is silently dropped (same failure — and fix — as
+    // notify_settled; verified on the HITL rig, where the single-chunk welcome was
+    // lost with the yield placed after notify()). This also paces multi-chunk
+    // replies so a burst isn't dropped.
+    delay(20);
+    g_player_tx->notify();
+  }
+}
+
+void player_ble_poll() {
+  if (!g_ble_frame_ready) return;
+  const uint8_t *reply = nullptr;
+  int n = lm_player_ble_reply(g_ble_frame, g_ble_frame_len, &reply);
+  g_ble_frame_ready = false;  // release the slot for the next inbound frame
+  if (n > 0 && reply) player_ble_notify(reply, (size_t)n);
+  // n == 0: fire-and-forget (no reply). n < 0: bad frame — drop silently.
 }

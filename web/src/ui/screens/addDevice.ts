@@ -221,6 +221,38 @@ async function provisionWithDevice(
   toast("Device provisioned");
 }
 
+/**
+ * Connect to a device over Bluetooth (no Wi-Fi, no cert) — the offline config
+ * path. Some networks (a phone hotspot with no upstream internet) refuse to
+ * load the device's https cert-accept page, so wss:// never becomes trustable;
+ * BLE sidesteps it entirely, carrying the full player protocol (see
+ * net/bleTransport.ts). The chooser is the FIRST async call (Web Bluetooth
+ * gesture). Keyed in the device list by a synthetic `ble:` URL; the socket runs
+ * over GATT, so cert-trust is meaningless and the client retries on the backoff.
+ */
+export function connectOverBle(onDone?: () => void): void {
+  void (async () => {
+    const { requestBleDevice, bleSocketFactory } = await import("../../net/bleTransport");
+    let device;
+    try {
+      device = await requestBleDevice(); // FIRST — preserve the user gesture
+    } catch (e) {
+      if (!isCancel(e)) toast(`Bluetooth: ${msg(e)}`, { error: true });
+      return;
+    }
+    const label = device.name || "Bluetooth device";
+    const url = `ble:${device.id ?? label}`;
+    toast("Connecting over Bluetooth…");
+    appState.connect(url, label, {
+      socketFactory: bleSocketFactory(device),
+      // GATT link is reliable once open; give the initial discovery a few tries.
+      coldRetryLimit: 6,
+    });
+    if (device.id) deviceStore.setBleId(url, device.id);
+    onDone?.();
+  })();
+}
+
 function promptManualAddress(): void {
   const url = prompt("Device address (wss://host:port):", "wss://");
   if (!url) return;
