@@ -87,6 +87,14 @@ message CodeParams {
   // LED output brightness scale in [0,1]; unset = 1.0. Servoed by the phone
   // against measured bloom/wash-out (exposure.ts planLedBrightness).
   optional double brightness = 9;
+  // Diffuse-capture striding (design: diffuse_capture; stride_lit in
+  // firmware/pattern ↔ web/src/code/stride.ts). Unset/<=1 stride_spacing = every
+  // LED lit every frame (legacy). Otherwise only a sparse, ≥ stride_spacing-
+  // separated subset of LEDs lights in the active `stride_phase`; the phone
+  // rotates the phase across epochs to cover the fixture.
+  optional int32 stride_spacing = 10;
+  optional int32 anchor_density = 11;
+  optional int32 stride_phase = 12;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -254,6 +262,13 @@ message StartMappingOptions {
   optional int32 symbols = 2;
   optional double bit_period_ms = 3;
   optional double brightness = 4;
+  // Diffuse-capture striding (see CodeParams.stride_spacing). Unset/<=1 =
+  // legacy all-lit. `anchor_density` (>=3, default 3) sets the shared-LED
+  // overlap that fuses the per-phase partials; `stride_phase` (default 0) is
+  // the initial phase the phone advances via Configure.
+  optional int32 stride_spacing = 5;
+  optional int32 anchor_density = 6;
+  optional int32 stride_phase = 7;
 }
 
 message StartMapping {
@@ -265,6 +280,11 @@ message ConfigureOptions {
   optional int32 symbols = 2;
   optional double bit_period_ms = 3;
   optional double brightness = 4;
+  // Diffuse-capture striding (see StartMappingOptions). The phone re-sends this
+  // each epoch to ADVANCE the phase (Configure restamps the pattern epoch).
+  optional int32 stride_spacing = 5;
+  optional int32 anchor_density = 6;
+  optional int32 stride_phase = 7;
 }
 
 // Mid-capture renegotiation; reply is PatternState with the new epoch.

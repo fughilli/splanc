@@ -32,10 +32,28 @@ const FS = `#version 300 es
 precision mediump float;
 uniform sampler2D cam;
 uniform float threshold;
+// Diffuse-mode local-contrast prefilter (design: diffuse_capture Stage A,
+// validated in web/src/sim/render.ts reduceToDetect + web/tests/diffuse_sim).
+// bgGain 0 = off. A diffuser SPREADS each LED spot — lowering its peak and
+// flattening its edges — so a fixed global threshold misses the dimmed spots and
+// bleeds neighbors together. Subtracting a low-frequency background (a top-hat /
+// DoG high-pass) restores the per-spot peak, the luma derivative, AND the
+// bleed-corrupted hue before the threshold + the CPU stage's per-blob chroma read.
+uniform float bgGain;
+uniform vec2 bgStep; // uv offset between the 5x5 background-estimate taps
 in vec2 uv;
 out vec4 outColor;
 void main() {
   vec3 rgb = texture(cam, uv).rgb;
+  if (bgGain > 0.0) {
+    vec3 bg = vec3(0.0);
+    for (int j = -2; j <= 2; j++) {
+      for (int i = -2; i <= 2; i++) {
+        bg += texture(cam, uv + bgStep * vec2(float(i), float(j))).rgb;
+      }
+    }
+    rgb = max(rgb - bgGain * (bg / 25.0), vec3(0.0));
+  }
   // Max channel: robust for saturated white AND colored LEDs.
   float lum = max(rgb.r, max(rgb.g, rgb.b));
   float m = lum >= threshold ? 1.0 : 0.0;
@@ -96,6 +114,15 @@ export interface DetectorOptions {
    */
   maxAspect?: number;
   /**
+   * Diffuse-capture mode: a local-contrast top-hat prefilter before the
+   * threshold (design: diffuse_capture Stage A). `gain` ≈ 1 fully removes the
+   * diffuser's DC lift; `radiusPx` is the background scale in DETECTION px
+   * (default 8, the Stage-A tuned value). Omit ⇒ off (the legacy detector).
+   * Pair with a LOW `threshold` (~0.18): the top-hat makes detection local, so
+   * the threshold reads residual contrast, not absolute brightness.
+   */
+  localContrast?: { gain: number; radiusPx?: number } | undefined;
+  /**
    * Whether the camera texture's v=0 row is the image BOTTOM (GL-style) —
    * then blob v must be flipped to the §7.4 top-left origin. Camera-texture
    * row order is device/driver territory; validated on-device 2026-07-03:
@@ -108,6 +135,78 @@ export interface DetectorOptions {
   flipV?: boolean;
 }
 
+/** Detector knobs the CCL + blob mapping needs (see {@link reducedToBlobs}). */
+export interface ReduceToBlobsOptions {
+  minArea: number;
+  maxArea: number;
+  maxBlobs: number;
+  maxAspect: number;
+  /** Also compute the chroma-weighted halo hue (cr/cg/cb) — the trace path. */
+  stats?: boolean;
+}
+
+/**
+ * Connected components + blob mapping over a reduced detect buffer (RGBA:
+ * `rgb·mask` in 0..2, masked luminance in alpha), the CPU half every detect path
+ * ends in. `buf` is at detection resolution `w`×`h`; `ds` scales centroids back to
+ * full-res px; `flipV` mirrors v to the top-left origin (GL readback rows are
+ * bottom-up, a pre-reduced buffer is top-down). Pure — so the synthetic diffuse
+ * simulator (web/src/sim) drives the exact production detector core, no port.
+ */
+export function reducedToBlobs(
+  buf: Uint8Array | Uint8ClampedArray,
+  w: number,
+  h: number,
+  ds: number,
+  imgH: number,
+  flipV: boolean,
+  opts: ReduceToBlobsOptions,
+): Blob[] {
+  // Fill/weight channel is alpha (masked luminance); RGB carries color.
+  // splitOversized: a washed-out strip merges every halo into one giant
+  // component that maxArea used to silently drop — taking every LED with
+  // it (2026-07-12 capture screenshot: one 98k-px component spanned the
+  // frame at threshold 0.6, beyond even the threshold servo's 0.9 cap).
+  // The cut ladders re-threshold such components into per-core blobs.
+  const comps = connectedComponents(buf, w, h, 4, 3, {
+    minArea: opts.minArea,
+    maxArea: opts.maxArea,
+    maxBlobs: opts.maxBlobs,
+    colorBase: 0,
+    stats: opts.stats === true,
+    splitOversized: true,
+  });
+
+  return comps
+    .filter((c) => Math.max(c.w, c.h) <= opts.maxAspect * Math.min(c.w, c.h))
+    .map((c) => {
+      const blob: Blob = {
+        u: c.x * ds,
+        v: flipV ? imgH - c.y * ds : c.y * ds,
+        intensity: c.intensity,
+        area: c.area * ds * ds,
+        w: c.w * ds,
+        h: c.h * ds,
+        // Always present: this call passes colorBase.
+        r: c.r!,
+        g: c.g!,
+        b: c.b!,
+      };
+      if (c.split) blob.split = true;
+      // Always present (CCL computes them unconditionally): the brightness
+      // servo reads satFrac each frame.
+      blob.peak = c.peak!;
+      blob.satFrac = c.satFrac!;
+      if (opts.stats) {
+        // The chroma-weighted color is only computed under stats:true.
+        blob.cr = c.cr!;
+        blob.cg = c.cg!;
+        blob.cb = c.cb!;
+      }
+      return blob;
+    });
+}
+
 export class DetectorGL {
   private readonly program: WebGLProgram;
   private readonly vao: WebGLVertexArrayObject;
@@ -115,6 +214,11 @@ export class DetectorGL {
   private readonly targetTex: WebGLTexture;
   private readonly uThreshold: WebGLUniformLocation;
   private readonly uCam: WebGLUniformLocation;
+  private readonly uBgGain: WebGLUniformLocation;
+  private readonly uBgStep: WebGLUniformLocation;
+  /** Diffuse-mode prefilter gain (0 = off) and background radius (detection px). */
+  private readonly bgGain: number;
+  private readonly bgRadiusPx: number;
   private targetW = 0;
   private targetH = 0;
   private readback: Uint8Array = new Uint8Array(0);
@@ -150,10 +254,14 @@ export class DetectorGL {
     this.maxArea = opts.maxArea ?? 4000;
     this.maxBlobs = opts.maxBlobs ?? 2048;
     this.maxAspect = opts.maxAspect ?? 3;
+    this.bgGain = opts.localContrast?.gain ?? 0;
+    this.bgRadiusPx = opts.localContrast?.radiusPx ?? 8;
 
     this.program = buildProgram(gl, VS, FS);
     this.uThreshold = gl.getUniformLocation(this.program, "threshold")!;
     this.uCam = gl.getUniformLocation(this.program, "cam")!;
+    this.uBgGain = gl.getUniformLocation(this.program, "bgGain")!;
+    this.uBgStep = gl.getUniformLocation(this.program, "bgStep")!;
 
     // Fullscreen triangle.
     this.vao = gl.createVertexArray()!;
@@ -189,6 +297,13 @@ export class DetectorGL {
     gl.disable(gl.BLEND);
     gl.useProgram(this.program);
     gl.uniform1f(this.uThreshold, this.threshold);
+    // Diffuse-mode top-hat: sample the 5×5 background at half the configured
+    // radius per tap (±2 taps → ±radius), in full-res normalized uv.
+    gl.uniform1f(this.uBgGain, this.bgGain);
+    if (this.bgGain > 0) {
+      const stepFull = (this.bgRadiusPx * this.downscale) / 2;
+      gl.uniform2f(this.uBgStep, stepFull / imgW, stepFull / imgH);
+    }
     gl.uniform1i(this.uCam, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -249,49 +364,13 @@ export class DetectorGL {
     flipV: boolean,
     opts: { stats?: boolean },
   ): Blob[] {
-    // Fill/weight channel is alpha (masked luminance); RGB carries color.
-    // splitOversized: a washed-out strip merges every halo into one giant
-    // component that maxArea used to silently drop — taking every LED with
-    // it (2026-07-12 capture screenshot: one 98k-px component spanned the
-    // frame at threshold 0.6, beyond even the threshold servo's 0.9 cap).
-    // The cut ladders re-threshold such components into per-core blobs.
-    const comps = connectedComponents(buf, w, h, 4, 3, {
+    return reducedToBlobs(buf, w, h, ds, imgH, flipV, {
       minArea: this.minArea,
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
-      colorBase: 0,
+      maxAspect: this.maxAspect,
       stats: opts.stats === true,
-      splitOversized: true,
     });
-
-    return comps
-      .filter((c) => Math.max(c.w, c.h) <= this.maxAspect * Math.min(c.w, c.h))
-      .map((c) => {
-        const blob: Blob = {
-          u: c.x * ds,
-          v: flipV ? imgH - c.y * ds : c.y * ds,
-          intensity: c.intensity,
-          area: c.area * ds * ds,
-          w: c.w * ds,
-          h: c.h * ds,
-          // Always present: this call passes colorBase.
-          r: c.r!,
-          g: c.g!,
-          b: c.b!,
-        };
-        if (c.split) blob.split = true;
-        // Always present (CCL computes them unconditionally): the brightness
-        // servo reads satFrac each frame.
-        blob.peak = c.peak!;
-        blob.satFrac = c.satFrac!;
-        if (opts.stats) {
-          // The chroma-weighted color is only computed under stats:true.
-          blob.cr = c.cr!;
-          blob.cg = c.cg!;
-          blob.cb = c.cb!;
-        }
-        return blob;
-      });
   }
 
   /**
@@ -315,6 +394,7 @@ export class DetectorGL {
     gl.disable(gl.BLEND);
     gl.useProgram(this.program);
     gl.uniform1f(this.uThreshold, 0.0); // unthresholded: alpha = raw luminance
+    gl.uniform1f(this.uBgGain, 0.0); // measure raw scene luma, never prefiltered
     gl.uniform1i(this.uCam, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -373,6 +453,7 @@ export class DetectorGL {
     gl.disable(gl.BLEND);
     gl.useProgram(this.program);
     gl.uniform1f(this.uThreshold, 0.0); // mask = 1 everywhere -> rgb passes through
+    gl.uniform1f(this.uBgGain, 0.0); // raw grab, never prefiltered
     gl.uniform1i(this.uCam, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
