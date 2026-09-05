@@ -245,6 +245,54 @@ pub fn symbol_at(led_id: u32, frame: u32, spec: &CodeSpec) -> u8 {
     ((codeword(led_id, spec) >> (frame * bps)) & ((1 << bps) - 1)) as u8
 }
 
+// ---------------------------------------------------------------------------
+// Diffuse-capture striding (mirror of web/src/code/stride.ts — see its docstring
+// for the design). On a diffused fixture, lighting every LED every frame blends
+// adjacent spots; instead the player lights only a sparse, ≥ `spacing`-separated
+// subset per phase and the phone rotates the phase across epochs. Coverage is the
+// `spacing` uniform-stride phases; the remaining `spacing-1` "bridge" phases wire a
+// depth-2 registration star through class 0 (anchor reps + a class-`j` rep in the
+// block gap). Every lit LED still shows its own full hue code, so ids stay absolute.
+// ---------------------------------------------------------------------------
+
+/// Total phases in one schedule: `spacing` coverage + `spacing-1` bridges; `1`
+/// when striding is disabled (`spacing <= 1`, the legacy all-lit pattern).
+pub const fn stride_phase_count(spacing: u32) -> u32 {
+    if spacing <= 1 {
+        1
+    } else {
+        2 * spacing - 1
+    }
+}
+
+/// The coverage phases are `0 .. spacing-1`; the rest are bridges.
+pub const fn stride_is_coverage(phase: u32, spacing: u32) -> bool {
+    phase < spacing
+}
+
+/// Is `led` lit in `phase` under the stride schedule? `spacing <= 1` ⇒ always lit.
+/// Out-of-range phases wrap (the caller may pass a running counter). `anchor_density`
+/// is clamped up to 3 (below it a bridge's lit spots can fall closer than `spacing`).
+pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bool {
+    let s = spacing;
+    if s <= 1 {
+        return true;
+    }
+    let n = 2 * s - 1;
+    let ph = phase % n;
+    if ph < s {
+        // Coverage: uniform stride-`s` grid at offset `ph`.
+        return led % s == ph;
+    }
+    // Bridge linking class 0 with class `j` (j = 1 .. s-1).
+    let j = ph - s + 1;
+    let a = if anchor_density < 3 { 3 } else { anchor_density };
+    let period = a * s;
+    let m = led % period;
+    // Class-0 anchor rep at the block start; class-`j` rep in the block's mid gap.
+    m == 0 || m == (a / 2) * s + j
+}
+
 /// The color `led_id` shows in cycle frame `frame_index`.
 ///
 /// `frame_index` must be within the cycle (callers index with
