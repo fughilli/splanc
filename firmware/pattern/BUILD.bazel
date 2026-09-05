@@ -34,3 +34,15 @@ rust_test(
         "@crates//:serde_json",
     ],
 )
+
+rust_test(
+    name = "golden_stride_test",
+    srcs = ["tests/golden_stride.rs"],
+    data = ["//web:tests/golden_stride.json"],
+    edition = "2021",
+    env = {"GOLDEN_STRIDE": "$(rootpath //web:tests/golden_stride.json)"},
+    deps = [
+        ":pattern",
+        "@crates//:serde_json",
+    ],
+)

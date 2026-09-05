@@ -77,6 +77,12 @@ export interface CodeParams {
   /** LED output brightness scale in [0,1]; absent = 1.0. Servoed by the
    * phone against measured bloom/wash-out (planLedBrightness). */
   brightness?: number | undefined;
+  /** Diffuse-capture striding (stride_lit; web/src/code/stride.ts). absent/<=1
+   * = every LED lit (legacy); else only the stridePhase subset lights, and
+   * the phone rotates the phase across epochs. Echoes what the device drives. */
+  strideSpacing?: number | undefined;
+  anchorDensity?: number | undefined;
+  stridePhase?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +210,12 @@ export interface StartMappingOptions {
   bitPeriodMs?: number;
   /** LED output brightness scale in [0,1]; omitted -> server default 1.0. */
   brightness?: number;
+  /** Diffuse-capture striding (see CodeParams). omitted/<=1 = legacy all-lit;
+   * anchorDensity (>=3, default 3) sets the fusion overlap, stridePhase (default
+   * 0) the initial phase the phone advances via Configure. */
+  strideSpacing?: number;
+  anchorDensity?: number;
+  stridePhase?: number;
 }
 
 export interface StartMappingMessage {
@@ -219,6 +231,11 @@ export interface ConfigureOptions {
   bitPeriodMs?: number;
   /** LED output brightness scale in [0,1]; omitted -> keep current. */
   brightness?: number;
+  /** Diffuse-capture striding (see StartMappingOptions); re-sent each epoch to
+   * ADVANCE the phase (omitted fields keep the active values). */
+  strideSpacing?: number;
+  anchorDensity?: number;
+  stridePhase?: number;
 }
 
 export interface ConfigureMessage {
