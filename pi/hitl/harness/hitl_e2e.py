@@ -43,6 +43,8 @@ import re
 import ssl
 import sys
 import time
+import urllib.parse
+import urllib.request
 
 import board_caps
 import hitl_ws
@@ -196,8 +198,57 @@ async def _ws_checks(
         await sock.close()
 
 
+def cert_page_check(ws_url: str, insecure: bool) -> None:
+    """Assert the device serves the self-signed-cert TRUST page on a plain GET /.
+
+    The webapp's trust flow (net/client.ts certApprovalUrl → https://<host>/) opens
+    the device's https root as a popup so the browser offers the cert interstitial;
+    the device must answer that plain (non-WebSocket) GET with a one-shot page that
+    postMessages 'ledmapper-cert-ok' to window.opener (deviceSheet.ts trustCert waits
+    for it) so the popup closes and the app reconnects over the now-trusted cert. The
+    netstack TLS server once served NOTHING on a non-WS GET — the browser got
+    ERR_EMPTY_RESPONSE and the trust flow dead-ended. Guard that regression on both
+    firmware variants. (Reached over the same wss tunnel, GET / instead of /ws.)
+    """
+    if not ws_url.startswith("wss:"):
+        print("[cert] CERT PAGE skipped — plain-ws target has no TLS cert page", flush=True)
+        return
+    u = urllib.parse.urlparse(ws_url)
+    page_url = f"https://{u.hostname}:{u.port or 443}/"
+    ctx = ssl.create_default_context()
+    if insecure:  # self-signed device cert (and the localhost tunnel host won't match)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(page_url, context=ctx, timeout=15) as r:
+            status, ctype = r.status, r.headers.get("Content-Type", "")
+            body = r.read(4096).decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001 — any failure here IS the regression
+        raise E2EFailure(
+            f"cert-trust page GET {page_url} failed ({type(e).__name__}: {e}) — a plain "
+            "GET / must serve the trust page, not close empty (ERR_EMPTY_RESPONSE)"
+        )
+    if status != 200 or "text/html" not in ctype:
+        raise E2EFailure(
+            f"cert-trust page GET {page_url}: expected 200 text/html, got {status} {ctype!r}"
+        )
+    if "ledmapper-cert-ok" not in body:
+        raise E2EFailure(
+            "cert-trust page served but missing the postMessage('ledmapper-cert-ok') the "
+            f"app's trust popup waits for; body[:200]={body[:200]!r}"
+        )
+    print(
+        f"[cert] CERT PAGE OK — GET / -> {status} {ctype}, postMessages ledmapper-cert-ok",
+        flush=True,
+    )
+
+
 def ws_checks(ws_url: str, new_name: str, insecure: bool, expected_caps: dict | None) -> None:
     asyncio.run(_ws_checks(ws_url, new_name, insecure, expected_caps))
+    # After the WS session closes (slot freed), assert the cert-trust landing page —
+    # the one-shot GET / the webapp's popup trust flow depends on (FUG: netstack
+    # ERR_EMPTY_RESPONSE regression). Uses the same tunnel, root path instead of /ws.
+    cert_page_check(ws_url, insecure)
 
 
 # --- driver ----------------------------------------------------------------
