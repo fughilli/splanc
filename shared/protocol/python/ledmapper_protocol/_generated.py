@@ -85,6 +85,11 @@ class CodeParams(_StrictModel):
     # LED output brightness scale; absent on the wire = 1.0. Servoed by the
     # phone against measured bloom/wash-out (planLedBrightness).
     brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Diffuse-capture striding (stride_lit; web/src/code/stride.ts). None/<=1 =
+    # every LED lit (legacy); else only the stridePhase subset lights.
+    strideSpacing: Union[int, None] = Field(default=None, ge=0)
+    anchorDensity: Union[int, None] = Field(default=None, ge=0)
+    stridePhase: Union[int, None] = Field(default=None, ge=0)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +210,10 @@ class StartMappingOptions(_StrictModel):
     symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
     brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Diffuse-capture striding (see CodeParams); None/<=1 = legacy all-lit.
+    strideSpacing: Union[int, None] = Field(default=None, ge=0)
+    anchorDensity: Union[int, None] = Field(default=None, ge=0)
+    stridePhase: Union[int, None] = Field(default=None, ge=0)
 
 
 class StartMappingMessage(_StrictModel):
@@ -219,6 +228,10 @@ class ConfigureOptions(_StrictModel):
     symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
     brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Diffuse striding (see StartMappingOptions); re-sent each epoch to advance phase.
+    strideSpacing: Union[int, None] = Field(default=None, ge=0)
+    anchorDensity: Union[int, None] = Field(default=None, ge=0)
+    stridePhase: Union[int, None] = Field(default=None, ge=0)
 
 
 class ConfigureMessage(_StrictModel):
