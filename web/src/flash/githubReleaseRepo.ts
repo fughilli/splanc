@@ -16,6 +16,7 @@
  */
 
 import { REPO_SLUG } from "../buildInfo";
+import { getReleaseIndex, putReleaseIndex } from "./firmwareCache";
 import type { ChipFamily } from "./usb";
 import type { FirmwareEntry, FirmwareIndex } from "./manifest";
 
@@ -80,17 +81,23 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
   return { revision: null, builtAt: null, entries };
 }
 
-/** Fetch + parse all releases into a firmware index, or null when unavailable
- * (offline, rate-limited, or no release ships firmware yet). */
+/** Fetch + parse all releases into a firmware index. On success the index is persisted
+ * to the offline cache (firmwareCache); when the network is unavailable (offline,
+ * rate-limited, 5xx) we fall back to the LAST-cached index so the version list — and
+ * any cached bundles — stay usable without a connection. Null only when there's no
+ * live index AND nothing cached. */
 export async function loadReleaseFirmwareIndex(): Promise<FirmwareIndex | null> {
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases?per_page=100`, {
       headers: { Accept: "application/vnd.github+json" },
       cache: "no-cache",
     });
-    if (!res.ok) return null;
-    return releasesToFirmwareIndex(await res.json());
+    if (!res.ok) return getReleaseIndex(); // rate-limited / 5xx — use the last-cached list
+    const index = releasesToFirmwareIndex(await res.json());
+    if (index) void putReleaseIndex(index); // persist for offline listing
+    return index ?? (await getReleaseIndex());
   } catch {
-    return null;
+    // Offline / DNS / CORS — fall back to the last release index we cached.
+    return getReleaseIndex();
   }
 }
