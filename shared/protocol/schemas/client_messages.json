@@ -79,6 +79,21 @@
               "minimum": 0,
               "maximum": 1,
               "description": "LED output brightness scale (see code_params.json). Servoed by the client against measured bloom/wash-out. Null/omitted -> server default (1.0)."
+            },
+            "strideSpacing": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Diffuse-capture striding (see code_params.json). Only the stridePhase subset lights, >= strideSpacing LEDs apart; the phone rotates the phase across epochs to cover the fixture. <=1/null = legacy all-lit."
+            },
+            "anchorDensity": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Bridge-phase anchor density (>=3): the shared-LED overlap that fuses the per-phase partials. Null -> 3."
+            },
+            "stridePhase": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Initial schedule phase (0-based); the phone advances it via Configure. Null -> 0."
             }
           }
         }
@@ -98,7 +113,14 @@
             "ledCount": { "type": ["integer", "null"], "minimum": 1 },
             "symbols": { "type": ["integer", "null"], "enum": [2, 4, null] },
             "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-            "brightness": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+            "brightness": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "strideSpacing": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Diffuse striding (see StartMapping); re-sent each epoch to ADVANCE the phase."
+            },
+            "anchorDensity": { "type": ["integer", "null"], "minimum": 0 },
+            "stridePhase": { "type": ["integer", "null"], "minimum": 0 }
           }
         }
       }
