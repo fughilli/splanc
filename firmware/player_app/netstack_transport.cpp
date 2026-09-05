@@ -251,9 +251,21 @@ int build_assoc(uint8_t *f) {
   memcpy(f + n, g_ssid, sl); n += sl;
   const uint8_t r[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, r, sizeof(r)); n += sizeof(r);
-  const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
+  // RSN IE: group=CCMP, pairwise=CCMP, AKM=PSK, caps=0 (no PMF). The group cipher
+  // (bytes 00-0f-ac-04) MUST be one this stack actually implements — it is CCMP-only,
+  // no TKIP — and match a modern WPA2/WPA3 AP, which uses CCMP/AES for the group key.
+  // It was 00-0f-ac-02 (TKIP): the rig AP tolerated that, but a real home AP rejects
+  // the Association Request with status 41 (INVALID_GROUP_CIPHER) — exactly the
+  // "assoc status=41" seen against a home network.
+  const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00,
                          0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
+  // WMM Information Element (WFA OUI 00-50-f2, OUI-type 2, subtype 0, version 1, QoS
+  // Info 0). Without it the AP admits us as a legacy non-QoS STA; with it we're a QoS
+  // STA, which is what lets us send QoS Data frames the AP will bridge (real clients
+  // are all QoS — confirmed over-the-air; our non-QoS uplink was silently dropped).
+  const uint8_t wmm[] = {0xdd, 0x07, 0x00, 0x50, 0xf2, 0x02, 0x00, 0x01, 0x00};
+  memcpy(f + n, wmm, sizeof(wmm)); n += sizeof(wmm);
   return n;
 }
 int build_eapol_data(uint8_t *f, const uint8_t *e, int el) {
@@ -291,7 +303,13 @@ int build_dhcp(uint8_t *p, const uint8_t *mac, uint32_t xid, uint8_t msg_type,
   dhcp[d++] = 1; dhcp[d++] = 1; dhcp[d++] = 6; dhcp[d++] = 0; // op/htype/hlen/hops
   dhcp[d++] = xid >> 24; dhcp[d++] = xid >> 16; dhcp[d++] = xid >> 8; dhcp[d++] = xid;
   dhcp[d++] = 0; dhcp[d++] = 0;             // secs
-  dhcp[d++] = 0x00; dhcp[d++] = 0x00;       // flags: unicast reply (we can RX unicast)
+  // flags: request a BROADCAST reply (0x8000). Unleased, we have no configured IP, so a
+  // server that honors a unicast-reply request (RFC 2131 §4.1) would ARP for the offered
+  // yiaddr and unicast the OFFER — which we can't answer ARP for yet, so it never arrives
+  // (our ARP responder only knows g_offer_ip, still 0 at DISCOVER). Broadcast comes back
+  // group-addressed and is decrypted via the GTK path. lenient servers (dnsmasq) broadcast
+  // regardless, which is why unicast "worked" on the rig.
+  dhcp[d++] = 0x80; dhcp[d++] = 0x00;       // flags: broadcast reply
   memset(dhcp + d, 0, 16); d += 16;         // ciaddr/yiaddr/siaddr/giaddr
   memcpy(dhcp + d, mac, 6); memset(dhcp + d + 6, 0, 10); d += 16; // chaddr
   memset(dhcp + d, 0, 64 + 128); d += 192;  // sname + file
@@ -409,8 +427,17 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     if (label) Serial.printf("%s (HW-enc ppTxPkt %d B, ok=%d)\n", label, 8 + 26 + plen, ok);
     return 8 + 26 + plen;
   }
+  // Send as a QoS Data MPDU (subtype 0x88, 26-byte header + 2-byte QoS Control) so we
+  // look like an ordinary client. Confirmed over-the-air: real clients on these networks
+  // send QoS Data (fc=8841); our legacy non-QoS Data (fc=0841) was ACKed but never
+  // bridged — commercial APs serve QoS STAs and drop a non-QoS STA's encrypted uplink.
+  // ccmp_encap keys the header length + QoS AAD off the subtype; TID 0, normal ack.
+  uint8_t qhdr[26];
+  memcpy(qhdr, hdr, 24);
+  qhdr[0] = 0x88;                     // QoS Data subtype (caller set 0x08)
+  qhdr[24] = 0x00; qhdr[25] = 0x00;   // QoS Control: TID 0, normal ack
   uint8_t enc[1700];
-  uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
+  uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
     ns_mac_send(enc, el, 0);
     static int dbg = 0;
@@ -425,16 +452,26 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   return el;
 }
 
+uint32_t g_dhcp_xid = 0;  // per-DORA transaction id (random; reused DISCOVER->REQUEST)
 void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id, const char *what) {
-  // One transaction id for the whole DORA so the REQUEST correlates to the OFFER.
-  const uint32_t xid = 0x5e7a9c01;
+  // One transaction id for the whole DORA so the REQUEST correlates to the OFFER. It
+  // MUST be random (RFC 2131 §4.4.1): a fixed constant, identical on every boot and
+  // across sibling DUTs, collides in a server's binding/dedup table so a strict server
+  // can suppress the OFFER. Draw a fresh one when the DISCOVER opens a new transaction.
+  if (msg_type == 1 || g_dhcp_xid == 0) esp_fill_random(&g_dhcp_xid, 4);
+  const uint32_t xid = g_dhcp_xid;
   uint8_t payload[400];
   int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
   uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=g_bssid a2=us a3=broadcast
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  // a3 = g_bssid (unicast to the AP at L2, L3 is still 255.255.255.255) so hardware TX
-  // encrypt uses the pairwise key (it keys off the destination address).
-  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
+  // a3 (the L2 destination in a ToDS frame) MUST be the real broadcast address for a DHCP
+  // DISCOVER/REQUEST — the L3 destination is 255.255.255.255. With a3 = g_bssid the AP saw
+  // the frame as destined to *itself* and never flooded/bridged it to the DHCP server; on a
+  // mesh, if we associated to a satellite node rather than the gateway, the DISCOVER died
+  // inside the wrong node. TX still encrypts with the PAIRWISE key regardless of a3 (uplink
+  // is always pairwise — see sta.rs encrypt_data), so a broadcast a3 is safe here.
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
   tx_l2(hdr, payload, pn, lbl);
@@ -1150,7 +1187,17 @@ void netstack_loop() {
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (apf++ < 12) Serial.printf("  AP->us fc=%02x%02x len=%u\n", rx[0], rx[1], n);
   }
-  if (n >= 24 && memcmp(rx + 4, OUR_MAC, 6) == 0 &&
+  // Accept frames addressed to us (A1 == our MAC) OR group-addressed (A1 I/G bit set:
+  // broadcast/multicast), as long as they come from our AP (A2 == BSSID) — or, for the
+  // legacy unicast path, A3 == BSSID. The group-addressed case is essential: a commercial
+  // AP returns the DHCP OFFER (and ARPs for our IP, and floods IPv4 multicast) as a
+  // BROADCAST data frame with A1 = ff:ff:ff:ff:ff:ff, which the old A1==OUR_MAC-only gate
+  // silently dropped before it could reach the GTK decrypt path below — assoc + 4-way OK,
+  // DISCOVER ACKed, but the OFFER we requested (broadcast flag, build_dhcp) was thrown away
+  // unread. The rig's dnsmasq unicast the OFFER to us, which masked this everywhere.
+  bool a1_us = memcmp(rx + 4, OUR_MAC, 6) == 0;
+  bool a1_group = (rx[4] & 0x01) != 0;
+  if (n >= 24 && (a1_us || a1_group) &&
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
@@ -1342,6 +1389,13 @@ void netstack_loop() {
       strncpy(g_ssid, s, sizeof g_ssid - 1);
       strncpy(g_pass, p, sizeof g_pass - 1);
       g_creds_ready = true;  // trigger association with the provisioner's creds
+      // The provisioned SSID may differ from an AP we already latched — most often the
+      // baked-cred fallback fired first (its 45s grace elapsed while the central was still
+      // connecting) and latched hitl-rig-3. g_ap_latched is a one-shot, so without this the
+      // radio stays aimed at the OLD BSSID/channel and the real network is never attempted.
+      // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
+      g_ap_latched = false;
+      st = AUTH;
       // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
       // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
       ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
