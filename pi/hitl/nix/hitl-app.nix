@@ -393,6 +393,15 @@ in
       key-mgmt = "wpa-psk";
       proto = "rsn";
       psk = apPsk;
+      # Pin CCMP (AES) for BOTH pairwise and group. With these unset, NM/wpa_supplicant
+      # leaves the RSN GROUP cipher at its legacy default (TKIP) — which no modern
+      # commercial AP uses and which the CCMP-only heapless netstack cannot do. The AP
+      # then associates a correctly-CCMP-declaring STA and immediately deauths it with
+      # reason 18 (invalid group cipher), storming re-join. Forcing CCMP makes the rig a
+      # true WPA2/WPA3-style AP so the netstack (and the commercial-AP path it mirrors)
+      # completes association + the 4-way. Vendor esp_wifi is unaffected (CCMP-capable).
+      group = "ccmp";
+      pairwise = "ccmp";
     } // lib.optionalAttrs apPmf {
       # 802.11w Management Frame Protection: "optional" (MFP-capable, not required) —
       # advertise like a modern AP without rejecting an STA that doesn't negotiate PMF.
