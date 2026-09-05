@@ -355,7 +355,10 @@ git_override(
     # same inputs hashed to the same store path with different bytes and nix copy
     # served stale daemons (rig-2 stuck on an old binary). Also folds in the
     # deploy_live board/hardware brick guard (was PR #13, never merged on its own).
-    commit = "8d6f66b54742cbb1d492783c5513e37792384c77",  # hermetic flake_srcs (PR #14 merged)
+    # PR #15 fixes flake-source staging on macOS: $TMPDIR under the /var symlink (nix
+    # rejects a symlink-traversing path: input) + a read-only cp -rL copy that macOS
+    # rename(2) can't move — so deploy_live couldn't build from a Mac at all.
+    commit = "f2d056cd16e527d1bfb8722b4ffd58d954616ff7",  # macOS flakesrc-staging fix (PR #15 merged)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
