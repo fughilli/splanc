@@ -18,8 +18,11 @@ import {
   loadFirmwareIndex,
   loadFlashRequest,
   totalBytes,
+  downloadFirmwareToCache,
+  prefetchLatestFirmware,
 } from "../../flash/firmwareRepo";
 import { loadReleaseFirmwareIndex } from "../../flash/githubReleaseRepo";
+import { cachedIds, deleteBundle, listBundles } from "../../flash/firmwareCache";
 import {
   webSerialUnavailableReason,
   requestSerialPort,
@@ -44,6 +47,10 @@ let openHandle: SheetHandle | null = null;
  * (the "dev" fallback, e.g. a PR preview flashing its exact-commit firmware). */
 type FwSource = "release" | "bundled";
 let currentSource: FwSource = "release";
+
+/** Ids of firmware versions cached for OFFLINE flashing — refreshed on each picker
+ * load and after a manage-drawer download/remove, and used to mark them in the UI. */
+let cachedSet = new Set<string>();
 
 function loadIndexForSource(source: FwSource): Promise<FirmwareIndex | null> {
   return source === "release" ? loadReleaseFirmwareIndex() : loadFirmwareIndex();
@@ -103,6 +110,11 @@ function renderDemoFlash(sheet: SheetHandle): void {
 
 export async function openFlashSheet(): Promise<void> {
   if (openHandle) return;
+
+  // Warm the offline cache with the latest release in the background (idempotent,
+  // no-ops offline) so the newest firmware is flashable without a network even if
+  // the connection drops mid-session.
+  void prefetchLatestFirmware();
 
   // iOS gives third-party apps no USB-serial access at all (no Web Serial, no
   // WebUSB, and no native serial to an unlisted board — docs/design/ios-support.md
@@ -173,6 +185,7 @@ async function showPicker(sheet: SheetHandle): Promise<void> {
     );
     return;
   }
+  cachedSet = await cachedIds(); // mark which versions are offline-ready
   renderIdle(sheet, index, index.entries[0]!);
 }
 
@@ -221,7 +234,7 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
     for (const e of index.entries) {
       const opt = document.createElement("option");
       opt.value = e.id;
-      opt.textContent = e.label;
+      opt.textContent = e.label + (cachedSet.has(e.id) ? "  ·  cached ✓" : "");
       if (e.id === selected.id) opt.selected = true;
       sel.append(opt);
     }
@@ -243,6 +256,7 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
       ? kvCommit("Build", selected.commit)
       : kv("Built at", index.revision ? `revision ${index.revision}` : "unknown revision"),
   );
+  if (cachedSet.has(selected.id)) card.append(kv("Offline", "cached — flashes without a network"));
   sheet.body.append(card);
 
   sheet.body.append(
@@ -252,8 +266,107 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
       block: true,
       onClick: () => void startFlash(sheet, index, selected),
     }),
-    buildDiagnostics(),
   );
+  // Manage the offline cache — only meaningful for the releases source (versioned,
+  // downloadable). The bundled "this build" source has a single non-cacheable image.
+  if (currentSource === "release") {
+    sheet.body.append(
+      Button({
+        label: "Manage cached versions…",
+        variant: "quiet",
+        block: true,
+        onClick: () => void renderManageDrawer(sheet, index, selected),
+      }),
+    );
+  }
+  sheet.body.append(buildDiagnostics());
+}
+
+/**
+ * "Manage cached versions" drawer — lists every release × variant with its cached
+ * state and per-version Download / Remove actions, so any version can be warmed for
+ * OFFLINE flashing (or removed to reclaim space). The latest release is prefetched
+ * automatically; this is where the user grabs any other one. Back returns to the picker.
+ */
+async function renderManageDrawer(
+  sheet: SheetHandle,
+  index: FirmwareIndex,
+  selected: FirmwareEntry,
+): Promise<void> {
+  cachedSet = await cachedIds();
+  const sizes = new Map((await listBundles()).map((b) => [b.id, b.size] as const));
+  sheet.body.innerHTML = "";
+  sheet.body.append(
+    intro(
+      "Downloaded versions are cached in this browser and flash without a network connection. " +
+        "The latest release is fetched automatically; download any other version here.",
+    ),
+  );
+
+  const releaseEntries = index.entries.filter((e) => e.tarUrl);
+  if (releaseEntries.length === 0) sheet.body.append(note("No published firmware releases to manage."));
+
+  for (const e of releaseEntries) {
+    const isCached = cachedSet.has(e.id);
+    const card = document.createElement("div");
+    card.className = "k-card flash-summary";
+    card.append(
+      kv("Firmware", e.label),
+      kv(
+        "Status",
+        isCached ? `Cached · ${fmtKB(sizes.get(e.id) ?? 0)} · flashes offline` : "Not downloaded",
+      ),
+    );
+    if (isCached) {
+      card.append(
+        Button({
+          label: "Remove",
+          variant: "quiet",
+          block: true,
+          onClick: () => void removeThen(sheet, index, selected, e.id),
+        }),
+      );
+    } else {
+      card.append(
+        Button({
+          label: "Download for offline",
+          icon: "chip",
+          block: true,
+          onClick: () => void downloadThen(sheet, index, selected, e),
+        }),
+      );
+    }
+    sheet.body.append(card);
+  }
+
+  sheet.body.append(
+    Button({ label: "Back", variant: "quiet", block: true, onClick: () => renderIdle(sheet, index, selected) }),
+  );
+}
+
+/** Remove a cached bundle, then re-render the drawer. */
+async function removeThen(sheet: SheetHandle, index: FirmwareIndex, selected: FirmwareEntry, id: string): Promise<void> {
+  await deleteBundle(id);
+  await renderManageDrawer(sheet, index, selected);
+}
+
+/** Download+cache a version (pinned — user-requested, never auto-evicted), showing a
+ * progress line, then re-render the drawer with it marked cached. */
+async function downloadThen(
+  sheet: SheetHandle,
+  index: FirmwareIndex,
+  selected: FirmwareEntry,
+  entry: FirmwareEntry,
+): Promise<void> {
+  sheet.body.innerHTML = "";
+  sheet.body.append(loadingLine(`Downloading ${entry.label}…`));
+  try {
+    await downloadFirmwareToCache(entry, true);
+    toast(`Downloaded ${entry.label} — flashes offline now`);
+  } catch (err) {
+    toast(errText(err), { error: true });
+  }
+  await renderManageDrawer(sheet, index, selected);
 }
 
 // -- no device found -------------------------------------------------------

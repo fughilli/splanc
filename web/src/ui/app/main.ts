@@ -173,6 +173,12 @@ async function main(): Promise<void> {
 
   router.start();
 
+  // Warm the offline firmware cache with the latest release in the background, so a
+  // released image is flashable over USB even with no network later. Dynamic-imported
+  // to keep the flash stack (and the esptool-js it can pull) off the initial bundle;
+  // best-effort — prefetchLatestFirmware() self-guards offline / errors.
+  void import("../../flash/firmwareRepo").then((m) => m.prefetchLatestFirmware()).catch(() => {});
+
   // FX-agent chat-log console dump (debugging, Option 1): a manual trigger from
   // DevTools, plus an on-boot dump when the "dump on launch" toggle is set — the
   // latter lets `bazel run //tools:ios_deploy -- --log` capture the transcripts
