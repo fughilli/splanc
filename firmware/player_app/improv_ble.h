@@ -58,4 +58,25 @@ void improv_ble_set_error(uint8_t error);
 // redirect URL (its http address on the joined network).
 void improv_ble_send_redirect(const char *url);
 
+// --- Player-protocol BLE transport (offline device configuration) ------------
+// A second GATT service (alongside Improv) carries the full ledmapper.v1 player
+// protocol over Bluetooth, so a device can be configured entirely offline — no
+// WiFi/TLS/self-signed-cert (accepting the cert needs upstream internet, which a
+// phone hotspot lacks). Started by improv_ble_begin. RX (app→device write) and TX
+// (device→app notify) form a length-prefixed byte stream: each logical frame is
+// [u32 BE length][payload], chunked to the MTU. Frames are latched on the BT-task
+// write callback and drained here on the loop task (single in-flight request/reply).
+//
+// Drain any latched inbound frame: compute its reply via the shared handler and
+// notify it back, chunked. Call every loop() iteration (Bluedroid runs its own BT
+// task; this runs the player handler + notify on the Arduino task for pacing).
+void player_ble_poll();
+
+// Compute the reply for one player-protocol frame — the transport-agnostic handler
+// (upload-chunk streaming + lm_player_handle + persistence + device-side polling),
+// defined in main.cpp and shared with the ws:81/wss:443 paths. Copies `in` into the
+// shared rx buffer, computes into the shared tx, and points `reply` at it. Returns
+// the reply length (>0), 0 (no reply), or -1 (bad frame / drop).
+int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply);
+
 #endif  // FIRMWARE_PLAYER_APP_IMPROV_BLE_H_

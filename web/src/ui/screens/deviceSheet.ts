@@ -16,7 +16,7 @@ import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
 import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
-import { bleRediscover, openAddDevice } from "./addDevice";
+import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { appendGrouped, openFolderPicker } from "./folders";
 
 let openHandle: { close: () => void } | null = null;
@@ -203,6 +203,13 @@ function render(): HTMLElement {
     IconButton("bluetooth", {
       title: "Add device (Bluetooth)",
       onClick: () => openAddDevice("ble"),
+    }),
+    // Connect over Bluetooth with no Wi-Fi/cert — for networks where the
+    // device's https cert-accept page won't load (a hotspot with no upstream
+    // internet), so wss:// can't be trusted. Runs the full protocol over GATT.
+    IconButton("plug", {
+      title: "Connect over Bluetooth (offline)",
+      onClick: () => connectOverBle(),
     }),
     IconButton("link", {
       title: "Enter address manually",

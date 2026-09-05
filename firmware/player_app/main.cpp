@@ -1039,6 +1039,20 @@ static void ws_dispatch_message() {
   }
   rx_len = 0;
 }
+
+// Player-protocol BLE transport bridge (improv_ble.cpp's player_ble_poll calls this):
+// treat `in` as one received frame, compute the reply via the shared handler, and point
+// `reply` at the shared tx. Mirrors lm_ws_dispatch for the vendor build's BLE path so a
+// message behaves identically over BLE, ws:81, and wss:443.
+int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
+  if (len > kRxCap) return -1;
+  memcpy(rx, in, len);
+  rx_len = len;
+  int n = ws_compute_reply();
+  *reply = tx;
+  rx_len = 0;
+  return n;
+}
 #else
 // The netstack transport's WS pump calls this: copy the received message into the shared rx,
 // compute the reply into the shared tx, and hand back a pointer to it. (One extra copy vs the
@@ -2419,6 +2433,7 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
+  player_ble_poll();  // drain + reply to any player-protocol frame received over BLE
   // Keep the served TLS cert's SAN matching the live STA IP. provisioning_poll's
   // demote issues the first LAN cert, but that one attempt can fail under
   // early-boot heap pressure (ledmapper_selfsign needs a few KB free) and the IP

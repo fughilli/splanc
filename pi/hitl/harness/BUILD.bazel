@@ -44,6 +44,40 @@ hitl_test(
     ],
 )
 
+# Offline player-protocol-over-BLE e2e (vendor C6 only): flash, then drive the
+# full ledmapper.v1 hello->welcome over the device's player GATT service with NO
+# WiFi/TLS/cert — the phone-hotspot offline-config path (improv_ble.cpp +
+# web/src/net/bleTransport.ts). The protobuf codec (//pi/server proto_wire) stays
+# on this driver side; the shipped hitl_ble_player.py does only BLE transport +
+# framing on the rig. requires=["improv"] but the setup path is esp32c6-only.
+hitl_test(
+    name = "ble_player_e2e",
+    srcs = [
+        "hitl_ble_player.py",  # shipped into the reservation (scp) + run there
+        "hitl_ble_player_e2e.py",
+        "hitl_e2e.py",  # reused for flash() + default_bundle() on the C6 path
+    ],
+    data = [
+        "//firmware/player_app:board_caps.textproto",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    main = "hitl_ble_player_e2e.py",
+    # `flash` restricts the fan-out to the esp32c6 (we flash the vendor bundle;
+    # the Pi is pre-imaged with the Rust player, which has no player GATT service
+    # yet); `improv` documents the BLE dependency. Fans to ble_player_e2e_esp32c6.
+    requires = [
+        "flash",
+        "improv",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 py_library(
     name = "harness",
     srcs = [
