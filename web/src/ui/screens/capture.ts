@@ -27,6 +27,7 @@ import {
 } from "../../cv/exposure";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
+import { phaseCount as stridePhaseCount } from "../../code/stride";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
@@ -56,10 +57,19 @@ function numParam(name: string, dflt: number): number {
 
 // URL-param power-user overrides (unchanged from main.ts; no longer primary UI).
 const forcedThreshold = qs.get("threshold") !== null;
+// Diffuse-capture mode (design: diffuse_capture): the fixture is behind a
+// diffuser, so blink LEDs on a spatial STRIDE (only a sparse, non-overlapping
+// subset per epoch; the phone rotates the phase to cover all LEDs) AND run the
+// detector's local-contrast prefilter with a LOW threshold (local adaptive
+// detection) to recover the diffuser-dimmed, low-derivative spots.
+const diffuse = qs.get("diffuse") === "1";
+const strideSpacing = Math.max(1, Math.floor(numParam("stride", 4)));
+const anchorDensity = Math.max(3, Math.floor(numParam("anchor", 3)));
 const detectorOpts = {
-  threshold: numParam("threshold", 0.6),
+  threshold: numParam("threshold", diffuse ? 0.18 : 0.6),
   downscale: numParam("downscale", 2),
   flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : false,
+  ...(diffuse ? { localContrast: { gain: numParam("lcgain", 1.0) } } : {}),
 };
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
 const forcedFx = ((): number | null => {
@@ -394,6 +404,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             ? { bitPeriodMs: recommended.bitPeriodMs }
             : {}),
         ...(forcedBrightness !== null ? { brightness: forcedBrightness } : {}),
+        // Diffuse mode: start on phase 0 of the stride schedule; the tick below
+        // rotates the phase. Firmware masks all but the phase's sparse subset.
+        ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
       };
 
       await c.syncClock(4);
@@ -412,7 +425,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         return pl;
       };
       let pipeline = makePipeline(params, epoch);
-      guideEl.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
+      // Diffuse phase rotation state (a no-op when !diffuse: phaseTotal === 1).
+      const phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
+      let phaseIdx = 0;
+      let lastPhaseAt = performance.now();
+      guideEl.textContent = diffuse
+        ? `diffuse: phase 1/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+        : `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
       capturing = true;
       startedAt = performance.now();
@@ -559,7 +578,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let pendingSymbols: 2 | 4 | null = null;
       let pendingBrightness: number | null = null;
       let renegotiating = false;
-      const applyReconfigure = (opts: { bitPeriodMs?: number; symbols?: 2 | 4; brightness?: number }): void => {
+      const applyReconfigure = (opts: {
+        bitPeriodMs?: number;
+        symbols?: 2 | 4;
+        brightness?: number;
+        stridePhase?: number;
+      }): void => {
         renegotiating = true;
         c.configure(opts)
           .then((ps) => {
@@ -568,9 +592,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);
-            guideEl.textContent =
-              `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
-              ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
+            guideEl.textContent = diffuse
+              ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+              : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
+                ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
           })
           .catch(() => undefined)
           .finally(() => {
@@ -600,7 +625,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const report = monitor.report(performance.now(), detector.threshold, lastAmbient);
         if (report === null) return;
         c.sendExposureReport(report);
-        if (!forcedThreshold) {
+        // In diffuse mode the top-hat prefilter makes detection LOCAL, so the
+        // threshold reads residual contrast at a fixed low value — the absolute-
+        // brightness servo would fight it. Leave it pinned there.
+        if (!forcedThreshold && !diffuse) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
           nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
@@ -658,6 +686,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           pendingBrightness = wantBright;
         }
         syncManualSliders(params.brightness ?? 1, servoedExposure);
+
+        // Diffuse capture: rotate the stride phase so every LED eventually lands
+        // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
+        // cycles per phase; skip if a servo reconfig just fired (they share the
+        // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
+        if (diffuse && !renegotiating) {
+          const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
+          if (performance.now() - lastPhaseAt > dwellMs) {
+            phaseIdx = (phaseIdx + 1) % phaseTotal;
+            lastPhaseAt = performance.now();
+            applyReconfigure({ stridePhase: phaseIdx });
+            guideEl.textContent = `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
+          }
+        }
       }, 2000);
     } catch (e) {
       manualHooks = null;
