@@ -903,7 +903,32 @@ static bool ws_pump() {
       g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
       if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
       char key[80];
-      if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) return false;
+      if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) {
+        // Not a WebSocket upgrade — this is the browser's plain GET / for the cert-trust
+        // landing (the webapp's certApprovalUrl points at https://<host>/). Serve the same
+        // one-shot page the vendor's wss_page_handler serves: it postMessages
+        // 'ledmapper-cert-ok' to window.opener so the app's popup trust flow closes and
+        // reconnects over the now-trusted cert. Without a response the browser got
+        // ERR_EMPTY_RESPONSE and the trust flow dead-ended (no postMessage, no return).
+        static const char kCertPage[] =
+            "<!doctype html><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<title>LED Mapper player</title>"
+            "<body style='font-family:system-ui;background:#111;color:#eee;padding:2rem'>"
+            "<h2>Certificate accepted \xE2\x9C\x93</h2>"
+            "<p>You can close this and return to the LED Mapper app — it connects to "
+            "this device directly.</p>"
+            "<script>try{if(window.opener)window.opener.postMessage("
+            "'ledmapper-cert-ok','*');}catch(e){}</script>";
+        char hdr[128];
+        int hn = snprintf(hdr, sizeof hdr,
+                          "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
+                          "Content-Length: %u\r\nConnection: close\r\n\r\n",
+                          (unsigned)(sizeof kCertPage - 1));
+        tls_write_all((const uint8_t *)hdr, hn);
+        tls_write_all((const uint8_t *)kCertPage, sizeof kCertPage - 1);
+        return false;  // one-shot: close after serving so the ~28 KB TLS session frees
+      }
       char accept[29];
       ws_accept_key(key, accept);
       char resp[200];
