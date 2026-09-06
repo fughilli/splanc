@@ -2,11 +2,13 @@
  * In-browser CPU provider (wllama = llama.cpp compiled to WASM).
  *
  * This is the PHONE-friendly on-device path. Unlike the WebGPU provider
- * (providers/webllm.ts), inference runs on the CPU in wllama's Web Worker(s) and
- * NEVER touches the display GPU — so it can't starve/hang a mobile GPU driver the
- * way a big WebGPU compute burst does (the "black blocks + freeze" failure on
- * phones). The trade-off is speed: it's a small model (1–3B GGUF) at a few
- * tokens/sec, but the device stays fully responsive.
+ * (providers/webllm.ts), inference runs purely on the CPU (WASM) in wllama's Web
+ * Worker(s), so it can't starve/hang a mobile GPU driver the way a big WebGPU
+ * compute burst does (the "black blocks + freeze" failure on phones). NOTE: this
+ * is ENFORCED, not automatic — wllama 3.6.1 defaults to offloading all layers to
+ * WebGPU, so loadWllamaModel MUST pass `n_gpu_layers: 0` (see there). The trade-off
+ * is speed: a small model (1–3B GGUF) at a few tokens/sec, but the device stays
+ * fully responsive.
  *
  * wllama is a real bundled dependency (`@wllama/wllama`, pnpm-locked): the engine
  * JS is dynamic-imported so Vite code-splits it into its own chunk (kept off the
@@ -140,6 +142,12 @@ export async function loadWllamaModel(
   const inst = new Wllama({ default: wllamaWasmUrl });
   const threads = threadCount(nThreads);
   await inst.loadModelFromUrl(model, {
+    // CRITICAL: force CPU-only. wllama 3.6.1 DEFAULTS to n_gpu_layers 99999 (offload
+    // every layer to WebGPU) — which is exactly the mobile GPU path that starves the
+    // display compositor and freezes the phone ("black blocks"). 0 → the engine sets
+    // noWebGPU and runs purely on the CPU/WASM, so the device stays responsive. This
+    // is the whole reason this provider exists; never remove it.
+    n_gpu_layers: 0,
     n_ctx: nCtx,
     ...(threads !== undefined ? { n_threads: threads } : {}),
     ...(onProgress
