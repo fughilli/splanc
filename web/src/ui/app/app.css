@@ -1527,12 +1527,33 @@ body.is-locked {
    long turn visibly progresses instead of looking stuck. */
 .fxedit-chatstatus {
   align-self: flex-start;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
+  max-width: 100%;
   color: var(--text-dim);
   font-size: var(--f-caption);
   padding: 0.15rem 0.2rem;
+}
+/* The status line doubles as the disclosure toggle for the model transcript. */
+.fxedit-chatstatus-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  cursor: pointer;
+  list-style: none;
+}
+.fxedit-chatstatus-summary::-webkit-details-marker {
+  display: none;
+}
+.fxedit-chatstatus-summary::before {
+  content: "▸";
+  opacity: 0.6;
+  margin-top: 0.05rem;
+  transition: transform 0.12s ease;
+}
+.fxedit-chatstatus[open] > .fxedit-chatstatus-summary::before {
+  transform: rotate(90deg);
+}
+.fxedit-chatstatus--done {
+  opacity: 0.85;
 }
 .fxedit-chatstatus-col {
   display: flex;
@@ -1543,6 +1564,60 @@ body.is-locked {
   color: var(--text-dim);
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
+}
+
+/* The collapsible LIVE model transcript (tokens in/out + tool calls) under the
+   status line — defaults collapsed; scrollable when a slow local model produces
+   a lot before replying. */
+.fxedit-trace {
+  margin: 0.35rem 0 0.1rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 0.3rem;
+  padding: 0.4rem 0.5rem;
+}
+.fxedit-trace-round {
+  color: var(--text-dim);
+  opacity: 0.6;
+  margin: 0.45rem 0 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.66rem;
+}
+.fxedit-trace-round:first-child {
+  margin-top: 0;
+}
+.fxedit-trace-row {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.1rem 0;
+}
+.fxedit-trace-label {
+  opacity: 0.8;
+  margin-right: 0.4rem;
+  user-select: none;
+}
+.fxedit-trace-row.in .fxedit-trace-label {
+  color: var(--accent, #7aa2f7);
+}
+.fxedit-trace-row.in .fxedit-trace-text {
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+.fxedit-trace-row.out .fxedit-trace-label {
+  color: var(--ok, #9ece6a);
+}
+.fxedit-trace-row.tool .fxedit-trace-label {
+  color: var(--warn, #e0af68);
+}
+.fxedit-trace-row.tool-err .fxedit-trace-label {
+  color: var(--err, #f7768e);
 }
 
 /* AI pane: keep the input legible. The chat content has a minimum width and the

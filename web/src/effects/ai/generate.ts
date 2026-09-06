@@ -349,7 +349,39 @@ export interface ChatHooks {
   onThinking?: (round: number) => void;
   /** A tool is about to run (for a status line in the panel). */
   onToolUse?: (name: string) => void;
+  /** Debug trace of the raw model I/O for EVERY internal round of the turn — the
+   * prompt sent in, the tokens streamed out, and each tool call + its result —
+   * so the editor can show a collapsible live transcript of what the (possibly
+   * slow, local) model is actually doing before it replies. */
+  onTrace?: (ev: ChatTraceEvent) => void;
   signal?: AbortSignal;
+}
+
+/** One event in the debug transcript (ChatHooks.onTrace). */
+export type ChatTraceEvent =
+  | { kind: "round"; round: number }
+  | { kind: "in"; text: string } // the new content sent to the model this round
+  | { kind: "delta"; text: string } // a streamed output token/chunk (live)
+  | { kind: "out"; text: string } // the round's final assistant text (authoritative)
+  | { kind: "tool_call"; name: string; input: unknown }
+  | { kind: "tool_result"; name: string; text: string; isError: boolean };
+
+/** Render a message's content to plain text for the debug trace ("tokens in"). */
+function traceRenderContent(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((b) => {
+      if (b.type === "text") return b.text;
+      if (b.type === "tool_use") return `[tool_use ${b.name} ${JSON.stringify(b.input)}]`;
+      if (b.type === "tool_result") {
+        const t = b.content
+          .map((c) => (c.type === "text" ? c.text : "[image]"))
+          .join("\n");
+        return `[tool_result ${b.is_error ? "(error) " : ""}${t}]`;
+      }
+      return "";
+    })
+    .join("\n");
 }
 
 const TOOLS = [
@@ -536,13 +568,25 @@ export async function chatTurn(
     : [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.(round + 1);
+    // Debug trace: the new content going IN this round (round 0 → the user's
+    // grounded ask; later rounds → the tool_result(s) fed back).
+    hooks.onTrace?.({ kind: "round", round: round + 1 });
+    const lastIn = history[history.length - 1];
+    if (lastIn) hooks.onTrace?.({ kind: "in", text: traceRenderContent(lastIn.content) });
     const { content, stop_reason } = await provider.send(history, {
       system,
       tools,
       signal: hooks.signal,
       // Live progress as the response streams (providers that can't stream just
-      // ignore this and return the whole turn at once).
-      stream: { onText: hooks.onText, onStatus: hooks.onStatus },
+      // ignore this and return the whole turn at once). Deltas also feed the
+      // debug transcript as tokens stream OUT.
+      stream: {
+        onText: (d) => {
+          hooks.onText?.(d);
+          hooks.onTrace?.({ kind: "delta", text: d });
+        },
+        onStatus: hooks.onStatus,
+      },
     });
     history.push({ role: "assistant", content });
 
@@ -551,6 +595,9 @@ export async function chatTurn(
       if (block.type === "text" && block.text) {
         finalText = block.text;
         hooks.onText?.(block.text);
+        // Authoritative round output (dedups the streamed deltas; the only source
+        // for non-streaming providers, which emit no deltas).
+        hooks.onTrace?.({ kind: "out", text: block.text });
       }
     }
 
@@ -577,6 +624,7 @@ export async function chatTurn(
     const results: ContentBlock[] = [];
     for (const tu of toolUses) {
       hooks.onToolUse?.(tu.name);
+      hooks.onTrace?.({ kind: "tool_call", name: tu.name, input: tu.input });
       try {
         if (tu.name === "set_script") {
           const input = tu.input as { source?: unknown; summary?: unknown };
@@ -636,6 +684,12 @@ export async function chatTurn(
           content: [{ type: "text", text: `tool error: ${e instanceof Error ? e.message : String(e)}` }],
           is_error: true,
         });
+      }
+      // Trace the result just produced for this tool call.
+      const last = results[results.length - 1];
+      if (last?.type === "tool_result") {
+        const text = last.content.map((c) => (c.type === "text" ? c.text : "[image]")).join("\n");
+        hooks.onTrace?.({ kind: "tool_result", name: tu.name, text, isError: last.is_error === true });
       }
     }
     history.push({ role: "user", content: results });
