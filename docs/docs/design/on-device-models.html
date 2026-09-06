@@ -420,10 +420,20 @@ and the <code class="docutils literal notranslate"><span class="pre">.wasm</span
 from a third-party CDN at runtime — only the (multi-GB) GGUF weights are a
 runtime download (then browser-cached). (Unlike the web-llm provider, which is
 still a runtime CDN import — a fragility worth migrating later.) This is the
-<strong>phone-friendly</strong> on-device option: inference
-runs on the CPU in wllama’s worker(s) and <strong>never touches the display GPU</strong>, so
-it can’t starve/hang a mobile GPU driver the way a big WebGPU compute burst does
-(see “Phones” below). Threads default to <code class="docutils literal notranslate"><span class="pre">floor(hardwareConcurrency</span> <span class="pre">/</span> <span class="pre">2)</span></code>
+<strong>phone-friendly</strong> on-device option: inference runs purely on the CPU in
+wllama’s worker(s) and <strong>never touches the display GPU</strong>, so it can’t
+starve/hang a mobile GPU driver the way a big WebGPU compute burst does (see
+“Phones” below). This is <strong>enforced with <code class="docutils literal notranslate"><span class="pre">n_gpu_layers:</span> <span class="pre">0</span></code></strong> — wllama 3.6.1
+otherwise defaults to <code class="docutils literal notranslate"><span class="pre">99999</span></code> (offload <em>every</em> layer to WebGPU), so omitting it
+runs on the GPU and freezes phones exactly like web-llm; never remove it.
+<strong>Downloads are resumable/checkpointed</strong> (<code class="docutils literal notranslate"><span class="pre">resumableDownload.ts</span></code>): the GGUF
+streams into OPFS and the on-disk size is the resume point, so an HTTP <code class="docutils literal notranslate"><span class="pre">Range</span></code>
+request (with <code class="docutils literal notranslate"><span class="pre">If-Range</span></code> on the stored ETag) continues from there — backgrounding
+the app / locking the phone costs only the in-flight bytes, not a full
+re-download (a bounded retry-with-resume loop makes it automatic on foreground).
+The loaded bytes are handed to wllama via <code class="docutils literal notranslate"><span class="pre">loadModel([blob])</span></code>, bypassing its own
+non-resumable downloader; split (multi-part) GGUFs and no-OPFS browsers fall back
+to it. Threads default to <code class="docutils literal notranslate"><span class="pre">floor(hardwareConcurrency</span> <span class="pre">/</span> <span class="pre">2)</span></code>
 (leaving UI headroom, à la pocketpal-ai) and are forced to 1 when the page isn’t
 cross-origin-isolated (no <code class="docutils literal notranslate"><span class="pre">SharedArrayBuffer</span></code> → multi-thread WASM is
 unavailable). Context defaults to a small 2048 to bound memory. wllama has <strong>no
