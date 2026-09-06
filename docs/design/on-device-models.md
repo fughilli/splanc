@@ -122,8 +122,14 @@ translate at each provider's edge.
   (per-model, see below); vision off (prebuilt models are text-only).
 
 - **`providers/wllama.ts`** — the in-browser **CPU** path (llama.cpp compiled to
-  WASM, via [wllama](https://github.com/ngxson/wllama), lazy-loaded from a pinned
-  CDN like web-llm). This is the **phone-friendly** on-device option: inference
+  WASM, via [wllama](https://github.com/ngxson/wllama)). It's a real BUNDLED
+  dependency (`@wllama/wllama`, pnpm-locked): the engine JS is `await import`-ed so
+  Vite code-splits it into its own lazy chunk (off the base bundle, own-origin),
+  and the `.wasm` is bundled as an app-origin asset (`?url`). Nothing is fetched
+  from a third-party CDN at runtime — only the (multi-GB) GGUF weights are a
+  runtime download (then browser-cached). (Unlike the web-llm provider, which is
+  still a runtime CDN import — a fragility worth migrating later.) This is the
+  **phone-friendly** on-device option: inference
   runs on the CPU in wllama's worker(s) and **never touches the display GPU**, so
   it can't starve/hang a mobile GPU driver the way a big WebGPU compute burst does
   (see "Phones" below). Threads default to `floor(hardwareConcurrency / 2)`
@@ -220,15 +226,19 @@ The effects-browser first-run hint and the editor gating now check
 user on a local/in-browser model isn't nagged and is sent to `#/settings/ai`
 when nothing is configured yet.
 
-## Why not bundle web-llm?
+## Bundling: wllama is bundled; web-llm is (still) a CDN import
 
-Bundling web-llm would add a large dependency and megabytes to every load, most
-of it unused (the cloud/local-server users never touch it). A lazy CDN import
-keeps the base bundle unchanged and only pays the cost for users who opt into
-in-browser inference. The trade-off is a runtime fetch of the library on first
-in-browser use; the model weights are a far larger first-run download anyway,
-and both are then cached. A future change could vendor web-llm behind the same
-`AiProvider` seam if a fully offline first-run is desired.
+The original argument for a runtime CDN import was to keep the engine off the
+base bundle for the cloud/local-server majority who never use it. But a runtime
+CDN import is fragile — it needs network to even start the engine, isn't
+integrity-pinned, and broke in practice (a mispinned version 404'd on-device).
+**wllama is therefore a real bundled dependency** (`@wllama/wllama`, pnpm-locked):
+a dynamic `import()` still lets Vite code-split the engine into its own lazy chunk
+(so the base bundle is unchanged for non-users), but that chunk and the `.wasm`
+are served from the app's own origin — no third-party runtime fetch, versions
+pinned in the lockfile. Only the (much larger) GGUF weights remain a runtime
+download. **web-llm is still a CDN import** and should be migrated to the same
+bundled shape.
 
 ## Testing
 

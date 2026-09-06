@@ -8,10 +8,11 @@
  * phones). The trade-off is speed: it's a small model (1–3B GGUF) at a few
  * tokens/sec, but the device stays fully responsive.
  *
- * wllama is loaded LAZILY from a CDN (pinned) so it adds no npm/lockfile
- * dependency and nothing to the base bundle — fetched only when this provider is
- * actually used, exactly like the web-llm provider. Its wasm binaries come from
- * the same CDN via wllama's own `wasm-from-cdn` asset map.
+ * wllama is a real bundled dependency (`@wllama/wllama`, pnpm-locked): the engine
+ * JS is dynamic-imported so Vite code-splits it into its own chunk (kept off the
+ * base bundle, loaded only when this provider is used), and the .wasm is bundled
+ * as an app-origin asset (`?url`). Nothing is fetched from a CDN at runtime — only
+ * the (multi-GB) GGUF model weights are a runtime download (then browser-cached).
  *
  * Threads: wllama defaults to floor(hardwareConcurrency / 2), already leaving CPU
  * headroom for the UI (the same instinct as pocketpal-ai's 80%-of-cores cap). We
@@ -34,14 +35,13 @@ import type {
   ContentBlock,
   SendOptions,
   SendResult,
-  ToolDef,
   WllamaConfig,
 } from "../provider";
-
-/** Pinned wllama release loaded from the CDN (see module docstring). A `string`
- * type keeps tsc from trying to resolve the CDN URL as a local module. */
-const WLLAMA_VERSION = "3.7.0";
-const CDN_BASE: string = `https://esm.run/@wllama/wllama@${WLLAMA_VERSION}`;
+// The wllama WASM binary, bundled as an app-origin asset by Vite (`?url` → the
+// emitted asset's URL). NOT fetched from a CDN at runtime — only the (multi-GB)
+// GGUF model weights are a runtime download. 3.6.1 ships a single universal wasm
+// that the engine's AssetsPathConfig points at via `default`.
+import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 
 // -- minimal shapes of the parts of wllama we touch --------------------------
 
@@ -58,96 +58,17 @@ interface WllamaModule {
   Wllama: new (assets: unknown, config?: Record<string, unknown>) => WllamaInstance;
 }
 
-// =============================================================================
-// Tool text-protocol (pure — unit-tested). wllama can't do native tool calls, so
-// we teach a small instruct model the `<tool_call>` / `<tool_response>`
-// convention (Hermes / Qwen-2.5 style) in the prompt and parse it back out.
-// =============================================================================
-
-/** Models whose chat template + training reliably emit the `<tool_call>` JSON
- * convention. Matched loosely on the GGUF filename/URL (models are arbitrary HF
- * URLs here, unlike web-llm's fixed catalog). Everything else → plain chat. */
-export function wllamaModelSupportsTools(modelUrlOrId: string): boolean {
-  const s = modelUrlOrId.toLowerCase();
-  const isInstruct = s.includes("instruct") || s.includes("hermes");
-  return isInstruct && (s.includes("qwen2.5") || s.includes("qwen3") || s.includes("hermes"));
-}
-
-/** The system-prompt addendum describing the advertised tools + the wire
- * convention the model must follow to call them. */
-export function formatToolInstructions(tools: readonly ToolDef[]): string {
-  const specs = tools
-    .map((t) => `- ${t.name}: ${t.description}\n  arguments schema: ${JSON.stringify(t.input_schema)}`)
-    .join("\n");
-  return (
-    `\n\n# Tools\n` +
-    `You can call tools. To call one, emit a line of exactly this form (and nothing else on that line):\n` +
-    `<tool_call>{"name": "<tool>", "arguments": { ... }}</tool_call>\n` +
-    `You may call multiple tools by emitting multiple such lines. After a tool runs you'll get a ` +
-    `<tool_response> with its result; continue until the task is done, then reply normally.\n\n` +
-    `Available tools:\n${specs}`
-  );
-}
-
-/** Serialize one neutral message's content to the flat string wllama's chat
- * template consumes. Assistant tool_use → `<tool_call>` lines; user tool_result
- * → `<tool_response>` blocks; images are dropped (this path has no vision). */
-export function contentToText(content: string | ContentBlock[]): string {
-  if (typeof content === "string") return content;
-  const parts: string[] = [];
-  for (const b of content) {
-    if (b.type === "text") {
-      parts.push(b.text);
-    } else if (b.type === "tool_use") {
-      parts.push(`<tool_call>${JSON.stringify({ name: b.name, arguments: b.input })}</tool_call>`);
-    } else if (b.type === "tool_result") {
-      const text = b.content
-        .filter((c): c is { type: "text"; text: string } => c.type === "text")
-        .map((c) => c.text)
-        .join("\n");
-      parts.push(`<tool_response>${text || "(no text output)"}</tool_response>`);
-    }
-  }
-  return parts.join("\n");
-}
-
-/** Build the wllama `messages` array from the neutral history + system prompt. */
-export function messagesToWllama(
-  system: string,
-  messages: ChatMessage[],
-): { role: string; content: string }[] {
-  const out: { role: string; content: string }[] = [{ role: "system", content: system }];
-  for (const m of messages) out.push({ role: m.role, content: contentToText(m.content) });
-  return out;
-}
-
-/** Extract `<tool_call>{...}</tool_call>` blocks from generated text, returning
- * the parsed calls plus the prose with those blocks removed. Tolerant of
- * whitespace and of malformed JSON (a call that won't parse is skipped). */
-export function parseToolCalls(text: string): {
-  calls: { name: string; input: Record<string, unknown> }[];
-  text: string;
-} {
-  const calls: { name: string; input: Record<string, unknown> }[] = [];
-  const re = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    try {
-      const obj = JSON.parse(m[1]!) as { name?: unknown; arguments?: unknown };
-      if (typeof obj.name === "string") {
-        const input =
-          obj.arguments && typeof obj.arguments === "object"
-            ? (obj.arguments as Record<string, unknown>)
-            : {};
-        calls.push({ name: obj.name, input });
-      }
-    } catch {
-      // malformed tool call — skip it (the prose still shows through)
-    }
-  }
-  const prose = text.replace(re, "").trim();
-  return { calls, text: prose };
-}
+// The tool text-protocol + message translation is pure and lives in a separate,
+// engine-free module so the unit tests can import it without pulling in the
+// top-level WASM `?url` asset (which the node test runtime can't resolve). Kept
+// re-exported here so existing importers (aiSettings.ts) are unaffected.
+import {
+  wllamaModelSupportsTools,
+  formatToolInstructions,
+  messagesToWllama,
+  parseToolCalls,
+} from "./wllamaProtocol";
+export { wllamaModelSupportsTools, formatToolInstructions, messagesToWllama, parseToolCalls };
 
 // =============================================================================
 // Engine lifecycle (module-level, reused across turns).
@@ -160,10 +81,12 @@ let engineCtx = 0;
 
 async function loadModule(): Promise<WllamaModule> {
   if (!modulePromise) {
-    modulePromise = (async () => {
-      const mod = (await import(/* @vite-ignore */ CDN_BASE)) as unknown as WllamaModule;
-      return mod;
-    })();
+    // Dynamic import of the bundled package → Vite splits it into its own lazy
+    // chunk (served from the app origin), so the ~MB engine stays off the base
+    // bundle but is never fetched from a third-party CDN.
+    modulePromise = import("@wllama/wllama/esm/index.js").then(
+      (mod) => mod as unknown as WllamaModule,
+    );
   }
   return modulePromise;
 }
@@ -191,10 +114,9 @@ export async function loadWllamaModel(
   if (engine && engineModel === model && engineCtx === nCtx && engine.isModelLoaded()) return;
   await unloadWllamaModel();
   const { Wllama } = await loadModule();
-  // wllama's CDN asset map lives in a sibling ESM file; import lazily so it's not
-  // resolved until we actually construct an engine.
-  const assets = ((await import(/* @vite-ignore */ `${CDN_BASE}/esm/wasm-from-cdn.js`)) as { default: unknown }).default;
-  const inst = new Wllama(assets);
+  // Point the engine at the bundled, app-origin wasm asset (3.6.1 uses one
+  // universal wasm via `default`) — no CDN, no wasm-from-cdn helper.
+  const inst = new Wllama({ default: wllamaWasmUrl });
   const threads = threadCount(nThreads);
   await inst.loadModelFromUrl(model, {
     n_ctx: nCtx,
