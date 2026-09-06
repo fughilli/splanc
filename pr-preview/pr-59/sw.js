@@ -26,7 +26,10 @@ const BASE = new URL(self.registration.scope).pathname;
 
 // Bump on any change that must invalidate the old cache (esp. the fixed-name
 // wasm bundles) — `activate` deletes every cache that isn't the current one.
-const VERSION = "v4";
+// v5: rebranded the raster icons (apple-touch-icon + icon-*.png) to the splash
+// mark — they had been left as the old "tree" art. Bumping evicts the cached
+// manifest + icons so updated clients re-fetch the new brand.
+const VERSION = "v5";
 const CACHE = `ledmapper-${VERSION}`;
 const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/app-icon.svg"];
 
