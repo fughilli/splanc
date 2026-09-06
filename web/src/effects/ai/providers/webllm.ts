@@ -287,6 +287,47 @@ export async function downloadWebLlmModel(
   }
 }
 
+/**
+ * Warm the in-browser model at app boot so the FIRST query in the effects
+ * workspace is fast. Two costs are paid up front, both OFF the main thread (the
+ * engine runs in a Web Worker):
+ *   1. loading the weights onto the GPU + compiling shaders (the multi-second
+ *      cost that would otherwise hit the user's first prompt), and
+ *   2. prefilling the (long, frozen) chat system prompt with a 1-token
+ *      generation, so the shared system-prefix KV is already computed when the
+ *      first real turn — which begins with that same prefix — arrives.
+ *
+ * Best-effort and non-blocking: skips silently with no WebGPU, no selected
+ * model, or weights not yet cached (we never trigger a big download at boot —
+ * only a model the user already downloaded is warmed). Never throws.
+ */
+export async function warmWebLlmModel(
+  model: string,
+  system: string,
+  contextWindowSize?: number,
+): Promise<void> {
+  try {
+    if (!model.trim() || !isWebLlmSupported()) return;
+    // Don't kick off a (potentially multi-GB) first download unprompted at boot;
+    // only warm a model whose weights are already in the browser cache.
+    if (!(await isModelDownloaded(model))) return;
+    await loadWebLlmModel(model, undefined, contextWindowSize);
+    if (!engine) return;
+    // Prime the prefill with exactly the system prompt (as a user turn, which the
+    // Hermes tool path also accepts — it rejects a custom system role). A real
+    // turn's first user message starts with this same text, so its shared prefix
+    // is already in the KV cache. max_tokens:1 keeps the warm-up near-free.
+    await engine.chat.completions.create({
+      messages: [{ role: "user", content: system }],
+      max_tokens: 1,
+      stream: false,
+    });
+  } catch {
+    // Warm-up is a pure optimization — swallow everything (no WebGPU, OOM, a
+    // model that dislikes the priming turn); the first real query still works.
+  }
+}
+
 /** Delete a model's cached weights from the browser (unloads it first if active). */
 export async function deleteWebLlmModel(model: string): Promise<void> {
   if (engineModel === model) await unloadWebLlmModel();
@@ -339,6 +380,9 @@ export function makeWebLlmProvider(cfg: WebLlmConfig): AiProvider {
         content: fromOpenAiMessage(message),
         stop_reason: finishReasonToStop(choice?.finish_reason),
       };
+    },
+    warmUp(system: string): Promise<void> {
+      return warmWebLlmModel(cfg.model, system, cfg.contextWindowSize);
     },
   };
 }

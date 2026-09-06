@@ -97,9 +97,13 @@ translate at each provider's edge.
   unaffected, and mirrors the Anthropic key back to it so a downgrade still
   works.
 
-- **`providers/anthropic.ts`** — the cloud default, extracted verbatim (BYO key,
+- **`providers/anthropic.ts`** — the cloud default (BYO key,
   `anthropic-dangerous-direct-browser-access`, cacheable system prefix,
-  `thinking: adaptive`). Capabilities: tools + vision.
+  `thinking: adaptive`). It **streams** the Messages API (SSE): the reader
+  reconstructs the assistant `content` blocks exactly as the non-streaming
+  response would and fires live status through `SendOptions.stream` — "Thinking…",
+  a fixed tool verb, and the model's own streamed `set_script` summary — plus a
+  prompt-cache breakpoint on the last message. Capabilities: tools + vision.
 
 - **`providers/openaiCompat.ts`** — translates the neutral blocks to/from the
   OpenAI `/chat/completions` shape (assistant `tool_calls`, `tool` messages,
@@ -119,6 +123,28 @@ translate at each provider's edge.
 
 `generate.ts` keeps its public surface (`chatTurn`, `editorContext`,
 `getApiKey`/`setApiKey` back-compat) and just routes through `activeProvider()`.
+
+### Off the main thread + boot warm-up
+
+The two costs that make an in-browser model feel slow — loading the weights onto
+the GPU (a multi-second fetch-from-cache + shader compile) and prefilling the
+long, frozen chat system prompt — are both paid **off the main thread and up
+front** so they never land on the user's first prompt:
+
+- **Web Worker.** web-llm inference runs in a Web Worker
+  (`CreateWebWorkerMLCEngine` over a blob module worker), so GPU compile and
+  inference don't stutter the UI (main-thread fallback if unavailable). Cloud and
+  local-server providers are stateless `fetch` calls, so they never block the UI
+  thread and need no worker.
+
+- **Boot warm-up.** At app boot `main.ts` calls `warmActiveProvider()`, which
+  invokes the optional `AiProvider.warmUp(system)`. Only the WebGPU provider
+  implements it: it loads the selected model into the worker and issues a
+  1-token generation with the chat system prompt, so the shared system-prefix KV
+  is already computed when the first real turn (which begins with that same
+  prefix) arrives. It is strictly best-effort — it skips with no WebGPU, no
+  selected model, or weights not yet cached (a boot must never trigger a
+  multi-GB download), and never throws. Stateless providers omit `warmUp`.
 
 ### Graceful degradation
 

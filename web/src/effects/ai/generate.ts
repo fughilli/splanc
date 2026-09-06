@@ -49,6 +49,22 @@ export function activeProvider(): AiProvider {
   return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
 }
 
+/**
+ * Warm the active provider at app boot so the first chat turn in the effects
+ * workspace is fast (see AiProvider.warmUp). Only the in-browser WebGPU provider
+ * has anything to warm — it loads the model onto the GPU in its Web Worker and
+ * prefills the chat system prompt; cloud / local-server providers no-op. Fully
+ * best-effort: `warmUp` never throws, and we still guard the whole thing.
+ */
+export function warmActiveProvider(): void {
+  try {
+    void activeProvider().warmUp?.(CHAT_SYSTEM);
+  } catch {
+    // instantiating the provider or reading config failed — a warm-up is purely
+    // an optimization, so ignore and let the first real turn take the slow path.
+  }
+}
+
 /** Read/write the BYO Anthropic key. Kept for back-compat (older callers); now
  * backed by the unified AI config (the cloud "anthropic" vendor). */
 export function getApiKey(): string | null {

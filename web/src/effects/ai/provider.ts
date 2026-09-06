@@ -93,6 +93,15 @@ export interface AiProvider {
   readonly capabilities: ProviderCapabilities;
   /** Run one assistant turn given the running history + advertised tools. */
   send(messages: ChatMessage[], opts: SendOptions): Promise<SendResult>;
+  /**
+   * Optional best-effort warm-up, run at app boot so the first real query is
+   * fast. `system` is the chat system prompt the loop will send. Providers that
+   * host the model locally (in-browser WebGPU) use this to load the model onto
+   * the GPU off the main thread and prime the system-prompt prefill; stateless
+   * HTTP providers (cloud / local server) have nothing to warm and omit it.
+   * Must never throw — a missing model, no WebGPU, or no network is a no-op.
+   */
+  warmUp?(system: string): Promise<void>;
 }
 
 // =============================================================================
