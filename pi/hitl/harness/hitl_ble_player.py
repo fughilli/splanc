@@ -7,7 +7,7 @@ This is the transport a phone-hotspot user hits when the browser refuses to load
 the device's https cert-accept page ("no internet") so wss:// never becomes
 trustable.
 
-    python3 hitl_ble_player.py exchange --hello-b64 <b64> [--address A|--name N]
+    python3 hitl_ble_player.py exchange --frames-b64 <b64,b64,…> [--address A|--name N]
 
 Scans for the device (same Improv-service advertisement as onboarding), connects
 to the SECOND service — RX (app->device write) + TX (device->app notify),
@@ -80,8 +80,11 @@ class Reassembler:
 
 
 async def exchange(
-    hello, address, name_filter, scan_seconds, timeout, connect_tries, connect_timeout
+    frames, address, name_filter, scan_seconds, timeout, connect_tries, connect_timeout
 ):
+    """Send each (already protobuf-encoded) frame in order, awaiting one reply per
+    frame — the player protocol is strictly request/reply, so a multi-frame
+    sequence (e.g. a hello then a sharded map/effect upload) drives cleanly."""
     dev, nm = await find(address, name_filter, scan_seconds)
     if dev is None:
         return {"ok": False, "error": "no player device found in scan"}
@@ -102,17 +105,19 @@ async def exchange(
         log(f"[ble-player] connected={client.is_connected}")
         # Subscribe to TX BEFORE writing so the reply is never missed.
         await client.start_notify(PLAYER_TX, on_tx)
-        wire = frame_with_length(hello)
-        log(f"[ble-player] subscribed TX; writing {len(wire)}B ({len(hello)}B payload)…")
-        for off in range(0, len(wire), WRITE_CHUNK):
-            await client.write_gatt_char(PLAYER_RX, wire[off : off + WRITE_CHUNK], response=True)
-        log("[ble-player] wrote frame; awaiting reply…")
-        reply = await asyncio.wait_for(got.get(), timeout=timeout)
-        return {
-            "ok": True,
-            "reply_b64": base64.b64encode(reply).decode("ascii"),
-            "device": device,
-        }
+        replies = []
+        for i, payload in enumerate(frames):
+            wire = frame_with_length(payload)
+            log(
+                f"[ble-player] -> frame {i + 1}/{len(frames)} {len(wire)}B ({len(payload)}B payload)"
+            )
+            for off in range(0, len(wire), WRITE_CHUNK):
+                await client.write_gatt_char(
+                    PLAYER_RX, wire[off : off + WRITE_CHUNK], response=True
+                )
+            reply = await asyncio.wait_for(got.get(), timeout=timeout)
+            replies.append(base64.b64encode(reply).decode("ascii"))
+        return {"ok": True, "replies_b64": replies, "device": device}
     except asyncio.TimeoutError:
         return {"ok": False, "error": "timed out waiting for a reply over BLE", "device": device}
     except _TRANSPORT_ERRORS as e:
@@ -133,7 +138,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="hitl_ble_player")
     sub = ap.add_subparsers(dest="cmd", required=True)
     ex = sub.add_parser("exchange")
-    ex.add_argument("--hello-b64", required=True, help="base64 of the ClientMessage to send")
+    ex.add_argument(
+        "--frames-b64",
+        required=True,
+        help="comma-separated base64 ClientMessage frames, sent in order (one reply each)",
+    )
     ex.add_argument("--address", help="target this BLE address (else scan for the Improv service)")
     ex.add_argument("--name", default="", help="only match devices whose name contains this")
     ex.add_argument("--scan-seconds", type=float, default=8.0)
@@ -142,10 +151,10 @@ def main() -> int:
     ex.add_argument("--connect-timeout", type=float, default=12.0)
     a = ap.parse_args()
     try:
-        hello = base64.b64decode(a.hello_b64)
+        frames = [base64.b64decode(f) for f in a.frames_b64.split(",") if f]
         result = asyncio.run(
             exchange(
-                hello,
+                frames,
                 a.address,
                 a.name,
                 a.scan_seconds,

@@ -123,6 +123,13 @@ export interface ClientOptions {
    * true. (Independent of certApprovalUrl(), which only compares origins and is
    * ALWAYS non-null in the wrapper, whose page origin is capacitor://localhost.) */
   certTrustPossible?: boolean;
+  /** Byte-window size for sharded uploads (submit_map / submit_topology /
+   * submit_effect). Defaults to {@link CHUNK_BYTES} (4096), sized for the wss
+   * heap. The BLE transport passes a smaller value so each upload window — and
+   * so each length-prefixed GATT frame — fits the device's small BLE reassembly
+   * cap (esp. the heapless netstack build). Only affects windowing, not
+   * correctness: the device reassembles any window size. */
+  uploadChunkBytes?: number;
 }
 
 export interface ClientEvents {
@@ -201,6 +208,8 @@ export class LedMapperClient {
 
   // Monotonic id grouping the frames of one sharded upload (see sendChunked).
   private uploadSeq = 0;
+  // Upload window size (see ClientOptions.uploadChunkBytes).
+  private readonly chunkBytes: number;
 
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
@@ -223,6 +232,7 @@ export class LedMapperClient {
     // ~2 TLS sessions — hammering every 250 ms fills both slots and starves the
     // cert-approval page load. Spacing retries out (1–8 s) keeps a slot free for
     // it and still reconnects within ~8 s once the cert is trusted.
+    this.chunkBytes = opts.uploadChunkBytes && opts.uploadChunkBytes > 0 ? opts.uploadChunkBytes : CHUNK_BYTES;
     this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
@@ -467,10 +477,15 @@ export class LedMapperClient {
     fxb: Uint8Array,
     activate = true,
   ): Promise<ResultReadyMessage> {
-    return (await this.request(
-      { type: "submit_effect", effectId, fxb, activate } as unknown as ClientMessage,
-      "result_ready",
-    )) as ResultReadyMessage;
+    // Sharded like submit_map: a compiled effect can exceed one window, and on
+    // the BLE transport a whole-frame send would blow the small per-frame cap.
+    // Small effects still take the single-window fast path inside sendChunked.
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      activate,
+    } as unknown as ClientMessage);
   }
 
   /** Select the active effect by id ("" or "off" clears it). Reply:
@@ -830,7 +845,7 @@ export class LedMapperClient {
    * Small frames (<= CHUNK_BYTES) still go as a single window — one send, one
    * result_ready — so the common case keeps its single round trip. */
   private async sendChunked(
-    kind: "MAP" | "TOPOLOGY",
+    kind: "MAP" | "TOPOLOGY" | "EFFECT",
     msg: ClientMessage,
   ): Promise<ResultReadyMessage> {
     // Shard anything past one window. On wss this dodges the big contiguous TLS
@@ -838,13 +853,13 @@ export class LedMapperClient {
     // player stream the upload to flash instead of holding a whole frame in RAM.
     // A frame that already fits one window takes the ordinary single-frame path.
     const frame = encodeClient(msg);
-    if (frame.length <= CHUNK_BYTES) {
+    if (frame.length <= this.chunkBytes) {
       return (await this.request(msg, "result_ready")) as ResultReadyMessage;
     }
     const uploadId = (this.uploadSeq = (this.uploadSeq + 1) >>> 0);
     let seq = 0;
-    for (let off = 0; off < frame.length; off += CHUNK_BYTES) {
-      const end = Math.min(off + CHUNK_BYTES, frame.length);
+    for (let off = 0; off < frame.length; off += this.chunkBytes) {
+      const end = Math.min(off + this.chunkBytes, frame.length);
       const last = end >= frame.length;
       // Copy the slice: encodeClient's bytes-field path base64s the payload, and
       // a subarray view would keep the whole frame's backing buffer alive.

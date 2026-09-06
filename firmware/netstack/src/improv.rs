@@ -26,6 +26,23 @@ const fn uuid128(n: u8) -> [u8; 16] {
     ]
 }
 
+/// Player-protocol transport service (a SECOND GATT service alongside Improv):
+/// RX (app->device write) + TX (device->app notify) carry the full ledmapper.v1
+/// protocol over BLE for fully-offline configuration. Must match improv_ble.cpp
+/// (vendor) and web/src/net/bleTransport.ts: 9f5b000X-8a2e-4c1d-9b3a-1f0e2d3c4b5a.
+pub const PLAYER_SVC_UUID: [u8; 16] = player_uuid128(0x00);
+pub const PLAYER_RX_UUID: [u8; 16] = player_uuid128(0x01); // app -> device (write)
+pub const PLAYER_TX_UUID: [u8; 16] = player_uuid128(0x02); // device -> app (notify)
+
+/// Build a player-transport 128-bit UUID (the `9f5b00{sub}` byte varies) in
+/// on-air little-endian order: 9f5b00{sub}-8a2e-4c1d-9b3a-1f0e2d3c4b5a reversed.
+const fn player_uuid128(sub: u8) -> [u8; 16] {
+    [
+        0x5a, 0x4b, 0x3c, 0x2d, 0x0e, 0x1f, 0x3a, 0x9b, 0x1d, 0x4c, 0x2e, 0x8a, sub, 0x00, 0x5b,
+        0x9f,
+    ]
+}
+
 /// Current-state characteristic values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -246,18 +263,20 @@ pub struct ImprovOutcome {
 /// the characteristic values in sync with the [`Improv`] state machine, and routes
 /// ATT writes on the RPC-command characteristic through it.
 pub struct ImprovService {
-    pub db: GattDb<24>,
+    pub db: GattDb<32>,
     pub improv: Improv,
     h_current: u16,
     h_error: u16,
     h_rpc_cmd: u16,
     h_rpc_result: u16,
+    h_player_rx: u16,
+    h_player_tx: u16,
 }
 
 impl ImprovService {
     pub fn new() -> Self {
         let improv = Improv::new();
-        let mut db: GattDb<24> = GattDb::new();
+        let mut db: GattDb<32> = GattDb::new();
         // Standard GATT Service (0x1801) with the feature characteristics a central
         // probes during robust-caching setup: Server (0x2B3A) + Client (0x2B29)
         // Supported Features. Without a GATT service, BlueZ's probe gets Attribute
@@ -280,7 +299,29 @@ impl ImprovService {
             .add_characteristic(Uuid::U128(IMPROV_CHAR_RPC_RESULT), PROP_READ | PROP_NOTIFY, &[])
             .unwrap_or(0);
         let _ = db.add_characteristic(Uuid::U128(IMPROV_CHAR_CAPABILITIES), PROP_READ, &improv.capabilities());
-        ImprovService { db, improv, h_current, h_error, h_rpc_cmd, h_rpc_result }
+        // Player-transport service: RX (write, app->device) + TX (notify,
+        // device->app). Discovered by the app after connecting (it filters the
+        // scan on the Improv service, then uses this one) — no advertising change.
+        // Writes to RX and notifies on TX are handled specially in ble_ffi (they
+        // stream length-prefixed frames far larger than an attribute value), so the
+        // db here only carries the declarations for discovery.
+        let _ = db.add_primary_service(Uuid::U128(PLAYER_SVC_UUID));
+        let h_player_rx = db
+            .add_characteristic(Uuid::U128(PLAYER_RX_UUID), PROP_WRITE | PROP_WRITE_NO_RSP, &[])
+            .unwrap_or(0);
+        let h_player_tx = db
+            .add_characteristic(Uuid::U128(PLAYER_TX_UUID), PROP_READ | PROP_NOTIFY, &[])
+            .unwrap_or(0);
+        ImprovService {
+            db,
+            improv,
+            h_current,
+            h_error,
+            h_rpc_cmd,
+            h_rpc_result,
+            h_player_rx,
+            h_player_tx,
+        }
     }
 
     /// Copy the current Improv state into the characteristic values.
@@ -324,6 +365,15 @@ impl ImprovService {
     pub fn finish_provisioning(&mut self, ok: bool, redirect_urls: &[&str]) {
         self.improv.provisioning_result(ok, redirect_urls);
         self.sync();
+    }
+
+    /// Value handle of the player-transport RX characteristic (app->device write).
+    pub fn player_rx_handle(&self) -> u16 {
+        self.h_player_rx
+    }
+    /// Value handle of the player-transport TX characteristic (device->app notify).
+    pub fn player_tx_handle(&self) -> u16 {
+        self.h_player_tx
     }
 
     /// Value handles for the notify characteristics.
@@ -488,7 +538,8 @@ mod tests {
         }
         assert!(found_improv, "Improv 128-bit service not discoverable");
 
-        // All 5 Improv characteristics are discoverable (Read By Type, large MTU).
+        // All 128-bit characteristics are discoverable (Read By Type, large MTU):
+        // the 5 Improv chars + the 2 player-transport chars (RX/TX).
         let mut chars: Buf<GATT_RSP_MAX> = Buf::new();
         let mut cstart = 1u16;
         let mut char_count = 0;
@@ -513,7 +564,20 @@ mod tests {
                 off += elem;
             }
         }
-        assert_eq!(char_count, 5, "all 5 Improv characteristics discoverable");
+        assert_eq!(char_count, 7, "5 Improv + 2 player-transport characteristics discoverable");
+    }
+
+    #[test]
+    fn player_service_handles_are_assigned_and_distinct() {
+        let svc = ImprovService::new();
+        let rx = svc.player_rx_handle();
+        let tx = svc.player_tx_handle();
+        assert_ne!(rx, 0, "player RX handle assigned");
+        assert_ne!(tx, 0, "player TX handle assigned");
+        assert_ne!(rx, tx);
+        // The player chars live after the Improv ones (added later).
+        assert!(rx > svc.rpc_result_handle());
+        assert!(tx > rx);
     }
 
     #[test]

@@ -232,7 +232,9 @@ async function provisionWithDevice(
  */
 export function connectOverBle(onDone?: () => void): void {
   void (async () => {
-    const { requestBleDevice, bleSocketFactory } = await import("../../net/bleTransport");
+    const { requestBleDevice, bleSocketFactory, BLE_UPLOAD_CHUNK_BYTES } = await import(
+      "../../net/bleTransport"
+    );
     let device;
     try {
       device = await requestBleDevice(); // FIRST — preserve the user gesture
@@ -247,6 +249,9 @@ export function connectOverBle(onDone?: () => void): void {
       socketFactory: bleSocketFactory(device),
       // GATT link is reliable once open; give the initial discovery a few tries.
       coldRetryLimit: 6,
+      // Shard uploads into small windows so each GATT frame fits the device's
+      // bounded BLE reassembly buffer (tight on the heapless-netstack build).
+      uploadChunkBytes: BLE_UPLOAD_CHUNK_BYTES,
     });
     if (device.id) deviceStore.setBleId(url, device.id);
     onDone?.();

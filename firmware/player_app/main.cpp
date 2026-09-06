@@ -932,6 +932,21 @@ static void poll_after_message() {
   poll_hardware_config();
 }
 
+// Dispatch the plain (non-upload) message currently in rx[0..rx_len) through the
+// session core: compute the reply into tx, persist it if it's a state-changing
+// upload (map/topology/effect/selection), and run the post-message hw pollers.
+// Shared by ws_compute_reply and the EFFECT-upload final step (a reassembled
+// submit_effect frame is a normal message). Returns the reply length, 0, or -1.
+static int dispatch_plain_rx() {
+  int64_t now = (int64_t)millis();
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
+  if (n > 0) persist_if_upload(rx, rx_len, tx, (size_t)n);
+  poll_after_message();
+  return (int)n;
+}
+
 // Handle one sharded-upload window (proto UploadChunk), shared by the wss and
 // ws:81 paths. `payload` points at the window's bytes (inside the caller's rx).
 // Each window is appended to the temp file; the last one is decoded straight
@@ -976,9 +991,32 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     return lm_encode_chunk_ack(ch->upload_id, ch->seq, tx, sizeof tx);
   }
 
-  // Final window: decode the reassembled frame straight off flash, then persist
-  // by renaming the temp file into place (a new map invalidates the topology).
+  // Final window.
   upload_active = false;
+
+  // EFFECT (kind 2): the reassembled frame is an ordinary submit_effect message,
+  // not a stream-decode-to-file target like map/topology. Load it back into rx
+  // and dispatch it in-memory through the shared handler, which validates it and
+  // (via persist_if_upload) writes the raw .fxb to kEffectPath. Sharding it this
+  // way is purely a TRANSPORT concern — it lets a large effect fit the BLE
+  // frame cap; the handler still needs the whole frame (<= kRxCap) in rx.
+  if (upload_kind == 2) {
+    if (upload_total > kRxCap) {
+      remove(kUploadTmp);
+      return -1;  // too large to dispatch in-memory
+    }
+    FILE *ef = fopen(kUploadTmp, "rb");
+    if (ef == nullptr) return -1;
+    size_t rn = fread(rx, 1, upload_total, ef);
+    fclose(ef);
+    remove(kUploadTmp);
+    if (rn != upload_total) return -1;
+    rx_len = rn;
+    return dispatch_plain_rx();
+  }
+
+  // Map/topology: decode the reassembled frame straight off flash, then persist
+  // by renaming the temp file into place (a new map invalidates the topology).
   FILE *f = fopen(kUploadTmp, "rb");
   if (f == nullptr) return -1;
   const int32_t arm = (upload_kind == 1) ? kArmSubmitTopology : kArmSubmitMap;
@@ -1017,16 +1055,7 @@ static int ws_compute_reply() {
   if (lm_parse_upload_chunk(rx, rx_len, &ch) == 1) {
     return (int)process_upload_chunk(&ch, rx + ch.payload_off);
   }
-  // Integer player clock (millis()) — no f64: the session core does its time arithmetic in
-  // integers and widens to the wire's double only at encode.
-  int64_t now = (int64_t)millis();
-  // Serialize with the render task's Player access (single-threaded core).
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
-  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
-  xSemaphoreGive(player_mutex);
-  if (n > 0) persist_if_upload(rx, rx_len, tx, (size_t)n);
-  poll_after_message();
-  return (int)n;
+  return dispatch_plain_rx();
 }
 
 #if !defined(LM_NETSTACK)
@@ -1065,6 +1094,14 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   *reply = tx;
   rx_len = 0;
   return n;
+}
+
+// Player-protocol BLE transport bridge (improv_ble_netstack.cpp's player_ble_poll
+// calls this): identical contract to lm_ws_dispatch — one received frame in, the
+// shared handler's reply out — so a message behaves the same over BLE and the
+// heapless WS on the netstack build.
+int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
+  return lm_ws_dispatch(in, len, reply);
 }
 #endif
 

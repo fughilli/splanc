@@ -44,16 +44,47 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.sku != "esp32c6":
-        # The BLE player transport lives in the vendor variant only for now; the
-        # heapless-netstack controller doesn't expose the second GATT service yet.
         raise SystemExit(f"ble_player_e2e has no setup path for SKU {args.sku!r}")
 
     from server import proto_wire  # driver-side codec (this runner, not the rig)
 
+    # Frame 1: hello -> welcome (transport up). Frames 2..N: a submit_map sharded
+    # into small BLE windows -> chunk_ack* then result_ready. The map exercises the
+    # SAME reassembly path effect uploads now use (proto UploadChunk), and the
+    # small window proves the device's bounded BLE reassembler — the crux of the
+    # heapless-netstack build. Windows match the app's BLE upload size (1024).
+    ble_window = 1024
     hello = proto_wire.encode_client(
         {"type": "hello", "client": "hitl_ble_player_e2e", "app_version": "1"}
     )
-    hello_b64 = base64.b64encode(hello).decode("ascii")
+    leds = [{"id": i, "xyz": [i / 255.0, 0.0, 0.0]} for i in range(220)]
+    map_frame = proto_wire.encode_client(
+        {"type": "submit_map", "map": {"map_id": "__ble", "led_count": len(leds), "leds": leds}}
+    )
+    if len(map_frame) <= ble_window:
+        raise SystemExit(f"test map too small to shard ({len(map_frame)}B <= {ble_window})")
+    frames = [hello]
+    windows = [
+        (off, min(off + ble_window, len(map_frame))) for off in range(0, len(map_frame), ble_window)
+    ]
+    for seq, (off, end) in enumerate(windows):
+        frames.append(
+            proto_wire.encode_client(
+                {
+                    "type": "upload_chunk",
+                    "upload_id": 1,
+                    "seq": seq,
+                    "last": end >= len(map_frame),
+                    "kind": "MAP",
+                    "payload": base64.b64encode(map_frame[off:end]).decode("ascii"),
+                }
+            )
+        )
+    frames_b64 = ",".join(base64.b64encode(f).decode("ascii") for f in frames)
+    print(
+        f"[ble-e2e] sequence: hello + {len(windows)} map windows ({len(map_frame)}B map)",
+        flush=True,
+    )
 
     caps = [c.strip() for c in args.require_caps.split(",") if c.strip()]
     res = Reservation(server=args.server, owner=args.owner, sku=args.sku, require_caps=caps)
@@ -77,7 +108,7 @@ def main() -> int:
         res.scp_to([_DRIVER, _IMPROV, _CODEC], "/tmp/")
         cmd = (
             f"PYTHONPATH=/tmp python3 /tmp/hitl_ble_player.py exchange "
-            f"--hello-b64 {hello_b64} --timeout {args.timeout:g}"
+            f"--frames-b64 {frames_b64} --timeout {args.timeout:g}"
         )
         if mac:
             cmd += f" --address {mac}"
@@ -94,14 +125,34 @@ def main() -> int:
         if not result.get("ok"):
             raise SystemExit(f"BLE exchange failed: {result.get('error')}")
 
-        reply = base64.b64decode(result["reply_b64"])
-        msg = proto_wire.decode_server(reply)
-        if msg.get("type") != "welcome":
-            raise SystemExit(f"expected a welcome over BLE, got {msg.get('type')!r}: {msg}")
-        # welcome carries the device identity — a non-empty one proves the shared
-        # player handler ran end-to-end over Bluetooth, not just any framed echo.
-        ident = msg.get("deviceName") or msg.get("mac") or msg.get("deviceId")
-        print(f"[ble-e2e] PASS — welcome over BLE (identity={ident!r})", flush=True)
+        replies = [proto_wire.decode_server(base64.b64decode(r)) for r in result["replies_b64"]]
+        if len(replies) != len(frames):
+            raise SystemExit(f"expected {len(frames)} replies, got {len(replies)}: {replies}")
+
+        # Frame 1: welcome (transport + shared handler ran end-to-end over BLE).
+        welcome = replies[0]
+        if welcome.get("type") != "welcome":
+            raise SystemExit(f"expected a welcome over BLE, got {welcome.get('type')!r}: {welcome}")
+        ident = welcome.get("deviceName") or welcome.get("mac") or welcome.get("deviceId")
+
+        # Frames 2..N: the sharded map — chunk_ack for each non-final window, then
+        # result_ready on the last. Proves multi-frame upload reassembly over the
+        # bounded BLE reassembler (the effect-upload path uses the same machinery).
+        upload_replies = replies[1:]
+        for i, r in enumerate(upload_replies[:-1]):
+            if r.get("type") != "chunk_ack":
+                raise SystemExit(f"window {i} expected chunk_ack, got {r.get('type')!r}: {r}")
+        final = upload_replies[-1]
+        if final.get("type") != "result_ready":
+            raise SystemExit(
+                f"final window expected result_ready, got {final.get('type')!r}: {final}"
+            )
+
+        print(
+            f"[ble-e2e] PASS — welcome (identity={ident!r}) + sharded map upload "
+            f"({len(upload_replies)} windows) over BLE",
+            flush=True,
+        )
         return 0
     finally:
         res.release()
