@@ -13,6 +13,7 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
+import { isMobileUserAgent } from "../../flash/env";
 import {
   getAiConfig,
   updateAiConfig,
@@ -24,6 +25,7 @@ import {
 import { makeAnthropicProvider } from "./providers/anthropic";
 import { makeOpenAiProvider } from "./providers/openaiCompat";
 import { makeWebLlmProvider } from "./providers/webllm";
+import { makeWllamaProvider } from "./providers/wllama";
 
 // Re-export the neutral wire types so existing importers keep their paths.
 export type { ChatMessage, ContentBlock } from "./provider";
@@ -40,6 +42,7 @@ export function activeProvider(): AiProvider {
   const cfg = getAiConfig();
   if (cfg.kind === "local") return makeOpenAiProvider(cfg.local);
   if (cfg.kind === "webllm") return makeWebLlmProvider(cfg.webllm);
+  if (cfg.kind === "wllama") return makeWllamaProvider(cfg.wllama);
   // cloud: Anthropic uses its native API; every other vendor is served through
   // the OpenAI-compatible client pointed at that vendor's endpoint.
   const v = cfg.cloud.vendors[cfg.cloud.vendor];
@@ -51,13 +54,19 @@ export function activeProvider(): AiProvider {
 
 /**
  * Warm the active provider at app boot so the first chat turn in the effects
- * workspace is fast (see AiProvider.warmUp). Only the in-browser WebGPU provider
- * has anything to warm — it loads the model onto the GPU in its Web Worker and
- * prefills the chat system prompt; cloud / local-server providers no-op. Fully
- * best-effort: `warmUp` never throws, and we still guard the whole thing.
+ * workspace is fast (see AiProvider.warmUp). The in-browser providers load the
+ * model + prefill the system prompt; cloud / local-server providers no-op.
+ *
+ * SAFETY: never auto-warm the WebGPU provider on a mobile device — loading a
+ * multi-GB model onto a phone GPU can monopolize/hang the driver and freeze the
+ * whole device (the "black blocks" failure). The CPU (wllama) path is GPU-free,
+ * so it's safe to warm anywhere. `warmUp` itself never throws; we still guard.
  */
 export function warmActiveProvider(): void {
   try {
+    const cfg = getAiConfig();
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    if (cfg.kind === "webllm" && isMobileUserAgent(ua)) return; // don't freeze phones
     void activeProvider().warmUp?.(CHAT_SYSTEM);
   } catch {
     // instantiating the provider or reading config failed — a warm-up is purely

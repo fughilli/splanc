@@ -121,6 +121,35 @@ translate at each provider's edge.
   (falls back to the main-thread engine if unavailable). Capabilities: tools
   (per-model, see below); vision off (prebuilt models are text-only).
 
+- **`providers/wllama.ts`** — the in-browser **CPU** path (llama.cpp compiled to
+  WASM, via [wllama](https://github.com/ngxson/wllama), lazy-loaded from a pinned
+  CDN like web-llm). This is the **phone-friendly** on-device option: inference
+  runs on the CPU in wllama's worker(s) and **never touches the display GPU**, so
+  it can't starve/hang a mobile GPU driver the way a big WebGPU compute burst does
+  (see "Phones" below). Threads default to `floor(hardwareConcurrency / 2)`
+  (leaving UI headroom, à la pocketpal-ai) and are forced to 1 when the page isn't
+  cross-origin-isolated (no `SharedArrayBuffer` → multi-thread WASM is
+  unavailable). Context defaults to a small 2048 to bound memory. wllama has **no
+  native tool-calling**, so tools are a **text protocol** — the tool specs go in
+  the system prompt, the model emits `<tool_call>{json}</tool_call>`, and we parse
+  those back into neutral `tool_use` blocks; advertised (capabilities.tools) only
+  for an allow-list of models trained for that convention (Qwen2.5-Instruct /
+  Hermes), else it degrades to plain chat. The translation + parsing are pure and
+  unit-tested (`web/tests/wllamaProvider.test.ts`); the WASM runtime is
+  browser/CPU-only and validated on-device. Vision off.
+
+### Phones: CPU (wllama) vs GPU (web-llm)
+
+The WebGPU path (`webllm`) is **desktop-GPU oriented**. On a phone, a 7–8B model
+prefills thousands of tokens as one sustained WebGPU compute burst; the display
+compositor is *also* GPU-driven, so it gets starved (frozen screen, black-block
+artifacts) and an immature mobile GPU driver can hang/reset outright. A Web Worker
+isolates the JS thread but **not** the GPU, so it doesn't help. The CPU (`wllama`)
+path avoids this entirely — no GPU work, bounded threads, small context — trading
+speed (a few tok/s on a small model) for a device that stays responsive. Two
+guards back this up: the boot warm-up (below) **never auto-loads the WebGPU model
+on a mobile user-agent**, and the AI-settings UI steers phones to the CPU option.
+
 `generate.ts` keeps its public surface (`chatTurn`, `editorContext`,
 `getApiKey`/`setApiKey` back-compat) and just routes through `activeProvider()`.
 
@@ -138,13 +167,17 @@ front** so they never land on the user's first prompt:
   thread and need no worker.
 
 - **Boot warm-up.** At app boot `main.ts` calls `warmActiveProvider()`, which
-  invokes the optional `AiProvider.warmUp(system)`. Only the WebGPU provider
-  implements it: it loads the selected model into the worker and issues a
-  1-token generation with the chat system prompt, so the shared system-prefix KV
-  is already computed when the first real turn (which begins with that same
-  prefix) arrives. It is strictly best-effort — it skips with no WebGPU, no
-  selected model, or weights not yet cached (a boot must never trigger a
-  multi-GB download), and never throws. Stateless providers omit `warmUp`.
+  invokes the optional `AiProvider.warmUp(system)`. The in-browser providers
+  implement it: load the selected model into the worker and issue a 1-token
+  generation with the chat system prompt, so the shared system-prefix KV is
+  already computed when the first real turn (which begins with that same prefix)
+  arrives. It is strictly best-effort — it skips with no WebGPU/WASM, no selected
+  model, or weights not yet cached (a boot must never trigger a multi-GB
+  download), and never throws. Stateless providers omit `warmUp`. **Crucially,
+  `warmActiveProvider()` never warms the WebGPU provider on a mobile user-agent**
+  (`isMobileUserAgent`) — auto-loading a model onto a phone GPU at launch is
+  exactly the freeze we're avoiding; the CPU (wllama) warm-up is GPU-free and runs
+  everywhere.
 
 ### Graceful degradation
 
