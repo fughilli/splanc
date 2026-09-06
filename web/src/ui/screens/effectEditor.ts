@@ -40,6 +40,7 @@ import {
   chatTurn,
   editorContext,
   type ChatMessage,
+  type ChatTraceEvent,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
 import { isAiConfigured } from "../../effects/ai/provider";
@@ -625,10 +626,17 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   for (const entry of transcript) renderMsg(entry.role, entry.text);
 
   // A live "what the model is doing" indicator (spinner + phase label), shown at
-  // the foot of the log while a turn runs and updated as phases change.
-  let chatStatusEl: HTMLElement | null = null;
+  // the foot of the log while a turn runs. It's a collapsible <details>: the
+  // summary is the status line; expanding it reveals the live model transcript
+  // (prompt in / tokens out / tool calls + results) for every internal round —
+  // useful when a slow local model takes minutes before replying. Defaults
+  // collapsed; frozen into the log after the turn so it stays inspectable.
+  let chatStatusEl: HTMLDetailsElement | null = null;
   let chatStatusLabelEl: HTMLElement | null = null;
   let chatStatusSubEl: HTMLElement | null = null;
+  let chatStatusSpinnerEl: HTMLElement | null = null;
+  let chatTraceBodyEl: HTMLElement | null = null;
+  let chatTraceOutEl: HTMLElement | null = null; // current round's streamed-output text node
   let chatStatusTimer: number | null = null;
   let chatStatusStartMs = 0;
   let chatHasRealStatus = false;
@@ -644,6 +652,33 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     // model's own summary for a set_script, or a fixed verb for other tools).
     chatStatusSubEl.textContent = fmtElapsed(performance.now() - chatStatusStartMs);
   }
+  /** Create the status <details> (once per turn) if it doesn't exist yet. */
+  function ensureChatStatus(): void {
+    if (chatStatusEl !== null) return;
+    if (chatHint.isConnected) chatHint.remove();
+    const d = document.createElement("details");
+    d.className = "fxedit-chatstatus";
+    const summary = document.createElement("summary");
+    summary.className = "fxedit-chatstatus-summary";
+    chatStatusSpinnerEl = document.createElement("span");
+    chatStatusSpinnerEl.className = "fxedit-spinner";
+    const col = document.createElement("span");
+    col.className = "fxedit-chatstatus-col";
+    chatStatusLabelEl = document.createElement("span");
+    chatStatusLabelEl.className = "fxedit-chatstatus-label";
+    chatStatusSubEl = document.createElement("span");
+    chatStatusSubEl.className = "fxedit-chatstatus-sub";
+    col.append(chatStatusLabelEl, chatStatusSubEl);
+    summary.append(chatStatusSpinnerEl, col);
+    chatTraceBodyEl = document.createElement("div");
+    chatTraceBodyEl.className = "fxedit-trace";
+    d.append(summary, chatTraceBodyEl);
+    chatStatusEl = d;
+    chatTraceOutEl = null;
+    chatStatusStartMs = performance.now();
+    chatStatusTimer = window.setInterval(paintChatSub, 1000);
+    chatLog.appendChild(d);
+  }
   /** Update the "model is working" indicator: a main label (the model's terse
    * summary, or a fixed tool verb) over a ticking-elapsed subtext. "Thinking…" is
    * a SOFT placeholder — once a real status (a model summary or tool verb) shows,
@@ -651,37 +686,85 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   function setChatStatus(label: string): void {
     if (label === THINKING && chatHasRealStatus) return;
     if (label !== THINKING) chatHasRealStatus = true;
-    if (chatHint.isConnected) chatHint.remove();
-    if (chatStatusEl === null) {
-      chatStatusEl = document.createElement("div");
-      chatStatusEl.className = "fxedit-chatstatus";
-      const sp = document.createElement("span");
-      sp.className = "fxedit-spinner";
-      const col = document.createElement("span");
-      col.className = "fxedit-chatstatus-col";
-      chatStatusLabelEl = document.createElement("span");
-      chatStatusLabelEl.className = "fxedit-chatstatus-label";
-      chatStatusSubEl = document.createElement("span");
-      chatStatusSubEl.className = "fxedit-chatstatus-sub";
-      col.append(chatStatusLabelEl, chatStatusSubEl);
-      chatStatusEl.append(sp, col);
-      chatStatusStartMs = performance.now();
-      chatStatusTimer = window.setInterval(paintChatSub, 1000);
-    }
+    ensureChatStatus();
     chatStatusLabelEl!.textContent = label;
     paintChatSub();
-    chatLog.appendChild(chatStatusEl); // keep it pinned to the bottom
-    chatLog.scrollTop = chatLog.scrollHeight;
+    chatLog.appendChild(chatStatusEl!); // keep it pinned to the bottom
+    if (!chatStatusEl!.open) chatLog.scrollTop = chatLog.scrollHeight; // don't yank while reading the trace
   }
+
+  /** Append one line to the live model transcript. */
+  function traceRow(cls: string, label: string, text: string): HTMLElement {
+    const row = document.createElement("div");
+    row.className = `fxedit-trace-row ${cls}`;
+    if (label) {
+      const l = document.createElement("span");
+      l.className = "fxedit-trace-label";
+      l.textContent = label;
+      row.append(l);
+    }
+    const t = document.createElement("span");
+    t.className = "fxedit-trace-text";
+    t.textContent = text;
+    row.append(t);
+    return row;
+  }
+  /** Render one debug-trace event (chatTurn's onTrace) into the transcript. */
+  function onChatTrace(ev: ChatTraceEvent): void {
+    ensureChatStatus();
+    const body = chatTraceBodyEl!;
+    if (ev.kind === "round") {
+      const d = document.createElement("div");
+      d.className = "fxedit-trace-round";
+      d.textContent = `round ${ev.round}`;
+      body.append(d);
+      chatTraceOutEl = null;
+    } else if (ev.kind === "in") {
+      body.append(traceRow("in", "in →", ev.text));
+      chatTraceOutEl = null;
+    } else if (ev.kind === "delta") {
+      if (chatTraceOutEl === null) {
+        const row = traceRow("out", "out ←", "");
+        chatTraceOutEl = row.querySelector<HTMLElement>(".fxedit-trace-text");
+        body.append(row);
+      }
+      if (chatTraceOutEl) chatTraceOutEl.textContent += ev.text;
+    } else if (ev.kind === "out") {
+      if (chatTraceOutEl) chatTraceOutEl.textContent = ev.text;
+      else body.append(traceRow("out", "out ←", ev.text));
+      chatTraceOutEl = null;
+    } else if (ev.kind === "tool_call") {
+      body.append(traceRow("tool", "🔧 call", `${ev.name}(${JSON.stringify(ev.input)})`));
+      chatTraceOutEl = null;
+    } else {
+      // tool_result
+      body.append(
+        traceRow(ev.isError ? "tool-err" : "tool", ev.isError ? "🔧 error" : "🔧 result", `${ev.name}: ${ev.text}`),
+      );
+      chatTraceOutEl = null;
+    }
+    if (chatStatusEl?.open) body.scrollTop = body.scrollHeight;
+  }
+
+  /** End the current turn's indicator: stop the timer/spinner and FREEZE the
+   * trace in the log (collapsed) so it stays inspectable, then null the live refs
+   * so the next turn builds a fresh one. (resetChat wipes the log outright.) */
   function clearChatStatus(): void {
     if (chatStatusTimer !== null) {
       clearInterval(chatStatusTimer);
       chatStatusTimer = null;
     }
-    chatStatusEl?.remove();
+    if (chatStatusEl !== null) {
+      chatStatusEl.classList.add("fxedit-chatstatus--done");
+      chatStatusSpinnerEl?.remove();
+      if (chatStatusLabelEl) chatStatusLabelEl.textContent = "Model trace";
+    }
     chatStatusEl = null;
     chatStatusLabelEl = null;
     chatStatusSubEl = null;
+    chatStatusSpinnerEl = null;
+    chatTraceBodyEl = null;
+    chatTraceOutEl = null;
     chatHasRealStatus = false; // next turn starts soft ("Thinking…") again
   }
 
@@ -1304,6 +1387,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           return estimateFleetReport();
         },
         onToolUse: () => undefined,
+        onTrace: onChatTrace,
         },
         deviceCosts,
       );
