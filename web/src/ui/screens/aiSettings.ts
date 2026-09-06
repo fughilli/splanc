@@ -32,6 +32,11 @@ import {
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
 import {
+  isWllamaSupported,
+  loadWllamaModel,
+  wllamaModelSupportsTools,
+} from "../../effects/ai/providers/wllama";
+import {
   isWebLlmSupported,
   listWebLlmModelCards,
   loadWebLlmModel,
@@ -44,7 +49,21 @@ import {
   type WebLlmModelCard,
 } from "../../effects/ai/providers/webllm";
 
-const KINDS: ProviderKind[] = ["cloud", "local", "webllm"];
+const KINDS: ProviderKind[] = ["cloud", "local", "webllm", "wllama"];
+
+/** A few small, tool-capable GGUFs known to run acceptably on-CPU in-browser.
+ * The URL contains "qwen2.5"/"instruct" so wllamaModelSupportsTools() enables the
+ * tool path; users can paste any GGUF URL in the field below. */
+const RECOMMENDED_WLLAMA: { label: string; url: string }[] = [
+  {
+    label: "Qwen2.5 1.5B Instruct (Q4_K_M) — ~1 GB, tools",
+    url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+  },
+  {
+    label: "Qwen2.5 3B Instruct (Q4_K_M) — ~2 GB, tools",
+    url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+  },
+];
 const VENDORS = Object.keys(CLOUD_VENDORS) as CloudVendor[];
 
 export function AiSettingsScreen(_router: Router): Screen {
@@ -100,6 +119,9 @@ export function AiSettingsScreen(_router: Router): Screen {
         break;
       case "webllm":
         panel = webLlmPanel();
+        break;
+      case "wllama":
+        panel = wllamaPanel(cfg, set, setLive);
         break;
       case "cloud":
       default:
@@ -241,6 +263,98 @@ function cloudPanel(
         `generation and MIDI mapping work.`,
     ),
   );
+  return g;
+}
+
+// -- In-browser CPU (wllama) -------------------------------------------------
+// The phone-friendly path: llama.cpp→WASM on the CPU, so it never touches the
+// GPU (no freeze/artifacts) — just slower, best with a small model.
+
+function wllamaPanel(
+  cfg: AiConfig,
+  set: (p: Partial<AiConfig>) => void,
+  setLive: (p: Partial<AiConfig>) => void,
+): HTMLElement {
+  const g = group("In-browser (CPU)");
+
+  // Recommended presets (picking one fills the URL field below via a rebuild).
+  const presets: Record<string, string> = { "": "Choose a recommended model…" };
+  for (const m of RECOMMENDED_WLLAMA) presets[m.url] = m.label;
+  const presetValue = RECOMMENDED_WLLAMA.some((m) => m.url === cfg.wllama.model)
+    ? cfg.wllama.model
+    : "";
+  g.append(
+    labeledSelect("Recommended", presets, presetValue, (url) => {
+      if (url) set({ wllama: { ...getAiConfig().wllama, model: url } });
+    }),
+    field({
+      label: "Model (GGUF URL)",
+      value: cfg.wllama.model,
+      placeholder: "https://huggingface.co/…/resolve/main/model.gguf",
+      onInput: (v) => setLive({ wllama: { ...getAiConfig().wllama, model: v.trim() } }),
+    }),
+    field({
+      label: "Context window (tokens)",
+      type: "number",
+      value: String(cfg.wllama.contextWindowSize),
+      onInput: (v) => {
+        const n = parseInt(v, 10);
+        if (n > 0) setLive({ wllama: { ...getAiConfig().wllama, contextWindowSize: n } });
+      },
+    }),
+    field({
+      label: "Threads (0 = auto)",
+      type: "number",
+      value: String(cfg.wllama.nThreads),
+      onInput: (v) => {
+        const n = parseInt(v, 10);
+        if (n >= 0) setLive({ wllama: { ...getAiConfig().wllama, nThreads: n } });
+      },
+    }),
+  );
+
+  const loadBtn = Button({
+    label: "Download / load model",
+    variant: "quiet",
+    onClick: async () => {
+      const c = getAiConfig().wllama;
+      if (!c.model.trim()) {
+        toast("Enter or pick a model URL first");
+        return;
+      }
+      loadBtn.disabled = true;
+      try {
+        await loadWllamaModel(c.model, c.contextWindowSize, c.nThreads);
+        toast("Model loaded");
+      } catch (e) {
+        toast(`Load failed: ${msg(e)}`, { error: true });
+      } finally {
+        loadBtn.disabled = false;
+      }
+    },
+  });
+  g.append(loadBtn);
+
+  if (!isWllamaSupported()) {
+    g.append(note("This browser has no WebAssembly — the CPU model can't run here."));
+  }
+  g.append(
+    note(
+      "Runs the model on the CPU, in your browser, on your device — it never touches " +
+        "the GPU, so it won't freeze the phone the way the WebGPU option can. It's " +
+        "slower (a few tokens/sec) and best with a small (1–3B) model. Multi-threading " +
+        "needs a cross-origin-isolated page; otherwise it runs single-threaded.",
+    ),
+  );
+  if (cfg.wllama.model && !wllamaModelSupportsTools(cfg.wllama.model)) {
+    g.append(
+      note(
+        "Heads up: this model isn't in the tool-calling allow-list, so it'll answer as " +
+          "plain chat — it can't directly edit the effect or map MIDI. Pick a " +
+          "Qwen2.5-Instruct model for tool use.",
+      ),
+    );
+  }
   return g;
 }
 

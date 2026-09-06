@@ -108,7 +108,7 @@ export interface AiProvider {
 // Config (localStorage): which provider is active + each provider's settings.
 // =============================================================================
 
-export type ProviderId = "anthropic" | "openai" | "webllm";
+export type ProviderId = "anthropic" | "openai" | "webllm" | "wllama";
 
 export interface AnthropicConfig {
   key: string;
@@ -135,13 +135,25 @@ export interface WebLlmConfig {
    * not exceed what the model was trained for. */
   contextWindowSize: number;
 }
+export interface WllamaConfig {
+  /** The active model — a GGUF URL (HuggingFace `resolve` link), or "". */
+  model: string;
+  /** Extra model URLs the user has pinned via "Add". */
+  pinned: string[];
+  /** Context window in tokens (kept small on this CPU path to bound memory). */
+  contextWindowSize: number;
+  /** Inference threads (0 = auto: wllama picks floor(cores/2), leaving UI
+   * headroom). Forced to 1 when the page isn't cross-origin-isolated. */
+  nThreads: number;
+}
 
 /**
- * The top-level provider category the user picks (3 buttons). "cloud" fans out
+ * The top-level provider category the user picks (4 buttons). "cloud" fans out
  * to a specific vendor (see {@link CloudVendor}); "local" is a self-hosted
- * OpenAI-compatible server; "webllm" is in-browser WebGPU.
+ * OpenAI-compatible server; "webllm" is in-browser WebGPU; "wllama" is
+ * in-browser CPU (WASM) — the phone-friendly path that doesn't touch the GPU.
  */
-export type ProviderKind = "cloud" | "local" | "webllm";
+export type ProviderKind = "cloud" | "local" | "webllm" | "wllama";
 
 /** Cloud vendors offered under the "Cloud" category. */
 export type CloudVendor = "anthropic" | "openai" | "gemini" | "grok" | "openrouter" | "custom";
@@ -209,6 +221,7 @@ export interface AiConfig {
   cloud: { vendor: CloudVendor; vendors: Record<CloudVendor, CloudVendorConfig> };
   local: OpenAiConfig;
   webllm: WebLlmConfig;
+  wllama: WllamaConfig;
 }
 
 const CONFIG_STORAGE = "ledmapper.ai.config";
@@ -222,6 +235,9 @@ export const DEFAULT_OPENAI_BASE_URL = "http://localhost:11434/v1";
 /** Default in-browser context window (tokens): fits our grounded prompts, and is
  * within the 8K trained context of the Llama-3-8B-based tool models. */
 export const DEFAULT_WEBLLM_CONTEXT = 8192;
+/** Default context for the CPU (wllama) path — kept small to bound memory + keep
+ * prefill snappy on a phone, à la pocketpal's 2048 default. */
+export const DEFAULT_WLLAMA_CONTEXT = 2048;
 
 function isCloudVendor(v: unknown): v is CloudVendor {
   return typeof v === "string" && v in CLOUD_VENDORS;
@@ -245,6 +261,7 @@ export function defaultConfig(): AiConfig {
     cloud: { vendor: "anthropic", vendors: emptyVendors() },
     local: { baseUrl: DEFAULT_OPENAI_BASE_URL, key: "", model: "", vision: false },
     webllm: { model: "", pinned: [], contextWindowSize: DEFAULT_WEBLLM_CONTEXT },
+    wllama: { model: "", pinned: [], contextWindowSize: DEFAULT_WLLAMA_CONTEXT, nThreads: 0 },
   };
 }
 
@@ -276,7 +293,9 @@ export function normalizeConfig(raw: unknown): AiConfig {
 
   // -- current shape ----------------------------------------------------------
   const kind: ProviderKind =
-    r["kind"] === "local" || r["kind"] === "webllm" ? r["kind"] : "cloud";
+    r["kind"] === "local" || r["kind"] === "webllm" || r["kind"] === "wllama"
+      ? r["kind"]
+      : "cloud";
   const cloud = (r["cloud"] ?? {}) as { vendor?: unknown; vendors?: unknown };
   const vendors = emptyVendors();
   if (cloud.vendors && typeof cloud.vendors === "object") {
@@ -299,19 +318,37 @@ export function normalizeConfig(raw: unknown): AiConfig {
     pinned?: unknown;
     contextWindowSize?: unknown;
   };
+  const wllama = (r["wllama"] ?? {}) as {
+    model?: unknown;
+    pinned?: unknown;
+    contextWindowSize?: unknown;
+    nThreads?: unknown;
+  };
+  const strArray = (x: unknown): string[] =>
+    Array.isArray(x) ? x.filter((v): v is string => typeof v === "string") : [];
   return {
     kind,
     cloud: { vendor, vendors },
     local: { ...d.local, ...local },
     webllm: {
       model: typeof webllm.model === "string" ? webllm.model : "",
-      pinned: Array.isArray(webllm.pinned)
-        ? webllm.pinned.filter((x): x is string => typeof x === "string")
-        : [],
+      pinned: strArray(webllm.pinned),
       contextWindowSize:
         typeof webllm.contextWindowSize === "number" && webllm.contextWindowSize > 0
           ? Math.floor(webllm.contextWindowSize)
           : DEFAULT_WEBLLM_CONTEXT,
+    },
+    wllama: {
+      model: typeof wllama.model === "string" ? wllama.model : "",
+      pinned: strArray(wllama.pinned),
+      contextWindowSize:
+        typeof wllama.contextWindowSize === "number" && wllama.contextWindowSize > 0
+          ? Math.floor(wllama.contextWindowSize)
+          : DEFAULT_WLLAMA_CONTEXT,
+      nThreads:
+        typeof wllama.nThreads === "number" && wllama.nThreads >= 0
+          ? Math.floor(wllama.nThreads)
+          : 0,
     },
   };
 }
@@ -372,10 +409,12 @@ export function isAiConfigured(cfg: AiConfig = getAiConfig()): boolean {
       return cfg.local.baseUrl.trim() !== "" && cfg.local.model.trim() !== "";
     case "webllm":
       return cfg.webllm.model.trim() !== "";
+    case "wllama":
+      return cfg.wllama.model.trim() !== "";
   }
 }
 
-/** Human label for a provider category (the 3 buttons + status line). */
+/** Human label for a provider category (the 4 buttons + status line). */
 export function kindLabel(kind: ProviderKind): string {
   switch (kind) {
     case "cloud":
@@ -384,5 +423,7 @@ export function kindLabel(kind: ProviderKind): string {
       return "Local server (OpenAI-compatible)";
     case "webllm":
       return "In-browser (WebGPU)";
+    case "wllama":
+      return "In-browser (CPU)";
   }
 }

@@ -11,6 +11,7 @@ import {
   DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_OPENAI_BASE_URL,
   DEFAULT_WEBLLM_CONTEXT,
+  DEFAULT_WLLAMA_CONTEXT,
   defaultConfig,
   isAiConfigured,
   kindLabel,
@@ -28,6 +29,28 @@ test("defaultConfig is Cloud▸Anthropic with the historical model", () => {
     pinned: [],
     contextWindowSize: DEFAULT_WEBLLM_CONTEXT,
   });
+  assert.deepEqual(d.wllama, {
+    model: "",
+    pinned: [],
+    contextWindowSize: DEFAULT_WLLAMA_CONTEXT,
+    nThreads: 0,
+  });
+});
+
+test("normalizeConfig defaults + clamps the wllama context and threads", () => {
+  const def = normalizeConfig({ kind: "wllama" }).wllama;
+  assert.equal(def.contextWindowSize, DEFAULT_WLLAMA_CONTEXT);
+  assert.equal(def.nThreads, 0);
+  const set = normalizeConfig({
+    kind: "wllama",
+    wllama: { model: "…/qwen2.5-3b-instruct-q4_k_m.gguf", contextWindowSize: 4096, nThreads: 3 },
+  }).wllama;
+  assert.equal(set.contextWindowSize, 4096);
+  assert.equal(set.nThreads, 3);
+  // Garbage falls back to safe defaults.
+  const bad = normalizeConfig({ kind: "wllama", wllama: { contextWindowSize: -1, nThreads: -5 } }).wllama;
+  assert.equal(bad.contextWindowSize, DEFAULT_WLLAMA_CONTEXT);
+  assert.equal(bad.nThreads, 0);
 });
 
 test("normalizeConfig defaults + clamps the web-llm context window", () => {
@@ -133,16 +156,24 @@ test("isAiConfigured requires the active provider's essentials", () => {
   local.local.model = "llama";
   assert.equal(isAiConfigured(local), true);
 
-  // In-browser: a selected model.
+  // In-browser (WebGPU): a selected model.
   const web = structuredClone(base);
   web.kind = "webllm";
   assert.equal(isAiConfigured(web), false);
   web.webllm.model = "Hermes-MLC";
   assert.equal(isAiConfigured(web), true);
+
+  // In-browser (CPU / wllama): a selected model URL.
+  const wasm = structuredClone(base);
+  wasm.kind = "wllama";
+  assert.equal(isAiConfigured(wasm), false);
+  wasm.wllama.model = "https://…/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+  assert.equal(isAiConfigured(wasm), true);
 });
 
-test("kindLabel names all three categories", () => {
+test("kindLabel names all four categories", () => {
   assert.equal(kindLabel("cloud"), "Cloud");
   assert.match(kindLabel("local"), /Local/);
-  assert.match(kindLabel("webllm"), /browser/i);
+  assert.match(kindLabel("webllm"), /WebGPU/);
+  assert.match(kindLabel("wllama"), /CPU/);
 });
