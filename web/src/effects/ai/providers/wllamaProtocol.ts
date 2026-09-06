@@ -13,11 +13,18 @@ import type { ChatMessage, ContentBlock, ToolDef } from "../provider";
 
 /** Models whose chat template + training reliably emit the `<tool_call>` JSON
  * convention. Matched loosely on the GGUF filename/URL (models are arbitrary HF
- * URLs here, unlike web-llm's fixed catalog). Everything else → plain chat. */
+ * URLs here, unlike web-llm's fixed catalog). Everything else → plain chat.
+ *
+ * Hermes and Qwen3 are instruction/tool-tuned by default — Qwen3 GGUFs are
+ * usually just "Qwen3-0.6B-…" with no "-instruct" suffix, so requiring "instruct"
+ * would wrongly exclude them. Qwen2.5 ships base AND instruct variants, so it must
+ * say "instruct" to be treated as a tool-capable chat model. */
 export function wllamaModelSupportsTools(modelUrlOrId: string): boolean {
   const s = modelUrlOrId.toLowerCase();
-  const isInstruct = s.includes("instruct") || s.includes("hermes");
-  return isInstruct && (s.includes("qwen2.5") || s.includes("qwen3") || s.includes("hermes"));
+  if (s.includes("hermes")) return true;
+  if (s.includes("qwen3")) return true;
+  if (s.includes("qwen2.5") && s.includes("instruct")) return true;
+  return false;
 }
 
 /** The system-prompt addendum describing the advertised tools + the wire

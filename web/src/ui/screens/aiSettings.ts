@@ -57,16 +57,27 @@ import {
 
 const KINDS: ProviderKind[] = ["cloud", "local", "webllm", "wllama"];
 
-/** A few small, tool-capable GGUFs known to run acceptably on-CPU in-browser.
- * The URL contains "qwen2.5"/"instruct" so wllamaModelSupportsTools() enables the
- * tool path; users can paste any GGUF URL in the field below. */
+/** A few small, tool-capable GGUFs (Qwen family → the `<tool_call>` convention
+ * our parser expects) known to run on-CPU in-browser, lightest first. The URL
+ * matches wllamaModelSupportsTools() so the tool path is enabled; users can paste
+ * any GGUF URL in the field below. Phones are memory/speed bound, so the small
+ * ones are the realistic picks — the tiny models handle MIDI/structured tools
+ * well but authoring a whole effect (set_script) wants the 1.5B. */
 const RECOMMENDED_WLLAMA: { label: string; url: string }[] = [
   {
-    label: "Qwen2.5 1.5B Instruct (Q4_K_M) — ~1 GB, tools",
+    label: "Qwen3 0.6B (Q8) — ~0.6 GB · lightest with good tools",
+    url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
+  },
+  {
+    label: "Qwen2.5 0.5B Instruct (Q4) — ~0.4 GB · tiny, basic tools",
+    url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+  },
+  {
+    label: "Qwen2.5 1.5B Instruct (Q4) — ~1 GB · best for authoring effects",
     url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
   },
   {
-    label: "Qwen2.5 3B Instruct (Q4_K_M) — ~2 GB, tools",
+    label: "Qwen2.5 3B Instruct (Q4) — ~2 GB · most capable, heaviest",
     url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
   },
 ];
