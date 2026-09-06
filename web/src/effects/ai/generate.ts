@@ -13,26 +13,55 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
+import {
+  getAiConfig,
+  updateAiConfig,
+  DEFAULT_ANTHROPIC_MODEL,
+  type AiProvider,
+  type ChatMessage,
+  type ContentBlock,
+} from "./provider";
+import { makeAnthropicProvider } from "./providers/anthropic";
+import { makeOpenAiProvider } from "./providers/openaiCompat";
+import { makeWebLlmProvider } from "./providers/webllm";
+
+// Re-export the neutral wire types so existing importers keep their paths.
+export type { ChatMessage, ContentBlock } from "./provider";
 
 const API_URL = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-opus-4-8";
-const KEY_STORAGE = "ledmapper.anthropicKey";
+const MODEL = DEFAULT_ANTHROPIC_MODEL;
 
-/** Read/write the BYO Anthropic key (localStorage; single-user self-host). */
-export function getApiKey(): string | null {
-  try {
-    return localStorage.getItem(KEY_STORAGE);
-  } catch {
-    return null;
+/**
+ * Build the provider selected in the AI config (FUG-87). Instantiated per call
+ * so config edits — switching provider, changing key/endpoint/model — take
+ * effect on the very next turn with no extra wiring.
+ */
+export function activeProvider(): AiProvider {
+  const cfg = getAiConfig();
+  if (cfg.kind === "local") return makeOpenAiProvider(cfg.local);
+  if (cfg.kind === "webllm") return makeWebLlmProvider(cfg.webllm);
+  // cloud: Anthropic uses its native API; every other vendor is served through
+  // the OpenAI-compatible client pointed at that vendor's endpoint.
+  const v = cfg.cloud.vendors[cfg.cloud.vendor];
+  if (cfg.cloud.vendor === "anthropic") {
+    return makeAnthropicProvider({ key: v.key, model: v.model });
   }
+  return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
+}
+
+/** Read/write the BYO Anthropic key. Kept for back-compat (older callers); now
+ * backed by the unified AI config (the cloud "anthropic" vendor). */
+export function getApiKey(): string | null {
+  const k = getAiConfig().cloud.vendors.anthropic.key;
+  return k ? k : null;
 }
 export function setApiKey(key: string): void {
-  try {
-    if (key) localStorage.setItem(KEY_STORAGE, key);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    // storage unavailable — generation just won't have a key
-  }
+  const cfg = getAiConfig();
+  const vendors = {
+    ...cfg.cloud.vendors,
+    anthropic: { ...cfg.cloud.vendors.anthropic, key },
+  };
+  updateAiConfig({ cloud: { ...cfg.cloud, vendors } });
 }
 
 /** One conversation turn kept in the workspace so follow-ups refine. */
@@ -199,30 +228,6 @@ function partialScript(json: string): string | null {
   return out;
 }
 
-/** Best-effort extraction of a string field's in-progress value from partial JSON
- * (a streamed tool-input object), e.g. the set_script `summary`. Null until the
- * field's opening quote has arrived. */
-function partialField(json: string, field: string): string | null {
-  const m = new RegExp(`"${field}"\\s*:\\s*"`).exec(json);
-  if (m === null) return null;
-  const start = m.index + m[0].length;
-  let out = "";
-  for (let i = start; i < json.length; i++) {
-    const ch = json[i]!;
-    if (ch === "\\") {
-      const next = json[i + 1];
-      if (next === undefined) break; // escape spans the stream boundary
-      out += unescapeChar(next);
-      i++;
-    } else if (ch === '"') {
-      break; // closing quote — field complete
-    } else {
-      out += ch;
-    }
-  }
-  return out;
-}
-
 function unescapeChar(c: string): string {
   switch (c) {
     case "n":
@@ -266,31 +271,12 @@ function parseResult(json: string): GenerateResult {
 // direct-browser CORS, BYO key).
 // =============================================================================
 
-/** A content block in an Anthropic message (the subset we produce/consume). */
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | {
-      type: "tool_result";
-      tool_use_id: string;
-      content: (
-        | { type: "text"; text: string }
-        | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-      )[];
-      is_error?: boolean;
-    };
-
-/** A full conversation message (chat history is an array of these). */
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-}
+// ContentBlock + ChatMessage — the neutral wire types — now live in provider.ts
+// (shared by every provider) and are re-exported from this module's top.
 
 /** The tool the model calls to replace the editor script. */
 export interface SetScriptCall {
   source: string;
-  /** Terse (≤5-word) status the model supplies for the UI while this applies. */
-  summary?: string;
 }
 
 /** One uniform→MIDI-control mapping the model proposes (set_midi_mapping). */
@@ -472,228 +458,6 @@ function dataUrlToImageBlock(dataUrl: string): {
   return { type: "image", source: { type: "base64", media_type, data } };
 }
 
-/** A message's content with a prompt-cache breakpoint on its LAST block (a bare
- * string becomes one text block). NON-MUTATING — the stored history that chatTurn
- * re-sends each round must never carry a moved/stale breakpoint. */
-export function withCacheControl(content: string | ContentBlock[]): unknown {
-  const cc = { type: "ephemeral" as const };
-  if (typeof content === "string") {
-    return [{ type: "text", text: content, cache_control: cc }];
-  }
-  if (content.length === 0) return content;
-  const copy = content.map((b) => ({ ...b })) as Record<string, unknown>[];
-  copy[copy.length - 1] = { ...copy[copy.length - 1], cache_control: cc };
-  return copy;
-}
-
-/** Live-progress callbacks fired while the response streams in. */
-export interface StreamHooks {
-  /** Assistant text deltas (the visible reply, as it's written). */
-  onText?: ((delta: string) => void) | undefined;
-  /** The current status label, updated live: "Thinking…", a fixed tool verb, or
-   * the model's own streamed set_script `summary`. */
-  onStatus?: ((label: string) => void) | undefined;
-}
-
-async function messagesRequest(
-  messages: ChatMessage[],
-  tools: readonly unknown[],
-  signal?: AbortSignal,
-  deviceCosts?: string,
-  systemExtra?: string,
-  stream?: StreamHooks,
-): Promise<{
-  content: ContentBlock[];
-  stop_reason: string | null;
-}> {
-  const key = getApiKey();
-  if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
-  // Prompt caching (order is tools → system → messages; a cache_control marker
-  // caches the whole prefix up to it). Breakpoints:
-  //   1. CHAT_SYSTEM — the frozen spec, shared across boards/surfaces/turns.
-  //   2. the LAST system block — so tools + the WHOLE system (incl per-device
-  //      costs + persona) are a cache hit within a conversation (each is stable
-  //      for the duration; a different board just gets its own entry).
-  type SysBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
-  const system: SysBlock[] = [
-    { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
-  ];
-  if (deviceCosts) system.push({ type: "text", text: deviceCosts });
-  if (systemExtra) system.push({ type: "text", text: systemExtra });
-  system[system.length - 1]!.cache_control = { type: "ephemeral" };
-
-  //   3. the LAST message's last block — caches the growing conversation prefix,
-  //      so every tool-loop round (and the next turn's shared prefix) RE-READS
-  //      the history — the ~9KB editor context, prior tool_results, any captured
-  //      preview images — at the cache rate instead of re-billing it each round.
-  const reqMessages: { role: string; content: unknown }[] = messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
-  if (reqMessages.length > 0) {
-    reqMessages[reqMessages.length - 1]!.content = withCacheControl(
-      messages[messages.length - 1]!.content,
-    );
-  }
-  const resp = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    signal: signal ?? null,
-    body: JSON.stringify({
-      // 4000 truncated routinely: a set_script carrying a whole shader PLUS
-      // adaptive-thinking tokens easily exceeds it, and a mid-tool-call cutoff
-      // used to wedge the chat (see chatTurn's truncation guard). max_tokens is a
-      // ceiling, not a cost, so give it real headroom.
-      model: MODEL,
-      max_tokens: 16000,
-      // opus-4-8 supports ADAPTIVE thinking only (a fixed budget_tokens 400s).
-      // The lever to shorten the up-front "Thinking…" is `output_config.effort`:
-      // "high" is the default; "medium" trades a little depth for a quicker,
-      // more interactive pace. Tune here for speed↔quality.
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      stream: true,
-      system,
-      tools,
-      messages: reqMessages,
-    }),
-  });
-  if (!resp.ok || resp.body === null) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(`Anthropic API ${resp.status}: ${body.slice(0, 300)}`);
-  }
-  return consumeChatStream(resp.body, stream);
-}
-
-/** Fixed status verb for a tool call, shown the moment the model starts it. */
-function toolLabel(name: string): string {
-  switch (name) {
-    case "set_script":
-      return "Writing the effect code…";
-    case "capture_preview":
-      return "Taking a screenshot of the preview…";
-    case "estimate_performance":
-      return "Running a performance pass…";
-    case "list_midi_controls":
-      return "Reading MIDI controls…";
-    case "set_midi_mapping":
-      return "Mapping MIDI controls…";
-    default:
-      return "Working…";
-  }
-}
-
-/**
- * Read the Anthropic SSE stream, reconstructing the assistant `content` blocks
- * (text, thinking + signature, tool_use with parsed input) exactly as the
- * non-streaming response would return them — so chatTurn's downstream logic and
- * the history it re-sends are unchanged — while firing live progress:
- *   - text_delta      → onText (the reply, as written)
- *   - thinking_delta  → onStatus("Thinking…")
- *   - tool_use start  → onStatus(fixed verb)
- *   - set_script's `summary` field (streamed first) → onStatus(<model summary>)
- */
-export async function consumeChatStream(
-  body: ReadableStream<Uint8Array>,
-  hooks?: StreamHooks,
-): Promise<{ content: ContentBlock[]; stop_reason: string | null }> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let stopReason: string | null = null;
-  // Blocks reconstructed by their `index`; `toolJson` accumulates each tool_use's
-  // streamed input JSON until its content_block_stop, when we parse it.
-  const blocks: Record<number, Record<string, unknown>> = {};
-  let maxIndex = -1;
-  const toolJson: Record<number, string> = {};
-  let lastSummary = "";
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      for (const line of frame.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (payload === "" || payload === "[DONE]") continue;
-        let ev: {
-          type?: string;
-          index?: number;
-          content_block?: Record<string, unknown>;
-          delta?: Record<string, unknown>;
-          error?: unknown;
-        };
-        try {
-          ev = JSON.parse(payload);
-        } catch {
-          continue;
-        }
-        if (ev.type === "error") {
-          throw new Error(`Anthropic stream error: ${JSON.stringify(ev.error)}`);
-        }
-        if (ev.type === "content_block_start" && typeof ev.index === "number") {
-          const cb = { ...(ev.content_block ?? {}) };
-          blocks[ev.index] = cb;
-          maxIndex = Math.max(maxIndex, ev.index);
-          if (cb.type === "tool_use") {
-            toolJson[ev.index] = "";
-            cb.input = {};
-            lastSummary = "";
-            hooks?.onStatus?.(toolLabel(String(cb.name)));
-          }
-        } else if (ev.type === "content_block_delta" && typeof ev.index === "number") {
-          const b = blocks[ev.index];
-          const d = ev.delta ?? {};
-          if (b === undefined) continue;
-          if (d.type === "text_delta") {
-            b.text = String(b.text ?? "") + String(d.text ?? "");
-            hooks?.onText?.(String(d.text ?? ""));
-          } else if (d.type === "thinking_delta") {
-            b.thinking = String(b.thinking ?? "") + String(d.thinking ?? "");
-            hooks?.onStatus?.("Thinking…");
-          } else if (d.type === "signature_delta") {
-            b.signature = String(b.signature ?? "") + String(d.signature ?? "");
-          } else if (d.type === "input_json_delta") {
-            const acc = (toolJson[ev.index] ?? "") + String(d.partial_json ?? "");
-            toolJson[ev.index] = acc;
-            if (b.name === "set_script") {
-              const s = partialField(acc, "summary");
-              if (s !== null && s !== lastSummary) {
-                lastSummary = s;
-                hooks?.onStatus?.(s);
-              }
-            }
-          }
-        } else if (ev.type === "content_block_stop" && typeof ev.index === "number") {
-          const b = blocks[ev.index];
-          if (b?.type === "tool_use") {
-            try {
-              b.input = JSON.parse(toolJson[ev.index] || "{}");
-            } catch {
-              b.input = {};
-            }
-          }
-        } else if (ev.type === "message_delta") {
-          const sr = (ev.delta ?? {}).stop_reason;
-          if (typeof sr === "string") stopReason = sr;
-        }
-      }
-    }
-  }
-
-  const content: ContentBlock[] = [];
-  for (let i = 0; i <= maxIndex; i++) if (blocks[i]) content.push(blocks[i] as unknown as ContentBlock);
-  return { content, stop_reason: stopReason };
-}
-
 /** Assemble the always-included editor context block for a user turn: the
  * current source + latest compile result (+ disassembly when present). */
 export function editorContext(opts: {
@@ -723,22 +487,38 @@ export async function chatTurn(
 ): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
-  // Advertise the optional tools only when the editor can fulfill them.
-  const tools = [
-    ...TOOLS,
-    ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
-    ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
-  ];
+  const provider = activeProvider();
+  const caps = provider.capabilities;
+  // Assemble the system prompt once: the frozen chat spec, then the per-device
+  // builtin-cost block (#65), then any caller persona (e.g. Acid Mode's voice).
+  // Kept as one string so every provider carries it (the Anthropic provider still
+  // caches the whole system block).
+  let system = CHAT_SYSTEM;
+  if (deviceCosts) system += `\n\n${deviceCosts}`;
+  if (systemExtra) system += `\n\n${systemExtra}`;
+  // Advertise only tools the active provider can fulfill: withhold the vision
+  // `capture_preview` when the model can't see images, and every tool when the
+  // provider has no tool-calling at all (the chat then runs plain-text only).
+  const baseTools = caps.vision
+    ? TOOLS
+    : TOOLS.filter((t) => t.name !== "capture_preview");
+  const tools = caps.tools
+    ? [
+        ...baseTools,
+        ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
+        ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
+      ]
+    : [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.(round + 1);
-    const { content, stop_reason } = await messagesRequest(
-      history,
+    const { content, stop_reason } = await provider.send(history, {
+      system,
       tools,
-      hooks.signal,
-      deviceCosts,
-      systemExtra,
-      { onText: hooks.onText, onStatus: hooks.onStatus },
-    );
+      signal: hooks.signal,
+      // Live progress as the response streams (providers that can't stream just
+      // ignore this and return the whole turn at once).
+      stream: { onText: hooks.onText, onStatus: hooks.onStatus },
+    });
     history.push({ role: "assistant", content });
 
     // Surface any assistant text.

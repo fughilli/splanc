@@ -35,6 +35,7 @@ import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { AboutScreen } from "../screens/about";
+import { AiSettingsScreen } from "../screens/aiSettings";
 import { AcidModeScreen } from "../screens/acidMode";
 import { installShakeToEnter } from "../acid/shake";
 import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
@@ -141,6 +142,10 @@ async function main(): Promise<void> {
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
+    })
+    .add("/settings/ai", () => {
+      shell.setChrome({ title: "AI provider", back: true, tabs: true });
+      return AiSettingsScreen(router);
     })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
