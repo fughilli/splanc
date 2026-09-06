@@ -22,10 +22,10 @@ import { FxCompilerWorker } from "../../effects/editor/compiler";
 import {
   chatTurn,
   editorContext,
-  getApiKey,
   type ChatMessage,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { isAiConfigured } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { costTableStore } from "../../store/costTableStore";
@@ -39,7 +39,6 @@ import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { StatusPill, icon, toast, type PillState } from "../kit";
-import { openAiKeySheet } from "./aiKeySheet";
 import { installAcidStyles } from "./acidMode.css";
 import { narrateTool } from "../acid/narrate";
 import { createVoice, voiceSupported, type VoiceSession } from "../acid/voice";
@@ -249,9 +248,9 @@ export function AcidModeScreen(router: Router): Screen {
 
   async function ask(text: string): Promise<void> {
     if (busy) return;
-    if (!getApiKey()) {
-      appendMsg("agent", "I need an Anthropic API key first — pop it in and try again.");
-      openAiKeySheet();
+    if (!isAiConfigured()) {
+      appendMsg("agent", "I need an AI provider set up first — pick one and try again.");
+      location.hash = "#/settings/ai";
       return;
     }
     appendMsg("you", text);
@@ -524,10 +523,10 @@ export function AcidModeScreen(router: Router): Screen {
       midiRouter.attach();
       // Remote chat drive (repro-on-device): feed queued prompts into ask().
       unregisterChatDriver = registerChatDriver((text) => ask(text));
-      if (!getApiKey()) {
+      if (!isAiConfigured()) {
         appendMsg(
           "agent",
-          "Heads up: add an Anthropic API key (⋯ → AI settings) and I can start making lights for you.",
+          "Heads up: set up an AI provider (⋯ → AI settings) and I can start making lights for you.",
         );
       }
     },

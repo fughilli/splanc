@@ -1,6 +1,7 @@
 /**
- * The chat-path SSE stream reader (consumeChatStream in effects/ai/generate.ts):
- * it reconstructs the assistant `content` blocks (thinking+signature, text,
+ * The chat-path SSE stream reader (consumeChatStream in the Anthropic provider,
+ * effects/ai/providers/anthropic.ts): it reconstructs the assistant `content`
+ * blocks (thinking+signature, text,
  * tool_use with parsed input) exactly as the non-streaming response would, and
  * fires live status while the response streams — including the set_script
  * `summary` field, which is emitted first so the UI can show it before the (big)
@@ -11,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { consumeChatStream, withCacheControl } from "../src/effects/ai/generate";
+import { consumeChatStream, withCacheControl } from "../src/effects/ai/providers/anthropic";
 
 // A realistic Anthropic streaming sequence: thinking → text → set_script tool_use
 // (summary before source) → stop_reason tool_use. `event:` lines are ignored by

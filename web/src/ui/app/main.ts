@@ -35,6 +35,8 @@ import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { AboutScreen } from "../screens/about";
+import { AiSettingsScreen } from "../screens/aiSettings";
+import { warmActiveProvider } from "../../effects/ai/generate";
 import { AcidModeScreen } from "../screens/acidMode";
 import { installShakeToEnter } from "../acid/shake";
 import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
@@ -142,6 +144,10 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
     })
+    .add("/settings/ai", () => {
+      shell.setChrome({ title: "AI provider", back: true, tabs: true });
+      return AiSettingsScreen(router);
+    })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
       return CaptureScreen(router, m.query);
@@ -178,6 +184,13 @@ async function main(): Promise<void> {
   // to keep the flash stack (and the esptool-js it can pull) off the initial bundle;
   // best-effort — prefetchLatestFirmware() self-guards offline / errors.
   void import("../../flash/firmwareRepo").then((m) => m.prefetchLatestFirmware()).catch(() => {});
+
+  // Warm the AI provider in the background so the first chat turn in the effects
+  // workspace is fast. Only the in-browser WebGPU model has anything to warm —
+  // it loads onto the GPU in its Web Worker (off the main thread) and prefills
+  // the chat system prompt; cloud / local-server providers no-op. Best-effort:
+  // skips silently with no WebGPU, no selected model, or weights not yet cached.
+  warmActiveProvider();
 
   // FX-agent chat-log console dump (debugging, Option 1): a manual trigger from
   // DevTools, plus an on-boot dump when the "dump on launch" toggle is set — the
