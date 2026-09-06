@@ -16,9 +16,11 @@
     "@capacitor/core": "^8.5.0",
     "@capacitor/ios": "^8.5.0",
     "@ledmapper/protocol": "workspace:*",
+    "@mlc-ai/web-llm": "0.2.84",
     "@splanc/camera-bridge": "link:./native-plugins/camera-bridge",
     "@splanc/speech-bridge": "link:./native-plugins/speech-bridge",
     "@splanc/wss-bridge": "link:./native-plugins/wss-bridge",
+    "@wllama/wllama": "3.6.1",
     "esptool-js": "^0.6.0",
     "jsqr": "^1.4.0",
     "web-serial-polyfill": "^1.0.15"

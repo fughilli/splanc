@@ -14,7 +14,7 @@ import {
   contentToText,
   messagesToWllama,
   parseToolCalls,
-} from "../src/effects/ai/providers/wllama";
+} from "../src/effects/ai/providers/wllamaProtocol";
 import type { ChatMessage, ToolDef } from "../src/effects/ai/provider";
 
 test("tool allow-list: qwen2.5-instruct / hermes yes, others no", () => {

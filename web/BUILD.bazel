@@ -307,6 +307,17 @@ vite_bin.vite(
         ":node_modules/jsqr",
         ":node_modules/vite",
         ":node_modules/web-serial-polyfill",
+        # wllama (in-browser CPU model, effects/ai/providers/wllama.ts): the engine
+        # JS is reached via `await import("@wllama/wllama/esm/index.js")` and the
+        # .wasm via a `?url` asset import, so — like jsqr / the capacitor chunks
+        # above — the package must be present for Rolldown to resolve + emit the
+        # lazy chunk and copy the wasm asset.
+        ":node_modules/@wllama/wllama",
+        # web-llm (in-browser WebGPU model): the engine is reached via
+        # `await import("@mlc-ai/web-llm")` and its host runs in a Vite-bundled
+        # `?worker` (webllmWorker.ts) — both must be present for Rolldown to
+        # resolve + emit the lazy engine chunk and the worker chunk.
+        ":node_modules/@mlc-ai/web-llm",
         # Capacitor native-wrapper packages (docs/design/ios-support.md §4.2–4.3).
         # net/nativeSocket.ts + net/capacitorImprov.ts + ui/acid/voice.ts reach
         # these ONLY through `await import(...)`, so Rolldown emits them as

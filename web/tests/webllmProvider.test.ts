@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modelSupportsTools, WEBLLM_TOOL_MODELS } from "../src/effects/ai/providers/webllm";
+import { modelSupportsTools, WEBLLM_TOOL_MODELS } from "../src/effects/ai/providers/webllmCatalog";
 
 test("modelSupportsTools accepts exactly the declared function-calling models", () => {
   assert.ok(WEBLLM_TOOL_MODELS.size > 0);
