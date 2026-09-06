@@ -44,11 +44,21 @@ import type {
 // GGUF model weights are a runtime download. 3.6.1 ships a single universal wasm
 // that the engine's AssetsPathConfig points at via `default`.
 import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
+import {
+  isResumableDownloadSupported,
+  downloadModelResumable,
+  cachedModelFile,
+  isModelCached,
+  deleteCachedModel,
+} from "../resumableDownload";
 
 // -- minimal shapes of the parts of wllama we touch --------------------------
 
 interface WllamaInstance {
   loadModelFromUrl(url: string, params?: Record<string, unknown>): Promise<void>;
+  /** Load already-fetched GGUF bytes (our resumable-download path uses this so
+   * wllama's own non-resumable downloader is bypassed). */
+  loadModel(blobs: Blob[], params?: Record<string, unknown>): Promise<void>;
   createChatCompletion(opts: Record<string, unknown>): Promise<ChatCompletionResponse>;
   isModelLoaded(): boolean;
   exit(): Promise<void>;
@@ -127,7 +137,26 @@ export function isWllamaSupported(): boolean {
   return typeof WebAssembly !== "undefined";
 }
 
-/** Load `model` (a GGUF URL) into the engine if not already the active one. */
+/** LoadModelParams shared by both load paths. `n_gpu_layers: 0` forces CPU-only
+ * (see the loadWllamaModel note); never remove it. */
+function loadParams(nCtx: number, nThreads: number): Record<string, unknown> {
+  const threads = threadCount(nThreads);
+  return {
+    // CRITICAL: force CPU-only. wllama 3.6.1 DEFAULTS to n_gpu_layers 99999 (offload
+    // every layer to WebGPU) — which is exactly the mobile GPU path that starves the
+    // display compositor and freezes the phone ("black blocks"). 0 → the engine sets
+    // noWebGPU and runs purely on the CPU/WASM, so the device stays responsive. This
+    // is the whole reason this provider exists; never remove it.
+    n_gpu_layers: 0,
+    n_ctx: nCtx,
+    ...(threads !== undefined ? { n_threads: threads } : {}),
+  };
+}
+
+/** Load `model` (a GGUF URL) into the engine if not already the active one.
+ * When OPFS is available the weights are fetched via the resumable/checkpointed
+ * downloader (survives backgrounding) and handed to wllama as a Blob; otherwise
+ * we fall back to wllama's own (non-resumable) URL downloader. */
 export async function loadWllamaModel(
   model: string,
   nCtx: number,
@@ -140,26 +169,40 @@ export async function loadWllamaModel(
   // Point the engine at the bundled, app-origin wasm asset (3.6.1 uses one
   // universal wasm via `default`) — no CDN, no wasm-from-cdn helper.
   const inst = new Wllama({ default: wllamaWasmUrl });
-  const threads = threadCount(nThreads);
-  await inst.loadModelFromUrl(model, {
-    // CRITICAL: force CPU-only. wllama 3.6.1 DEFAULTS to n_gpu_layers 99999 (offload
-    // every layer to WebGPU) — which is exactly the mobile GPU path that starves the
-    // display compositor and freezes the phone ("black blocks"). 0 → the engine sets
-    // noWebGPU and runs purely on the CPU/WASM, so the device stays responsive. This
-    // is the whole reason this provider exists; never remove it.
-    n_gpu_layers: 0,
-    n_ctx: nCtx,
-    ...(threads !== undefined ? { n_threads: threads } : {}),
-    ...(onProgress
-      ? {
-          progressCallback: ({ loaded, total }: { loaded: number; total: number }) =>
-            onProgress({ progress: total ? loaded / total : 0, text: "Loading…" }),
-        }
-      : {}),
-  });
+  const params = loadParams(nCtx, nThreads);
+
+  if (isResumableDownloadSupported() && !isSplitModel(model)) {
+    // Resumable path: fetch (or reuse) the checkpointed file, then load the bytes.
+    const file =
+      (await cachedModelFile(model)) ??
+      (await downloadModelResumable(model, {
+        onProgress: (p) =>
+          onProgress?.({ progress: p.total ? p.loaded / p.total : 0, text: "Downloading…" }),
+      }));
+    onProgress?.({ progress: 1, text: "Loading…" });
+    await inst.loadModel([file], params);
+  } else {
+    // Fallback: wllama's own downloader (no resume) — used when OPFS is
+    // unavailable or for split (multi-part) GGUFs the resumable path can't join.
+    await inst.loadModelFromUrl(model, {
+      ...params,
+      ...(onProgress
+        ? {
+            progressCallback: ({ loaded, total }: { loaded: number; total: number }) =>
+              onProgress({ progress: total ? loaded / total : 0, text: "Loading…" }),
+          }
+        : {}),
+    });
+  }
   engine = inst;
   engineModel = model;
   engineCtx = nCtx;
+}
+
+/** wllama split (multi-part) GGUFs — "…-00001-of-00003.gguf". The resumable
+ * downloader handles single files; split models fall back to wllama's joiner. */
+function isSplitModel(url: string): boolean {
+  return /-\d{5}-of-\d{5}\.gguf(\?.*)?$/i.test(url);
 }
 
 /** Free the loaded model + worker(s). */
@@ -186,8 +229,15 @@ async function getModelManager(): Promise<WllamaModelManager> {
   return modelManager;
 }
 
+/** Whether to use our resumable/checkpointed store for this model (single-file
+ * GGUF + OPFS available) vs. wllama's own downloader (split models / no OPFS). */
+function useResumableStore(url: string): boolean {
+  return isResumableDownloadSupported() && !isSplitModel(url);
+}
+
 /** Is this model's weights already downloaded (cached) in the browser? */
 export async function isWllamaModelDownloaded(url: string): Promise<boolean> {
+  if (useResumableStore(url)) return isModelCached(url);
   try {
     const models = await (await getModelManager()).getModels();
     return models.some((m) => m.url === url);
@@ -201,11 +251,21 @@ export function isWllamaModelLoaded(url: string): boolean {
   return engine !== null && engineModel === url;
 }
 
-/** Download + cache a model's weights WITHOUT loading it onto the CPU. */
+/** Download + cache a model's weights WITHOUT loading it onto the CPU. Resumable
+ * (checkpointed) so backgrounding the app doesn't force a full re-download. */
 export async function downloadWllamaModel(
   url: string,
   onProgress?: (p: WllamaProgress) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (useResumableStore(url)) {
+    await downloadModelResumable(url, {
+      onProgress: (p) =>
+        onProgress?.({ progress: p.total ? p.loaded / p.total : 0, text: "Downloading…" }),
+      signal,
+    });
+    return;
+  }
   const mm = await getModelManager();
   await mm.downloadModel(url, {
     progressCallback: ({ loaded, total }) =>
@@ -216,6 +276,10 @@ export async function downloadWllamaModel(
 /** Delete a model's cached weights (unloads it first if it's the active one). */
 export async function deleteWllamaModel(url: string): Promise<void> {
   if (engineModel === url) await unloadWllamaModel();
+  if (useResumableStore(url)) {
+    await deleteCachedModel(url);
+    return;
+  }
   const models = await (await getModelManager()).getModels();
   const m = models.find((x) => x.url === url);
   if (m) await m.remove();

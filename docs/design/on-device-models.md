@@ -129,10 +129,20 @@ translate at each provider's edge.
   from a third-party CDN at runtime — only the (multi-GB) GGUF weights are a
   runtime download (then browser-cached). (Unlike the web-llm provider, which is
   still a runtime CDN import — a fragility worth migrating later.) This is the
-  **phone-friendly** on-device option: inference
-  runs on the CPU in wllama's worker(s) and **never touches the display GPU**, so
-  it can't starve/hang a mobile GPU driver the way a big WebGPU compute burst does
-  (see "Phones" below). Threads default to `floor(hardwareConcurrency / 2)`
+  **phone-friendly** on-device option: inference runs purely on the CPU in
+  wllama's worker(s) and **never touches the display GPU**, so it can't
+  starve/hang a mobile GPU driver the way a big WebGPU compute burst does (see
+  "Phones" below). This is **enforced with `n_gpu_layers: 0`** — wllama 3.6.1
+  otherwise defaults to `99999` (offload *every* layer to WebGPU), so omitting it
+  runs on the GPU and freezes phones exactly like web-llm; never remove it.
+  **Downloads are resumable/checkpointed** (`resumableDownload.ts`): the GGUF
+  streams into OPFS and the on-disk size is the resume point, so an HTTP `Range`
+  request (with `If-Range` on the stored ETag) continues from there — backgrounding
+  the app / locking the phone costs only the in-flight bytes, not a full
+  re-download (a bounded retry-with-resume loop makes it automatic on foreground).
+  The loaded bytes are handed to wllama via `loadModel([blob])`, bypassing its own
+  non-resumable downloader; split (multi-part) GGUFs and no-OPFS browsers fall back
+  to it. Threads default to `floor(hardwareConcurrency / 2)`
   (leaving UI headroom, à la pocketpal-ai) and are forced to 1 when the page isn't
   cross-origin-isolated (no `SharedArrayBuffer` → multi-thread WASM is
   unavailable). Context defaults to a small 2048 to bound memory. wllama has **no
