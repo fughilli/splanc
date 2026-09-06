@@ -4,10 +4,12 @@
  * browser, and inference runs locally on the GPU via web-llm (MLC). Nothing
  * leaves the device.
  *
- * web-llm is loaded LAZILY from a CDN ESM URL rather than bundled, so it adds no
- * npm/lockfile dependency and no weight to the base bundle — it's fetched only
- * when the user actually selects the in-browser provider. web-llm exposes an
- * OpenAI-shaped `chat.completions.create`, so we reuse the OpenAI translators.
+ * web-llm is a BUNDLED dependency (`@mlc-ai/web-llm`, pnpm-locked): the engine is
+ * `await import`-ed so Vite code-splits it into its own lazy chunk (off the base
+ * bundle, own-origin — fetched only when this provider is selected, never from a
+ * third-party CDN, so the app works offline). Inference runs in a Web Worker
+ * bundled from webllmWorker.ts (Vite `?worker`). web-llm exposes an OpenAI-shaped
+ * `chat.completions.create`, so we reuse the OpenAI translators.
  *
  * This path is best-effort: it requires WebGPU and a first-run model download.
  */
@@ -26,10 +28,15 @@ import {
   toOpenAiTools,
   type OaiMessage,
 } from "./openaiCompat";
-
-/** The web-llm ESM bundle. A `string`-typed specifier keeps tsc from trying to
- * resolve the URL as a module (which it would flag as missing). */
-const CDN_URL: string = "https://esm.run/@mlc-ai/web-llm";
+// The tool allow-list is pure + CJS-safe (node-testable); it lives in a separate
+// module so this engine/worker file — which pulls the bundled WASM/worker — needn't
+// be imported by the unit tests. Re-exported for existing importers.
+import { WEBLLM_TOOL_MODELS, modelSupportsTools } from "./webllmCatalog";
+export { WEBLLM_TOOL_MODELS, modelSupportsTools };
+// The web-llm engine host, bundled as an app-origin Web Worker by Vite (`?worker`
+// → a Worker constructor). Inference runs off the main thread; nothing is fetched
+// from a CDN.
+import WebLlmWorker from "./webllmWorker.ts?worker";
 
 // -- minimal shape of the parts of web-llm we touch --------------------------
 
@@ -88,18 +95,13 @@ function chatOptsFor(contextWindowSize?: number): ChatOpts | undefined {
 }
 
 /**
- * Spawn a module Web Worker that hosts a web-llm engine handler, so inference
- * runs off the main thread (fixes UI stutter). The worker imports web-llm from
- * the same CDN and installs its `WebWorkerMLCEngineHandler`; we build it from a
- * blob so there's no separate worker asset to bundle.
+ * Spawn the module Web Worker that hosts the web-llm engine handler, so inference
+ * runs off the main thread (fixes UI stutter). Bundled from webllmWorker.ts via
+ * Vite's `?worker` (own-origin asset), so — unlike the old blob-from-CDN worker —
+ * it needs no network to start and works offline.
  */
 function makeWorker(): Worker {
-  const src =
-    `import * as webllm from ${JSON.stringify(CDN_URL)};\n` +
-    `const handler = new webllm.WebWorkerMLCEngineHandler();\n` +
-    `self.onmessage = (m) => handler.onmessage(m);\n`;
-  const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
-  return new Worker(url, { type: "module" });
+  return new WebLlmWorker();
 }
 
 /** Create an engine, preferring the Web Worker variant when available. Returns
@@ -126,27 +128,6 @@ async function createEngine(
   return { engine: await m.CreateMLCEngine(model, opts, chatOpts), worker: null };
 }
 
-/**
- * web-llm only implements function calling for a FIXED, enumerated set of models
- * (the engine throws for any other model when `tools` is present — e.g. even
- * Hermes-3-Llama-3.2-3B is unsupported; only the 3.1-8B Hermes-3 variants are).
- * A name heuristic is therefore wrong: this must be the exact allow-list web-llm
- * publishes. Our AI features are tool-driven, so we never send tools to a model
- * outside this set (no crash) and the UI steers the user to a supported one.
- */
-export const WEBLLM_TOOL_MODELS = new Set<string>([
-  "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC",
-  "Hermes-2-Pro-Llama-3-8B-q4f32_1-MLC",
-  "Hermes-2-Pro-Mistral-7B-q4f16_1-MLC",
-  "Hermes-3-Llama-3.1-8B-q4f32_1-MLC",
-  "Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
-]);
-
-/** Whether web-llm can do tool/function calling for this exact model id. */
-export function modelSupportsTools(id: string): boolean {
-  return WEBLLM_TOOL_MODELS.has(id);
-}
-
 /** True when the browser exposes WebGPU (required for in-browser inference). */
 export function isWebLlmSupported(): boolean {
   return typeof navigator !== "undefined" && "gpu" in navigator;
@@ -154,7 +135,9 @@ export function isWebLlmSupported(): boolean {
 
 async function loadModule(): Promise<WebLlmModule> {
   if (!modulePromise) {
-    modulePromise = import(/* @vite-ignore */ CDN_URL) as Promise<WebLlmModule>;
+    // Bundled dynamic import → Vite splits web-llm into its own lazy chunk served
+    // from the app origin (no CDN); loaded only when this provider is used.
+    modulePromise = import("@mlc-ai/web-llm").then((m) => m as unknown as WebLlmModule);
   }
   return modulePromise;
 }

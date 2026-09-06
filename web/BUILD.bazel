@@ -313,6 +313,11 @@ vite_bin.vite(
         # above — the package must be present for Rolldown to resolve + emit the
         # lazy chunk and copy the wasm asset.
         ":node_modules/@wllama/wllama",
+        # web-llm (in-browser WebGPU model): the engine is reached via
+        # `await import("@mlc-ai/web-llm")` and its host runs in a Vite-bundled
+        # `?worker` (webllmWorker.ts) — both must be present for Rolldown to
+        # resolve + emit the lazy engine chunk and the worker chunk.
+        ":node_modules/@mlc-ai/web-llm",
         # Capacitor native-wrapper packages (docs/design/ios-support.md §4.2–4.3).
         # net/nativeSocket.ts + net/capacitorImprov.ts + ui/acid/voice.ts reach
         # these ONLY through `await import(...)`, so Rolldown emits them as
