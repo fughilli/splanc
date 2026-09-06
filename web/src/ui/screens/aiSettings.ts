@@ -26,6 +26,7 @@ import {
   CLOUD_VENDORS,
   DEFAULT_OPENAI_BASE_URL,
   DEFAULT_WEBLLM_CONTEXT,
+  DEFAULT_WLLAMA_CONTEXT,
   type AiConfig,
   type ProviderKind,
   type CloudVendor,
@@ -34,6 +35,11 @@ import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/op
 import {
   isWllamaSupported,
   loadWllamaModel,
+  unloadWllamaModel,
+  downloadWllamaModel,
+  deleteWllamaModel,
+  isWllamaModelDownloaded,
+  isWllamaModelLoaded,
   wllamaModelSupportsTools,
 } from "../../effects/ai/providers/wllama";
 import {
@@ -121,7 +127,7 @@ export function AiSettingsScreen(_router: Router): Screen {
         panel = webLlmPanel();
         break;
       case "wllama":
-        panel = wllamaPanel(cfg, set, setLive);
+        panel = wllamaPanel();
         break;
       case "cloud":
       default:
@@ -270,92 +276,93 @@ function cloudPanel(
 // The phone-friendly path: llama.cpp→WASM on the CPU, so it never touches the
 // GPU (no freeze/artifacts) — just slower, best with a small model.
 
-function wllamaPanel(
-  cfg: AiConfig,
-  set: (p: Partial<AiConfig>) => void,
-  setLive: (p: Partial<AiConfig>) => void,
-): HTMLElement {
-  const g = group("In-browser (CPU)");
+/** A friendly display name for a wllama GGUF URL (its recommended label, else
+ * the filename sans extension). */
+function wllamaTitle(url: string): string {
+  const rec = RECOMMENDED_WLLAMA.find((m) => m.url === url);
+  if (rec) return rec.label;
+  const file = url.split("/").pop() ?? url;
+  return file.replace(/\.gguf(\?.*)?$/i, "");
+}
+/** The HuggingFace model page for a `…/resolve/<rev>/<file>.gguf` URL. */
+function wllamaHfUrl(url: string): string | undefined {
+  return url.match(/^(https:\/\/huggingface\.co\/[^/]+\/[^/]+)\/resolve\//)?.[1];
+}
 
-  // Recommended presets (picking one fills the URL field below via a rebuild).
-  const presets: Record<string, string> = { "": "Choose a recommended model…" };
-  for (const m of RECOMMENDED_WLLAMA) presets[m.url] = m.label;
-  const presetValue = RECOMMENDED_WLLAMA.some((m) => m.url === cfg.wllama.model)
-    ? cfg.wllama.model
-    : "";
-  g.append(
-    labeledSelect("Recommended", presets, presetValue, (url) => {
-      if (url) set({ wllama: { ...getAiConfig().wllama, model: url } });
-    }),
-    field({
-      label: "Model (GGUF URL)",
-      value: cfg.wllama.model,
-      placeholder: "https://huggingface.co/…/resolve/main/model.gguf",
-      onInput: (v) => setLive({ wllama: { ...getAiConfig().wllama, model: v.trim() } }),
-    }),
-    field({
-      label: "Context window (tokens)",
-      type: "number",
-      value: String(cfg.wllama.contextWindowSize),
-      onInput: (v) => {
-        const n = parseInt(v, 10);
-        if (n > 0) setLive({ wllama: { ...getAiConfig().wllama, contextWindowSize: n } });
-      },
-    }),
-    field({
-      label: "Threads (0 = auto)",
-      type: "number",
-      value: String(cfg.wllama.nThreads),
-      onInput: (v) => {
-        const n = parseInt(v, 10);
-        if (n >= 0) setLive({ wllama: { ...getAiConfig().wllama, nThreads: n } });
-      },
-    }),
-  );
-
-  const loadBtn = Button({
-    label: "Download / load model",
-    variant: "quiet",
-    onClick: async () => {
-      const c = getAiConfig().wllama;
-      if (!c.model.trim()) {
-        toast("Enter or pick a model URL first");
-        return;
-      }
-      loadBtn.disabled = true;
-      try {
-        await loadWllamaModel(c.model, c.contextWindowSize, c.nThreads);
-        toast("Model loaded");
-      } catch (e) {
-        toast(`Load failed: ${msg(e)}`, { error: true });
-      } finally {
-        loadBtn.disabled = false;
-      }
+// In-browser CPU (wllama): the phone-friendly path. Uses the SAME model-manager
+// component as WebGPU (scrollview cards + download/load/delete + search + add).
+function wllamaPanel(): HTMLElement {
+  const cfgW = (): AiConfig["wllama"] => getAiConfig().wllama;
+  const toVM = (url: string): ModelVM => {
+    const tools = wllamaModelSupportsTools(url);
+    return {
+      id: url,
+      title: wllamaTitle(url),
+      tools,
+      badges: tools ? [{ label: "Tools", kind: "tools" }] : [],
+      hfUrl: wllamaHfUrl(url),
+    };
+  };
+  const threadsField = field({
+    label: "Threads (0 = auto)",
+    type: "number",
+    value: String(cfgW().nThreads),
+    onInput: (v) => {
+      const n = parseInt(v, 10);
+      if (n >= 0) updateAiConfig({ wllama: { ...cfgW(), nThreads: n } });
     },
   });
-  g.append(loadBtn);
-
-  if (!isWllamaSupported()) {
-    g.append(note("This browser has no WebAssembly — the CPU model can't run here."));
-  }
-  g.append(
-    note(
+  const src: ModelSource = {
+    title: "In-browser (CPU)",
+    supported: isWllamaSupported(),
+    unsupportedNote: "This browser has no WebAssembly — the CPU model can't run here.",
+    // wllama models are arbitrary GGUFs (not a curated tool-only catalog), so
+    // don't hide non-tool models by default.
+    toolsOnlyDefault: false,
+    extraFields: [threadsField],
+    ctx: {
+      get: () => cfgW().contextWindowSize,
+      default: DEFAULT_WLLAMA_CONTEXT,
+      set: (n) => updateAiConfig({ wllama: { ...cfgW(), contextWindowSize: n } }),
+    },
+    active: () => cfgW().model,
+    pinned: () => cfgW().pinned,
+    addPin: (id) => {
+      const p = cfgW().pinned;
+      if (!p.includes(id)) updateAiConfig({ wllama: { ...cfgW(), pinned: [...p, id] } });
+    },
+    loadCatalog: async () => RECOMMENDED_WLLAMA.map((m) => toVM(m.url)),
+    cardFor: (id) => toVM(id),
+    isDownloaded: (id) => isWllamaModelDownloaded(id),
+    isLoaded: (id) => isWllamaModelLoaded(id),
+    download: (id, onP) => downloadWllamaModel(id, onP),
+    load: (id, onP) => loadWllamaModel(id, cfgW().contextWindowSize, cfgW().nThreads, onP),
+    unload: () => unloadWllamaModel(),
+    delete: (id) => deleteWllamaModel(id),
+    setActive: (id) => updateAiConfig({ wllama: { ...cfgW(), model: id } }),
+    clearActive: () => updateAiConfig({ wllama: { ...cfgW(), model: "" } }),
+    add: {
+      label: "Add a model by GGUF URL",
+      placeholder: "https://huggingface.co/…/resolve/main/model.gguf",
+      validate: (id) =>
+        /^https?:\/\/.+\.gguf(\?.*)?$/i.test(id)
+          ? null
+          : "Enter a direct .gguf URL (a HuggingFace “resolve” link)",
+    },
+    footerNote:
       "Runs the model on the CPU, in your browser, on your device — it never touches " +
-        "the GPU, so it won't freeze the phone the way the WebGPU option can. It's " +
-        "slower (a few tokens/sec) and best with a small (1–3B) model. Multi-threading " +
-        "needs a cross-origin-isolated page; otherwise it runs single-threaded.",
-    ),
-  );
-  if (cfg.wllama.model && !wllamaModelSupportsTools(cfg.wllama.model)) {
-    g.append(
-      note(
-        "Heads up: this model isn't in the tool-calling allow-list, so it'll answer as " +
-          "plain chat — it can't directly edit the effect or map MIDI. Pick a " +
-          "Qwen2.5-Instruct model for tool use.",
-      ),
-    );
-  }
-  return g;
+      "the GPU, so it won't freeze the phone the way the WebGPU option can. It's slower " +
+      "(a few tokens/sec) and best with a small (1–3B) model. Weights download from " +
+      "HuggingFace on first use and cache locally. Multi-threading needs a " +
+      "cross-origin-isolated page; otherwise it runs single-threaded. Tool-calling " +
+      "(needed to generate effects and map MIDI) works on Qwen2.5-Instruct / Hermes models.",
+    toolsWarn: (id) =>
+      id && !wllamaModelSupportsTools(id)
+        ? `⚠ ${wllamaTitle(id)} isn't a tool-calling model, so it can only chat — it ` +
+          `can't generate effects or map MIDI. Pick a model with the “Tools” badge.`
+        : null,
+  };
+  return modelManagerPanel(src);
 }
 
 /** Build a full cloud patch that merges a change into one vendor. */
@@ -476,46 +483,91 @@ function localPanel(cfg: AiConfig, setLive: (p: Partial<AiConfig>) => void): HTM
   return g;
 }
 
-// -- In-browser WebGPU (web-llm) — the model browser -------------------------
+// -- Shared in-browser model manager (WebGPU + CPU) --------------------------
+// One component drives BOTH in-browser tabs: the scrollview of model cards with
+// per-model download / load / delete controls + progress, a search box, a
+// "tool-calling only" filter, an "add by id/URL" field, and a configurable
+// context window. Each provider supplies a ModelSource adapter.
 
-function webLlmPanel(): HTMLElement {
-  const g = group("In-browser (WebGPU)");
-  if (!isWebLlmSupported()) {
-    g.append(
-      note(
-        "This browser doesn't expose WebGPU, so in-browser inference isn't " +
-          "available. Try a recent Chrome/Edge, or use a local server instead.",
-      ),
-    );
+/** A model as shown in the manager (webllm: id-named; wllama: URL-keyed). */
+interface ModelVM {
+  /** Stable key passed to download/load/delete + compared to the active model. */
+  id: string;
+  /** Display name in the card head. */
+  title: string;
+  /** Can it drive tool calls (effect generation + MIDI mapping)? */
+  tools: boolean;
+  badges: { label: string; kind?: string }[];
+  hfUrl?: string | undefined;
+}
+
+/** Progress of a per-model download / load (0..1 + a label). */
+interface ManagerProgress {
+  progress: number;
+  text: string;
+}
+
+/** Per-provider behavior the shared manager drives. */
+interface ModelSource {
+  title: string;
+  supported: boolean;
+  unsupportedNote: string;
+  /** Whether the "Tool-calling only" filter starts on. */
+  toolsOnlyDefault: boolean;
+  /** Extra provider-specific fields (e.g. wllama threads), shown under context. */
+  extraFields?: HTMLElement[];
+  ctx: { get: () => number; default: number; set: (n: number) => void };
+  active: () => string;
+  pinned: () => string[];
+  addPin: (id: string) => void;
+  loadCatalog: () => Promise<ModelVM[]>;
+  cardFor: (id: string) => ModelVM;
+  isDownloaded: (id: string) => Promise<boolean>;
+  isLoaded: (id: string) => boolean;
+  download: (id: string, onProgress: (p: ManagerProgress) => void) => Promise<void>;
+  load: (id: string, onProgress: (p: ManagerProgress) => void) => Promise<void>;
+  unload: () => Promise<void>;
+  delete: (id: string) => Promise<void>;
+  setActive: (id: string) => void;
+  clearActive: () => void;
+  add: {
+    label: string;
+    placeholder: string;
+    /** Return an error message to reject the id, or null to accept. `catalog` is
+     * the loaded model list (so webllm can require catalog membership). */
+    validate: (id: string, catalog: ModelVM[]) => string | null;
+  };
+  footerNote: string;
+  /** Warning shown when the active model can't tool-call (or null). */
+  toolsWarn: (id: string) => string | null;
+}
+
+function modelManagerPanel(src: ModelSource): HTMLElement {
+  const g = group(src.title);
+  if (!src.supported) {
+    g.append(note(src.unsupportedNote));
     return g;
   }
 
   // Local state — chips update in place; only the list rebuilds (not this whole
   // panel), so search focus and in-flight operations survive.
-  let toolsOnly = true;
+  let toolsOnly = src.toolsOnlyDefault;
   let query = "";
-  let cards: WebLlmModelCard[] = [];
+  let cards: ModelVM[] = [];
   const downloaded = new Map<string, boolean>();
   const busy = new Map<string, "download" | "load" | "delete">();
-  const active = (): string => getAiConfig().webllm.model;
-  const pinned = (): string[] => getAiConfig().webllm.pinned;
 
   const warn = note("");
   warn.classList.add("aiset-warn");
   function refreshWarn(): void {
-    const m = active();
-    const bad = m !== "" && !modelSupportsTools(m);
-    warn.style.display = bad ? "block" : "none";
-    if (bad) {
-      warn.textContent =
-        `⚠ ${m} can't use tools, so it can't generate effects or map MIDI — ` +
-        `it will only chat. Pick a model with the “Tools” badge.`;
-    }
+    const w = src.toolsWarn(src.active());
+    warn.style.display = w ? "block" : "none";
+    if (w) warn.textContent = w;
   }
 
   const search = field({
     label: "Search models",
-    placeholder: "e.g. Hermes, Llama, Phi",
+    placeholder: "e.g. Hermes, Llama, Qwen, Phi",
     onInput: (v) => {
       query = v.trim().toLowerCase();
       renderCards();
@@ -530,22 +582,16 @@ function webLlmPanel(): HTMLElement {
     }),
   );
 
-  // Context window (tokens). web-llm's per-model default (often 4096) is too
-  // small for our grounded prompts (ContextWindowSizeExceededError); configurable
-  // here. Takes effect on the next load (the engine reloads if it changed).
+  // Context window (tokens). The per-model default is often too small for our
+  // grounded prompts; configurable here. Takes effect on the next load.
   const ctxField = field({
     label: "Context window (tokens)",
     type: "number",
-    value: String(getAiConfig().webllm.contextWindowSize),
-    placeholder: String(DEFAULT_WEBLLM_CONTEXT),
+    value: String(src.ctx.get()),
+    placeholder: String(src.ctx.default),
     onInput: (v) => {
       const n = parseInt(v, 10);
-      updateAiConfig({
-        webllm: {
-          ...getAiConfig().webllm,
-          contextWindowSize: Number.isFinite(n) && n > 0 ? n : DEFAULT_WEBLLM_CONTEXT,
-        },
-      });
+      src.ctx.set(Number.isFinite(n) && n > 0 ? n : src.ctx.default);
     },
   });
 
@@ -555,28 +601,15 @@ function webLlmPanel(): HTMLElement {
   listStatus.className = "aiset-progress-text";
   listStatus.textContent = "Loading model list…";
 
-  /** Resolve a model id to a card (synthesizing one for pinned/custom ids). */
-  function cardFor(id: string): WebLlmModelCard {
-    const found = cards.find((c) => c.id === id);
-    if (found) return found;
-    return {
-      id,
-      vramMB: null,
-      lowResource: false,
-      tools: modelSupportsTools(id),
-      hfUrl: `https://huggingface.co/mlc-ai/${id}`,
-    };
-  }
-
   function renderCards(): void {
-    const pins = pinned();
-    const shown: WebLlmModelCard[] = [
-      ...pins.map(cardFor),
+    const pins = src.pinned();
+    const shown: ModelVM[] = [
+      ...pins.map((id) => src.cardFor(id)),
       ...cards.filter(
         (c) =>
           !pins.includes(c.id) &&
           (!toolsOnly || c.tools) &&
-          c.id.toLowerCase().includes(query),
+          (c.title.toLowerCase().includes(query) || c.id.toLowerCase().includes(query)),
       ),
     ];
     cardsEl.replaceChildren();
@@ -589,16 +622,16 @@ function webLlmPanel(): HTMLElement {
     for (const c of shown) cardsEl.append(chipEl(c));
   }
 
-  function chipEl(card: WebLlmModelCard): HTMLElement {
+  function chipEl(card: ModelVM): HTMLElement {
     const id = card.id;
     const el = document.createElement("div");
-    el.className = "aiset-card" + (id === active() ? " on" : "");
+    el.className = "aiset-card" + (id === src.active() ? " on" : "");
 
     const nameRow = document.createElement("div");
     nameRow.className = "aiset-card-head";
     const name = document.createElement("div");
     name.className = "aiset-card-name";
-    name.textContent = id;
+    name.textContent = card.title;
 
     // Controls: download (↓ / ✓ / bar), delete (trash), load (</>).
     const controls = document.createElement("div");
@@ -614,9 +647,7 @@ function webLlmPanel(): HTMLElement {
 
     const badges = document.createElement("div");
     badges.className = "aiset-badges";
-    if (card.tools) badges.append(badge("Tools", "tools"));
-    if (card.vramMB) badges.append(badge(`${(card.vramMB / 1024).toFixed(1)} GB VRAM`));
-    if (card.lowResource) badges.append(badge("Low-resource"));
+    for (const b of card.badges) badges.append(badge(b.label, b.kind));
 
     el.append(nameRow, chipBar.wrap, badges);
     if (card.hfUrl) {
@@ -641,7 +672,7 @@ function webLlmPanel(): HTMLElement {
       if (b !== "download") chipBar.wrap.style.display = "none";
     }
     function applyLoad(): void {
-      const loaded = isModelLoaded(id);
+      const loaded = src.isLoaded(id);
       const b = busy.get(id);
       loadBtn.classList.toggle("yellow", loaded && b !== "load");
       loadBtn.classList.toggle("gray", !loaded && b !== "load");
@@ -653,7 +684,7 @@ function webLlmPanel(): HTMLElement {
 
     // Reflect the cached state asynchronously (once per chip).
     if (!downloaded.has(id)) {
-      void isModelDownloaded(id).then((d) => {
+      void src.isDownloaded(id).then((d) => {
         downloaded.set(id, d);
         applyDownload();
       });
@@ -667,11 +698,11 @@ function webLlmPanel(): HTMLElement {
       chipBar.set(0, "Starting…");
       applyDownload();
       try {
-        await downloadWebLlmModel(id, (p) =>
+        await src.download(id, (p) =>
           chipBar.set(Math.round(p.progress * 100), p.text || "Downloading…"),
         );
         downloaded.set(id, true);
-        toast(`Downloaded ${id}`);
+        toast(`Downloaded ${card.title}`);
       } catch (e) {
         toast(`Download failed: ${msg(e)}`, { error: true });
       } finally {
@@ -682,46 +713,45 @@ function webLlmPanel(): HTMLElement {
 
     trashBtn.addEventListener("click", async () => {
       if (busy.get(id)) return;
-      if (!confirm(`Delete downloaded model?\n\n${id}\n\nThis frees its cached weights.`)) return;
+      if (!confirm(`Delete downloaded model?\n\n${card.title}\n\nThis frees its cached weights.`))
+        return;
       busy.set(id, "delete");
       applyDownload();
       try {
-        await deleteWebLlmModel(id);
+        await src.delete(id);
         downloaded.set(id, false);
-        if (active() === id) {
-          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: "" } });
+        if (src.active() === id) {
+          src.clearActive();
           refreshWarn();
         }
-        toast(`Deleted ${id}`);
+        toast(`Deleted ${card.title}`);
       } catch (e) {
         toast(`Delete failed: ${msg(e)}`, { error: true });
       } finally {
         busy.delete(id);
         applyDownload();
         applyLoad();
-        el.classList.toggle("on", id === active());
+        el.classList.toggle("on", id === src.active());
       }
     });
 
     loadBtn.addEventListener("click", async () => {
       if (busy.get(id) && busy.get(id) !== "load") return;
-      const wasLoaded = isModelLoaded(id);
+      const wasLoaded = src.isLoaded(id);
       busy.set(id, "load");
       applyLoad();
       try {
         if (wasLoaded) {
-          await unloadWebLlmModel();
-          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: "" } });
+          await src.unload();
+          src.clearActive();
           toast("Model unloaded");
         } else {
-          await loadWebLlmModel(
-            id,
-            (p) => chipBar.set(Math.round(p.progress * 100), p.text || "Loading…"),
-            getAiConfig().webllm.contextWindowSize,
+          await src.load(id, (p) =>
+            chipBar.set(Math.round(p.progress * 100), p.text || "Loading…"),
           );
           downloaded.set(id, true);
-          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: id } });
-          toast(`Loaded ${id}`);
+          src.setActive(id);
+          toast(`Loaded ${card.title}`);
         }
       } catch (e) {
         toast(`${wasLoaded ? "Unload" : "Load"} failed: ${msg(e)}`, { error: true });
@@ -734,66 +764,45 @@ function webLlmPanel(): HTMLElement {
         for (const other of cardsEl.querySelectorAll(".aiset-card")) {
           other.classList.remove("on");
         }
-        el.classList.toggle("on", id === active());
+        el.classList.toggle("on", id === src.active());
       }
     });
 
     return el;
   }
 
-  // Add a model by id (pins it so its chip shows). Validated against the catalog
-  // — only listed MLC models can actually run in-browser.
-  const addField = field({
-    label: "Add a model by id",
-    placeholder: "e.g. Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
-  });
+  // Add a model by id/URL (pins it so its chip shows).
+  const addField = field({ label: src.add.label, placeholder: src.add.placeholder });
   const addBtn = Button({
     label: "Add",
     variant: "quiet",
     onClick: () => {
       const id = addField.querySelector("input")?.value.trim() ?? "";
       if (!id) {
-        toast("Enter a model id", { error: true });
+        toast("Enter a model id/URL", { error: true });
         return;
       }
-      if (!cards.some((c) => c.id === id)) {
-        toast(`“${id}” isn't in web-llm's catalog`, { error: true });
+      const err = src.add.validate(id, cards);
+      if (err) {
+        toast(err, { error: true });
         return;
       }
-      const pins = pinned();
-      if (!pins.includes(id)) {
-        updateAiConfig({ webllm: { ...getAiConfig().webllm, pinned: [...pins, id] } });
-      }
+      src.addPin(id);
       const input = addField.querySelector("input");
       if (input) input.value = "";
       renderCards();
-      toast(`Added ${id}`);
+      toast(`Added ${src.cardFor(id).title}`);
     },
   });
   const addRow = document.createElement("div");
   addRow.className = "aiset-row";
   addRow.append(addField, addBtn);
 
-  g.append(
-    warn,
-    ctxField,
-    search,
-    filterRow,
-    cardsEl,
-    listStatus,
-    addRow,
-    note(
-      "Models run entirely in your browser on the GPU; weights download from " +
-        "HuggingFace on first use and cache locally. Use ↓ to download, </> to " +
-        "load/unload, and the trash icon to delete. Only listed MLC-compiled " +
-        "models work here — to run an arbitrary HuggingFace GGUF, use the local " +
-        "server (Ollama). Tool-calling (needed to generate effects and map MIDI) " +
-        "is limited to models with a “Tools” badge.",
-    ),
-  );
+  g.append(warn, ctxField, ...(src.extraFields ?? []), search, filterRow, cardsEl, listStatus, addRow, note(src.footerNote));
 
   refreshWarn();
-  listWebLlmModelCards()
+  src
+    .loadCatalog()
     .then((cs) => {
       cards = cs;
       listStatus.textContent = `${cs.length} models available`;
@@ -801,9 +810,81 @@ function webLlmPanel(): HTMLElement {
     })
     .catch((e) => {
       listStatus.textContent = `Couldn't load model list: ${msg(e)}`;
+      renderCards(); // still show pinned/custom models
     });
 
   return g;
+}
+
+// -- In-browser WebGPU (web-llm) — the model browser -------------------------
+
+function webLlmPanel(): HTMLElement {
+  const cfgW = (): AiConfig["webllm"] => getAiConfig().webllm;
+  const toVM = (c: WebLlmModelCard): ModelVM => {
+    const badges: { label: string; kind?: string }[] = [];
+    if (c.tools) badges.push({ label: "Tools", kind: "tools" });
+    if (c.vramMB) badges.push({ label: `${(c.vramMB / 1024).toFixed(1)} GB VRAM` });
+    if (c.lowResource) badges.push({ label: "Low-resource" });
+    return { id: c.id, title: c.id, tools: c.tools, badges, hfUrl: c.hfUrl ?? undefined };
+  };
+  const src: ModelSource = {
+    title: "In-browser (WebGPU)",
+    supported: isWebLlmSupported(),
+    unsupportedNote:
+      "This browser doesn't expose WebGPU, so in-browser (WebGPU) inference isn't " +
+      "available. Try a recent Chrome/Edge, use the CPU option, or a local server. " +
+      "On phones the CPU option is recommended — WebGPU can freeze the device.",
+    toolsOnlyDefault: true,
+    ctx: {
+      get: () => cfgW().contextWindowSize,
+      default: DEFAULT_WEBLLM_CONTEXT,
+      set: (n) => updateAiConfig({ webllm: { ...cfgW(), contextWindowSize: n } }),
+    },
+    active: () => cfgW().model,
+    pinned: () => cfgW().pinned,
+    addPin: (id) => {
+      const p = cfgW().pinned;
+      if (!p.includes(id)) updateAiConfig({ webllm: { ...cfgW(), pinned: [...p, id] } });
+    },
+    loadCatalog: () => listWebLlmModelCards().then((cs) => cs.map(toVM)),
+    cardFor: (id) =>
+      toVM({
+        id,
+        vramMB: null,
+        lowResource: false,
+        tools: modelSupportsTools(id),
+        hfUrl: `https://huggingface.co/mlc-ai/${id}`,
+      }),
+    isDownloaded: (id) => isModelDownloaded(id),
+    isLoaded: (id) => isModelLoaded(id),
+    download: (id, onP) => downloadWebLlmModel(id, onP),
+    load: (id, onP) => loadWebLlmModel(id, onP, cfgW().contextWindowSize),
+    unload: () => unloadWebLlmModel(),
+    delete: (id) => deleteWebLlmModel(id),
+    setActive: (id) => updateAiConfig({ webllm: { ...cfgW(), model: id } }),
+    clearActive: () => updateAiConfig({ webllm: { ...cfgW(), model: "" } }),
+    add: {
+      label: "Add a model by id",
+      placeholder: "e.g. Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
+      // Only listed MLC models can actually run in-browser.
+      validate: (id, catalog) =>
+        catalog.some((c) => c.id === id) ? null : `“${id}” isn't in web-llm's catalog`,
+    },
+    footerNote:
+      "Models run entirely in your browser on the GPU; weights download from " +
+      "HuggingFace on first use and cache locally. Use ↓ to download, </> to " +
+      "load/unload, and the trash icon to delete. Only listed MLC-compiled models " +
+      "work here — to run an arbitrary HuggingFace GGUF, use the CPU option or a " +
+      "local server (Ollama). Tool-calling (needed to generate effects and map MIDI) " +
+      "is limited to models with a “Tools” badge. On a phone, prefer the CPU option — " +
+      "a big WebGPU model can freeze the device.",
+    toolsWarn: (id) =>
+      id && !modelSupportsTools(id)
+        ? `⚠ ${id} can't use tools, so it can't generate effects or map MIDI — it will ` +
+          `only chat. Pick a model with the “Tools” badge.`
+        : null,
+  };
+  return modelManagerPanel(src);
 }
 
 // -- small local builders ----------------------------------------------------

@@ -208,18 +208,22 @@ route here):
   `/v1/models` for the OpenAI-compatible vendors; Anthropic has no such
   endpoint). Text inputs persist without rebuilding the panel so typing keeps
   focus.
-- In-browser: a WebGPU support check and a **model manager** — cards from
-  web-llm's prebuilt (HuggingFace-hosted MLC) list with a HuggingFace link and
-  VRAM / low-resource / "Tools" badges, a search box, and a "Tool-calling only"
-  filter (default on). An **"Add"** field pins a model by id (validated against
-  the catalog). Each chip has a **download** control (↓ → inline progress bar →
-  green ✓, with a red trash to delete, confirm-gated) and a **load** control
-  (`</>`: gray → shimmer while (un)loading → yellow when loaded); a warning
-  shows when the active model can't tool-call. Download caches weights without
-  keeping the model on the GPU; load/unload toggles the active engine. A
-  **"Context window (tokens)"** field sets web-llm's `context_window_size` — its
-  per-model default (often 4096) is too small for our grounded prompts
-  (`ContextWindowSizeExceededError`); default 8192, applied on the next load.
+- In-browser (both WebGPU **and** CPU): a runtime-support check and a **shared
+  model manager** (`modelManagerPanel` + a per-provider `ModelSource` adapter, so
+  the two tabs are identical). Cards carry a HuggingFace link and badges (WebGPU:
+  VRAM / low-resource / "Tools"; CPU: "Tools"), with a search box and a
+  "Tool-calling only" filter. An **"Add"** field pins a model (WebGPU: a model id
+  validated against web-llm's catalog; CPU: any HuggingFace `.gguf` URL). Each
+  chip has a **download** control (↓ → inline progress bar → green ✓, with a red
+  trash to delete, confirm-gated) and a **load** control (`</>`: gray → shimmer
+  while (un)loading → yellow when loaded); a warning shows when the active model
+  can't tool-call. Download caches weights without loading the model; load/unload
+  toggles the active engine. A **"Context window (tokens)"** field sets the
+  engine's context (WebGPU default 8192; CPU default 2048 — kept small to bound
+  phone memory), applied on the next load; the CPU tab adds a **threads** field
+  (0 = auto). Per-provider differences: the WebGPU filter defaults on (its catalog
+  is large) while the CPU filter defaults off (its list is a short curated set of
+  arbitrary GGUFs).
 
 The effects-browser first-run hint and the editor gating now check
 `isAiConfigured()` (any provider ready) rather than "has an Anthropic key," so a

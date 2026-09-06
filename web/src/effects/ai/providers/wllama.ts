@@ -54,8 +54,28 @@ interface WllamaInstance {
 interface ChatCompletionResponse {
   choices?: { message?: { content?: string } }[];
 }
+/** wllama's cached-model handle (ModelManager.getModels()). */
+interface WllamaCachedModel {
+  url: string;
+  size: number;
+  remove(): Promise<void>;
+}
+interface WllamaModelManager {
+  getModels(opts?: { includeInvalid?: boolean }): Promise<WllamaCachedModel[]>;
+  downloadModel(
+    url: string,
+    opts?: { progressCallback?: (p: { loaded: number; total: number }) => void },
+  ): Promise<unknown>;
+}
 interface WllamaModule {
   Wllama: new (assets: unknown, config?: Record<string, unknown>) => WllamaInstance;
+  ModelManager: new () => WllamaModelManager;
+}
+
+/** Progress of a first-run model download / load (0..1 + a label). */
+export interface WllamaProgress {
+  progress: number;
+  text: string;
 }
 
 // The tool text-protocol + message translation is pure and lives in a separate,
@@ -110,6 +130,7 @@ export async function loadWllamaModel(
   model: string,
   nCtx: number,
   nThreads: number,
+  onProgress?: (p: WllamaProgress) => void,
 ): Promise<void> {
   if (engine && engineModel === model && engineCtx === nCtx && engine.isModelLoaded()) return;
   await unloadWllamaModel();
@@ -121,6 +142,12 @@ export async function loadWllamaModel(
   await inst.loadModelFromUrl(model, {
     n_ctx: nCtx,
     ...(threads !== undefined ? { n_threads: threads } : {}),
+    ...(onProgress
+      ? {
+          progressCallback: ({ loaded, total }: { loaded: number; total: number }) =>
+            onProgress({ progress: total ? loaded / total : 0, text: "Loading…" }),
+        }
+      : {}),
   });
   engine = inst;
   engineModel = model;
@@ -139,6 +166,51 @@ export async function unloadWllamaModel(): Promise<void> {
   engine = null;
   engineModel = "";
   engineCtx = 0;
+}
+
+// -- model cache management (mirrors the web-llm provider so the settings UI can
+//    share one model-manager component) -------------------------------------
+
+let modelManager: WllamaModelManager | null = null;
+async function getModelManager(): Promise<WllamaModelManager> {
+  const mod = await loadModule();
+  if (!modelManager) modelManager = new mod.ModelManager();
+  return modelManager;
+}
+
+/** Is this model's weights already downloaded (cached) in the browser? */
+export async function isWllamaModelDownloaded(url: string): Promise<boolean> {
+  try {
+    const models = await (await getModelManager()).getModels();
+    return models.some((m) => m.url === url);
+  } catch {
+    return false;
+  }
+}
+
+/** Is this model the one currently loaded into the active engine (this tab)? */
+export function isWllamaModelLoaded(url: string): boolean {
+  return engine !== null && engineModel === url;
+}
+
+/** Download + cache a model's weights WITHOUT loading it onto the CPU. */
+export async function downloadWllamaModel(
+  url: string,
+  onProgress?: (p: WllamaProgress) => void,
+): Promise<void> {
+  const mm = await getModelManager();
+  await mm.downloadModel(url, {
+    progressCallback: ({ loaded, total }) =>
+      onProgress?.({ progress: total ? loaded / total : 0, text: "Downloading…" }),
+  });
+}
+
+/** Delete a model's cached weights (unloads it first if it's the active one). */
+export async function deleteWllamaModel(url: string): Promise<void> {
+  if (engineModel === url) await unloadWllamaModel();
+  const models = await (await getModelManager()).getModels();
+  const m = models.find((x) => x.url === url);
+  if (m) await m.remove();
 }
 
 /** Build an in-browser CPU (wllama) provider from its config. */
