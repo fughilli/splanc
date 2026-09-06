@@ -53,20 +53,109 @@ const ATT_WRITE_REQ: u8 = 0x12;
 const ATT_WRITE_CMD: u8 = 0x52;
 const ATT_WRITE_RSP: u8 = 0x13;
 
+extern "C" {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8);
+}
+
+/// A heap-backed byte buffer, allocated only WHILE a BLE central is connected and
+/// freed on disconnect. Load-bearing: the player transport's ~3.8 KB of
+/// reassembly + reply storage would otherwise sit permanently in DRAM/BSS. On the
+/// C6 all internal SRAM is DMA-capable and shared, so that permanent BSS shrinks
+/// the contiguous pool the heapless TLS server draws from — during a heavy wss
+/// streaming session (no BLE central connected) it starved the per-record mbedtls
+/// dynamic buffer + the esp-aes HW-AES DMA buffer, dropping the connection
+/// mid-sweep ("board unreachable" in fx_bench, rekeys=0, WiFi still alive). BLE
+/// config and wss streaming never overlap (the central disconnects after
+/// provisioning), so this memory belongs to whichever is active. See the
+/// vendor-build twin of this in improv_ble.cpp (keep BLE static buffers small).
+struct HeapBuf {
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+}
+impl HeapBuf {
+    const fn new() -> Self {
+        HeapBuf { ptr: core::ptr::null_mut(), len: 0, cap: 0 }
+    }
+    fn alloc(&mut self, cap: usize) {
+        self.free();
+        let p = unsafe { malloc(cap) };
+        if !p.is_null() {
+            self.ptr = p;
+            self.cap = cap;
+            self.len = 0;
+        }
+    }
+    fn free(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { free(self.ptr) };
+        }
+        self.ptr = core::ptr::null_mut();
+        self.cap = 0;
+        self.len = 0;
+    }
+    fn ready(&self) -> bool {
+        !self.ptr.is_null()
+    }
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn as_slice(&self) -> &[u8] {
+        if self.ptr.is_null() {
+            return &[];
+        }
+        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+    }
+    /// Append; false (no-op) if unallocated or it wouldn't fit.
+    fn extend(&mut self, src: &[u8]) -> bool {
+        if self.ptr.is_null() || self.len + src.len() > self.cap {
+            return false;
+        }
+        unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr.add(self.len), src.len()) };
+        self.len += src.len();
+        true
+    }
+    /// Drop the first `n` bytes, shifting any remainder down in place.
+    fn drain_front(&mut self, n: usize) {
+        if n >= self.len {
+            self.len = 0;
+            return;
+        }
+        unsafe {
+            let s = core::slice::from_raw_parts_mut(self.ptr, self.len);
+            s.copy_within(n.., 0);
+        }
+        self.len -= n;
+    }
+}
+
 /// Inbound length-prefix reassembler for the player RX characteristic. One
 /// complete frame is exposed at a time (the app's protocol is request/reply).
+/// Backed by a HeapBuf so it costs nothing when no central is connected.
 struct PlayerRx {
-    buf: Buf<PLAYER_RX_CAP>,
+    buf: HeapBuf,
 }
 impl PlayerRx {
     const fn new() -> Self {
-        PlayerRx { buf: Buf::new() }
+        PlayerRx { buf: HeapBuf::new() }
     }
-    fn reset(&mut self) {
-        self.buf.clear();
+    /// (Re)allocate the reassembly buffer for a new BLE session.
+    fn alloc(&mut self) {
+        self.buf.alloc(PLAYER_RX_CAP);
+    }
+    /// Release the reassembly buffer back to the heap (session ended).
+    fn release(&mut self) {
+        self.buf.free();
     }
     /// Append a GATT write's bytes; on overflow/desync, resync from empty.
     fn push(&mut self, chunk: &[u8]) {
+        if !self.buf.ready() {
+            return;
+        }
         if self.buf.len() + chunk.len() > PLAYER_RX_CAP {
             self.buf.clear();
             return;
@@ -77,34 +166,34 @@ impl PlayerRx {
     /// `out` and return its length (consuming it, keeping any trailing bytes of a
     /// following frame). 0 if none / bad length / `out` too small.
     fn take(&mut self, out: &mut [u8]) -> usize {
-        let b = self.buf.as_slice();
-        if b.len() < 4 {
+        let n = self.buf.len();
+        if n < 4 {
             return 0;
         }
-        let flen = u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize;
+        let s = self.buf.as_slice();
+        let flen = u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize;
         if flen == 0 || flen > PLAYER_FRAME_MAX {
             self.buf.clear(); // bad length — resync
             return 0;
         }
-        if b.len() < 4 + flen {
+        if n < 4 + flen {
             return 0; // frame not fully arrived yet
         }
         if out.len() < flen {
             self.buf.clear();
             return 0;
         }
-        out[..flen].copy_from_slice(&b[4..4 + flen]);
-        let mut tail: Buf<PLAYER_RX_CAP> = Buf::new();
-        let _ = tail.extend(&b[4 + flen..]);
-        self.buf.clear();
-        let _ = self.buf.extend(tail.as_slice());
+        out[..flen].copy_from_slice(&s[4..4 + flen]);
+        // (immutable borrow `s` ends above) — drop the consumed frame in place.
+        self.buf.drain_front(4 + flen);
         flen
     }
 }
 
 static mut PLAYER_RX: PlayerRx = PlayerRx::new();
 // The current reply, length-prefixed, drained to the central in MTU chunks.
-static mut PLAYER_TX_BUF: Buf<PLAYER_TX_BUF_CAP> = Buf::new();
+// Heap-backed (see HeapBuf): allocated on connect, freed on disconnect.
+static mut PLAYER_TX_BUF: HeapBuf = HeapBuf::new();
 static mut PLAYER_TX_OFF: usize = 0;
 
 fn copy_out(src: &[u8], out: *mut u8, cap: u32) -> u32 {
@@ -220,8 +309,11 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
                     NOTIFY_N = 0;
                     HAS_PENDING = false;
                     L2CAP.reset(); // drop any partial fragment from a prior link
-                    PLAYER_RX.reset(); // drop a half-received player frame
-                    PLAYER_TX_BUF.clear();
+                    // Allocate the player-transport buffers for THIS session (freed on
+                    // disconnect below) — they must not sit in permanent BSS starving the
+                    // TLS server's DMA-capable heap during a no-central wss stream.
+                    PLAYER_RX.alloc();
+                    PLAYER_TX_BUF.alloc(PLAYER_TX_BUF_CAP);
                     PLAYER_TX_OFF = 0;
                 }
                 // On the fresh connection, ask the central to raise the supervision timeout so the
@@ -232,6 +324,14 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
                 // Connection Update Complete event.
                 if let Some(h) = unsafe { HOST.conn_handle() } {
                     return conn_param_update_req_acl(h, out, cap);
+                }
+            } else if was_connected && !now_connected {
+                // Central disconnected: return the player-transport buffers to the heap so a
+                // subsequent heavy wss streaming session has the full DMA-capable pool.
+                unsafe {
+                    PLAYER_RX.release();
+                    PLAYER_TX_BUF.free();
+                    PLAYER_TX_OFF = 0;
                 }
             }
             if n == 0 {
