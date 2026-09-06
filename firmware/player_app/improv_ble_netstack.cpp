@@ -15,6 +15,7 @@
 
 #include <Arduino.h>
 
+#include <cstdlib>
 #include <cstring>
 
 #include "esp_bt.h"
@@ -196,11 +197,25 @@ void improv_ble_poll() {
 // TX notifications before taking the next frame (one reply is in flight at a
 // time). Call every loop() after improv_ble_poll.
 void player_ble_poll() {
-  if (!g_up) return;
-  static uint8_t frame[1536];  // >= PLAYER_FRAME_MAX (ble_ffi.rs)
+  // The 1536-B reassembly scratch is heap-backed and held ONLY while a central is
+  // connected — mirroring the Rust-side player buffers (ble_ffi.rs HeapBuf). During
+  // a heavy wss streaming session no central is connected, so this frees ~1.5 KB of
+  // DMA-capable SRAM back to the TLS server (see the "board unreachable" root cause).
+  static uint8_t *frame = nullptr;
+  if (!improv_ble_central_connected()) {
+    if (frame) {
+      free(frame);
+      frame = nullptr;
+    }
+    return;
+  }
+  if (!frame) {
+    frame = static_cast<uint8_t *>(malloc(1536));  // >= PLAYER_FRAME_MAX (ble_ffi.rs)
+    if (!frame) return;
+  }
   uint8_t out[256];
   uint32_t n;
-  while ((n = ns_ble_player_take_frame(frame, sizeof frame)) > 0) {
+  while ((n = ns_ble_player_take_frame(frame, 1536)) > 0) {
     const uint8_t *reply = nullptr;
     int r = lm_player_ble_reply(frame, (size_t)n, &reply);
     if (r > 0 && reply) {
