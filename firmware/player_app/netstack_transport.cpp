@@ -1173,6 +1173,10 @@ void netstack_loop() {
   // Service the heapless BLE host (drain the controller's HCI queue, run the Improv
   // GATT state machine). No-op after onboarding once the central disconnects.
   improv_ble_poll();
+  // Drain + reply to any player-protocol frame received over the BLE transport
+  // (offline configuration). Must follow improv_ble_poll, which pumps the HCI
+  // packets that feed the RX reassembler.
+  player_ble_poll();
   // NB: WiFi/BT coex arbitration runs on its own high-frequency esp_timer (coex_timer_cb), not here
   // — the ~22ms loop period was too coarse to time the BLE-yield slices. See coex_timer_cb.
   // Advance the incremental PMK derivation a small chunk per loop (once creds arrive). 64 HMAC-

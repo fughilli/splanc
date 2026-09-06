@@ -28,6 +28,12 @@ const PLAYER_TX_UUID = "9f5b0002-8a2e-4c1d-9b3a-1f0e2d3c4b5a"; // device→app (
 // vary — 180 leaves comfortable headroom and matches the firmware notify chunk.
 const WRITE_CHUNK = 180;
 
+// Upload window for the BLE transport (LedMapperClient.uploadChunkBytes). Kept
+// small so each sharded map/topology/effect window — hence each length-prefixed
+// GATT frame — fits the device's bounded BLE reassembly buffer, which is tight
+// on the heapless-netstack build. 1 KB is a good round-trip/RAM balance.
+export const BLE_UPLOAD_CHUNK_BYTES = 1024;
+
 // WebSocket.readyState values (SocketLike mirrors them).
 const SOCK_CONNECTING = 0;
 const SOCK_OPEN = 1;

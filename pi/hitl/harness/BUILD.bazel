@@ -44,12 +44,16 @@ hitl_test(
     ],
 )
 
-# Offline player-protocol-over-BLE e2e (vendor C6 only): flash, then drive the
-# full ledmapper.v1 hello->welcome over the device's player GATT service with NO
-# WiFi/TLS/cert — the phone-hotspot offline-config path (improv_ble.cpp +
-# web/src/net/bleTransport.ts). The protobuf codec (//pi/server proto_wire) stays
-# on this driver side; the shipped hitl_ble_player.py does only BLE transport +
-# framing on the rig. requires=["improv"] but the setup path is esp32c6-only.
+# Offline player-protocol-over-BLE e2e: flash, then drive the full ledmapper.v1
+# over the device's player GATT service with NO WiFi/TLS/cert — the phone-hotspot
+# offline-config path. Hello->welcome proves the transport; a submit_map sharded
+# into small BLE windows proves multi-frame upload reassembly (the same path
+# effect uploads now use). Two targets, one per firmware variant on the same C6
+# SKU: this fan-out flashes the VENDOR bundle (improv_ble.cpp / Bluedroid); the
+# ble_player_e2e_netstack py_test below flashes the HEAPLESS-NETSTACK bundle
+# (improv_ble_netstack.cpp + firmware/blehost + firmware/netstack GATT). The
+# protobuf codec (//pi/server proto_wire) stays on this driver side; the shipped
+# hitl_ble_player.py does only BLE transport + framing on the rig.
 hitl_test(
     name = "ble_player_e2e",
     srcs = [
@@ -69,6 +73,46 @@ hitl_test(
     requires = [
         "flash",
         "improv",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Same BLE e2e against the HEAPLESS-NETSTACK player variant: BLE Improv + the
+# player GATT service run on our own controller/GATT stack (no Bluedroid), so this
+# proves the netstack player transport end-to-end. Not a hitl_test fan-out (that
+# keys on the SKU, and netstack is the same esp32c6 SKU as vendor) — a standalone
+# py_test that points default_bundle() at the netstack flashbundle, mirroring
+# e2e_netstack. Reserves any esp32c6 with flash+improv caps.
+py_test(
+    name = "ble_player_e2e_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_ble_player.py",
+        "hitl_ble_player_e2e.py",
+        "hitl_e2e.py",
+    ],
+    args = [
+        "--sku=esp32c6",
+        "--require-caps=flash,improv",
+    ],
+    data = [
+        "//firmware/player_app:board_caps.textproto",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
+    imports = ["."],
+    main = "hitl_ble_player_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
     ],
     deps = [
         ":harness",

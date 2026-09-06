@@ -30,6 +30,83 @@ static mut NOTIFY_N: usize = 0;
 /// truncated ATT PDU and the rest is dropped — the intermittent "invalid_rpc".
 static mut L2CAP: L2capReassembler = L2capReassembler::new();
 
+// --- Player-protocol transport over BLE (the SECOND GATT service) -------------
+// RX writes carry a length-prefixed byte stream ([u32 BE len][payload], chunked
+// to the MTU by the app); we reassemble one whole frame at a time here and hand
+// it to the firmware, which computes the reply through the shared player handler
+// and calls ns_ble_player_notify to send it back the same way. This wire matches
+// improv_ble.cpp (vendor) and web/src/net/bleTransport.ts.
+
+/// Largest reassembled inbound frame. The app shards map/topology/effect uploads
+/// into small BLE windows (bleTransport BLE_UPLOAD_CHUNK_BYTES) so an upload
+/// frame is one window + envelope; this also bounds a non-sharded control
+/// message (rename/set_effect/…). A frame past this is dropped (use WS instead).
+const PLAYER_FRAME_MAX: usize = 1536;
+const PLAYER_RX_CAP: usize = PLAYER_FRAME_MAX + 256;
+/// Largest reply (matches the firmware's tx buffer); notified back in MTU chunks.
+const PLAYER_REPLY_MAX: usize = 2048;
+const PLAYER_TX_BUF_CAP: usize = PLAYER_REPLY_MAX + 4;
+/// Notify chunk (<= ATT_MTU 185 - 3), matches the vendor + app write unit.
+const PLAYER_TX_CHUNK: usize = 180;
+const ATT_HANDLE_VALUE_NTF: u8 = 0x1b;
+const ATT_WRITE_REQ: u8 = 0x12;
+const ATT_WRITE_CMD: u8 = 0x52;
+const ATT_WRITE_RSP: u8 = 0x13;
+
+/// Inbound length-prefix reassembler for the player RX characteristic. One
+/// complete frame is exposed at a time (the app's protocol is request/reply).
+struct PlayerRx {
+    buf: Buf<PLAYER_RX_CAP>,
+}
+impl PlayerRx {
+    const fn new() -> Self {
+        PlayerRx { buf: Buf::new() }
+    }
+    fn reset(&mut self) {
+        self.buf.clear();
+    }
+    /// Append a GATT write's bytes; on overflow/desync, resync from empty.
+    fn push(&mut self, chunk: &[u8]) {
+        if self.buf.len() + chunk.len() > PLAYER_RX_CAP {
+            self.buf.clear();
+            return;
+        }
+        let _ = self.buf.extend(chunk);
+    }
+    /// If a whole `[u32 BE len][payload]` frame is buffered, copy the payload into
+    /// `out` and return its length (consuming it, keeping any trailing bytes of a
+    /// following frame). 0 if none / bad length / `out` too small.
+    fn take(&mut self, out: &mut [u8]) -> usize {
+        let b = self.buf.as_slice();
+        if b.len() < 4 {
+            return 0;
+        }
+        let flen = u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize;
+        if flen == 0 || flen > PLAYER_FRAME_MAX {
+            self.buf.clear(); // bad length — resync
+            return 0;
+        }
+        if b.len() < 4 + flen {
+            return 0; // frame not fully arrived yet
+        }
+        if out.len() < flen {
+            self.buf.clear();
+            return 0;
+        }
+        out[..flen].copy_from_slice(&b[4..4 + flen]);
+        let mut tail: Buf<PLAYER_RX_CAP> = Buf::new();
+        let _ = tail.extend(&b[4 + flen..]);
+        self.buf.clear();
+        let _ = self.buf.extend(tail.as_slice());
+        flen
+    }
+}
+
+static mut PLAYER_RX: PlayerRx = PlayerRx::new();
+// The current reply, length-prefixed, drained to the central in MTU chunks.
+static mut PLAYER_TX_BUF: Buf<PLAYER_TX_BUF_CAP> = Buf::new();
+static mut PLAYER_TX_OFF: usize = 0;
+
 fn copy_out(src: &[u8], out: *mut u8, cap: u32) -> u32 {
     let n = src.len().min(cap as usize);
     unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), out, n) };
@@ -143,6 +220,9 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
                     NOTIFY_N = 0;
                     HAS_PENDING = false;
                     L2CAP.reset(); // drop any partial fragment from a prior link
+                    PLAYER_RX.reset(); // drop a half-received player frame
+                    PLAYER_TX_BUF.clear();
+                    PLAYER_TX_OFF = 0;
                 }
                 // On the fresh connection, ask the central to raise the supervision timeout so the
                 // link survives the multi-second WiFi-active join (see conn_param_update_req_acl).
@@ -185,6 +265,22 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             };
             let svc = unsafe { IMPROV.as_mut() };
             let Some(svc) = svc else { return 0 };
+            // Player-transport RX writes: reassemble length-prefixed frames off the
+            // write stream and never touch the Improv state machine / GATT storage
+            // (the frames dwarf an attribute value). A write-request still gets its
+            // ATT ack so the app's writeValueWithResponse resolves in order.
+            if (pdu.opcode == ATT_WRITE_REQ || pdu.opcode == ATT_WRITE_CMD)
+                && pdu.params.len() >= 2
+                && u16::from_le_bytes([pdu.params[0], pdu.params[1]]) == svc.player_rx_handle()
+            {
+                unsafe { PLAYER_RX.push(&pdu.params[2..]) };
+                if pdu.opcode == ATT_WRITE_REQ {
+                    let mut att: Buf<GATT_RSP_MAX> = Buf::new();
+                    let _ = att.extend(&[ATT_WRITE_RSP]);
+                    return wrap_att_acl(handle, att.as_slice(), out, cap);
+                }
+                return 0;
+            }
             let mut att: Buf<GATT_RSP_MAX> = Buf::new();
             let outcome = svc.handle_att(pdu.opcode, pdu.params, &mut att);
             // Stash Wi-Fi credentials for the firmware; queue notifications.
@@ -240,6 +336,65 @@ pub extern "C" fn ns_ble_poll_notify(out: *mut u8, cap: u32) -> u32 {
             return 0;
         }
         wrap_att_acl(conn, ntf.as_slice(), out, cap)
+    }
+}
+
+/// Take the next complete player-protocol frame reassembled from RX writes into
+/// `out`, returning its length (0 if none yet). The firmware computes the reply
+/// and sends it via ns_ble_player_notify.
+#[no_mangle]
+pub extern "C" fn ns_ble_player_take_frame(out: *mut u8, cap: u32) -> u32 {
+    if out.is_null() || cap == 0 {
+        return 0;
+    }
+    let dst = unsafe { core::slice::from_raw_parts_mut(out, cap as usize) };
+    unsafe { PLAYER_RX.take(dst) as u32 }
+}
+
+/// Queue a player-protocol reply to notify back on the TX characteristic:
+/// length-prefixed and drained to the central in MTU chunks by
+/// ns_ble_player_poll_notify. Replaces any still-draining reply (the protocol is
+/// strictly request/reply, and the firmware drains one fully before the next).
+#[no_mangle]
+pub extern "C" fn ns_ble_player_notify(data: *const u8, len: u32) {
+    unsafe {
+        PLAYER_TX_BUF.clear();
+        PLAYER_TX_OFF = 0;
+        if data.is_null() || len as usize > PLAYER_REPLY_MAX {
+            return;
+        }
+        let src = core::slice::from_raw_parts(data, len as usize);
+        let _ = PLAYER_TX_BUF.extend(&(src.len() as u32).to_be_bytes());
+        let _ = PLAYER_TX_BUF.extend(src);
+    }
+}
+
+/// Pop the next MTU chunk of the pending player reply as a ready-to-send TX
+/// notification ACL. Returns 0 when the reply is fully drained. The firmware
+/// loops this after ns_ble_player_notify, like the Improv notification flush.
+#[no_mangle]
+pub extern "C" fn ns_ble_player_poll_notify(out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let total = PLAYER_TX_BUF.len();
+        if PLAYER_TX_OFF >= total {
+            return 0;
+        }
+        let Some(conn) = HOST.conn_handle() else {
+            PLAYER_TX_OFF = total; // no link — abandon the drain
+            return 0;
+        };
+        let Some(svc) = IMPROV.as_ref() else { return 0 };
+        let end = (PLAYER_TX_OFF + PLAYER_TX_CHUNK).min(total);
+        let mut att: Buf<GATT_RSP_MAX> = Buf::new();
+        if att.extend(&[ATT_HANDLE_VALUE_NTF]).is_err()
+            || att.extend(&svc.player_tx_handle().to_le_bytes()).is_err()
+            || att.extend(&PLAYER_TX_BUF.as_slice()[PLAYER_TX_OFF..end]).is_err()
+        {
+            return 0;
+        }
+        let n = wrap_att_acl(conn, att.as_slice(), out, cap);
+        PLAYER_TX_OFF = end;
+        n
     }
 }
 

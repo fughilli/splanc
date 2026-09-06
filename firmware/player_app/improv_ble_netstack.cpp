@@ -29,6 +29,11 @@ uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t 
 uint32_t ns_ble_state();
 uint32_t ns_ble_conn_interval();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
+// Player-protocol transport (the second GATT service): take a reassembled
+// inbound frame, notify a reply back (chunked), flush queued TX chunks.
+uint32_t ns_ble_player_take_frame(uint8_t *out, uint32_t cap);
+void ns_ble_player_notify(const uint8_t *data, uint32_t len);
+uint32_t ns_ble_player_poll_notify(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
 void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
 void ns_ble_set_name(const uint8_t *name, uint32_t len);
@@ -183,6 +188,28 @@ void improv_ble_poll() {
   // saw the join complete on-device yet timed out waiting for the redirect ("state 3, no URL").
   uint32_t m;
   while ((m = ns_ble_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
+}
+
+// Player-protocol transport (the second GATT service): drain each inbound frame
+// the RX-write reassembler has completed (fed by improv_ble_poll's HCI pump),
+// compute its reply through the shared handler, and flush the reply as chunked
+// TX notifications before taking the next frame (one reply is in flight at a
+// time). Call every loop() after improv_ble_poll.
+void player_ble_poll() {
+  if (!g_up) return;
+  static uint8_t frame[1536];  // >= PLAYER_FRAME_MAX (ble_ffi.rs)
+  uint8_t out[256];
+  uint32_t n;
+  while ((n = ns_ble_player_take_frame(frame, sizeof frame)) > 0) {
+    const uint8_t *reply = nullptr;
+    int r = lm_player_ble_reply(frame, (size_t)n, &reply);
+    if (r > 0 && reply) {
+      ns_ble_player_notify(reply, (uint32_t)r);
+      uint32_t m;
+      while ((m = ns_ble_player_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
+    }
+    // r == 0: fire-and-forget (no reply). r < 0: bad frame — already consumed.
+  }
 }
 
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {

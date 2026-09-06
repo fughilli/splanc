@@ -662,6 +662,72 @@ test("submitMap over wss shards a large map into UploadChunk windows the device 
   assert.deepEqual(acc, encodeClient({ type: "submit_map", map } as unknown as Parameters<typeof encodeClient>[0]));
 });
 
+test("submitEffect shards a large .fxb into EFFECT windows sized by uploadChunkBytes", async () => {
+  // A compiled effect can exceed one window, and over BLE the whole-frame send
+  // would blow the device's small per-frame cap — so submit_effect shards like
+  // submit_map, at the (BLE-small) window size the client was configured with.
+  const tick = () => new Promise((r) => setImmediate(r));
+  const sockets: FakeSocket[] = [];
+  const client = new LedMapperClient("wss://device.test/ws", {
+    socketFactory: () => {
+      const s = new FakeSocket();
+      sockets.push(s);
+      return s;
+    },
+    now: () => 1000,
+    schedule: () => {},
+    coldRetryLimit: 1_000_000,
+    uploadChunkBytes: 256, // force multiple windows from a modest fxb
+  });
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  const fxb = Uint8Array.from({ length: 1000 }, (_, i) => (i * 31) & 0xff);
+  const submitP = client.submitEffect("fx-big", fxb, true);
+  for (let guard = 0; ; guard++) {
+    assert.ok(guard < 100, "runaway window loop");
+    await tick();
+    const last = s.lastSent() as { type: string; last?: boolean; uploadId: number; seq: number };
+    assert.equal(last.type, "upload_chunk");
+    if (last.last === true) break;
+    s.receive({ type: "chunk_ack", uploadId: last.uploadId, seq: last.seq });
+  }
+  s.receive({ type: "result_ready", mapId: "fx-big" });
+  assert.equal((await submitP).mapId, "fx-big");
+
+  const windows = s.allSent().filter((m) => m.type === "upload_chunk") as unknown as Array<{
+    seq: number;
+    last: boolean;
+    kind: string;
+    payload: string;
+  }>;
+  assert.ok(windows.length >= 4, "large effect sharded into several small windows");
+  windows.forEach((w, i) => {
+    assert.equal(w.seq, i);
+    assert.equal(w.kind, "EFFECT");
+    assert.equal(w.last, i === windows.length - 1);
+  });
+  const parts = windows.map((w) => Uint8Array.from(atob(w.payload), (c) => c.charCodeAt(0)));
+  const acc = new Uint8Array(parts.reduce((n, b) => n + b.length, 0));
+  let o = 0;
+  for (const b of parts) {
+    acc.set(b, o);
+    o += b.length;
+  }
+  assert.deepEqual(
+    acc,
+    encodeClient({
+      type: "submit_effect",
+      effectId: "fx-big",
+      fxb,
+      activate: true,
+    } as unknown as Parameters<typeof encodeClient>[0]),
+  );
+});
+
 test("certApprovalUrl points cross-origin wss targets at the player origin", () => {
   const page = { host: "ledmapper.pages.dev" };
   // Hosted-app flow: the player's origin is the certificate-approval stop.

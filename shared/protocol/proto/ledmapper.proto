@@ -378,6 +378,9 @@ message UploadChunk {
   enum Kind {
     MAP = 0;       // payload windows reassemble a SubmitMap frame
     TOPOLOGY = 1;  // payload windows reassemble a SubmitTopology frame
+    EFFECT = 2;    // payload windows reassemble a SubmitEffect frame (large .fxb
+                   // bytecode) — lets effect uploads fit the BLE transport's
+                   // small per-frame cap, same as map/topology.
   }
   uint32 upload_id = 1;
   uint32 seq = 2;     // 0-based; strictly increasing within an upload_id
