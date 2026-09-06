@@ -65,6 +65,10 @@ const KINDS: ProviderKind[] = ["cloud", "local", "webllm", "wllama"];
  * well but authoring a whole effect (set_script) wants the 1.5B. */
 const RECOMMENDED_WLLAMA: { label: string; url: string }[] = [
   {
+    label: "Granite 4.0 350M (Q4) — ~0.25 GB · tiniest, tool-aware (dense)",
+    url: "https://huggingface.co/unsloth/granite-4.0-350m-GGUF/resolve/main/granite-4.0-350m-Q4_K_M.gguf",
+  },
+  {
     label: "Qwen3 0.6B (Q8) — ~0.6 GB · lightest with good tools",
     url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
   },

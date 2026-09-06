@@ -24,6 +24,9 @@ test("tool allow-list: qwen2.5-instruct / qwen3 / hermes yes, others no", () => 
   // Qwen3 is tool-tuned by default — its GGUFs usually omit "-instruct".
   assert.equal(wllamaModelSupportsTools("…/Qwen3-0.6B-Q8_0.gguf"), true);
   assert.equal(wllamaModelSupportsTools("…/Qwen3-1.7B-Q4_K_M.gguf"), true);
+  // IBM Granite is tool-aware by default and emits the same <tool_call> format.
+  assert.equal(wllamaModelSupportsTools("…/granite-4.0-350m-Q4_K_M.gguf"), true);
+  assert.equal(wllamaModelSupportsTools("…/granite-4.0-h-350m-Q4_K_M.gguf"), true);
   // Qwen2.5 BASE (no "instruct") is not a chat/tool model → plain chat only.
   assert.equal(wllamaModelSupportsTools("…/qwen2.5-0.5b-q4_k_m.gguf"), false);
   // Instruct but not a tool-convention family → plain chat only.

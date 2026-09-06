@@ -15,14 +15,17 @@ import type { ChatMessage, ContentBlock, ToolDef } from "../provider";
  * convention. Matched loosely on the GGUF filename/URL (models are arbitrary HF
  * URLs here, unlike web-llm's fixed catalog). Everything else → plain chat.
  *
- * Hermes and Qwen3 are instruction/tool-tuned by default — Qwen3 GGUFs are
- * usually just "Qwen3-0.6B-…" with no "-instruct" suffix, so requiring "instruct"
- * would wrongly exclude them. Qwen2.5 ships base AND instruct variants, so it must
- * say "instruct" to be treated as a tool-capable chat model. */
+ * Hermes, Qwen3 and Granite are instruction/tool-tuned by default — their GGUFs
+ * often omit an "-instruct" suffix (e.g. "Qwen3-0.6B-…", "granite-4.0-350m-…"), so
+ * requiring "instruct" would wrongly exclude them. IBM Granite emits the SAME
+ * `<tool_call>{name,arguments}</tool_call>` convention, so no parser change is
+ * needed. Qwen2.5 ships base AND instruct variants, so it must say "instruct" to
+ * be treated as a tool-capable chat model. */
 export function wllamaModelSupportsTools(modelUrlOrId: string): boolean {
   const s = modelUrlOrId.toLowerCase();
   if (s.includes("hermes")) return true;
   if (s.includes("qwen3")) return true;
+  if (s.includes("granite")) return true;
   if (s.includes("qwen2.5") && s.includes("instruct")) return true;
   return false;
 }
