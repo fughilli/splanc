@@ -22,7 +22,7 @@
 
 #![no_std]
 
-use ledmapper_pattern::{color_for_frame, CodeSpec, Rgb};
+use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb};
 use ledmapper_pulse::{Effect, EffectConfig};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
@@ -121,6 +121,13 @@ struct ActiveCapture {
     /// LED brightness as Q8 fixed-point in [0, 256] (256 == full); servoed by
     /// the phone against its measured bloom/wash-out (§7.1).
     brightness_q8: u16,
+    /// Diffuse-capture striding (design: diffuse_capture). `<= 1` = disabled
+    /// (every LED lit, the legacy pattern). Otherwise only the `stride_phase`
+    /// subset lights, ≥ `stride_spacing` LEDs apart; the phone rotates the phase
+    /// across epochs (each Configure restamps the epoch). See `stride_lit`.
+    stride_spacing: u32,
+    anchor_density: u32,
+    stride_phase: u32,
 }
 
 impl ActiveCapture {
@@ -139,6 +146,40 @@ impl ActiveCapture {
 fn brightness_to_q8(v: f64) -> u16 {
     let q = (v * BRIGHTNESS_ONE_Q8 as f64 + 0.5) as i32;
     q.clamp(0, BRIGHTNESS_ONE_Q8 as i32) as u16
+}
+
+/// Validate the wire stride triple (optional non-negative ints), filling `defaults`
+/// for unset fields. `stride_spacing <= 1` means striding is off. Cold (once per
+/// start/configure); the actual lit-mask math is `ledmapper_pattern::stride_lit`.
+fn parse_stride(
+    spacing: Option<i32>,
+    anchor: Option<i32>,
+    phase: Option<i32>,
+    defaults: (i32, i32, i32),
+) -> Result<(u32, u32, u32), pb::ServerMessage> {
+    let spacing = spacing.unwrap_or(defaults.0);
+    let anchor = anchor.unwrap_or(defaults.1);
+    let phase = phase.unwrap_or(defaults.2);
+    if spacing < 0 {
+        return Err(error("bad_message", "strideSpacing must be >= 0"));
+    }
+    if anchor < 0 {
+        return Err(error("bad_message", "anchorDensity must be >= 0"));
+    }
+    if phase < 0 {
+        return Err(error("bad_message", "stridePhase must be >= 0"));
+    }
+    Ok((spacing as u32, anchor as u32, phase as u32))
+}
+
+/// Echo the active stride onto a CodeParams reply, only when striding is on
+/// (unset fields mean "legacy all-lit" on the wire).
+fn set_stride_params(cp: &mut pb::CodeParams, active: &ActiveCapture) {
+    if active.stride_spacing > 1 {
+        cp.set_stride_spacing(active.stride_spacing as i32);
+        cp.set_anchor_density(active.anchor_density as i32);
+        cp.set_stride_phase(active.stride_phase as i32);
+    }
 }
 
 /// Counting-pattern block capacity (matches SetCountingPattern.blocks in the
@@ -511,17 +552,31 @@ impl Player {
         if !(0.0..=1.0).contains(&brightness) {
             return error("bad_message", "brightness must be in [0, 1]");
         }
+        let (stride_spacing, anchor_density, stride_phase) = match parse_stride(
+            options.r#stride_spacing().copied(),
+            options.r#anchor_density().copied(),
+            options.r#stride_phase().copied(),
+            (0, 3, 0),
+        ) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
         let active = ActiveCapture {
             epoch_ms: now_ms,
             spec,
             bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
             brightness_q8: brightness_to_q8(brightness),
+            stride_spacing,
+            anchor_density,
+            stride_phase,
         };
         self.active = Some(active);
         let mut started = pb::MappingStarted::default();
         started.r#pattern_clock_epoch = now_ms as f64;
-        started.set_code_params(code_params_msg(&spec, active.bit_period_ms(), active.brightness()));
+        let mut cp = code_params_msg(&spec, active.bit_period_ms(), active.brightness());
+        set_stride_params(&mut cp, &active);
+        started.set_code_params(cp);
         reply(SMsg::MappingStarted(started))
     }
 
@@ -554,12 +609,26 @@ impl Player {
         if !(0.0..=1.0).contains(&brightness) {
             return error("bad_message", "brightness must be in [0, 1]");
         }
+        // Stride params default to the ACTIVE ones, so a phase-advancing Configure
+        // (only stride_phase set) keeps the spacing/anchor the session started with.
+        let (stride_spacing, anchor_density, stride_phase) = match parse_stride(
+            options.and_then(|o| o.r#stride_spacing().copied()),
+            options.and_then(|o| o.r#anchor_density().copied()),
+            options.and_then(|o| o.r#stride_phase().copied()),
+            (active.stride_spacing as i32, active.anchor_density as i32, active.stride_phase as i32),
+        ) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
             bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
             brightness_q8: brightness_to_q8(brightness),
+            stride_spacing,
+            anchor_density,
+            stride_phase,
         });
         self.pattern_state()
     }
@@ -588,11 +657,9 @@ impl Player {
             Some(active) => {
                 state.r#active = true;
                 state.set_pattern_clock_epoch(active.epoch_ms as f64);
-                state.set_code_params(code_params_msg(
-                    &active.spec,
-                    active.bit_period_ms(),
-                    active.brightness(),
-                ));
+                let mut cp = code_params_msg(&active.spec, active.bit_period_ms(), active.brightness());
+                set_stride_params(&mut cp, &active);
+                state.set_code_params(cp);
             }
             None => {
                 state.r#active = false;
@@ -917,6 +984,14 @@ impl Player {
     /// track's own white frame).
     pub fn pattern_color(&self, led: u32, frame_index: u32) -> Option<Rgb> {
         let active = self.active.as_ref()?;
+        // Diffuse striding: LEDs outside the active phase's subset are OFF. Return
+        // BLACK (not None) — the render loop leaves a None LED at its prior color,
+        // which would strand masked LEDs lit from the previous phase.
+        if active.stride_spacing > 1
+            && !stride_lit(led, active.stride_phase, active.stride_spacing, active.anchor_density)
+        {
+            return Some((0, 0, 0));
+        }
         let (r, g, b) = color_for_frame(led, frame_index, &active.spec);
         // Integer Q8 scale (v * q8 / 256, rounded) — no f64 in the per-LED,
         // per-frame hot path. q8 == 256 is exact identity.

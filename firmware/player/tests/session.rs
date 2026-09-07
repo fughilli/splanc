@@ -406,3 +406,62 @@ fn hardware_config_roundtrip() {
     // Nothing above changed channel 0's order.
     assert_eq!(player.hw_color_order_name(0), "RBG");
 }
+
+#[test]
+fn diffuse_striding_masks_and_rotates_phase() {
+    // Diffuse capture: only the active phase's sparse subset lights; masked LEDs
+    // read BLACK (never None), and a phase-only Configure advances the phase while
+    // keeping the spacing/anchor the session started with.
+    let mut player = Player::new("esp32-0001", 64);
+    send(&mut player, CMsg::Hello(pb::Hello::default()), 1.0);
+
+    let (spacing, anchor, led_count) = (3u32, 3u32, 32u32);
+    let spec = pat::CodeSpec::derive(led_count, 2, true);
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = led_count as i32;
+    opts.set_stride_spacing(spacing as i32);
+    opts.set_anchor_density(anchor as i32);
+    opts.set_stride_phase(0);
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    let Some(SMsg::MappingStarted(started)) = send(&mut player, CMsg::StartMapping(start), 1000.0)
+    else {
+        panic!("start_mapping must produce mapping_started");
+    };
+    // The active stride is echoed on CodeParams.
+    let cp = &started.r#code_params;
+    assert_eq!(cp.r#stride_spacing().copied(), Some(spacing as i32));
+    assert_eq!(cp.r#anchor_density().copied(), Some(anchor as i32));
+    assert_eq!(cp.r#stride_phase().copied(), Some(0));
+
+    // Masking matches ledmapper_pattern::stride_lit for the active phase, across a
+    // sync frame (ALL_OFF = green) and a data frame — lit LEDs keep their code
+    // color, masked LEDs are black.
+    let check_phase = |player: &Player, phase: u32| {
+        for frame in [pat::FRAME_ALL_OFF, pat::DATA_FRAME_OFFSET] {
+            for led in 0..led_count {
+                let got = player.pattern_color(led, frame).expect("active");
+                if pat::stride_lit(led, phase, spacing, anchor) {
+                    assert_eq!(got, pat::color_for_frame(led, frame, &spec), "lit led {led} f{frame}");
+                    assert_ne!(got, (0, 0, 0), "lit led {led} must not be black at f{frame}");
+                } else {
+                    assert_eq!(got, (0, 0, 0), "masked led {led} must be black at f{frame} phase {phase}");
+                }
+            }
+        }
+    };
+    check_phase(&player, 0);
+
+    // A phase-only Configure advances to phase 1 (spacing/anchor persist).
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_stride_phase(1);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(state)) = send(&mut player, CMsg::Configure(configure), 2000.0)
+    else {
+        panic!("configure must produce pattern_state");
+    };
+    assert_eq!(state.r#code_params.r#stride_spacing().copied(), Some(spacing as i32));
+    assert_eq!(state.r#code_params.r#stride_phase().copied(), Some(1));
+    check_phase(&player, 1);
+}
