@@ -43,7 +43,7 @@ import {
   type ChatTraceEvent,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
-import { isAiConfigured } from "../../effects/ai/provider";
+import { isAiConfigured, getAiConfig } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
@@ -1325,9 +1325,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
     appendChat("user", opts.label ?? ask);
 
-    // Always ground the turn in the current editor + latest compile (+ disasm).
+    // Ground the turn in the current editor + latest compile. Include the
+    // disassembly ONLY for capable (cloud/WebGPU) models: it's ~1k extra prompt
+    // tokens that a tiny on-device CPU model would spend minutes prefilling for
+    // little benefit, so the wllama path drops it (it also gets the condensed
+    // system spec — see generate.ts).
+    const cpuMode = getAiConfig().kind === "wllama";
     const ctx = editorContext(
-      lastDisassembly
+      lastDisassembly && !cpuMode
         ? { source: codeEl.value, compileSummary: lastCompileSummary, disassembly: lastDisassembly }
         : { source: codeEl.value, compileSummary: lastCompileSummary },
     );
@@ -1366,8 +1371,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           syncScroll();
           scheduleSave();
           await compileNow();
+          // Feed disassembly back only to capable models (see cpuMode above) — the
+          // CPU path keeps every tool round lean.
           return `Compile result: ${lastCompileSummary}${
-            lastDisassembly ? `\n\nDisassembly:\n${lastDisassembly}` : ""
+            lastDisassembly && !cpuMode ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
         onCapturePreview: async () => {
