@@ -1,0 +1,24 @@
+{
+  "chip": "esp32c6",
+  "flash_mode": "keep",
+  "flash_freq": "keep",
+  "flash_size": "keep",
+  "images": [
+    {
+      "offset": "0x0",
+      "file": "esp32c6_bootloader.bin"
+    },
+    {
+      "offset": "0x8000",
+      "file": "partitions_huge_app.bin"
+    },
+    {
+      "offset": "0xe000",
+      "file": "boot_app0.bin"
+    },
+    {
+      "offset": "0x10000",
+      "file": "esp32c6.bin"
+    }
+  ]
+}
