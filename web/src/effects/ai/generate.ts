@@ -12,7 +12,7 @@
  */
 
 import type { FxDiagnostic } from "../../fx/preview";
-import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
+import { OUTPUT_SCHEMA, SYSTEM_PROMPT, SYSTEM_PROMPT_COMPACT } from "./system-prompt";
 import { isMobileUserAgent } from "../../flash/env";
 import {
   getAiConfig,
@@ -67,7 +67,10 @@ export function warmActiveProvider(): void {
     const cfg = getAiConfig();
     const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
     if (cfg.kind === "webllm" && isMobileUserAgent(ua)) return; // don't freeze phones
-    void activeProvider().warmUp?.(CHAT_SYSTEM);
+    // Warm with the SAME system the first turn will use, so wllama's cache_prompt
+    // finds a full-length common prefix (the CPU path uses the condensed spec).
+    const warmSystem = cfg.kind === "wllama" ? CHAT_SYSTEM_COMPACT : CHAT_SYSTEM;
+    void activeProvider().warmUp?.(warmSystem);
   } catch {
     // instantiating the provider or reading config failed — a warm-up is purely
     // an optimization, so ignore and let the first real turn take the slow path.
@@ -505,6 +508,44 @@ You are now in an interactive chat with the user inside the effect editor. You c
 - When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform), and only map scalar (slider/toggle) uniforms.
 Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
+/**
+ * Condensed chat system for tiny on-device (wllama/CPU) models — the compact DSL
+ * spec plus only the essential tool-loop instructions. A phone-CPU model prefills
+ * at ~2×params×tokens FLOPs, so the ~3.5k-token CHAT_SYSTEM alone is minutes of
+ * prefill; this trims the constant prefix to roughly a third without dropping any
+ * load-bearing DSL fact. The full CHAT_SYSTEM still drives cloud/WebGPU.
+ */
+const CHAT_SYSTEM_COMPACT = `${SYSTEM_PROMPT_COMPACT}
+
+You are in an interactive chat inside the effect editor.
+- Call set_script to author or revise the effect; you get the compile result back — fix any errors and iterate.
+- If a performance/MIDI tool is offered, use it only when the user asks about speed or MIDI.
+- Answer questions about the current effect briefly.
+Keep prose short. Prefer minimal, targeted edits.`;
+
+/** Strip a wrapping markdown code fence from a model-supplied script. Small
+ * (esp. on-device) models sometimes wrap the `set_script` source in ```` ``` ````
+ * despite the schema asking for raw source, which then fails to compile. Removes
+ * a leading fence (with an optional language tag ONLY when it's alone on the first
+ * line — so real code that happens to start right after the backticks is kept)
+ * and a trailing fence. Valid DSL never legitimately starts with ```` ``` ````, so
+ * this is safe for every provider. */
+export function stripCodeFence(s: string): string {
+  let t = s.trim();
+  if (t.startsWith("```")) {
+    t = t.slice(3);
+    const nl = t.indexOf("\n");
+    const firstLine = (nl === -1 ? t : t.slice(0, nl)).trim();
+    // Drop a bare language tag line (e.g. ```glsl\n…); keep code that ran on the
+    // same line as the opening backticks (```uniform float…).
+    if (nl !== -1 && firstLine.length <= 12 && /^[a-zA-Z0-9_-]*$/.test(firstLine)) {
+      t = t.slice(nl + 1);
+    }
+  }
+  if (t.endsWith("```")) t = t.slice(0, -3);
+  return t.trim();
+}
+
 function dataUrlToImageBlock(dataUrl: string): {
   type: "image";
   source: { type: "base64"; media_type: string; data: string };
@@ -550,7 +591,11 @@ export async function chatTurn(
   // builtin-cost block (#65), then any caller persona (e.g. Acid Mode's voice).
   // Kept as one string so every provider carries it (the Anthropic provider still
   // caches the whole system block).
-  let system = CHAT_SYSTEM;
+  // Tiny on-device (CPU/wllama) models pay a brutal prefill for every prompt
+  // token, so they get the condensed DSL spec; every other provider gets the full
+  // prompt. Kept as one string so the provider carries it verbatim (and wllama's
+  // cache_prompt reuses this constant prefix across turns).
+  let system = provider.id === "wllama" ? CHAT_SYSTEM_COMPACT : CHAT_SYSTEM;
   if (deviceCosts) system += `\n\n${deviceCosts}`;
   if (systemExtra) system += `\n\n${systemExtra}`;
   // Advertise only tools the active provider can fulfill: withhold the vision
@@ -628,7 +673,7 @@ export async function chatTurn(
       try {
         if (tu.name === "set_script") {
           const input = tu.input as { source?: unknown; summary?: unknown };
-          const source = String(input.source ?? "");
+          const source = stripCodeFence(String(input.source ?? ""));
           const note = typeof input.summary === "string" ? input.summary : undefined;
           const compileResult = await hooks.onSetScript(source, note);
           results.push({

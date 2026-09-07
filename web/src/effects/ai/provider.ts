@@ -235,9 +235,11 @@ export const DEFAULT_OPENAI_BASE_URL = "http://localhost:11434/v1";
 /** Default in-browser context window (tokens): fits our grounded prompts, and is
  * within the 8K trained context of the Llama-3-8B-based tool models. */
 export const DEFAULT_WEBLLM_CONTEXT = 8192;
-/** Default context for the CPU (wllama) path — kept small to bound memory + keep
- * prefill snappy on a phone, à la pocketpal's 2048 default. */
-export const DEFAULT_WLLAMA_CONTEXT = 2048;
+/** Default context for the CPU (wllama) path. NOTE: our grounded editor prompts
+ * (system + full program + disassembly + compile output + ask) run ~4k tokens, so
+ * 2048 rejects them with exceed_context_size — it must hold the prompt PLUS room
+ * to generate. 8192 matches the WebGPU default. */
+export const DEFAULT_WLLAMA_CONTEXT = 8192;
 
 function isCloudVendor(v: unknown): v is CloudVendor {
   return typeof v === "string" && v in CLOUD_VENDORS;

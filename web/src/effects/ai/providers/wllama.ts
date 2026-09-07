@@ -132,6 +132,29 @@ function threadCount(configured: number): number | undefined {
   return undefined; // let wllama pick floor(hardwareConcurrency / 2)
 }
 
+/** A held screen wake-lock (subset of WakeLockSentinel). */
+interface WakeSentinel {
+  release(): Promise<void>;
+}
+
+/** Request a screen wake-lock for the duration of a (possibly multi-minute)
+ * on-device inference so the phone doesn't auto-lock — which suspends the WASM
+ * worker mid-turn (the model appears to "hang", and any progress telemetry
+ * stops). Best-effort: returns null where the API is absent (non-secure context,
+ * unsupported browser) or the request is refused. The lock auto-releases if the
+ * page is hidden, so it prevents the idle screen-timeout, not deliberate
+ * backgrounding. */
+async function acquireWakeLock(): Promise<WakeSentinel | null> {
+  try {
+    const wl = (navigator as { wakeLock?: { request(type: string): Promise<WakeSentinel> } })
+      .wakeLock;
+    if (!wl) return null;
+    return await wl.request("screen");
+  } catch {
+    return null;
+  }
+}
+
 /** True when the browser can run wllama at all (WebAssembly present). */
 export function isWllamaSupported(): boolean {
   return typeof WebAssembly !== "undefined";
@@ -301,32 +324,87 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
       await loadWllamaModel(cfg.model, cfg.contextWindowSize, cfg.nThreads);
       if (!engine) throw new Error("in-browser CPU model failed to load");
 
+      // Progress tracking for the status line: on-device CPU inference is slow, so
+      // we surface prefill/generation progress. A rough chars→tokens estimate feeds
+      // the "prefilling ~N tok" label; t0/tokCount/firstAt drive the heartbeat below.
+      const wllamaMessages = messagesToWllama(system, messages);
+      const promptChars = wllamaMessages.reduce((n, m) => n + m.content.length, 0);
+      const tokEst = Math.round(promptChars / 3.6); // rough chars→tokens
+      const t0 = Date.now();
+      let tokCount = 0;
+      let firstAt = 0;
+      opts.stream?.onStatus?.(`prefilling ~${tokEst} tok (ctx ${cfg.contextWindowSize})…`);
+      // Hold the screen awake for the whole turn so an idle auto-lock can't
+      // suspend the worker mid-prefill (best-effort; released in every exit path).
+      const wake = await acquireWakeLock();
+      // A heartbeat that updates the status EVEN if no token ever streams (a long
+      // prefill): the model runs in a worker, so the main thread is free. tok=0 for
+      // a long time ⇒ still prefilling; tok climbing ⇒ generating (just slow).
+      const beat = window.setInterval(() => {
+        const secs = Math.round((Date.now() - t0) / 1000);
+        opts.stream?.onStatus?.(
+          firstAt ? `generating (${tokCount} tok, ${secs}s)` : `prefilling… (${secs}s, ~${tokEst}/${cfg.contextWindowSize} ctx)`,
+        );
+      }, 2000);
+
       let full = "";
       const onData = (chunk: unknown): void => {
+        // First chunk marks the prefill→generate transition (flips the status line).
+        if (firstAt === 0) firstAt = Date.now();
         // wllama's ChatCompletionChunk is OpenAI-shaped; be tolerant of the exact
         // field so a version nudge doesn't silently drop the stream.
         const c = chunk as {
-          choices?: { delta?: { content?: string } }[];
+          choices?: { delta?: { content?: string; reasoning_content?: string } }[];
           currentText?: string;
         };
         const delta = c.choices?.[0]?.delta?.content;
+        // Reasoning models (e.g. Qwen3) stream chain-of-thought in a SEPARATE
+        // `reasoning_content` field. We disable thinking below, but if a model
+        // still emits it, surface it to the live transcript + progress counter so
+        // the turn doesn't look frozen — WITHOUT appending it to `full` (it must
+        // not leak into the parsed script / tool call).
+        const reason = c.choices?.[0]?.delta?.reasoning_content;
         if (typeof delta === "string" && delta) {
           full += delta;
+          tokCount++;
           opts.stream?.onText?.(delta);
+        } else if (typeof reason === "string" && reason) {
+          tokCount++;
+          opts.stream?.onText?.(reason);
         } else if (typeof c.currentText === "string" && c.currentText.length > full.length) {
           const d = c.currentText.slice(full.length);
           full = c.currentText;
+          tokCount++;
           opts.stream?.onText?.(d);
         }
       };
 
-      const resp = await engine.createChatCompletion({
-        messages: messagesToWllama(system, messages),
-        n_predict: opts.maxTokens ?? 2048,
-        stream: true,
-        onData,
-        ...(opts.signal ? { abortSignal: opts.signal } : {}),
-      });
+      let resp: ChatCompletionResponse | undefined;
+      try {
+        resp = await engine.createChatCompletion({
+          messages: wllamaMessages,
+          n_predict: opts.maxTokens ?? 2048,
+          stream: true,
+          onData,
+          // Disable chain-of-thought on reasoning models (Qwen3 et al.): for
+          // structured tool-call authoring the <think> block is pure latency
+          // (minutes of CPU decode before any answer) and doesn't reach `content`.
+          // A jinja template that doesn't know this kwarg simply ignores it.
+          chat_template_kwargs: { enable_thinking: false },
+          // Reuse the KV of the previous completion's common prefix (llama.cpp
+          // prompt cache). The system block is a constant prefix across turns, and
+          // warmUp() pre-decodes it at boot, so the first user turn — and every
+          // follow-up — skips re-prefilling the (large) shared prefix.
+          cache_prompt: true,
+          ...(opts.signal ? { abortSignal: opts.signal } : {}),
+        });
+      } catch (e) {
+        clearInterval(beat);
+        void wake?.release().catch(() => undefined);
+        throw e;
+      }
+      clearInterval(beat);
+      void wake?.release().catch(() => undefined);
       // stream:true + onData resolves to void; if a build returned the response
       // object instead, fall back to its content so we never lose the reply.
       if (!full && resp?.choices?.[0]?.message?.content) full = resp.choices[0].message.content;
@@ -347,12 +425,20 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
         if (!cfg.model.trim() || !isWllamaSupported()) return;
         await loadWllamaModel(cfg.model, cfg.contextWindowSize, cfg.nThreads);
         if (!engine) return;
-        // Prime the prefill with the system prompt (1 token). CPU-only, so this is
+        // Prime the prefill with the system prompt so its KV is resident before
+        // the first real turn. Use the SAME leading `system` message the turn will
+        // send (messagesToWllama puts it first) + cache_prompt, so the turn reuses
+        // this decoded prefix instead of re-prefilling it. CPU-only, so this is
         // safe to run at boot even on a phone — it never touches the GPU.
         await engine.createChatCompletion({
-          messages: [{ role: "user", content: system }],
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: "Ready?" },
+          ],
           n_predict: 1,
           stream: false,
+          cache_prompt: true,
+          chat_template_kwargs: { enable_thinking: false },
         });
       } catch {
         // warm-up is a pure optimization — never throw.

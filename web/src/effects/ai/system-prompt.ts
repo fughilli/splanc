@@ -148,6 +148,59 @@ ${EXAMPLES}
 
 REPAIR: If you are given a previous script and compiler diagnostics, return a corrected script that fixes every error; change as little else as possible.`;
 
+// -- Condensed prompt for tiny on-device (CPU / wllama) models ----------------
+// A ≤350M–3B GGUF running on a phone CPU pays ~2×params×prompt_tokens FLOPs just
+// to PREFILL — the full SYSTEM_PROMPT (~3.5k tokens) is minutes of prefill before
+// the first output token. This variant keeps every load-bearing fact (entry
+// points, the real type/context/builtin tables from lang-spec, uniform + state +
+// buffer/texture syntax, one worked example) but drops the long perf essay and
+// three of the four examples, cutting the prefix to roughly a third. Generated
+// from the SAME lang-spec tables, so it can never name a builtin the compiler
+// lacks. The full prompt still drives the cloud/WebGPU paths.
+const builtinSigList = BUILTINS.map((b) => b.sig).join("\n  ");
+
+export const SYSTEM_PROMPT_COMPACT = `You write effects for an LED-mapping runtime in a small GLSL-like language. Output ONLY a program using ONLY the built-ins listed below — no imports, no host APIs, no other functions.
+
+STRUCTURE (both required):
+- \`void update()\` — runs ONCE per frame; advance \`state\`.
+- \`vec3 shade(Led led)\` — runs per-LED; return linear RGB in 0..1.
+No recursion. \`for\` loops need compile-time-bounded trip counts.
+
+TYPES: ${TYPES.filter((t) => t.name !== "void" && t.name !== "Led").map((t) => t.name).join(", ")}
+
+CONTEXTS (read-only globals):
+${contextTable}
+
+BUILT-IN FUNCTIONS (the ONLY functions available besides your own):
+  ${builtinSigList}
+
+UNIFORMS (expose the interesting parameters so the user gets live controls — required):
+- slider:   uniform float speed : 0.0 .. 5.0 = 1.0;
+- color:    uniform vec3 tint : color = 0.2, 0.6, 1.0;
+- dropdown: uniform int mode : {"fire","ice"} = 0;
+- toggle:   uniform bool invert = false;
+
+STATE & DATA:
+- \`state T x;\` persists across frames — written in update(), read-only in shade(). Use for phases/integrators.
+- \`struct Name { float a; vec3 b; };\` + fixed arrays \`T name[N];\` (index \`a[i]\`, fields \`.field\`). An array of structs in \`state\` = agents/particles (seed once behind a \`state bool\`, advance in a \`for\` loop).
+- \`buffer vec3 trail;\` — a per-LED persistent buffer; index \`trail[led.idx]\`; MAY be written from shade() (feedback/trails). Always index it.
+- \`texture vec3 img(64,64);\` — read \`sample(img, led.uv)\` (bilinear, uv in 0..1), write \`paint(img, uv, color);\`.
+
+PERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in \`int\`/\`fixed\`/\`fixed16\`/\`fixed8\` (native, no soft-float); \`sin\`/\`cos\`/\`exp\` on a \`fixed\` arg are LUT-based (angle in TURNS, 1.0 = full circle). Hoist anything not per-LED into update(). Narrow buffer/texture storage with \`: fixed8\`/\`: fixed16\` to save RAM.
+
+EXAMPLE — a moving band along the trunk:
+uniform float speed : 0.0 .. 5.0 = 1.0;
+uniform float width : 0.02 .. 0.5 = 0.12;
+uniform vec3 tint : color = 0.2, 0.6, 1.0;
+void update() {}
+vec3 shade(Led led) {
+  float phase = fract(led.s - time * speed);
+  float band = smoothstep(width, 0.0, abs(phase - 0.5));
+  return tint * band;
+}
+
+REPAIR: given a previous script + compiler diagnostics, fix every error; change as little else as possible.`;
+
 /** JSON schema for the structured `{script, notes}` output. */
 export const OUTPUT_SCHEMA = {
   type: "object",
