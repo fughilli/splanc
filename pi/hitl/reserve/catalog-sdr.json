@@ -1,0 +1,43 @@
+{
+  "comment": "amd-rig SDR HITL bench catalog (read by hitl-reserved --catalog on the amd64 //pi/hitl:hitl_sdr variant). Unlike the fleet-identical Pi catalog.json, this host offers ONE composite reservable unit: an ESP32-C6 wired next to a HackRF One, handed out together as a single atomic reservation for reverse-engineering the ESP32's lower-layer WiFi/BT stacks. No auto-discovery (discovery yields single-board units, not composites) and no FX2 analyzer / provisioning-AP (see nix/hitl-sdr.nix). host/workspace + the unit sshd port range are passed as flags by nix/hitl-sdr.nix, not baked here.",
+  "workspace": "splanc",
+  "lease_seconds": 1800,
+  "ssh_port_base": 2222,
+
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "monitor", "jtag", "gdb", "improv", "wss-app", "led-strip"]
+    },
+    "hackrf-one": {
+      "kind": "usb",
+      "capabilities": ["sdr", "rx", "tx", "wideband"]
+    }
+  },
+
+  "components": [
+    {
+      "comment": "The ESP32-C6 DUT, addressed by its built-in USB-JTAG by-id symlink (stable across re-enumeration) and pinned to /dev/ttyACM0 inside the reservation env so the toolbox (hitl-flash/monitor, default /dev/ttyACM0) works unchanged. HITL_ADAPTER_SERIAL selects this board's USB-JTAG for openocd/gdb.",
+      "name": "c6-0",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:B0-if00:/dev/ttyACM0"
+      ],
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:B0" }
+    },
+    {
+      "comment": "The HackRF One. A raw-USB SDR with no serial tty, so it isn't isolated by the tty→USB-port path; the reservation container runs privileged (single-unit bench) and sees the whole /dev/bus/usb, which includes the HackRF at 1d50:6089. hackrf_info + GNU Radio/gr-osmosdr in the env drive it.",
+      "name": "sdr-0",
+      "type": "hackrf-one"
+    }
+  ],
+
+  "units": [
+    {
+      "comment": "The composite unit: C6 + HackRF reserved together as one atomic unit for lower-layer RE. Its capabilities are the union of both components (flash/monitor/jtag/gdb + sdr/rx/tx/wideband). Target it with `hitl reserve --type esp32c6+hackrf` or `--unit c6-sdr`.",
+      "name": "c6-sdr",
+      "type": "esp32c6+hackrf",
+      "components": ["c6-0", "sdr-0"]
+    }
+  ]
+}

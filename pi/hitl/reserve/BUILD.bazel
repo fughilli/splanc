@@ -20,4 +20,11 @@ alias(
     actual = "@hitl_reserve//cmd/hitl",
 )
 
-exports_files(["catalog.json"])
+# catalog.json — the fleet-identical Pi rig catalog (//pi/hitl:hitl{,_pi3}).
+# catalog-sdr.json — the amd-rig SDR bench catalog: one composite esp32c6+hackrf
+# unit (//pi/hitl:hitl_sdr). Both are baked into their image by nix/hitl-*.nix,
+# staged via //pi/hitl:flake_srcs.
+exports_files([
+    "catalog.json",
+    "catalog-sdr.json",
+])

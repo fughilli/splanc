@@ -4,7 +4,11 @@
 # key mounted at /run/hitl/authorized_keys; the entrypoint installs the key and
 # starts sshd. Toolbox is MVP (flash + serial); BLE/JTAG tools are added as they
 # get exercised (just more packages in `toolbox`).
-{ pkgs }:
+#
+# withSdr = true adds the HackRF CLI + GNU Radio (gr-osmosdr) so a composite
+# esp32c6+hackrf reservation (amd-rig, //pi/hitl:hitl_sdr) can drive the SDR
+# alongside the C6, and names the image `hitl-sdr:latest` instead of hitl-test.
+{ pkgs, withSdr ? false }:
 let
   # esptool pulls python-ecdsa, which nixpkgs currently flags insecure. Permit it
   # just for this image by re-importing nixpkgs with the allowance, so the caller
@@ -14,6 +18,19 @@ let
     config = (pkgs.config or { }) // {
       permittedInsecurePackages = [ "python3.12-ecdsa-0.19.1" ];
     };
+    # ecdsa's test suite has a flaky signals/threads case
+    # (test_multithreading_with_interrupts asserts a KeyboardInterrupt that a
+    # heavily-parallel/sandboxed builder races and misses). Being insecure-marked,
+    # ecdsa isn't served by cache.nixos.org, so every rig builds it from source and
+    # runs those tests — a non-deterministic deploy failure (hit building this image
+    # on amd-rig's 16-core box). esptool doesn't need ecdsa's tests, so drop them.
+    overlays = [
+      (final: prev: {
+        pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+          (pyfinal: pyprev: { ecdsa = pyprev.ecdsa.overridePythonAttrs (_: { doCheck = false; }); })
+        ];
+      })
+    ];
   };
 
   sshUser = "agent";
@@ -275,6 +292,35 @@ let
     '';
   };
 
+  # SDR toolbox (withSdr): the HackRF CLI + GNU Radio with the osmocom source
+  # block, built exactly as ai-sdr's flake does (gnuradio.override extraPackages =
+  # [ gnuradioPackages.osmosdr ]). Lets a composite esp32c6+hackrf holder capture
+  # IQ / run flowgraphs against the HackRF alongside flashing/debugging the C6.
+  grWithOsmo = p.gnuradio.override { extraPackages = [ p.gnuradioPackages.osmosdr ]; };
+  # A python3 that can `import gnuradio, osmosdr`, exposed under a distinct name so
+  # it never shadows the ESP toolbox's pyEnv python3 (pyserial/bleak) on PATH.
+  # Write flowgraphs (see ai-sdr) and run them with `gnuradio-python flow.py`.
+  gnuradioPython = p.runCommand "gnuradio-python" { } ''
+    mkdir -p $out/bin
+    ln -s ${grWithOsmo.pythonEnv}/bin/python3 $out/bin/gnuradio-python
+  '';
+  sdrTools = with p; [
+    hackrf # hackrf_info / hackrf_transfer / hackrf_sweep
+    soapyhackrf # SoapySDR HackRF backend
+    grWithOsmo # gnuradio-companion / gr_modtool / gnuradio-config-info + gr-osmosdr
+    gnuradioPython # `gnuradio-python flow.py`
+    # WiFi + BT stack for talking to the ESP over the full protocol while the SDR
+    # captures the PHY. Usable because the SDR bench runs the env with host
+    # networking (--net-host) + the host D-Bus socket (--mount); the radios live on
+    # the host (see nix/hitl-sdr.nix). iw/wpa_supplicant/hostapd = STA/AP/monitor
+    # over nl80211; bluez (bluetoothctl/btmon) drives the host bluetoothd; the base
+    # toolbox already carries bluez + hitl-ble.
+    iw
+    wpa_supplicant # wpa_supplicant + wpa_cli (STA)
+    hostapd # AP
+    iproute2 # ip / ss
+  ];
+
   toolbox = with p; [
     bashInteractive
     coreutils
@@ -305,11 +351,14 @@ let
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port
     # bluez python3Packages.bleak   # BLE scan/connect/commands
-  ];
+  ] ++ p.lib.optionals withSdr sdrTools;
   toolPath = p.lib.makeBinPath toolbox;
 
   sshdConfig = p.writeText "sshd_config" ''
-    Port 22
+    # Port is set on the sshd command line from $HITL_SSH_PORT (default 22), not
+    # here: with bridge networking the daemon publishes 22 -> the unit's host port,
+    # but under host networking (--net-host, the SDR bench) there's no publish, so
+    # sshd must bind the unit port itself (and NOT 22, which the host sshd owns).
     PermitRootLogin no
     PasswordAuthentication no
     KbdInteractiveAuthentication no
@@ -356,12 +405,16 @@ let
       for dev in /dev/ttyACM* /dev/ttyUSB*; do
         if [ -e "$dev" ]; then chmod a+rw "$dev" 2>/dev/null || true; fi
       done
-      exec ${p.openssh}/bin/sshd -D -e -f ${sshdConfig}
+      # Bind the unit's sshd port: $HITL_SSH_PORT under host networking (--net-host,
+      # the SDR bench), else 22 (bridge mode publishes it to the unit's host port).
+      exec ${p.openssh}/bin/sshd -D -e -f ${sshdConfig} -o "Port=''${HITL_SSH_PORT:-22}"
     '';
   };
 in
 p.dockerTools.buildLayeredImage {
-  name = "hitl-test";
+  # hitl-sdr for the amd-rig SDR bench (esp32c6+hackrf), hitl-test for the Pi rigs;
+  # the app module's --image / imageRef must match (hitl-sdr.nix / hitl-app.nix).
+  name = if withSdr then "hitl-sdr" else "hitl-test";
   tag = "latest";
   contents = toolbox;
   # Minimal rootfs: the agent + sshd-privsep users, /tmp, a login profile that

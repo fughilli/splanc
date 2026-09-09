@@ -34,17 +34,17 @@
     "hitl-reserve": {
       "flake": false,
       "locked": {
-        "lastModified": 1788994997,
-        "narHash": "sha256-MT8ZEXr+QTPKIh2gZGLi60lTg0Muwk1qfcv9bS5JSc0=",
+        "lastModified": 1788997562,
+        "narHash": "sha256-v1YN9nk7BFtjDrmuZu8PuYjYx7U/zWLWdggaygHiqu8=",
         "owner": "fughilli",
         "repo": "hitl-reserve",
-        "rev": "c6699e9003b54ea602b3df5166cf46a47b928663",
+        "rev": "40a21d46c8bb7fcfebe893d759d1e9889abeb5f3",
         "type": "github"
       },
       "original": {
         "owner": "fughilli",
         "repo": "hitl-reserve",
-        "rev": "c6699e9003b54ea602b3df5166cf46a47b928663",
+        "rev": "40a21d46c8bb7fcfebe893d759d1e9889abeb5f3",
         "type": "github"
       }
     },
@@ -134,18 +134,18 @@
       },
       "locked": {
         "dir": "nix",
-        "lastModified": 1787169079,
-        "narHash": "sha256-QTjRoKmjD58lQSKVFtMevDeKks3I//w66z5bhNA8RCU=",
+        "lastModified": 1788979785,
+        "narHash": "sha256-m1oP10VKx/SN8E6H5qyd9U12/LV2czjPkTxksKMv1Do=",
         "owner": "fughilli",
         "repo": "sbc-deploy",
-        "rev": "f51b3f2cd0036caf4f594c70ad79e86ce51fec31",
+        "rev": "ccc7dd0d48b5b687f896264538789344dffa0edd",
         "type": "github"
       },
       "original": {
         "dir": "nix",
         "owner": "fughilli",
-        "ref": "f51b3f2",
         "repo": "sbc-deploy",
+        "rev": "ccc7dd0d48b5b687f896264538789344dffa0edd",
         "type": "github"
       }
     }
