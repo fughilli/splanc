@@ -1,7 +1,8 @@
 # Consumes the extracted hitl-reserve Bazel module (@hitl_reserve). These aliases
 # expose the generalized reservation daemon + CLI to splanc's build graph, driven
-# by the splanc-fleet catalog.json in this directory. Additive: the existing
-# //pi/hitl/cmd/hitl-managerd daemon is untouched; this is the migration target.
+# by the splanc-fleet catalog.json in this directory (also baked into the rig image
+# by nix/hitl-app.nix, staged via //pi/hitl:flake_srcs). This is now the rig's
+# reservation system — the old cmd/hitl-managerd + internal/* are gone.
 #
 #   bazel run //pi/hitl/reserve:hitl-reserved -- \
 #     --catalog $(bazel info workspace)/pi/hitl/reserve/catalog.json --host $(hostname)

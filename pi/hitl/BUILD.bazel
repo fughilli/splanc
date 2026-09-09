@@ -38,7 +38,7 @@ filegroup(
     srcs = [
         "flake.lock",
         "flake.nix",
-        "reserve/catalog.json",
+        "//pi/hitl/reserve:catalog.json",  # reserve/ is its own package
     ] + glob([
         "nix/**",
         "observability/**",
