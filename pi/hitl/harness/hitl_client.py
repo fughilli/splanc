@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shlex
 import shutil
 import socket
@@ -34,6 +35,11 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+
+
+def _host_of(base_url: str) -> str:
+    """The hostname out of a base URL like 'http://hitl-rig-1:8087' -> 'hitl-rig-1'."""
+    return base_url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0]
 
 
 class ReserveError(RuntimeError):
@@ -202,8 +208,11 @@ class Reservation:
         print(f"reserved: id={self.id} on {self.server} unit={self._unit}", flush=True)
 
     def _pick_server(self) -> str:
-        """Pick a host with a matching free unit; else one with a matching busy unit
-        (to queue on); else the first reachable. Mirrors the CLI/pool policy."""
+        """Pick a host to reserve on. Prefer a host with the MOST free matching units
+        (spreads load), else one with a matching busy unit (to queue on), else any
+        reachable — breaking ties RANDOMLY so a burst of concurrent reservations (the
+        CI suite fires the whole set at once) fans out across the fleet instead of all
+        piling onto the first rig."""
         if self.server:
             return self.server
         pool = _pool()
@@ -212,7 +221,8 @@ class Reservation:
                 "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
                 f"with rigs tagged {os.environ.get('HITL_TAG') or DEFAULT_TAG}"
             )
-        free, queueable, reachable, errs = [], [], [], []
+        free: list[tuple[str, int]] = []  # (host, free-matching-unit count)
+        queueable, reachable, errs = [], [], []
         for base in pool:
             try:
                 st = _get(base + "/status")
@@ -221,13 +231,18 @@ class Reservation:
                 continue
             reachable.append(base)
             units = st.get("units") or []
-            if any(_unit_serves(u, self.sku or "", self.require_caps) for u in units):
-                free.append(base)
+            n = sum(1 for u in units if _unit_serves(u, self.sku or "", self.require_caps))
+            if n:
+                free.append((base, n))
             elif any(self._unit_matches(u) for u in units):
                 queueable.append(base)
-        for cand in (free, queueable, reachable):
-            if cand:
-                return cand[0]
+        if free:
+            most = max(n for _, n in free)
+            return random.choice([b for b, n in free if n == most])
+        if queueable:
+            return random.choice(queueable)
+        if reachable:
+            return random.choice(reachable)
         raise ReserveError("no reachable host with a matching unit: " + "; ".join(errs))
 
     def _unit_matches(self, u: dict) -> bool:
@@ -248,7 +263,13 @@ class Reservation:
             state = r.get("state")
             if state == "active":
                 ep = r.get("endpoint") or {}
-                self.host, self.port, self.user = ep.get("host"), ep.get("port"), ep.get("user")
+                self.port, self.user = ep.get("port"), ep.get("user")
+                # Reach the container over the SAME address we reached the daemon at,
+                # not the daemon's advertised endpoint host — that may be a .local
+                # (mDNS) name that doesn't resolve from every client, whereas the pool
+                # address (a tailnet MagicDNS name) does. Matches the old CLI, which
+                # derived the ssh host from the server URL rather than trusting --host.
+                self.host = _host_of(self.server) or ep.get("host")
                 self._unit = r.get("unit")
                 self.endpoint = f"{self.user}@{self.host}:{self.port}"
                 return
