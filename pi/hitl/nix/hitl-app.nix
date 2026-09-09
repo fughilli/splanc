@@ -513,6 +513,12 @@ in
           # creds. SSID = hostname (per-rig), so it's a flag, not in the catalog.
           "--provisioning-ssid ${apSsid}"
           "--provisioning-psk ${apPsk}"
+          # Share the host system dbus socket into every reservation container so
+          # in-container BLE (bleak: Improv provisioning + hitl-ble) can drive the
+          # host bluetoothd — the old daemon bind-mounted this; the generalized one
+          # needs it passed explicitly. --mount skips it if the socket is absent, so a
+          # rig without bluetoothd is unaffected.
+          "--mount /run/dbus/system_bus_socket:/run/dbus/system_bus_socket"
         ];
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
       # rig (harmless when no FX2 is attached; the analyzer broker self-gates).
