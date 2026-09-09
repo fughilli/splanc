@@ -1,148 +1,237 @@
-"""Thin HITL reservation client — drives the Go `hitl` CLI, no logic of its own.
+"""Thin HITL reservation client for the generalized hitl-reserve daemon.
 
-This used to reimplement the daemon's reserve/heartbeat/release loop and the
-ssh/scp plumbing in Python — a parallel copy of pi/hitl/cmd/hitl. It now shells
-out to the `hitl` binary, so there is ONE implementation of reservation, server
-selection (including tailnet tag discovery, see pi/hitl/internal/tailnet),
-flashing, and tunneling. The `Reservation` API is unchanged, so callers (the e2e
-driver, the reach probe) stay put.
+Talks the daemon's JSON API directly (POST /reserve, /reservation/{id}/heartbeat,
+/release; GET /status) and does the ssh/scp/tunnel plumbing in Python. The
+reservation workflow (flashing, tunneling to a DUT via the rig) is splanc-specific,
+so it lives HERE in the harness rather than in the general `hitl` CLI — the CLI
+stays a minimal reserve/status/release/shared client.
 
-Model: one long-lived `hitl reserve --no-shell` process holds the reservation and
-heartbeats its lease for the whole session; each operation (`ssh`, `scp_to`,
-`forward`) is a short `hitl` subcommand that attaches to it with --id (which does
-not release or heartbeat — the holder owns the lifecycle). release() ends the
-holder, which drops the reservation.
+The `Reservation` API is unchanged from the previous CLI-shelling version, so
+callers (the e2e driver, the reach probe, the benches) stay put:
 
     r = Reservation(); r.acquire()          # pick a free rig, reserve, hold it
     r.scp_to([bundle], "/tmp/"); r.ssh("hitl-flash …", capture=True)
     with r.forward(dut_ip, 81) as port: ...  # tunnel to the DUT via the rig
     r.release()                             # or use it as a context manager
+
+Model: acquire() picks a matching free host from the pool ($HITL_HOSTS, or the
+legacy $HITL_SERVERS), reserves a unit with a throwaway SSH key, and holds the
+lease with a background heartbeat thread until release(). Each operation is a short
+ssh/scp to the unit's endpoint. Stdlib only (urllib/subprocess/threading).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
-
-
-def default_hitl() -> list[str]:
-    """Locate the `hitl` binary: $HITL_BIN, else bazel runfiles, else $PATH."""
-    override = os.environ.get("HITL_BIN")
-    if override:
-        return override.split()
-    # When run as the //pi/hitl/harness:e2e py_binary, the CLI rides in runfiles
-    # (it's a data dep) — resolve it there so no PATH setup is needed. rules_go
-    # nests the binary under `<pkg>/hitl_/hitl`; accept the flat path too in case
-    # that changes.
-    try:
-        from python.runfiles import runfiles
-
-        rf = runfiles.Create()
-        for rloc in ("_main/pi/hitl/cmd/hitl/hitl_/hitl", "_main/pi/hitl/cmd/hitl/hitl"):
-            path = rf.Rlocation(rloc)
-            if path and os.path.exists(path):
-                return [path]
-    except Exception:
-        pass
-    found = shutil.which("hitl")
-    if found:
-        return [found]
-    raise RuntimeError("hitl binary not found: set $HITL_BIN or put `hitl` on PATH")
 
 
 class ReserveError(RuntimeError):
     pass
 
 
+DEFAULT_PORT = "8087"
+
+
+def default_hitl() -> list[str]:
+    """Kept for signature compatibility; the client no longer shells the CLI."""
+    return (os.environ.get("HITL_BIN") or "hitl").split()
+
+
+def _pool() -> list[str]:
+    """Canonical base URLs from $HITL_HOSTS (or legacy $HITL_SERVERS)."""
+    raw = os.environ.get("HITL_HOSTS") or os.environ.get("HITL_SERVERS") or ""
+    out: list[str] = []
+    for tok in raw.replace(",", " ").split():
+        u = tok if "://" in tok else "http://" + tok
+        if ":" not in u.split("://", 1)[1]:
+            u = u + ":" + DEFAULT_PORT
+        if u not in out:
+            out.append(u)
+    return out
+
+
+def _get(url: str, timeout: float = 10.0) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310 (trusted tailnet)
+        return json.load(r)
+
+
+def _post(url: str, body: dict | None = None, timeout: float = 15.0) -> dict:
+    data = json.dumps(body).encode() if body is not None else b""
+    req = urllib.request.Request(
+        url, data=data, method="POST", headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+            raw = r.read()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")
+        raise ReserveError(f"{url}: {e.code} {detail}") from e
+
+
+def _unit_serves(u: dict, unit_type: str, caps: list[str]) -> bool:
+    """Whether a FREE unit can serve the request under the pin rules the pool sees."""
+    if u.get("active") is not None:
+        return False
+    if unit_type and u.get("type") != unit_type:
+        return False
+    have = set(u.get("capabilities") or [])
+    if not set(caps).issubset(have):
+        return False
+    if not unit_type and u.get("pin_only"):
+        return False  # caps-only/unconstrained never targets a pin-only unit
+    return True
+
+
 class Reservation:
-    """A held HITL reservation, driven through the `hitl` CLI."""
+    """One reservation held for the session; see the module docstring."""
 
     def __init__(
         self,
         server: str | None = None,
         owner: str | None = None,
-        hitl: list[str] | None = None,
         require: str | None = None,
-        device: str | None = None,
         require_caps: list[str] | None = None,
         sku: str | None = None,
-    ):
-        # server=None lets `hitl` select a free rig from the pool (tag discovery
-        # or $HITL_SERVERS); once acquired, self.server pins the chosen rig so
-        # every follow-up command targets the same daemon. require (e.g.
-        # "analyzer") narrows pool selection to capability-matching rigs. device
-        # (a discovered c6-<serial> name) pins a specific DUT on the rig instead
-        # of whichever frees first — for walking every DUT (see hitl_dut_id.py).
-        # require_caps (e.g. ["improv"]) lands on any free DUT whose advertised
-        # capabilities are a superset — how a capability-targeted test runs on any
-        # SKU that satisfies it (esp32c6, led-mapper-pi, …). sku (e.g.
-        # "led-mapper-pi") pins to any free DUT of that hardware SKU — an explicit
-        # hardware target, so unlike require_caps it can reach a pin-only network
-        # DUT; a SKU-fanned test uses it to run on its exact hardware.
+        device: str | None = None,
+        hitl: list[str] | None = None,
+    ) -> None:
         self.server = server
-        self.owner = owner or os.environ.get("HITL_OWNER")
-        self.require = require
-        self.device = device
-        self.require_caps = require_caps
-        self.sku = sku
-        self._hitl = hitl or default_hitl()
+        self.owner = owner or os.environ.get("HITL_OWNER") or f"hitl-harness@{socket.gethostname()}"
+        # `require` was a single required capability; fold it into require_caps.
+        caps = list(require_caps or [])
+        if require:
+            caps.append(require)
+        self.require_caps = caps
+        self.sku = sku  # -> unit_type (an explicit hardware-class target)
+        self.device = device  # -> unit (pin by exact name)
         self.id: str | None = None
         self.host: str | None = None
+        self.port: int | None = None
+        self.user: str | None = None
         self.endpoint: str | None = None
-        self._holder: subprocess.Popen | None = None
+        self._unit: str | None = None
+        self._hb_stop: threading.Event | None = None
+        self._hb_thread: threading.Thread | None = None
+        self._keydir: str | None = None
+        self._keyfile: str | None = None
 
     # --- lifecycle -------------------------------------------------------
     def acquire(self) -> None:
-        """Reserve a rig (picking a free one) and hold it with a heartbeat process."""
-        argv = [*self._hitl, "reserve", "--no-shell"]
-        if self.server:
-            argv += ["--server", self.server]
-        if self.owner:
-            argv += ["--owner", self.owner]
-        if self.require:
-            argv += ["--require", self.require]
-        if self.require_caps:
-            argv += ["--require-caps", ",".join(self.require_caps)]
-        if self.sku:
-            argv += ["--sku", self.sku]
+        """Reserve a matching free rig and hold it with a heartbeat thread."""
+        self._gen_key()
+        base = self._pick_server()
+        pub = open(self._keyfile + ".pub").read().strip()
+        body = {"owner": self.owner, "ssh_public_key": pub}
         if self.device:
-            argv += ["--device", self.device]
-        # stderr inherits (human progress -> our logs); stdout is the machine
-        # channel we parse. The process stays alive to heartbeat until release().
-        self._holder = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
-        fields: dict[str, str] = {}
-        assert self._holder.stdout is not None
-        for line in self._holder.stdout:  # blocks until active, then 3 key=val lines
-            key, _, val = line.strip().partition("=")
-            if key:
-                fields[key] = val
-            if "endpoint" in fields:
-                break
-        if "endpoint" not in fields:
-            code = self._holder.poll()
-            raise ReserveError(f"hitl reserve gave no endpoint (exited {code}); fields={fields}")
-        self.id = fields.get("id")
-        self.server = fields.get("server", self.server)
-        self.endpoint = fields["endpoint"]
-        self.host = self.endpoint.split("@", 1)[-1].rsplit(":", 1)[0]
-        print(f"reserved: id={self.id} on {self.server}", flush=True)
+            body["unit"] = self.device
+        if self.sku:
+            body["unit_type"] = self.sku
+        if self.require_caps:
+            body["require_caps"] = self.require_caps
+        res = _post(base + "/reserve", body)
+        self.server = base
+        self.id = res.get("id")
+        if not self.id:
+            raise ReserveError(f"reserve gave no id: {res}")
+        self._start_heartbeat()
+        self._await_active()
+        print(f"reserved: id={self.id} on {self.server} unit={self._unit}", flush=True)
+
+    def _pick_server(self) -> str:
+        """Pick a host with a matching free unit; else one with a matching busy unit
+        (to queue on); else the first reachable. Mirrors the CLI/pool policy."""
+        if self.server:
+            return self.server
+        pool = _pool()
+        if not pool:
+            raise ReserveError("no hosts: set --server, $HITL_HOSTS, or $HITL_SERVERS")
+        free, queueable, reachable, errs = [], [], [], []
+        for base in pool:
+            try:
+                st = _get(base + "/status")
+            except Exception as e:  # noqa: BLE001
+                errs.append(f"{base}: {e}")
+                continue
+            reachable.append(base)
+            units = st.get("units") or []
+            if any(_unit_serves(u, self.sku or "", self.require_caps) for u in units):
+                free.append(base)
+            elif any(self._unit_matches(u) for u in units):
+                queueable.append(base)
+        for cand in (free, queueable, reachable):
+            if cand:
+                return cand[0]
+        raise ReserveError("no reachable host with a matching unit: " + "; ".join(errs))
+
+    def _unit_matches(self, u: dict) -> bool:
+        """Like _unit_serves but ignoring free/busy — for routing to a queueable host."""
+        if self.sku and u.get("type") != self.sku:
+            return False
+        if not set(self.require_caps).issubset(set(u.get("capabilities") or [])):
+            return False
+        if not self.sku and u.get("pin_only"):
+            return False
+        return True
+
+    def _await_active(self, timeout: float = 900.0) -> None:
+        deadline = time.time() + timeout
+        last_pos = -1
+        while time.time() < deadline:
+            r = _get(f"{self.server}/reservation/{self.id}")
+            state = r.get("state")
+            if state == "active":
+                ep = r.get("endpoint") or {}
+                self.host, self.port, self.user = ep.get("host"), ep.get("port"), ep.get("user")
+                self._unit = r.get("unit")
+                self.endpoint = f"{self.user}@{self.host}:{self.port}"
+                return
+            if state == "released":
+                raise ReserveError(f"reservation released before activating: {r.get('message')}")
+            pos = r.get("position", -1)
+            if pos != last_pos:
+                print(f"queued: position {pos}", flush=True)
+                last_pos = pos
+            time.sleep(2)
+        raise ReserveError(f"reservation {self.id} did not activate within {timeout}s")
+
+    def _start_heartbeat(self) -> None:
+        self._hb_stop = threading.Event()
+
+        def beat() -> None:
+            while not self._hb_stop.wait(20):
+                try:
+                    _post(f"{self.server}/reservation/{self.id}/heartbeat")
+                except Exception:  # noqa: BLE001
+                    pass  # transient; the next tick retries, the reaper is the backstop
+
+        self._hb_thread = threading.Thread(target=beat, daemon=True)
+        self._hb_thread.start()
 
     def release(self) -> None:
-        holder, self._holder = self._holder, None
-        if holder and holder.poll() is None:
-            holder.terminate()  # SIGTERM -> the holder releases (it holds without --keep)
+        if self._hb_stop:
+            self._hb_stop.set()
+        if self.id and self.server:
             try:
-                holder.wait(timeout=8)
+                _post(f"{self.server}/reservation/{self.id}/release")
                 print("released", flush=True)
-            except subprocess.TimeoutExpired:
-                holder.kill()
-        elif self.id:
-            # Holder already gone; release directly as a backstop.
-            self._sub("release", self.id, attach=False, check=False)
+            except Exception as e:  # noqa: BLE001
+                print(f"release: {e}", flush=True)
         self.id = None
+        if self._keydir:
+            shutil.rmtree(self._keydir, ignore_errors=True)
+            self._keydir = None
 
     def __enter__(self) -> "Reservation":
         self.acquire()
@@ -151,80 +240,106 @@ class Reservation:
     def __exit__(self, *exc) -> None:
         self.release()
 
-    # --- operations (each a `hitl` subcommand attached via --id) ---------
-    def _attach(self) -> list[str]:
-        args: list[str] = []
-        if self.server:
-            args += ["--server", self.server]
-        if self.id:
-            args += ["--id", self.id, "--keep"]  # reuse without releasing/heartbeating
-        return args
-
-    def _sub(
-        self,
-        subcmd: str,
-        *args: str,
-        attach: bool = True,
-        capture: bool = False,
-        timeout: float | None = None,
-        check: bool = False,
-    ) -> subprocess.CompletedProcess:
-        argv = [*self._hitl, subcmd, *(self._attach() if attach else []), *args]
-        return subprocess.run(
-            argv, check=check, timeout=timeout, capture_output=capture, text=capture or None
+    # --- ssh key ---------------------------------------------------------
+    def _gen_key(self) -> None:
+        self._keydir = tempfile.mkdtemp(prefix="hitl-key-")
+        self._keyfile = os.path.join(self._keydir, "id")
+        subprocess.run(
+            [
+                "ssh-keygen",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-q",
+                "-f",
+                self._keyfile,
+                "-C",
+                "hitl-harness",
+            ],
+            check=True,
         )
 
+    def _ssh_base(self) -> list[str]:
+        return [
+            "ssh",
+            "-i",
+            self._keyfile,
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-p",
+            str(self.port),
+        ]
+
+    # --- operations ------------------------------------------------------
     def ssh(
         self, remote_cmd: list[str] | str, capture: bool = False, timeout: float | None = None
     ) -> subprocess.CompletedProcess:
-        """Run a shell command in the reservation's container (via `hitl run`)."""
+        """Run a shell command in the reservation's container."""
         if isinstance(remote_cmd, list):
-            # shlex.join (not a bare space-join) so an argv element that itself
-            # contains shell metacharacters — e.g. `python3 -c '<snippet with
-            # (){}quotes>'` — survives the remote `sh -c` as ONE token.
             remote_cmd = shlex.join(remote_cmd)
-        # `hitl run` shell-quotes each arg, so wrap in `sh -c` to have the remote
-        # shell interpret the whole line (env prefixes, pipes, redirection).
-        return self._sub("run", "--", "sh", "-c", remote_cmd, capture=capture, timeout=timeout)
+        argv = self._ssh_base() + [f"{self.user}@{self.host}", "sh", "-c", shlex.quote(remote_cmd)]
+        return subprocess.run(
+            argv, check=False, timeout=timeout, capture_output=capture, text=capture or None
+        )
 
     def scp_to(self, locals_: list[str], remote_dir: str) -> None:
-        self._sub("cp", *locals_, remote_dir, check=True)
+        argv = [
+            "scp",
+            "-i",
+            self._keyfile,
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-P",
+            str(self.port),
+            *locals_,
+            f"{self.user}@{self.host}:{remote_dir}",
+        ]
+        subprocess.run(argv, check=True)
 
     def wifi(self) -> tuple[str, str] | None:
-        """The rig's provisioning-AP creds as (ssid, psk), or None if it runs no AP.
-
-        Lets the e2e provision the DUT onto the rig's own AP with no external
-        network — the daemon serves the creds (`hitl wifi` -> /status).
-        """
-        server = ["--server", self.server] if self.server else []
-        proc = self._sub("wifi", *server, attach=False, capture=True)
-        if proc.returncode != 0:
+        """The rig's provisioning-network creds as (ssid, psk), or None if it runs
+        none. Lets the e2e provision the DUT onto the rig's own AP with no external
+        network — the daemon serves the creds via /status.provisioning."""
+        try:
+            st = _get(f"{self.server}/status")
+        except Exception:  # noqa: BLE001
             return None
-        fields: dict[str, str] = {}
-        for line in (proc.stdout or "").splitlines():
-            key, _, val = line.strip().partition("=")
-            if key:
-                fields[key] = val
-        ssid = fields.get("ssid")
-        return (ssid, fields.get("psk", "")) if ssid else None
+        p = st.get("provisioning")
+        if not p or not p.get("ssid"):
+            return None
+        return (p["ssid"], p.get("psk", ""))
 
     @contextmanager
     def forward(self, remote_host: str, remote_port: int):
         """Local-forward a fresh localhost port to remote_host:remote_port via the rig.
 
-        The tunnel's far end is dialed FROM the reservation's container, so the
-        rig reaches the device; this host only needs to reach the rig. Yields the
-        local port (chosen by `hitl forward`, printed on its first stdout line).
+        The tunnel's far end is dialed FROM the reservation's container (the -L
+        target is resolved on the ssh server side), so the rig reaches the device;
+        this host only needs to reach the rig. Yields the chosen local port.
         """
-        argv = [*self._hitl, "forward", *self._attach(), remote_host, str(remote_port)]
-        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
+        local_port = _free_local_port()
+        argv = self._ssh_base() + [
+            "-N",
+            "-L",
+            f"{local_port}:{remote_host}:{remote_port}",
+            f"{self.user}@{self.host}",
+        ]
+        proc = subprocess.Popen(argv)
         try:
-            assert proc.stdout is not None
-            line = proc.stdout.readline().strip()
-            if not line.isdigit():
-                code = proc.poll()
-                raise ReserveError(f"hitl forward gave no local port (exited {code}), got {line!r}")
-            local_port = int(line)
+            _wait_listen(local_port, timeout=15)
             print(
                 f"tunnel: localhost:{local_port} -> (rig) -> {remote_host}:{remote_port}",
                 flush=True,
@@ -236,3 +351,19 @@ class Reservation:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _wait_listen(port: int, timeout: float) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.3)

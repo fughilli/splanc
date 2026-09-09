@@ -1,13 +1,19 @@
 # HITL rig — Pi system config: Podman, Tailscale, the reservation daemon, and
-# the test container image. Passed to mkSbcProject as an appModule.
+# the test container image. A FUNCTION of the hitl-reserve module source
+# (`hitlSrc`), returning an appModule for mkSbcProject (flake.nix applies it). The
+# daemon + CLI (hitl-reserved / hitl) are built from that source in packages.nix.
 #
 # Hardware-dependent bits (ESP32 device path, USBIP bind, BT controller, the
 # Tailscale auth key) are MVP placeholders — see DESIGN.md "Open items".
+{ hitlSrc }:
 { config, pkgs, lib, ... }:
 let
-  hitl = pkgs.callPackage ./packages.nix { };
+  hitl = pkgs.callPackage ./packages.nix { src = hitlSrc; };
   image = pkgs.callPackage ./container.nix { inherit pkgs; };
   imageRef = "hitl-test:latest"; # matches container.nix name:tag
+  # The declarative catalog baked into the image (single source of truth, shared
+  # with the //pi/hitl/reserve Bazel consumer). The daemon reads it at --catalog.
+  catalogFile = ../reserve/catalog.json;
 
   apiPort = 8087; # daemon API (reached over the tailnet)
   sshPort = 2222; # published container sshd port for the first DUT
@@ -450,7 +456,11 @@ in
   # connection can always activate, so it wins the device over a lower-priority
   # STA. The uplink is Ethernet, so no STA is needed here.
 
-  # The reservation daemon.
+  # The reservation daemon (hitl-reserved, from the hitl-reserve module). Reads the
+  # baked catalog for its reservable units + shared resources; per-host values (the
+  # provisioning-AP SSID/PSK, derived from the hostname) come in as flags since the
+  # catalog is fleet-identical. USB C6 boards are auto-discovered and network DUTs
+  # are runtime-seeded (scripts/seed-network-dut.sh -> the catalog's seeded_file).
   systemd.services.hitl-manager = {
     description = "HITL reservation manager";
     wantedBy = [ "multi-user.target" ];
@@ -463,25 +473,25 @@ in
     # so a redeployed rig silently kept serving stale behaviour). Listing the
     # package in restartTriggers puts the unit in switch-to-configuration's
     # always-restart set, keyed on the exact binary, so a deploy reliably swaps it.
-    restartTriggers = [ "${hitl}/bin/hitl-managerd" ];
+    restartTriggers = [ "${hitl}/bin/hitl-reserved" "${catalogFile}" ];
     # No restart rate-limit ([Unit] section): a reservation rig's daemon must
     # always come back, and rapid redeploys (or a crash loop during bring-up)
     # shouldn't trip the default StartLimitBurst and wedge it into a
     # "failed, refuses to start" state that then needs a manual reset-failed.
     unitConfig.StartLimitIntervalSec = 0;
-    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
-    # demand; sigrok-cli captures the DUT's tapped LED line when an FX2 is present
-    # (shipped on every rig; the daemon self-gates); getent resolves a *.local
-    # network-DUT address host-side (nss-mdns) before injecting the IP into the
-    # reservation container (see resolveDUTAddr).
+    # sigrok-cli captures a unit's tapped LED line when an FX2 is present (shipped
+    # on every rig; the analyzer broker self-gates on presence); getent resolves a
+    # *.local network-DUT address host-side (nss-mdns) before the runner injects the
+    # IP into the reservation container; podman/openssh for the reservation env.
     path = [ pkgs.podman pkgs.iproute2 pkgs.openssh pkgs.getent ]
       ++ sigrok.packages;
     serviceConfig = {
       ExecStart =
-        lib.concatStringsSep " " ([
-          "${hitl}/bin/hitl-managerd"
+        lib.concatStringsSep " " [
+          "${hitl}/bin/hitl-reserved"
           "--addr :${toString apiPort}"
-          "--rig ${config.networking.hostName}"
+          "--catalog ${catalogFile}"
+          "--workspace splanc"
           # Advertised host (display/fallback); the CLI overrides it with the
           # address it actually used to reach the API. `.local` resolves on the LAN.
           "--host ${config.networking.hostName}.local"
@@ -489,31 +499,18 @@ in
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
-          # Reservation containers reach the daemon's shared analyzer over the
-          # podman host gateway; keep the port in sync with --addr above.
-          "--container-capture-url http://host.containers.internal:${toString apiPort}"
-          # Per-reservation BLE HCI capture. btmon runs host-side (as the daemon's
-          # root, which has the HCI monitor socket + CAP_NET_RAW the unprivileged
-          # container lacks) and its btsnoop is bind-mounted read-only into the
-          # reservation container; `hitl btmon` drives it. Bounded (size + time
-          # caps) so it can't fill the rig disk; off until an agent starts it.
-          "--btmon ${pkgs.bluez}/bin/btmon"
-          # The AP is always-on (NM autoconnect); the daemon only advertises its
-          # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
-          # AP — no --ap-conn — so per-reservation AP control (internal/ap) stays
-          # dormant, ready for the future multi-DUT design.
-          "--ap-ssid ${apSsid}"
-          "--ap-psk ${apPsk}"
-          dutArgs
-        ] ++ analyzerArgs # --analyzer-* always; daemon self-gates on the FX2
-        # Always prefer a USB BLE dongle for central (btmon capture host-side + bleak
-        # in the container) over the flaky onboard controller. "usb" auto-resolves the
-        # dongle's hci by bus at runtime and FALLS BACK to onboard when none is up
-        # (resolveBLEAdapter) — so this is safe on every rig, dongle or not, and needs
-        # no build-time flag.
-        ++ [ "--ble-adapter" "usb" ]);
+          # Reservation containers reach the daemon's shared-resource brokers (e.g.
+          # the logic analyzer at POST /shared/logic-analyzer) over the podman host
+          # gateway; keep the port in sync with --addr above ($HITL_BROKER_URL).
+          "--broker-url http://host.containers.internal:${toString apiPort}"
+          # The AP is always-on (NM autoconnect); the daemon only ADVERTISES its
+          # creds in /status so the harness can provision a DUT onto it with no OOB
+          # creds. SSID = hostname (per-rig), so it's a flag, not in the catalog.
+          "--provisioning-ssid ${apSsid}"
+          "--provisioning-psk ${apPsk}"
+        ];
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
-      # rig (harmless when no FX2 is attached; the daemon self-gates on presence).
+      # rig (harmless when no FX2 is attached; the analyzer broker self-gates).
       Environment = [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";
       Restart = "on-failure";

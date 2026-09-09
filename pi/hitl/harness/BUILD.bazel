@@ -32,7 +32,7 @@ hitl_test(
     data = [
         "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     main = "hitl_improv_e2e.py",
     requires = ["improv"],
@@ -64,7 +64,7 @@ hitl_test(
     data = [
         "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     main = "hitl_ble_player_e2e.py",
     # `flash` restricts the fan-out to the esp32c6 (we flash the vendor bundle;
@@ -103,7 +103,7 @@ py_test(
     data = [
         "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -169,7 +169,7 @@ py_test(
         # image embeds (loaded from runfiles as the expected value).
         "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_e2e.py",
@@ -197,7 +197,7 @@ py_test(
     data = [
         "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -236,7 +236,7 @@ py_test(
         # The compiled JIT-bench effect for --jit-verify (FUG-134). The OPTIMIZED
         # .fxb the firmware ships, so it lowers to a native RV32 segment on-device.
         "//firmware/player_app:jit_bench_fxb_file",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_led_capture.py",
@@ -267,7 +267,7 @@ py_test(
     data = [
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//firmware/player_app:jit_bench_fxb_file",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -295,7 +295,7 @@ hitl_test(
     srcs = ["hitl_fpga_ws281x.py"],
     # The `hitl` CLI rides in runfiles so the reservation works without PATH setup
     # (default_hitl() resolves it there); mirrors :improv_e2e.
-    data = ["//pi/hitl/cmd/hitl"],
+    data = ["@hitl_reserve//cmd/hitl"],
     main = "hitl_fpga_ws281x.py",
     requires = [
         "spi-fpga",
@@ -327,7 +327,7 @@ py_test(
         # The OPTIMIZED .fxb the firmware ships, so it lowers to a native RV32
         # segment on-device — the program under differential test.
         "//firmware/player_app:jit_bench_fxb_file",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_led_capture.py",
@@ -360,7 +360,7 @@ py_test(
     data = [
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//firmware/player_app:jit_bench_fxb_file",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -388,7 +388,7 @@ py_binary(
     srcs = ["hitl_serial_probe.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_serial_probe.py",
@@ -412,7 +412,7 @@ py_binary(
     srcs = ["hitl_dut_id.py"],
     data = [
         "//firmware/dut_id:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_dut_id.py",
@@ -439,7 +439,7 @@ py_binary(
     ],
     data = [
         "//firmware/dut_id:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_map_la.py",
@@ -469,7 +469,7 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_mapping.py",
@@ -512,7 +512,7 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
         # The unified golden (full bundle + margins), shared with the web
         # estimator test — the margin check reads it from runfiles.
         "//web:tests/testdata/device-bench-esp32c6.json",
@@ -549,8 +549,8 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
         "//web:tests/testdata/device-bench-esp32c6.json",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -585,7 +585,7 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
         # The JIT golden (JIT pinned ON); its interpreter twin is on :fx_bench.
         "//web:tests/testdata/device-bench-esp32c6-jit.json",
     ],
@@ -619,8 +619,8 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
         "//web:tests/testdata/device-bench-esp32c6-jit.json",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -659,7 +659,7 @@ py_test(
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_jit_soak.py",
@@ -688,7 +688,7 @@ py_test(
     srcs = ["hitl_map_upload.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_map_upload.py",
@@ -717,7 +717,7 @@ py_test(
     srcs = ["hitl_map_upload.py"],
     data = [
         "//firmware/player_app:esp32c6_netstack_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -747,7 +747,7 @@ py_test(
     srcs = ["hitl_rename_wss.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_rename_wss.py",
@@ -777,7 +777,7 @@ py_test(
     srcs = ["hitl_tls_churn.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_tls_churn.py",
@@ -805,7 +805,7 @@ py_test(
     args = ["--skip-nvs-reboot"],
     data = [
         "//firmware/player_app:esp32c6_netstack_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -840,8 +840,8 @@ py_test(
         "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
         "//tools/touchdesigner/stream_bench",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_video_stream.py",
@@ -873,8 +873,8 @@ py_test(
         "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
         "//tools/touchdesigner/stream_bench",
+        "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
@@ -910,7 +910,7 @@ py_test(
         "uniform_bench_probe.fx",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "uniform_bench.py",
@@ -940,7 +940,7 @@ py_test(
         "led_freeze_probe.py",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_led_freeze.py",
@@ -964,7 +964,7 @@ py_binary(
     srcs = ["hitl_slot_repro.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_slot_repro.py",
@@ -992,7 +992,7 @@ py_test(
     srcs = ["hitl_slot_repro.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_slot_repro.py",
@@ -1020,7 +1020,7 @@ py_test(
         "//firmware/netstack:ap_webserver_flashbundle",
         "//firmware/netstack:ble_peripheral_flashbundle",
         "//firmware/netstack:sta_client_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
     main = "hitl_netstack_examples.py",

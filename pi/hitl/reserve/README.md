@@ -5,9 +5,13 @@ This directory brings [`hitl-reserve`](https://github.com/fughilli/hitl-reserve)
 `pi/hitl` rig — back into splanc as a Bazel module (`@hitl_reserve`, pinned in the
 root `MODULE.bazel`).
 
-It is **additive**: the existing `//pi/hitl/cmd/hitl-managerd` daemon and the
-`hitl` harness are untouched. This is the migration target — the same rig behavior,
-now on a reusable, hardware-agnostic engine that other repos share.
+This is now the rig's reservation system: the old `cmd/hitl-managerd` daemon,
+`cmd/hitl` CLI, and `internal/*` have been removed, and the nix deploy
+(`nix/hitl-app.nix` → `hitl-reserved --catalog reserve/catalog.json`) builds and
+runs `@hitl_reserve`. Same rig behavior, on a reusable, hardware-agnostic engine
+other repos share. The harness (`harness/hitl_client.py`) drives the daemon's HTTP
+API directly and does its own ssh/scp/tunnel plumbing (splanc-specific, kept out of
+the general CLI).
 
 ## Run
 
@@ -29,18 +33,18 @@ the Pi's real address and per-rig `--host`/`--workspace` at deploy.
 
 ## Concept mapping (pi/hitl → hitl-reserve)
 
-| pi/hitl (managerd) | hitl-reserve |
-| --- | --- |
-| DUT (a board, or a network DUT) | **unit** — now composable from ≥1 **component** (e.g. a C6 + a HackRF reserved together) |
-| SKU (`skus.bzl`) | **resource type** (component capabilities) + **unit type** (reservation target) |
-| `runner.Device` (name, kind, sku, devices, env) | **component** (+ unit bundles several) |
-| network DUT is pin-only (kind=="network") | `pin_only` unit (explicit, not kind-inferred) |
-| logic analyzer broker (`internal/analyzer`, `/capture`) | **shared resource** (`shared.Broker`), generic `POST /shared/{name}` |
-| `logic-analyzer-*` caps from the channel map | shared-resource **binding** caps + live discovery `TapCaps` |
-| `--discover` by-id USB monitor | `discovery` block in the catalog |
-| pool over `$HITL_SERVERS` | pool over `$HITL_HOSTS` |
-| metrics labeled `rig` | metrics labeled `host` **and** `workspace` (multi-repo dashboards) |
-| `--dut '{…}'` flags / seeded network-DUT file | declarative `catalog.json` (+ optional discovery) |
+| pi/hitl (managerd)                                      | hitl-reserve                                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| DUT (a board, or a network DUT)                         | **unit** — now composable from ≥1 **component** (e.g. a C6 + a HackRF reserved together) |
+| SKU (`skus.bzl`)                                        | **resource type** (component capabilities) + **unit type** (reservation target)          |
+| `runner.Device` (name, kind, sku, devices, env)         | **component** (+ unit bundles several)                                                   |
+| network DUT is pin-only (kind=="network")               | `pin_only` unit (explicit, not kind-inferred)                                            |
+| logic analyzer broker (`internal/analyzer`, `/capture`) | **shared resource** (`shared.Broker`), generic `POST /shared/{name}`                     |
+| `logic-analyzer-*` caps from the channel map            | shared-resource **binding** caps + live discovery `TapCaps`                              |
+| `--discover` by-id USB monitor                          | `discovery` block in the catalog                                                         |
+| pool over `$HITL_SERVERS`                               | pool over `$HITL_HOSTS`                                                                  |
+| metrics labeled `rig`                                   | metrics labeled `host` **and** `workspace` (multi-repo dashboards)                       |
+| `--dut '{…}'` flags / seeded network-DUT file           | declarative `catalog.json` (+ optional discovery)                                        |
 
 ## What still lives in `pi/hitl` (not generalized)
 

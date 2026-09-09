@@ -31,6 +31,23 @@
         "type": "github"
       }
     },
+    "hitl-reserve": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788973279,
+        "narHash": "sha256-MH3oHor4j6ilqlD7I5c8lr4TRJI+h4QgxOHx/mxhzCs=",
+        "owner": "fughilli",
+        "repo": "hitl-reserve",
+        "rev": "dd9ad06ef4a5052cad08aac37bd904cb709fb3aa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "fughilli",
+        "repo": "hitl-reserve",
+        "rev": "dd9ad06ef4a5052cad08aac37bd904cb709fb3aa",
+        "type": "github"
+      }
+    },
     "nixos-images": {
       "inputs": {
         "nixos-stable": [
@@ -102,6 +119,7 @@
     },
     "root": {
       "inputs": {
+        "hitl-reserve": "hitl-reserve",
         "nixpkgs": [
           "sbc-deploy",
           "nixpkgs"

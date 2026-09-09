@@ -1,17 +1,18 @@
-# The HITL Go binaries, built with nix. Stdlib-only, so vendorHash = null.
-# One derivation with both:
-#   bin/hitl-managerd  — the Pi-side reservation daemon
-#   bin/hitl           — the agent-facing CLI
-{ buildGoModule, lib }:
+# The HITL Go binaries, built with nix from the hitl-reserve module source
+# (github.com/fughilli/hitl-reserve — the generalized reservation system, pinned as
+# a `flake = false` input in flake.nix and threaded in as `src`). Stdlib-only, so
+# vendorHash = null. One derivation with both:
+#   bin/hitl-reserved  — the reservation daemon
+#   bin/hitl           — the client CLI
+{ buildGoModule, lib, src }:
 buildGoModule {
-  pname = "hitl";
+  pname = "hitl-reserve";
   version = "0.1.0";
-  # The flake root is pi/hitl (has go.mod); this file is pi/hitl/nix/.
-  src = lib.cleanSource ../.;
+  inherit src;
   vendorHash = null;
-  subPackages = [ "cmd/hitl-managerd" "cmd/hitl" ];
+  subPackages = [ "cmd/hitl-reserved" "cmd/hitl" ];
   meta = {
-    description = "HITL rig reservation daemon (hitl-managerd) + agent CLI (hitl)";
+    description = "HITL reservation daemon (hitl-reserved) + client CLI (hitl)";
     mainProgram = "hitl";
   };
 }

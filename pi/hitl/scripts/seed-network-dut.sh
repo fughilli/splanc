@@ -2,7 +2,7 @@
 # Seed a NETWORK DUT (a device reached over the LAN and provisioned over BLE — e.g.
 # the LED Mapper Pi) onto a running HITL rig so it gets its own work queue, WITHOUT
 # rebuilding the image. The daemon's --discover monitor ingests
-# /var/lib/hitl/network-duts.json within a few seconds — no restart. Re-run after a
+# /var/lib/hitl/seeded-units.json within a few seconds — no restart. Re-run after a
 # reflash (which wipes /var/lib), same as seed_grafana.
 #
 #   bazel run //pi/hitl:seed_network_dut -- [host] --name pi-ledmapper-1 \
@@ -27,8 +27,9 @@ while [ "$#" -gt 0 ]; do
     --name) NAME="$2"; shift 2;;
     --addr) ADDR="$2"; shift 2;;
     --ble-mac) BLE_MAC="$2"; shift 2;;
-    # The DUT's hardware SKU (e.g. "led-mapper-pi"). Its capabilities are looked up
-    # from the registry (pi/hitl/skus.bzl) so capability-targeted tests fan to it.
+    # The DUT's resource type (e.g. "led-mapper-pi"), a key in the catalog's
+    # resource_types (reserve/catalog.json). Its capabilities come from there, so
+    # capability-targeted tests fan to it. (Kept as --sku for CLI compatibility.)
     --sku) SKU="$2"; shift 2;;
     # Override the container's BLE central (HITL_BLE_ADAPTER, e.g. "hci1"). Only
     # needed when the rig doesn't set --ble-adapter itself AND its default adapter
@@ -52,7 +53,7 @@ DEPLOY_KEY="$WS/pi/secrets/deploy_key"
 SSH=(ssh -i "$DEPLOY_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new)
 
 # Current remote file (or an empty array if it doesn't exist yet).
-CURRENT="$("${SSH[@]}" "root@$HOST" 'cat /var/lib/hitl/network-duts.json 2>/dev/null || echo "[]"')"
+CURRENT="$("${SSH[@]}" "root@$HOST" 'cat /var/lib/hitl/seeded-units.json 2>/dev/null || echo "[]"')"
 
 if [ "$ACTION" = "list" ]; then
   printf '%s\n' "$CURRENT" | python3 -m json.tool
@@ -87,7 +88,13 @@ if os.environ["ACTION"] == "add":
         env["HITL_DUT_BLE_MAC"] = os.environ["BLE_MAC"]
     if os.environ["BLE_ADAPTER"]:
         env["HITL_BLE_ADAPTER"] = os.environ["BLE_ADAPTER"]
-    cur.append({"name": name, "kind": "network", "sku": os.environ["SKU"], "devices": [], "env": env})
+    # hitl-reserve seeded-unit schema (discovery.SeededUnit): the resource `type`
+    # (its capabilities come from the catalog's resource_types), a network unit with
+    # a single synthesized component at `address` (the runner injects it as
+    # HITL_ADDRESS + resolves *.local host-side), plus the env the toolbox reads.
+    # pin_only defaults true for seeded units, so it's a pin-only network unit.
+    cur.append({"name": name, "type": os.environ["SKU"], "kind": "network",
+                "address": os.environ["ADDR"], "env": env})
 json.dump(cur, sys.stdout, indent=2)
 PY
 )"
@@ -96,10 +103,10 @@ PY
 # never reads a half-written file.
 "${SSH[@]}" "root@$HOST" 'install -d -m755 /var/lib/hitl'
 printf '%s\n' "$MERGED" | "${SSH[@]}" "root@$HOST" '
-  tmp="$(mktemp /var/lib/hitl/.network-duts.XXXXXX)"
+  tmp="$(mktemp /var/lib/hitl/.seeded-units.XXXXXX)"
   cat > "$tmp"
   chmod 600 "$tmp"
-  mv -f "$tmp" /var/lib/hitl/network-duts.json'
+  mv -f "$tmp" /var/lib/hitl/seeded-units.json'
 
-echo "seeded -> root@$HOST:/var/lib/hitl/network-duts.json (daemon ingests within ~3s)"
+echo "seeded -> root@$HOST:/var/lib/hitl/seeded-units.json (daemon ingests within ~3s)"
 printf '%s\n' "$MERGED"

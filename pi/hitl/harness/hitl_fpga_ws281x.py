@@ -99,10 +99,17 @@ def _set_channel_map(server: str, m: dict) -> None:
 
 
 def _capture(server: str, device: str, protocol: str, samples: int) -> dict:
-    """POST /capture with an explicit protocol; return the raw result JSON."""
-    body = json.dumps({"device": device, "protocol": protocol, "samples": samples}).encode()
+    """Broker a capture with an explicit protocol; return the raw result JSON.
+
+    The analyzer is a shared resource now — post to /shared/logic-analyzer
+    (op=capture) rather than the old /capture."""
+    body = json.dumps(
+        {"op": "capture", "unit": device, "protocol": protocol, "samples": samples}
+    ).encode()
     req = urllib.request.Request(
-        server.rstrip("/") + "/capture", data=body, headers={"Content-Type": "application/json"}
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=body,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read())

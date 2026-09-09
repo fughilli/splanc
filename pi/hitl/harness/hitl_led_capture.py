@@ -302,17 +302,20 @@ def require_analyzer(server: str) -> None:
 
 
 def capture_via_daemon(server: str, device: str, samples: int) -> List[Tuple[int, int, int]]:
-    """POST /capture to the daemon directly (over the tailnet) and return pixels.
+    """Broker a capture from the daemon directly (over the tailnet) and return pixels.
 
     Used by --device-ws mode, where there is no reservation container to run
-    `hitl-capture` in; the daemon's shared analyzer captures the DUT's mapped
-    channel (D6 here) the same way.
+    `hitl-capture` in; the daemon's shared logic-analyzer broker captures the
+    unit's mapped channel the same way. The analyzer is a shared resource now, so
+    this posts to /shared/logic-analyzer (op=capture) rather than the old /capture.
     """
     import urllib.request
 
-    body = json.dumps({"device": device, "samples": samples}).encode()
+    body = json.dumps({"op": "capture", "unit": device, "samples": samples}).encode()
     req = urllib.request.Request(
-        server.rstrip("/") + "/capture", data=body, headers={"Content-Type": "application/json"}
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=body,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=90) as r:
         res_json = json.loads(r.read())

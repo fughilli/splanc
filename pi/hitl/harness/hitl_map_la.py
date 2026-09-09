@@ -28,12 +28,21 @@ from hitl_client import Reservation, ReserveError
 from hitl_dut_id import _default_bundle, _log, flash_blink, list_duts, stop_blink
 
 
+def _post_broker(server: str, body: dict) -> dict:
+    """POST an op to the shared logic-analyzer broker (/shared/logic-analyzer)."""
+    url = server.rstrip("/") + "/shared/logic-analyzer"
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+
+
 def get_map(server: str) -> dict:
-    """The rig's current DUT→channel map (POST-schema JSON), or {} if none set."""
-    url = server.rstrip("/") + "/analyzer/channel-map"
+    """The rig's current unit→channel map, or {} if none set. The analyzer is a
+    shared resource now: read it via the broker (op=map.get) rather than the old
+    /analyzer/channel-map."""
     try:
-        with urllib.request.urlopen(url, timeout=6) as r:
-            return json.load(r)
+        return _post_broker(server, {"op": "map.get"})
     except urllib.error.HTTPError as e:
         if e.code == 503:
             raise SystemExit("map_la: this rig has no logic analyzer configured — nothing to map")
@@ -41,13 +50,8 @@ def get_map(server: str) -> dict:
 
 
 def put_map(server: str, mapping: dict) -> dict:
-    url = server.rstrip("/") + "/analyzer/channel-map"
-    body = json.dumps(mapping).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.load(r)
+        return _post_broker(server, {"op": "map.set", "map": mapping})
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace")
         raise SystemExit(f"map_la: daemon rejected the map ({e.code}): {detail}")

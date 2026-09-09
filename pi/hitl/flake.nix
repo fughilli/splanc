@@ -1,6 +1,8 @@
 {
-  # HITL rig — Raspberry Pi image + live-deploy (sbc-deploy consumer) plus the
-  # `hitl` agent CLI. See DESIGN.md.
+  # HITL rig — Raspberry Pi image + live-deploy (sbc-deploy consumer). The
+  # reservation daemon + client CLI are the generalized hitl-reserve module
+  # (github.com/fughilli/hitl-reserve), built from the `hitl-reserve` input below.
+  # See DESIGN.md and reserve/README.md.
   #
   # Built via `//pi/hitl:hitl.*` (image_sd / image_sd_base / deploy_live / ssh /
   # keys). The CLI is `packages.<system>.hitl` for agents to `nix run` / install.
@@ -12,9 +14,17 @@
     # @sbc_deploy git_override in //MODULE.bazel.
     sbc-deploy.url = "github:fughilli/sbc-deploy/f51b3f2?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
+
+    # The generalized reservation system. Not a flake (plain Go module source);
+    # buildGoModule consumes it in nix/packages.nix. Kept in lockstep with the
+    # @hitl_reserve git_override in //MODULE.bazel — bump both together.
+    hitl-reserve = {
+      url = "github:fughilli/hitl-reserve/dd9ad06ef4a5052cad08aac37bd904cb709fb3aa";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, sbc-deploy, ... }:
+  outputs = { self, nixpkgs, sbc-deploy, hitl-reserve, ... }:
     let
       project = sbc-deploy.lib.mkSbcProject {
         hostName = "hitl-rig";
@@ -23,7 +33,10 @@
         # hitl-alloy service is gated on /var/lib/hitl/grafana.env existing
         # (ConditionPathExists), so a rig without Grafana creds just doesn't
         # start it. Seed the creds with `bazel run //pi/hitl:seed_grafana`.
-        appModules = [ ./nix/hitl-app.nix ./observability/alloy.nix ];
+        #
+        # hitl-app.nix is a FUNCTION of the hitl-reserve source (so the app module
+        # can build the daemon/CLI from it); apply it here to get the module value.
+        appModules = [ (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; }) ./observability/alloy.nix ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };
 
@@ -33,7 +46,7 @@
     project // {
       # The hitl CLI for agents (claude-container): `nix run …#hitl -- reserve`.
       packages = forAll (system:
-        let hitl = nixpkgs.legacyPackages.${system}.callPackage ./nix/packages.nix { };
+        let hitl = nixpkgs.legacyPackages.${system}.callPackage ./nix/packages.nix { src = hitl-reserve; };
         in { inherit hitl; default = hitl; });
     };
 }
