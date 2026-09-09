@@ -227,10 +227,10 @@ let
   };
 
   # hitl-capture: thin client for the rig's SHARED logic analyzer. The FX2 stays
-  # on the host (owned by the daemon); this just POSTs to the daemon's /capture
-  # over the podman host gateway ($HITL_CAPTURE_SERVER), naming this reservation's
-  # DUT ($HITL_DUT), and prints the decoded pixels. No sigrok or raw USB in the
-  # container. Stdlib only.
+  # on the host (owned by the daemon); this POSTs to the daemon's shared-resource
+  # broker (/shared/logic-analyzer, op=capture) over the podman host gateway
+  # ($HITL_BROKER_URL), naming this reservation's unit ($HITL_UNIT), and prints the
+  # decoded pixels. No sigrok or raw USB in the container. Stdlib only.
   hitlCapture = p.writeTextFile {
     name = "hitl-capture";
     executable = true;
@@ -239,23 +239,23 @@ let
       #!${pyEnv}/bin/python3
       import argparse, base64, json, os, sys, urllib.request, urllib.error
       ap = argparse.ArgumentParser(prog="hitl-capture",
-          description="capture + decode this DUT's LED line via the rig's shared logic analyzer")
-      ap.add_argument("--dut", default=os.environ.get("HITL_DUT", ""),
-                      help="DUT name to capture (default $HITL_DUT)")
-      ap.add_argument("--server", default=os.environ.get("HITL_CAPTURE_SERVER", ""),
-                      help="daemon base URL (default $HITL_CAPTURE_SERVER)")
+          description="capture + decode this unit's LED line via the rig's shared logic analyzer")
+      ap.add_argument("--dut", default=os.environ.get("HITL_UNIT") or os.environ.get("HITL_DUT", ""),
+                      help="unit name to capture (default $HITL_UNIT)")
+      ap.add_argument("--server", default=os.environ.get("HITL_BROKER_URL") or os.environ.get("HITL_CAPTURE_SERVER", ""),
+                      help="daemon base URL (default $HITL_BROKER_URL)")
       ap.add_argument("--protocol", default="", help="override decoder: ws2812|spi")
       ap.add_argument("--samples", type=int, default=0, help="capture length (0 = rig default)")
       ap.add_argument("--sr", default="", help="also write the raw .sr session to this file")
       ap.add_argument("--json", action="store_true", help="print the raw JSON result")
       a = ap.parse_args()
       if not a.server:
-          sys.exit("hitl-capture: no daemon URL ($HITL_CAPTURE_SERVER unset; pass --server)")
-      req = {"device": a.dut, "protocol": a.protocol, "samples": a.samples, "save_sr": bool(a.sr)}
+          sys.exit("hitl-capture: no daemon URL ($HITL_BROKER_URL unset; pass --server)")
+      req = {"op": "capture", "unit": a.dut, "protocol": a.protocol, "samples": a.samples, "save_sr": bool(a.sr)}
       body = json.dumps(req).encode()
       try:
           with urllib.request.urlopen(
-                  urllib.request.Request(a.server.rstrip("/") + "/capture", data=body,
+                  urllib.request.Request(a.server.rstrip("/") + "/shared/logic-analyzer", data=body,
                                          headers={"Content-Type": "application/json"}),
                   timeout=60) as r:
               res = json.loads(r.read())
@@ -286,7 +286,7 @@ let
     pyEnv
     hitlFlash
     hitlMonitor
-    # Shared logic analyzer capture (thin client to the daemon's /capture):
+    # Shared logic analyzer capture (thin client to the daemon's /shared broker):
     hitlCapture
     # BLE central (drives the host bluetoothd over the mounted system D-Bus).
     # ImprovBLE provisioning isn't a baked tool: the e2e harness ships its own
@@ -318,8 +318,8 @@ let
     Subsystem sftp ${p.openssh}/libexec/sftp-server
     PidFile /run/sshd.pid
     SetEnv PATH=${toolPath}:/bin:/usr/bin DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
-    # The daemon injects per-reservation HITL_* env (HITL_DUT, HITL_CAPTURE_SERVER,
-    # HITL_ADAPTER_SERIAL) via `podman -e`; that reaches sshd's process but not the
+    # The daemon injects per-reservation HITL_* env (HITL_UNIT, HITL_BROKER_URL,
+    # HITL_ADAPTER_SERIAL, …) via `podman -e`; that reaches sshd's process but not the
     # session it spawns. Read them from ~/.ssh/environment (written by the entrypoint)
     # so both interactive shells and `ssh host cmd` (the harness capture path) see them.
     PermitUserEnvironment yes
@@ -346,7 +346,7 @@ let
       # Expose the per-reservation HITL_* env (set on this process by `podman -e`) to
       # SSH sessions. sshd doesn't pass its own env to sessions; PermitUserEnvironment
       # + ~/.ssh/environment does, for both interactive shells and `ssh host cmd`
-      # (e.g. the harness running hitl-capture, which defaults to $HITL_CAPTURE_SERVER).
+      # (e.g. the harness running hitl-capture, which defaults to $HITL_BROKER_URL).
       printenv | grep -E '^HITL_[A-Za-z0-9_]+=' > "/home/$user/.ssh/environment" || true
       chown "$user":"$user" "/home/$user/.ssh/environment" 2>/dev/null || true
       chmod 600 "/home/$user/.ssh/environment" 2>/dev/null || true

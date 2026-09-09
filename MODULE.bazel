@@ -390,12 +390,11 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # general-parity-features @ dd9ad06 (PR #2): generic provisioning-network
+    # main @ c92f3eb (PR #2 squash-merged): generic provisioning-network
     # advertisement + runtime seeded-units file + zero-unit hosts — what the splanc
-    # deploy needs for full parity. Re-pin to the main SHA once PR #2 merges (a
-    # squash-merge changes the SHA; see the stacked-PR caveat). Keep this in lockstep
-    # with the hitl-reserve rev in pi/hitl/flake.nix / flake.lock.
-    commit = "dd9ad06ef4a5052cad08aac37bd904cb709fb3aa",
+    # deploy needs for full parity. Keep this in lockstep with the hitl-reserve rev in
+    # pi/hitl/flake.nix / flake.lock (bump all three together).
+    commit = "c92f3ebb95b4441ff7f95894d7c5fb04db006f15",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
