@@ -70,7 +70,7 @@ py_test(
     srcs = ["hitl_hybrid_heap.py"],
     data = [
         ":hybrid_flashbundle",
-        "//pi/hitl/cmd/hitl",
+        "@hitl_reserve//cmd/hitl",
     ],
     imports = ["../../pi/hitl/harness"],
     main = "hitl_hybrid_heap.py",

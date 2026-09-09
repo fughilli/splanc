@@ -51,6 +51,13 @@ DEFAULT_PORT = "8087"
 # this tag on the tailnet when no host list is given (matches the old Go CLI's
 # internal/tailnet). Override with $HITL_TAG.
 DEFAULT_TAG = "tag:splanc-hitl"
+# `--require` capability aliases (old CLI parseRequire): the logic analyzer is a
+# per-unit tap capability, granular by the signal it taps.
+_REQUIRE_ALIASES = {
+    "analyzer": "logic-analyzer-led-strip",
+    "analyzer-led-strip": "logic-analyzer-led-strip",
+    "analyzer-spi": "logic-analyzer-spi",
+}
 
 
 def default_hitl() -> list[str]:
@@ -165,12 +172,18 @@ class Reservation:
         device: str | None = None,
         hitl: list[str] | None = None,
     ) -> None:
-        self.server = server
+        # $HITL_SERVER pins a specific rig for every script (the old CLI honored it on
+        # every subcommand); an explicit arg still wins.
+        self.server = server or os.environ.get("HITL_SERVER") or None
         self.owner = owner or os.environ.get("HITL_OWNER") or f"hitl-harness@{socket.gethostname()}"
-        # `require` was a single required capability; fold it into require_caps.
+        # `require` is a single capability alias; expand it (analyzer -> the granular
+        # logic-analyzer-* tap cap) exactly as the old CLI's parseRequire did, then
+        # fold it into require_caps. Without this "analyzer" never matches any unit
+        # (units advertise logic-analyzer-led-strip / -spi) and the reservation queues
+        # forever.
         caps = list(require_caps or [])
         if require:
-            caps.append(require)
+            caps.append(_REQUIRE_ALIASES.get(require, require))
         self.require_caps = caps
         self.sku = sku  # -> unit_type (an explicit hardware-class target)
         self.device = device  # -> unit (pin by exact name)
@@ -255,7 +268,11 @@ class Reservation:
             return False
         return True
 
-    def _await_active(self, timeout: float = 900.0) -> None:
+    # The whole CI suite fires at once against a small fleet, so a queue behind a
+    # multi-minute soak is routine; wait generously (the targets themselves run
+    # timeout=eternal). On timeout we RELEASE so we don't strand a queued slot with
+    # the heartbeat thread keeping it alive.
+    def _await_active(self, timeout: float = 2400.0) -> None:
         deadline = time.time() + timeout
         last_pos = -1
         while time.time() < deadline:
@@ -272,6 +289,11 @@ class Reservation:
                 self.host = _host_of(self.server) or ep.get("host")
                 self._unit = r.get("unit")
                 self.endpoint = f"{self.user}@{self.host}:{self.port}"
+                # The daemon marks active as the container starts; give its sshd a
+                # moment to bind so the first scp/ssh doesn't race it (best-effort, as
+                # the old CLI's waitPort did — proceed regardless so a real failure
+                # surfaces on the actual scp/ssh with a clear error).
+                _wait_port(self.host, int(self.port), timeout=45)
                 return
             if state == "released":
                 raise ReserveError(f"reservation released before activating: {r.get('message')}")
@@ -280,7 +302,11 @@ class Reservation:
                 print(f"queued: position {pos}", flush=True)
                 last_pos = pos
             time.sleep(2)
-        raise ReserveError(f"reservation {self.id} did not activate within {timeout}s")
+        try:
+            self.release()
+        except Exception:  # noqa: BLE001
+            pass
+        raise ReserveError(f"reservation {self.id} did not activate within {timeout:.0f}s")
 
     def _start_heartbeat(self) -> None:
         self._hb_stop = threading.Event()
@@ -407,15 +433,24 @@ class Reservation:
         this host only needs to reach the rig. Yields the chosen local port.
         """
         local_port = _free_local_port()
+        # ExitOnForwardFailure so ssh dies (rather than sitting with no tunnel) if the
+        # local bind fails — otherwise the caller would burn its retry budget dialing a
+        # port nothing listens on.
         argv = self._ssh_base() + [
             "-N",
+            "-o",
+            "ExitOnForwardFailure=yes",
             "-L",
             f"{local_port}:{remote_host}:{remote_port}",
             f"{self.user}@{self.host}",
         ]
         proc = subprocess.Popen(argv)
         try:
-            _wait_listen(local_port, timeout=15)
+            if not _wait_listen(local_port, timeout=20) or proc.poll() is not None:
+                raise ReserveError(
+                    f"tunnel to {remote_host}:{remote_port} via {self.host} did not come up "
+                    f"(ssh exited {proc.poll()})"
+                )
             print(
                 f"tunnel: localhost:{local_port} -> (rig) -> {remote_host}:{remote_port}",
                 flush=True,
@@ -435,11 +470,20 @@ def _free_local_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_listen(port: int, timeout: float) -> None:
+def _wait_port(host: str, port: int, timeout: float) -> bool:
+    """Block until host:port accepts a TCP connection, or timeout. Returns success."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
-            if s.connect_ex(("127.0.0.1", port)) == 0:
-                return
+            s.settimeout(1.0)
+            try:
+                if s.connect_ex((host, port)) == 0:
+                    return True
+            except OSError:
+                pass
         time.sleep(0.3)
+    return False
+
+
+def _wait_listen(port: int, timeout: float) -> bool:
+    return _wait_port("127.0.0.1", port, timeout)

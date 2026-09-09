@@ -37,7 +37,7 @@ def _default_bundle():
 def list_duts(server: str):
     with urllib.request.urlopen(server.rstrip("/") + "/status", timeout=6) as r:
         status = json.load(r)
-    return [d["name"] for d in status.get("devices", [])]
+    return [u["name"] for u in status.get("units", [])]
 
 
 def flash_blink(res: Reservation, bundle: str) -> None:
