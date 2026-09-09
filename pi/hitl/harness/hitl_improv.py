@@ -49,15 +49,43 @@ from improv import (  # noqa: E402
 _TRANSPORT_ERRORS = (BleakError, asyncio.TimeoutError, OSError, EOFError)
 
 
-def _adapter_kwargs() -> dict:
-    """bleak `adapter=` kwargs from $HITL_BLE_ADAPTER, else empty (system default).
+def _resolve_usb_hci() -> str:
+    """The first Bluetooth controller on the USB bus (a dongle), or "" if none.
 
-    The daemon sets HITL_BLE_ADAPTER (e.g. "hci1") on a rig whose BLE central runs
-    on a USB dongle rather than the flaky onboard controller (see
-    runner.PodmanConfig.BLEAdapter). bleak's BlueZ backend defaults to "hci0", so
-    without this every scan/connect would hit the onboard controller regardless.
+    Reads /sys/class/bluetooth/hci*/device (mounted read-only in the reservation
+    container): a USB controller's device path resolves under .../usbN/..., while a
+    Pi's onboard controller sits on a serial/platform path. Mirrors the old daemon's
+    runner.resolveUSBHCI, done here now that the generalized daemon no longer selects
+    the BLE central for us.
+    """
+    root = "/sys/class/bluetooth"
+    try:
+        names = sorted(n for n in os.listdir(root) if n.startswith("hci"))
+    except OSError:
+        return ""
+    for n in names:
+        try:
+            dev = os.path.realpath(os.path.join(root, n, "device"))
+        except OSError:
+            continue
+        if "/usb" in dev:
+            return n
+    return ""
+
+
+def _adapter_kwargs() -> dict:
+    """bleak `adapter=` kwargs: an explicit $HITL_BLE_ADAPTER wins; otherwise (or for
+    the sentinel "usb") prefer a USB dongle over the flaky onboard controller.
+
+    The Pi 5 Cypress onboard controller flakes on connect (0x3E), which a USB BT
+    dongle fixes — so route BLE at the dongle when one is present, falling back to
+    the system default (onboard) when there isn't (e.g. a Pi 3 rig). The generalized
+    daemon no longer injects HITL_BLE_ADAPTER (the old daemon resolved this host-side
+    via --ble-adapter usb); we resolve it here from sysfs in the container instead.
     """
     adp = os.environ.get("HITL_BLE_ADAPTER", "").strip()
+    if not adp or adp == "usb":
+        adp = _resolve_usb_hci()  # "" -> bleak's system default (onboard)
     return {"adapter": adp} if adp else {}
 
 
