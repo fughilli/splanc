@@ -41,6 +41,10 @@ class ReserveError(RuntimeError):
 
 
 DEFAULT_PORT = "8087"
+# ACL tag every splanc HITL rig carries; the pool falls back to discovering rigs by
+# this tag on the tailnet when no host list is given (matches the old Go CLI's
+# internal/tailnet). Override with $HITL_TAG.
+DEFAULT_TAG = "tag:splanc-hitl"
 
 
 def default_hitl() -> list[str]:
@@ -48,17 +52,65 @@ def default_hitl() -> list[str]:
     return (os.environ.get("HITL_BIN") or "hitl").split()
 
 
-def _pool() -> list[str]:
-    """Canonical base URLs from $HITL_HOSTS (or legacy $HITL_SERVERS)."""
-    raw = os.environ.get("HITL_HOSTS") or os.environ.get("HITL_SERVERS") or ""
+def _norm(tokens: list[str]) -> list[str]:
+    """Canonicalize bare host / host:port / URL tokens to base URLs."""
     out: list[str] = []
-    for tok in raw.replace(",", " ").split():
+    for tok in tokens:
         u = tok if "://" in tok else "http://" + tok
         if ":" not in u.split("://", 1)[1]:
             u = u + ":" + DEFAULT_PORT
         if u not in out:
             out.append(u)
     return out
+
+
+def _discover_tailnet_rigs(status_json: str | None = None) -> list[str]:
+    """Hostnames of online tailnet nodes carrying the HITL tag (default
+    tag:splanc-hitl, override $HITL_TAG). The fallback when neither $HITL_HOSTS nor
+    $HITL_SERVERS is set — how CI (which sets no host list) finds the fleet. Mirrors
+    the old Go CLI's internal/tailnet: include Self if tagged, and tagged peers that
+    are Online. `status_json` is injectable for tests; otherwise `tailscale status
+    --json` is run locally. A missing/erroring tailscale CLI yields no rigs."""
+    tag = os.environ.get("HITL_TAG") or DEFAULT_TAG
+    if status_json is None:
+        try:
+            p = subprocess.run(
+                ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=15
+            )
+            if p.returncode != 0 or not (p.stdout or "").strip():
+                return []
+            status_json = p.stdout
+        except Exception:  # noqa: BLE001 (no tailscale / not joined -> just no discovery)
+            return []
+    try:
+        st = json.loads(status_json)
+    except Exception:  # noqa: BLE001
+        return []
+
+    def host(n: dict) -> str:
+        return n.get("HostName") or (n.get("DNSName") or "").rstrip(".")
+
+    def tagged(n: dict | None) -> bool:
+        return bool(n) and tag in (n.get("Tags") or [])
+
+    hosts: list[str] = []
+    self_n = st.get("Self")
+    if tagged(self_n):  # self is included regardless of the Online flag
+        hosts.append(host(self_n))
+    for n in (st.get("Peer") or {}).values():
+        if tagged(n) and n.get("Online"):  # skip offline peers so the pool doesn't stall
+            hosts.append(host(n))
+    return sorted(h for h in hosts if h)
+
+
+def _pool() -> list[str]:
+    """Canonical base URLs: $HITL_HOSTS (or legacy $HITL_SERVERS) if set, else rigs
+    discovered on the tailnet by the HITL tag."""
+    raw = os.environ.get("HITL_HOSTS") or os.environ.get("HITL_SERVERS") or ""
+    tokens = raw.replace(",", " ").split()
+    if not tokens:
+        tokens = _discover_tailnet_rigs()
+    return _norm(tokens)
 
 
 def _get(url: str, timeout: float = 10.0) -> dict:
@@ -156,7 +208,10 @@ class Reservation:
             return self.server
         pool = _pool()
         if not pool:
-            raise ReserveError("no hosts: set --server, $HITL_HOSTS, or $HITL_SERVERS")
+            raise ReserveError(
+                "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
+                f"with rigs tagged {os.environ.get('HITL_TAG') or DEFAULT_TAG}"
+            )
         free, queueable, reachable, errs = [], [], [], []
         for base in pool:
             try:
