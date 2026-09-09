@@ -19,7 +19,7 @@
     # buildGoModule consumes it in nix/packages.nix. Kept in lockstep with the
     # @hitl_reserve git_override in //MODULE.bazel — bump both together.
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/2a074d408f6de5408000ba8a56a50bc2b3aefee4";
+      url = "github:fughilli/hitl-reserve/c6699e9003b54ea602b3df5166cf46a47b928663";
       flake = false;
     };
   };

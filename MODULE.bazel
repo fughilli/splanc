@@ -390,11 +390,11 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # inject-bind-mounts @ 2a074d4 (PR #3): adds --mount for the dbus socket (BLE).
+    # main @ c6699e9 (PR #3 squash-merged): --mount injects bind mounts (the dbus socket for BLE).
     # advertisement + runtime seeded-units file + zero-unit hosts — what the splanc
     # deploy needs for full parity. Keep this in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "2a074d408f6de5408000ba8a56a50bc2b3aefee4",
+    commit = "c6699e9003b54ea602b3df5166cf46a47b928663",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
