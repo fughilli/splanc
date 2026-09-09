@@ -1,7 +1,10 @@
 {
   "title": "HITL Rigs",
   "uid": "hitl-rigs",
-  "tags": ["hitl", "splanc"],
+  "tags": [
+    "hitl",
+    "splanc"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "editable": true,
@@ -204,7 +207,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace(hitl_queue_depth, \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace(hitl_queue_depth, \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -240,7 +243,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace((hitl_duts_busy or hitl_units_busy), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace((hitl_duts_busy or hitl_units_busy), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}} busy"
         },
         {
@@ -249,7 +252,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace((hitl_duts_total or hitl_units_total), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace((hitl_duts_total or hitl_units_total), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}} total"
         }
       ]
@@ -275,7 +278,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "sum by (rig) (label_replace(rate(hitl_reservations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")) * 60",
+          "expr": "sum by (rig) (label_replace(rate(hitl_reservations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")) * 60",
           "legendFormat": "{{rig}} reserved"
         },
         {
@@ -284,7 +287,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "sum by (rig) (label_replace(rate(hitl_activations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")) * 60",
+          "expr": "sum by (rig) (label_replace(rate(hitl_activations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")) * 60",
           "legendFormat": "{{rig}} activated"
         }
       ]
@@ -311,7 +314,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "sum by (rig) (label_replace(rate(hitl_lease_expirations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")) * 60",
+          "expr": "sum by (rig) (label_replace(rate(hitl_lease_expirations_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")) * 60",
           "legendFormat": "{{rig}} lease-expiry"
         },
         {
@@ -320,7 +323,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "sum by (rig) (label_replace(rate(hitl_start_failures_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")) * 60",
+          "expr": "sum by (rig) (label_replace(rate(hitl_start_failures_total[$__rate_interval]), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")) * 60",
           "legendFormat": "{{rig}} start-fail"
         }
       ]
@@ -357,7 +360,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace(hitl_host_load1, \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace(hitl_host_load1, \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -391,7 +394,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace(100 * (1 - hitl_host_memory_available_bytes / hitl_host_memory_total_bytes), \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace(100 * (1 - hitl_host_memory_available_bytes / hitl_host_memory_total_bytes), \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -439,7 +442,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "label_replace(hitl_host_temperature_celsius, \"rig\", \"$1\", \"host\", \"(.+?)(\\.local)?\")",
+          "expr": "label_replace(hitl_host_temperature_celsius, \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
           "legendFormat": "{{rig}}"
         }
       ]
