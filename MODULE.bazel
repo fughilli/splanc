@@ -376,6 +376,27 @@ git_override(
     remote = "https://github.com/fughilli/rules_fpga.git",
 )
 
+# hitl_reserve: the generalized hardware reservation/queueing system, extracted
+# from this repo's pi/hitl rig and developed standalone
+# (github.com/fughilli/hitl-reserve). Go, stdlib-only, same rules_go/gazelle
+# pins as here. Consumed by //pi/hitl/reserve (a splanc-fleet catalog + aliases
+# to the module's daemon/CLI). It generalizes the pi/hitl model: DUT -> unit
+# (composable from multiple components), SKU -> resource/unit type, the shared
+# logic analyzer -> a pluggable shared-resource broker. See pi/hitl/reserve/
+# README.md for the migration path. This is ADDITIVE — the existing
+# cmd/hitl-managerd daemon is untouched; the module is wired in so pi/hitl can
+# migrate onto it incrementally. For co-developing hitl-reserve locally:
+# bazel --override_module=hitl_reserve=/path/to/hitl-reserve.
+bazel_dep(name = "hitl_reserve", version = "0.0.0")
+git_override(
+    module_name = "hitl_reserve",
+    # import-from-splanc @ 39ecfb3 — initial import of the extracted, generalized
+    # module. Re-pin to the main SHA once hitl-reserve's import PR merges (a
+    # squash-merge changes the SHA; see the stacked-PR caveat).
+    commit = "39ecfb33805387a6ba5ee2367f2330603e5d4c75",
+    remote = "https://github.com/fughilli/hitl-reserve.git",
+)
+
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",

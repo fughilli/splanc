@@ -1,0 +1,59 @@
+{
+  "comment": "splanc HITL fleet expressed in the hitl-reserve catalog schema. Mirrors the SKUs in //pi/hitl:skus.bzl and the network-DUT / shared-analyzer wiring of the existing cmd/hitl-managerd daemon. Set host/workspace per rig at launch (--host --workspace) or here.",
+  "workspace": "splanc",
+  "lease_seconds": 1800,
+  "ssh_port_base": 2222,
+
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "jtag", "improv", "wss-app", "led-strip"]
+    },
+    "led-mapper-pi": {
+      "kind": "network",
+      "capabilities": ["improv", "wss-app", "led-strip", "spi-fpga"]
+    }
+  },
+
+  "shared_resources": [
+    {
+      "comment": "One FX2/fx2lafw logic analyzer whose channels tap each DUT's LED line. Dormant unless an FX2 is attached (HardwareProbe). Default map taps D0/ws2812 so a discovered single-board rig captures its sole DUT; per-unit channels can be set at runtime via `hitl shared logic-analyzer {\"op\":\"map.set\",...}`.",
+      "name": "logic-analyzer",
+      "kind": "logic-analyzer",
+      "config": {
+        "driver": "fx2lafw",
+        "samplerate": "24m",
+        "map": { "": { "channels": ["D0"], "protocol": "ws2812" } }
+      }
+    }
+  ],
+
+  "components": [
+    {
+      "comment": "The LED Mapper Pi — a network DUT reached over the tailnet/LAN and provisioned over BLE; no board on this rig. Seed its real address per deployment.",
+      "name": "led-mapper-pi-1",
+      "type": "led-mapper-pi",
+      "address": "led-mapper-pi-1.local"
+    }
+  ],
+
+  "units": [
+    {
+      "comment": "The Pi player as a pin-only network unit: ordinary caps-only work never drifts onto the scarce Pi; reach it with --unit led-mapper-pi-1 or --type led-mapper-pi.",
+      "name": "led-mapper-pi-1",
+      "type": "led-mapper-pi",
+      "pin_only": true,
+      "components": ["led-mapper-pi-1"]
+    }
+  ],
+
+  "discovery": {
+    "comment": "Auto-discover attached ESP32-C6 player boards by their built-in USB-JTAG by-id symlinks — one reservable unit per board, sticky ports, live hot-plug. Each discovered unit unions in the analyzer tap cap (logic-analyzer-led-strip) from the broker's channel map, exactly like the managerd rig.",
+    "enabled": true,
+    "glob": "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00",
+    "type": "esp32c6",
+    "name_prefix": "c6-",
+    "ssh_port_base": 2300,
+    "max": 8
+  }
+}
