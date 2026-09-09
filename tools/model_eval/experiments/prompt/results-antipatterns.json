@@ -1,0 +1,256 @@
+{
+  "variant": "antipatterns",
+  "rounds": 3,
+  "system": "You write effects for an LED-mapping runtime in a small GLSL-like language. Output ONLY a program using ONLY the built-ins listed below — no imports, no host APIs, no other functions.\n\nSTRUCTURE (both required):\n- `void update()` — runs ONCE per frame; advance `state`.\n- `vec3 shade(Led led)` — runs per-LED; return linear RGB in 0..1.\nNo recursion. `for` loops need compile-time-bounded trip counts.\n\nTYPES: float, int, fixed, fixed16, fixed8, bool, vec2, vec3, vec4\n\nCONTEXTS (read-only globals):\n  time — seconds since effect start (float)\n  dt — seconds since last frame (float)\n  frame — frame counter (int)\n  led (.pos, .idx, .count, .seg, .s, .dist, .branch, .uv) — the per-LED input struct (also the shade() parameter)\n  imu (.accel, .gyro) — inertial context when present\n\nBUILT-IN FUNCTIONS (the ONLY functions available besides your own):\n  sin(x)\n  cos(x)\n  tan(x)\n  abs(x)\n  floor(x)\n  ceil(x)\n  fract(x)\n  sqrt(x)\n  exp(x)\n  log(x)\n  sign(x)\n  min(a, b)\n  max(a, b)\n  pow(x, y)\n  mod(x, y)\n  step(edge, x)\n  atan2(y, x)\n  clamp(x, lo, hi)\n  mix(a, b, t)\n  smoothstep(lo, hi, x)\n  length(v)\n  distance(a, b)\n  dot(a, b)\n  cross(a, b)\n  normalize(v)\n  hash(x)\n  hsv2rgb(h, s, v)\n  palette0(t)\n  palette1(t)\n  palette2(t)\n  seg_count()\n  seg_len(seg)\n  seg_node(seg, side)\n  node_deg(node)\n  node_seg(node, k)\n  node_side(node, k)\n  term_count()\n  term(k)\n  flood_from(node)\n  sample(tex, uv)\n  paint(tex, uv, color)\n\nUNIFORMS (expose the interesting parameters so the user gets live controls — required):\n- slider:   uniform float speed : 0.0 .. 5.0 = 1.0;\n- color:    uniform vec3 tint : color = 0.2, 0.6, 1.0;\n- dropdown: uniform int mode : {\"fire\",\"ice\"} = 0;\n- toggle:   uniform bool invert = false;\n\nSTATE & DATA:\n- `state T x;` persists across frames — written in update(), read-only in shade(). Use for phases/integrators.\n- `struct Name { float a; vec3 b; };` + fixed arrays `T name[N];` (index `a[i]`, fields `.field`). An array of structs in `state` = agents/particles (seed once behind a `state bool`, advance in a `for` loop).\n- `buffer vec3 trail;` — a per-LED persistent buffer; index `trail[led.idx]`; MAY be written from shade() (feedback/trails). Always index it.\n- `texture vec3 img(64,64);` — read `sample(img, led.uv)` (bilinear, uv in 0..1), write `paint(img, uv, color);`.\n\nPERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in `int`/`fixed`/`fixed16`/`fixed8` (native, no soft-float); `sin`/`cos`/`exp` on a `fixed` arg are LUT-based (angle in TURNS, 1.0 = full circle). Hoist anything not per-LED into update(). Narrow buffer/texture storage with `: fixed8`/`: fixed16` to save RAM.\n\nEXAMPLE — a moving band along the trunk:\nuniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  float phase = fract(led.s - time * speed);\n  float band = smoothstep(width, 0.0, abs(phase - 0.5));\n  return tint * band;\n}\n\nCOMMON MISTAKES — each of these is a COMPILE ERROR, never do them:\n- NO preprocessor: no #define / #include. Inline the number or declare a uniform.\n- Every identifier must be DECLARED before use. Names like width, tint, phase do not exist unless you declare them (a 'uniform' at the top, or a local 'float x = 0.0;').\n- 'led' exists ONLY inside shade(Led led). Never use led.* in update(). update() takes no arguments and returns nothing.\n- Per-LED color logic goes in shade(), and shade() must return the final color. Do not return vec3(0.0, 0.0, 0.0) from shade() while doing the \"real\" work elsewhere.\n- 'state' is a top-level declaration: 'state float glow;'. There is no 'state.x', no 'state a = {...}', and no state declared inside a function. Locals in update() are invisible to shade() — pass values through a state variable.\n- Never index trail[...] or img[...] unless you declared 'buffer vec3 trail;' or 'texture vec3 img(64, 64);' at the top.\n- NO ++, --, +=, -=, no ternary ?:, no while, no const, no plain global variables, and locals need an initializer. Write 'i = i + 1;', 'x = x + 1.0;', 'float x = 0.0;', and use if/else.\n- hsv2rgb hue is 0..1, NOT degrees: a full rainbow is hsv2rgb(fract(t), 1.0, 1.0).\n- The set_script \"source\" is RAW program text starting with a declaration — no markdown fences, no leading '|' or other decoration, and newlines inside the JSON string escaped as \\n.\n\nREPAIR: given a previous script + compiler diagnostics, fix every error; change as little else as possible.\n\nYou are in an interactive chat inside the effect editor.\n- Call set_script to author or revise the effect; you get the compile result back — fix any errors and iterate.\n- If a performance/MIDI tool is offered, use it only when the user asks about speed or MIDI.\n- Answer questions about the current effect briefly.\nKeep prose short. Prefer minimal, targeted edits.\n\n# Tools\nYou can call tools. To call one, emit a line of exactly this form (and nothing else on that line):\n<tool_call>{\"name\": \"<tool>\", \"arguments\": { ... }}</tool_call>\nYou may call multiple tools by emitting multiple such lines. After a tool runs you'll get a <tool_response> with its result; continue until the task is done, then reply normally.\n\nAvailable tools:\n- set_script: Replace the entire editor script with a new effect program and compile it. Use this to author or revise the effect. The compile result (success, diagnostics, uniforms, and disassembly) is returned so you can iterate.\n  arguments schema: {\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"type\":\"string\",\"description\":\"A terse status shown in the UI while this applies — AT MOST 5 words, present-tense, e.g. 'adding hue-space blending' or 'fixing compile error'. Emit this field FIRST.\"},\"source\":{\"type\":\"string\",\"description\":\"The complete new effect source.\"}},\"required\":[\"summary\",\"source\"]}\n- edit_script: Make a TARGETED edit to the CURRENT script instead of rewriting the whole thing: replace an exact snippet with new text. Much cheaper than set_script for a small change or a compile fix. `find` must be copied VERBATIM from the current script and must appear EXACTLY ONCE (include enough surrounding text to be unique). Prefer this over set_script when changing only part of the program.\n  arguments schema: {\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"find\":{\"type\":\"string\",\"description\":\"Exact snippet to replace, copied verbatim from the current script.\"},\"replace\":{\"type\":\"string\",\"description\":\"Replacement text.\"}},\"required\":[\"find\",\"replace\"]}",
+  "cells": [
+    {
+      "variant": "antipatterns",
+      "model": "qwen3-0.6b",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 16, msg: \"expected '='\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program does not compute any angle via atan2 relative to the map center and instead uses led.s bands, producing no rotating colored spokes, and it references undefined symbols and won't compile.",
+      "seconds": 26.003,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 center;\n    for (int i = 0; i < 8; ++i) {\n        int led_idx = i * 4;\n        vec3 color = shade(led(led_idx));\n        center += vec3(color.x, color.y, color.z);\n    }\n}\nvec3 shade(Led led) {\n    float phase = fract(led.s - time * speed);\n    float band = smoothstep(width, 0.0, abs(phase - 0.5));\n    return tint * band;\n}}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing color mapping error\", \"source\": \"uniform float speed ",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"vec3(0.0, 0.0, 0.0)\", \"replace\": \"vec3(0.0, 0.0, 0.0)\"}}",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing color calculation logic\", \"source\": \"uniform float sp"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen3-0.6b",
+      "task": "breathing-red",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 7, col: 15, msg: \"expected '='\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "Program doesn't compile, uses `led` in update() where it's unavailable, references undefined globals `color`/`trail`, and implements no smooth breathing oscillation of red brightness.",
+      "seconds": 43.711,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 color = vec3(1.0, 0.0, 0.0);\n    for (int i = 0; i < 24; i++) {\n        float phase = fract(led.s - time * speed * 2);\n        float brightness = smoothstep(0.5, 0.0, abs(phase - 0.5));\n        color *= vec3(brightness / 1.0, brightness / 1.0, brightness / 1.0);\n    }\n    trail[led.idx] += color;\n}\nvec3 shade(Led led) {\n    return color;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing red light effect\", \"source\": \"uniform float speed : 0",
+        "The error was due to an expected closing brace missing after the variable 'color'. The corrected program now includes pr",
+        "The error was due to an expected closing brace missing after the variable 'color'. The corrected program now includes pr"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen3-0.6b",
+      "task": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 11, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The code doesn't compile, references undefined symbols (width, tint, trail, img), and produces a single moving band rather than a full saturated rainbow spectrum with hue varying across positions.",
+      "seconds": 45.013,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    state name[3] = vec3(0.0, 0.0, 0.0);\n    for (int i=0; i < seg_count(); i++) {\n        vec4 color = sample(seg_node(i, 0), led.uv);\n        trail[led.idx] += color;\n        paint(img, led.uv, color);\n    }\n}\nvec3 shade(Led led) {\n    float phase = fract(led.s - time * speed);\n    float band = smoothstep(width, 0.0, abs(phase - 0.5));\n    return tint * band;\n}}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"adding rainbow effect\", \"source\": \"uniform float speed : 0.0",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"fixing variable access error\", \"source\": \"uniform float spee",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"fixing variable access error\", \"source\": \"uniform float spee"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen3-0.6b",
+      "task": "comet",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": true,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 16, msg: \"array length must be an integer literal\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "It doesn't compile (undefined width/tint, syntax errors), and the shade uses a symmetric smoothstep band with no directional decay, so it wouldn't form a fading tail behind a comet head.",
+      "seconds": 18.038999999999998,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 trail[led.count];\n    for (int i = 0; i < led.count; ++i) {\n        trail[i] = mix(vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0), fract(led.s - time * speed));\n    }\n}\nvec3 shade(Led led) {\n    float phase = fract(led.s - time * speed);\n    float band = smoothstep(width, 0.0, abs(phase - 0.5));\n    return tint * band;\n}}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing comet shape and tail fade\", \"source\": \"uniform float ",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"trail[led.count]\", \"replace\": \"trail[led.count] = mix(vec3(0.0",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing comet tail fade and array length\", \"source\": \"uniform"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-1.5b-instruct",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "recovered",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 1, col: 1, msg: \"unexpected token Sym('{')\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program does not compile, uses led.s and a sin-based phase rather than atan2 angle from the map center, and does not rotate over time, so it fails to implement a rotating pinwheel.",
+      "seconds": 17.729999999999997,
+      "source": "{\n  \"summary\": \"Creating a colorful pinwheel\",\n  \"source\": \"\"\"\nuniform float speed : 0.0 .. 5.0 = 1.0;\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\nuniform int mode : {\"fire\",\"ice\"} = 0;\nuniform bool invert = false;\n\nvoid update() {}\n\nvec3 shade(Led led) {\n  float phase = sin(led.s * speed);\n  float angle = smoothstep(0.5 - (led.dist / 2), 0.5, abs(phase));\n  \n  return tint * hsv2rgb(angle + sign(invert ? 1 : -1), 1, 1);\n}\n\"\"\"\n}",
+      "replyHeads": [
+        "Edit the script to create a colorful pinwheel effect. Use sine waves and smoothstep for rotation, and hsv2rgb for color ",
+        "The script contains an unexpected token error. The curly brace '{' is expected to be part of a uniform declaration but a",
+        "**set_script:**\n```json\n{\n  \"summary\": \"Creating a colorful pinwheel\",\n  \"source\": \"\"\"\nuniform float speed : 0.0 .. 5.0 "
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-1.5b-instruct",
+      "task": "breathing-red",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "recovered",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "The program outputs a constant red with no time-based brightness oscillation, so it does not breathe.",
+      "seconds": 9.684,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  return vec3(1.0, 0.0, 0.0);\n}",
+      "replyHeads": [
+        "```json\n{\"summary\":\"Adding a breathing red light effect\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update()"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-1.5b-instruct",
+      "task": "rainbow-sweep",
+      "compiled": true,
+      "compiledAtRound": 2,
+      "roundsUsed": 2,
+      "obtained": "recovered",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "Returns a constant blue color with no hue variation by position or time, so no rainbow appears.",
+      "seconds": 9.467,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  return vec3(0.2, 0.6, 1.0);\n}",
+      "replyHeads": [
+        "",
+        "set_script{\"summary\":\"Making a rainbow that sweeps along the strip.\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\nv"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-1.5b-instruct",
+      "task": "comet",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "recovered",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 6, col: 11, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The code doesn't compile, uses invalid `state T x;`, and the shade logic produces a symmetric band plus an always-on additive term rather than a moving bright head with an exponentially fading tail.",
+      "seconds": 26.246,
+      "source": "uniform float speed : 0.5 .. 2.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 tint : color = 0.7, 0.8, 1.0;\n\nvoid update() {\n    state T x;\n}\n\nvec3 shade(Led led) {\n    // Correcting the issue with 'led'\n    float phase = fract(led.s - time * speed);\n    float band = smoothstep(width, 0.0, abs(phase - 0.5));\n    \n    return tint * (band + mix(vec3(1.0), vec3(0.2), clamp(step(1e-6, length(led.pos)), 0.0, 1.0)));\n}",
+      "replyHeads": [
+        "Edit the script to create a bright comet that travels along a strip and leaves a fading tail behind it. Use fixed16 for ",
+        "I've encountered an error with the identifier 'led'. It's likely caused by using `led` outside of a function. To fix thi",
+        "The error is due to the use of `led` in a context outside of the function. To fix this, we need to ensure that all varia"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-3b-instruct",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 10, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program does not compile, uses led.s (a 1D coordinate) rather than computing an atan2 angle from position relative to the map center, and produces no distinct rotating colored spokes.",
+      "seconds": 39.104,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    state.angle += dt * speed / 20.0;\n}\nvec3 shade(Led led) {\n    float phase = fract(led.s - time);\n    float angle = mod(phase + state.angle, 1.0);\n    return mix(vec3(0.8, 0.6, 0.2), vec3(0.2, 0.4, 0.8), smoothstep(0.5, 0.7, length(angle - 0.5))) * tint;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"add pinwheel effect\", \"source\": \"| uniform float speed : 0.0",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"fix pinwheel compile error\", \"source\": \"| uniform float spee",
+        "It seems like the issue persists. Let's correct it by removing the extraneous `|` characters and ensuring we have a prop"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-3b-instruct",
+      "task": "breathing-red",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 1, col: 1, msg: \"unexpected token Sym('|')\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program does not compile, uses a step function (hard on/off, not smooth breathing), references undefined `tint` and out-of-scope `phase`, and never establishes red or a smooth sinusoidal brightness.",
+      "seconds": 31.494,
+      "source": "| uniform float speed : 0.0 .. 5.0 = 1.0;\n| void update() {\n|   state float phase = mod(time * speed, 1.0);\n| }\n| vec3 shade(Led led) {\n|   return mix(vec3(0.0), tint * vec3(1.0), step(phase - 0.5, 0.25));\n| }",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"introduce breathing effect\", \"source\": \"| uniform float spee",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"correct syntax errors\", \"source\": \"| uniform float speed : 0",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"correct syntax errors\", \"source\": \"| uniform float speed : 0"
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-3b-instruct",
+      "task": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 4, col: 43, msg: \"type mismatch: Float vs Vec2\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program fails to compile (led.s treated as vec2, phase used as vec2 for scalar hue/sat), so it wouldn't render the intended sweeping rainbow.",
+      "seconds": 32.759,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {} \nvec3 shade(Led led) {\n  vec2 phase = fract(led.s - time * speed);\n  return hsv2rgb(phase.x, clamp(phase.y, 0.0, 1.0), 1.0);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"add rainbow sweep\", \"source\": \"uniform float speed : 0.0 .. ",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"fix type mismatch\", \"source\": \"uniform float speed : 0.0 .. ",
+        "It seems there's still a type mismatch. Let me correct the code to ensure `phase` is properly handled:\n\n```glsl\nuniform "
+      ]
+    },
+    {
+      "variant": "antipatterns",
+      "model": "qwen2.5-3b-instruct",
+      "task": "comet",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "recovered",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "compileDiag": "compile error: [Diagnostic { line: 2, col: 16, msg: \"expected ';'\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program doesn't compile, samples an uninitialized buffer, and has no advancing head or time-based tail decay along the strip.",
+      "seconds": 31.345,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nbuffer vec3 img(64,64);\nvoid update() {};\nvec3 shade(Led led) {\n  vec3 tail = sample(img, led.uv);\n  return mix(tail, vec3(0.0, 0.0, 0.0), smoothstep(0.5, 2.0, led.dist));\n}",
+      "replyHeads": [
+        "{\"name\": \"set_script\", \"arguments\": {\"summary\": \"add comet trail\", \"source\": \"uniform float speed : 0.0 .. 5.0 = 1.0;\\nv",
+        "{\"name\": \"set_script\", \"arguments\": {\"summary\": \"correct texture declaration\", \"source\": \"uniform float speed : 0.0 .. 5",
+        "{\"name\": \"set_script\", \"arguments\": {\"summary\": \"add missing semicolon\", \"source\": \"uniform float speed : 0.0 .. 5.0 = 1"
+      ]
+    }
+  ]
+}

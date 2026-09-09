@@ -1,0 +1,194 @@
+{
+  "config": {
+    "rounds": 3,
+    "variants": ["envelope", "dsl"]
+  },
+  "cells": [
+    {
+      "variant": "envelope",
+      "model": "qwen2.5-3b-instruct",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 4, col: 10, msg: \"unknown identifier\" }]",
+      "judgeScore": 0.6,
+      "judgeRationale": "It computes angle via atan2 centered at (0.5,0.5), maps angle to hue for multiple spokes, and advances phase by time-ish (dt*speed) for rotation, though the hsv2rgb argument scaling is messy and it declares COMPILES:no.",
+      "seconds": 3677.5650000000005,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\n\nvoid update() {\n    state.x.phase += dt * speed;\n}\n\nvec3 shade(Led led) {\n    vec2 uv = led.uv;\n    float phase = fract(state.x.phase + led.s);\n    float angle = atan2(uv.y - 0.5, uv.x - 0.5);\n    return hsv2rgb(clamp(mod(angle * 6.0 + phase, 1.0), 0.0, 1.0) * 4.0, 1.0, 0.8);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"introducing pinwheel effect\",\"source\":\"uniform float speed : 0.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"correcting identifier error\",\"source\":\"uniform float speed : 0.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"fixing identifier error\",\"source\":\"uniform float speed : 0.0 .. "
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen2.5-3b-instruct",
+      "task": "breathing-red",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "Output is white (equal RGB) not red, and it varies per-LED via led.s creating a moving gradient rather than the whole map breathing together with a smooth time oscillation.",
+      "seconds": 682.473,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\n\nvoid update() {\n}\n\nvec3 shade(Led led) {\n  float phase = fract(led.s - time * speed);\n  return vec3(phase, phase, phase);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"improving red light breathing effect\",\"source\":\"uniform float sp"
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen2.5-3b-instruct",
+      "task": "rainbow-sweep",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 1,
+      "judgeRationale": "Hue varies by led.s and shifts with time, producing a full saturated spectrum sweeping along the strip.",
+      "seconds": 748.448,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  float phase = fract(led.s - time * speed);\n  vec3 color = hsv2rgb(phase, 1.0, 1.0);\n  return color;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting rainbow sweep\",\"source\":\"uniform float speed : 0.0 .. "
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen2.5-3b-instruct",
+      "task": "comet",
+      "compiled": true,
+      "compiledAtRound": 2,
+      "roundsUsed": 2,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "The program lights the entire strip uniformly blue with no moving head, tail decay, or time dependence.",
+      "seconds": 794.5070000000001,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {} \nvec3 shade(Led led) {\n return vec3(0.0, 0.0, 1.0); // bright comet\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"revising comet effect\",\"source\":\"\"}}</tool_call>",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"fixing compile error\",\"source\":\"uniform float speed : 0.0 .. 5.0"
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen2.5-3b-instruct",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 4, col: 10, msg: \"unknown identifier\" }]",
+      "judgeScore": 0.7,
+      "judgeRationale": "It computes an angle via atan2 centered at (0.5,0.5), maps it to hue creating multiple spokes, and advances phase by time, though it lacks explicit compilation and hsv2rgb argument handling is questionable, plus per-LED phase from led.s could distort spokes.",
+      "seconds": 3721.084,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\n\nvoid update() {\n    state.x.phase += dt * speed;\n}\n\nvec3 shade(Led led) {\n    vec2 uv = led.uv;\n    float phase = fract(state.x.phase + led.s);\n    float angle = atan2(uv.y - 0.5, uv.x - 0.5);\n    return hsv2rgb(clamp(mod(angle * 6.0 + phase, 1.0), 0.0, 1.0) * 4.0, 1.0, 0.8);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"introducing pinwheel effect\",\"source\":\"uniform float speed : 0.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"correcting identifier error\",\"source\":\"uniform float speed : 0.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"fixing identifier error\",\"source\":\"uniform float speed : 0.0 .. "
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen2.5-3b-instruct",
+      "task": "breathing-red",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "Output is grayscale (equal RGB) not red, and it uses fract of a per-LED coordinate creating a moving position-based pattern rather than a uniform smooth breathing brightness.",
+      "seconds": 688.182,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\n\nvoid update() {\n}\n\nvec3 shade(Led led) {\n  float phase = fract(led.s - time * speed);\n  return vec3(phase, phase, phase);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"improving red light breathing effect\",\"source\":\"uniform float sp"
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen2.5-3b-instruct",
+      "task": "rainbow-sweep",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 1,
+      "judgeRationale": "Hue maps to led.s position and shifts with time, producing a full-spectrum rainbow that sweeps along the strip.",
+      "seconds": 738.278,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  float phase = fract(led.s - time * speed);\n  vec3 color = hsv2rgb(phase, 1.0, 1.0);\n  return color;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting rainbow sweep\",\"source\":\"uniform float speed : 0.0 .. "
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen2.5-3b-instruct",
+      "task": "comet",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "",
+      "judgeScore": 0.2,
+      "judgeRationale": "The head position advances with time, but the smoothstep(0.5,1.0,abs(phase-0.5)) makes the head a broad region (~half the strip) rather than a localized bright point with an asymmetric fading tail, and the color mixing doesn't produce a clear directional decay.",
+      "seconds": 1060.836,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n}\nvec3 shade(Led led) {\n  vec3 color = vec3(1.0, 1.0, 1.0);\n  float phase = fract(led.s - time * speed);\n  float tail_alpha = smoothstep(0.5, 1.0, abs(phase - 0.5));\n  return mix(color, palette2(tail_alpha), tail_alpha);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"revising comet effect\",\"source\":\"uniform float speed : 0.0 .. 5."
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "model": "qwen2.5-3b-instruct",
+      "arm": "baseline",
+      "n": 4,
+      "tool": 3,
+      "eff": 4,
+      "comp": 2,
+      "judge": 0
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "arm": "envelope",
+      "n": 4,
+      "tool": 4,
+      "eff": 4,
+      "comp": 3,
+      "judge": 0.4
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "arm": "dsl",
+      "n": 4,
+      "tool": 4,
+      "eff": 4,
+      "comp": 3,
+      "judge": 0.475
+    }
+  ]
+}

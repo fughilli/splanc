@@ -97,6 +97,13 @@ export default defineConfig({
   },
   server: {
     host: true,
+    // DEBUG-SESSION: allow the cloudflared quick-tunnel host + serve COOP/COEP so
+    // the page is cross-origin-isolated (SharedArrayBuffer → wllama multithread).
+    allowedHosts: true,
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "credentialless",
+    },
     ...(https ? { https } : {}),
     ...(devPort ? { port: devPort, strictPort: true } : {}),
     proxy: {

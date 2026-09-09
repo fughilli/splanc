@@ -1,0 +1,134 @@
+{
+  "config": {
+    "rounds": 3,
+    "variants": ["envelope", "dsl"]
+  },
+  "cells": [
+    {
+      "variant": "envelope",
+      "model": "qwen3-0.6b",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 6, col: 13, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "Does not compile, shade returns a constant red with no angle computation, hue mapping, or time-based rotation, so it renders no pinwheel.",
+      "seconds": 1549.305,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 center = vec3(0.0, 0.0, 0.0);\n    vec2 offset = vec2(.4, .6);\n    for (int i=0; i < led.count; i++) {\n        Led led_i = led[i];\n        float phase = fract(led_i.s - time * speed);\n        float band = smoothstep(0.1, 0.0, abs(phase - 0.5));\n        vec3 color = shade(led_i);\n        center += vec2(color.x, color.y);\n    }\n    trail[led.count] = center;\n}\nvec3 shade(Led led) {\n    return vec3(1.0, 0.0, 0.0);\n}}.",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5.",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5.",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5."
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen3-0.6b",
+      "task": "breathing-red",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 15, msg: \"expected '='\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "It does not compile (shade nested inside update), and the use of fract(sin(...)) produces erratic non-smooth brightness rather than a smooth periodic breathing.",
+      "seconds": 745.5240000000001,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 shade(Led led)\n    {\n        vec3 color = vec3(1.0, 0.0, 0.0);\n        float phase = fract(sin(time * speed));\n        float band = smoothstep(0.5, 0.0, abs(phase - 0.5));\n        return color * band;\n    }\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing red light effect\",\"source\":\"uniform float speed : 0.0 .. ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing error\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\\",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing error\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\\"
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen3-0.6b",
+      "task": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 10, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program does not compile, produces only a dark red at best (no full spectrum hue variation), so it does not implement a moving rainbow.",
+      "seconds": 480.631,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    state.x += dt * speed;\n} \nvec3 shade(Led led) {\n    vec3 color = vec3(0.0, 0.0, 0.0);\n    float phase = fract(led.s - time * speed);\n    if (phase > 0.5) {\n        color = mix(color, vec3(1.0, 0.0, 0.0), 0.25);\n    }\n    return color;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing compile error\",\"source\":\"uniform float speed : 0.0 .. 5.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing syntax error\",\"source\":\"uniform float speed : 0.0 .. 5.0 ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing missing 'if' statement\",\"source\":\"uniform float speed : 0"
+      ]
+    },
+    {
+      "variant": "envelope",
+      "model": "qwen3-0.6b",
+      "task": "comet",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 10, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program doesn't compile and has no head position or tail decay logic—it just returns a solid red multiplied by an undefined blend call, not a moving comet with a fading tail.",
+      "seconds": 473.249,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    state.x += dt * speed;\n    blend(state.x, time);\n}\nvec3 shade(Led led) {\n    vec3 color = vec3(1.0, 0.0, 0.0);\n    return color * blend(color, led.s);\n}}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing compile error\",\"source\":\"uniform float speed : 0.0 .. 5.0",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing unknown identifier error\",\"source\":\"uniform float speed :",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing unknown identifier error\",\"source\":\"uniform float speed :"
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen3-0.6b",
+      "task": "pinwheel",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 6, col: 13, msg: \"unknown identifier\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program doesn't compile, shade() just returns flat red with no angle computation or rotation, and update() contains nonsensical code, so it never renders a spinning colorful pinwheel.",
+      "seconds": 908.5319999999999,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 center = vec3(0.0, 0.0, 0.0);\n    vec2 offset = vec2(.4, .6);\n    for (int i=0; i < led.count; i++) {\n        Led led_i = led[i];\n        float phase = fract(led_i.s - time * speed);\n        float band = smoothstep(0.1, 0.0, abs(phase - 0.5));\n        vec3 color = shade(led_i);\n        center += vec2(color.x, color.y);\n    }\n    trail[led.count] = center;\n}\nvec3 shade(Led led) {\n    return vec3(1.0, 0.0, 0.0);\n}}.",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5.",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5.",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing color blending\",\"source\":\"uniform float speed : 0.0 .. 5."
+      ]
+    },
+    {
+      "variant": "dsl",
+      "model": "qwen3-0.6b",
+      "task": "breathing-red",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "compileDiag": "compile error: [Diagnostic { line: 3, col: 15, msg: \"expected '='\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "It doesn't compile (shade nested inside update), and the fract(sin(...)) produces jittery non-smooth brightness rather than a smooth periodic breathe.",
+      "seconds": 568.7570000000001,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    vec3 shade(Led led)\n    {\n        vec3 color = vec3(1.0, 0.0, 0.0);\n        float phase = fract(sin(time * speed));\n        float band = smoothstep(0.5, 0.0, abs(phase - 0.5));\n        return color * band;\n    }\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing red light effect\",\"source\":\"uniform float speed : 0.0 .. ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing error\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\\",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"Fixing error\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\\"
+      ]
+    }
+  ]
+}

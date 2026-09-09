@@ -19,7 +19,32 @@ const URL_KEY = "ledmapper.debugServer";
 
 /** The remembered debug-server base URL (trailing slashes stripped), or "". */
 export function debugServerUrl(): string {
-  return (localStorage.getItem(URL_KEY) ?? "").replace(/\/+$/, "");
+  let u = (localStorage.getItem(URL_KEY) ?? "").replace(/\/+$/, "");
+  // Tolerate a scheme-less URL (a QR/entry that dropped "https://") — otherwise
+  // fetch treats it as a path relative to the app origin and never reaches the
+  // debug server.
+  if (u && !/^https?:\/\//i.test(u)) u = "https://" + u;
+  return u;
+}
+
+/** Fire-and-forget a LIVE debug event to the connected debug server's /dbg ring
+ * (no-op when no debug server is configured). DEBUG-SESSION instrumentation —
+ * also mirrors to console.error, which the Vite dev server forwards to the
+ * container log. Never throws. */
+export function shipDbg(ev: Record<string, unknown>): void {
+  const base = debugServerUrl();
+  try {
+    // eslint-disable-next-line no-console
+    console.error("[DBG] " + JSON.stringify({ ...ev, _base: base || "(none)" }));
+  } catch {
+    /* ignore */
+  }
+  if (!base) return;
+  try {
+    void postJson(base, "/dbg", ev).catch(() => undefined);
+  } catch {
+    // ignore — best-effort telemetry
+  }
 }
 
 /** Remember a debug-server base URL (trailing slashes stripped). */

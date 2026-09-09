@@ -1745,10 +1745,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       void load();
       // Remote chat drive (repro-on-device): feed queued prompts into this turn.
       unregisterChatDriver = registerChatDriver((text) => submitChat(text));
+      // DEBUG-SESSION: expose this chat to the remote-control channel.
+      void import("../../net/remoteControl").then((m) =>
+        m.setActiveChat({ submit: (t) => submitChat(t), newChat: () => resetChat() }),
+      );
     },
     onUnmount: () => {
       disposed = true;
       unregisterChatDriver?.();
+      void import("../../net/remoteControl").then((m) => m.setActiveChat(null));
       document.documentElement.classList.remove("is-locked");
       document.body.classList.remove("is-locked");
       closeMenu();

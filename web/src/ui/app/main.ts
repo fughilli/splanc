@@ -179,6 +179,10 @@ async function main(): Promise<void> {
 
   router.start();
 
+  // DEBUG-SESSION: remote control from the debug server (drive prompts, load/unload
+  // models, open workspaces) so we can iterate without on-device typing.
+  void import("../../net/remoteControl").then((m) => m.startRemoteControl(router)).catch(() => {});
+
   // Warm the offline firmware cache with the latest release in the background, so a
   // released image is flashable over USB even with no network later. Dynamic-imported
   // to keep the flash stack (and the esptool-js it can pull) off the initial bundle;

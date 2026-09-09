@@ -1,0 +1,210 @@
+{
+  "config": {
+    "rounds": 3,
+    "models": ["qwen3-0.6b", "qwen2.5-1.5b-instruct", "qwen2.5-3b-instruct"],
+    "tasks": [
+      "pinwheel",
+      "breathing-red",
+      "rainbow-sweep",
+      "comet",
+      "fire",
+      "twinkle",
+      "color-wipe",
+      "two-tone-gradient"
+    ]
+  },
+  "templates": [
+    {
+      "id": "color-test",
+      "description": "Static linear gradient blending between two colors across a span of the strip; LEDs outside the span are off."
+    },
+    {
+      "id": "rainbow-sweep",
+      "description": "Full rainbow of hues spread across the map by position, scrolling/sweeping over time."
+    },
+    {
+      "id": "breathing-pulse",
+      "description": "The whole map glows one warm color whose brightness smoothly pulses brighter and dimmer with a sine of time."
+    },
+    {
+      "id": "comet",
+      "description": "A single bright band of color that travels/wipes along the strip over time, wrapping around to start again."
+    },
+    {
+      "id": "flood",
+      "description": "A wavefront fills the whole structure outward from an endpoint following the wiring, then restarts from another endpoint."
+    },
+    {
+      "id": "pulse",
+      "description": "Several evenly staggered glowing wavefronts ripple outward along the strands by distance from the root."
+    },
+    {
+      "id": "trails",
+      "description": "A moving spark on a mostly dark background leaves a fading, decaying trail behind it (per-LED feedback buffer)."
+    },
+    {
+      "id": "texture-map",
+      "description": "Bakes a radial two-color pattern into a 2D texture centered on the map and samples it per LED by uv position."
+    }
+  ],
+  "goldRetrieval": {
+    "pinwheel": ["rainbow-sweep", "texture-map"],
+    "breathing-red": ["breathing-pulse"],
+    "rainbow-sweep": ["rainbow-sweep"],
+    "comet": ["comet", "trails"],
+    "fire": ["breathing-pulse", "trails"],
+    "twinkle": ["trails"],
+    "color-wipe": ["comet", "color-test"],
+    "two-tone-gradient": ["color-test"]
+  },
+  "heuristicRetrieval": {
+    "pinwheel": {
+      "pick": "rainbow-sweep",
+      "ok": true
+    },
+    "breathing-red": {
+      "pick": "breathing-pulse",
+      "ok": true
+    },
+    "rainbow-sweep": {
+      "pick": "rainbow-sweep",
+      "ok": true
+    },
+    "comet": {
+      "pick": "comet",
+      "ok": true
+    },
+    "fire": {
+      "pick": "breathing-pulse",
+      "ok": true
+    },
+    "twinkle": {
+      "pick": "trails",
+      "ok": true
+    },
+    "color-wipe": {
+      "pick": "comet",
+      "ok": true
+    },
+    "two-tone-gradient": {
+      "pick": "color-test",
+      "ok": true
+    }
+  },
+  "modelPicks": {
+    "qwen3-0.6b": {
+      "pinwheel": {
+        "pick": "color-test",
+        "ok": false,
+        "seconds": 58.93
+      },
+      "breathing-red": {
+        "pick": null,
+        "ok": false,
+        "seconds": 42.935
+      },
+      "rainbow-sweep": {
+        "pick": "rainbow-sweep",
+        "ok": true,
+        "seconds": 44.855
+      },
+      "comet": {
+        "pick": null,
+        "ok": false,
+        "seconds": 28.841
+      },
+      "fire": {
+        "pick": null,
+        "ok": false,
+        "seconds": 29.936
+      },
+      "twinkle": {
+        "pick": null,
+        "ok": false,
+        "seconds": 28.701
+      },
+      "color-wipe": {
+        "pick": null,
+        "ok": false,
+        "seconds": 32.795
+      },
+      "two-tone-gradient": {
+        "pick": null,
+        "ok": false,
+        "seconds": 39.774
+      }
+    }
+  },
+  "cells": [
+    {
+      "model": "qwen3-0.6b",
+      "task": "pinwheel",
+      "template": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "unmodified": false,
+      "templateSimilarity": 0.23529411764705882,
+      "compileDiag": "compile error: [Diagnostic { line: 5, col: 1, msg: \"unexpected token Ident(\\\"color\\\")\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program doesn't compile, references led in update() incorrectly, lacks a shade() entry, and its garbled logic never produces rotating colored spokes.",
+      "hadThinking": false,
+      "seconds": 2007.841,
+      "source": "uniform float scale : 0.2 .. 4.0 = 1.0;\n\nuniform float drift : 0.0 .. 2.0 = 0.3;\n\ncolor vec3 color(0.5, 0.5, 0.5);\n\nvoid update() {\n\tfloat h = fract(led.pos.y * scale + time * drift);\n\tfloat angle = atan2(h, led.s);\n\tfloat radius = sqrt(led.dist * led.dist); // radius in TURNS\n\n\tfor (int i=0; i<4; ++i) {\n\t\tsin(i * 0.1) * cos(angle - 0.05) + \n\t\t\tcos(i * 0.1) * sin(angle + 0.05);\n\t\t\tcolor.rgb = mix(color.rgb, color.rgb, i / 4.0);\n\t}\n\n\ttrail[led.idx] += vec3(0.0, 0.0, 0.0); // trail is not used here\n\n\ncolor hsv2rgb(angle * 0.5, 1.0, 1.0);\n\n\ntexture img(64, 64);\n\n\ndeflect sample(img, led.uv);\n\tpaint(img, led.uv, color); // paint the trail",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing pinwheel effect\", \"source\": \"uniform float scale : 0.",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing pinwheel color definition\", \"source\": \"uniform float ",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing pinwheel color definition\", \"source\": \"uniform float "
+      ]
+    },
+    {
+      "model": "qwen3-0.6b",
+      "task": "breathing-red",
+      "template": "breathing-pulse",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "unmodified": true,
+      "templateSimilarity": 1,
+      "compileDiag": "",
+      "judgeScore": 1,
+      "judgeRationale": "Red-dominant base color multiplied by a smooth sin-based glow that oscillates periodically and uniformly across all LEDs.",
+      "hadThinking": false,
+      "seconds": 191.086,
+      "source": "uniform float rate : 0.1 .. 3.0 = 0.6;\nuniform vec3 base : color = 1.0, 0.3, 0.1;\nstate float glow;\nvoid update() { glow = 0.5 + 0.5 * sin(time * rate); }\nvec3 shade(Led led) { return base * glow; }",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing compile error\", \"source\": \"uniform float rate : 0.1 ."
+      ]
+    },
+    {
+      "model": "qwen3-0.6b",
+      "task": "rainbow-sweep",
+      "template": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": false,
+      "unmodified": false,
+      "templateSimilarity": 0.46153846153846156,
+      "compileDiag": "compile error: [Diagnostic { line: 4, col: 15, msg: \"expected '='\" }]",
+      "judgeScore": 0.5,
+      "judgeRationale": "The shade logic correctly maps hue to position and time for a moving full-spectrum rainbow, but the program has compile errors (led referenced in update without definition, passing vec3 to hsv2rgb hue, extra brace) so it wouldn't run as-is.",
+      "hadThinking": false,
+      "seconds": 2484.502,
+      "source": "uniform float scale : 0.2 .. 4.0 = 1.0;\nuniform float drift : 0.0 .. 2.0 = 0.3;\nvoid update() {\n    vec3 color;\n    for (int i=0; i < 5; i++) {\n        color = hsv2rgb(led.pos.y * scale + time * drift, 0.9, 1.0);\n        trail[led.idx] += color;\n    }\n}\nvec3 shade(Led led) { \n    vec3 h = fract(led.pos.y * scale + time * drift);\n    return hsv2rgb(h, 0.9, 1.0); \n}}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing rainbow effect\", \"source\": \"uniform float scale : 0.2",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing rainbow effect\", \"source\": \"uniform float scale : 0.2",
+        "<tool_call>{\"name\": \"set_script\", \"arguments\": {\"summary\": \"Fixing rainbow effect\", \"source\": \"uniform float scale : 0.2"
+      ]
+    }
+  ]
+}

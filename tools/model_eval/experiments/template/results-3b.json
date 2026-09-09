@@ -1,0 +1,189 @@
+{
+  "config": {
+    "rounds": 3,
+    "models": ["qwen2.5-3b-instruct"],
+    "tasks": ["pinwheel", "breathing-red", "rainbow-sweep", "comet"]
+  },
+  "templates": [
+    {
+      "id": "color-test",
+      "description": "Static linear gradient blending between two colors across a span of the strip; LEDs outside the span are off."
+    },
+    {
+      "id": "rainbow-sweep",
+      "description": "Full rainbow of hues spread across the map by position, scrolling/sweeping over time."
+    },
+    {
+      "id": "breathing-pulse",
+      "description": "The whole map glows one warm color whose brightness smoothly pulses brighter and dimmer with a sine of time."
+    },
+    {
+      "id": "comet",
+      "description": "A single bright band of color that travels/wipes along the strip over time, wrapping around to start again."
+    },
+    {
+      "id": "flood",
+      "description": "A wavefront fills the whole structure outward from an endpoint following the wiring, then restarts from another endpoint."
+    },
+    {
+      "id": "pulse",
+      "description": "Several evenly staggered glowing wavefronts ripple outward along the strands by distance from the root."
+    },
+    {
+      "id": "trails",
+      "description": "A moving spark on a mostly dark background leaves a fading, decaying trail behind it (per-LED feedback buffer)."
+    },
+    {
+      "id": "texture-map",
+      "description": "Bakes a radial two-color pattern into a 2D texture centered on the map and samples it per LED by uv position."
+    }
+  ],
+  "goldRetrieval": {
+    "pinwheel": ["rainbow-sweep", "texture-map"],
+    "breathing-red": ["breathing-pulse"],
+    "rainbow-sweep": ["rainbow-sweep"],
+    "comet": ["comet", "trails"],
+    "fire": ["breathing-pulse", "trails"],
+    "twinkle": ["trails"],
+    "color-wipe": ["comet", "color-test"],
+    "two-tone-gradient": ["color-test"]
+  },
+  "heuristicRetrieval": {
+    "pinwheel": {
+      "pick": "rainbow-sweep",
+      "ok": true
+    },
+    "breathing-red": {
+      "pick": "breathing-pulse",
+      "ok": true
+    },
+    "rainbow-sweep": {
+      "pick": "rainbow-sweep",
+      "ok": true
+    },
+    "comet": {
+      "pick": "comet",
+      "ok": true
+    }
+  },
+  "modelPicks": {
+    "qwen2.5-3b-instruct": {
+      "pinwheel": {
+        "pick": "rainbow-sweep",
+        "ok": true,
+        "seconds": 43.405
+      },
+      "breathing-red": {
+        "pick": "breathing-pulse",
+        "ok": true,
+        "seconds": 41.968
+      },
+      "rainbow-sweep": {
+        "pick": "rainbow-sweep",
+        "ok": true,
+        "seconds": 41.096
+      },
+      "comet": {
+        "pick": "comet",
+        "ok": true,
+        "seconds": 27.701
+      }
+    }
+  },
+  "cells": [
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "pinwheel",
+      "template": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "none",
+      "emittedToolCall": false,
+      "usedEdit": false,
+      "unmodified": true,
+      "templateSimilarity": 1,
+      "compileDiag": "",
+      "judgeScore": null,
+      "judgeRationale": "",
+      "hadThinking": false,
+      "seconds": 5699.4580000000005,
+      "source": "uniform float scale : 0.2 .. 4.0 = 1.0;\nuniform float drift : 0.0 .. 2.0 = 0.3;\n\nvoid update() {}\n\nvec3 shade(Led led) {\n  float h = fract(led.pos.y * scale + time * drift);\n  return hsv2rgb(h, 0.9, 1.0);\n}\n",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"vec3 shade(Led led) {\", \"replace\": \"void update() {\\n    float",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"void update() {\\n    float phase = time * 0.1;\\n    for (int i",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"void update() {\\n    float phase = time * 0.1;\\n    for (int i"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "breathing-red",
+      "template": "breathing-pulse",
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": true,
+      "unmodified": false,
+      "templateSimilarity": 0.8,
+      "compileDiag": "",
+      "judgeScore": 1,
+      "judgeRationale": "Red base color scaled by a smooth periodic sine-based glow applied uniformly to all LEDs, breathing together as required.",
+      "hadThinking": false,
+      "seconds": 490.573,
+      "source": "uniform float rate : 0.1 .. 3.0 = 1.0;\nuniform vec3 base : color = 1.0, 0.3, 0.1;\nstate float glow;\n\nvoid update() { glow = 0.5 + 0.5 * sin(time * rate); }\n\nvec3 shade(Led led) { return base * glow; }\n",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"uniform float rate : 0.1 .. 3.0 = 0.6;\", \"replace\": \"uniform f"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "rainbow-sweep",
+      "template": "rainbow-sweep",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": true,
+      "unmodified": false,
+      "templateSimilarity": 0.7142857142857143,
+      "compileDiag": "compile error: [Diagnostic { line: 6, col: 17, msg: \"unexpected token Sym('\\\\\\\\')\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program has duplicate update() definitions, a typo'd 'vect3', escaped-newline garbage, and undefined identifiers, so it doesn't compile and wouldn't render the sweeping rainbow.",
+      "hadThinking": false,
+      "seconds": 1552.4969999999998,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float drift : 0.0 .. 2.0 = 0.3;\n\nvoid update() {}\n\nvoid update() {}\\n\\nvect3 shade(Led led) {\\n  float h = fract(led.pos.y * speed + time * drift);\\n  return hsv2rgb(h, 0.9, 1.0);\\n}\n  float h = fract(led.pos.y * scale + time * drift);\n  return hsv2rgb(h, 0.9, 1.0);\n}\n",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"uniform float scale : 0.2 .. 4.0 = 1.0;\", \"replace\": \"uniform ",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"uniform float scale : 0.2 .. 4.0 = 1.0;\", \"replace\": \"uniform ",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"vec3 shade(Led led) {\", \"replace\": \"void update() {}\\\\n\\\\nvect"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "comet",
+      "template": "comet",
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "usedEdit": true,
+      "unmodified": false,
+      "templateSimilarity": 0.5789473684210527,
+      "compileDiag": "compile error: [Diagnostic { line: 7, col: 13, msg: \"unknown identifier\" }]",
+      "judgeScore": 0.2,
+      "judgeRationale": "The shade function lights a moving band with no tail decay (symmetric smoothstep, no fading behind the head), so it produces a moving blob rather than a comet with a fading tail.",
+      "hadThinking": false,
+      "seconds": 7141.76,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\n\nvoid update() {\n    for (int i = 0; i < seg_count(); ++i) {\n        Led led = term(i);\n        if (led.idx == frame % trail.size()) {\n            float comet_speed = speed;\n            vec3 comet_color = mix(tint, palette1(0.5), clamp(mod(frame, 20), 0, 1));\n            float tail_width = smoothstep(width * 0.5, width, abs(fract(led.s - time * comet_speed) - 0.5));\n            trail[i] = mix(comet_color, trail[i], tail_width);\n        }\n    }\n}\n\nvec3 shade(Led led) {\n    float phase = fract(led.s - time * speed);\n    float band = smoothstep(width, 0.0, abs(phase - 0.5));\n    return tint * band;\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"vec3 shade(Led led) {\", \"replace\": \"void update() {\\n    float",
+        "<tool_call>{\"name\": \"edit_script\", \"arguments\": {\"find\": \"void update() {\\n    float comet_speed = speed;\\n\\n    for (in",
+        "It seems there's still an issue with the `comet_speed` variable. Let me correct it by directly using the `speed` uniform"
+      ]
+    }
+  ]
+}

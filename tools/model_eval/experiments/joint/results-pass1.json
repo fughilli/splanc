@@ -1,0 +1,262 @@
+{
+  "config": {
+    "model": "qwen2.5-3b-instruct",
+    "rounds": 3,
+    "nearMinScore": 2,
+    "stack": ["template-routing", "grammar-envelope", "combined-prompt+enriched-repair"],
+    "tasks": [
+      "pinwheel",
+      "breathing-red",
+      "rainbow-sweep",
+      "comet",
+      "fire",
+      "twinkle",
+      "color-wipe",
+      "two-tone-gradient"
+    ]
+  },
+  "routing": {
+    "pinwheel": {
+      "route": "scratch",
+      "pick": "rainbow-sweep",
+      "score": 1,
+      "goldOk": null
+    },
+    "breathing-red": {
+      "route": "template",
+      "pick": "breathing-pulse",
+      "score": 4,
+      "goldOk": true
+    },
+    "rainbow-sweep": {
+      "route": "template",
+      "pick": "rainbow-sweep",
+      "score": 4,
+      "goldOk": true
+    },
+    "comet": {
+      "route": "template",
+      "pick": "comet",
+      "score": 3,
+      "goldOk": true
+    },
+    "fire": {
+      "route": "scratch",
+      "pick": "breathing-pulse",
+      "score": 1,
+      "goldOk": null
+    },
+    "twinkle": {
+      "route": "scratch",
+      "pick": "trails",
+      "score": 1,
+      "goldOk": null
+    },
+    "color-wipe": {
+      "route": "scratch",
+      "pick": "comet",
+      "score": 1,
+      "goldOk": null
+    },
+    "two-tone-gradient": {
+      "route": "template",
+      "pick": "color-test",
+      "score": 3,
+      "goldOk": true
+    }
+  },
+  "cells": [
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "pinwheel",
+      "route": "scratch",
+      "template": null,
+      "retrievalScore": 1,
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": null,
+      "templateSimilarity": null,
+      "compileDiag": "compile error: [Diagnostic { line: 1, col: 1, msg: \"program must define `vec3 shade(Led led)`\" }]",
+      "judgeScore": null,
+      "judgeRationale": "",
+      "seconds": 21.497999999999998,
+      "truncated": false,
+      "source": "",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting pinwheel effect\",\"source\":\"\"}}</tool_call>",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting pinwheel effect\",\"source\":\"\"}}</tool_call>",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting pinwheel effect\",\"source\":\"\"}}</tool_call>"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "breathing-red",
+      "route": "template",
+      "template": "breathing-pulse",
+      "retrievalScore": 4,
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": false,
+      "templateSimilarity": 0.6,
+      "compileDiag": "",
+      "judgeScore": 0.85,
+      "judgeRationale": "Red-dominant base color breathes uniformly via sin(time), though clamping to positive values makes the oscillation dwell at the dim base half the cycle rather than a full smooth dim, still clearly a periodic breathing red.",
+      "seconds": 22.039,
+      "truncated": false,
+      "source": "uniform float rate : 0.1 .. 3.0 = 0.6;\nuniform vec3 base : color = 1.0, 0.3, 0.1;\nstate float glow;\n\nvoid update() { glow = sin(time * rate); }\n\nvec3 shade(Led led) { return mix(base, vec3(1.0), clamp(glow, 0.0, 1.0)); }",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"modifying red light breathing effect\",\"source\":\"uniform float ra"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "rainbow-sweep",
+      "route": "template",
+      "template": "rainbow-sweep",
+      "retrievalScore": 4,
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": false,
+      "templateSimilarity": 0.4444444444444444,
+      "compileDiag": "compile error: [Diagnostic { line: 11, col: 2, msg: \"unexpected token Sym(';')\" }]",
+      "judgeScore": 0.4,
+      "judgeRationale": "It uses full saturated HSV spectrum with time-based drift, but the program fails to compile and hue derives from an odd atan2 of position rather than a clean sweep along the strip's position axis.",
+      "seconds": 38.882999999999996,
+      "truncated": false,
+      "source": "uniform float scale : 0.2 .. 4.0 = 1.0;\nuniform float drift : 0.0 .. 2.0 = 0.3;\n\nvoid update() {\n}\n\nvec3 shade(Led led) {\n  float ang = atan2(led.pos.y, led.s - 0.5);\n  float hue = fract(ang * scale + time * drift);\n  return hsv2rgb(hue, 1.0, 1.0);\n};",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting rainbow sweep\",\"source\":\"uniform float scale : 0.2 .. ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"fixing syntax error\",\"source\":\"uniform float scale : 0.2 .. 4.0 ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"fixing syntax error\",\"source\":\"uniform float scale : 0.2 .. 4.0 "
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "comet",
+      "route": "template",
+      "template": "comet",
+      "retrievalScore": 3,
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": false,
+      "templateSimilarity": 0.6666666666666666,
+      "compileDiag": "",
+      "judgeScore": 1,
+      "judgeRationale": "The head position (where behind≈0) advances with time and intensity decays exponentially behind it, forming a moving comet with a fading tail.",
+      "seconds": 23.585,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\n\nvoid update() {} \n\nvec3 shade(Led led) {\n  float behind = fract(time * speed - led.s);\n  return vec3(1.0, 0.8, 0.4) * exp(-8.0 * behind);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"modifying comet effect\",\"source\":\"uniform float speed : 0.0 .. 5"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "fire",
+      "route": "scratch",
+      "template": null,
+      "retrievalScore": 1,
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": null,
+      "templateSimilarity": null,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "The palette is cool/blue-heavy (base colors emphasize blue) rather than warm reds/oranges, and it uses IMU gyro rather than per-LED time-varying flicker.",
+      "seconds": 23.369,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n}\nvec3 shade(Led led) {\n  vec3 base = mix(vec3(0.2, 0.4, 0.6), vec3(0.8, 0.9, 1.0), smoothstep(0.5, 1.0, time * speed));\n  float noise = fract(sin(dot(imu.gyro, vec2(12.9898, 78.233))) * 4363.2);\n  return mix(base, vec3(noise), step(time * speed - led.s, 0.5));\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjusting fire effect\",\"source\":\"uniform float speed : 0.0 .. 5."
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "twinkle",
+      "route": "scratch",
+      "template": null,
+      "retrievalScore": 1,
+      "compiled": true,
+      "compiledAtRound": 1,
+      "roundsUsed": 1,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": null,
+      "templateSimilarity": null,
+      "compileDiag": "",
+      "judgeScore": 0,
+      "judgeRationale": "This uses only global time (no per-LED hash), so all LEDs flash on and off together as a solid uniform white/black blink rather than sparse twinkling stars.",
+      "seconds": 21.457,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {}\nvec3 shade(Led led) {\n  vec2 uv = led.uv;\n  float t = fract(time * speed);\n  return mix(vec3(0.0, 0.0, 0.0), vec3(1.0), step(t - 0.5, 0.0));\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"introducing twinkling stars\",\"source\":\"uniform float speed : 0.0"
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "color-wipe",
+      "route": "scratch",
+      "template": null,
+      "retrievalScore": 1,
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": null,
+      "templateSimilarity": null,
+      "compileDiag": "compile error: [Diagnostic { line: 4, col: 9, msg: \"expected '{'\" }]",
+      "judgeScore": 0,
+      "judgeRationale": "The program doesn't compile, shade always returns black, and there is no time-driven boundary wipe implementing the request.",
+      "seconds": 36.815,
+      "truncated": false,
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nvoid update() {\n    for(int i = 0; i < led.count; i++)\n        trail[i] = mix(trail[max(0, i-1)], vec3(1.0), 0.2);\n}\nvec3 shade(Led led) {\n    return vec3(0.0, 0.0, 0.0);\n}",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"wiping LEDs\",\"source\":\"uniform float speed : 0.0 .. 5.0 = 1.0;\\n",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"correcting script\",\"source\":\"uniform float speed : 0.0 .. 5.0 = ",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"correcting script\",\"source\":\"uniform float speed : 0.0 .. 5.0 = "
+      ]
+    },
+    {
+      "model": "qwen2.5-3b-instruct",
+      "task": "two-tone-gradient",
+      "route": "template",
+      "template": "color-test",
+      "retrievalScore": 3,
+      "compiled": false,
+      "compiledAtRound": 0,
+      "roundsUsed": 3,
+      "obtained": "tool_call",
+      "emittedToolCall": true,
+      "unmodified": false,
+      "templateSimilarity": 0,
+      "compileDiag": "compile error: [Diagnostic { line: 1, col: 1, msg: \"program must define `vec3 shade(Led led)`\" }]",
+      "judgeScore": null,
+      "judgeRationale": "",
+      "seconds": 23.417,
+      "truncated": false,
+      "source": "",
+      "replyHeads": [
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjust gradient effect\",\"source\":\"\"}}</tool_call>",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjust gradient effect\",\"source\":\"\"}}</tool_call>",
+        "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"adjust gradient effect\",\"source\":\"\"}}</tool_call>"
+      ]
+    }
+  ]
+}

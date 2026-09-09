@@ -1,0 +1,11 @@
+{
+  "name": "model-eval",
+  "private": true,
+  "type": "module",
+  "description": "Model-in-the-loop eval harness for on-device (small GGUF) effect authoring (FUG-87 hill-climbing). Standalone dev tool — not part of the Bazel app build.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "node-llama-cpp": "^3.0.0",
+    "tsx": "^4.23.13"
+  }
+}

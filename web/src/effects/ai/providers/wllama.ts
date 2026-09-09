@@ -44,6 +44,7 @@ import type {
 // GGUF model weights are a runtime download. 3.6.1 ships a single universal wasm
 // that the engine's AssetsPathConfig points at via `default`.
 import wllamaWasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
+import { shipDbg } from "../../../net/debugServer"; // DEBUG-SESSION instrumentation
 import {
   isResumableDownloadSupported,
   downloadModelResumable,
@@ -158,6 +159,29 @@ async function acquireWakeLock(): Promise<WakeSentinel | null> {
 /** True when the browser can run wllama at all (WebAssembly present). */
 export function isWllamaSupported(): boolean {
   return typeof WebAssembly !== "undefined";
+}
+
+// -- DEBUG-SESSION: grammar-constrained tool-call envelope --------------------
+// GBNF (llama.cpp grammar) forcing the output to be EXACTLY one
+// <tool_call>{"name":"set_script","arguments":{"summary":"…","source":"…"}}</tool_call>
+// with `source` non-empty (schar+ — the model_eval joint run caught a degenerate
+// empty-source mode with schar*). Validated in tools/model_eval/experiments/
+// {grammar,joint}. Gated off unless localStorage "wllama.grammar"="envelope".
+const JSON_CHAR = String.raw`[^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])`;
+const ENVELOPE_GBNF = [
+  String.raw`root ::= ws "<tool_call>{\"name\":\"set_script\",\"arguments\":{\"summary\":\"" summary "\",\"source\":\"" source "\"}}</tool_call>"`,
+  `ws ::= [ \\t\\n]*`,
+  `summary ::= schar*`,
+  `source ::= schar schar*`,
+  `schar ::= ${JSON_CHAR}`,
+].join("\n");
+
+function debugGrammar(): boolean {
+  try {
+    return localStorage.getItem("wllama.grammar") === "envelope";
+  } catch {
+    return false;
+  }
 }
 
 /** LoadModelParams shared by both load paths. `n_gpu_layers: 0` forces CPU-only
@@ -333,6 +357,14 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
       const t0 = Date.now();
       let tokCount = 0;
       let firstAt = 0;
+      // DEBUG-SESSION telemetry (spot-check): turn start/heartbeat/done → /dbg.
+      shipDbg({
+        kind: "wllama_start",
+        model: cfg.model.split("/").pop(),
+        promptTokEst: tokEst,
+        grammar: debugGrammar() ? "envelope" : "off",
+        useTools,
+      });
       opts.stream?.onStatus?.(`prefilling ~${tokEst} tok (ctx ${cfg.contextWindowSize})…`);
       // Hold the screen awake for the whole turn so an idle auto-lock can't
       // suspend the worker mid-prefill (best-effort; released in every exit path).
@@ -342,6 +374,7 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
       // a long time ⇒ still prefilling; tok climbing ⇒ generating (just slow).
       const beat = window.setInterval(() => {
         const secs = Math.round((Date.now() - t0) / 1000);
+        shipDbg({ kind: "beat", secs, tok: tokCount, firstTokenAt: firstAt ? Math.round((firstAt - t0) / 1000) : null });
         opts.stream?.onStatus?.(
           firstAt ? `generating (${tokCount} tok, ${secs}s)` : `prefilling… (${secs}s, ~${tokEst}/${cfg.contextWindowSize} ctx)`,
         );
@@ -396,6 +429,12 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
           // warmUp() pre-decodes it at boot, so the first user turn — and every
           // follow-up — skips re-prefilling the (large) shared prefix.
           cache_prompt: true,
+          // DEBUG-SESSION EXPERIMENT (localStorage "wllama.grammar"="envelope"):
+          // GBNF-constrain sampling to a valid <tool_call> set_script envelope —
+          // the strongest lever from the model_eval experiments (3b: comp 50→75%,
+          // judge 0→0.4+). llama.cpp grammar passes straight through wllama's
+          // SamplingParams. Off by default until productized.
+          ...(useTools && debugGrammar() ? { grammar: ENVELOPE_GBNF } : {}),
           ...(opts.signal ? { abortSignal: opts.signal } : {}),
         });
       } catch (e) {
@@ -408,6 +447,7 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
       // stream:true + onData resolves to void; if a build returned the response
       // object instead, fall back to its content so we never lose the reply.
       if (!full && resp?.choices?.[0]?.message?.content) full = resp.choices[0].message.content;
+      shipDbg({ kind: "wllama_done", secs: Math.round((Date.now() - t0) / 1000), tok: tokCount, chars: full.length, replyHead: full.slice(0, 300) });
 
       if (!useTools) {
         return { content: [{ type: "text", text: full }], stop_reason: "end_turn" };
