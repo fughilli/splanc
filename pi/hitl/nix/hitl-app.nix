@@ -492,9 +492,14 @@ in
           "--addr :${toString apiPort}"
           "--catalog ${catalogFile}"
           "--workspace splanc"
-          # Advertised host (display/fallback); the CLI overrides it with the
-          # address it actually used to reach the API. `.local` resolves on the LAN.
-          "--host ${config.networking.hostName}.local"
+          # The canonical host name: the generalized daemon uses this for BOTH the
+          # metrics/status `host` label AND the reservation endpoint clients dial.
+          # Keep it un-suffixed (the tailnet resolves the bare name via MagicDNS): a
+          # `.local` here would leak into the `host` metric label, breaking continuity
+          # with the pre-migration `rig` label (which was the bare hostname). The old
+          # daemon had a separate --rig (label) and --host (.local address); the
+          # generalized one has a single canonical name.
+          "--host ${config.networking.hostName}"
           "--image ${imageRef}"
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
