@@ -479,6 +479,16 @@ in
     # presence in the container is what arms hitl_client.ssh_serialized's flock.
     ++ lib.optional serializeFlash "d /run/hitl-flash 0777 root root -";
 
+  # Hardware watchdog. A wedged rig (a Pi 3 locked up by a USB-bus stall under
+  # concurrent DUT load — the very thing SBC_SERIALIZE_FLASH prevents — or any
+  # kernel/PID1 hang) otherwise stays dead on the tailnet until a human power-cycles
+  # it. The BCM SoC watchdog (/dev/watchdog, bcm2835_wdt — present on every Pi and
+  # loaded by default) lets systemd pet it on a timer and hard-reset the board when
+  # the system stops responding, so an unattended rig self-heals. The BCM hardware
+  # caps the timeout at ~15 s, so systemd pings well within that; a clean reboot
+  # keeps the watchdog armed too, so even a stuck shutdown recovers.
+  systemd.watchdog.runtimeTime = "15s";
+
   systemd.services.hitl-manager = {
     description = "HITL reservation manager";
     wantedBy = [ "multi-user.target" ];
