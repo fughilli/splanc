@@ -52,6 +52,15 @@ def main():
     mic5848 = box((0, 0, .10), (3.5, 2.65, .20), dark)
     mic5848 += box((0, 0, .655), (3.5, 2.65, .91), silver)
     write('TDK_InvenSense_MMICT5848_00_012', 'T5848_body.wrl', mic5848)
+    # ICM-42670-P nominal envelope: 3.0 x 2.5 x 0.76 mm (DS package table).
+    imu = box((0, 0, .405), (3.0, 2.5, .71), dark)
+    for x in (-1.25, 1.25):
+        for y in (-.75, -.25, .25, .75):
+            imu += box((x, y, .025), (.45, .25, .05), gold)
+    for y in (-1.0, 1.0):
+        for x in (-.5, 0, .5):
+            imu += box((x, y, .025), (.25, .45, .05), gold)
+    write('TDK_InvenSense_ICM_42670_P', 'ICM42670_body.wrl', imu)
 
 
 if __name__ == '__main__':

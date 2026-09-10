@@ -80,8 +80,11 @@ def package(pcb, parts, source_project, output):
     manifest = {'status': 'engineering-review-not-for-manufacture',
                 'source_pcb_sha256': hashlib.sha256(pcb.read_bytes()).hexdigest(),
                 'footprints': len(list(board.GetFootprints())), 'populated_footprints': len(changes), 'model_instances': len(records),
-                'simplified_or_representative': ['Vishay_WSL25122L000FEA', 'Texas_Instruments_TPS25730DREFR',
-                    'TDK_InvenSense_INMP441', 'Bosch_BMP280'], 'models': records}
+                'simplified_or_representative': [name for name in [
+                    'Vishay_WSL25122L000FEA', 'Texas_Instruments_TPS25730DREFR',
+                    'TDK_InvenSense_INMP441', 'Bosch_BMP280',
+                    'TDK_InvenSense_MMICT5848_00_012', 'TDK_InvenSense_ICM_42670_P']
+                    if name in {r['library'] for r in records}], 'models': records}
     output.with_suffix('.models.json').write_text(json.dumps(manifest, indent=2))
     print(f'Packaged {len(records)} model instances for {len(changes)} footprints: {output}')
 

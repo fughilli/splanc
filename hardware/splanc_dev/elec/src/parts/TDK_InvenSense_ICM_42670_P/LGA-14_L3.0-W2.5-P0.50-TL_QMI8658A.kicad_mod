@@ -241,7 +241,7 @@
 		(layers "F.Cu" "F.Paste" "F.Mask")
 		(uuid "3d54d3e8-ad03-4677-8b89-2c066e067169")
 	)
-	(model "${KIPRJMOD}/../../src/parts/TDK_InvenSense_ICM_42670_P/LGA-14_L3.0-W2.5-P0.50-TL_QMI8658A.STEP"
+	(model "${KIPRJMOD}/../../src/parts/TDK_InvenSense_ICM_42670_P/ICM42670_body.wrl"
 		(offset
 			(xyz 0 0 -0)
 		)
