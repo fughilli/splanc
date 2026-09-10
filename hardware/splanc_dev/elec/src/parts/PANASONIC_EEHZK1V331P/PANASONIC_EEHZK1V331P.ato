@@ -1,0 +1,17 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component PANASONIC_EEHZK1V331P_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C278516", date="2026-09-09T19:16:52.152216+00:00", checksum="0c4cef0b2f62e5804af90d5e36d56dcfb56816f458e531652f12a01a7eb5d1f9">
+
+    trait is_atomic_part<manufacturer="PANASONIC", partnumber="EEHZK1V331P", footprint="CAP-SMD_BD10.0-L10.3-W10.3-LS11.3-FD.kicad_mod", symbol="EEHZK1V331P.kicad_sym", model="CAP-SMD_BD10.0-L10.3-W10.3-LS11.3-FD.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C278516", manufacturer="PANASONIC", partno="EEHZK1V331P">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 2
+    pin 1

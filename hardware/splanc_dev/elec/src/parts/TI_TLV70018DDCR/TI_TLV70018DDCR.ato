@@ -1,0 +1,21 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component TI_TLV70018DDCR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C79924", date="2026-09-09T22:50:49.928148+00:00", checksum="f803b5a12bd9d2598af087da92a13eaa36fe0a12a0bac3f410ee1e56d18bd628">
+
+    trait is_atomic_part<manufacturer="TI", partnumber="TLV70018DDCR", footprint="SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR.kicad_mod", symbol="TLV70018DDCR.kicad_sym", model="SOT-23-5_L2.9-W1.6-H1.1-LS2.8-P0.95.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C79924", manufacturer="TI", partno="TLV70018DDCR">
+    trait has_designator_prefix<prefix="U">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/22bb42f516c2444685a37d872f316f88.pdf?productCode=C79924">
+
+    # pins
+    signal EN ~ pin 3
+    signal GND ~ pin 2
+    signal IN ~ pin 1
+    signal OUT ~ pin 5

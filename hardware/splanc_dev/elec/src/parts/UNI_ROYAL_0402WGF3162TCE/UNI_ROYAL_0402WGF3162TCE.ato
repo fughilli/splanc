@@ -1,0 +1,17 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component UNI_ROYAL_0402WGF3162TCE_package:
+    """31.6 kOhm, 1%."""
+
+
+    trait is_atomic_part<manufacturer="UNI-ROYAL", partnumber="0402WGF3162TCE", footprint="R0402.kicad_mod", symbol="0402WGF3162TCE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C11463", manufacturer="UNI-ROYAL", partno="0402WGF3162TCE">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    pin 2
+    signal p2 ~ pin 2
+    pin 1
+    signal p1 ~ pin 1

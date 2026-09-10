@@ -1,0 +1,22 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component UNI_ROYAL_0402WGF6041TCE_package:
+    """6.04KΩ (6041) ±1%"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C25913", date="2026-09-09T18:13:39.663600+00:00", checksum="13ce51fd5a4b408917d1301523550dca4f0895af90ee81043241f4a54040587d">
+
+    trait is_atomic_part<manufacturer="UNI-ROYAL", partnumber="0402WGF6041TCE", footprint="R0402.kicad_mod", symbol="0402WGF6041TCE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C25913", manufacturer="UNI-ROYAL", partno="0402WGF6041TCE">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    pin 2
+    pin 1
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

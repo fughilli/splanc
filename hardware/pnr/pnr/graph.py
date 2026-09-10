@@ -72,8 +72,8 @@ class Component:
     ``pos``/``rot``/``side`` are the *current* placement (initially atopile's
     naive row); the placer overwrites them. ``courtyard`` is the axis-aligned
     (width, height) of the courtyard used for overlap/density; ``bbox`` is the
-    full graphical bounding box. Both are in mm and orientation-agnostic
-    (measured at ``rot`` as ingested — :mod:`pnr.ingest` records them as seen).
+    full graphical bounding box. Both are in mm in the unrotated frame and
+    symmetric around the footprint origin, including offset component bodies.
     """
 
     ref: str
@@ -85,6 +85,7 @@ class Component:
     bbox: Tuple[float, float]
     locked: bool = False
     pads: List[Pad] = field(default_factory=list)
+    address: str = ""  # Stable atopile path, independent of generated designators.
 
     def __post_init__(self):
         self.pos = _fpair(self.pos)
@@ -168,6 +169,7 @@ class BoardGraph:
         components = [
             Component(
                 ref=c["ref"],
+                address=c.get("address", ""),
                 footprint=c["footprint"],
                 pos=c["pos"],
                 rot=float(c["rot"]),

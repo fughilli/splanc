@@ -53,7 +53,10 @@ atopile_project(
 atopile_pnr(
     name = "splanc_dev.fab",
     constraints = "constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
     layout = ":splanc_dev",
+    quality_gate = True,
     # The own detailed router routes the signals; the build fails unless every net
     # is routed (require_routed defaults True) — a partial route is not a board.
     visibility = ["//visibility:public"],

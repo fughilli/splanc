@@ -1,0 +1,16 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component E_Switch_TL3340AF160QG_package:
+
+    trait is_atomic_part<manufacturer="E-Switch", partnumber="TL3340AF160QG", footprint="SW-SMD_E-SWITCH_TL3340.kicad_mod", symbol="TL3340AF160QG.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2886925", manufacturer="E-Switch", partno="TL3340AF160QG">
+    trait has_designator_prefix<prefix="SW">
+
+    # Pin 2 is unused in the manufacturer's SPST schematic; 4/5 are shell tabs.
+    signal p1 ~ pin 1
+    signal p2 ~ pin 3
+    pin 2
+    signal shell ~ pin 4
+    shell ~ pin 5

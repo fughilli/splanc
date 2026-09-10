@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Nexperia_PSMN4R2_80YSE_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C3278352", date="2026-09-09T19:57:45.037206+00:00", checksum="ec759f0fa4a02e96f2b207762d242b516c8d65d49d973f347133217b9962094b">
+
+    trait is_atomic_part<manufacturer="Nexperia", partnumber="PSMN4R2-80YSE", footprint="LFPAK56-5_L4.9-W4.0-P1.27-LS6.1-BR.kicad_mod", symbol="PSMN4R2-80YSE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C3278352", manufacturer="Nexperia", partno="PSMN4R2-80YSE">
+    trait has_designator_prefix<prefix="Q">
+
+    # pins
+    signal D ~ pin 5
+    signal G ~ pin 4
+    signal S ~ pin 1
+    S ~ pin 2
+    S ~ pin 3

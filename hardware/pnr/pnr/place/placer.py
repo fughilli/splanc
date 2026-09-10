@@ -9,7 +9,7 @@ from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph, BoardOutline
 
 from . import metrics
-from .geometry import keepout_rects, outline_size, resolve_fixed_poses
+from .geometry import keepout_rects, outline_size, resolve_fixed_poses, hard_group_limits
 from .legalize import legalize
 from .model import global_place
 
@@ -26,11 +26,12 @@ class PlacementReport:
     outside_outline: List[str] = field(default_factory=list)
     fixed_misplaced: List[str] = field(default_factory=list)
     keepout: List[str] = field(default_factory=list)
+    group_outside: List[str] = field(default_factory=list)
     rotated: int = 0
 
     @property
     def legal(self) -> bool:
-        return not (self.overlaps or self.outside_outline or self.fixed_misplaced or self.keepout)
+        return not (self.overlaps or self.outside_outline or self.fixed_misplaced or self.keepout or self.group_outside)
 
     @property
     def hpwl_improvement(self) -> float:
@@ -48,7 +49,7 @@ class PlacementReport:
             f"(overlaps={len(self.overlaps)}, "
             f"outside={len(self.outside_outline)}, "
             f"fixed_off={len(self.fixed_misplaced)}, "
-            f"keepout={len(self.keepout)})"
+            f"keepout={len(self.keepout)}, group_outside={len(self.group_outside)})"
         )
 
 
@@ -107,6 +108,7 @@ def place(
         width,
         height,
         fixed=poses,
+        group_limits=hard_group_limits(constraints, poses),
         keepouts=keepouts,
         clearance=clearance,
         grid_mm=grid_mm,
@@ -134,6 +136,7 @@ def place(
         outside_outline=v["outside_outline"],
         fixed_misplaced=v["fixed_misplaced"],
         keepout=v["keepout"],
+        group_outside=v["group_outside"],
         rotated=sum(1 for c in placed.components if int(round(c.rot)) % 360 != 0),
     )
     return placed, report

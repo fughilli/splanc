@@ -1,0 +1,10 @@
+#VRML V2.0 utf8
+# Simplified dimensioned package; see MODEL_NOTES.md
+Transform { translation 0.0000000 0.0000000 0.0393701 children [ Shape {
+ appearance Appearance { material Material { diffuseColor 0.055 0.055 0.06 shininess 0.35 } }
+ geometry Box { size 1.3779528 1.0433071 0.0787402 }
+} ] }
+Transform { translation 0.0000000 0.0000000 0.2578740 children [ Shape {
+ appearance Appearance { material Material { diffuseColor 0.65 0.65 0.67 shininess 0.35 } }
+ geometry Box { size 1.3779528 1.0433071 0.3582677 }
+} ] }

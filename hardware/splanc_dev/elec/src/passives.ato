@@ -9,10 +9,10 @@ from "parts/Samsung_CL05A105KA5NQNC/Samsung_CL05A105KA5NQNC.ato" import Samsung_
 from "parts/Samsung_CL10A106KP8NNNC/Samsung_CL10A106KP8NNNC.ato" import Samsung_CL10A106KP8NNNC_package
 from "parts/Samsung_CL21A106KAYNNNE/Samsung_CL21A106KAYNNNE.ato" import Samsung_CL21A106KAYNNNE_package
 from "parts/Samsung_CL21A226MOQNNNE/Samsung_CL21A226MOQNNNE.ato" import Samsung_CL21A226MOQNNNE_package
-from "parts/Sunlord_GZ2012D601TF/Sunlord_GZ2012D601TF.ato" import Sunlord_GZ2012D601TF_package
-from "parts/Sunlord_SWPA6045S1R0NT/Sunlord_SWPA6045S1R0NT.ato" import Sunlord_SWPA6045S1R0NT_package
+from "parts/muRata_BLM21PG601SN1D/muRata_BLM21PG601SN1D.ato" import muRata_BLM21PG601SN1D_package
+from "parts/VISHAY_IHLP2525CZER1R0M01/VISHAY_IHLP2525CZER1R0M01.ato" import VISHAY_IHLP2525CZER1R0M01_package
 from "parts/UNI_ROYAL_0402WGF0000TCE/UNI_ROYAL_0402WGF0000TCE.ato" import UNI_ROYAL_0402WGF0000TCE_package
-from "parts/UNI_ROYAL_0402WGF330JTCE/UNI_ROYAL_0402WGF330JTCE.ato" import UNI_ROYAL_0402WGF330JTCE_package
+from "parts/YAGEO_RC0402FR_0733RL/YAGEO_RC0402FR_0733RL.ato" import YAGEO_RC0402FR_0733RL_package
 from "parts/UNI_ROYAL_0402WGF1500TCE/UNI_ROYAL_0402WGF1500TCE.ato" import UNI_ROYAL_0402WGF1500TCE_package
 from "parts/UNI_ROYAL_0402WGF1001TCE/UNI_ROYAL_0402WGF1001TCE.ato" import UNI_ROYAL_0402WGF1001TCE_package
 from "parts/UNI_ROYAL_0402WGF2001TCE/UNI_ROYAL_0402WGF2001TCE.ato" import UNI_ROYAL_0402WGF2001TCE_package
@@ -53,14 +53,14 @@ module C22u:
 
 # -- Inductor / ferrite ------------------------------------------------------
 module L1u:
-    """1 uH power inductor 6x6 (C96955)."""
-    _p = new Sunlord_SWPA6045S1R0NT_package
+    """1 uH shielded 11A RMS / 22A saturation (C845018)."""
+    _p = new VISHAY_IHLP2525CZER1R0M01_package
     signal p1 ~ _p.p1
     signal p2 ~ _p.p2
 
 module FB600:
-    """600R@100MHz ferrite bead 0805 (C1017)."""
-    _p = new Sunlord_GZ2012D601TF_package
+    """600R@100MHz ferrite bead 0805 (C41556732)."""
+    _p = new muRata_BLM21PG601SN1D_package
     signal p1 ~ _p.p1
     signal p2 ~ _p.p2
 
@@ -72,8 +72,8 @@ module R0:
     signal p2 ~ _p.p2
 
 module R33:
-    """33 ohm 0402 (C25105)."""
-    _p = new UNI_ROYAL_0402WGF330JTCE_package
+    """33 ohm 0402 (C138002)."""
+    _p = new YAGEO_RC0402FR_0733RL_package
     signal p1 ~ _p.p1
     signal p2 ~ _p.p2
 
@@ -113,14 +113,173 @@ module R100k:
     signal p1 ~ _p.p1
     signal p2 ~ _p.p2
 
-module Rshunt:
-    """LED-channel current-sense shunt — 0 ohm 0402 STAND-IN.
+from "parts/Uniroyal_RLP25FEGMR010/Uniroyal_RLP25FEGMR010.ato" import Uniroyal_RLP25FEGMR010_package
 
-    Production BOM substitutes a 10 mOhm 2512 shunt (e.g. Uniroyal RLP25FEGMR010,
-    LCSC C393072): swap _p for that 2512 atomic part once its EasyEDA footprint
-    generates cleanly (it hit a picker error in this environment). The INA226
-    measures across p1/p2 either way, so the schematic is correct; only the shunt
-    footprint + value change. See docs/hardware/splanc-dev-module.md §6."""
-    _p = new UNI_ROYAL_0402WGF0000TCE_package
+module Rshunt:
+    """10 mOhm 2512, 1%, 2 W (C393072)."""
+    _p = new Uniroyal_RLP25FEGMR010_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_CL05B224KO5NNNC/Samsung_CL05B224KO5NNNC.ato" import Samsung_CL05B224KO5NNNC_package
+
+module C220n:
+    """220 nF 0402 (C16772)."""
+    _p = new Samsung_CL05B224KO5NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_CL10A475KA8NQNC/Samsung_CL10A475KA8NQNC.ato" import Samsung_CL10A475KA8NQNC_package
+
+module C4u7:
+    """4.7 uF 25 V 0603 (C69335)."""
+    _p = new Samsung_CL10A475KA8NQNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF3162TCE/UNI_ROYAL_0402WGF3162TCE.ato" import UNI_ROYAL_0402WGF3162TCE_package
+
+module R31k6:
+    """31.6 kOhm 0402 (C11463)."""
+    _p = new UNI_ROYAL_0402WGF3162TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF4532TCE/UNI_ROYAL_0402WGF4532TCE.ato" import UNI_ROYAL_0402WGF4532TCE_package
+
+module R45k3:
+    """45.3 kOhm 0402 (C26980)."""
+    _p = new UNI_ROYAL_0402WGF4532TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF4222TCE/UNI_ROYAL_0402WGF4222TCE.ato" import UNI_ROYAL_0402WGF4222TCE_package
+
+module R42k2:
+    """42.2 kOhm 0402 (C26979)."""
+    _p = new UNI_ROYAL_0402WGF4222TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF6041TCE/UNI_ROYAL_0402WGF6041TCE.ato" import UNI_ROYAL_0402WGF6041TCE_package
+
+module R6k04:
+    """6.04 kOhm 1%."""
+    _p = new UNI_ROYAL_0402WGF6041TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF3001TCE/UNI_ROYAL_0402WGF3001TCE.ato" import UNI_ROYAL_0402WGF3001TCE_package
+
+module R3k:
+    """3 kOhm 1%."""
+    _p = new UNI_ROYAL_0402WGF3001TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/YAGEO_RC0402FR_0710RL/YAGEO_RC0402FR_0710RL.ato" import YAGEO_RC0402FR_0710RL_package
+
+module R10:
+    """10 Ohm 1%, 0402 (C138066)."""
+    _p = new YAGEO_RC0402FR_0710RL_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_CL05C102JB5NNNC/Samsung_CL05C102JB5NNNC.ato" import Samsung_CL05C102JB5NNNC_package
+
+module C1n:
+    """1 nF 50 V."""
+    _p = new Samsung_CL05C102JB5NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_CL05B473KO5NNNC/Samsung_CL05B473KO5NNNC.ato" import Samsung_CL05B473KO5NNNC_package
+
+module C47n:
+    """47 nF 16 V."""
+    _p = new Samsung_CL05B473KO5NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF1742TCE/UNI_ROYAL_0402WGF1742TCE.ato" import UNI_ROYAL_0402WGF1742TCE_package
+
+module R17k4:
+    _p = new UNI_ROYAL_0402WGF1742TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF1202TCE/UNI_ROYAL_0402WGF1202TCE.ato" import UNI_ROYAL_0402WGF1202TCE_package
+
+module R12k:
+    _p = new UNI_ROYAL_0402WGF1202TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF2203TCE/UNI_ROYAL_0402WGF2203TCE.ato" import UNI_ROYAL_0402WGF2203TCE_package
+
+module R220k:
+    _p = new UNI_ROYAL_0402WGF2203TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/UNI_ROYAL_0402WGF2201TCE/UNI_ROYAL_0402WGF2201TCE.ato" import UNI_ROYAL_0402WGF2201TCE_package
+
+module R2k2:
+    _p = new UNI_ROYAL_0402WGF2201TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_CL10B104KB8NNNC/Samsung_CL10B104KB8NNNC.ato" import Samsung_CL10B104KB8NNNC_package
+
+module C100n_50V:
+    _p = new Samsung_CL10B104KB8NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Stackpole_Electronics_CSRF0805FT10L0/Stackpole_Electronics_CSRF0805FT10L0.ato" import Stackpole_Electronics_CSRF0805FT10L0_package
+
+module RshuntLed:
+    """10 mOhm 0805, 1%, 0.5 W."""
+    _p = new Stackpole_Electronics_CSRF0805FT10L0_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Walter_Elec_STE1206M1W0R010F/Walter_Elec_STE1206M1W0R010F.ato" import Walter_Elec_STE1206M1W0R010F_package
+
+module RshuntSystem:
+    """10 mOhm 1206, 1%, 1 W."""
+    _p = new Walter_Elec_STE1206M1W0R010F_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/FOJAN_FRM121WFR005TM/FOJAN_FRM121WFR005TM.ato" import FOJAN_FRM121WFR005TM_package
+
+module RshuntUsb:
+    """5 mOhm 1206, 1%, 1 W."""
+    _p = new FOJAN_FRM121WFR005TM_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/TA_I_Tech_RLP25FEGMR005/TA_I_Tech_RLP25FEGMR005.ato" import TA_I_Tech_RLP25FEGMR005_package
+
+module RshuntGauge:
+    """5 mOhm 2512, 1%, 3 W."""
+    _p = new TA_I_Tech_RLP25FEGMR005_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Vishay_WSL25122L000FEA/Vishay_WSL25122L000FEA.ato" import Vishay_WSL25122L000FEA_package
+
+module RshuntBatteryMux:
+    """2 mOhm 2512, 1%, 1 W at 70 C; TCR +/-275 ppm/C."""
+    _p = new Vishay_WSL25122L000FEA_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+from "parts/Samsung_Electro_Mechanics_CL05B103KB5NNNC/Samsung_Electro_Mechanics_CL05B103KB5NNNC.ato" import Samsung_Electro_Mechanics_CL05B103KB5NNNC_package
+
+module C10n:
+    """10 nF 50 V X7R 0402 (C15195)."""
+    _p = new Samsung_Electro_Mechanics_CL05B103KB5NNNC_package
     signal p1 ~ _p.p1
     signal p2 ~ _p.p2

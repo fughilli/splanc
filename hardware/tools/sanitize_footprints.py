@@ -9,6 +9,7 @@ Removing the degenerate lines is cosmetic (they draw nothing) and lets the board
 build. Idempotent. Usage: sanitize_footprints.py <dir-or-.kicad_mod>...
 """
 import re
+import math
 import sys
 from pathlib import Path
 
@@ -55,7 +56,8 @@ def ensure_silk_line(text: str) -> tuple[str, bool]:
     """atopile's `get_bbox_from_geos` only reads Lines/Rects — a footprint whose
     silkscreen is *only* circles/arcs yields an empty bbox and crashes layout
     with `min() iterable argument is empty`. If the silk layer has no fp_line/
-    fp_rect, add one spanning the pad extents so the bbox is well-defined."""
+    fp_rect, add a line outside the pad extents so the bbox is well-defined without
+    drawing silkscreen through solder lands."""
     has_silk_line = False
     for m in re.finditer(r"\(fp_(line|rect)\b(.*?)\n\t\)", text, re.S):
         if "SilkS" in m.group(2):
@@ -64,16 +66,20 @@ def ensure_silk_line(text: str) -> tuple[str, bool]:
     has_silk_any = "SilkS" in text
     if has_silk_line or not has_silk_any:
         return text, False
-    # Span the pad centres.
+    # Bound complete pad geometry, including rotated rectangles conservatively.
     xs, ys = [], []
     for m in re.finditer(r"\(pad\b(.*?)\n\t\)", text, re.S):
         at = _floats(r"\(at\s+(-?[\d.]+)\s+(-?[\d.]+)", m.group(1))
         if at:
-            xs.append(at[0])
-            ys.append(at[1])
+            size = _floats(r"\(size\s+(-?[\d.]+)\s+(-?[\d.]+)", m.group(1))
+            if size is None:
+                return text, False  # No geometry: do not invent a safe outline.
+            radius = math.hypot(*size) / 2
+            xs.extend([at[0] - radius, at[0] + radius])
+            ys.extend([at[1] - radius, at[1] + radius])
     if not xs:
         return text, False
-    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    x0, y0, x1, y1 = min(xs), min(ys)-0.3, max(xs), min(ys)-0.3
     if x0 == x1 and y0 == y1:
         x1 += 0.5
     line = (

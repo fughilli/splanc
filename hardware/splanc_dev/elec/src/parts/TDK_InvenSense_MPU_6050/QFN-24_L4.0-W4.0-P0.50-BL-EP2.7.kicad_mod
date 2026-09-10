@@ -290,12 +290,7 @@
 		(layers "F.Cu" "F.Paste" "F.Mask")
 		(uuid "de4e15b6-c552-4a56-a189-52f67e6fde79")
 	)
-	(pad "25" smd rect
-		(at 0.01 0 0)
-		(size 2.7 2.7)
-		(layers "F.Cu" "F.Paste" "F.Mask")
-		(uuid "385147ff-d7b6-44f5-a497-630d44855425")
-	)
+
 	(model "${KIPRJMOD}/../../src/parts/TDK_InvenSense_MPU_6050/QFN-24_L4.0-W4.0-P0.50-BL-EP2.7.STEP"
 		(offset
 			(xyz 0 0 -0)

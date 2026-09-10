@@ -1,0 +1,31 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Global_Connector_Technology_USB4105_GF_A_060_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C3025063", date="2026-09-09T19:38:42.261621+00:00", checksum="2ef992e91d425222d074b693c8d215faddea7514beca0810de3a16bb1718c7f2">
+
+    trait is_atomic_part<manufacturer="Global Connector Technology", partnumber="USB4105-GF-A-060", footprint="USB-C-SMD_GT-USB-7010E-1.kicad_mod", symbol="USB4105-GF-A-060.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C3025063", manufacturer="Global Connector Technology", partno="USB4105-GF-A-060">
+    trait has_designator_prefix<prefix="USB">
+
+    # pins
+    signal CC1 ~ pin A5
+    signal CC2 ~ pin B5
+    signal DN1 ~ pin A7
+    signal DN2 ~ pin B7
+    signal DP1 ~ pin A6
+    signal DP2 ~ pin B6
+    signal GND ~ pin A1B12
+    GND ~ pin B1A12
+    GND ~ pin 1
+    GND ~ pin 2
+    GND ~ pin 3
+    GND ~ pin 4
+    signal SBU1 ~ pin A8
+    signal SBU2 ~ pin B8
+    signal VBUS ~ pin A4B9
+    VBUS ~ pin B4A9

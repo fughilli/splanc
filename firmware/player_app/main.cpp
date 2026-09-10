@@ -1901,6 +1901,22 @@ static void run_fx_jit_bench() {
 #endif  // LM_FX_JIT_BENCH
 
 void setup() {
+#ifdef LM_BOARD_SPLANC_DEV
+  // Keep the engineering assembly quiescent until pack provisioning and a
+  // contract-aware power manager are implemented. GPIO10 reports USB source selection.
+  // Set output latches before changing direction to avoid an enable glitch.
+  digitalWrite(SPLANC_LOAD_SW0_EN_PIN, LOW);
+  digitalWrite(SPLANC_LOAD_SW1_EN_PIN, LOW);
+  digitalWrite(SPLANC_CHARGER_EN_PIN, LOW);
+  digitalWrite(SPLANC_USB_HOLDOFF_PIN, LOW);
+  pinMode(SPLANC_LOAD_SW0_EN_PIN, OUTPUT);
+  pinMode(SPLANC_LOAD_SW1_EN_PIN, OUTPUT);
+  pinMode(SPLANC_CHARGER_EN_PIN, OUTPUT);
+  pinMode(SPLANC_USB_HOLDOFF_PIN, OUTPUT);
+  pinMode(SPLANC_USB_SELECTED_N_PIN, INPUT);
+  pinMode(SPLANC_LOAD_SW0_FLT_PIN, INPUT);
+  pinMode(SPLANC_LOAD_SW1_FLT_PIN, INPUT);
+#endif
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
   // the low-priority drain task started below does the actual Serial writes — so

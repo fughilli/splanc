@@ -8,8 +8,8 @@ component Korean_Hroparts_TYPE_C_16PIN_2MD_073_package:
     # If you want to manually change it, remove the trait
     trait is_auto_generated<system="ato_part", source="easyeda:C2765186", date="2026-08-20T03:04:52.105136+00:00", checksum="95d60b7c0d0ea11de800187bed91f2a41ae7ab32fd573ae2ac235e39164f38db">
 
-    trait is_atomic_part<manufacturer="Korean Hroparts", partnumber="TYPE-C 16PIN 2MD(073)", footprint="USB-C-SMD_TYPE-C-16PIN-2MD-073.kicad_mod", symbol="TYPE-C16PIN2MD(073).kicad_sym">
-    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2765186", manufacturer="Korean Hroparts", partno="TYPE-C 16PIN 2MD(073)">
+    trait is_atomic_part<manufacturer="SHOU HAN", partnumber="TYPE-C 16PIN 2MD(073)", footprint="USB-C-SMD_TYPE-C-16PIN-2MD-073.kicad_mod", symbol="TYPE-C16PIN2MD(073).kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2765186", manufacturer="SHOU HAN", partno="TYPE-C 16PIN 2MD(073)">
     trait has_designator_prefix<prefix="USB">
 
     # pins

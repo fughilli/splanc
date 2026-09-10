@@ -1,0 +1,24 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component TDK_InvenSense_INMP441_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C5438445", date="2026-09-09T17:34:49.095841+00:00", checksum="b1a9ee85015d6eee91e394b81c3c42e95a9784e07c105aadb6b1b05614b9766f">
+
+    trait is_atomic_part<manufacturer="TDK InvenSense", partnumber="INMP441", footprint="MIC-SMD_INMP441.kicad_mod", symbol="INMP441.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C5438445", manufacturer="TDK InvenSense", partno="INMP441">
+    trait has_designator_prefix<prefix="MIC">
+
+    # pins
+    signal CHIPEN ~ pin 8
+    signal GND ~ pin 5
+    GND ~ pin 6
+    GND ~ pin 9
+    signal L_R ~ pin 4
+    signal SCK ~ pin 1
+    signal SD ~ pin 2
+    signal VDD ~ pin 7
+    signal WS ~ pin 3

@@ -33,6 +33,9 @@ PnrReportsInfo = provider(
     fields = {
         "drc": "File: the kicad-cli DRC report.",
         "quality": "File: routed length / via / diff-pair / length-match report.",
+        "project": "File: KiCad project containing authoritative design rules.",
+        "library_table": "File: portable footprint library table.",
+        "footprints": "List of source footprint files used by DRC and bundled for review.",
     },
 )
 
@@ -93,6 +96,9 @@ def _pnr_board_impl(ctx):
     in_pcb = ctx.attr.layout[AtopileLayoutInfo].pcb
     bom = ctx.attr.layout[AtopileLayoutInfo].bom
     out_pcb = ctx.actions.declare_file(ctx.label.name + ".kicad_pcb")
+    out_pro = ctx.actions.declare_file(ctx.label.name + ".kicad_pro")
+    out_libs = ctx.actions.declare_file(ctx.label.name + ".fp-lib-table")
+    footprint_args = " ".join(['"%s"' % f.path for f in ctx.files.footprints])
     drc_rpt = ctx.actions.declare_file(ctx.label.name + ".drc.rpt")
     quality_rpt = ctx.actions.declare_file(ctx.label.name + ".quality.txt")
 
@@ -123,10 +129,14 @@ def _pnr_board_impl(ctx):
         _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json" --routes "$_WORK/routes.json"' % (in_pcb.path, out_pcb.path)),
         # 4. pour ground/power planes + fanout their pads.
         _ki_run('-m pnr.planes "%s" --rules "$_WORK/rules.json"' % out_pcb.path),
+        # Validate in an isolated project folder with the source libraries.
+        'cp "%s" "$_WORK/board.kicad_pcb"' % out_pcb.path,
+        'cp "%s" "$_WORK/board.kicad_pro"' % out_pro.path,
+        _ki_run('-m pnr.library_table --out "$_WORK/fp-lib-table" %s' % footprint_args),
+        _ki_run('-m pnr.library_table --portable --out "%s" %s' % (out_libs.path, footprint_args)),
         # 5. DRC report (gated iff drc_gate).
-        '"%s" pcb drc "%s" -o "%s" --format report %s || _DRC=$?' % (
+        '"%s" pcb drc "$_WORK/board.kicad_pcb" -o "%s" --format report %s || _DRC=$?' % (
             _kicad_cli(info),
-            out_pcb.path,
             drc_rpt.path,
             drc_severity,
         ),
@@ -148,12 +158,12 @@ def _pnr_board_impl(ctx):
     ])
 
     inputs = depset(
-        direct = [in_pcb, ctx.file.constraints, graph_py] + ctx.files._pnr_srcs,
+        direct = [in_pcb, ctx.file.constraints, graph_py] + ctx.files._pnr_srcs + ctx.files.footprints,
         transitive = [_tool_inputs(info)],
     )
 
     ctx.actions.run_shell(
-        outputs = [out_pcb, drc_rpt, quality_rpt],
+        outputs = [out_pcb, out_pro, out_libs, drc_rpt, quality_rpt],
         inputs = inputs,
         # files_to_run stages the placer py_binary AND its runfiles tree.
         tools = [ctx.attr.placer[DefaultInfo].files_to_run],
@@ -166,9 +176,9 @@ def _pnr_board_impl(ctx):
         execution_requirements = {"local": "1", "no-sandbox": "1"},
     )
     return [
-        DefaultInfo(files = depset([out_pcb, drc_rpt, quality_rpt])),
+        DefaultInfo(files = depset([out_pcb, out_pro, out_libs, drc_rpt, quality_rpt])),
         AtopileLayoutInfo(pcb = out_pcb, bom = bom),
-        PnrReportsInfo(drc = drc_rpt, quality = quality_rpt),
+        PnrReportsInfo(drc = drc_rpt, quality = quality_rpt, project = out_pro, library_table = out_libs, footprints = ctx.files.footprints),
     ]
 
 _pnr_board = rule(
@@ -177,6 +187,7 @@ _pnr_board = rule(
         "layout": attr.label(providers = [AtopileLayoutInfo], mandatory = True, doc = "Resolved atopile board to place+route."),
         "constraints": attr.label(allow_single_file = [".yaml", ".yml"], mandatory = True, doc = "Sidecar constraints.yaml (design §3)."),
         "placer": attr.label(executable = True, cfg = "exec", mandatory = True, doc = "The torch place+route+detail-route py_binary (//hardware/pnr:pnr_fab)."),
+        "footprints": attr.label_list(allow_files = [".kicad_mod"], doc = "Source footprints for DRC and the portable fab bundle."),
         "board_name": attr.string(doc = "Board name recorded in the graph (default: target name)."),
         "allow_unconverged": attr.bool(default = True, doc = "Proceed even if the place↔route loop did not drive overflow to 0."),
         "drc_gate": attr.bool(default = False, doc = "Fail the build on DRC violations (else report only)."),
@@ -197,6 +208,8 @@ def _pnr_fab_impl(ctx):
     bom = layout.bom
     drc = reports.drc
     quality = reports.quality
+    project = reports.project
+    library_table = reports.library_table
     outdir = ctx.actions.declare_directory(ctx.label.name)
     kc = _kicad_cli(info)
 
@@ -206,18 +219,25 @@ def _pnr_fab_impl(ctx):
         'mkdir -p "%s"' % outdir.path,
         # The routed board itself, for reference / hand-off.
         'cp -f "%s" "%s/"' % (pcb.path, outdir.path),
+        'cp -f "%s" "%s/"' % (project.path, outdir.path),
+        'cp -f "%s" "%s/fp-lib-table"' % (library_table.path, outdir.path),
         '"%s" pcb export gerbers "%s" -o "%s/"' % (kc, pcb.path, outdir.path),
         '"%s" pcb export drill "%s" -o "%s/"' % (kc, pcb.path, outdir.path),
-        '"%s" pcb export pos "%s" -o "%s/pick-place.csv" --format csv --units mm || true' % (kc, pcb.path, outdir.path),
+        '"%s" pcb export pos "%s" -o "%s/pick-place.csv" --format csv --units mm' % (kc, pcb.path, outdir.path),
         'if [ -s "%s" ]; then cp -f "%s" "%s/bom.csv"; fi' % (bom.path, bom.path, outdir.path),
         # The DRC + Phase 6 quality reports travel with the bundle.
         'cp -f "%s" "%s/drc.rpt"' % (drc.path, outdir.path),
         'cp -f "%s" "%s/quality.txt"' % (quality.path, outdir.path),
     ])
 
+    for footprint in reports.footprints:
+        library = footprint.dirname.split("/")[-1]
+        destination = outdir.path + "/footprints/" + library
+        cmd += '\nmkdir -p "%s"\ncp -f "%s" "%s/"' % (destination, footprint.path, destination)
+
     ctx.actions.run_shell(
         outputs = [outdir],
-        inputs = depset([pcb, bom, drc, quality], transitive = [_tool_inputs(info)]),
+        inputs = depset([pcb, bom, drc, quality, project, library_table] + reports.footprints, transitive = [_tool_inputs(info)]),
         command = cmd,
         mnemonic = "PnrFab",
         progress_message = "PnR fab bundle -> %s" % outdir.short_path,
@@ -238,6 +258,7 @@ def atopile_pnr(
         name,
         layout,
         constraints,
+        footprints = [],
         drc_gate = False,
         quality_gate = False,
         require_routed = True,
@@ -255,6 +276,7 @@ def atopile_pnr(
       name: base target name (e.g. `splanc_dev.fab`).
       layout: the `atopile_project` base target (provides the resolved board).
       constraints: the sidecar `constraints.yaml` (design §3).
+      footprints: source .kicad_mod files, registered for DRC and bundled.
       drc_gate: fail the build on DRC violations (default: report only).
       quality_gate: fail the build if a diff-pair/length-match check fails.
       require_routed: fail the build if any net is left unrouted (default True).
@@ -267,6 +289,7 @@ def atopile_pnr(
         name = name + ".board",
         layout = layout,
         constraints = constraints,
+        footprints = footprints,
         placer = "//hardware/pnr:pnr_fab",
         drc_gate = drc_gate,
         quality_gate = quality_gate,

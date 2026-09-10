@@ -1,0 +1,150 @@
+import ElectricPower
+from "parts/Texas_Instruments_TPS25730DREFR/Texas_Instruments_TPS25730DREFR.ato" import Texas_Instruments_TPS25730DREFR_package
+from "parts/Samsung_CL31B106KBHNNNE/Samsung_CL31B106KBHNNNE.ato" import Samsung_CL31B106KBHNNNE_package
+from "parts/Samsung_CL05C331JB5NNNC/Samsung_CL05C331JB5NNNC.ato" import Samsung_CL05C331JB5NNNC_package
+from "parts/Samsung_CL21B105KBFNNNE/Samsung_CL21B105KBFNNNE.ato" import Samsung_CL21B105KBFNNNE_package
+from "passives.ato" import C10u
+from "passives.ato" import C1u
+from "passives.ato" import C100n_50V
+from "parts/Texas_Instruments_TPD6S300ARUKR/Texas_Instruments_TPD6S300ARUKR.ato" import Texas_Instruments_TPD6S300ARUKR_package
+from "parts/Texas_Instruments_TVS2200DRVR/Texas_Instruments_TVS2200DRVR.ato" import Texas_Instruments_TVS2200DRVR_package
+from "passives.ato" import R100k
+from "passives.ato" import R5k1
+
+module PdInput:
+    """Engineering subassembly: TPS25730D sink, 5–20 V / up to 5 A.
+
+    Feeds the source selector and the separate charging branch in SplancDev.
+    TI SLVSGP9 tables 8-1, 8-3, 8-5, 8-6: ADC indices 0,7,1,7;
+    operating current 1.5 A, maximum 5 A, I2C address 0x20.
+    Firmware must read the actual contract before enabling charging/LED loads.
+    CAP_MIS or SINK_EN alone does not establish the available power budget.
+    CC pins include internal dead-battery Rd: do not add external 5.1k Rd.
+    Connector, transient protection and full power-path layout remain integration work.
+    """
+    raw_usb = new ElectricPower
+    raw_usb.voltage = 5V to 21V
+    negotiated = new ElectricPower
+    negotiated.voltage = 5V to 21V
+    logic = new ElectricPower
+    logic.voltage = 3.3V +/- 3%
+    signal cc1
+    signal cc2
+    signal sda
+    signal scl
+    signal sink_enabled_n
+    signal capability_mismatch
+    raw_usb.lv ~ negotiated.lv
+    raw_usb.lv ~ logic.lv
+
+    ctrl = new Texas_Instruments_TPS25730DREFR_package
+    ctrl.GND ~ raw_usb.lv
+    ctrl.RESERVED ~ raw_usb.lv
+    ctrl.VBUS ~ raw_usb.hv
+    ctrl.VBUS_IN ~ raw_usb.hv
+    ctrl.PPHV ~ negotiated.hv
+    ctrl.VIN_3V3 ~ logic.hv
+    # CC protection is powered by the PD controller's VBUS-derived LDO so it
+    # starts with an empty or absent battery. Do not power it from system 3V3.
+    cc_protection = new Texas_Instruments_TPD6S300ARUKR_package
+    cc_protection.C_CC1 ~ cc1
+    cc_protection.C_CC2 ~ cc2
+    cc_protection.CC1 ~ ctrl.CC1
+    cc_protection.CC2 ~ ctrl.CC2
+    cc_protection.GND ~ raw_usb.lv
+    cc_protection.VPWR ~ ctrl.LDO_3V3
+    # Enable connector-side dead-battery Rd; it disconnects once VPWR is up.
+    cc_protection.RPD_G1 ~ cc1
+    cc_protection.RPD_G2 ~ cc2
+    cc_protection.PAD ~ raw_usb.lv
+    cc_protection.N_C ~ raw_usb.lv
+    # Unused SBU paths and USB ESD channels. USB data has its own local clamp.
+    cc_protection.C_SUB1 ~ raw_usb.lv
+    cc_protection.C_SUB2 ~ raw_usb.lv
+    cc_protection.SUB1 ~ raw_usb.lv
+    cc_protection.SBU2 ~ raw_usb.lv
+    cc_protection.D1 ~ raw_usb.lv
+    cc_protection.D2 ~ raw_usb.lv
+    cc_protection.nFLT ~ ctrl.nFAULT_IN
+    cc_fault_pullup = new R100k
+    cc_fault_pullup.p1 ~ ctrl.LDO_3V3
+    cc_fault_pullup.p2 ~ ctrl.nFAULT_IN
+    cc_supply_dec = new C1u
+    cc_supply_dec.p1 ~ ctrl.LDO_3V3
+    cc_supply_dec.p2 ~ raw_usb.lv
+    cc_bias_dec = new C100n_50V
+    cc_bias_dec.p1 ~ cc_protection.VBIAS
+    cc_bias_dec.p2 ~ raw_usb.lv
+    vbus_tvs = new Texas_Instruments_TVS2200DRVR_package
+    vbus_tvs.IN ~ raw_usb.hv
+    vbus_tvs.GND ~ raw_usb.lv
+    ctrl.I2Ct_SDA ~ sda
+    ctrl.I2Ct_SCL ~ scl
+    ctrl.nSINK_EN ~ sink_enabled_n
+    ctrl.CAP_MIS ~ capability_mismatch
+    # DRAIN pins/pad share an isolated copper island, never ground or VBUS.
+    # Unused open-drain indicators PLUG_EVENT/PLUG_FLIP/DBG_ACC are left open.
+    ctrl.ADCIN1 ~ raw_usb.lv
+    ctrl.ADCIN2 ~ ctrl.LDO_3V3
+    ctrl.ADCIN4 ~ ctrl.LDO_3V3
+    current_top = new R100k
+    current_bottom = new R5k1
+    current_top.p1 ~ ctrl.LDO_3V3
+    current_top.p2 ~ ctrl.ADCIN3
+    current_bottom.p1 ~ ctrl.ADCIN3
+    current_bottom.p2 ~ raw_usb.lv
+
+    # Supply bypass. Values are nominal; verify effective capacitance in review.
+    logic_dec = new C10u
+    logic_dec.p1 ~ logic.hv
+    logic_dec.p2 ~ raw_usb.lv
+    ldo3_dec = new C10u
+    ldo3_dec.p1 ~ ctrl.LDO_3V3
+    ldo3_dec.p2 ~ raw_usb.lv
+    ldo1_dec = new C10u
+    ldo1_dec.p1 ~ ctrl.LDO_1V5
+    ldo1_dec.p2 ~ raw_usb.lv
+
+    input_dec_0 = new Samsung_CL21B105KBFNNNE_package
+    input_dec_0.p1 ~ raw_usb.hv
+    input_dec_0.p2 ~ raw_usb.lv
+
+    input_dec_1 = new Samsung_CL21B105KBFNNNE_package
+    input_dec_1.p1 ~ raw_usb.hv
+    input_dec_1.p2 ~ raw_usb.lv
+
+    input_dec_2 = new Samsung_CL21B105KBFNNNE_package
+    input_dec_2.p1 ~ raw_usb.hv
+    input_dec_2.p2 ~ raw_usb.lv
+
+    input_dec_3 = new Samsung_CL21B105KBFNNNE_package
+    input_dec_3.p1 ~ raw_usb.hv
+    input_dec_3.p2 ~ raw_usb.lv
+
+    input_dec_4 = new Samsung_CL21B105KBFNNNE_package
+    input_dec_4.p1 ~ raw_usb.hv
+    input_dec_4.p2 ~ raw_usb.lv
+
+    output_dec_0 = new Samsung_CL31B106KBHNNNE_package
+    output_dec_0.p1 ~ negotiated.hv
+    output_dec_0.p2 ~ raw_usb.lv
+
+    output_dec_1 = new Samsung_CL31B106KBHNNNE_package
+    output_dec_1.p1 ~ negotiated.hv
+    output_dec_1.p2 ~ raw_usb.lv
+
+    output_dec_2 = new Samsung_CL31B106KBHNNNE_package
+    output_dec_2.p1 ~ negotiated.hv
+    output_dec_2.p2 ~ raw_usb.lv
+
+    output_dec_3 = new Samsung_CL31B106KBHNNNE_package
+    output_dec_3.p1 ~ negotiated.hv
+    output_dec_3.p2 ~ raw_usb.lv
+
+    cc_dec_1 = new Samsung_CL05C331JB5NNNC_package
+    cc_dec_1.p1 ~ ctrl.CC1
+    cc_dec_1.p2 ~ raw_usb.lv
+
+    cc_dec_2 = new Samsung_CL05C331JB5NNNC_package
+    cc_dec_2.p1 ~ ctrl.CC2
+    cc_dec_2.p2 ~ raw_usb.lv

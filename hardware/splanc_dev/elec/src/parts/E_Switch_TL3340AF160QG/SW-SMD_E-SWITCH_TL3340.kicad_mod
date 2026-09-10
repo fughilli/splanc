@@ -1,0 +1,265 @@
+(footprint "SW-SMD_E-SWITCH_TL3340"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0 -4.98 0)
+		(layer "F.SilkS")
+		(uuid "a1bc8078-7105-411a-a06b-60461a04934f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "SW-SMD_E-SWITCH_TL3340"
+		(at 0 4.97 0)
+		(layer "F.Fab")
+		(uuid "d1fde086-d154-4df5-8697-e2e212be9583")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "31efab4e-d628-48bb-b918-b8fe5668dbd3")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "105d84f3-b6b1-4d23-b0da-fe79bee62a00")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -1.6 -2.3)
+		(end 1.6 -2.3)
+		(stroke
+			(width 0.15)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "7e8490cd-c980-459a-bb84-cc7912ff0b7f")
+	)
+	(fp_line
+		(start -2.25 -1.43)
+		(end -2.25 -0.75)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "7df92d7d-bb3f-4324-bde7-f4624710276f")
+	)
+	(fp_line
+		(start -2.25 -1.43)
+		(end -1.83 -1.43)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3ac2fa2c-6042-49bb-ba33-5b3311c99f98")
+	)
+	(fp_line
+		(start -1.24 1.12)
+		(end -1 1.12)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "525c2de9-44bb-4327-855f-21457327f098")
+	)
+	(fp_line
+		(start -1 1.12)
+		(end -1 1.97)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "86fb6c5c-28f6-4844-92a4-f90e90253fc4")
+	)
+	(fp_line
+		(start -1 1.97)
+		(end 1 1.97)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "2e4b1bd3-89c2-487b-b8c3-dfb8818980dd")
+	)
+	(fp_line
+		(start -0.62 -1.43)
+		(end -0.53 -1.43)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "266c02e4-9817-48de-a367-e9d238493cda")
+	)
+	(fp_line
+		(start 0.53 -1.43)
+		(end 0.62 -1.43)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "e99a7d60-ef76-4ab5-b47d-ba2fdb7e8da6")
+	)
+	(fp_line
+		(start 1 1.12)
+		(end 1.24 1.12)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ab567441-2f41-4ddb-8250-fb56edb54059")
+	)
+	(fp_line
+		(start 1 1.97)
+		(end 1 1.12)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "48c31c92-8508-4500-8510-c4ece42591d4")
+	)
+	(fp_line
+		(start 1.83 -1.43)
+		(end 2.25 -1.43)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "77ddfff6-c4fd-4eb3-b50b-73963257d9f1")
+	)
+	(fp_line
+		(start 2.25 -1.43)
+		(end 2.25 -0.75)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "508a8bb9-c9e6-4ad3-b907-390757cd0860")
+	)
+	(fp_circle
+		(center -2.25 -1.58)
+		(end -2.22 -1.58)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "e4f72fba-68d5-41fe-804b-ac06bb98555f")
+	)
+	(pad "" np_thru_hole circle
+		(at -2.12 -0.07)
+		(size 0.9 0.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(uuid "b76f5276-22c8-4914-95d6-0dcbd3b0591f")
+	)
+	(pad "" np_thru_hole circle
+		(at 2.12 -0.07)
+		(size 0.9 0.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(uuid "c2585875-956e-4221-9416-8f201875e7c9")
+	)
+	(pad "1" smd custom
+		(at -1.225 -0.98)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(options
+			(clearance outline)
+			(anchor rect)
+		)
+		(primitives
+			(gr_poly
+				(pts
+					(xy 0.375 0.9) (xy -0.175 0.9) (xy -0.375 0.4) (xy -0.375 -0.9) (xy 0.375 -0.9)
+				)
+				(width 0)
+				(fill yes)
+			)
+		)
+		(uuid "9a0f6bc0-578c-45b8-926f-49bccce20d44")
+	)
+	(pad "2" smd rect
+		(at 0 -0.98)
+		(size 0.6 1.8)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "f9bf2214-341f-4aae-a88d-fd206a365b8e")
+	)
+	(pad "3" smd custom
+		(at 1.225 -0.98)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(options
+			(clearance outline)
+			(anchor rect)
+		)
+		(primitives
+			(gr_poly
+				(pts
+					(xy -0.375 -0.9) (xy 0.375 -0.9) (xy 0.375 0.4) (xy 0.175 0.9) (xy -0.375 0.9)
+				)
+				(width 0)
+				(fill yes)
+			)
+		)
+		(uuid "19230efc-2ed8-47ff-8608-e34e57f90bf1")
+	)
+	(pad "4" smd rect
+		(at 1.85 1.01)
+		(size 1.3 0.84)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "7e5840da-10b0-4b8e-b9db-ab15d5b087ab")
+	)
+	(pad "5" smd rect
+		(at -1.85 1.01)
+		(size 1.3 0.84)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "65217ec9-2c9a-4885-9088-ee0c023f3dd8")
+	)
+	(model "${KIPRJMOD}/../../src/parts/E_Switch_TL3340AF160QG/SW-SMD_E-SWITCH_TL3340.step"
+		(offset
+			(xyz 0 0 0.4)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

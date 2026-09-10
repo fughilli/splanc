@@ -26,8 +26,10 @@ filegroup(
         "pnr/__init__.py",
         "pnr/graph.py",
         "pnr/ingest.py",
+        "pnr/library_table.py",
         "pnr/planes.py",
         "pnr/quality.py",
+        "pnr/specctra.py",
         "pnr/writeback.py",
     ],
 )
@@ -329,4 +331,18 @@ py_test(
         ":pnr_route",
         requirement("pyyaml"),
     ],
+)
+
+py_test(
+    name = "specctra_test",
+    srcs = ["tests/test_specctra.py"],
+    main = "tests/test_specctra.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "library_table_test",
+    srcs = ["tests/test_library_table.py"],
+    main = "tests/test_library_table.py",
+    deps = [":pnr"],
 )

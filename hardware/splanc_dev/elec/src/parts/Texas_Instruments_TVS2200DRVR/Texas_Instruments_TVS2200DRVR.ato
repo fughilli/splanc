@@ -1,0 +1,22 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TVS2200DRVR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C523793", date="2026-09-09T18:57:24.290497+00:00", checksum="a0dd2b5e265ab76082e51c9350632c089e6f3de91da593a987312a574b8c1c71">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TVS2200DRVR", footprint="WSON-6_L2.0-W2.0-P0.65-BL-EP.kicad_mod", symbol="TVS2200DRVR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C523793", manufacturer="Texas Instruments", partno="TVS2200DRVR">
+    trait has_designator_prefix<prefix="D">
+
+    # pins
+    signal GND ~ pin 1
+    GND ~ pin 2
+    GND ~ pin 3
+    GND ~ pin 7
+    signal IN ~ pin 4
+    IN ~ pin 5
+    IN ~ pin 6

@@ -36,7 +36,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     with open(args.graph, encoding="utf-8") as fh:
         graph = BoardGraph.from_json(fh.read())
     with open(args.constraints, encoding="utf-8") as fh:
-        constraints = compile_constraints(yaml.safe_load(fh), graph.refs)
+        constraints = compile_constraints(
+            yaml.safe_load(fh), graph.refs,
+            {c.address: c.ref for c in graph.components if c.address},
+            {f"{c.address}:{p.name}": p.net for c in graph.components
+             if c.address for p in c.pads if p.name},
+        )
 
     placed, report = place(
         graph, constraints, seed=args.seed, iters=args.iters, grid_mm=args.grid_mm

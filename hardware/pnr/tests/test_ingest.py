@@ -79,6 +79,27 @@ class SvgRenderTest(unittest.TestCase):
 class LiveExtractionTest(unittest.TestCase):
     """Re-extract from the .kicad_pcb and confirm it matches the frozen graph."""
 
+    def test_offset_body_is_bounded_about_origin_at_any_rotation(self):
+        import pcbnew
+        from pnr.ingest import _phys_bbox_mm
+        board = pcbnew.BOARD()
+        fp = pcbnew.FOOTPRINT(board)
+        board.Add(fp)
+        fp.SetPosition(pcbnew.VECTOR2I(30000000, 40000000))
+        pad = pcbnew.PAD(fp)
+        pad.SetShape(pcbnew.PAD_SHAPE_RECT)
+        pad.SetSize(pcbnew.VECTOR2I(2000000, 4000000))
+        fp.Add(pad)
+        pad.SetPosition(pcbnew.VECTOR2I(35000000, 41000000))
+        baseline = _phys_bbox_mm(fp)
+        self.assertGreaterEqual(baseline[0], 12)
+        self.assertGreaterEqual(baseline[1], 6)
+        for rotation in (90, 180, 270):
+            fp.SetOrientationDegrees(rotation)
+            measured = _phys_bbox_mm(fp)
+            self.assertAlmostEqual(measured[0], baseline[0], places=5)
+            self.assertAlmostEqual(measured[1], baseline[1], places=5)
+
     def test_live_matches_frozen(self):
         import pcbnew
 

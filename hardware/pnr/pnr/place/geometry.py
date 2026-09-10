@@ -11,8 +11,24 @@ import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from pnr.constraints import CompiledConstraints
+from pnr.constraints import CompiledConstraints, Enforcement
 from pnr.graph import BoardGraph, Component
+
+
+def hard_group_limits(constraints, poses):
+    """Intersect centre-distance limits around explicitly fixed anchors."""
+    limits = {}
+    for con in constraints.constraints:
+        if con.kind != "group" or con.enforcement != Enforcement.HARD:
+            continue
+        anchor = con.params["anchor"]
+        if anchor not in poses:
+            raise ValueError(f"hard group anchor {anchor} has no fixed pose")
+        ax, ay = poses[anchor]
+        for ref in con.refs:
+            if ref != anchor:
+                limits.setdefault(ref, []).append((ax, ay, con.params["radius_mm"]))
+    return limits
 
 
 @dataclass(frozen=True)

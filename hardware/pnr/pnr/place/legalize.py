@@ -42,7 +42,8 @@ def _mark(occ: np.ndarray, g: float, rect: Rect) -> None:
 
 
 def _place_part(
-    occ: np.ndarray, g: float, bw: int, bh: int, target: Tuple[float, float]
+    occ: np.ndarray, g: float, bw: int, bh: int, target: Tuple[float, float],
+    limits=(),
 ) -> Tuple[int, int]:
     """Find the free ``bh x bw`` block nearest ``target`` (returns top-left r, c)."""
     ny, nx = occ.shape
@@ -62,6 +63,10 @@ def _place_part(
     cols = np.arange(free.shape[1])[None, :]
     cx = (cols + bw / 2.0) * g
     cy = (rows + bh / 2.0) * g
+    for ax, ay, radius in limits:
+        free &= (cx - ax) ** 2 + (cy - ay) ** 2 <= radius ** 2 + 1e-9
+    if not free.any():
+        raise LegalizationError("no free slot inside hard group radius")
     dist2 = (cx - target[0]) ** 2 + (cy - target[1]) ** 2
     dist2 = np.where(free, dist2, np.inf)
     r, c = np.unravel_index(np.argmin(dist2), dist2.shape)
@@ -79,6 +84,7 @@ def legalize(
     grid_mm: float = 0.5,
     inflation: Optional[Dict[str, float]] = None,
     spread: float = 1.0,
+    group_limits: Optional[Dict[str, List[Tuple[float, float, float]]]] = None,
 ) -> BoardGraph:
     """Return a copy of ``graph`` with movable parts snapped to a legal layout.
 
@@ -91,9 +97,12 @@ def legalize(
     unchanged. ``spread`` is a *floor* on that factor applied to **every** movable
     part, so legalization leaves routing channels between all footprints (HPWL
     global placement otherwise packs parts shoulder-to-shoulder with no room for
-    tracks). Raises :class:`LegalizationError` if a part will not fit.
+    tracks). ``group_limits`` intersects centre-distance discs (anchor x/y,
+    radius) for each constrained part. Raises :class:`LegalizationError` if a
+    part cannot fit without violating one of those discs.
     """
     inflation = inflation or {}
+    group_limits = group_limits or {}
     g = grid_mm
     nx = int(math.ceil(width / g))
     ny = int(math.ceil(height / g))
@@ -111,18 +120,27 @@ def legalize(
         if comp is None:
             continue
         comp.pos = (px, py)
+        if any(math.hypot(px - ax, py - ay) > radius + 1e-9
+               for ax, ay, radius in group_limits.get(ref, ())):
+            raise LegalizationError(f"fixed part {ref} lies outside hard group radius")
         cr = courtyard_rect(comp)
         _mark(occ, g, Rect(px, py, cr.w + clearance, cr.h + clearance))
 
-    # Movable parts, biggest first; each into the free slot nearest its target.
+    # Movable parts, tightest group first and then biggest first.
     movable: List[Component] = [c for c in placed.components if c.ref not in fixed]
-    movable.sort(key=lambda c: courtyard_rect(c).w * courtyard_rect(c).h, reverse=True)
+    # Reserve tight electrical groups before unrestricted bodies consume them.
+    movable.sort(key=lambda c: (
+        min((limit[2] for limit in group_limits.get(c.ref, ())), default=math.inf),
+        -courtyard_rect(c).w * courtyard_rect(c).h))
     for comp in movable:
         cr = courtyard_rect(comp)
         infl = max(1.0, spread, float(inflation.get(comp.ref, 1.0)))
         bw = int(math.ceil((cr.w * infl + clearance) / g))
         bh = int(math.ceil((cr.h * infl + clearance) / g))
-        r, c = _place_part(occ, g, bw, bh, comp.pos)
+        try:
+            r, c = _place_part(occ, g, bw, bh, comp.pos, group_limits.get(comp.ref, ()))
+        except LegalizationError as exc:
+            raise LegalizationError(f"{comp.ref}: {exc}") from exc
         occ[r : r + bh, c : c + bw] = True
         comp.pos = ((c + bw / 2.0) * g, (r + bh / 2.0) * g)
 

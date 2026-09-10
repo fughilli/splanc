@@ -190,8 +190,8 @@ def unrouted_count(board) -> int:
     try:
         conn = board.GetConnectivity()
         return int(conn.GetUnconnectedCount(True))
-    except Exception:  # pragma: no cover - version shim
-        return 0
+    except Exception as exc:
+        raise RuntimeError("Cannot verify board connectivity; refusing to report it routed") from exc
 
 
 def load(pcb_path: str) -> Tuple[Dict[str, float], Dict[str, int], int]:

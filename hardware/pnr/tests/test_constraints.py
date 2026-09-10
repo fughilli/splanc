@@ -131,5 +131,100 @@ class RealFixtureTest(unittest.TestCase):
         self.assertTrue(any(r.startswith("R") for r in bottom))
 
 
+class AddressConstraintTests(unittest.TestCase):
+    def test_source_paths_survive_reference_renumbering(self):
+        doc = {"fixed": {"@board.usbc": {"at": [5, 4]}},
+               "group": [{"members": ["@board.power.*"], "anchor": "@board.power.ic"}]}
+        for usb, ic in [("USB1", "U2"), ("USB4", "U19")]:
+            result = compile_constraints(doc, [usb, ic, "C8"],
+                {"board.usbc": usb, "board.power.ic": ic, "board.power.cap": "C8"})
+            self.assertEqual(result.constraints[0].refs, (usb,))
+            self.assertEqual(set(result.constraints[1].refs), {ic, "C8"})
+            self.assertEqual(result.constraints[1].params["anchor"], ic)
+        self.assertIn("@board.usbc", doc["fixed"])
+
+    def test_missing_or_ambiguous_fixed_address_fails(self):
+        with self.assertRaises(ConstraintError):
+            compile_constraints({"fixed": {"@missing": {}}}, ["U1"], {"board.ic": "U1"})
+        with self.assertRaises(ConstraintError):
+            compile_constraints({"fixed": {"@board.*": {}}}, ["U1", "U2"],
+                                {"board.a": "U1", "board.b": "U2"})
+
+class NetEndpointTests(unittest.TestCase):
+    def test_usb_pair_tracks_generated_net_names(self):
+        doc = {"diff_pair": [{"name": "usb", "p": "net@board.usbc:A6", "n": "net@board.usbc:A7"}]}
+        result = compile_constraints(doc, [], pin_nets={"board.usbc:A6": "Dpos", "board.usbc:A7": "Dneg"})
+        self.assertEqual(result.diff_pairs[0].p, "Dpos")
+        self.assertEqual(result.diff_pairs[0].n, "Dneg")
+        with self.assertRaises(ConstraintError):
+            compile_constraints(doc, [], pin_nets={"board.usbc:A6": "Dpos", "board.usbc:A7": ""})
+
+class CopperKeepoutTest(unittest.TestCase):
+    def test_anchor_resolves_and_rejects_missing_or_empty_geometry(self):
+        from pnr.constraints import compile_constraints,compile_routing_rules,ConstraintError
+        doc = {'copper_keepout':[{'name':'die','ref':'@board.mpu','rect_mm':[-1.35,-1.35,1.35,1.35]}]}
+        compiled=compile_constraints(doc,['U42'],{'board.mpu':'U42'})
+        self.assertEqual(compile_routing_rules(compiled,[])['copper_keepouts'][0]['ref'],'U42')
+        with self.assertRaises(ConstraintError):
+            compile_constraints(doc,['U1'])
+        doc['copper_keepout'][0]['rect_mm']=[0,0,0,2]
+        with self.assertRaises(ConstraintError):
+            compile_constraints(doc,['U42'],{'board.mpu':'U42'})
+
+
+class LayoutArrayTest(unittest.TestCase):
+    def test_repeats_local_template_and_preserves_source_document(self):
+        import copy
+        doc = {'layout_array': [{'instances': ['board.led0','board.led1'],
+            'origin': [79,20], 'step': [0,11], 'members': {
+                'conn': {'at': [0,0], 'rot':180},
+                'switch': {'at': [-7,0], 'rot':90}}}]}
+        original = copy.deepcopy(doc)
+        addresses = {'board.led0.conn':'J1','board.led1.conn':'J2',
+                     'board.led0.switch':'U1','board.led1.switch':'U2'}
+        c = compile_constraints(doc, list(addresses.values()), addresses)
+        poses = {x.refs[0]: x.params for x in c.constraints if x.kind == 'fixed'}
+        self.assertEqual(poses['J1']['at'], [79,20])
+        self.assertEqual(poses['J2']['at'], [79,31])
+        self.assertEqual(poses['U1']['at'], [72,20])
+        self.assertEqual(poses['U2']['at'], [72,31])
+        self.assertEqual(poses['U1']['rot'], poses['U2']['rot'])
+        self.assertEqual(doc, original)
+
+    def test_missing_instance_member_fails(self):
+        doc = {'layout_array': [{'instances':['board.led0','board.led1'],
+            'origin':[0,0], 'step':[0,10], 'members':{'conn':{'at':[0,0]}}}]}
+        with self.assertRaises(ConstraintError):
+            compile_constraints(doc,['J1'],{'board.led0.conn':'J1'})
+
+    def test_duplicate_or_unspaced_instances_fail(self):
+        for instances, step in [(['board.led0','board.led0'],[0,10]),
+                                (['board.led0','board.led1'],[0,0])]:
+            with self.assertRaises(ConstraintError):
+                compile_constraints({'layout_array':[{'instances':instances,
+                    'origin':[0,0], 'step':step,'members':{'conn':{'at':[0,0]}}}]}, [])
+
+
+class MountingHoleTest(unittest.TestCase):
+    def test_fastener_envelope_reaches_placement_and_routing(self):
+        from pnr.constraints import compile_routing_rules
+        cc=compile_constraints({'board':{'outline':{'w':85,'h':65}},
+            'mounting_hole':[{'name':'MH1','at':[4,4],'drill_mm':2.7,
+                              'clearance_diameter_mm':7}]},[])
+        self.assertEqual(cc.hard[0].params['polygon'][0],[0.5,0.5])
+        self.assertEqual(compile_routing_rules(cc,[])['mounting_holes'][0]['drill_mm'],2.7)
+
+    def test_invalid_holes_fail_closed(self):
+        good={'name':'MH1','at':[4,4],'drill_mm':2.7,'clearance_diameter_mm':7}
+        for update in [{'at':[2,2]},{'drill_mm':8},{'drill_mm':float('nan')},
+                       {'at':[True,4]},{'clearance_diameter_mm':0}]:
+            with self.assertRaises(ConstraintError):
+                compile_constraints({'board':{'outline':{'w':85,'h':65}},
+                    'mounting_hole':[dict(good,**update)]},[])
+        with self.assertRaises(ConstraintError):
+            compile_constraints({'board':{'outline':{'w':85,'h':65}},
+                                 'mounting_hole':[good,good]},[])
+
+
 if __name__ == "__main__":
     unittest.main()

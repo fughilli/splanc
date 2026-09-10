@@ -603,3 +603,85 @@ example `constraints.yaml`. Green `ingest_test`.
 `bazelisk --output_base=$HOME/.cache/bazel-atopile build //hardware/...` (the
 `/workspace` mount is macOS-synced); pip = root `requirements.in` + `@pypi`;
 prek hooks can abort commits (re-add + re-commit); don't push from the container.
+
+## 2026-09-09 — Splanc routing integrity corrections
+
+- FreeRouting merged distinct atopile nets `EN` and `en`; KiCad reported four
+  shorts after the raw SES import. `pnr.specctra` now exports a private board
+  with unique ASCII net aliases, preserves a checked mapping, and restores
+  original names on import. Live KiCad tests verify both track memberships.
+- Plane fanout previously checked track endpoints only, ignored same-net drill
+  spacing, forced unchecked vias into congested pads, and hardcoded undersized
+  vias. It now checks full segments, conservative pad/arc envelopes, drilled
+  holes and rule areas; uses the fab geometry; and leaves blocked pads for the
+  connectivity gate. It does not claim that all pads can be escaped.
+- `copper_keepout` specifies an all-layer rectangle relative to a stable source
+  reference. Writeback reconstructs it after placement; atopile drops the MPU
+  footprint's embedded zone. Live tests verify transformed bounds and layers.
+- The original Splanc USB receptacle is rated only 5V/3A. The hardware now uses
+  GCT USB4105-GF-A-060 and a routable QFN TPD6S300A CC protector. Neither a legal
+  placement nor a completed router run establishes manufacturing readiness.
+
+Optional diagnostic FreeRouting bridge (run Python steps with KiCad Python):
+
+```
+python -m pnr.specctra export placed.kicad_pcb private.dsn --map net-map.json --rules rules.json
+freerouting -de private.dsn -do private.ses -mt 1 -mp 10
+python -m pnr.specctra import private.ses routed.kicad_pcb --map net-map.json
+python -m pnr.planes routed.kicad_pcb --rules rules.json
+```
+
+Run independent DRC and quality gates afterward. The primary Bazel flow continues
+using the custom detailed router; the bridge is a diagnostic/alternate backend.
+
+### Reliable DRC identities and offset bodies
+
+Atopile cloned 2,237 internal item IDs across repeated parts on this board.
+Writeback now regenerates duplicated child UUIDs deterministically, retaining
+footprint identities and rejecting duplicate parent IDs. A live KiCad regression
+checks uniqueness and idempotence. KiCad's mutable KIID.Clone API is required;
+the m_Uuid property itself is read-only.
+
+Ingestion now measures unrotated body/courtyard extents symmetrically around the
+footprint origin. Bounding-box width alone underrepresented offset connector
+bodies, allowing an XT30 body to collide with a FET despite legal placement.
+A rotated, offset-pad regression covers this geometry. The earlier 224-part
+Splanc placement passes KiCad DRC with zero non-connectivity violations before
+routing; it still has 499 unconnected items and is not a fabrication release.
+
+### Thermal-via and CAD review integration
+
+The 229-component revision includes source-controlled ground thermal vias for
+TPS25730, TPD6S300A, TPS552882 PGND and both TPS25200 switches, with paste windows
+kept off drill openings. Both factory assemblies build; 44 source-board checks
+pass per assembly, and the placed-board audit passes 45 including the MPU keepout.
+Plane-first writeback leaves 455 unconnected items and zero other KiCad DRC
+violations. This is an unrouted diagnostic board, not a manufacturing artifact.
+
+Plane fanout rejects distant obstacles by bounding-box distance before exact
+segment intersection tests. Its conservative collision criteria remain intact.
+The complete Python router suite passes 114 tests with 7 skips; the KiCad
+writeback and ingest suites pass 14 and 6 tests respectively.
+
+`hardware/tools/package_pcb_models.py` restores model declarations from source
+footprints, copies assets and provenance into a portable review directory, and
+checks that packaging preserves pad identity, geometry and nets. All 229 model
+instances resolve. Simplified PD/microphone and representative barometer models
+are explicitly recorded in the manifest. The native KiCad render is a placement
+study until routing, mechanical geometry and power validation are complete.
+
+### Hard electrical proximity through legalization
+
+The largest-first legalizer could scatter small power support parts 20–34mm
+from their IC even when global placement used soft groups. `group.hard: true`
+now requires a fixed anchor, known members and finite positive radius. Legalizer
+candidates intersect all hard group discs; tight groups reserve space before
+unrestricted parts. No feasible slot raises with the component reference.
+Independent metrics and PlacementReport.legal also check group distances.
+
+Regression coverage includes distant targets, occupied group regions, invalid
+radii/anchors, and independent detection of scattered parts. 23 group/constraint
+tests and 15 placement/orientation tests pass. Both 229-part factory placements
+remain clearance-clean with 499 unconnected items. The previous 360-unconnected
+partial route is obsolete after these component moves. Power classification now
+includes 21 nets; this is not a substitute for qualified power copper geometry.

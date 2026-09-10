@@ -1,0 +1,18 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPD2EUSB30ADRTR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C94934", date="2026-09-09T18:57:17.632478+00:00", checksum="7001deb0ce5bfb6188ba77e3249ae09f56aeb25f8d0f99b04f3692df3e8f6ed4">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPD2EUSB30ADRTR", footprint="SOT-9X3-3_L1.0-W0.8-P0.35-LS1.0-BR.kicad_mod", symbol="TPD2EUSB30ADRTR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C94934", manufacturer="Texas Instruments", partno="TPD2EUSB30ADRTR">
+    trait has_designator_prefix<prefix="D">
+
+    # pins
+    signal Dneg ~ pin 2
+    signal Dpos ~ pin 1
+    signal GND ~ pin 3

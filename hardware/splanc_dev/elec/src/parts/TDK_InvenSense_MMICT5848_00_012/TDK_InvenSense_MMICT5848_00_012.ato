@@ -1,0 +1,25 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component TDK_InvenSense_MMICT5848_00_012_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C20344623", date="2026-09-09T22:49:43.198747+00:00", checksum="0c34479ed826b1a87503ae838d7035a1fe2462446d0c779517824e7884bb14f5">
+
+    trait is_atomic_part<manufacturer="TDK InvenSense", partnumber="MMICT5848-00-012", footprint="MIC-SMD_7P-L3.5-W2.7_MMICT5848-00-012.kicad_mod", symbol="MMICT5848-00-012.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C20344623", manufacturer="TDK InvenSense", partno="MMICT5848-00-012">
+    trait has_designator_prefix<prefix="MIC">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/d238399e4bf2efa674db85db7a27f06b.pdf?productCode=C20344623">
+
+    # pins
+    signal GND ~ pin 3
+    signal LR ~ pin 2
+    signal SCK ~ pin 6
+    signal SD ~ pin 8
+    signal THSEL ~ pin 5
+    signal VDD ~ pin 7
+    signal WAKE ~ pin 4
+    signal WS ~ pin 1

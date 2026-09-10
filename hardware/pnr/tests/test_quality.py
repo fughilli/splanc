@@ -14,7 +14,21 @@ from pnr.constraints import (
     compile_constraints,
     compile_routing_rules,
 )
-from pnr.quality import analyze
+from pnr.quality import analyze, unrouted_count
+from unittest.mock import Mock
+
+
+class ConnectivityFailureTest(unittest.TestCase):
+    def test_failed_connectivity_query_cannot_pass_release(self):
+        board = Mock()
+        board.GetConnectivity.side_effect = RuntimeError("unsupported KiCad API")
+        with self.assertRaisesRegex(RuntimeError, "Cannot verify"):
+            unrouted_count(board)
+
+    def test_unconnected_pads_are_reported(self):
+        board = Mock()
+        board.GetConnectivity.return_value.GetUnconnectedCount.return_value = 7
+        self.assertEqual(unrouted_count(board), 7)
 
 
 class RoutingRuleCompileTest(unittest.TestCase):
