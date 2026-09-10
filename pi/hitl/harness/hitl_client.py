@@ -124,7 +124,17 @@ def _pool() -> list[str]:
     tokens = raw.replace(",", " ").split()
     if not tokens:
         tokens = _discover_tailnet_rigs()
-    return _norm(tokens)
+    urls = _norm(tokens)
+    # $HITL_EXCLUDE_HOSTS (comma/space list of hostnames) fences specific rigs OUT of
+    # this run's pool. Used to keep a test lane off a rig it can't run on — e.g. the
+    # netstack lane skips a rig whose AP the heapless netstack can't yet join (rig-3's
+    # Pi 3 onboard AP drops the DUT's protected unicast; tracked as a firmware RX bug),
+    # while the vendor-stack lane still uses it. Matched by hostname, so it applies
+    # whether the pool came from $HITL_HOSTS or tailnet-tag discovery.
+    excl = set((os.environ.get("HITL_EXCLUDE_HOSTS") or "").replace(",", " ").split())
+    if excl:
+        urls = [u for u in urls if _host_of(u) not in excl]
+    return urls
 
 
 def _get(url: str, timeout: float = 10.0) -> dict:
