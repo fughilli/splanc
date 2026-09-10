@@ -22,6 +22,7 @@ ssh/scp to the unit's endpoint. Stdlib only (urllib/subprocess/threading).
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import random
@@ -390,6 +391,49 @@ class Reservation:
         return subprocess.run(
             argv, check=False, timeout=timeout, capture_output=capture, text=capture or None
         )
+
+    # Well-known container path of the per-rig "serialize the USB-serial device ops"
+    # lock dir. The daemon bind-mounts it (a host-shared dir) into every container
+    # ONLY on a rig configured to serialize those ops — a board whose one shared USB
+    # bus can't run two DUTs' flash/monitor at once (a Pi 3: all USB ports + the
+    # radio dongle hang off a single USB 2.0 hub). Where the mount is absent (a Pi 5,
+    # which flashes two DUTs concurrently fine) the lock is a no-op and ops run
+    # unserialized. This is the flash-side twin of the BLE provisioning lock
+    # (hitl_improv.py's /run/hitl/provision-lock), so each rig can DESCRIBE which
+    # device ops it must serialize purely by which lock dirs its daemon mounts.
+    SERIALIZE_LOCK_DIR = "/run/hitl/flash-lock"
+
+    def ssh_serialized(
+        self,
+        remote_cmd: list[str] | str,
+        capture: bool = False,
+        timeout: float | None = None,
+        lock_dir: str | None = None,
+    ) -> subprocess.CompletedProcess:
+        """Like ssh(), but hold a per-rig flock across the command when this rig is
+        configured to serialize USB-serial device ops (see SERIALIZE_LOCK_DIR).
+
+        Wraps the command in a tiny in-container python that flocks lock_dir/lock
+        (LOCK_EX) for the command's duration IF lock_dir exists, else runs it
+        unwrapped — so two containers on a serialize-configured rig never drive the
+        shared USB bus at once (flash vs flash, flash vs monitor/reset), while a
+        capable rig without the mount is unaffected. The container has python3 (the
+        toolbox) but no flock(1), so the lock is taken in python. The real command is
+        passed base64'd to sidestep the double sh -c quoting.
+        """
+        lock_dir = lock_dir or self.SERIALIZE_LOCK_DIR
+        if isinstance(remote_cmd, list):
+            remote_cmd = shlex.join(remote_cmd)
+        b64 = base64.b64encode(remote_cmd.encode()).decode()
+        py = (
+            "import base64,fcntl,os,subprocess,sys;"
+            f"d={lock_dir!r};"
+            "fd=(os.open(d+'/lock',os.O_CREAT|os.O_RDWR,0o666) if os.path.isdir(d) else None);"
+            "(fcntl.flock(fd,fcntl.LOCK_EX) if fd is not None else None);"
+            "sys.exit(subprocess.call(['sh','-c',base64.b64decode(sys.argv[1]).decode()]))"
+        )
+        wrapped = f"python3 -c {shlex.quote(py)} {b64}"
+        return self.ssh(wrapped, capture=capture, timeout=timeout)
 
     def scp_to(self, locals_: list[str], remote_dir: str) -> None:
         argv = [

@@ -73,7 +73,9 @@ def ensure_booted(res, log: str, monitor_seconds: float, attempts: int = BOOT_AT
             f"(attempt {attempt + 1}/{attempts})…",
             flush=True,
         )
-        proc = res.ssh(
+        # ssh_serialized: hitl-monitor drives the DUT's USB-serial, which contends with
+        # a concurrent flash/reset on a single-USB-bus rig (Pi 3); serialize it there.
+        proc = res.ssh_serialized(
             f"hitl-monitor --reset --seconds {monitor_seconds:g}",
             capture=True,
             timeout=monitor_seconds + 60,
@@ -162,7 +164,7 @@ def reserved_board_ble_mac(res, seconds: float = 6.0) -> str | None:
     MAC, or None if the boot banner didn't surface one in the window.
     """
     try:
-        proc = res.ssh(
+        proc = res.ssh_serialized(  # USB-serial op; serialize on single-USB-bus rigs
             f"hitl-monitor --reset --seconds {seconds:g}", capture=True, timeout=seconds + 40
         )
     except Exception as e:  # noqa: BLE001 — best-effort; fall back to a name scan
@@ -216,7 +218,9 @@ def provision_dut(
             # first-join state (creds were cleared on the join-timeout), which is
             # the reliably-provisionable path. The 4s read lets the boot settle.
             print(f"[improv] resetting DUT for a clean retry {attempt}/{attempts}…", flush=True)
-            res.ssh("hitl-monitor --reset --seconds 4", capture=True, timeout=30)
+            res.ssh_serialized(  # USB-serial op; serialize on single-USB-bus rigs
+                "hitl-monitor --reset --seconds 4", capture=True, timeout=30
+            )
         try:
             url = _run_provisioner(res, ssid, password, timeout, address=address)
             print(f"[improv] OK — DUT joined WiFi, redirect={url}", flush=True)

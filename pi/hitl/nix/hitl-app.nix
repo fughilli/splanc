@@ -131,6 +131,15 @@ let
   # uses onboard. No SBC_BT_DONGLE to commit wrong.
   sigrok = import ./sigrok.nix { inherit pkgs; };
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
+  # Serialize the USB-serial device ops (flash + monitor/reset) across a rig's
+  # reservation containers. A board whose USB ports + radio all hang off one shared
+  # USB 2.0 bus (a Pi 3) corrupts/times-out two DUTs' concurrent flash/monitor, so
+  # such a rig sets SBC_SERIALIZE_FLASH=1 and the daemon mounts a host-shared flash
+  # -lock dir into every container; the harness (hitl_client.ssh_serialized) flocks
+  # it around those ops. A capable rig (Pi 5) leaves it off and flashes 2-wide. This
+  # is the flash-side twin of the always-on provisioning lock — each rig DESCRIBES
+  # which device ops it must serialize purely by which lock dirs its daemon mounts.
+  serializeFlash = builtins.getEnv "SBC_SERIALIZE_FLASH" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
   # Make the rig AP behave like a commercial/mesh AP so the heapless netstack meets
   # on the rig the behaviors a home AP exhibits but the lenient rig default hides.
@@ -465,7 +474,10 @@ in
   # (see the --mount /run/hitl-provision below). /run is tmpfs, so a tmpfiles rule
   # recreates it each boot; world-writable because a non-root container agent user
   # creates the lock file inside it. It only ever holds a zero-byte lock file.
-  systemd.tmpfiles.rules = [ "d /run/hitl-provision 0777 root root -" ];
+  systemd.tmpfiles.rules = [ "d /run/hitl-provision 0777 root root -" ]
+    # The flash/USB-serial lock dir exists only on a serialize-flash rig; its mere
+    # presence in the container is what arms hitl_client.ssh_serialized's flock.
+    ++ lib.optional serializeFlash "d /run/hitl-flash 0777 root root -";
 
   systemd.services.hitl-manager = {
     description = "HITL reservation manager";
@@ -493,7 +505,7 @@ in
       ++ sigrok.packages;
     serviceConfig = {
       ExecStart =
-        lib.concatStringsSep " " [
+        lib.concatStringsSep " " ([
           "${hitl}/bin/hitl-reserved"
           "--addr :${toString apiPort}"
           "--catalog ${catalogFile}"
@@ -540,7 +552,13 @@ in
           # provision. --mount skips it if the dir is absent, so a rig not yet
           # redeployed just provisions unserialized.
           "--mount /run/hitl-provision:/run/hitl/provision-lock"
-        ];
+        ]
+        # Flash/USB-serial serialization lock, mounted ONLY on a serialize-flash rig
+        # (SBC_SERIALIZE_FLASH=1, e.g. the Pi 3 whose single USB bus can't run two
+        # DUTs' flash/monitor at once). Its presence in the container arms
+        # hitl_client.ssh_serialized; absent (Pi 5), those ops run concurrently.
+        ++ lib.optional serializeFlash
+          "--mount /run/hitl-flash:/run/hitl/flash-lock");
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
       # rig (harmless when no FX2 is attached; the analyzer broker self-gates).
       Environment = [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
