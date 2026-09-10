@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import fcntl
 import json
 import os
 import sys
+import time
 
 # The container has no /var/run/dbus; point dbus-fast at the mounted host socket
 # (matches container.nix's env for the other BLE tools) before importing bleak.
@@ -96,6 +99,49 @@ def looks_like_player(name: str) -> bool:
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
+
+
+# Per-rig BLE-adapter mutex. A rig has ONE Bluetooth controller shared by every
+# reservation container over the host system D-Bus (bluetoothd). BLE provisioning
+# is adapter-exclusive end to end: discovery (Start/StopDiscovery, refcounted
+# per-sender by BlueZ) and connection setup collide when two containers run at
+# once, AND — more subtly — a second container's discovery/link drops the Improv
+# join-confirmation notification off the first container's still-open link at the
+# moment its DUT brings up Wi-Fi (radio coex at its weakest), so the DUT joins yet
+# its provisioner times out. So the whole provision is held under this flock. The
+# lock dir is a host-shared bind mount (hitl-app.nix --mount /run/hitl-provision),
+# making the flock a host-wide mutex across the rig's containers; only provisioning
+# is serialized, while the test's network traffic to already-joined DUTs stays
+# concurrent. Best-effort: no lock dir (rig not yet redeployed) ⇒ unserialized.
+_ADAPTER_LOCK_PATH = os.environ.get(
+    "HITL_BLE_ADAPTER_LOCK", "/run/hitl/provision-lock/adapter.lock"
+)
+
+
+@contextlib.contextmanager
+def _adapter_lock():
+    """Hold the per-rig BLE-adapter mutex for the enclosed provisioning."""
+    d = os.path.dirname(_ADAPTER_LOCK_PATH)
+    fd = None
+    if os.path.isdir(d):
+        try:
+            fd = os.open(_ADAPTER_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+        except OSError as e:
+            log(f"[improv] adapter lock unavailable ({e}); proceeding unserialized")
+    if fd is None:
+        yield
+        return
+    t0 = time.monotonic()
+    log("[improv] acquiring rig BLE-adapter lock (serialize provisioning)…")
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    log(f"[improv] adapter lock held (waited {time.monotonic() - t0:.1f}s)")
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 async def find(address: str | None, name_filter: str, scan_seconds: float, name_wait: float = 8.0):
@@ -212,11 +258,6 @@ async def provision(
     connect_tries: int = 5,
     connect_timeout: float = 12.0,
 ):
-    dev, nm = await find(address, name_filter, scan_seconds)
-    if dev is None:
-        return {"ok": False, "error": "no Improv device found in scan"}
-    device = {"name": nm, "address": dev.address}
-    log(f"[improv] provisioning {nm} ({dev.address}) ssid={ssid!r}")
     done = asyncio.Event()
     state = {"urls": None, "error": None, "state": None}
 
@@ -243,30 +284,51 @@ async def provision(
             done.set()
 
     client = None
+    device = None
     try:
-        client = await _connect(dev, connect_tries, connect_timeout)
-        log(f"[improv] connected={client.is_connected}")
-        # Subscribe BEFORE writing so the reply is never missed.
-        await client.start_notify(CH_RPC_RESULT, on_result)
-        await client.start_notify(CH_ERROR, on_error)
-        try:
-            await client.start_notify(CH_STATE, on_state)
-            log("[improv] subscribed STATE/ERROR/RESULT")
-        except Exception as e:
-            log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
-        rpc = build_wifi_rpc(ssid, password)
-        log(f"[improv] -> RPC_CMD {rpc.hex()}")
-        await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
-        log("[improv] write ack; awaiting join…")
-        try:
-            await asyncio.wait_for(done.wait(), timeout)
-        except asyncio.TimeoutError:
-            if state["state"] != STATE_PROVISIONED:
-                return {
-                    "ok": False,
-                    "error": "timed out waiting for the player to join",
-                    "device": device,
-                }
+        # Hold the per-rig BLE-adapter lock across the ENTIRE provisioning, not just
+        # discover+connect. The Improv join-confirmation (the RPC_RESULT carrying the
+        # DUT's redirect URL + the PROVISIONED state) is a load-bearing check — it
+        # proves the firmware's ImprovBLE path actually reported the join, so the test
+        # must keep waiting for it, not infer the join out-of-band. But that reply
+        # arrives over the still-open BLE link at the exact moment the C6 brings up
+        # Wi-Fi (radio coex at its weakest), and a SECOND container discovering /
+        # holding a link on the shared controller reliably drops it — the DUT joins
+        # (DHCP lease appears) yet its notification never lands, so the provisioner
+        # times out. Only ONE genuinely-exclusive thing is happening here (BLE
+        # provisioning on the one adapter), so serialize the whole of it per rig; the
+        # AP stays up throughout and every OTHER container step — the test's WSS/HTTP
+        # traffic to already-joined DUTs over the network — still runs concurrently.
+        # Best-effort: no lock dir (rig not redeployed) ⇒ unserialized, as before.
+        with _adapter_lock():
+            dev, nm = await find(address, name_filter, scan_seconds)
+            if dev is None:
+                return {"ok": False, "error": "no Improv device found in scan"}
+            device = {"name": nm, "address": dev.address}
+            log(f"[improv] provisioning {nm} ({dev.address}) ssid={ssid!r}")
+            client = await _connect(dev, connect_tries, connect_timeout)
+            log(f"[improv] connected={client.is_connected}")
+            # Subscribe BEFORE writing so the reply is never missed.
+            await client.start_notify(CH_RPC_RESULT, on_result)
+            await client.start_notify(CH_ERROR, on_error)
+            try:
+                await client.start_notify(CH_STATE, on_state)
+                log("[improv] subscribed STATE/ERROR/RESULT")
+            except Exception as e:
+                log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
+            rpc = build_wifi_rpc(ssid, password)
+            log(f"[improv] -> RPC_CMD {rpc.hex()}")
+            await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+            log("[improv] write ack; awaiting join…")
+            try:
+                await asyncio.wait_for(done.wait(), timeout)
+            except asyncio.TimeoutError:
+                if state["state"] != STATE_PROVISIONED:
+                    return {
+                        "ok": False,
+                        "error": "timed out waiting for the player to join",
+                        "device": device,
+                    }
     except _TRANSPORT_ERRORS as e:
         # The board tears BLE down the instant it joins (soft-AP off, STA-only),
         # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is

@@ -461,6 +461,12 @@ in
   # provisioning-AP SSID/PSK, derived from the hostname) come in as flags since the
   # catalog is fleet-identical. USB C6 boards are auto-discovered and network DUTs
   # are runtime-seeded (scripts/seed-network-dut.sh -> the catalog's seeded_file).
+  # Host-shared dir the reservation containers hold the BLE-adapter flock across
+  # (see the --mount /run/hitl-provision below). /run is tmpfs, so a tmpfiles rule
+  # recreates it each boot; world-writable because a non-root container agent user
+  # creates the lock file inside it. It only ever holds a zero-byte lock file.
+  systemd.tmpfiles.rules = [ "d /run/hitl-provision 0777 root root -" ];
+
   systemd.services.hitl-manager = {
     description = "HITL reservation manager";
     wantedBy = [ "multi-user.target" ];
@@ -519,6 +525,21 @@ in
           # needs it passed explicitly. --mount skips it if the socket is absent, so a
           # rig without bluetoothd is unaffected.
           "--mount /run/dbus/system_bus_socket:/run/dbus/system_bus_socket"
+          # Per-rig BLE-adapter mutex for provisioning. A rig has ONE Bluetooth
+          # controller (the USB dongle) shared by every reservation container over
+          # the host system D-Bus (bluetoothd), and BLE provisioning is adapter-
+          # exclusive end to end: two containers discovering/connecting at once
+          # collide, and a second container's activity drops the Improv join-confirm
+          # notification off the first's link right as its DUT brings up Wi-Fi, so a
+          # DUT joins (DHCP lease appears) yet its provisioner times out. The AP
+          # itself stays up the whole time (NM autoconnect), so already-joined DUTs
+          # are reached over the network with no exclusion — only the BLE provision
+          # is serialized. Bind-mount a per-host dir into every container so the
+          # in-container provisioner (hitl_improv.py) holds an flock across it — a
+          # host-wide mutex, since a bind mount shares the inode — for the whole
+          # provision. --mount skips it if the dir is absent, so a rig not yet
+          # redeployed just provisions unserialized.
+          "--mount /run/hitl-provision:/run/hitl/provision-lock"
         ];
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
       # rig (harmless when no FX2 is attached; the analyzer broker self-gates).
