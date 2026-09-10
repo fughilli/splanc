@@ -18,14 +18,15 @@ component TDK_InvenSense_MPU_6050_package:
     signal AUX_DA ~ pin 6
     signal CLKIN ~ pin 1
     signal CPOUT ~ pin 20
-    signal EP ~ pin 25
+    # Exposed die pad must not be soldered (datasheet section 11.4.2).
     signal FSYNC ~ pin 11
     signal GND ~ pin 18
     signal INT ~ pin 12
     signal REGOUT ~ pin 10
-    signal RESV ~ pin 19
-    RESV ~ pin 21
-    RESV ~ pin 22
+    # Reserved pins must remain individually unconnected.
+    pin 19
+    pin 21
+    pin 22
     signal SCL ~ pin 23
     signal SDA ~ pin 24
     signal VDD ~ pin 13

@@ -1,0 +1,188 @@
+import ElectricPower
+from "parts/Texas_Instruments_BQ25798RQMR/Texas_Instruments_BQ25798RQMR.ato" import Texas_Instruments_BQ25798RQMR_package
+from "parts/Changjiang_MMBT3904_RANGE_100_300/Changjiang_MMBT3904_RANGE_100_300.ato" import Changjiang_MMBT3904_RANGE_100_300_package
+from "parts/Samsung_CL31B106KBHNNNE/Samsung_CL31B106KBHNNNE.ato" import Samsung_CL31B106KBHNNNE_package
+from "passives.ato" import C100n
+from "passives.ato" import C100n_50V
+from "passives.ato" import C47n
+from "passives.ato" import C1n
+from "passives.ato" import C4u7
+from "passives.ato" import C10u
+from "passives.ato" import L1u
+from "passives.ato" import R10
+from "passives.ato" import R150
+from "passives.ato" import R2k
+from "passives.ato" import R5k1
+from "passives.ato" import R10k
+from "passives.ato" import R31k6
+from "passives.ato" import R100k
+
+module BatteryCharger:
+    """BQ25798 charging branch. System load bypasses its internal BATFET.
+    PROG is factory strapped externally: 3.0k for 1S, 6.04k for 2S (1.5MHz).
+    Charging stays disabled until enable_charging is explicitly driven high.
+    pack_ntc connects to a pack-mounted 103AT-2 thermistor returning to GND.
+    Never connect the charger SYS node to the high-voltage system power bus.
+    """
+    usb = new ElectricPower
+    battery = new ElectricPower
+    logic = new ElectricPower
+    signal sda
+    signal scl
+    signal enable_charging
+    signal interrupt_n
+    signal pack_ntc
+    signal program
+    usb.lv ~ battery.lv
+    usb.lv ~ logic.lv
+
+    ic = new Texas_Instruments_BQ25798RQMR_package
+    ic.GND ~ usb.lv
+    ic.VBUS ~ usb.hv
+    ic.VAC1 ~ usb.hv
+    ic.VAC2 ~ usb.hv
+    ic.ACDRV1 ~ usb.lv
+    ic.ACDRV2 ~ usb.lv
+    ic.BAT ~ battery.hv
+    ic.PROG ~ program
+    ic.SDA ~ sda
+    ic.SCL ~ scl
+    ic.nINT ~ interrupt_n
+    # D+/D- are deliberately isolated from USB data; host disables BC1.2.
+    # QON is internally pulled up; no ship FET is fitted.
+    sense_r = new R10
+    sense_r.p1 ~ battery.hv
+    sense_r.p2 ~ ic.BATP
+    ship_dec = new C1n
+    ship_dec.p1 ~ ic.SDRV
+    ship_dec.p2 ~ usb.lv
+    reg_dec = new C4u7
+    reg_dec.p1 ~ ic.REGN
+    reg_dec.p2 ~ usb.lv
+    inductor = new L1u
+    inductor.p1 ~ ic.SW1
+    inductor.p2 ~ ic.SW2
+    bootstrap1 = new C47n
+    bootstrap1.p1 ~ ic.BTST1
+    bootstrap1.p2 ~ ic.SW1
+    bootstrap2 = new C47n
+    bootstrap2.p1 ~ ic.BTST2
+    bootstrap2.p2 ~ ic.SW2
+
+    # Startup input clamp: REGN * 33.6 / 133.6, approximately 0.2–0.4 A.
+    # Host sets IINDPM and clears EN_EXTILIM only after confirming the contract.
+    ilim_top = new R100k
+    ilim_bottom1 = new R31k6
+    ilim_bottom2 = new R2k
+    ilim_top.p1 ~ ic.REGN
+    ilim_top.p2 ~ ic.ILIM_HIZ
+    ilim_bottom1.p1 ~ ic.ILIM_HIZ
+    ilim_bottom1.p2 ~ ilim_bottom2.p1
+    ilim_bottom2.p2 ~ usb.lv
+
+    charge_off = new R100k
+    charge_off.p1 ~ ic.REGN
+    charge_off.p2 ~ ic.nCE
+    enable_q = new Changjiang_MMBT3904_RANGE_100_300_package
+    enable_q.C ~ ic.nCE
+    enable_q.E ~ usb.lv
+    enable_r = new R10k
+    enable_r.p1 ~ enable_charging
+    enable_r.p2 ~ enable_q.B
+    enable_pd = new R100k
+    enable_pd.p1 ~ enable_q.B
+    enable_pd.p2 ~ usb.lv
+    interrupt_pullup = new R10k
+    interrupt_pullup.p1 ~ logic.hv
+    interrupt_pullup.p2 ~ interrupt_n
+
+    # Approximate TI 103AT window; final limits are cell-profile dependent.
+    # An absent/open pack thermistor inhibits charging through TS.
+    ts_top1 = new R5k1
+    ts_top2 = new R150
+    ts_bottom = new R31k6
+    ts_top1.p1 ~ ic.REGN
+    ts_top1.p2 ~ ts_top2.p1
+    ts_top2.p2 ~ ic.TS
+    ts_bottom.p1 ~ ic.TS
+    ts_bottom.p2 ~ usb.lv
+    ic.TS ~ pack_ntc
+
+    input_cap0 = new Samsung_CL31B106KBHNNNE_package
+    input_cap0.p1 ~ usb.hv
+    input_cap0.p2 ~ usb.lv
+
+    input_cap1 = new Samsung_CL31B106KBHNNNE_package
+    input_cap1.p1 ~ usb.hv
+    input_cap1.p2 ~ usb.lv
+
+    pmid_cap0 = new Samsung_CL31B106KBHNNNE_package
+    pmid_cap0.p1 ~ ic.PMID
+    pmid_cap0.p2 ~ usb.lv
+
+    pmid_cap1 = new Samsung_CL31B106KBHNNNE_package
+    pmid_cap1.p1 ~ ic.PMID
+    pmid_cap1.p2 ~ usb.lv
+
+    pmid_cap2 = new Samsung_CL31B106KBHNNNE_package
+    pmid_cap2.p1 ~ ic.PMID
+    pmid_cap2.p2 ~ usb.lv
+
+    system_cap0 = new C10u
+    system_cap0.p1 ~ ic.SYS
+    system_cap0.p2 ~ usb.lv
+
+    system_cap1 = new C10u
+    system_cap1.p1 ~ ic.SYS
+    system_cap1.p2 ~ usb.lv
+
+    system_cap2 = new C10u
+    system_cap2.p1 ~ ic.SYS
+    system_cap2.p2 ~ usb.lv
+
+    system_cap3 = new C10u
+    system_cap3.p1 ~ ic.SYS
+    system_cap3.p2 ~ usb.lv
+
+    system_cap4 = new C10u
+    system_cap4.p1 ~ ic.SYS
+    system_cap4.p2 ~ usb.lv
+
+    system_hf = new C100n
+    system_hf.p1 ~ ic.SYS
+    system_hf.p2 ~ usb.lv
+
+    battery_cap0 = new C10u
+    battery_cap0.p1 ~ battery.hv
+    battery_cap0.p2 ~ usb.lv
+
+    battery_cap1 = new C10u
+    battery_cap1.p1 ~ battery.hv
+    battery_cap1.p2 ~ usb.lv
+
+    battery_hf = new C100n
+    battery_hf.p1 ~ battery.hv
+    battery_hf.p2 ~ usb.lv
+
+    input_hf = new C100n_50V
+    input_hf.p1 ~ usb.hv
+    input_hf.p2 ~ usb.lv
+
+    pmid_hf = new C100n_50V
+    pmid_hf.p1 ~ ic.PMID
+    pmid_hf.p2 ~ usb.lv
+
+from "passives.ato" import R3k
+from "passives.ato" import R6k04
+
+module Charger1S:
+    core = new BatteryCharger
+    strap = new R3k
+    strap.p1 ~ core.program
+    strap.p2 ~ core.usb.lv
+
+module Charger2S:
+    core = new BatteryCharger
+    strap = new R6k04
+    strap.p1 ~ core.program
+    strap.p2 ~ core.usb.lv

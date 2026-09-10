@@ -1,0 +1,20 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Samsung_Electro_Mechanics_CL05B103KB5NNNC_package:
+    """10nF (103) ±10% 50V"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+
+    trait is_atomic_part<manufacturer="Samsung Electro-Mechanics", partnumber="CL05B103KB5NNNC", footprint="C0402.kicad_mod", symbol="CL05B103KB5NNNC.kicad_sym", model="C0402_L1.0-W0.5-H0.5.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C15195", manufacturer="Samsung Electro-Mechanics", partno="CL05B103KB5NNNC">
+    trait has_designator_prefix<prefix="C">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf?productCode=C15195">
+
+    # pins
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

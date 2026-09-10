@@ -11,8 +11,24 @@ import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from pnr.constraints import CompiledConstraints
+from pnr.constraints import CompiledConstraints, Enforcement
 from pnr.graph import BoardGraph, Component
+
+
+def hard_group_limits(constraints, poses):
+    """Intersect centre-distance limits around explicitly fixed anchors."""
+    limits = {}
+    for con in constraints.constraints:
+        if con.kind != "group" or con.enforcement != Enforcement.HARD:
+            continue
+        anchor = con.params["anchor"]
+        if anchor not in poses:
+            raise ValueError(f"hard group anchor {anchor} has no fixed pose")
+        ax, ay = poses[anchor]
+        for ref in con.refs:
+            if ref != anchor:
+                limits.setdefault(ref, []).append((ax, ay, con.params["radius_mm"]))
+    return limits
 
 
 @dataclass(frozen=True)
@@ -57,6 +73,25 @@ class Rect:
             and self.right <= width + eps
             and self.top <= height + eps
         )
+
+
+def set_component_side(comp: Component, side: str):
+    """Flip local pad offsets with the physical footprint (KiCad Flip(..., False)).
+
+    Ingestion stores offsets in the current side's unrotated frame. Merely
+    changing the side label would leave the router targeting mirrored pads.
+    """
+    if side not in ('top', 'bottom'):
+        raise ValueError(f'Invalid placement side: {side}')
+    if comp.side != side:
+        for pad in comp.pads:
+            pad.offset = (pad.offset[0], -pad.offset[1])
+        comp.side = side
+
+
+def occupied_sides(comp: Component):
+    """Reserve through-hole component bodies on both sides, conservatively."""
+    return ("top", "bottom") if any(p.through_hole for p in comp.pads) else (comp.side,)
 
 
 def courtyard_rect(comp: Component) -> Rect:

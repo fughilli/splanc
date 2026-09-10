@@ -24,6 +24,29 @@
 load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
 load("//hardware/pnr:pnr.bzl", "atopile_pnr")
 
+# USB-only Mini uses the shared atomic libraries and its own entry/constraints.
+atopile_project(
+    name = "splanc_mini",
+    srcs = glob(["elec/**"]),
+    ato_yaml = "ato.yaml",
+    autoroute = False,
+    build = "mini",
+    frozen = False,
+    outline_margin_mm = 4,
+    picker = False,
+    visibility = ["//visibility:public"],
+)
+
+atopile_pnr(
+    name = "splanc_mini.fab",
+    constraints = "mini-constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
+    layout = ":splanc_mini",
+    quality_gate = True,
+    visibility = ["//visibility:public"],
+)
+
 atopile_project(
     name = "splanc_dev",
     # All design sources: the .ato plus the atomic parts' committed footprints
@@ -53,7 +76,10 @@ atopile_project(
 atopile_pnr(
     name = "splanc_dev.fab",
     constraints = "constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
     layout = ":splanc_dev",
+    quality_gate = True,
     # The own detailed router routes the signals; the build fails unless every net
     # is routed (require_routed defaults True) — a partial route is not a board.
     visibility = ["//visibility:public"],

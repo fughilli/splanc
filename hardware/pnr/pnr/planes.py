@@ -1,11 +1,11 @@
 """Pour ground / power planes on the routed board (design §9.6 follow-on).
 
-Runs **after** the detailed route (FreeRouting drops pre-poured zones through its
-DSN/SES round-trip). For each ``plane_layer`` net class in ``rules.json`` it pours
-a filled copper zone bound to the net on that inner layer and via-stitches every
-pad of the net down to it — see :func:`pnr.writeback.apply_planes`. High-fanout
-ground / power nets (e.g. `lv` at 75 pads) are hopeless to trace-route; a plane +
-via drops removes them from the routing problem entirely.
+Run after detailed routing to refill zones against final tracks. It can also run
+before Specctra export to provide plane-aware routing and conservative fanouts;
+import into the saved private board preserves its zones, which must be refilled.
+For each ``plane_layer`` net class, create an inner-layer copper zone and attempt
+collision-checked ground escapes. Blocked pads remain unconnected for the final
+connectivity gate; this step does not guarantee complete plane attachment.
 
 Runs under the KiCad ``pcbnew`` python (``@kicad_python``); ``pcbnew`` is imported
 lazily so the module imports fine elsewhere.

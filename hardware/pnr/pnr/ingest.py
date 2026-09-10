@@ -95,13 +95,29 @@ def _phys_bbox_mm(fp) -> Tuple[float, float]:
     The default ``GetBoundingBox()`` includes silkscreen text, which inflates a
     tiny 0402 to ~4x5 mm. We want the copper/silk body for placement, so we ask
     for the text-excluded box (the arg signature varies across KiCad versions)."""
+    # Measure in the local frame; placement applies rotation separately.
+    fp = fp.Duplicate()
+    fp.SetOrientationDegrees(0)
+    origin = fp.GetPosition()
     for args in ((False, False), (False,), ()):
         try:
             bb = fp.GetBoundingBox(*args)
-            return (_mm(bb.GetWidth()), _mm(bb.GetHeight()))
+            return (2 * _mm(max(abs(bb.GetLeft() - origin.x), abs(bb.GetRight() - origin.x))),
+                    2 * _mm(max(abs(bb.GetTop() - origin.y), abs(bb.GetBottom() - origin.y))))
         except Exception:  # pragma: no cover - version shim
             continue
     raise RuntimeError("GetBoundingBox unavailable")
+
+
+def _atopile_address(fp) -> str:
+    """KiCad 8/9 compatibility for the source path stored by atopile."""
+    if hasattr(fp, "GetFields"):
+        for item in fp.GetFields():
+            if item.GetName() == "atopile_address":
+                return item.GetText()
+    if hasattr(fp, "GetProperties"):
+        return str(fp.GetProperties().get("atopile_address", ""))
+    return ""
 
 
 def _component(fp, frame: _Frame) -> Component:
@@ -118,8 +134,14 @@ def _component(fp, frame: _Frame) -> Component:
     # text-excluded body box (any silk keep-out area is drawn on the body).
     try:
         layer = pcbnew.B_CrtYd if fp.IsFlipped() else pcbnew.F_CrtYd
-        cyard = fp.GetCourtyard(layer).BBox()
-        courtyard_mm = (_mm(cyard.GetWidth()), _mm(cyard.GetHeight()))
+        local_fp = fp.Duplicate()
+        local_fp.SetOrientationDegrees(0)
+        cyard = local_fp.GetCourtyard(layer).BBox()
+        origin = local_fp.GetPosition()
+        courtyard_mm = (2 * _mm(max(abs(cyard.GetLeft() - origin.x), abs(cyard.GetRight() - origin.x))),
+                        2 * _mm(max(abs(cyard.GetTop() - origin.y), abs(cyard.GetBottom() - origin.y))))
+        if cyard.GetWidth() <= 0 or cyard.GetHeight() <= 0:
+            courtyard_mm = bbox_mm
         if courtyard_mm[0] <= 0 or courtyard_mm[1] <= 0:
             courtyard_mm = bbox_mm
     except Exception:  # pragma: no cover - version shim
@@ -174,6 +196,7 @@ def _component(fp, frame: _Frame) -> Component:
 
     return Component(
         ref=fp.GetReference(),
+        address=_atopile_address(fp),
         footprint=fp.GetFPIDAsString(),
         pos=(x, y),
         rot=fp.GetOrientationDegrees(),

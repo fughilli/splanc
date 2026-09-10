@@ -90,6 +90,7 @@ class BoardSpec:
     height: Optional[float] = None
     layers: int = 2
     default_clearance_mm: float = DEFAULT_CLEARANCE_MM
+    references_on_fab: bool = False
 
 
 @dataclass
@@ -193,6 +194,8 @@ class CompiledConstraints:
     net_classes: List[NetClass] = field(default_factory=list)
     diff_pairs: List[DiffPair] = field(default_factory=list)
     length_matches: List[LengthMatch] = field(default_factory=list)
+    copper_keepouts: List[Dict] = field(default_factory=list)
+    mounting_holes: List[Dict] = field(default_factory=list)
 
     @property
     def hard(self) -> List[Constraint]:
@@ -289,6 +292,9 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
     fab = compiled.fab
     return {
         "layers": int(compiled.board.layers),
+        "references_on_fab": compiled.board.references_on_fab,
+        "copper_keepouts": compiled.copper_keepouts,
+        "mounting_holes": compiled.mounting_holes,
         "default_clearance_mm": float(compiled.board.default_clearance_mm),
         "fab": {
             "track_width_mm": fab.track_width_mm,
@@ -342,6 +348,7 @@ def _parse_board(raw: Dict) -> BoardSpec:
         height=outline.get("h"),
         layers=int(raw.get("layers", 2)),
         default_clearance_mm=float(raw.get("default_clearance_mm", DEFAULT_CLEARANCE_MM)),
+        references_on_fab=bool(raw.get("references_on_fab", False)),
     )
 
 
@@ -364,7 +371,100 @@ def _parse_fab(raw: Dict) -> FabProfile:
     return d
 
 
-def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstraints:
+def _resolve_addresses(doc, addresses, pin_nets):
+    """Resolve @source.path selectors, failing closed on stale/ambiguous paths.
+
+    Lists may contain globs (e.g. @board.converter.*). Scalar values and mapping
+    keys must resolve to one component. Never silently drop a source constraint.
+    """
+    def matches(value):
+        result = [ref for path, ref in addresses.items()
+                  if fnmatch.fnmatchcase(path, value[1:])]
+        if not result:
+            raise ConstraintError(f"unknown component address {value!r}")
+        return sorted(set(result))
+
+    def visit(value):
+        if isinstance(value, str) and value.startswith("net@"):
+            net = pin_nets.get(value[4:])
+            if not net:
+                raise ConstraintError(f"unknown or unconnected net endpoint {value!r}")
+            return net
+        if isinstance(value, str) and value.startswith("@"):
+            refs = matches(value)
+            if len(refs) != 1:
+                raise ConstraintError(f"ambiguous component address {value!r}: {refs}")
+            return refs[0]
+        if isinstance(value, list):
+            result = []
+            for item in value:
+                if isinstance(item, str) and item.startswith("@"):
+                    result.extend(matches(item))
+                else:
+                    result.append(visit(item))
+            return result
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                resolved = visit(key)
+                if resolved in result:
+                    raise ConstraintError(f"duplicate resolved component key {resolved!r}")
+                result[resolved] = visit(item)
+            return result
+        return value
+    return visit(doc)
+
+
+def _expand_layout_arrays(doc):
+    """Instantiate one local placement template at evenly spaced module origins."""
+    import copy
+    import math
+    doc = copy.deepcopy(doc)
+    arrays = doc.pop('layout_array', [])
+    if not isinstance(arrays, list):
+        raise ConstraintError('layout_array must be a list')
+    fixed = doc.setdefault('fixed', {})
+    if not isinstance(fixed, dict):
+        raise ConstraintError('fixed must be a mapping')
+
+    def xy(value, label):
+        if (not isinstance(value, (list, tuple)) or len(value) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                       or not math.isfinite(v) for v in value)):
+            raise ConstraintError(f'{label} requires two finite coordinates')
+        return value
+
+    for array in arrays:
+        if not isinstance(array, dict):
+            raise ConstraintError('layout_array entry must be a mapping')
+        instances = array.get('instances')
+        members = array.get('members')
+        if (not isinstance(instances, list) or not instances
+                or any(not isinstance(s, str) or not s or any(c in s for c in '@*?[]')
+                       for s in instances) or len(set(instances)) != len(instances)):
+            raise ConstraintError('layout_array requires unique, literal module paths')
+        if not isinstance(members, dict) or not members:
+            raise ConstraintError('layout_array requires a nonempty members template')
+        origin = xy(array.get('origin'), 'layout_array.origin')
+        step = xy(array.get('step'), 'layout_array.step')
+        if len(instances) > 1 and all(v == 0 for v in step):
+            raise ConstraintError('layout_array instances require nonzero spacing')
+        for index, instance in enumerate(instances):
+            for member, spec in members.items():
+                if (not isinstance(member, str) or not member
+                        or any(c in member for c in '@*?[]') or not isinstance(spec, dict)):
+                    raise ConstraintError('layout_array members require literal paths and poses')
+                local = xy(spec.get('at'), 'layout_array member.at')
+                selector = '@' + instance + '.' + member
+                if selector in fixed:
+                    raise ConstraintError(f'layout_array duplicates fixed pose {selector}')
+                pose = copy.deepcopy(spec)
+                pose['at'] = [origin[k] + index * step[k] + local[k] for k in range(2)]
+                fixed[selector] = pose
+    return doc
+
+
+def compile_constraints(doc: Dict, known_refs: Sequence[str], addresses=None, pin_nets=None) -> CompiledConstraints:
     """Compile a parsed constraints document against a netlist's refs.
 
     ``doc`` is the already-parsed YAML mapping (see :func:`load_constraints` for
@@ -378,6 +478,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
     if not isinstance(doc, dict):
         raise ConstraintError("top level must be a mapping")
 
+    doc = _resolve_addresses(_expand_layout_arrays(doc), addresses or {}, pin_nets or {})
     warnings: List[str] = []
     board = _parse_board(doc.get("board") or {})
     fab = _parse_fab(doc.get("fab") or {})
@@ -395,6 +496,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
         "net_class",
         "diff_pair",
         "length_match",
+        "copper_keepout",
     }
     for key in doc:
         if key not in known_keys:
@@ -478,18 +580,31 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
             )
         )
 
-    # group: SOFT — attract members together, near an anchor.
+    # Groups are soft by default; hard groups survive legalization.
     for entry in doc.get("group") or []:
         entry = entry or {}
         members = entry.get("members") or []
+        warnings_before_group = len(warnings)
         refs = _expand_refs(members, known_refs, warnings, "group.members")
         anchor = entry.get("anchor")
+        hard = entry.get("hard", False)
+        if not isinstance(hard, bool):
+            raise ConstraintError("group.hard must be a boolean")
+        if hard:
+            if not refs or len(warnings) != warnings_before_group:
+                raise ConstraintError("hard group requires known, nonempty members")
+            radius = entry.get("radius_mm")
+            if isinstance(radius, bool) or not isinstance(radius, (int, float)) or not 0 < radius < float("inf"):
+                raise ConstraintError("hard group requires a finite positive radius_mm")
+            fixed_refs = {r for c in constraints if c.kind == "fixed" for r in c.refs}
+            if anchor not in fixed_refs:
+                raise ConstraintError("hard group requires an explicitly fixed anchor")
         if anchor is not None and anchor not in known_refs:
             warnings.append(f"group.anchor: unknown component ref {anchor!r}")
         constraints.append(
             Constraint(
                 kind="group",
-                enforcement=Enforcement.SOFT,
+                enforcement=Enforcement.HARD if hard else Enforcement.SOFT,
                 refs=refs,
                 params={"anchor": anchor, "radius_mm": entry.get("radius_mm")},
                 weight=float(entry.get("weight", DEFAULT_WEIGHTS["group"])),
@@ -544,6 +659,49 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
             )
         )
 
+    # Mechanical fastener envelopes reserve both faces and every copper layer.
+    import math
+    mounting_holes = []
+    hole_names = set()
+    for entry in doc.get('mounting_hole') or []:
+        name = entry.get('name')
+        at = entry.get('at', [])
+        drill = entry.get('drill_mm')
+        diameter = entry.get('clearance_diameter_mm')
+        values = list(at) + [drill, diameter] if isinstance(at, (list, tuple)) else []
+        if (not isinstance(name, str) or not name or name in hole_names
+                or len(values) != 4 or any(isinstance(v, bool)
+                    or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values)
+                or not 0 < drill < diameter):
+            raise ConstraintError('mounting_hole requires unique name, finite XY and 0 < drill < clearance diameter')
+        radius = diameter / 2
+        if board.width is None or board.height is None:
+            raise ConstraintError('mounting_hole requires explicit board dimensions')
+        if (at[0]-radius < 0 or at[1]-radius < 0
+                or at[0]+radius > board.width or at[1]+radius > board.height):
+            raise ConstraintError('mounting_hole clearance envelope must fit inside board')
+        hole_names.add(name)
+        mounting_holes.append({'name': name, 'at': list(at), 'drill_mm': drill,
+                               'clearance_diameter_mm': diameter})
+        x, y = at
+        constraints.append(Constraint(kind='keepout', enforcement=Enforcement.HARD,
+            refs=(), name='mount:'+name, params={'polygon': [
+                [x-radius,y-radius],[x+radius,y-radius],
+                [x+radius,y+radius],[x-radius,y+radius]]}))
+
+    copper_keepouts = []
+    for entry in doc.get('copper_keepout') or []:
+        ref = entry.get('ref')
+        rect = entry.get('rect_mm', [])
+        if ref not in known_refs:
+            raise ConstraintError(f'copper_keepout: unknown ref {ref!r}')
+        if len(rect) != 4 or not all(isinstance(x, (int,float)) for x in rect):
+            raise ConstraintError('copper_keepout: rect_mm needs four numbers')
+        if rect[0] >= rect[2] or rect[1] >= rect[3]:
+            raise ConstraintError('copper_keepout: rectangle must have positive area')
+        copper_keepouts.append({'name':str(entry.get('name') or ref),
+                                'ref':ref, 'rect_mm':list(rect)})
+
     return CompiledConstraints(
         board=board,
         constraints=constraints,
@@ -553,6 +711,8 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
         net_classes=net_classes,
         diff_pairs=diff_pairs,
         length_matches=length_matches,
+        copper_keepouts=copper_keepouts,
+        mounting_holes=mounting_holes,
     )
 
 

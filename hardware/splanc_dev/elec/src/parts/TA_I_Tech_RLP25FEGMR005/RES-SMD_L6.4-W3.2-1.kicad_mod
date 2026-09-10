@@ -1,0 +1,137 @@
+(footprint "TA_I_Tech_RLP25FEGMR005:RES-SMD_L6.4-W3.2-1"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "8c521536-8a58-43db-a5a2-ace0ba706c1b")
+	(property "Reference" "REF**"
+		(at 0 -4)
+		(layer "F.SilkS")
+		(uuid "1ebd42db-cb5b-42e0-8207-8831b6355cf7")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "RES-SMD_L6.4-W3.2-1"
+		(at 0 4)
+		(layer "F.Fab")
+		(uuid "e0afbb85-ff68-4bfc-bc16-2ca02a77b421")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center -3.2 1.6)
+		(end -3.17 1.6)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "1cbc5181-cb38-4996-8de6-e01daebe8c22")
+	)
+	(fp_line
+		(start -1.89 -2.03)
+		(end -4.69 -2.03)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "2e6293b5-7794-4735-94ae-58a29d15690a")
+	)
+	(fp_line
+		(start -4.69 -2.03)
+		(end -4.69 2.04)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "0be14047-5cc9-44f7-9fac-d332449b4f71")
+	)
+	(fp_line
+		(start -4.69 2.04)
+		(end -1.77 2.04)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "0f4695cc-b088-4331-8e73-48ebf49054b6")
+	)
+	(fp_line
+		(start 1.89 2.16)
+		(end 4.69 2.16)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "964e2ad4-abdb-439a-b2ca-89a60d797d7a")
+	)
+	(fp_line
+		(start 4.69 2.16)
+		(end 4.69 -2.03)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "83bcacc0-9460-4edc-a00e-b256ebc7cf7f")
+	)
+	(fp_line
+		(start 4.69 -2.03)
+		(end 1.76 -2.03)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "7912766d-a4f9-4025-8ffe-a5e6f760f860")
+	)
+	(pad "2" smd rect
+		(at 3.1 0 0)
+		(size 2.5 3.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "69eb0758-370f-42ca-a2bb-0a8f577218a9")
+	)
+	(pad "1" smd rect
+		(at -3.1 0 0)
+		(size 2.5 3.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "d81866d4-a080-4287-a48a-75bdea1a6708")
+	)
+	(model "${KIPRJMOD}/../../src/parts/TA_I_Tech_RLP25FEGMR005/RES-SMD_L6.4-W3.2-1.step"
+		(offset
+			(xyz 0 0 -0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

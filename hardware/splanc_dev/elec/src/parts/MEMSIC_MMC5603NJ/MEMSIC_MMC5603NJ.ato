@@ -1,0 +1,21 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component MEMSIC_MMC5603NJ_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C404328", date="2026-09-09T22:49:35.768898+00:00", checksum="59b9bc1a17592dc16dcbcfd56944a1761a368e8ee4a939d6b41b7fdffa53f8c2">
+
+    trait is_atomic_part<manufacturer="MEMSIC", partnumber="MMC5603NJ", footprint="FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL.kicad_mod", symbol="MMC5603NJ.kicad_sym", model="FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C404328", manufacturer="MEMSIC", partno="MMC5603NJ">
+    trait has_designator_prefix<prefix="U">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/04cae59a31e0e5a1a28fd793c4cbc8bd.pdf?productCode=C404328">
+
+    # pins
+    signal SCL ~ pin A2
+    signal SDA ~ pin B2
+    signal VDD ~ pin B1
+    signal VSA ~ pin A1

@@ -1,0 +1,10 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component Vishay_WSL25122L000FEA_package:
+    trait is_atomic_part<manufacturer="Vishay", partnumber="WSL25122L000FEA", footprint="WSL2512_2mOhm.kicad_mod", symbol="WSL25122L000FEA.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C844899", manufacturer="Vishay", partno="WSL25122L000FEA">
+    trait has_designator_prefix<prefix="R">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

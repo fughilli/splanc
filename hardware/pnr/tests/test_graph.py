@@ -84,3 +84,16 @@ class GraphRoundTripTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SourceAddressRoundTripTest(unittest.TestCase):
+    def test_address_survives_json_seam(self):
+        graph = _sample()
+        graph.components[0].address = 'board.pd.ctrl'
+        restored = BoardGraph.from_json(graph.to_json())
+        self.assertEqual(restored.components[0].address, 'board.pd.ctrl')
+
+    def test_old_graph_without_addresses_loads(self):
+        doc = _sample().to_dict()
+        for component in doc['components']:
+            component.pop('address')
+        self.assertTrue(all(c.address == '' for c in BoardGraph.from_dict(doc).components))

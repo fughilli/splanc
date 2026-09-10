@@ -126,8 +126,15 @@ def _astar(
         heapq.heappush(open_heap, (h(s), tie, s))
         tie += 1
 
+    closed: Set[Cell] = set()
     while open_heap:
         _f, _t, cur = heapq.heappop(open_heap)
+        # A cell can be queued repeatedly as cheaper paths are discovered.
+        # With the consistent octile heuristic, its first pop is optimal;
+        # expanding stale entries again makes blocked routes needlessly costly.
+        if cur in closed:
+            continue
+        closed.add(cur)
         if cur in tset:
             path = [cur]
             while cur in came:

@@ -180,8 +180,8 @@ _LAYER_NAMES = {
 
 def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
     """Pour the ``plane_layer`` net classes as filled copper zones + via-drop each
-    of their pads to the plane. **Run after the detailed route** — a FreeRouting
-    DSN/SES round-trip drops pre-poured zones.
+    of their pads to the plane. Existing net/layer zones are reused and refilled
+    so routing restarts do not duplicate pours or their fanout.
 
     High-fanout ground / power nets (e.g. `lv` with 75 pads) are hopeless to
     trace-route; on a multilayer board they belong on a plane, where each pad
@@ -206,6 +206,7 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             pad_pos.setdefault(pad.GetNetname(), []).append(pad.GetPosition())
 
     zones = []  # (area, zone) for priority assignment
+    reused = 0
     for nc in rules.get("net_classes", []):
         layer = nc.get("plane_layer")
         if not layer or layer not in layer_id:
@@ -214,6 +215,15 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             net = board.FindNet(net_name)
             pts = pad_pos.get(net_name, [])
             if net is None or not pts:
+                continue
+            # Specctra import into the private board preserves existing pours.
+            # A refill must not stack duplicate planes or add more dogbones
+            # around pads that were already fanned out on the previous pass.
+            existing = [z for z in board.Zones()
+                        if not z.GetIsRuleArea() and z.GetNetCode() == net.GetNetCode()
+                        and z.IsOnLayer(layer_id[layer])]
+            if existing:
+                reused += len(existing)
                 continue
             xs = [p.x for p in pts]
             ys = [p.y for p in pts]
@@ -236,19 +246,19 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
                 outline.Append(pcbnew.VECTOR2I(int(x), int(y)))
             board.Add(z)
-            _dogbone_fanout_net(board, net.GetNetCode())
+            _dogbone_fanout_net(board, net.GetNetCode(), rules=rules)
             zones.append(((x1 - x0) * (y1 - y0), z))
 
     # Priority: smaller zones fill on top of (carve out of) larger overlapping ones.
     for rank, (_area, z) in enumerate(sorted(zones, key=lambda az: -az[0])):
         z.SetAssignedPriority(rank)
 
-    if zones:
+    if zones or reused:
         try:
             pcbnew.ZONE_FILLER(board).Fill(board.Zones())
-        except Exception:  # pragma: no cover - version shim
-            pass
-    return len(zones)
+        except Exception as exc:  # pragma: no cover - version shim
+            raise RuntimeError('Copper plane fill failed') from exc
+    return len(zones) + reused
 
 
 def _type_plane_layers(board, rules: dict) -> None:
@@ -266,108 +276,165 @@ def _type_plane_layers(board, rules: dict) -> None:
                 pass
 
 
+def _segment_distance_sq(a, b, c, d):
+    """Squared minimum separation of two closed 2D line segments."""
+    def cross(p, q, r):
+        return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
+
+    def point_dist(p, u, v):
+        dx, dy = v[0]-u[0], v[1]-u[1]
+        den = dx*dx + dy*dy
+        t = max(0., min(1., ((p[0]-u[0])*dx+(p[1]-u[1])*dy)/den)) if den else 0.
+        return (p[0]-u[0]-t*dx)**2 + (p[1]-u[1]-t*dy)**2
+
+    if (cross(a, b, c)*cross(a, b, d) < 0 and
+            cross(c, d, a)*cross(c, d, b) < 0):
+        return 0.
+    return min(point_dist(a,c,d), point_dist(b,c,d),
+               point_dist(c,a,b), point_dist(d,a,b))
+
+
 def _collect_obstacles(board):
-    """(x, y, radius, netcode) for every pad + track/via endpoint — the copper a
-    fanout via/trace must clear. Coarse bounding circles (safe for keep-away)."""
+    """Conservative copper capsules (start, end, radius, net code).
+
+    Pad bounding-box diagonals enclose rotated/custom copper. Straight tracks
+    are full capsules, not endpoint discs. Arcs use their enclosing box.
+    An unreadable track collection raises instead of silently ignoring copper.
+    """
+    import math
+    import pcbnew
     obs = []
     for fp in board.GetFootprints():
         for pad in fp.Pads():
-            p = pad.GetPosition()
-            sz = pad.GetSize()
-            obs.append((p.x, p.y, max(sz.x, sz.y) / 2.0, pad.GetNetCode()))
-    try:  # BOARD.GetTracks() has a flaky SWIG iterator in this KiCad 9 python
-        tracks = list(board.GetTracks())
-    except TypeError:  # pragma: no cover - version shim
-        tracks = []
-        sys.stderr.write("planes: GetTracks() not iterable; fanout avoids pads only\n")
-    for t in tracks:
-        code = t.GetNetCode()
-        w = t.GetWidth() / 2.0
-        for pt in (t.GetStart(), t.GetEnd()):
-            obs.append((pt.x, pt.y, w, code))
+            box = pad.GetBoundingBox()
+            center = box.GetCenter()
+            point = (center.x, center.y)
+            radius = math.hypot(box.GetWidth(), box.GetHeight()) / 2.
+            obs.append((point, point, radius, pad.GetNetCode()))
+            drill = pad.GetDrillSize()
+            if drill.x or drill.y:
+                point = (pad.GetPosition().x, pad.GetPosition().y)
+                obs.append((point, point, max(drill.x, drill.y)/2., -1))
+    zones = list(board.Zones())
+    for fp in board.GetFootprints():
+        zones.extend(fp.Zones())
+    for zone in zones:
+        if zone.GetIsRuleArea() and (zone.GetDoNotAllowTracks() or zone.GetDoNotAllowVias()):
+            box = zone.GetBoundingBox()
+            center = box.GetCenter()
+            point = (center.x, center.y)
+            obs.append((point, point, math.hypot(box.GetWidth(),box.GetHeight())/2., -1))
+    for track in list(board.GetTracks()):
+        if isinstance(track, pcbnew.PCB_ARC):
+            box = track.GetBoundingBox()
+            center = box.GetCenter()
+            point = (center.x, center.y)
+            obs.append((point, point, math.hypot(box.GetWidth(), box.GetHeight())/2., track.GetNetCode()))
+        else:
+            start, end = track.GetStart(), track.GetEnd()
+            width = track.GetFrontWidth() if isinstance(track, pcbnew.PCB_VIA) else track.GetWidth()
+            obs.append(((start.x,start.y), (end.x,end.y), width/2., track.GetNetCode()))
+            if isinstance(track, pcbnew.PCB_VIA):
+                point = (start.x, start.y)
+                obs.append((point, point, track.GetDrillValue()/2., -1))
     return obs
 
 
-def _clear_of_obstacles(vx, vy, keepr, netcode, obstacles) -> bool:
-    """True if a disc of radius ``keepr`` at (vx, vy) clears all other-net copper."""
-    for ox, oy, orad, onet in obstacles:
+def _clear_segment(a, b, radius, netcode, obstacles):
+    # Most obstacles are far away. Reject disjoint bounding boxes before the
+    # more expensive exact segment-distance calculation (same clearance bound).
+    ax0, ax1 = sorted((a[0], b[0]))
+    ay0, ay1 = sorted((a[1], b[1]))
+    for start, end, other_radius, onet in obstacles:
         if onet == netcode:
             continue
-        dx, dy = vx - ox, vy - oy
-        if dx * dx + dy * dy < (keepr + orad) ** 2:
+        limit = (radius + other_radius) ** 2
+        dx = max(0, min(start[0], end[0]) - ax1, ax0 - max(start[0], end[0]))
+        dy = max(0, min(start[1], end[1]) - ay1, ay0 - max(start[1], end[1]))
+        if dx * dx + dy * dy >= limit:
+            continue
+        if _segment_distance_sq(a, b, start, end) < limit:
             return False
     return True
 
 
-def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2) -> int:
-    """Dog-bone fanout: for each pad of ``netcode`` place a through-via *offset*
-    into free space with a short trace (not via-in-pad, which shorts on 0.5 mm
-    pitch — the standard fanout for ≥0.5 mm pitch). The via is pushed outward from
-    the footprint centre and clearance-checked against all other-net copper; the
-    first clear offset wins, else via-in-pad only where the pad is big enough to
-    host one cleanly. The plane fill bonds to the via. Returns pads fanned out."""
+def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=None) -> int:
+    """Add only checked external pad-to-plane escapes; never force via-in-pad.
+
+    Leaves congested pads unrouted for the connectivity gate. Through-hole pads
+    already reach the plane. Conservative obstacles include every copper layer;
+    final KiCad DRC remains authoritative for zones, keepouts and board edges.
+    """
     import math
-
     import pcbnew
-
-    via_d = _nm(0.45)
-    via_r = via_d / 2.0
-    drill_d = _nm(0.25)
-    clr = _nm(clearance_mm)
-    trace_w = _nm(0.25)
+    fab = _fab(rules)
+    via_d = _nm(fab['via_diameter_mm'])
+    via_r = via_d/2.
+    drill_d = _nm(fab['via_drill_mm'])
+    clr = _nm(max(clearance_mm, fab['clearance_mm']))
+    trace_w = _nm(fab['track_width_mm'])
+    via_keep = max(via_r+clr, drill_d/2.+_nm(fab['hole_clearance_mm']))
     obstacles = _collect_obstacles(board)
-
-    def add_via(x, y):
-        v = pcbnew.PCB_VIA(board)
-        v.SetPosition(pcbnew.VECTOR2I(int(x), int(y)))
-        v.SetViaType(pcbnew.VIATYPE_THROUGH)
-        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-        v.SetFrontWidth(via_d)  # KiCad 9: per-via diameter (SetWidth wants a layer)
-        v.SetDrill(drill_d)
-        v.SetNetCode(netcode)
-        board.Add(v)
-
-    added = 0
+    bounds = board.GetBoardEdgesBoundingBox()
+    edge = via_r + _nm(fab['edge_clearance_mm'])
+    added, skipped = 0, []
     for fp in board.GetFootprints():
-        cen = fp.GetPosition()
+        center = fp.GetPosition()
         for pad in fp.Pads():
-            if pad.GetNetCode() != netcode:
+            if pad.GetNetCode() != netcode or pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
                 continue
             pos = pad.GetPosition()
-            sz = pad.GetSize()
-            pr = max(sz.x, sz.y) / 2.0
-            layer = pad.GetLayer()
-            dx, dy = pos.x - cen.x, pos.y - cen.y
-            norm = math.hypot(dx, dy) or 1.0
-            ux, uy = dx / norm, dy / norm
-
-            # A big pad (thermal / through-hole) hosts a via in-pad cleanly.
-            if pr >= via_r + _nm(0.15):
-                add_via(pos.x, pos.y)
-                added += 1
-                continue
-
+            point = (pos.x,pos.y)
+            size = pad.GetSize()
+            # Via outside the complete pad, avoiding unsupported via-in-pad fab.
+            base = math.hypot(size.x,size.y)/2. + via_r + clr
+            angle = math.atan2(pos.y-center.y, pos.x-center.x)
             placed = False
-            base = pr + via_r + clr
-            for extra in (_nm(0.0), _nm(0.25), _nm(0.5), _nm(0.9)):
-                vx = pos.x + ux * (base + extra)
-                vy = pos.y + uy * (base + extra)
-                if _clear_of_obstacles(vx, vy, via_r + clr, netcode, obstacles):
-                    add_via(vx, vy)
-                    t = pcbnew.PCB_TRACK(board)
-                    t.SetStart(pos)
-                    t.SetEnd(pcbnew.VECTOR2I(int(vx), int(vy)))
-                    t.SetWidth(trace_w)
-                    t.SetLayer(layer)
-                    t.SetNetCode(netcode)
-                    board.Add(t)
-                    obstacles.append((vx, vy, via_r, netcode))  # don't stack
+            for extra in (0., .25, .5, .9, 1.5):
+                for delta in (0, 45, -45, 90, -90, 135, -135, 180):
+                    theta = angle + math.radians(delta)
+                    distance = base + _nm(extra)
+                    target = (round(pos.x+math.cos(theta)*distance), round(pos.y+math.sin(theta)*distance))
+                    x,y = target
+                    if not (bounds.GetLeft()+edge <= x <= bounds.GetRight()-edge and
+                            bounds.GetTop()+edge <= y <= bounds.GetBottom()-edge):
+                        continue
+                    if not _clear_segment(target,target,via_keep,netcode,obstacles):
+                        continue
+                    if not _clear_segment(point,target,trace_w/2.+clr,netcode,obstacles):
+                        continue
+                    via = pcbnew.PCB_VIA(board)
+                    via.SetPosition(pcbnew.VECTOR2I(x,y))
+                    via.SetViaType(pcbnew.VIATYPE_THROUGH)
+                    via.SetLayerPair(pcbnew.F_Cu,pcbnew.B_Cu)
+                    via.SetFrontWidth(via_d)
+                    via.SetDrill(drill_d)
+                    via.SetNetCode(netcode)
+                    board.Add(via)
+                    track = pcbnew.PCB_TRACK(board)
+                    track.SetStart(pos)
+                    track.SetEnd(pcbnew.VECTOR2I(x,y))
+                    track.SetWidth(trace_w)
+                    # PAD.GetLayer() is not the copper layer of a flipped pad
+                    # on every KiCad version. Consult its actual layer set.
+                    surface = (pcbnew.B_Cu if pad.IsOnLayer(pcbnew.B_Cu)
+                               and not pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu)
+                    track.SetLayer(surface)
+                    track.SetNetCode(netcode)
+                    board.Add(track)
+                    obstacles.append((target,target,via_r,netcode))
+                    # Hole spacing applies even between vias on the same net.
+                    obstacles.append((target,target,drill_d/2.,-1))
+                    obstacles.append((point,target,trace_w/2.,netcode))
                     added += 1
                     placed = True
                     break
+                if placed:
+                    break
             if not placed:
-                add_via(pos.x, pos.y)  # congested: via-in-pad last resort
-                added += 1
+                skipped.append(f'{fp.GetReference()}.{pad.GetNumber()}')
+    if skipped:
+        sys.stderr.write('planes: no clear fanout for ' + ', '.join(skipped) + '\n')
     return added
 
 
@@ -380,6 +447,37 @@ def _clear_tracks(board) -> int:
         board.Remove(t)
         n += 1
     return n
+
+
+def normalize_item_uuids(board):
+    """Repair duplicate library-child IDs while preserving footprint identities.
+
+    Atopile can clone pads/graphics/fields without regenerating their UUIDs.
+    KiCad's DRC JSON then resolves a violation to the wrong instance. Only
+    duplicated child IDs change, deterministically within the owning footprint;
+    a second pass is a no-op. Duplicate footprint IDs are rejected.
+    """
+    import uuid
+    import pcbnew
+    footprints = list(board.GetFootprints())
+    footprint_ids = [fp.m_Uuid.AsString() for fp in footprints]
+    if len(set(footprint_ids)) != len(footprint_ids):
+        raise ValueError('Duplicate footprint UUIDs: source identity is ambiguous')
+    seen = set(footprint_ids)
+    changed = 0
+    for fp in footprints:
+        namespace = uuid.UUID(fp.m_Uuid.AsString())
+        children = list(fp.Pads()) + list(fp.GraphicalItems()) + list(fp.GetFields()) + list(fp.Zones())
+        for index,item in enumerate(children):
+            original = item.m_Uuid.AsString()
+            if original in seen:
+                candidate = str(uuid.uuid5(namespace, f'{original}:{item.GetClass()}:{index}'))
+                if candidate in seen:
+                    raise ValueError('Unable to assign unique footprint child UUID')
+                item.m_Uuid.Clone(pcbnew.KIID(candidate))
+                changed += 1
+            seen.add(item.m_Uuid.AsString())
+    return changed
 
 
 def apply_placement(
@@ -530,14 +628,49 @@ def patch_project_rules(pro_path: str, rules: Optional[dict] = None) -> bool:
     try:
         with open(pro_path, encoding="utf-8") as fh:
             pro = json.load(fh)
-    except (OSError, ValueError):
-        return False
+    except FileNotFoundError:
+        pro = {"meta": {"version": 3}, "board": {"design_settings": {}}}
+    pro.setdefault("meta", {}).setdefault("version", 3)
     rules_j = pro.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
     rules_j.update(rule_set)
-    for cls in pro.setdefault("net_settings", {}).get("classes", []):
-        cls["clearance"] = fab["clearance_mm"]
-        if cls.get("track_width", 0.0) < fab["track_width_mm"]:
-            cls["track_width"] = fab["track_width_mm"]
+    settings = pro.setdefault("net_settings", {})
+    # Without the version marker KiCad migrates this as an old project and can
+    # silently reset the supplied Default clearance to 0.2mm.
+    settings.setdefault("meta", {})["version"] = 4
+    classes = settings.setdefault("classes", [])
+    by_name = {c["name"]: c for c in classes}
+    default = by_name.get("Default")
+    if default is None:
+        default = {"name": "Default", "priority": 2147483647}
+        classes.append(default)
+        by_name["Default"] = default
+    default.setdefault("priority", 2147483647)
+    default.update(clearance=fab["clearance_mm"], track_width=fab["track_width_mm"],
+                   via_diameter=fab["via_diameter_mm"], via_drill=fab["via_drill_mm"])
+    patterns = settings.setdefault("netclass_patterns", [])
+
+    def add_class(name, spec, nets, priority):
+        cls = by_name.get(name)
+        if cls is None:
+            cls = dict(default, name=name)
+            classes.append(cls)
+            by_name[name] = cls
+        cls["priority"] = priority
+        cls["clearance"] = spec.get("clearance_mm") or fab["clearance_mm"]
+        cls["track_width"] = spec.get("width_mm") or fab["track_width_mm"]
+        for net in nets:
+            patterns[:] = [p for p in patterns if p.get("pattern") != net]
+            patterns.append({"netclass": name, "pattern": net})
+        return cls
+
+    for index, spec in enumerate((rules or {}).get("net_classes", []), 1):
+        add_class(spec["name"], spec, spec.get("nets", []), index)
+    for spec in (rules or {}).get("diff_pairs", []):
+        cls = add_class("dp_" + spec["name"], spec, [spec["p"], spec["n"]], 0)
+        if spec.get("width_mm") is not None:
+            cls["diff_pair_width"] = spec["width_mm"]
+        if spec.get("gap_mm") is not None:
+            cls["diff_pair_gap"] = spec["gap_mm"]
     with open(pro_path, "w", encoding="utf-8") as fh:
         json.dump(pro, fh, indent=2)
     return True
@@ -627,6 +760,102 @@ def emit_routes(
     return n_tracks
 
 
+def apply_copper_keepouts(board, graph, rules, height):
+    """Recreate all-layer copper restrictions in final placement coordinates.
+
+    Atopile 0.15.8 strips footprint rule areas; keeping this in compiled layout
+    rules makes it survive that generation step and the Specctra export.
+    """
+    import math
+    import pcbnew
+    for zone in list(board.Zones()):
+        if zone.GetZoneName().startswith('PNR keepout:'):
+            board.Remove(zone)
+    frame = _WriteFrame(height)
+    for spec in rules.get('copper_keepouts', []):
+        comp = graph.component(spec['ref'])
+        x0,y0,x1,y1 = spec['rect_mm']
+        angle = math.radians(comp.rot)
+        co,si = math.cos(angle),math.sin(angle)
+        zone = pcbnew.ZONE(board)
+        zone.SetIsRuleArea(True)
+        zone.SetZoneName('PNR keepout:'+spec['name'])
+        zone.SetLayerSet(pcbnew.LSET.AllCuMask(board.GetCopperLayerCount()))
+        zone.SetDoNotAllowTracks(True)
+        zone.SetDoNotAllowVias(True)
+        zone.SetDoNotAllowCopperPour(True)
+        zone.SetDoNotAllowPads(False)
+        zone.SetDoNotAllowFootprints(False)
+        polygon = zone.Outline()
+        polygon.NewOutline()
+        for x,y in ((x0,y0),(x1,y0),(x1,y1),(x0,y1)):
+            if comp.side == SIDE_BOTTOM:
+                x = -x
+            polygon.Append(frame.point(comp.pos[0]+co*x-si*y,comp.pos[1]+si*x+co*y))
+        board.Add(zone)
+    return len(rules.get('copper_keepouts', []))
+
+
+def apply_mounting_holes(board, rules, height):
+    """Create unplated enclosure holes and all-layer screw/boss keepouts."""
+    import pcbnew
+    frame = _WriteFrame(height)
+    for fp in list(board.GetFootprints()):
+        if fp.GetValue() == 'PNR mounting hole':
+            board.Remove(fp)
+    for zone in list(board.Zones()):
+        if zone.GetZoneName().startswith('PNR mounting:'):
+            board.Remove(zone)
+    for spec in rules.get('mounting_holes', []):
+        x,y = spec['at']
+        radius = spec['clearance_diameter_mm']/2
+        fp = pcbnew.FOOTPRINT(board)
+        fp.SetReference(spec['name'])
+        fp.SetValue('PNR mounting hole')
+        fp.SetAttributes(pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
+        fp.Reference().SetVisible(False)
+        fp.Value().SetVisible(False)
+        fp.SetPosition(frame.point(x,y))
+        pad = pcbnew.PAD(fp)
+        pad.SetNumber('')
+        pad.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+        pad.SetShape(pcbnew.PAD_SHAPE_CIRCLE)
+        diameter = _nm(spec['drill_mm'])
+        pad.SetSize(pcbnew.VECTOR2I(diameter,diameter))
+        pad.SetDrillSize(pcbnew.VECTOR2I(diameter,diameter))
+        pad.SetLayerSet(pcbnew.LSET.AllCuMask(board.GetCopperLayerCount()))
+        pad.SetPosition(frame.point(x,y))
+        fp.Add(pad)
+        # Matching top/bottom courtyards encode the reserved boss/head envelope.
+        for layer in (pcbnew.F_CrtYd, pcbnew.B_CrtYd):
+            circle = pcbnew.PCB_SHAPE(fp)
+            circle.SetShape(pcbnew.SHAPE_T_CIRCLE)
+            circle.SetCenter(frame.point(x,y))
+            circle.SetEnd(frame.point(x+radius,y))
+            circle.SetLayer(layer)
+            circle.SetWidth(_nm(0.05))
+            fp.Add(circle)
+        board.Add(fp)
+        zone = pcbnew.ZONE(board)
+        zone.SetIsRuleArea(True)
+        zone.SetZoneName('PNR mounting:'+spec['name'])
+        zone.SetLayerSet(pcbnew.LSET.AllCuMask(board.GetCopperLayerCount()))
+        zone.SetDoNotAllowTracks(True)
+        zone.SetDoNotAllowVias(True)
+        zone.SetDoNotAllowCopperPour(True)
+        # NPTH hole is inside its own rule area; component exclusion is enforced
+        # by both-face courtyards plus the conservative placement rectangle.
+        zone.SetDoNotAllowPads(False)
+        zone.SetDoNotAllowFootprints(False)
+        polygon = zone.Outline()
+        polygon.NewOutline()
+        for px,py in ((x-radius,y-radius),(x+radius,y-radius),
+                      (x+radius,y+radius),(x-radius,y+radius)):
+            polygon.Append(frame.point(px,py))
+        board.Add(zone)
+    return len(rules.get('mounting_holes', []))
+
+
 def writeback(
     in_pcb: str,
     graph: BoardGraph,
@@ -644,6 +873,7 @@ def writeback(
     import pcbnew
 
     board = pcbnew.LoadBoard(in_pcb)
+    normalize_item_uuids(board)
     # Read the net-name -> code map up front, while the pcbnew session's iterators
     # are reliable (they flake later).
     net_code = _net_code_map(board) if routes else {}
@@ -652,11 +882,16 @@ def writeback(
     # applying them afterwards does not persist through the save).
     if rules:
         apply_net_classes(board, rules)
+    if rules and rules.get('references_on_fab'):
+        for fp in board.GetFootprints():
+            fp.Reference().SetLayer(pcbnew.B_Fab if fp.IsFlipped() else pcbnew.F_Fab)
     n = apply_placement(board, graph, width=width, height=height, layers=layers)
     # Type the plane layers as POWER so signals stay on the outer layers
     # (F.Cu/B.Cu) and the inner layers carry the ground/power planes (pnr.planes).
     if rules:
         _type_plane_layers(board, rules)
+        apply_copper_keepouts(board, graph, rules, height)
+        apply_mounting_holes(board, rules, height)
     # Emit the own detailed router's signal tracks/vias (replaces FreeRouting).
     if routes:
         fab = _fab(rules)
@@ -671,6 +906,8 @@ def writeback(
     text = frame_region(strip_edge_cuts(text), width, height)
     with open(out_pcb, "w", encoding="utf-8") as fh:
         fh.write(text)
+    if rules and out_pcb.endswith(".kicad_pcb"):
+        patch_project_rules(out_pcb[:-len(".kicad_pcb")] + ".kicad_pro", rules)
     # NB: planes are poured *after* the detailed route (see pnr.planes) — a
     # FreeRouting DSN/SES round-trip drops pre-poured zones.
     return n

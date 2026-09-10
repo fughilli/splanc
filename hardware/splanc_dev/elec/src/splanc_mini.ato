@@ -1,0 +1,357 @@
+#pragma experiment("BRIDGE_CONNECT")
+
+import ElectricPower
+
+from "parts/Espressif_Systems_ESP32_C6_WROOM_1_N8/Espressif_Systems_ESP32_C6_WROOM_1_N8.ato" import Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+from "parts/Global_Connector_Technology_USB4105_GF_A_060/Global_Connector_Technology_USB4105_GF_A_060.ato" import Global_Connector_Technology_USB4105_GF_A_060_package
+from "parts/Texas_Instruments_TLV62569DBVR/Texas_Instruments_TLV62569DBVR.ato" import Texas_Instruments_TLV62569DBVR_package
+from "parts/Texas_Instruments_SN74LVC1T45DBVR/Texas_Instruments_SN74LVC1T45DBVR.ato" import Texas_Instruments_SN74LVC1T45DBVR_package
+from "parts/TDK_InvenSense_ICM_42670_P/TDK_InvenSense_ICM_42670_P.ato" import TDK_InvenSense_ICM_42670_P_package
+from "parts/Bosch_BMP580/Bosch_BMP580.ato" import Bosch_BMP580_package
+from "parts/E_Switch_TL3340AF160QG/E_Switch_TL3340AF160QG.ato" import E_Switch_TL3340AF160QG_package
+from "parts/Splanc_Mini_EOL_V1/Splanc_Mini_EOL_V1.ato" import MiniEolPads
+from "passives.ato" import C100n
+from "passives.ato" import C1u
+from "passives.ato" import C10u
+from "passives.ato" import C10u_0603
+from "passives.ato" import FB600
+from "passives.ato" import L1u
+from "passives.ato" import R2k
+from "passives.ato" import R10k
+from "passives.ato" import R100k
+from "parts/MEMSIC_MMC5603NJ/MEMSIC_MMC5603NJ.ato" import MEMSIC_MMC5603NJ_package
+from "parts/TDK_InvenSense_MMICT5848_00_012/TDK_InvenSense_MMICT5848_00_012.ato" import TDK_InvenSense_MMICT5848_00_012_package
+from "passives.ato" import C4u7
+from "passives.ato" import R45k3
+
+from "pd_input.ato" import PdInput
+from "system_5v.ato" import System5V
+from "parts/Texas_Instruments_TPD2EUSB30ADRTR/Texas_Instruments_TPD2EUSB30ADRTR.ato" import Texas_Instruments_TPD2EUSB30ADRTR_package
+from "parts/TI_TLV70018DDCR/TI_TLV70018DDCR.ato" import TI_TLV70018DDCR_package
+from "passives.ato" import C10n
+from "passives.ato" import R10
+
+from "parts/LITEON_LTST_C190KGKT/LITEON_LTST_C190KGKT.ato" import LITEON_LTST_C190KGKT_package
+from "parts/LITEON_LTST_C190KFKT/LITEON_LTST_C190KFKT.ato" import LITEON_LTST_C190KFKT_package
+
+from "splanc_dev.ato" import LedChannel
+
+module MiniCore:
+    """USB-PD-only Splanc Mini. Full two-port and sensor feature set."""
+
+    # -- Rails ---------------------------------------------------------------
+    vbus = new ElectricPower       # USB-C raw VBUS, including negotiated 20V
+    vbus.voltage = 5V to 21V
+    vsys = new ElectricPower       # protected negotiated USB rail
+    vsys.voltage = 5V to 21V
+    p3v3 = new ElectricPower       # logic rail
+    p3v3.voltage = 3.3V +/- 3%
+    p3v3a = new ElectricPower      # quiet analog rail for the sensors
+    p3v3a.voltage = 3.3V +/- 3%
+    p5v = new ElectricPower        # 5 V boost output for the LED channels
+    p5v.voltage = 5V +/- 5%
+
+    # Common USB, converter and logic ground.
+    vbus.lv ~ vsys.lv
+    vsys.lv ~ p3v3.lv
+    p3v3.lv ~ p5v.lv
+    p3v3.lv ~ p3v3a.lv
+    # 3V3A derived from 3V3 through a ferrite bead (quiet analog island).
+    aferrite = new FB600
+    aferrite.p1 ~ p3v3.hv
+    aferrite.p2 ~ p3v3a.hv
+    a_dec = new C1u
+    a_dec.p1 ~ p3v3a.hv
+    a_dec.p2 ~ p3v3a.lv
+
+    # Shared I2C0 bus (2k2 pull-ups to 3V3A).
+    signal i2c_sda
+    signal i2c_scl
+    sda_pu = new R2k
+    sda_pu.p1 ~ p3v3a.hv
+    sda_pu.p2 ~ i2c_sda
+    scl_pu = new R2k
+    scl_pu.p1 ~ p3v3a.hv
+    scl_pu.p2 ~ i2c_scl
+
+    # -- MCU: ESP32-C6-WROOM-1-N8 -------------------------------------------
+    esp = new Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+    esp.P3V3 ~ p3v3.hv
+    esp.GND ~ p3v3.lv
+    esp_dec = new C100n
+    esp_dec.p1 ~ p3v3.hv
+    esp_dec.p2 ~ p3v3.lv
+    esp_bulk = new C10u_0603
+    esp_bulk.p1 ~ p3v3.hv
+    esp_bulk.p2 ~ p3v3.lv
+    esp.IO6 ~ i2c_sda
+    esp.IO7 ~ i2c_scl
+
+    # Reset (EN): 10k pull-up + 100 nF + button. BOOT (IO9): 10k pull-up + button.
+    en_pullup = new R10k
+    en_pullup.p1 ~ p3v3.hv
+    en_pullup.p2 ~ esp.EN
+    en_cap = new C100n
+    en_cap.p1 ~ esp.EN
+    en_cap.p2 ~ p3v3.lv
+    btn_reset = new E_Switch_TL3340AF160QG_package
+    btn_reset.p1 ~ esp.EN
+    btn_reset.p2 ~ p3v3.lv
+    btn_reset.shell ~ p3v3.lv
+    # ROM download requires GPIO8=1 while GPIO9=0 (ESP32-C6 boot straps).
+    # GPIO8 otherwise floats; keep factory UART recovery deterministic.
+    download_pullup = new R10k
+    download_pullup.p1 ~ p3v3.hv
+    download_pullup.p2 ~ esp.IO8
+    boot_pullup = new R10k
+    boot_pullup.p1 ~ p3v3.hv
+    boot_pullup.p2 ~ esp.IO9
+    btn_boot = new E_Switch_TL3340AF160QG_package
+    btn_boot.p1 ~ esp.IO9
+    btn_boot.p2 ~ p3v3.lv
+    btn_boot.shell ~ p3v3.lv
+
+    # Two user buttons (IO22, IO23) with pull-ups.
+    u1_pullup = new R10k
+    u1_pullup.p1 ~ p3v3.hv
+    u1_pullup.p2 ~ esp.IO22
+    btn_user1 = new E_Switch_TL3340AF160QG_package
+    btn_user1.p1 ~ esp.IO22
+    btn_user1.p2 ~ p3v3.lv
+    btn_user1.shell ~ p3v3.lv
+    u2_pullup = new R10k
+    u2_pullup.p1 ~ p3v3.hv
+    u2_pullup.p2 ~ esp.IO23
+    btn_user2 = new E_Switch_TL3340AF160QG_package
+    btn_user2.p1 ~ esp.IO23
+    btn_user2.p2 ~ p3v3.lv
+    btn_user2.shell ~ p3v3.lv
+
+    # -- USB-C (native USB: JTAG + CDC) -------------------------------------
+    usbc = new Global_Connector_Technology_USB4105_GF_A_060_package
+    usbc.VBUS ~ vbus.hv
+    usbc.GND ~ vbus.lv
+    pd = new PdInput
+    pd.raw_usb ~ vbus
+    pd.logic ~ p3v3
+    pd.cc1 ~ usbc.CC1
+    pd.cc2 ~ usbc.CC2
+    pd.sda ~ i2c_sda
+    pd.scl ~ i2c_scl
+    pd.negotiated ~ vsys
+    converter = new System5V
+    converter.input ~ vsys
+    converter.output ~ p5v
+    converter.logic ~ p3v3
+    usbc.DP1 ~ esp.IO13
+    usbc.DP2 ~ esp.IO13
+    usbc.DN1 ~ esp.IO12
+    usbc.DN2 ~ esp.IO12
+    usb_data_esd = new Texas_Instruments_TPD2EUSB30ADRTR_package
+    usb_data_esd.Dpos ~ esp.IO13
+    usb_data_esd.Dneg ~ esp.IO12
+    usb_data_esd.GND ~ vbus.lv
+
+    # -- 3V3 buck: TLV62569 (5V -> 3V3) -----------------------------------
+    buck = new Texas_Instruments_TLV62569DBVR_package
+    buck.GND ~ p5v.lv
+    buck.VIN ~ p5v.hv
+    buck.EN ~ p5v.hv
+    buck_l = new L1u
+    buck_l.p1 ~ buck.SW
+    buck_l.p2 ~ p3v3.hv
+    fb_top = new R45k3
+    fb_top.p1 ~ p3v3.hv
+    fb_top.p2 ~ buck.FB
+    fb_bot = new R10k
+    fb_bot.p1 ~ buck.FB
+    fb_bot.p2 ~ p3v3.lv
+    buck_in = new C10u
+    buck_in.p1 ~ p5v.hv
+    buck_in.p2 ~ p5v.lv
+    buck_out = new C10u
+    buck_out.p1 ~ p3v3.hv
+    buck_out.p2 ~ p3v3.lv
+
+    # Top-emitting indicators share a two-channel enclosure light-pipe row.
+    # 2k limits nominal LED current to ~0.65mA at 3.3V / Vf=2V.
+    power_led = new LITEON_LTST_C190KGKT_package
+    power_led_r = new R2k
+    power_led_r.p1 ~ p3v3.hv
+    power_led_r.p2 ~ power_led.pos
+    power_led.neg ~ p3v3.lv
+    status_led = new LITEON_LTST_C190KFKT_package
+    status_led_r = new R2k
+    status_led_r.p1 ~ p3v3.hv
+    status_led_r.p2 ~ status_led.pos
+    status_led.neg ~ esp.IO10
+
+    # -- LED channels x2 -----------------------------------------------------
+    led0 = new LedChannel
+    led0.p5v ~ p5v
+    led0.p3v3 ~ p3v3
+    led0.data_in ~ esp.IO0
+    led0.en ~ esp.IO2
+    led0.fault ~ esp.IO3
+    led0.sda ~ i2c_sda
+    led0.scl ~ i2c_scl
+    led0.ina.A0 ~ p3v3.lv        # A0=A1=GND -> 0x40
+    led0.ina.A1 ~ p3v3.lv
+    led1 = new LedChannel
+    led1.p5v ~ p5v
+    led1.p3v3 ~ p3v3
+    led1.data_in ~ esp.IO1
+    led1.en ~ esp.IO4
+    led1.fault ~ esp.IO5
+    led1.sda ~ i2c_sda
+    led1.scl ~ i2c_scl
+    led1.ina.A0 ~ p3v3a.hv       # A0=VS -> 0x41
+    led1.ina.A1 ~ p3v3.lv
+
+    # -- Sensors (I2C0, on 3V3A) --------------------------------------------
+    # ICM-42670-P, I2C 0x68. Keep the stable mpu source address for placement.
+    mpu = new TDK_InvenSense_ICM_42670_P_package
+    mpu.VDD ~ p3v3a.hv
+    mpu.VDDIO ~ p3v3a.hv
+    mpu.GND ~ p3v3a.lv
+    mpu.AP_SDA_AP_SDIO_AP_SDI ~ i2c_sda
+    mpu.AP_SCL_AP_SCLK ~ i2c_scl
+    mpu.AP_SDO_AP_AD0 ~ p3v3a.lv
+    mpu.AP_CS ~ p3v3a.hv
+    mpu.INT1_INT ~ esp.IO21
+    mpu.FSYNC ~ p3v3a.lv
+    mpu.RESV ~ p3v3a.lv
+    mpu_dec = new C100n
+    mpu_dec.p1 ~ p3v3a.hv
+    mpu_dec.p2 ~ p3v3a.lv
+    mpu_io_dec = new C10n
+    mpu_io_dec.p1 ~ p3v3a.hv
+    mpu_io_dec.p2 ~ p3v3a.lv
+    # 4.7uF/25V gives margin over the 2.2uF VDD reservoir requirement.
+    mpu_reservoir = new C4u7
+    mpu_reservoir.p1 ~ p3v3a.hv
+    mpu_reservoir.p2 ~ p3v3a.lv
+
+    # BMP580 pressure/temperature sensor, I2C 0x46 (SDO low).
+    bmp = new Bosch_BMP580_package
+    # Limit power-on inrush even when the upstream rail rises in <10us.
+    bmp_supply_r = new R10
+    bmp_supply_r.p1 ~ p3v3a.hv
+    bmp_supply_r.p2 ~ bmp.VDD
+    bmp.VDDIO ~ bmp.VDD
+    bmp.VSS ~ p3v3a.lv
+    bmp.SCK ~ i2c_scl
+    bmp.SDI ~ i2c_sda
+    bmp.SDO ~ p3v3a.lv
+    bmp.CSB ~ bmp.VDDIO
+    # INT left open; firmware configures push-pull output per Bosch guidance.
+    bmp_dec = new C100n
+    bmp_dec.p1 ~ bmp.VDD
+    bmp_dec.p2 ~ p3v3a.lv
+    bmp_io_dec = new C100n
+    bmp_io_dec.p1 ~ bmp.VDDIO
+    bmp_io_dec.p2 ~ p3v3a.lv
+
+    # MMC5603NJ three-axis compass, I2C 0x30. Avoid high-current loops.
+    compass = new MEMSIC_MMC5603NJ_package
+    compass.VDD ~ p3v3a.hv
+    compass.VSA ~ p3v3a.lv
+    compass.SDA ~ i2c_sda
+    compass.SCL ~ i2c_scl
+    compass_dec = new C100n
+    compass_dec.p1 ~ p3v3a.hv
+    compass_dec.p2 ~ p3v3a.lv
+    compass_reservoir = new C4u7
+    compass_reservoir.p1 ~ p3v3a.hv
+    compass_reservoir.p2 ~ p3v3a.lv
+
+    # T5848 I2S mic: 1.8V supply and explicit translation on all three signals.
+    mic_supply = new TI_TLV70018DDCR_package
+    mic_supply.IN ~ p3v3a.hv
+    mic_supply.EN ~ p3v3a.hv
+    mic_supply.GND ~ p3v3a.lv
+    mic_supply_in = new C1u
+    mic_supply_in.p1 ~ p3v3a.hv
+    mic_supply_in.p2 ~ p3v3a.lv
+    mic_supply_out = new C1u
+    mic_supply_out.p1 ~ mic_supply.OUT
+    mic_supply_out.p2 ~ p3v3a.lv
+    mic = new TDK_InvenSense_MMICT5848_00_012_package
+    mic.VDD ~ mic_supply.OUT
+    mic.GND ~ p3v3a.lv
+    mic.LR ~ p3v3a.lv
+    # WAKE and THSEL NC: acoustic activity detection is not used.
+    mic_dec = new C100n
+    mic_dec.p1 ~ mic_supply.OUT
+    mic_dec.p2 ~ p3v3a.lv
+    mic_data_pd = new R100k
+    mic_data_pd.p1 ~ mic.SD
+    mic_data_pd.p2 ~ p3v3a.lv
+    mic_sck_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_sck_shift.VCCA ~ p3v3a.hv
+    mic_sck_shift.VCCB ~ mic_supply.OUT
+    mic_sck_shift.DIR ~ p3v3a.hv
+    mic_sck_shift.GND ~ p3v3a.lv
+    mic_sck_shift.A ~ esp.IO18
+    mic_sck_shift.B ~ mic.SCK
+    mic_sck_shift_a_dec = new C100n
+    mic_sck_shift_a_dec.p1 ~ p3v3a.hv
+    mic_sck_shift_a_dec.p2 ~ p3v3a.lv
+    mic_sck_shift_b_dec = new C100n
+    mic_sck_shift_b_dec.p1 ~ mic_supply.OUT
+    mic_sck_shift_b_dec.p2 ~ p3v3a.lv
+    mic_ws_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_ws_shift.VCCA ~ p3v3a.hv
+    mic_ws_shift.VCCB ~ mic_supply.OUT
+    mic_ws_shift.DIR ~ p3v3a.hv
+    mic_ws_shift.GND ~ p3v3a.lv
+    mic_ws_shift.A ~ esp.IO19
+    mic_ws_shift.B ~ mic.WS
+    mic_ws_shift_a_dec = new C100n
+    mic_ws_shift_a_dec.p1 ~ p3v3a.hv
+    mic_ws_shift_a_dec.p2 ~ p3v3a.lv
+    mic_ws_shift_b_dec = new C100n
+    mic_ws_shift_b_dec.p1 ~ mic_supply.OUT
+    mic_ws_shift_b_dec.p2 ~ p3v3a.lv
+    mic_sd_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_sd_shift.VCCA ~ mic_supply.OUT
+    mic_sd_shift.VCCB ~ p3v3a.hv
+    mic_sd_shift.DIR ~ mic_supply.OUT
+    mic_sd_shift.GND ~ p3v3a.lv
+    mic_sd_shift.A ~ mic.SD
+    mic_sd_shift.B ~ esp.IO20
+    mic_sd_shift_a_dec = new C100n
+    mic_sd_shift_a_dec.p1 ~ mic_supply.OUT
+    mic_sd_shift_a_dec.p2 ~ p3v3a.lv
+    mic_sd_shift_b_dec = new C100n
+    mic_sd_shift_b_dec.p1 ~ p3v3a.hv
+    mic_sd_shift_b_dec.p2 ~ p3v3a.lv
+
+
+
+    # -- Underside MINI-EOL-V1 pads; hardware/interfaces/mini-eol-v1.json --
+    eol = new MiniEolPads
+    eol.p1 ~ p3v3.lv
+    eol.p3 ~ p3v3.lv
+    eol.p4 ~ p3v3.lv
+    eol.p2 ~ p3v3.lv          # GND
+    eol.p5 ~ p5v.hv           # 5V0_SENSE
+    eol.p6 ~ p3v3.hv          # 3V3_SENSE
+    eol.p7 ~ led0.fault       # CH0_FAULT_N, digital open drain
+    eol.p8 ~ led1.fault       # CH1_FAULT_N, digital open drain
+    eol.p9 ~ led0.chan_out    # CH0_5V_SENSE only; load via LED JST
+    eol.p10 ~ led1.chan_out   # CH1_5V_SENSE only; load via LED JST
+    eol.p11 ~ esp.IO0         # LED_CH0_DATA (FX2 tap)
+    eol.p12 ~ esp.IO1         # LED_CH1_DATA
+    eol.p13 ~ i2c_sda         # I2C_SDA
+    eol.p14 ~ i2c_scl         # I2C_SCL
+    eol.p15 ~ esp.EN          # BTN_RESET_DRV
+    eol.p16 ~ esp.IO9         # BTN_BOOT_DRV
+    eol.p17 ~ esp.IO22        # BTN_USER1_DRV
+    eol.p18 ~ esp.IO23        # BTN_USER2_DRV
+    eol.p19 ~ esp.TXD0        # UART0_TXD
+    eol.p20 ~ esp.RXD0        # UART0_RXD
+
+
+module SplancMini:
+    board = new MiniCore

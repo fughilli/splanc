@@ -1,0 +1,194 @@
+(footprint "MEMSIC_MMC5603NJ:FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "29e7fd3d-974e-4238-8f21-7984260846fc")
+	(property "Reference" "REF**"
+		(at 0 -4.2)
+		(layer "F.SilkS")
+		(uuid "5bfa11ec-e669-43fe-b7c1-5ef7b54f9bfd")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL"
+		(at 0 4.2)
+		(layer "F.Fab")
+		(uuid "e48ffec8-5359-43a4-9740-40ddcc755bde")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center -0.4 -0.4)
+		(end -0.37 -0.4)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "31dddf9a-66c9-4576-8e91-470b73ceb0f0")
+	)
+	(fp_circle
+		(center -0.3 -0.2)
+		(end -0.2 -0.2)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(layer "Cmts.User")
+		(locked no)
+		(uuid "4d3c16c8-e253-49dc-bba7-6042667edadd")
+	)
+	(fp_circle
+		(center -0.2 -0.2)
+		(end -0.15 -0.2)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "e1a51da4-21ca-40df-863d-8e159d8dd2a5")
+	)
+	(fp_circle
+		(center 0.2 -0.2)
+		(end 0.25 -0.2)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "3d829856-ba3d-4843-a0fc-7e3c620daf0b")
+	)
+	(fp_circle
+		(center 0.2 0.2)
+		(end 0.25 0.2)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "19c38bd3-2f5c-4f6e-9811-b4a8e4712d58")
+	)
+	(fp_circle
+		(center -0.2 0.2)
+		(end -0.15 0.2)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "cd43f62b-b777-4ad4-94ff-91325f1af36a")
+	)
+	(fp_circle
+		(center -0.76 -0.25)
+		(end -0.71 -0.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(locked no)
+		(uuid "0ef4a680-c5d5-4341-b58b-6c7dcba322d1")
+	)
+	(fp_line
+		(start 0.47 -0.48)
+		(end 0.47 0.47)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "3cd56b98-c598-4061-91ca-831d53de0971")
+	)
+	(fp_line
+		(start 0.47 0.47)
+		(end -0.48 0.47)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "94882739-c6e9-4007-afcb-7e64836dfc2a")
+	)
+	(fp_line
+		(start -0.48 0.47)
+		(end -0.48 -0.48)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "cb0f8da2-b443-49a7-9862-74825fe49349")
+	)
+	(fp_line
+		(start -0.48 -0.48)
+		(end 0.47 -0.48)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "0feed742-bbd8-45aa-b272-1026761e79d4")
+	)
+	(pad "A1" smd circle
+		(at -0.2 -0.2 0)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "ac17e5cf-6dce-493e-8f45-f26a599ae86f")
+	)
+	(pad "A2" smd circle
+		(at 0.2 -0.2 0)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "5a9566b5-e67e-4b8a-adf6-797ae71fa144")
+	)
+	(pad "B1" smd circle
+		(at -0.2 0.2 0)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "40bf5442-859a-4b1f-9552-aa2201d8e844")
+	)
+	(pad "B2" smd circle
+		(at 0.2 0.2 0)
+		(size 0.2 0.2)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "d78ec993-cd4a-4312-b77d-0f43ff5b955b")
+	)
+	(model "${KIPRJMOD}/../../src/parts/MEMSIC_MMC5603NJ/FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL.step"
+		(offset
+			(xyz 0 0 -0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 270)
+		)
+	)
+	(embedded_fonts no)
+
+(fp_rect (start -0.65 -0.65) (end 0.65 0.65) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "e697b69d-55c7-4cfb-b56e-5008778d2bdb"))
+)

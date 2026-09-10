@@ -7,6 +7,8 @@ hard-legality checks (overlaps, outline containment, fixed poses, keep-outs).
 
 from __future__ import annotations
 
+import math
+
 from typing import Dict, List, Tuple
 
 from pnr.constraints import CompiledConstraints
@@ -15,10 +17,12 @@ from pnr.graph import BoardGraph
 from .geometry import (
     Rect,
     courtyard_rect,
+    occupied_sides,
     keepout_rects,
     outline_size,
     pin_positions,
     resolve_fixed_poses,
+    hard_group_limits,
 )
 
 
@@ -51,7 +55,8 @@ def overlap_pairs(graph: BoardGraph, clearance: float = 0.0) -> List[Tuple[str, 
     for i in range(len(rects)):
         ri = rects[i][1]
         for j in range(i + 1, len(rects)):
-            if ri.overlaps(rects[j][1], gap=clearance):
+            if (set(occupied_sides(graph.components[i])) & set(occupied_sides(graph.components[j]))
+                    and ri.overlaps(rects[j][1], gap=clearance)):
                 out.append((rects[i][0], rects[j][0]))
     return out
 
@@ -104,9 +109,13 @@ def hard_violations(
     width, height = outline_size(graph, constraints)
     poses = resolve_fixed_poses(graph, constraints)
     keepouts = keepout_rects(graph, constraints, poses)
+    limits = hard_group_limits(constraints, poses)
     return {
         "overlaps": overlap_pairs(graph, clearance),
         "outside_outline": outside_outline(graph, width, height, exclude=constraints.locked_refs),
         "fixed_misplaced": misplaced_fixed(graph, poses),
         "keepout": in_keepout(graph, keepouts, clearance),
+        "group_outside": [c.ref for c in graph.components
+                          if any(math.dist(c.pos, (ax, ay)) > radius + 1e-9
+                                 for ax, ay, radius in limits.get(c.ref, ()))],
     }

@@ -181,7 +181,7 @@
 		(layers "F.Cu" "F.Paste" "F.Mask")
 		(uuid "225d23ca-6c45-4561-850b-afd23dc33bec")
 	)
-	(model "${KIPRJMOD}/../../src/parts/Bosch_BMP280/13.STEP"
+	(model "${KIPRJMOD}/../../src/parts/Bosch_BMP280/LGA-8_supplier_visualization.step"
 		(offset
 			(xyz 0 0 -0)
 		)

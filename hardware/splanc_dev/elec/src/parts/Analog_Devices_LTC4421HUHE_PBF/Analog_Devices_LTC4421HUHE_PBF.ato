@@ -1,0 +1,52 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Analog_Devices_LTC4421HUHE_PBF_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C688531", date="2026-09-09T18:32:00.212786+00:00", checksum="980b7b11368f68c84f0961502ba98981e5c51b3edf0b18ea6e2fb8c40baa28d2">
+
+    trait is_atomic_part<manufacturer="Analog Devices", partnumber="LTC4421HUHE#PBF", footprint="QFN-36_L6.0-W5.0-P0.50-BL-EP.kicad_mod", symbol="LTC4421HUHE#PBF.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C688531", manufacturer="Analog Devices", partno="LTC4421HUHE#PBF">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal CASIN ~ pin 12
+    signal CASOUT ~ pin 14
+    signal CPO ~ pin 33
+    signal CPOREF ~ pin 34
+    signal EP ~ pin 37
+    signal EXTVCC ~ pin 32
+    signal GATE1 ~ pin 2
+    signal GATE2 ~ pin 27
+    signal GND ~ pin 31
+    signal INTVCC ~ pin 13
+    signal OUT1 ~ pin 35
+    signal OUT2 ~ pin 30
+    signal OV1 ~ pin 6
+    signal OV2 ~ pin 23
+    signal QUAL ~ pin 15
+    signal RETRY ~ pin 16
+    signal SENSE1 ~ pin 36
+    signal SENSE2 ~ pin 29
+    signal SOURCE1 ~ pin 1
+    signal SOURCE2 ~ pin 28
+    signal TMR1 ~ pin 7
+    signal TMR2 ~ pin 22
+    signal UVF1 ~ pin 4
+    signal UVF2 ~ pin 25
+    signal UVR1 ~ pin 5
+    signal UVR2 ~ pin 24
+    signal V1 ~ pin 3
+    signal V2 ~ pin 26
+    signal nCH1 ~ pin 9
+    signal nCH2 ~ pin 20
+    signal nDISABLE1 ~ pin 8
+    signal nDISABLE2 ~ pin 21
+    signal nFAULT1 ~ pin 11
+    signal nFAULT2 ~ pin 18
+    signal nSHDN ~ pin 17
+    signal nVALID1 ~ pin 10
+    signal nVALID2 ~ pin 19

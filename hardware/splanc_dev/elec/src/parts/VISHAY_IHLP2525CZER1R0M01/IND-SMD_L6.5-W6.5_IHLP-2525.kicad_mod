@@ -1,0 +1,138 @@
+(footprint "VISHAY_IHLP2525CZER1R0M01:IND-SMD_L6.5-W6.5_IHLP-2525"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "e8d450f7-84cb-47ca-81f8-6b949b9a9c73")
+	(property "Reference" "REF**"
+		(at 0 -4)
+		(layer "F.SilkS")
+		(uuid "448e1a2a-399a-4044-9a45-63ad5b98d069")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "IND-SMD_L6.5-W6.5_IHLP-2525"
+		(at 0 4)
+		(layer "F.Fab")
+		(uuid "d36fea8c-f640-42d9-95cb-fb9f5abd73ad")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center -3.43 3.23)
+		(end -3.4 3.23)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "4956f499-0d0e-491c-bff7-d3da779f9222")
+	)
+	(fp_line
+		(start -3.25 -1.95)
+		(end -3.25 -3.25)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "343e1160-2011-446b-a355-bc5521336eeb")
+	)
+	(fp_line
+		(start 3.25 1.95)
+		(end 3.25 3.25)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "e49c9ee6-aeb9-40fd-b2a5-fdec94599ed2")
+	)
+	(fp_line
+		(start 3.25 3.25)
+		(end -3.25 3.25)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "2dc729a9-25bb-4ead-b72d-9f0b790e3a93")
+	)
+	(fp_line
+		(start -3.25 3.25)
+		(end -3.25 1.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "40198e9a-f786-4611-a25e-f8e384d30b56")
+	)
+	(fp_line
+		(start -3.25 -3.25)
+		(end 3.25 -3.25)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "ea38dec7-a305-4476-a0e3-38fab996f653")
+	)
+	(fp_line
+		(start 3.25 -3.25)
+		(end 3.25 -1.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "75e1ea43-9eec-4dce-b38c-e52d5db167a0")
+	)
+	(pad "1" smd rect
+		(at -2.92 0 0)
+		(size 2.42 3.43)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "ad63f0a4-94c8-4467-ab40-31125312e85f")
+	)
+	(pad "2" smd rect
+		(at 2.92 0 0)
+		(size 2.42 3.43)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "a6a43ed1-e71f-4b75-bc70-926b588f09b7")
+	)
+	(model "${KIPRJMOD}/../../src/parts/VISHAY_IHLP2525CZER1R0M01/IND-SMD_L6.5-W6.5-H3.0_IHLP-2525.step"
+		(offset
+			(xyz 0 0 -0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+)

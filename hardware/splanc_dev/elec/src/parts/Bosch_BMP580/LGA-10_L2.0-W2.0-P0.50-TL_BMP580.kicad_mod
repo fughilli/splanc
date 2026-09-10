@@ -1,0 +1,198 @@
+(footprint "Bosch_BMP580:LGA-10_L2.0-W2.0-P0.50-TL_BMP580"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "a24091f0-e05f-44e2-b341-057897493bc9")
+	(property "Reference" "REF**"
+		(at 0 -4.78)
+		(layer "F.SilkS")
+		(uuid "c5185ebe-c451-41c7-bc31-28ad146573dd")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LGA-10_L2.0-W2.0-P0.50-TL_BMP580"
+		(at 0 4.78)
+		(layer "F.Fab")
+		(uuid "dd86df07-90ad-4dc7-be98-36a72f297d4d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_circle
+		(center -1 -1)
+		(end -0.97 -1)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "ba3fffcb-c229-4013-aeff-8a94e0501122")
+	)
+	(fp_circle
+		(center 0.25 -0.25)
+		(end 0.35 -0.25)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(locked no)
+		(uuid "bd0a36ba-b949-472a-a8af-05e37ea86f1f")
+	)
+	(fp_circle
+		(center 0.25 -0.25)
+		(end 0.35 -0.25)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(layer "Cmts.User")
+		(locked no)
+		(uuid "01e9ec8d-4679-4196-93f9-e4194fc8a784")
+	)
+	(fp_line
+		(start -1.5 -0.1)
+		(end -1.5 -0.5)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "46df7bf4-5f36-4a8d-8a3c-2a68b5980350")
+	)
+	(fp_line
+		(start -1.5 -0.5)
+		(end -1.6 -0.4)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "26b1ebaf-b3b2-436a-ae66-15f7e0000b64")
+	)
+	(fp_line
+		(start -1.23 -1.23)
+		(end 1.23 -1.23)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "87cf712b-06b1-4141-b07d-07876c77a897")
+	)
+	(fp_line
+		(start 1.23 -1.23)
+		(end 1.23 1.23)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "e14f3099-863d-4c18-83c2-c93f270075be")
+	)
+	(fp_line
+		(start 1.23 1.23)
+		(end -1.23 1.23)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "8bda13d7-2eb1-408c-9685-0508e3abfcca")
+	)
+	(pad "6" smd rect
+		(at 0.78 0.25 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "4dd5a4bc-8684-4c56-8f71-6a0b3d484148")
+	)
+	(pad "7" smd rect
+		(at 0.78 -0.25 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "e562568f-0d05-493d-8c22-c2e3a1d491d2")
+	)
+	(pad "8" smd rect
+		(at 0.5 -0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "63391055-348f-49db-948e-ae73fe21f048")
+	)
+	(pad "9" smd rect
+		(at 0 -0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "ad5222eb-22a9-48dc-aa00-57455ce453f2")
+	)
+	(pad "10" smd rect
+		(at -0.5 -0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "cd1c43c4-b39b-4854-8782-a1238547e71a")
+	)
+	(pad "1" smd rect
+		(at -0.78 -0.25 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "d7d94182-b3dc-41f6-a869-9dcb7e4f0c00")
+	)
+	(pad "2" smd rect
+		(at -0.78 0.25 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "82367fc8-ca44-4d01-a6f8-1e27cfa7f133")
+	)
+	(pad "3" smd rect
+		(at -0.5 0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "76b09a81-5583-47e2-a705-45559ce69444")
+	)
+	(pad "4" smd rect
+		(at 0 0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "427932d2-bb07-4e8c-ac18-ea65d5672570")
+	)
+	(pad "5" smd rect
+		(at 0.5 0.78 90)
+		(size 0.3 0.3)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "7eeeaa1e-2627-4ec6-a2f1-a85cc0ee547e")
+	)
+	(model "${KIPRJMOD}/../../src/parts/Bosch_BMP580/2.STEP"
+		(offset
+			(xyz 0 -0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+
+(fp_rect (start -1.25 -1.25) (end 1.25 1.25) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd") (uuid "b82809fa-2668-4949-a970-72a42ca07d86"))
+)

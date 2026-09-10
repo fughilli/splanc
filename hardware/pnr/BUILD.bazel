@@ -26,8 +26,10 @@ filegroup(
         "pnr/__init__.py",
         "pnr/graph.py",
         "pnr/ingest.py",
+        "pnr/library_table.py",
         "pnr/planes.py",
         "pnr/quality.py",
+        "pnr/specctra.py",
         "pnr/writeback.py",
     ],
 )
@@ -270,6 +272,26 @@ py_test(
 
 # R4 acceptance: the multi-layer PathFinder maze router (routes, vias, negotiation).
 py_test(
+    name = "route_keepouts_test",
+    size = "small",
+    srcs = ["tests/test_route_keepouts.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_keepouts.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "plane_refill_test",
+    size = "small",
+    srcs = ["tests/test_plane_refill.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_plane_refill.py",
+    deps = [":pnr"],
+)
+
+py_test(
     name = "detail_maze_test",
     size = "small",
     srcs = ["tests/test_detail_maze.py"],
@@ -329,4 +351,28 @@ py_test(
         ":pnr_route",
         requirement("pyyaml"),
     ],
+)
+
+py_test(
+    name = "specctra_test",
+    srcs = ["tests/test_specctra.py"],
+    main = "tests/test_specctra.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "library_table_test",
+    srcs = ["tests/test_library_table.py"],
+    main = "tests/test_library_table.py",
+    deps = [":pnr"],
+)
+
+# Regression: underside test copper and physical pad coordinates after a flip.
+py_test(
+    name = "two_sided_placement_test",
+    size = "small",
+    legacy_create_init = False,
+    srcs = ["tests/test_two_sided_placement.py"],
+    main = "tests/test_two_sided_placement.py",
+    deps = [":pnr", ":pnr_place"],
 )

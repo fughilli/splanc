@@ -62,6 +62,11 @@ def _net_widths(rules: Optional[dict], default_mm: float) -> dict:
     return out
 
 
+def _track_halo(width: float, signal_width: float, clearance: float, pitch: float) -> int:
+    """Cells to reserve so even a fine grid preserves copper separation."""
+    return max(0, math.ceil((width / 2 + clearance + signal_width / 2) / pitch) - 1)
+
+
 @dataclass
 class BoardRoute:
     """Detailed-route result in board (mm) space, ready for write-back."""
@@ -150,6 +155,33 @@ def _mark_plane_regions(
         grid.block_region(region, layers=[la], grow=margin + grid.clearance)
 
 
+def _mark_copper_keepouts(grid: RouteGrid, graph: BoardGraph, rules: Optional[dict]) -> None:
+    """Apply the same physical copper exclusions as KiCad writeback.
+
+    Reserve a conservative bounding box for rotated rule areas and round screw
+    clearances. Grow by via radius so both tracks and through-vias stay clear.
+    """
+    if not rules:
+        return
+    for spec in rules.get('mounting_holes', []):
+        x, y = spec['at']
+        diameter = spec['clearance_diameter_mm']
+        grid.block_region(Rect(x, y, diameter, diameter), grow=grid.via_radius)
+    for spec in rules.get('copper_keepouts', []):
+        comp = graph.component(spec['ref'])
+        x0, y0, x1, y1 = spec['rect_mm']
+        angle = math.radians(comp.rot)
+        co, si = math.cos(angle), math.sin(angle)
+        points = []
+        for x,y in ((x0,y0),(x1,y0),(x1,y1),(x0,y1)):
+            if comp.side == 'bottom':
+                x = -x  # Keep identical to writeback's rule-area transform.
+            points.append((comp.pos[0]+co*x-si*y,comp.pos[1]+si*x+co*y))
+        xs,ys=zip(*points)
+        grid.block_region(Rect((min(xs)+max(xs))/2,(min(ys)+max(ys))/2,
+                               max(xs)-min(xs),max(ys)-min(ys)),grow=grid.via_radius)
+
+
 def _diag_unrouted(grid, net_access, unrouted, via_keepout):
     """Diagnostic: re-route each unrouted net ALONE (fresh occupancy, only the pad
     obstacles) and report how many find a path. Routable-alone ⇒ the net's path
@@ -177,6 +209,7 @@ def route_board(
     pitch: Optional[float] = None,
     track_width_mm: Optional[float] = None,
     max_iters: int = 12,
+    ripup_rounds: int = 12,
     escape_via_in_pad: bool = True,
     escape_dogbone: bool = True,
 ) -> BoardRoute:
@@ -201,12 +234,12 @@ def route_board(
         # would coarsen the whole board); wide nets reserve extra room via a halo.
         floor = track_width_mm + clearance_mm
         pitch = round((floor + 0.02) / 0.05) * 0.05
-    # A wider-than-signal net reserves a track halo so neighbours clear its copper:
+    # Every net reserves enough track halo for this pitch, including signals:
     # other-net centre must be ≥ width/2 + clearance + ½signal from this net's cells.
     net_halo = {
-        n: max(0, math.ceil((w / 2.0 + clearance_mm + track_width_mm / 2.0) / pitch) - 1)
-        for n, w in net_width.items()
-        if w > track_width_mm
+        n: _track_halo(w, track_width_mm, clearance_mm, pitch)
+        for n in (net.name for net in graph.nets)
+        for w in (net_width.get(n, track_width_mm),)
     }
 
     # Via keep-out radius derived from the fab geometry, NOT hardcoded: two vias
@@ -230,6 +263,7 @@ def route_board(
     # Split planes on the inner layers become obstacles the signals route around
     # (matching the 2 mm writeback pour margin).
     _mark_plane_regions(grid, graph, rules, margin=2.0)
+    _mark_copper_keepouts(grid, graph, rules)
     planes = _plane_nets(rules)
 
     # Plan a pin escape per pad (E2 via-in-pad / E3 dog-bone) — the access cell the
@@ -246,7 +280,8 @@ def route_board(
     net_access = {n: cells for n, cells in plan.net_access.items() if len(cells) >= 2}
 
     result = route(
-        grid, net_access, max_iters=max_iters, via_keepout=via_keepout, net_halo=net_halo
+        grid, net_access, max_iters=max_iters, via_keepout=via_keepout, net_halo=net_halo,
+        rrr_rounds=ripup_rounds
     )
 
     if os.environ.get("PNR_DIAG_UNROUTED"):

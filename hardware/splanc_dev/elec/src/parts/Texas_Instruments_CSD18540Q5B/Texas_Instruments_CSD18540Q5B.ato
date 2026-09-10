@@ -1,0 +1,23 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_CSD18540Q5B_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C86513", date="2026-09-09T18:32:29.214032+00:00", checksum="3b66aebf9cded2c15c3ef18678a65cec92b5f3e44097006232ef0bdf00b69189">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="CSD18540Q5B", footprint="VSON-CLIP-8_L5.0-W6.0-P1.27-BL.kicad_mod", symbol="CSD18540Q5B.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C86513", manufacturer="Texas Instruments", partno="CSD18540Q5B">
+    trait has_designator_prefix<prefix="Q">
+
+    # pins
+    signal D ~ pin 5
+    D ~ pin 6
+    D ~ pin 7
+    D ~ pin 8
+    signal G ~ pin 4
+    signal S ~ pin 1
+    S ~ pin 2
+    S ~ pin 3

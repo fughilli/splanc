@@ -1,0 +1,13 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component LITEON_LTST_C190KGKT_package:
+
+    trait is_atomic_part<manufacturer="LITEON", partnumber="LTST-C190KGKT", footprint="LED0603-RD.kicad_mod", symbol="LTST-C190KGKT.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C125094", manufacturer="LITEON", partno="LTST-C190KGKT">
+    trait has_designator_prefix<prefix="LED">
+
+    # pins
+    signal neg ~ pin 1
+    signal pos ~ pin 2

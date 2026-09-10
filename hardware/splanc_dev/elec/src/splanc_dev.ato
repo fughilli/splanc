@@ -3,18 +3,13 @@
 import ElectricPower
 
 from "parts/Espressif_Systems_ESP32_C6_WROOM_1_N8/Espressif_Systems_ESP32_C6_WROOM_1_N8.ato" import Espressif_Systems_ESP32_C6_WROOM_1_N8_package
-from "parts/Korean_Hroparts_TYPE_C_16PIN_2MD_073/Korean_Hroparts_TYPE_C_16PIN_2MD_073.ato" import Korean_Hroparts_TYPE_C_16PIN_2MD_073_package
+from "parts/Global_Connector_Technology_USB4105_GF_A_060/Global_Connector_Technology_USB4105_GF_A_060.ato" import Global_Connector_Technology_USB4105_GF_A_060_package
 from "parts/Texas_Instruments_TLV62569DBVR/Texas_Instruments_TLV62569DBVR.ato" import Texas_Instruments_TLV62569DBVR_package
-from "parts/Texas_Instruments_TPS61088RHLR/Texas_Instruments_TPS61088RHLR.ato" import Texas_Instruments_TPS61088RHLR_package
 from "parts/Texas_Instruments_INA226AIDGSR/Texas_Instruments_INA226AIDGSR.ato" import Texas_Instruments_INA226AIDGSR_package
 from "parts/Texas_Instruments_SN74LVC1T45DBVR/Texas_Instruments_SN74LVC1T45DBVR.ato" import Texas_Instruments_SN74LVC1T45DBVR_package
-from "parts/Alpha___Omega_AO3401A/Alpha___Omega_AO3401A.ato" import Alpha___Omega_AO3401A_package
-from "parts/Changjiang_MMBT3904_RANGE_100_300/Changjiang_MMBT3904_RANGE_100_300.ato" import Changjiang_MMBT3904_RANGE_100_300_package
-from "parts/Microchip_MCP73831T_2ACI_OT/Microchip_MCP73831T_2ACI_OT.ato" import Microchip_MCP73831T_2ACI_OT_package
-from "parts/Analog_Devices_MAX17048G_T10/Analog_Devices_MAX17048G_T10.ato" import Analog_Devices_MAX17048G_T10_package
-from "parts/TDK_InvenSense_MPU_6050/TDK_InvenSense_MPU_6050.ato" import TDK_InvenSense_MPU_6050_package
-from "parts/Bosch_BMP280/Bosch_BMP280.ato" import Bosch_BMP280_package
-from "parts/XKB_TS_1088_AR02016/XKB_TS_1088_AR02016.ato" import XKB_TS_1088_AR02016_package
+from "parts/TDK_InvenSense_ICM_42670_P/TDK_InvenSense_ICM_42670_P.ato" import TDK_InvenSense_ICM_42670_P_package
+from "parts/Bosch_BMP580/Bosch_BMP580.ato" import Bosch_BMP580_package
+from "parts/E_Switch_TL3340AF160QG/E_Switch_TL3340AF160QG.ato" import E_Switch_TL3340AF160QG_package
 from "parts/JST_B2B_PH_K_S_LF__SN/JST_B2B_PH_K_S_LF__SN.ato" import JST_B2B_PH_K_S_LF__SN_package
 from "parts/JST_B3B_PH_K_S_LF__SN/JST_B3B_PH_K_S_LF__SN.ato" import JST_B3B_PH_K_S_LF__SN_package
 from "parts/XKB_PZ254V_12_20P/XKB_PZ254V_12_20P.ato" import XKB_PZ254V_12_20P_package
@@ -31,14 +26,38 @@ from "passives.ato" import R2k
 from "passives.ato" import R5k1
 from "passives.ato" import R10k
 from "passives.ato" import R100k
-from "passives.ato" import Rshunt
+from "passives.ato" import RshuntLed
+from "parts/MEMSIC_MMC5603NJ/MEMSIC_MMC5603NJ.ato" import MEMSIC_MMC5603NJ_package
+from "parts/TDK_InvenSense_MMICT5848_00_012/TDK_InvenSense_MMICT5848_00_012.ato" import TDK_InvenSense_MMICT5848_00_012_package
+from "parts/Texas_Instruments_TPS25200DRVR/Texas_Instruments_TPS25200DRVR.ato" import Texas_Instruments_TPS25200DRVR_package
+from "passives.ato" import C220n
+from "passives.ato" import C4u7
+from "passives.ato" import R31k6
+from "passives.ato" import R45k3
+from "passives.ato" import R42k2
 
+from "pd_input.ato" import PdInput
+from "power_mux.ato" import PowerMux
+from "battery_charger.ato" import BatteryCharger
+from "system_5v.ato" import System5V
+from "fuel_gauge.ato" import FuelGauge
+from "parts/Texas_Instruments_TPD2EUSB30ADRTR/Texas_Instruments_TPD2EUSB30ADRTR.ato" import Texas_Instruments_TPD2EUSB30ADRTR_package
+from "parts/TI_TLV70018DDCR/TI_TLV70018DDCR.ato" import TI_TLV70018DDCR_package
+from "passives.ato" import C10n
+from "passives.ato" import R10
+from "parts/Changzhou_Amass_Elec_XT30PW_M30_G_Y/Changzhou_Amass_Elec_XT30PW_M30_G_Y.ato" import Changzhou_Amass_Elec_XT30PW_M30_G_Y_package
+from "passives.ato" import R3k
+from "passives.ato" import R6k04
+from "passives.ato" import R220k
+
+from "parts/LITEON_LTST_C190KGKT/LITEON_LTST_C190KGKT.ato" import LITEON_LTST_C190KGKT_package
+from "parts/LITEON_LTST_C190KFKT/LITEON_LTST_C190KFKT.ato" import LITEON_LTST_C190KFKT_package
 
 module LedChannel:
     """One monitored + switched 5 V LED channel (docs/hardware §6):
-    shunt -> INA226 (I2C V/I) -> P-FET high-side load switch -> level-shifted
+    shunt -> INA226 (I2C V/I) -> TPS25200 current-limited switch -> level-shifted
     WS2812 data -> 3-pin connector. `en` turns the channel on; `fault` carries
-    the INA226 over-current alert. `sda`/`scl` join the shared I2C bus; the
+    the wire-OR INA226 and eFuse fault alerts. `sda`/`scl` join the shared I2C bus; the
     caller straps `ina.A0`/`ina.A1` to pick the address."""
     p5v = new ElectricPower       # 5 V boost rail in
     p3v3 = new ElectricPower      # logic rail (INA226 supply + shifter A side)
@@ -51,7 +70,7 @@ module LedChannel:
     signal scl
 
     # Shunt + INA226 monitor. Bus voltage sensed on the load side of the shunt.
-    shunt = new Rshunt
+    shunt = new RshuntLed
     ina = new Texas_Instruments_INA226AIDGSR_package
     shunt.p1 ~ p5v.hv
     ina.VINpos ~ p5v.hv
@@ -62,39 +81,45 @@ module LedChannel:
     ina.SDA ~ sda
     ina.SCL ~ scl
     ina.Alert ~ fault
+    fault_pu = new R10k
+    fault_pu.p1 ~ p3v3.hv
+    fault_pu.p2 ~ fault
     ina_dec = new C100n
     ina_dec.p1 ~ p3v3.hv
     ina_dec.p2 ~ p5v.lv
 
-    # High-side load switch: P-FET, gate pulled to source, an NPN pulls the gate
-    # low (channel ON) when `en` is high. The P-FET is the over-current/short
-    # shutoff element (see docs/hardware §6, exercised by the EoL tester).
-    pfet = new Alpha___Omega_AO3401A_package
-    pfet.S ~ shunt.p2
-    pfet.D ~ chan_out
-    gate_pu = new R10k
-    gate_pu.p1 ~ shunt.p2
-    gate_pu.p2 ~ pfet.G
-    nmos = new Changjiang_MMBT3904_RANGE_100_300_package
-    nmos.C ~ pfet.G
-    nmos.E ~ p5v.lv
-    base_r = new R1k
-    base_r.p1 ~ en
-    base_r.p2 ~ nmos.B
+    # Hardware current limiting (~2.3 A typ), independent of MCU/INA226 timing.
+    load_sw = new Texas_Instruments_TPS25200DRVR_package
+    load_sw.IN ~ shunt.p2
+    load_sw.OUT ~ chan_out
+    load_sw.GND ~ p5v.lv
+    load_sw.EP ~ p5v.lv
+    load_sw.EN ~ en
+    load_sw.nFAULT ~ fault
+    load_ilim = new R42k2
+    load_ilim.p1 ~ load_sw.ILIM
+    load_ilim.p2 ~ p5v.lv
+    en_pd = new R100k
+    en_pd.p1 ~ en
+    en_pd.p2 ~ p5v.lv
 
     # 3V3 -> 5V data level shift (DIR high = A->B) + series termination.
     shifter = new Texas_Instruments_SN74LVC1T45DBVR_package
     shifter.VCCA ~ p3v3.hv
-    shifter.VCCB ~ p5v.hv
+    shifter.VCCB ~ chan_out
     shifter.GND ~ p5v.lv
-    shifter.DIR ~ p5v.hv
+    shifter.DIR ~ p3v3.hv    # DIR is referenced to VCCA (TI datasheet).
     shifter.A ~ data_in
     term = new R33
     term.p1 ~ shifter.B
     term.p2 ~ data_out
     shifter_dec = new C100n
-    shifter_dec.p1 ~ p5v.hv
+    shifter_dec.p1 ~ chan_out
     shifter_dec.p2 ~ p5v.lv
+
+    shifter_a_dec = new C100n
+    shifter_a_dec.p1 ~ p3v3.hv
+    shifter_a_dec.p2 ~ p3v3.lv
 
     # 3-pin LED connector: 5V / DATA / GND.
     conn = new JST_B3B_PH_K_S_LF__SN_package
@@ -102,41 +127,39 @@ module LedChannel:
     conn.p2 ~ data_out
     conn.p3 ~ p5v.lv
     chan_bulk = new C10u
-    chan_bulk.p1 ~ p5v.hv
+    chan_bulk.p1 ~ chan_out
     chan_bulk.p2 ~ p5v.lv
 
 
 module SplancDev:
     """Splanc Dev Module (FUG-131). Full board per docs/hardware/splanc-dev-module.md.
 
-    Every part is a real, pre-picked atomic LCSC component (elec/src/parts; common
-    passives wrapped in passives.ato), so the board builds hermetically — no
-    picker/components-API/EasyEDA at build time. Simplifications vs the design
-    doc, all noted inline: VSYS is USB-fed (battery charges but doesn't load-share
-    — doc §5.3), the power-path pushbutton is omitted, and the compass/mic are
-    left off the first spin (their footprints didn't resolve here)."""
+    Engineering design, not released for manufacture. USB PD and protected factory
+    1S/2S packs feed a separate high-current source selector and 5V converter.
+    The charging branch does not carry system discharge current.
+    Instantiate a factory wrapper; the core has no battery-voltage straps.
+    """
 
     # -- Rails ---------------------------------------------------------------
-    vbus = new ElectricPower       # 5 V from USB-C
-    vbus.voltage = 5V +/- 5%
-    vsys = new ElectricPower       # system rail (USB-fed on this board)
-    vsys.voltage = 5V +/- 20%
+    vbus = new ElectricPower       # USB-C raw VBUS, including negotiated 20V
+    vbus.voltage = 5V to 21V
+    vsys = new ElectricPower       # selected battery / negotiated USB rail
+    vsys.voltage = 3V to 21V
     p3v3 = new ElectricPower       # logic rail
     p3v3.voltage = 3.3V +/- 3%
     p3v3a = new ElectricPower      # quiet analog rail for the sensors
     p3v3a.voltage = 3.3V +/- 3%
     p5v = new ElectricPower        # 5 V boost output for the LED channels
     p5v.voltage = 5V +/- 5%
-    vbat = new ElectricPower        # 1S LiPo
-    vbat.voltage = 3.7V +/- 20%
+    vbat = new ElectricPower        # protected factory 1S or 2S pack
+    vbat.voltage = 3V to 8.6V
 
-    # Common ground; VBUS feeds VSYS directly (see docstring).
+    # Common system ground. Pack current sensing is inserted at the connector.
     vbus.lv ~ vsys.lv
     vsys.lv ~ p3v3.lv
     p3v3.lv ~ p5v.lv
     p5v.lv ~ vbat.lv
     p3v3.lv ~ p3v3a.lv
-    vbus.hv ~ vsys.hv
     # 3V3A derived from 3V3 through a ferrite bead (quiet analog island).
     aferrite = new FB600
     aferrite.p1 ~ p3v3.hv
@@ -175,115 +198,98 @@ module SplancDev:
     en_cap = new C100n
     en_cap.p1 ~ esp.EN
     en_cap.p2 ~ p3v3.lv
-    btn_reset = new XKB_TS_1088_AR02016_package
+    btn_reset = new E_Switch_TL3340AF160QG_package
     btn_reset.p1 ~ esp.EN
     btn_reset.p2 ~ p3v3.lv
+    btn_reset.shell ~ p3v3.lv
     boot_pullup = new R10k
     boot_pullup.p1 ~ p3v3.hv
     boot_pullup.p2 ~ esp.IO9
-    btn_boot = new XKB_TS_1088_AR02016_package
+    btn_boot = new E_Switch_TL3340AF160QG_package
     btn_boot.p1 ~ esp.IO9
     btn_boot.p2 ~ p3v3.lv
+    btn_boot.shell ~ p3v3.lv
 
     # Two user buttons (IO22, IO23) with pull-ups.
     u1_pullup = new R10k
     u1_pullup.p1 ~ p3v3.hv
     u1_pullup.p2 ~ esp.IO22
-    btn_user1 = new XKB_TS_1088_AR02016_package
+    btn_user1 = new E_Switch_TL3340AF160QG_package
     btn_user1.p1 ~ esp.IO22
     btn_user1.p2 ~ p3v3.lv
+    btn_user1.shell ~ p3v3.lv
     u2_pullup = new R10k
     u2_pullup.p1 ~ p3v3.hv
     u2_pullup.p2 ~ esp.IO23
-    btn_user2 = new XKB_TS_1088_AR02016_package
+    btn_user2 = new E_Switch_TL3340AF160QG_package
     btn_user2.p1 ~ esp.IO23
     btn_user2.p2 ~ p3v3.lv
+    btn_user2.shell ~ p3v3.lv
 
     # -- USB-C (native USB: JTAG + CDC) -------------------------------------
-    usbc = new Korean_Hroparts_TYPE_C_16PIN_2MD_073_package
+    usbc = new Global_Connector_Technology_USB4105_GF_A_060_package
     usbc.VBUS ~ vbus.hv
-    usbc.EH ~ vbus.lv
-    cc1_r = new R5k1
-    cc1_r.p1 ~ usbc.CC1
-    cc1_r.p2 ~ vbus.lv
-    cc2_r = new R5k1
-    cc2_r.p1 ~ usbc.CC2
-    cc2_r.p2 ~ vbus.lv
-    usbc.Dp1 ~ esp.IO13
-    usbc.Dp2 ~ esp.IO13
-    usbc.Dn1 ~ esp.IO12
-    usbc.Dn2 ~ esp.IO12
-    vbus_bulk = new C10u_0603
-    vbus_bulk.p1 ~ vbus.hv
-    vbus_bulk.p2 ~ vbus.lv
+    usbc.GND ~ vbus.lv
+    pd = new PdInput
+    pd.raw_usb ~ vbus
+    pd.logic ~ p3v3
+    pd.cc1 ~ usbc.CC1
+    pd.cc2 ~ usbc.CC2
+    pd.sda ~ i2c_sda
+    pd.scl ~ i2c_scl
+    mux = new PowerMux
+    mux.usb ~ pd.negotiated
+    mux.battery ~ vbat
+    mux.output ~ vsys
+    mux.logic ~ p3v3
+    mux.hold_usb_off ~ esp.IO15
+    converter = new System5V
+    converter.input ~ vsys
+    converter.output ~ p5v
+    converter.logic ~ p3v3
+    mux.usb_selected_n ~ esp.IO10
+    usbc.DP1 ~ esp.IO13
+    usbc.DP2 ~ esp.IO13
+    usbc.DN1 ~ esp.IO12
+    usbc.DN2 ~ esp.IO12
+    usb_data_esd = new Texas_Instruments_TPD2EUSB30ADRTR_package
+    usb_data_esd.Dpos ~ esp.IO13
+    usb_data_esd.Dneg ~ esp.IO12
+    usb_data_esd.GND ~ vbus.lv
 
-    # -- 3V3 buck: TLV62569 (VSYS -> 3V3) -----------------------------------
+    # -- 3V3 buck: TLV62569 (5V -> 3V3) -----------------------------------
     buck = new Texas_Instruments_TLV62569DBVR_package
-    buck.VIN ~ vsys.hv
-    buck.EN ~ vsys.hv
+    buck.GND ~ p5v.lv
+    buck.VIN ~ p5v.hv
+    buck.EN ~ p5v.hv
     buck_l = new L1u
     buck_l.p1 ~ buck.SW
     buck_l.p2 ~ p3v3.hv
-    fb_top = new R100k
+    fb_top = new R45k3
     fb_top.p1 ~ p3v3.hv
     fb_top.p2 ~ buck.FB
-    fb_bot = new R2k
+    fb_bot = new R10k
     fb_bot.p1 ~ buck.FB
     fb_bot.p2 ~ p3v3.lv
     buck_in = new C10u
-    buck_in.p1 ~ vsys.hv
-    buck_in.p2 ~ vsys.lv
+    buck_in.p1 ~ p5v.hv
+    buck_in.p2 ~ p5v.lv
     buck_out = new C10u
     buck_out.p1 ~ p3v3.hv
     buck_out.p2 ~ p3v3.lv
 
-    # -- 5 V boost: TPS61088 (VSYS -> 5V0, EN from IO10) --------------------
-    # Feedback / current-limit / compensation values are first-pass and flagged
-    # for datasheet verification (docs/hardware §5.3).
-    boost = new Texas_Instruments_TPS61088RHLR_package
-    boost.VIN ~ vsys.hv
-    boost.VCC ~ vsys.hv
-    boost.AGND ~ vsys.lv
-    boost.PGND ~ vsys.lv
-    boost.EN ~ esp.IO10
-    boost.MODE ~ vsys.lv
-    boost.VOUT ~ p5v.hv
-    boost_l = new L1u
-    boost_l.p1 ~ vsys.hv
-    boost_l.p2 ~ boost.SW
-    boost_boot = new C100n
-    boost_boot.p1 ~ boost.SW
-    boost_boot.p2 ~ boost.BOOT
-    boost_fbtop = new R100k
-    boost_fbtop.p1 ~ p5v.hv
-    boost_fbtop.p2 ~ boost.FB
-    boost_fbbot = new R1k
-    boost_fbbot.p1 ~ boost.FB
-    boost_fbbot.p2 ~ vsys.lv
-    boost_ss = new C100n
-    boost_ss.p1 ~ boost.SS
-    boost_ss.p2 ~ vsys.lv
-    boost_ilim = new R10k
-    boost_ilim.p1 ~ boost.ILIM
-    boost_ilim.p2 ~ vsys.lv
-    boost_fsw = new R100k
-    boost_fsw.p1 ~ boost.FSW
-    boost_fsw.p2 ~ vsys.lv
-    boost_comp = new C100n
-    boost_comp.p1 ~ boost.COMP
-    boost_comp.p2 ~ vsys.lv
-    boost_vcc = new C1u
-    boost_vcc.p1 ~ boost.VCC
-    boost_vcc.p2 ~ vsys.lv
-    boost_in = new C22u
-    boost_in.p1 ~ vsys.hv
-    boost_in.p2 ~ vsys.lv
-    boost_out1 = new C22u
-    boost_out1.p1 ~ p5v.hv
-    boost_out1.p2 ~ p5v.lv
-    boost_out2 = new C22u
-    boost_out2.p1 ~ p5v.hv
-    boost_out2.p2 ~ p5v.lv
+    # Top-emitting indicators share a two-channel enclosure light-pipe row.
+    # 2k limits nominal LED current to ~0.65mA at 3.3V / Vf=2V.
+    power_led = new LITEON_LTST_C190KGKT_package
+    power_led_r = new R2k
+    power_led_r.p1 ~ p3v3.hv
+    power_led_r.p2 ~ power_led.pos
+    power_led.neg ~ p3v3.lv
+    charge_led = new LITEON_LTST_C190KFKT_package
+    charge_led_r = new R2k
+    charge_led_r.p1 ~ p3v3.hv
+    charge_led_r.p2 ~ charge_led.pos
+    charge_led.neg ~ charger.ic.STAT
 
     # -- LED channels x2 -----------------------------------------------------
     led0 = new LedChannel
@@ -309,81 +315,156 @@ module SplancDev:
 
     # -- Sensors (I2C0, on 3V3A) --------------------------------------------
     # MPU6050 (0x68): AD0 low. INT -> IO21. REGOUT + CPOUT caps per datasheet.
-    mpu = new TDK_InvenSense_MPU_6050_package
+    # ICM-42670-P, I2C 0x68. Keep the stable mpu source address for placement.
+    mpu = new TDK_InvenSense_ICM_42670_P_package
     mpu.VDD ~ p3v3a.hv
-    mpu.VLOGIC ~ p3v3a.hv
+    mpu.VDDIO ~ p3v3a.hv
     mpu.GND ~ p3v3a.lv
-    mpu.SDA ~ i2c_sda
-    mpu.SCL ~ i2c_scl
-    mpu.AD0 ~ p3v3a.lv
-    mpu.INT ~ esp.IO21
+    mpu.AP_SDA_AP_SDIO_AP_SDI ~ i2c_sda
+    mpu.AP_SCL_AP_SCLK ~ i2c_scl
+    mpu.AP_SDO_AP_AD0 ~ p3v3a.lv
+    mpu.AP_CS ~ p3v3a.hv
+    mpu.INT1_INT ~ esp.IO21
+    mpu.FSYNC ~ p3v3a.lv
+    mpu.RESV ~ p3v3a.lv
     mpu_dec = new C100n
     mpu_dec.p1 ~ p3v3a.hv
     mpu_dec.p2 ~ p3v3a.lv
-    mpu_reg = new C100n
-    mpu_reg.p1 ~ mpu.REGOUT
-    mpu_reg.p2 ~ p3v3a.lv
-    mpu_cp = new C100n
-    mpu_cp.p1 ~ mpu.CPOUT
-    mpu_cp.p2 ~ p3v3a.lv
+    mpu_io_dec = new C10n
+    mpu_io_dec.p1 ~ p3v3a.hv
+    mpu_io_dec.p2 ~ p3v3a.lv
+    # 4.7uF/25V gives margin over the 2.2uF VDD reservoir requirement.
+    mpu_reservoir = new C4u7
+    mpu_reservoir.p1 ~ p3v3a.hv
+    mpu_reservoir.p2 ~ p3v3a.lv
 
-    # BMP280 (0x76): I2C mode (CSB=VDDIO, SDO=GND).
-    bmp = new Bosch_BMP280_package
-    bmp.VDD ~ p3v3a.hv
-    bmp.VDDIO ~ p3v3a.hv
-    bmp.GND ~ p3v3a.lv
+    # BMP580 pressure/temperature sensor, I2C 0x46 (SDO low).
+    bmp = new Bosch_BMP580_package
+    # Limit power-on inrush even when the upstream rail rises in <10us.
+    bmp_supply_r = new R10
+    bmp_supply_r.p1 ~ p3v3a.hv
+    bmp_supply_r.p2 ~ bmp.VDD
+    bmp.VDDIO ~ bmp.VDD
+    bmp.VSS ~ p3v3a.lv
     bmp.SCK ~ i2c_scl
     bmp.SDI ~ i2c_sda
     bmp.SDO ~ p3v3a.lv
-    bmp.CSB ~ p3v3a.hv
+    bmp.CSB ~ bmp.VDDIO
+    # INT left open; firmware configures push-pull output per Bosch guidance.
     bmp_dec = new C100n
-    bmp_dec.p1 ~ p3v3a.hv
+    bmp_dec.p1 ~ bmp.VDD
     bmp_dec.p2 ~ p3v3a.lv
+    bmp_io_dec = new C100n
+    bmp_io_dec.p1 ~ bmp.VDDIO
+    bmp_io_dec.p2 ~ p3v3a.lv
 
-    # -- Battery: charger + fuel gauge + connector --------------------------
-    # MCP73831 charges VBAT from VBUS. PROG (2k) ~ 500 mA. STAT via 1k to 3V3.
-    charger = new Microchip_MCP73831T_2ACI_OT_package
-    charger.VDD ~ vbus.hv
-    charger.VBAT ~ vbat.hv
-    charger.VSS ~ vbus.lv
-    chg_prog = new R2k
-    chg_prog.p1 ~ charger.PROG
-    chg_prog.p2 ~ vbus.lv
-    chg_stat = new R1k
-    chg_stat.p1 ~ p3v3.hv
-    chg_stat.p2 ~ charger.STAT
-    chg_in = new C1u
-    chg_in.p1 ~ vbus.hv
-    chg_in.p2 ~ vbus.lv
-    chg_out = new C1u
-    chg_out.p1 ~ vbat.hv
-    chg_out.p2 ~ vbat.lv
+    # MMC5603NJ three-axis compass, I2C 0x30. Avoid high-current loops.
+    compass = new MEMSIC_MMC5603NJ_package
+    compass.VDD ~ p3v3a.hv
+    compass.VSA ~ p3v3a.lv
+    compass.SDA ~ i2c_sda
+    compass.SCL ~ i2c_scl
+    compass_dec = new C100n
+    compass_dec.p1 ~ p3v3a.hv
+    compass_dec.p2 ~ p3v3a.lv
+    compass_reservoir = new C4u7
+    compass_reservoir.p1 ~ p3v3a.hv
+    compass_reservoir.p2 ~ p3v3a.lv
 
-    # MAX17048 fuel gauge (0x36), powered from the cell, reports over I2C.
-    gauge = new Analog_Devices_MAX17048G_T10_package
-    gauge.VDD ~ vbat.hv
-    gauge.CELL ~ vbat.hv
-    gauge.EP ~ vbat.lv
-    gauge.SDA ~ i2c_sda
-    gauge.SCL ~ i2c_scl
-    gauge_alrt = new R10k
-    gauge_alrt.p1 ~ p3v3.hv
-    gauge_alrt.p2 ~ gauge.nALRT
-    gauge_dec = new C100n
-    gauge_dec.p1 ~ vbat.hv
-    gauge_dec.p2 ~ vbat.lv
+    # T5848 I2S mic: 1.8V supply and explicit translation on all three signals.
+    mic_supply = new TI_TLV70018DDCR_package
+    mic_supply.IN ~ p3v3a.hv
+    mic_supply.EN ~ p3v3a.hv
+    mic_supply.GND ~ p3v3a.lv
+    mic_supply_in = new C1u
+    mic_supply_in.p1 ~ p3v3a.hv
+    mic_supply_in.p2 ~ p3v3a.lv
+    mic_supply_out = new C1u
+    mic_supply_out.p1 ~ mic_supply.OUT
+    mic_supply_out.p2 ~ p3v3a.lv
+    mic = new TDK_InvenSense_MMICT5848_00_012_package
+    mic.VDD ~ mic_supply.OUT
+    mic.GND ~ p3v3a.lv
+    mic.LR ~ p3v3a.lv
+    # WAKE and THSEL NC: acoustic activity detection is not used.
+    mic_dec = new C100n
+    mic_dec.p1 ~ mic_supply.OUT
+    mic_dec.p2 ~ p3v3a.lv
+    mic_data_pd = new R100k
+    mic_data_pd.p1 ~ mic.SD
+    mic_data_pd.p2 ~ p3v3a.lv
+    mic_sck_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_sck_shift.VCCA ~ p3v3a.hv
+    mic_sck_shift.VCCB ~ mic_supply.OUT
+    mic_sck_shift.DIR ~ p3v3a.hv
+    mic_sck_shift.GND ~ p3v3a.lv
+    mic_sck_shift.A ~ esp.IO18
+    mic_sck_shift.B ~ mic.SCK
+    mic_sck_shift_a_dec = new C100n
+    mic_sck_shift_a_dec.p1 ~ p3v3a.hv
+    mic_sck_shift_a_dec.p2 ~ p3v3a.lv
+    mic_sck_shift_b_dec = new C100n
+    mic_sck_shift_b_dec.p1 ~ mic_supply.OUT
+    mic_sck_shift_b_dec.p2 ~ p3v3a.lv
+    mic_ws_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_ws_shift.VCCA ~ p3v3a.hv
+    mic_ws_shift.VCCB ~ mic_supply.OUT
+    mic_ws_shift.DIR ~ p3v3a.hv
+    mic_ws_shift.GND ~ p3v3a.lv
+    mic_ws_shift.A ~ esp.IO19
+    mic_ws_shift.B ~ mic.WS
+    mic_ws_shift_a_dec = new C100n
+    mic_ws_shift_a_dec.p1 ~ p3v3a.hv
+    mic_ws_shift_a_dec.p2 ~ p3v3a.lv
+    mic_ws_shift_b_dec = new C100n
+    mic_ws_shift_b_dec.p1 ~ mic_supply.OUT
+    mic_ws_shift_b_dec.p2 ~ p3v3a.lv
+    mic_sd_shift = new Texas_Instruments_SN74LVC1T45DBVR_package
+    mic_sd_shift.VCCA ~ mic_supply.OUT
+    mic_sd_shift.VCCB ~ p3v3a.hv
+    mic_sd_shift.DIR ~ mic_supply.OUT
+    mic_sd_shift.GND ~ p3v3a.lv
+    mic_sd_shift.A ~ mic.SD
+    mic_sd_shift.B ~ esp.IO20
+    mic_sd_shift_a_dec = new C100n
+    mic_sd_shift_a_dec.p1 ~ mic_supply.OUT
+    mic_sd_shift_a_dec.p2 ~ p3v3a.lv
+    mic_sd_shift_b_dec = new C100n
+    mic_sd_shift_b_dec.p1 ~ p3v3a.hv
+    mic_sd_shift_b_dec.p2 ~ p3v3a.lv
 
-    # Battery connector (JST-PH 2-pin).
-    bat_conn = new JST_B2B_PH_K_S_LF__SN_package
-    bat_conn.p1 ~ vbat.hv
-    bat_conn.p2 ~ vbat.lv
+
+
+    # -- Charger: disabled until the MCU validates pack profile and USB contract.
+    charger = new BatteryCharger
+    charger.usb ~ pd.negotiated
+    charger.battery ~ vbat
+    charger.logic ~ p3v3
+    charger.sda ~ i2c_sda
+    charger.scl ~ i2c_scl
+    charger.enable_charging ~ esp.IO11
+
+    # Dedicated pack-mounted charger NTC; an absent NTC inhibits charging.
+    charger_ntc_conn = new JST_B2B_PH_K_S_LF__SN_package
+    charger_ntc_conn.p1 ~ charger.pack_ntc
+    charger_ntc_conn.p2 ~ vbat.lv
+
+    # XT30 battery connector; pack-negative is isolated from GND by gauge shunts.
+    bat_conn = new Changzhou_Amass_Elec_XT30PW_M30_G_Y_package
+    gauge = new FuelGauge
+    bat_conn.pos ~ vbat.hv
+    bat_conn.pos ~ gauge.pack.hv
+    bat_conn.neg ~ gauge.pack.lv
+    gauge.system_ground ~ vbat.lv
+    gauge.sda ~ i2c_sda
+    gauge.scl ~ i2c_scl
 
     # -- EoL test connector (2x10) — docs/hardware §11 ----------------------
     eol = new XKB_PZ254V_12_20P_package
-    eol.p1 ~ vbus.hv          # VBUS_INJ
+    # p1 intentionally unconnected: legacy 5V injection must not reach PD VBUS.
     eol.p2 ~ p3v3.lv          # GND
-    eol.p3 ~ vsys.hv          # VSYS_SENSE
-    eol.p4 ~ vbat.hv          # VBAT_SENSE
+    # p3 intentionally unconnected: wide-input VSYS exceeds legacy tester rating.
+    # p4 intentionally unconnected: 2S exceeds legacy tester battery-sense rating.
     eol.p5 ~ p5v.hv           # 5V0_SENSE
     eol.p6 ~ p3v3.hv          # 3V3_SENSE
     eol.p7 ~ led0.fault       # CH0_CSA (INA226 alert)
@@ -400,3 +481,37 @@ module SplancDev:
     eol.p18 ~ esp.IO23        # BTN_USER2_DRV
     eol.p19 ~ esp.TXD0        # UART0_TXD
     eol.p20 ~ esp.RXD0        # UART0_RXD
+
+
+module SplancDev1S:
+    """Factory 1S assembly. Parallel count is provisioned in firmware/gauge."""
+    board = new SplancDev
+    charger_program = new R3k
+    charger_program.p1 ~ board.charger.program
+    charger_program.p2 ~ board.vbat.lv
+    battery_uvr_top = new R100k
+    battery_uvr_top.p1 ~ board.vbat.hv
+    battery_uvr_top.p2 ~ board.mux.battery_uvr
+    battery_uvf_top = new R100k
+    battery_uvf_top.p1 ~ board.vbat.hv
+    battery_uvf_top.p2 ~ board.mux.battery_uvf
+    battery_ov_top = new R100k
+    battery_ov_top.p1 ~ board.vbat.hv
+    battery_ov_top.p2 ~ board.mux.battery_ov
+
+
+module SplancDev2S:
+    """Factory 2S assembly. Parallel count is provisioned in firmware/gauge."""
+    board = new SplancDev
+    charger_program = new R6k04
+    charger_program.p1 ~ board.charger.program
+    charger_program.p2 ~ board.vbat.lv
+    battery_uvr_top = new R220k
+    battery_uvr_top.p1 ~ board.vbat.hv
+    battery_uvr_top.p2 ~ board.mux.battery_uvr
+    battery_uvf_top = new R220k
+    battery_uvf_top.p1 ~ board.vbat.hv
+    battery_uvf_top.p2 ~ board.mux.battery_uvf
+    battery_ov_top = new R220k
+    battery_ov_top.p1 ~ board.vbat.hv
+    battery_ov_top.p2 ~ board.mux.battery_ov
