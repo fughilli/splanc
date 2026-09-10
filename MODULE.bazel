@@ -394,14 +394,14 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # branch claude/net-host @ 40a21d46 (c6699e9 + one commit): adds --net-host so a
-    # reservation environment can share the host net namespace and drive host radios
-    # directly (WiFi over nl80211), the complement to --mount (the dbus socket for
-    # BLE, PR #3). Needed by the amd-rig SDR bench (//pi/hitl:hitl_sdr) so an agent
-    # gets the full WiFi+BT stack alongside the SDR + C6. Backward-compatible (opt-in
-    # flag; the Pi rigs don't pass it). Re-pin to main once the net-host PR merges.
-    # Keep in lockstep with the hitl-reserve rev in pi/hitl/flake.nix / flake.lock.
-    commit = "40a21d46c8bb7fcfebe893d759d1e9889abeb5f3",
+    # main @ 51c57f6 (PR #4 squash-merged): --net-host runs a reservation environment
+    # with the host net namespace so it can drive host radios directly (WiFi over
+    # nl80211), the complement to --mount (the dbus socket for BLE, PR #3). Needed by
+    # the amd-rig SDR bench (//pi/hitl:hitl_sdr) so an agent gets the full WiFi+BT
+    # stack alongside the SDR + C6. Backward-compatible (opt-in flag; the Pi rigs
+    # don't pass it). Keep in lockstep with the hitl-reserve rev in
+    # pi/hitl/flake.nix / flake.lock (bump all three together).
+    commit = "51c57f6fc54d84dd0b0aa02582e472c7ce06a3a3",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
