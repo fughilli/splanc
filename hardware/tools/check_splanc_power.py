@@ -11,7 +11,7 @@ from pathlib import Path
 import pcbnew
 
 
-def check(path, require_layout=False):
+def check(path, require_layout=False, mini=False):
     board = pcbnew.LoadBoard(str(path))
     footprints = {}
     for fp in board.GetFootprints():
@@ -47,8 +47,9 @@ def check(path, require_layout=False):
 
     ground = ('usbc', 'A1B12')
     # USB receptacle aliases all ground and supply contacts in its atomic part.
-    same('main ground reaches the power IC ground pads', ground,
-         ('pd.ctrl', 39), ('charger.ic', 27), ('converter.ic', 24), ('mux.ic', 37))
+    same('main ground reaches PD and converter', ground, ('pd.ctrl', 39), ('converter.ic', 24))
+    if not mini:
+        same('battery power IC grounds', ground, ('charger.ic', 27), ('mux.ic', 37))
     for address, number, expected in [('pd.ctrl', '39', 4), ('pd.cc_protection', '21', 1),
                                        ('converter.ic', '24', 1), ('led0.load_sw', '7', 1),
                                        ('led1.load_sw', '7', 1)]:
@@ -64,31 +65,34 @@ def check(path, require_layout=False):
         require(f'{address} retains exposed solder land', len(lands) == 1 and
                 lands[0].GetNetCode() != 0 and
                 all(p.GetNetCode() == lands[0].GetNetCode() for p in vias))
-    separate('raw USB, negotiated USB, selected bus, battery and 5V stay isolated',
-             ('pd.ctrl', 23), ('pd.ctrl', 20), ('converter.ic', 3),
-             ('bat_conn', 2), ('buck', 1))
+    if not mini:
+        separate('raw USB, negotiated USB, selected bus, battery and 5V stay isolated',
+                 ('pd.ctrl', 23), ('pd.ctrl', 20), ('converter.ic', 3),
+                 ('bat_conn', 2), ('buck', 1))
     same('USB enters PD controller and raw VBUS clamp', ('usbc', 'A4B9'),
          ('pd.ctrl', 23), ('pd.vbus_tvs', 4))
-    same('charger uses negotiated USB, not battery/system bus',
-         ('pd.ctrl', 20), ('charger.ic', 2))
-    same('USB mux input FET drain receives negotiated VBUS',
-         ('pd.ctrl', 20), ('mux.input_fet1', 2))
-    same('battery mux input FET drain receives protected pack',
-         ('bat_conn', 2), ('mux.input_fet2', 2))
-    for channel in (1, 2):
-        same(f'mux channel {channel} FET sources are back-to-back',
-             (f'mux.input_fet{channel}', 3), (f'mux.output_fet{channel}', 1))
-    same('USB selected status reaches MCU and logic pullup', ('esp', 11), ('mux.ic', 9),
-         ('mux.usb_status_pullup._p', 2))
-    same('USB holdoff GPIO reaches base resistor', ('esp', 23), ('mux.usb_holdoff_base._p', 1))
-    same('USB holdoff transistor grounds emitter', ground, ('mux.usb_holdoff_q', 2),
-         ('mux.usb_holdoff_pd._p', 2))
-    same('USB holdoff collector controls only channel 1 disable', ('mux.ic', 8),
-         ('mux.usb_holdoff_q', 3), ('mux.usb_enable_pullup._p', 2))
-    separate('USB holdoff preserves pullup supply isolation', ('mux.ic', 8), ('mux.ic', 13))
+    if not mini:
+        same('charger uses negotiated USB, not battery/system bus',
+             ('pd.ctrl', 20), ('charger.ic', 2))
+        same('USB mux input FET drain receives negotiated VBUS',
+             ('pd.ctrl', 20), ('mux.input_fet1', 2))
+        same('battery mux input FET drain receives protected pack',
+             ('bat_conn', 2), ('mux.input_fet2', 2))
+        for channel in (1, 2):
+            same(f'mux channel {channel} FET sources are back-to-back',
+                 (f'mux.input_fet{channel}', 3), (f'mux.output_fet{channel}', 1))
+        same('USB selected status reaches MCU and logic pullup', ('esp', 11), ('mux.ic', 9),
+             ('mux.usb_status_pullup._p', 2))
+        same('USB holdoff GPIO reaches base resistor', ('esp', 23), ('mux.usb_holdoff_base._p', 1))
+        same('USB holdoff transistor grounds emitter', ground, ('mux.usb_holdoff_q', 2),
+             ('mux.usb_holdoff_pd._p', 2))
+        same('USB holdoff collector controls only channel 1 disable', ('mux.ic', 8),
+             ('mux.usb_holdoff_q', 3), ('mux.usb_enable_pullup._p', 2))
+        separate('USB holdoff preserves pullup supply isolation', ('mux.ic', 8), ('mux.ic', 13))
     same('logic buck receives regulated 5V', ('buck', 1), ('buck', 4),
          ('converter.shunt._p', 2))
-    separate('charger SYS and battery are not shorted', ('charger.ic', 25), ('bat_conn', 2))
+    if not mini:
+        separate('charger SYS and battery are not shorted', ('charger.ic', 25), ('bat_conn', 2))
     same('PD DRAIN island joins all required pads', ('pd.ctrl', 15), ('pd.ctrl', 30), ('pd.ctrl', 40))
     separate('PD DRAIN island is isolated from ground/VBUS', ('pd.ctrl', 15), ground, ('pd.ctrl', 23))
     same('CC1 routes through protection', ('usbc', 'A5'), ('pd.cc_protection', 4), ('pd.cc_protection', 7))
@@ -103,11 +107,12 @@ def check(path, require_layout=False):
          ('pd.cc_protection', 8), ('pd.cc_protection', 13),
          ('pd.cc_protection', 16), ('pd.cc_protection', 17),
          ('pd.cc_protection', 18), ('pd.cc_protection', 21))
-    separate('gauge low-side shunt separates pack negative from system ground', ('bat_conn', 1), ground)
-    same('gauge ground is on battery side', ('bat_conn', 1), ('gauge.ic', 8), ('gauge.shunt_a._p', 1))
-    same('charger and mux share protected battery positive', ('bat_conn', 2), ('charger.ic', 22))
-    separate('gauge regulator input/output isolate 2S from low-voltage gauge', ('gauge.supply', 1), ('gauge.ic', 6))
-    same('gauge regulator feeds REGIN and CE', ('gauge.supply', 5), ('gauge.ic', 6), ('gauge.ic', 5))
+    if not mini:
+        separate('gauge low-side shunt separates pack negative from system ground', ('bat_conn', 1), ground)
+        same('gauge ground is on battery side', ('bat_conn', 1), ('gauge.ic', 8), ('gauge.shunt_a._p', 1))
+        same('charger and mux share protected battery positive', ('bat_conn', 2), ('charger.ic', 22))
+        separate('gauge regulator input/output isolate 2S from low-voltage gauge', ('gauge.supply', 1), ('gauge.ic', 6))
+        same('gauge regulator feeds REGIN and CE', ('gauge.supply', 5), ('gauge.ic', 6), ('gauge.ic', 5))
     same('ICM address select, sync and reserved pins grounded', ground,
          ('mpu', 1), ('mpu', 7), ('mpu', 2), ('mpu', 3), ('mpu', 10), ('mpu', 11))
     same('ICM I2C mode and supplies use 3V3A', ('mpu', 8), ('mpu', 5), ('mpu', 12), ('compass', 'B1'))
@@ -136,10 +141,40 @@ def check(path, require_layout=False):
     require('microphone has a 0.5mm unplated acoustic opening',
             any(abs(p.GetDrillSize().x / 1e6 - .5) < .001 for p in holes))
     require('legacy tester high-voltage pins disconnected', all(isolated('eol', p) for p in [1, 3, 4]))
-    same('factory charger strap reaches PROG and ground', ('charger_program._p', 1), ('charger.ic', 20))
-    same('factory charger strap ground', ('charger_program._p', 2), ground)
-    for name, pin in [('battery_uvr', 24), ('battery_uvf', 25), ('battery_ov', 23)]:
-        same(name + ' factory top resistor starts at battery', (name + '_top._p', 1), ('bat_conn', 2))
+    if not mini:
+        same('factory charger strap reaches PROG and ground', ('charger_program._p', 1), ('charger.ic', 20))
+        same('factory charger strap ground', ('charger_program._p', 2), ground)
+        for name, pin in [('battery_uvr', 24), ('battery_uvf', 25), ('battery_ov', 23)]:
+            same(name + ' factory top resistor starts at battery', (name + '_top._p', 1), ('bat_conn', 2))
+    if mini:
+        require('battery circuitry absent', not any(any(word in address for word in
+            ['board.charger', 'board.gauge', 'board.mux', 'board.bat_conn', 'battery_uv', 'battery_ov', 'charger_program']) for address in footprints))
+        same('protected PD output directly supplies converter', ('pd.ctrl', 20), ('converter.ic', 3))
+        separate('raw USB, protected input and regulated 5V separated', ('pd.ctrl', 23), ('pd.ctrl', 20), ('buck', 1))
+        same('status LED cathode reaches GPIO10', ('status_led', 1), ('esp', 11))
+        require('removed battery control GPIOs unused', isolated('esp', 23) and isolated('esp', 12))
+    for channel in (0, 1):
+        name = f'led{channel}'
+        same(name + ' enable reaches assigned GPIO', (name + '.load_sw', 4), ('esp', 27 if channel == 0 else 4))
+        same(name + ' switched output reaches connector', (name + '.load_sw', 1), (name + '.conn', 1))
+    if require_layout:
+        mounts = [f for f in board.GetFootprints() if f.GetValue() == 'PNR mounting hole']
+        require('four 2.7mm nonplated M2.5 mounting holes', len(mounts) == 4 and all(
+            len(list(f.Pads())) == 1 and next(iter(f.Pads())).GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and
+            next(iter(f.Pads())).GetDrillSize().x == 2700000 for f in mounts))
+        mounting_keepouts = [z for z in board.Zones() if z.GetZoneName().startswith('PNR mounting:')]
+        require('four all-copper mounting keepouts', len(mounting_keepouts) == 4 and all(
+            z.GetDoNotAllowTracks() and z.GetDoNotAllowVias() and z.GetDoNotAllowCopperPour() and
+            z.GetLayerSet().CuStack().size() == 4 for z in mounting_keepouts))
+        matching = True
+        for address, fp in footprints.items():
+            if address.startswith('board.led0.'):
+                twin = footprints[address.replace('board.led0.', 'board.led1.')]
+                matching &= (fp.GetOrientationDegrees() == twin.GetOrientationDegrees() and
+                    fp.IsFlipped() == twin.IsFlipped() and
+                    fp.GetPosition().x == twin.GetPosition().x and
+                    abs(fp.GetPosition().y - twin.GetPosition().y) == 11000000)
+        require('LED ports retain identical placements at 11mm pitch', matching)
     return {"board": str(path), "components": len(footprints), "checks": results,
             "passed": all(r['passed'] for r in results)}
 
@@ -149,8 +184,9 @@ def main():
     parser.add_argument('boards', nargs='+', type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--require-layout', action='store_true')
+    parser.add_argument('--mini', action='store_true')
     args = parser.parse_args()
-    reports = [check(p, args.require_layout) for p in args.boards]
+    reports = [check(p, args.require_layout, args.mini) for p in args.boards]
     text = json.dumps(reports, indent=2)
     if args.output:
         args.output.write_text(text + '\n')

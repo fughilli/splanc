@@ -48,6 +48,9 @@
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
+#ifdef LM_BOARD_SPLANC_MINI
+#include "firmware/player_app/mini_board.h"
+#endif
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws2812_rmt.h"
@@ -1350,6 +1353,9 @@ static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
+#ifdef LM_BOARD_SPLANC_MINI
+    mini_limit_frame(reinterpret_cast<uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
+#endif
     ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
@@ -1901,6 +1907,16 @@ static void run_fx_jit_bench() {
 #endif  // LM_FX_JIT_BENCH
 
 void setup() {
+#ifdef LM_BOARD_SPLANC_MINI
+  digitalWrite(SPLANC_LOAD_SW0_EN_PIN, LOW);
+  digitalWrite(SPLANC_LOAD_SW1_EN_PIN, LOW);
+  digitalWrite(SPLANC_STATUS_LED_PIN, HIGH);
+  pinMode(SPLANC_LOAD_SW0_EN_PIN, OUTPUT);
+  pinMode(SPLANC_LOAD_SW1_EN_PIN, OUTPUT);
+  pinMode(SPLANC_STATUS_LED_PIN, OUTPUT);
+  pinMode(SPLANC_LOAD_SW0_FLT_PIN, INPUT);
+  pinMode(SPLANC_LOAD_SW1_FLT_PIN, INPUT);
+#endif
 #ifdef LM_BOARD_SPLANC_DEV
   // Keep the engineering assembly quiescent until pack provisioning and a
   // contract-aware power manager are implemented. GPIO10 reports USB source selection.
@@ -1928,6 +1944,9 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+#ifdef LM_BOARD_SPLANC_MINI
+  mini_board_init();
+#endif
   // Capture the exact size of any failing allocation — above all the mbedtls TLS
   // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
   // site. Registered before anything allocates so no early failure is missed.

@@ -11,9 +11,10 @@ cost commitments, and delivery dates are deferred.
 
 This document supersedes the assumption that the first product must include
 onboard battery management. It specifies product direction, not a manufacturing
-release. The existing `hardware/splanc_dev` implementation is still the
-battery-capable engineering baseline. The USB-only Mini conversion has not yet
-been implemented. Preserve that baseline for later Battery work.
+release. The shared `hardware/splanc_dev` project now contains a distinct `mini` build
+alongside the retained battery targets. See [Mini implementation](../../hardware/splanc_dev/mini.md)
+for the circuit, firmware and remaining validation work. The battery baseline
+is preserved in commit `8c68c24` for later Battery work.
 
 ## Product definitions
 
