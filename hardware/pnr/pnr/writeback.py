@@ -180,8 +180,8 @@ _LAYER_NAMES = {
 
 def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
     """Pour the ``plane_layer`` net classes as filled copper zones + via-drop each
-    of their pads to the plane. **Run after the detailed route** — a FreeRouting
-    DSN/SES round-trip drops pre-poured zones.
+    of their pads to the plane. Existing net/layer zones are reused and refilled
+    so routing restarts do not duplicate pours or their fanout.
 
     High-fanout ground / power nets (e.g. `lv` with 75 pads) are hopeless to
     trace-route; on a multilayer board they belong on a plane, where each pad
@@ -206,6 +206,7 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             pad_pos.setdefault(pad.GetNetname(), []).append(pad.GetPosition())
 
     zones = []  # (area, zone) for priority assignment
+    reused = 0
     for nc in rules.get("net_classes", []):
         layer = nc.get("plane_layer")
         if not layer or layer not in layer_id:
@@ -214,6 +215,15 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             net = board.FindNet(net_name)
             pts = pad_pos.get(net_name, [])
             if net is None or not pts:
+                continue
+            # Specctra import into the private board preserves existing pours.
+            # A refill must not stack duplicate planes or add more dogbones
+            # around pads that were already fanned out on the previous pass.
+            existing = [z for z in board.Zones()
+                        if not z.GetIsRuleArea() and z.GetNetCode() == net.GetNetCode()
+                        and z.IsOnLayer(layer_id[layer])]
+            if existing:
+                reused += len(existing)
                 continue
             xs = [p.x for p in pts]
             ys = [p.y for p in pts]
@@ -243,12 +253,12 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
     for rank, (_area, z) in enumerate(sorted(zones, key=lambda az: -az[0])):
         z.SetAssignedPriority(rank)
 
-    if zones:
+    if zones or reused:
         try:
             pcbnew.ZONE_FILLER(board).Fill(board.Zones())
         except Exception as exc:  # pragma: no cover - version shim
             raise RuntimeError('Copper plane fill failed') from exc
-    return len(zones)
+    return len(zones) + reused
 
 
 def _type_plane_layers(board, rules: dict) -> None:
@@ -405,7 +415,11 @@ def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=No
                     track.SetStart(pos)
                     track.SetEnd(pcbnew.VECTOR2I(x,y))
                     track.SetWidth(trace_w)
-                    track.SetLayer(pad.GetLayer())
+                    # PAD.GetLayer() is not the copper layer of a flipped pad
+                    # on every KiCad version. Consult its actual layer set.
+                    surface = (pcbnew.B_Cu if pad.IsOnLayer(pcbnew.B_Cu)
+                               and not pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu)
+                    track.SetLayer(surface)
                     track.SetNetCode(netcode)
                     board.Add(track)
                     obstacles.append((target,target,via_r,netcode))

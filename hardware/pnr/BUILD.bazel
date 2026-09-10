@@ -272,6 +272,26 @@ py_test(
 
 # R4 acceptance: the multi-layer PathFinder maze router (routes, vias, negotiation).
 py_test(
+    name = "route_keepouts_test",
+    size = "small",
+    srcs = ["tests/test_route_keepouts.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_keepouts.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "plane_refill_test",
+    size = "small",
+    srcs = ["tests/test_plane_refill.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_plane_refill.py",
+    deps = [":pnr"],
+)
+
+py_test(
     name = "detail_maze_test",
     size = "small",
     srcs = ["tests/test_detail_maze.py"],

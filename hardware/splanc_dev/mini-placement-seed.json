@@ -25,10 +25,10 @@
   },
   "board.fb_bot._p": {
     "pos": [
-      0.875,
-      45.875
+      1,
+      24.5
     ],
-    "rot": 90.0,
+    "rot": 90,
     "side": "top"
   },
   "board.converter.output_cap1._p": {
@@ -89,10 +89,10 @@
   },
   "board.buck": {
     "pos": [
-      44.25,
-      17.5
+      4,
+      24.5
     ],
-    "rot": 0.0,
+    "rot": 0,
     "side": "top"
   },
   "board.led0.load_ilim._p": {
@@ -129,10 +129,10 @@
   },
   "board.buck_in._p": {
     "pos": [
-      54.875,
-      2.25
+      4,
+      21.5
     ],
-    "rot": 270.0,
+    "rot": 0,
     "side": "top"
   },
   "board.led1.load_ilim._p": {
@@ -273,10 +273,10 @@
   },
   "board.fb_top._p": {
     "pos": [
-      0.75,
-      43.125
+      1,
+      21.75
     ],
-    "rot": 90.0,
+    "rot": 270,
     "side": "top"
   },
   "board.led0.ina": {
@@ -377,10 +377,10 @@
   },
   "board.buck_l._p": {
     "pos": [
-      66.5,
-      39.75
+      4,
+      31
     ],
-    "rot": 270.0,
+    "rot": 90,
     "side": "top"
   },
   "board.converter.output_cap2._p": {
@@ -753,10 +753,10 @@
   },
   "board.buck_out._p": {
     "pos": [
-      4.0,
-      46.375
+      4,
+      37
     ],
-    "rot": 180.0,
+    "rot": 180,
     "side": "top"
   },
   "board.mic_sck_shift_b_dec._p": {
@@ -921,10 +921,10 @@
   },
   "board.pd.output_dec_0": {
     "pos": [
-      8.5,
-      21.125
+      12.5,
+      15.75
     ],
-    "rot": 0.0,
+    "rot": 90,
     "side": "top"
   },
   "board.converter.frequency2._p": {

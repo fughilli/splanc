@@ -144,6 +144,48 @@ fixed:
     - 31
     rot: 0
     side: top
+  '@board.buck':
+    at:
+    - 4
+    - 24.5
+    rot: 0
+    side: top
+  '@board.buck_l._p':
+    at:
+    - 4
+    - 31
+    rot: 90
+    side: top
+  '@board.buck_out._p':
+    at:
+    - 4
+    - 37
+    rot: 180
+    side: top
+  '@board.buck_in._p':
+    at:
+    - 4
+    - 21.5
+    rot: 0
+    side: top
+  '@board.fb_bot._p':
+    at:
+    - 1
+    - 24.5
+    rot: 90
+    side: top
+  '@board.fb_top._p':
+    at:
+    - 1
+    - 21.75
+    rot: 270
+    side: top
+  '@board.pd.output_dec_0':
+    at:
+    - 12.5
+    - 15.75
+    rot: 90
+    side: top
 layout_array:
 - instances:
   - board.led0
@@ -383,6 +425,11 @@ net_class:
     - net@board.esp:2
     - net@board.compass:B1
     width_mm: 0.5
+  buck_switch:
+    nets:
+    - net@board.buck:3
+    width_mm: 1.0
+    clearance_mm: 0.15
 diff_pair:
 - name: usb
   p: net@board.usbc:A6

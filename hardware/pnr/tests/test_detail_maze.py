@@ -70,6 +70,25 @@ class TwoPinTest(unittest.TestCase):
         self.assertIn(Cell(0, 3, 0), set(res.nets["N"].cells))
 
 
+    def test_blocked_search_expands_each_cell_once(self):
+        from unittest.mock import patch
+        from pnr.route.detail.maze import _astar
+        g = RouteGrid(12, 12, 1.0)
+        target = Cell(0, 6, 6)
+        # An unreachable target forces exhaustion of the open set. Varied
+        # entry costs generate improvements and stale priority-queue entries.
+        blocked = {Cell(la, i, j) for la in range(g.nlayers)
+                   for i in range(5, 8) for j in range(5, 8)}
+        costs = {Cell(la, i, j): float((i * 17 + j * 13) % 11)
+                 for la in range(g.nlayers) for i in range(12) for j in range(12)}
+        with patch.object(g, 'passable', wraps=g.passable) as check:
+            result = _astar(g, {Cell(0, 0, 0)}, {target}, 'N', {}, {},
+                            3.0, 0.5, blocked=blocked, soft=costs)
+        self.assertIsNone(result)
+        # Four orthogonal and at most twelve diagonal pad tests per cell.
+        self.assertLessEqual(check.call_count, g.nlayers * 12 * 12 * 16)
+
+
 class NegotiationTest(unittest.TestCase):
     def test_two_crossing_nets_negotiate(self):
         g = RouteGrid(5, 5, 1.0)
