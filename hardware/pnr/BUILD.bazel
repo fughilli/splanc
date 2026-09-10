@@ -346,3 +346,13 @@ py_test(
     main = "tests/test_library_table.py",
     deps = [":pnr"],
 )
+
+# Regression: underside test copper and physical pad coordinates after a flip.
+py_test(
+    name = "two_sided_placement_test",
+    size = "small",
+    legacy_create_init = False,
+    srcs = ["tests/test_two_sided_placement.py"],
+    main = "tests/test_two_sided_placement.py",
+    deps = [":pnr", ":pnr_place"],
+)

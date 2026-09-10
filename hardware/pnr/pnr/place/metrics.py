@@ -17,6 +17,7 @@ from pnr.graph import BoardGraph
 from .geometry import (
     Rect,
     courtyard_rect,
+    occupied_sides,
     keepout_rects,
     outline_size,
     pin_positions,
@@ -54,7 +55,8 @@ def overlap_pairs(graph: BoardGraph, clearance: float = 0.0) -> List[Tuple[str, 
     for i in range(len(rects)):
         ri = rects[i][1]
         for j in range(i + 1, len(rects)):
-            if ri.overlaps(rects[j][1], gap=clearance):
+            if (set(occupied_sides(graph.components[i])) & set(occupied_sides(graph.components[j]))
+                    and ri.overlaps(rects[j][1], gap=clearance)):
                 out.append((rects[i][0], rects[j][0]))
     return out
 

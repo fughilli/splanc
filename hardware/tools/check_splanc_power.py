@@ -138,15 +138,33 @@ def check(path, require_layout=False, mini=False):
         same(name + ' direction and 3V3 supply', (name, 1), (name, 5), ('mpu', 8))
     same('microphone data translator 3V3 output supply', ('mic_sd_shift', 6), ('mpu', 8))
     holes = [p for p in footprints['board.mic'].Pads() if p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH]
+    mic_template_path = Path(__file__).resolve().parents[1] / 'splanc_dev/elec/src/parts/TDK_InvenSense_MMICT5848_00_012'
+    mic_template = pcbnew.FootprintLoad(str(mic_template_path), 'MIC-SMD_7P-L3.5-W2.7_MMICT5848-00-012')
+    mic_template.SetOrientation(footprints['board.mic'].GetOrientation())
+    mic_template.SetPosition(footprints['board.mic'].GetPosition())
+    def ground_shapes(fp):
+        return sorted((p.GetBoundingBox().GetX(), p.GetBoundingBox().GetY(),
+                       p.GetBoundingBox().GetWidth(), p.GetBoundingBox().GetHeight())
+                      for p in fp.Pads() if p.GetNumber() == '3')
+    require('microphone segmented ground pads retain source geometry',
+            len(ground_shapes(mic_template)) == 4 and ground_shapes(mic_template) == ground_shapes(footprints['board.mic']))
     require('microphone has a 0.5mm unplated acoustic opening',
             any(abs(p.GetDrillSize().x / 1e6 - .5) < .001 for p in holes))
-    require('legacy tester high-voltage pins disconnected', all(isolated('eol', p) for p in [1, 3, 4]))
+    if mini:
+        spec = json.loads((Path(__file__).resolve().parents[1] / 'interfaces/mini-eol-v1.json').read_text())
+        for pad in spec['pads']:
+            same(f"EoL {pad['number']}: {pad['signal']}", ('eol', pad['number']), tuple(pad['dut_endpoint']))
+    else:
+        require('legacy tester high-voltage pins disconnected', all(isolated('eol', p) for p in [1, 3, 4]))
     if not mini:
         same('factory charger strap reaches PROG and ground', ('charger_program._p', 1), ('charger.ic', 20))
         same('factory charger strap ground', ('charger_program._p', 2), ground)
         for name, pin in [('battery_uvr', 24), ('battery_uvf', 25), ('battery_ov', 23)]:
             same(name + ' factory top resistor starts at battery', (name + '_top._p', 1), ('bat_conn', 2))
     if mini:
+        same('ROM download GPIO8 strap high', ('download_pullup._p', 1), ('esp', 2))
+        same('ROM download strap reaches GPIO8', ('download_pullup._p', 2), ('esp', 10))
+        separate('ROM download strap is resistive', ('esp', 10), ('esp', 2))
         require('battery circuitry absent', not any(any(word in address for word in
             ['board.charger', 'board.gauge', 'board.mux', 'board.bat_conn', 'battery_uv', 'battery_ov', 'charger_program']) for address in footprints))
         same('protected PD output directly supplies converter', ('pd.ctrl', 20), ('converter.ic', 3))

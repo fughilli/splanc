@@ -143,9 +143,12 @@ GPIO assumptions must not be active on Mini.
 
 ### Mechanical and layout requirements
 
-Start from the 85 × 65 mm, four-layer placement study. A smaller Mini is desirable
-if deletion of battery circuitry permits it, but no reduced dimensions are yet
-committed. A size change requires revisiting all enclosure geometry.
+The current Mini placement is 70 × 55 mm, four layers, with a MINI-EOL-V1
+underside pad array in place of the fitted test header. See
+`splanc-mini-eol-interface.md` for the shared fixture contract. The updated
+mounts, controls and connector placements supersede the 85 × 65 mm study;
+the enclosure must use the new coordinates. Final dimensions still require
+routing, thermal and mechanical validation.
 
 Keep four M2.5 corner mounts with 2.7 mm nonplated holes and the existing 7 mm
 diameter mounting clearances as the initial mechanical baseline. Maintain

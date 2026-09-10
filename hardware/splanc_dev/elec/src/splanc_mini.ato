@@ -9,7 +9,7 @@ from "parts/Texas_Instruments_SN74LVC1T45DBVR/Texas_Instruments_SN74LVC1T45DBVR.
 from "parts/TDK_InvenSense_ICM_42670_P/TDK_InvenSense_ICM_42670_P.ato" import TDK_InvenSense_ICM_42670_P_package
 from "parts/Bosch_BMP580/Bosch_BMP580.ato" import Bosch_BMP580_package
 from "parts/E_Switch_TL3340AF160QG/E_Switch_TL3340AF160QG.ato" import E_Switch_TL3340AF160QG_package
-from "parts/XKB_PZ254V_12_20P/XKB_PZ254V_12_20P.ato" import XKB_PZ254V_12_20P_package
+from "parts/Splanc_Mini_EOL_V1/Splanc_Mini_EOL_V1.ato" import MiniEolPads
 from "passives.ato" import C100n
 from "passives.ato" import C1u
 from "passives.ato" import C10u
@@ -98,6 +98,11 @@ module MiniCore:
     btn_reset.p1 ~ esp.EN
     btn_reset.p2 ~ p3v3.lv
     btn_reset.shell ~ p3v3.lv
+    # ROM download requires GPIO8=1 while GPIO9=0 (ESP32-C6 boot straps).
+    # GPIO8 otherwise floats; keep factory UART recovery deterministic.
+    download_pullup = new R10k
+    download_pullup.p1 ~ p3v3.hv
+    download_pullup.p2 ~ esp.IO8
     boot_pullup = new R10k
     boot_pullup.p1 ~ p3v3.hv
     boot_pullup.p2 ~ esp.IO9
@@ -324,18 +329,18 @@ module MiniCore:
 
 
 
-    # -- EoL test connector (2x10) — docs/hardware §11 ----------------------
-    eol = new XKB_PZ254V_12_20P_package
-    # p1 intentionally unconnected: legacy 5V injection must not reach PD VBUS.
+    # -- Underside MINI-EOL-V1 pads; hardware/interfaces/mini-eol-v1.json --
+    eol = new MiniEolPads
+    eol.p1 ~ p3v3.lv
+    eol.p3 ~ p3v3.lv
+    eol.p4 ~ p3v3.lv
     eol.p2 ~ p3v3.lv          # GND
-    # p3 intentionally unconnected: wide-input VSYS exceeds legacy tester rating.
-    # p4 intentionally unconnected: Mini has no battery sense.
     eol.p5 ~ p5v.hv           # 5V0_SENSE
     eol.p6 ~ p3v3.hv          # 3V3_SENSE
-    eol.p7 ~ led0.fault       # CH0_CSA (INA226 alert)
-    eol.p8 ~ led1.fault       # CH1_CSA
-    eol.p9 ~ led0.chan_out    # CH0_5V (to simulated load)
-    eol.p10 ~ led1.chan_out   # CH1_5V
+    eol.p7 ~ led0.fault       # CH0_FAULT_N, digital open drain
+    eol.p8 ~ led1.fault       # CH1_FAULT_N, digital open drain
+    eol.p9 ~ led0.chan_out    # CH0_5V_SENSE only; load via LED JST
+    eol.p10 ~ led1.chan_out   # CH1_5V_SENSE only; load via LED JST
     eol.p11 ~ esp.IO0         # LED_CH0_DATA (FX2 tap)
     eol.p12 ~ esp.IO1         # LED_CH1_DATA
     eol.p13 ~ i2c_sda         # I2C_SDA

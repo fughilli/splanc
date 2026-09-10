@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from pnr.graph import BoardGraph, Component
 
-from .geometry import Rect, courtyard_rect
+from .geometry import Rect, courtyard_rect, occupied_sides
 
 
 class LegalizationError(RuntimeError):
@@ -106,10 +106,11 @@ def legalize(
     g = grid_mm
     nx = int(math.ceil(width / g))
     ny = int(math.ceil(height / g))
-    occ = np.zeros((ny, nx), dtype=bool)
+    occupancy = {side: np.zeros((ny, nx), dtype=bool) for side in ("top", "bottom")}
 
     for k in keepouts:
-        _mark(occ, g, k)
+        for occ in occupancy.values():
+            _mark(occ, g, k)
 
     placed = BoardGraph.from_json(graph.to_json())  # deep copy
     by_ref = {c.ref: c for c in placed.components}
@@ -124,7 +125,8 @@ def legalize(
                for ax, ay, radius in group_limits.get(ref, ())):
             raise LegalizationError(f"fixed part {ref} lies outside hard group radius")
         cr = courtyard_rect(comp)
-        _mark(occ, g, Rect(px, py, cr.w + clearance, cr.h + clearance))
+        for side in occupied_sides(comp):
+            _mark(occupancy[side], g, Rect(px, py, cr.w + clearance, cr.h + clearance))
 
     # Movable parts, tightest group first and then biggest first.
     movable: List[Component] = [c for c in placed.components if c.ref not in fixed]
@@ -137,11 +139,14 @@ def legalize(
         infl = max(1.0, spread, float(inflation.get(comp.ref, 1.0)))
         bw = int(math.ceil((cr.w * infl + clearance) / g))
         bh = int(math.ceil((cr.h * infl + clearance) / g))
+        sides = occupied_sides(comp)
+        occ = np.logical_or.reduce([occupancy[side] for side in sides])
         try:
             r, c = _place_part(occ, g, bw, bh, comp.pos, group_limits.get(comp.ref, ()))
         except LegalizationError as exc:
             raise LegalizationError(f"{comp.ref}: {exc}") from exc
-        occ[r : r + bh, c : c + bw] = True
+        for side in sides:
+            occupancy[side][r : r + bh, c : c + bw] = True
         comp.pos = ((c + bw / 2.0) * g, (r + bh / 2.0) * g)
 
     return placed

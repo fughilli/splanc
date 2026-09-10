@@ -1,9 +1,8 @@
-# Splanc Mini: all power-stage support stays with its controller.
 schema: v0
 board:
   outline:
-    w: 85
-    h: 65
+    w: 70
+    h: 55
   layers: 4
   references_on_fab: true
   default_clearance_mm: 0.2
@@ -15,122 +14,134 @@ fab:
 fixed:
   '@board.usbc':
     at:
-    - 18
+    - 14
     - 3.5
     rot: 0
     side: top
   '@board.esp':
     at:
-    - 66
-    - 52
+    - 17.25
+    - 40
     rot: 0
     side: top
   '@board.compass':
     at:
-    - 79
-    - 52
+    - 59
+    - 48
     rot: 0
     side: top
   '@board.mpu':
     at:
-    - 47.5
-    - 50.5
+    - 40
+    - 19
     rot: 270
     side: top
   '@board.bmp':
     at:
-    - 24.625
-    - 3.125
+    - 51
+    - 48
     rot: 0
     side: top
   '@board.mic':
     at:
-    - 74
+    - 63
     - 10
     rot: 0
     side: top
   '@board.mic_supply':
     at:
-    - 48
+    - 37
     - 10
     rot: 0
     side: top
   '@board.mic_sck_shift':
     at:
-    - 54
+    - 43
     - 10
     rot: 0
     side: top
   '@board.mic_ws_shift':
     at:
-    - 60
+    - 49
     - 10
     rot: 0
     side: top
   '@board.mic_sd_shift':
     at:
-    - 66
+    - 55
     - 10
     rot: 0
     side: top
   '@board.converter.ic':
     at:
-    - 30
-    - 33
+    - 39
+    - 41
     rot: 0
     side: top
   '@board.btn_reset':
     at:
-    - 40
+    - 34
     - 3.5
     rot: 0
     side: top
   '@board.btn_boot':
     at:
-    - 48
+    - 42
     - 3.5
     rot: 0
     side: top
   '@board.btn_user1':
     at:
-    - 60
+    - 51
     - 3.5
     rot: 0
     side: top
   '@board.btn_user2':
     at:
-    - 68
+    - 59
     - 3.5
     rot: 0
     side: top
   '@board.power_led':
     at:
-    - 28
+    - 22
     - 4
     rot: 0
     side: top
   '@board.status_led':
     at:
-    - 32
+    - 26
     - 4
     rot: 0
     side: top
   '@board.power_led_r._p':
     at:
-    - 28
+    - 22
     - 7
     rot: 90
     side: top
   '@board.status_led_r._p':
     at:
-    - 32
+    - 26
     - 7
     rot: 90
     side: top
   '@board.pd.ctrl':
     at:
-    - 30
-    - 13
+    - 18
+    - 14
+    rot: 0
+    side: top
+  '@board.eol':
+    at:
+    - 45
+    - 13.5
+    rot: 0
+    side: bottom
+  '@board.converter.inductor':
+    at:
+    - 35
+    - 31
     rot: 0
     side: top
 layout_array:
@@ -138,7 +149,7 @@ layout_array:
   - board.led0
   - board.led1
   origin:
-  - 79
+  - 64
   - 20
   step:
   - 0
@@ -209,10 +220,6 @@ layout_array:
       - -12
       - 3.5
       rot: 0
-edge_align:
-  '@board.eol':
-    edge: north
-    side: top
 mounting_hole:
 - name: MH1
   at:
@@ -222,42 +229,42 @@ mounting_hole:
   clearance_diameter_mm: 7
 - name: MH2
   at:
-  - 81
+  - 66
   - 4
   drill_mm: 2.7
   clearance_diameter_mm: 7
 - name: MH3
   at:
-  - 81
-  - 61
+  - 66
+  - 51
   drill_mm: 2.7
   clearance_diameter_mm: 7
 - name: MH4
   at:
   - 4
-  - 61
+  - 51
   drill_mm: 2.7
   clearance_diameter_mm: 7
 keepout:
 - name: power_light_pipe
   polygon:
-  - - 26.5
+  - - 20.5
     - 0
-  - - 29.5
+  - - 23.5
     - 0
-  - - 29.5
+  - - 23.5
     - 2.5
-  - - 26.5
+  - - 20.5
     - 2.5
 - name: charge_light_pipe
   polygon:
-  - - 30.5
+  - - 24.5
     - 0
-  - - 33.5
+  - - 27.5
     - 0
-  - - 33.5
+  - - 27.5
     - 2.5
-  - - 30.5
+  - - 24.5
     - 2.5
 - name: esp32_antenna
   ref: '@board.esp'

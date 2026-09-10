@@ -27,8 +27,8 @@ def package(pcb, parts, source_project, output):
     before = circuit_signature(board)
     records, changes, errors = [], [], []
     for fp in board.GetFootprints():
-        if fp.GetValue() == 'PNR mounting hole':
-            continue  # A drilled hole has no populated 3D component.
+        if fp.GetValue() == 'PNR mounting hole' or fp.GetFPIDAsString() == 'Splanc_Mini_EOL_V1:MINI-EOL-V1':
+            continue  # Holes and bare test copper have no populated 3D component.
         library, item = fp.GetFPIDAsString().split(':', 1)
         source_fp = parts / library / (item + '.kicad_mod')
         if not source_fp.is_file():

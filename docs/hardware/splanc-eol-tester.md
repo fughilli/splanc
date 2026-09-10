@@ -1,5 +1,11 @@
 # Splanc EoL Tester — hardware design
 
+> Legacy tester reference. Splanc Mini now uses the versioned underside
+> [MINI-EOL-V1 interface](splanc-mini-eol-interface.md). The legacy pin-1
+> power injection, load wiring and ADC assumptions are incompatible; do not
+> connect this controller directly to the Mini pogo carrier.
+
+
 **FUG-131.** A bench fixture that plugs into the
 [Splanc Dev Module](splanc-dev-module.md)'s `J_EOL` connector and runs a fully
 automated End-of-Line (EoL) test: power the DUT, actuate every button through

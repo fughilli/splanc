@@ -4,8 +4,8 @@
   "batch": 1000,
   "overage": 0.03,
   "components": 136,
-  "per_board": 24.078930000000003,
-  "procurement": 24804.54890000001,
+  "per_board": 24.005330000000004,
+  "procurement": 24728.68090000001,
   "lines": [
     {
       "code": "C3188898",
@@ -488,26 +488,6 @@
       "shortage": 0
     },
     {
-      "code": "C492427",
-      "mpn": "PZ254V-12-20P",
-      "manufacturer": "XKB",
-      "quantity": 1,
-      "unit_price": 0.0756,
-      "stock": 78015,
-      "multiple": 5,
-      "minimum": 5,
-      "source": "https://www.lcsc.com/product-image/C492427.html",
-      "supplier": "LCSC",
-      "tier": 500,
-      "note": "Direct inventory snapshot 2026-09-09T23:03:19.372780+00:00.",
-      "refs": "H1",
-      "category": "other",
-      "extended": 0.0756,
-      "buy": 1030,
-      "purchase": 77.868,
-      "shortage": 0
-    },
-    {
       "code": "C69335",
       "mpn": "CL10A475KA8NQNC",
       "manufacturer": "Samsung",
@@ -688,6 +668,26 @@
       "shortage": 0
     },
     {
+      "code": "C25804",
+      "mpn": "0603WAF1002T5E",
+      "manufacturer": "UNI-ROYAL",
+      "quantity": 9,
+      "unit_price": 0.002,
+      "stock": 5010000,
+      "multiple": 100,
+      "minimum": 100,
+      "source": "https://www.lcsc.com/product-image/C25804.html",
+      "supplier": "LCSC",
+      "tier": 5000,
+      "note": "Direct inventory snapshot 2026-09-09T23:03:15.670842+00:00.",
+      "refs": "R2, R12, R37, R14, R15, R18, R23, R35, R36",
+      "category": "resistor",
+      "extended": 0.018000000000000002,
+      "buy": 9300,
+      "purchase": 18.6,
+      "shortage": 0
+    },
+    {
       "code": "C25741",
       "mpn": "0402WGF1003TCE",
       "manufacturer": "UNI-ROYAL",
@@ -745,26 +745,6 @@
       "extended": 0.0168,
       "buy": 2100,
       "purchase": 17.64,
-      "shortage": 0
-    },
-    {
-      "code": "C25804",
-      "mpn": "0603WAF1002T5E",
-      "manufacturer": "UNI-ROYAL",
-      "quantity": 8,
-      "unit_price": 0.002,
-      "stock": 5010000,
-      "multiple": 100,
-      "minimum": 100,
-      "source": "https://www.lcsc.com/product-image/C25804.html",
-      "supplier": "LCSC",
-      "tier": 5000,
-      "note": "Direct inventory snapshot 2026-09-09T23:03:15.670842+00:00.",
-      "refs": "R2, R12, R14, R15, R18, R23, R35, R36",
-      "category": "resistor",
-      "extended": 0.016,
-      "buy": 8300,
-      "purchase": 16.6,
       "shortage": 0
     },
     {
