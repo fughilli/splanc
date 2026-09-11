@@ -220,6 +220,11 @@ jobs:
           # lane runs on the Pi 5 rigs (rig-1/rig-2), where it passes 2-wide. The VENDOR
           # lane below still uses rig-3: the vendor Wi-Fi stack decrypts unicast in hardware
           # and works there.
+          #
+          # amd-rig needs no host fence here: its sole DUT (c6-sdr) is SDR-hardwired to a
+          # HackRF with no antenna (OTA netstack e2e can't pass), but #168 marks that unit
+          # pin_only so caps-only netstack reservations skip it — amd-rig offers no eligible
+          # unit to this lane. (Confirmed live: curl amd-rig:8087/status → c6-sdr pin_only=true.)
           echo "::group::netstack HITL tests (GATING)"
           HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$netstack"
           echo "::endgroup::"

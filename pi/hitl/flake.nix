@@ -21,9 +21,9 @@
     # The generalized reservation system. Not a flake (plain Go module source);
     # buildGoModule consumes it in nix/packages.nix. Kept in lockstep with the
     # @hitl_reserve git_override in //MODULE.bazel — bump both together. main @
-    # 51c57f6 (PR #4: --net-host for the amd-rig SDR bench, see the MODULE.bazel comment).
+    # afe8101 (PR #5: --max-concurrent host cap, see the MODULE.bazel comment).
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/51c57f6fc54d84dd0b0aa02582e472c7ce06a3a3";
+      url = "github:fughilli/hitl-reserve/afe81016d45da0a26ec25bc0c1362b0b5564843b";
       flake = false;
     };
   };
