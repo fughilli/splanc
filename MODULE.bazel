@@ -362,7 +362,17 @@ git_override(
     # "x86_64" swaps mkSbcSystem to a stock-nixpkgs UEFI/systemd-boot system and
     # makes sbc_application emit `image_installer` (a bootable install USB) +
     # deploy_live — the //pi/hitl:hitl_sdr amd-rig target rides this.
-    commit = "ccc7dd0d48b5b687f896264538789344dffa0edd",  # amd64 (x86_64) support (PR #16 merged)
+    # PR #18 makes the deploy_live hardware guard family-aware. It read
+    # /proc/device-tree/model — a Pi-only identity source — so every x86_64 deploy
+    # warned "could not read /proc/device-tree/model" and verified NOTHING, and
+    # `update` died outright on an x86 target. x86 identity is SMBIOS
+    # (/sys/class/dmi/id), which a Pi lacks entirely, so the two sources settle the
+    # FAMILY — the mismatch that actually bricks a box. The exact board is still
+    # checked within the Pi family (each needs its own kernel/DTB); x86 has no
+    # sub-board granularity to check. amd-rig's SMBIOS is unprogrammed ("Default
+    # string" throughout), so placeholder DMI values are filtered rather than
+    # reported as a name.
+    commit = "773117cc05e0292a54cbb3da8b308885c2d62f65",  # x86 hardware guard via DMI (PR #18 merged)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 

@@ -9,13 +9,18 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    # sbc-deploy main @ ccc7dd0 (#16 amd64/x86_64 support: an `amd64-generic` board
+    # sbc-deploy main @ 773117c (#18 makes the deploy_live hardware guard
+    # family-aware: it read the Pi-only /proc/device-tree/model, so an x86_64
+    # deploy verified nothing and `update` died on one; x86 identity now comes
+    # from SMBIOS). Carries #16 (amd64/x86_64 support: an `amd64-generic` board
     # whose family = "x86_64" swaps mkSbcSystem to a stock-nixpkgs UEFI system and
     # gives image_installer + deploy_live — the amd-rig `hitl_sdr` variant rides
-    # this). Also carries #14/#15 (hermetic flake_srcs staging, macOS fixes) and
-    # #7/#8 (persistent hostname identity, `update` autodetect). Kept in lockstep
-    # with the @sbc_deploy git_override in //MODULE.bazel.
-    sbc-deploy.url = "github:fughilli/sbc-deploy/ccc7dd0d48b5b687f896264538789344dffa0edd?dir=nix";
+    # this), #14/#15 (hermetic flake_srcs staging, macOS fixes) and #7/#8
+    # (persistent hostname identity, `update` autodetect). Kept in lockstep with
+    # the @sbc_deploy git_override in //MODULE.bazel. (#18 touches only
+    # deploy/scripts/, i.e. nothing this ?dir=nix input evaluates; the narHash
+    # still moves, since it covers the whole fetched tree, not just the subdir.)
+    sbc-deploy.url = "github:fughilli/sbc-deploy/773117cc05e0292a54cbb3da8b308885c2d62f65?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
 
     # The generalized reservation system. Not a flake (plain Go module source);

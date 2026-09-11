@@ -416,6 +416,23 @@ p.dockerTools.buildLayeredImage {
   # the app module's --image / imageRef must match (hitl-sdr.nix / hitl-app.nix).
   name = if withSdr then "hitl-sdr" else "hitl-test";
   tag = "latest";
+  # zstd, not the dockerTools default gz. This image is ~4 GB uncompressed and
+  # gets compressed on the ephemeral builder VM, which is the bottleneck: for an
+  # x86 target that VM is QEMU under TCG on Apple Silicon (no HVF for x86-on-ARM)
+  # with -smp 6, so every CPU second costs several. nixpkgs offers no compression
+  # LEVEL knob here — `compressor` selects a named pipeline (none | gz | zstd,
+  # `pigz -p$NIX_BUILD_CORES -nTR` vs `zstd -T$NIX_BUILD_CORES`) — but the level
+  # knob isn't what we want anyway. Measured on amd-rig over 2 GiB of this very
+  # image, single-threaded so the numbers are per core:
+  #     gzip -6    35.7 MB/s   34.2% of raw   (the gz pipeline's level)
+  #     gzip -1   112.3 MB/s   37.9%
+  #     zstd -3   283.7 MB/s   30.4%          (the zstd pipeline's default)
+  # zstd -3 is ~8x faster per core AND ~11% smaller, so it beats dropping gzip to
+  # -1 on both axes — no larger artifact to trade away. Output becomes
+  # hitl-sdr.tar.zst; nothing depends on the extension (hitl-image-load does
+  # `podman load -i ${image}` on the store path) and podman 5.4.1 on the rigs
+  # sniffs the compression itself.
+  compressor = "zstd";
   contents = toolbox;
   # Minimal rootfs: the agent + sshd-privsep users, /tmp, a login profile that
   # puts the toolbox on PATH for interactive SSH shells.
