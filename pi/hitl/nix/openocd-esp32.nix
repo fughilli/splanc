@@ -4,14 +4,28 @@
 { pkgs }:
 let
   version = "0.12.0-esp32-20260703";
+  # Select the prebuilt asset by host arch: the aarch64 Pi rigs need arm64, the
+  # x86_64 amd-rig (SDR bench) needs amd64. Pinning arm64 unconditionally shipped an
+  # aarch64 openocd onto the x86_64 amd-rig -> "Exec format error" on hitl-jtag.
+  system = pkgs.stdenv.hostPlatform.system;
+  asset = {
+    "aarch64-linux" = {
+      arch = "arm64";
+      hash = "sha256-POBZompUPpaxm+8VopuFCq2v8dTi3CkejBq0XjMaXxw=";
+    };
+    "x86_64-linux" = {
+      arch = "amd64";
+      hash = "sha256-S3HRtNjkAlApRm54AWEmKgQTc0i2jpZcFSUNvuvvA84=";
+    };
+  }.${system} or (throw "openocd-esp32: unsupported system ${system}");
 in
 pkgs.stdenv.mkDerivation {
   pname = "openocd-esp32";
   inherit version;
 
   src = pkgs.fetchurl {
-    url = "https://github.com/espressif/openocd-esp32/releases/download/v${version}/openocd-esp32-linux-arm64-${version}.tar.gz";
-    hash = "sha256-POBZompUPpaxm+8VopuFCq2v8dTi3CkejBq0XjMaXxw=";
+    url = "https://github.com/espressif/openocd-esp32/releases/download/v${version}/openocd-esp32-linux-${asset.arch}-${version}.tar.gz";
+    inherit (asset) hash;
   };
 
   nativeBuildInputs = [ pkgs.autoPatchelfHook ];
