@@ -71,7 +71,10 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     # clean littlefs. This is the HITL rig; live-device updates keep their state.
     cmd = f"hitl-flash {remote} --erase-fs --monitor --monitor-seconds {monitor_seconds:g}"
     print(f"[flash] {cmd}", flush=True)
-    proc = res.ssh(cmd, capture=True, timeout=monitor_seconds + 120)
+    # ssh_serialized: on a rig that can't run two DUTs' USB-serial ops at once (a Pi 3,
+    # one shared USB bus) this holds a per-rig flock so concurrent flashes don't corrupt
+    # each other; on a capable rig (no lock mount) it's a plain ssh. See hitl_client.
+    proc = res.ssh_serialized(cmd, capture=True, timeout=monitor_seconds + 120)
     log = (proc.stdout or "") + (proc.stderr or "")
     sys.stdout.write(log)
     if proc.returncode != 0:

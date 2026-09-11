@@ -33,6 +33,7 @@ py_test(
         "test_led_pattern.py",
         "test_map_upload.py",
         "test_mapping_trigger.py",
+        "test_pool.py",
         "test_provision.py",
         "test_sync.py",
         "test_tls_churn.py",

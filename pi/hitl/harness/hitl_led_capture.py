@@ -292,27 +292,33 @@ def require_analyzer(server: str) -> None:
             st = json.loads(r.read())
     except Exception as e:
         raise SystemExit(f"[capture] can't read {server}/status: {e}")
-    a = st.get("analyzer")
+    # The analyzer is a shared resource now: look for a present logic-analyzer entry
+    # in status.shared[] (was the top-level status.analyzer.present); the host label
+    # is status.host (was status.rig).
+    a = next((s for s in (st.get("shared") or []) if s.get("kind") == "logic-analyzer"), None)
     if not (a and a.get("present")):
         raise SystemExit(
-            f"[capture] rig {st.get('rig', server)!r} has no logic analyzer — this "
+            f"[capture] rig {st.get('host', server)!r} has no logic analyzer — this "
             f"test needs one. Pin an analyzer rig with --server, or drop --server to "
             f"let pool selection require it."
         )
 
 
 def capture_via_daemon(server: str, device: str, samples: int) -> List[Tuple[int, int, int]]:
-    """POST /capture to the daemon directly (over the tailnet) and return pixels.
+    """Broker a capture from the daemon directly (over the tailnet) and return pixels.
 
     Used by --device-ws mode, where there is no reservation container to run
-    `hitl-capture` in; the daemon's shared analyzer captures the DUT's mapped
-    channel (D6 here) the same way.
+    `hitl-capture` in; the daemon's shared logic-analyzer broker captures the
+    unit's mapped channel the same way. The analyzer is a shared resource now, so
+    this posts to /shared/logic-analyzer (op=capture) rather than the old /capture.
     """
     import urllib.request
 
-    body = json.dumps({"device": device, "samples": samples}).encode()
+    body = json.dumps({"op": "capture", "unit": device, "samples": samples}).encode()
     req = urllib.request.Request(
-        server.rstrip("/") + "/capture", data=body, headers={"Content-Type": "application/json"}
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=body,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=90) as r:
         res_json = json.loads(r.read())
@@ -353,38 +359,40 @@ BLOCKS: List[Tuple[int, int, Tuple[int, int, int]]] = []
 # analyzer at D5 for one capture via POST /analyzer/channel-map — always restored.
 
 
-def _channel_map(server: str) -> dict:
-    import urllib.request
-
-    with urllib.request.urlopen(server.rstrip("/") + "/analyzer/channel-map", timeout=10) as r:
-        return json.loads(r.read())
-
-
-def _set_channel_map(server: str, m: dict) -> None:
+def _broker(server: str, body: dict) -> dict:
+    """POST an op to the shared logic-analyzer broker (was /analyzer/channel-map)."""
     import urllib.request
 
     req = urllib.request.Request(
-        server.rstrip("/") + "/analyzer/channel-map",
-        data=json.dumps(m).encode(),
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=10) as r:
-        r.read()
+        return json.loads(r.read() or b"{}")
+
+
+def _channel_map(server: str) -> dict:
+    return _broker(server, {"op": "map.get"})
+
+
+def _set_channel_map(server: str, m: dict) -> None:
+    _broker(server, {"op": "map.set", "map": m})
 
 
 def _reserved_device(server: str, res_id: str | None) -> str:
-    """The DUT name this reservation holds, from /status — the reserve output
-    doesn't carry it, and this rig has per-DUT channel maps with no default entry,
-    so /capture needs the real name to resolve the tap."""
+    """The unit name this reservation holds, from /status — this rig has per-unit
+    channel maps with no default entry, so a capture needs the real name to resolve
+    the tap."""
     import urllib.request
 
     with urllib.request.urlopen(server.rstrip("/") + "/status", timeout=10) as r:
         st = json.loads(r.read())
-    for d in st.get("devices") or []:
-        act = d.get("active") or {}
+    for u in st.get("units") or []:
+        act = u.get("active") or {}
         if res_id and act.get("id") == res_id:
-            return d.get("name") or act.get("device") or ""
+            return u.get("name") or act.get("unit") or ""
     return ""
 
 

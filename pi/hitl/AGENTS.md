@@ -16,7 +16,7 @@ The rigs live on the tailnet tagged `tag:splanc-hitl`. From a claude-container
 that's on the tailnet, the CLI finds them automatically — no server to set:
 
 ```sh
-alias hitl="bazel run //pi/hitl/cmd/hitl:hitl --"   # the CLI (stdlib-only Go)
+alias hitl="bazel run //pi/hitl/reserve:hitl --"   # the CLI (@hitl_reserve, stdlib-only Go)
 hitl pool                                       # every tagged rig + its queue
 hitl status                                     # the rig a bare command would use
 hitl reserve                                    # picks the shortest-queue rig

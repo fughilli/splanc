@@ -65,44 +65,64 @@ def _get(server: str, path: str) -> dict:
 
 
 def require_analyzer(server: str) -> None:
-    """Fail early unless the daemon at `server` advertises a logic analyzer."""
-    a = _get(server, "/status").get("analyzer")
+    """Fail early unless the daemon at `server` advertises a logic analyzer. The
+    analyzer is a shared resource now (status.shared[]), not the old status.analyzer."""
+    a = next(
+        (
+            s
+            for s in (_get(server, "/status").get("shared") or [])
+            if s.get("kind") == "logic-analyzer"
+        ),
+        None,
+    )
     if not (a and a.get("present")):
         raise SystemExit(f"[fpga] rig {server!r} has no logic analyzer — this test needs one")
 
 
 def _reserved_device(server: str, res_id: str | None) -> str:
-    """The DUT name this reservation holds (per-DUT channel maps have no default).
+    """The unit name this reservation holds (per-unit channel maps have no default).
 
-    Each /status device carries its current holder under `active` (api.Reservation),
+    Each /status unit carries its current holder under `active` (api.Reservation),
     so match on `active.id` (matches this reservation) — network DUTs included."""
-    for d in _get(server, "/status").get("devices", []):
-        active = d.get("active") or {}
+    for u in _get(server, "/status").get("units", []):
+        active = u.get("active") or {}
         if active.get("id") == res_id:
-            return d.get("name", "")
-    raise SystemExit(f"[fpga] could not resolve reserved device for id={res_id}")
+            return u.get("name", "")
+    raise SystemExit(f"[fpga] could not resolve reserved unit for id={res_id}")
 
 
-def _channel_map(server: str) -> dict:
-    return _get(server, "/analyzer/channel-map")
-
-
-def _set_channel_map(server: str, m: dict) -> None:
+def _broker(server: str, body: dict) -> dict:
+    """POST an op to the shared logic-analyzer broker (was /analyzer/channel-map)."""
     req = urllib.request.Request(
-        server.rstrip("/") + "/analyzer/channel-map",
-        data=json.dumps(m).encode(),
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=10) as r:
-        r.read()
+        return json.loads(r.read() or b"{}")
+
+
+def _channel_map(server: str) -> dict:
+    return _broker(server, {"op": "map.get"})
+
+
+def _set_channel_map(server: str, m: dict) -> None:
+    _broker(server, {"op": "map.set", "map": m})
 
 
 def _capture(server: str, device: str, protocol: str, samples: int) -> dict:
-    """POST /capture with an explicit protocol; return the raw result JSON."""
-    body = json.dumps({"device": device, "protocol": protocol, "samples": samples}).encode()
+    """Broker a capture with an explicit protocol; return the raw result JSON.
+
+    The analyzer is a shared resource now — post to /shared/logic-analyzer
+    (op=capture) rather than the old /capture."""
+    body = json.dumps(
+        {"op": "capture", "unit": device, "protocol": protocol, "samples": samples}
+    ).encode()
     req = urllib.request.Request(
-        server.rstrip("/") + "/capture", data=body, headers={"Content-Type": "application/json"}
+        server.rstrip("/") + "/shared/logic-analyzer",
+        data=body,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=90) as r:
         return json.loads(r.read())

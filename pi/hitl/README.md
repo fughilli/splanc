@@ -104,11 +104,14 @@ bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host-or-ip>
 The board is a **bazel target** (`:hitl` = Pi 5, `:hitl_pi3` = Pi 3B/3B+); the two
 optional capabilities are **env flags** at deploy, independent of the board:
 
-| flag              | effect                                                         |
-| ----------------- | -------------------------------------------------------------- |
-| `SBC_ANALYZER=1`  | wire the shared FX2/fx2lafw logic analyzer (sigrok `/capture`) |
-| `SBC_AP_DONGLE=1` | host the AP on a dedicated RTL8851BU USB radio (`ap0`) instead |
-|                   | of onboard `wlan0` — for a board that can't AP                 |
+| flag                    | effect                                                         |
+| ----------------------- | -------------------------------------------------------------- |
+| `SBC_ANALYZER=1`        | wire the shared FX2/fx2lafw logic analyzer (sigrok `/capture`) |
+| `SBC_AP_DONGLE=1`       | host the AP on a dedicated RTL8851BU USB radio (`ap0`) instead |
+|                         | of onboard `wlan0` — for a board that can't AP                 |
+| `SBC_SERIALIZE_FLASH=1` | serialize USB-serial device ops (flash + monitor/reset)        |
+|                         | across the rig's containers — for a board with one shared USB  |
+|                         | bus (Pi 3) that corrupts two DUTs' concurrent flash            |
 
 So any combination works, e.g. an **analyzer on a Pi 5** (onboard-wlan0 AP) —
 capabilities are env flags, the name is `--hostname`:

@@ -1,0 +1,42 @@
+{
+  "comment": "splanc HITL fleet catalog (fleet-identical; baked into every rig image, read by hitl-reserved --catalog). USB ESP32-C6 boards are auto-discovered; network DUTs (a Pi player) are runtime-seeded via scripts/seed-network-dut.sh into the seeded_file below (no redeploy). The FX2 logic analyzer is a shared resource, dormant unless an FX2 is attached. Per-rig values (the provisioning-AP SSID/PSK = hostname) are passed as flags by nix/hitl-app.nix, not baked here. Ports 2222-2233 match the firewall range opened in hitl-app.nix.",
+  "workspace": "splanc",
+  "lease_seconds": 1800,
+
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "jtag", "improv", "wss-app", "led-strip"]
+    },
+    "led-mapper-pi": {
+      "kind": "network",
+      "capabilities": ["improv", "wss-app", "led-strip", "spi-fpga"]
+    }
+  },
+
+  "shared_resources": [
+    {
+      "comment": "One FX2/fx2lafw logic analyzer whose channels tap each unit's LED line. Dormant unless an FX2 is physically attached (the broker self-gates via FX2Present). The default map taps D0/ws2812 so a discovered single-board rig captures its sole unit; per-unit channels are set at runtime via `hitl shared logic-analyzer '{\"op\":\"map.set\",...}'` (persisted under /var/lib/hitl).",
+      "name": "logic-analyzer",
+      "kind": "logic-analyzer",
+      "config": {
+        "driver": "fx2lafw",
+        "samplerate": "24m",
+        "map": { "": { "channels": ["D0"], "protocol": "ws2812" } }
+      }
+    }
+  ],
+
+  "discovery": {
+    "comment": "Auto-discover attached ESP32-C6 player boards by their built-in USB-JTAG by-id symlinks (one reservable unit per board, sticky ports, live hot-plug), and ingest runtime-seeded units (a network DUT Pi) from seeded_file. USB ports 2222-2229; seeded ports 2230-2233 (dedicated range above the USB pool). Each discovered unit unions in the analyzer tap cap from the broker's channel map.",
+    "enabled": true,
+    "glob": "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00",
+    "type": "esp32c6",
+    "name_prefix": "c6-",
+    "ssh_port_base": 2222,
+    "max": 8,
+    "seeded_file": "/var/lib/hitl/seeded-units.json",
+    "seeded_ssh_port_base": 2230,
+    "seeded_max": 4
+  }
+}

@@ -9,52 +9,40 @@
 #   nix run 'path:pi/hitl#hitl' -- reserve
 # On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
 
-load("@gazelle//:def.bzl", "gazelle")
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
-# The SKU -> capabilities registry lives in skus.bzl (source of truth) + the
-# go:embedded internal/skus package. See //pi/hitl/internal/skus.
-exports_files(["skus.bzl"])
+# The reservation daemon + CLI now come from the @hitl_reserve Bazel module
+# (github.com/fughilli/hitl-reserve, pinned in //MODULE.bazel), and the nix deploy
+# builds them from the matching `hitl-reserve` flake input. The reservable-hardware
+# model (resource types, units, shared resources) is declared in reserve/catalog.json,
+# not a Go SKU registry. See //pi/hitl/reserve.
 
-# Go BUILD files under pi/hitl are gazelle-generated. Regenerate after editing
-# .go sources:  bazel run //pi/hitl:gazelle
-# gazelle:prefix github.com/fughilli/splanc/pi/hitl
-gazelle(name = "gazelle")
+# skus.bzl still feeds the harness test fan-out (harness/hitl_test.bzl loads
+# hitl_skus_with to run each on-hardware test against every SKU whose capabilities
+# satisfy it). It no longer backs a daemon (the daemon reads reserve/catalog.json).
+exports_files(["skus.bzl"])
 
 # EXACTLY the files the nix flake build reads, staged by sbc_application into a
 # hermetic TreeArtifact so `nix build path:` sees deterministic content instead of
 # the live workspace (whose .bazelisk cache Bazel rewrites mid-deploy — the churn
-# that made redeploys non-deterministic and pinned stale daemons). This is the
-# flake root's own files (flake.nix/.lock, go.mod, the nix/ + observability/
-# modules) plus the Go module sources from the sub-packages. NOT the whole tree:
-# harness/tests (python), docs, BUILD files, and skus.bzl aren't read by nix, and
-# the churn dirs are excluded outright. A new Go sub-package must add a
-# `:flake_srcs` filegroup and be listed here (a missing one fails the daemon build
-# loudly, never silently stale).
+# that made redeploys non-deterministic and pinned stale daemons). The Go daemon/CLI
+# source is NOT here anymore — nix builds it from the `hitl-reserve` input (fetched
+# by rev, hermetic on its own). What remains is the flake root's own files
+# (flake.nix/.lock), the nix/ + observability/ modules, and the baked catalog the
+# daemon reads. NOT the whole tree: harness/tests (python), docs, and BUILD files
+# aren't read by nix.
 filegroup(
     name = "flake_srcs",
     srcs = [
         "flake.lock",
         "flake.nix",
-        "go.mod",
+        "//pi/hitl/reserve:catalog.json",  # reserve/ is its own package
     ] + glob([
         "nix/**",
         "observability/**",
-    ]) + [
-        "//pi/hitl/cmd/hitl:flake_srcs",
-        "//pi/hitl/cmd/hitl-managerd:flake_srcs",
-        "//pi/hitl/internal/analyzer:flake_srcs",
-        "//pi/hitl/internal/ap:flake_srcs",
-        "//pi/hitl/internal/api:flake_srcs",
-        "//pi/hitl/internal/metrics:flake_srcs",
-        "//pi/hitl/internal/pool:flake_srcs",
-        "//pi/hitl/internal/queue:flake_srcs",
-        "//pi/hitl/internal/runner:flake_srcs",
-        "//pi/hitl/internal/skus:flake_srcs",
-        "//pi/hitl/internal/tailnet:flake_srcs",
-    ],
+    ]),
 )
 
 # Default to the tracked placeholder so a fresh checkout / CI builds; a local
@@ -94,8 +82,9 @@ alias(
 
 # Raspberry Pi 3B/3B+ board variant of the SAME flake + config (:hitl above is the
 # Pi 5 board). Capability is NO LONGER tied to the board: nix/hitl-app.nix keys the
-# logic analyzer on $SBC_ANALYZER and the dedicated-AP-radio dongle on
-# $SBC_AP_DONGLE (both default off), independent of $SBC_BOARD — so you can deploy
+# logic analyzer on $SBC_ANALYZER, the dedicated-AP-radio dongle on $SBC_AP_DONGLE,
+# and USB-serial flash/monitor serialization on $SBC_SERIALIZE_FLASH (all default
+# off), independent of $SBC_BOARD — so you can deploy
 # a plain Pi 3, an analyzer Pi 5, etc. Gives //pi/hitl:hitl_pi3.{image_sd,
 # deploy_live,ssh,keys}. See DESIGN.md "Shared logic analyzer" and internal/analyzer.
 #

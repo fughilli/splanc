@@ -32,6 +32,12 @@ class FakeRes:
         log = self._reset_logs.pop(0) if self._reset_logs else SILENT
         return FakeProc(stdout=log, returncode=self._returncode)
 
+    # ensure_booted runs the resets through ssh_serialized (a per-rig flock on
+    # serialize-flash rigs); it's transparent — same command, same result — so
+    # delegate to ssh (which records the call + returns the scripted log).
+    def ssh_serialized(self, cmd, capture=False, timeout=None, lock_dir=None):
+        return self.ssh(cmd, capture=capture, timeout=timeout)
+
 
 def test_in_download_mode_detects_rom_downloader():
     assert in_download_mode(DOWNLOAD)
