@@ -174,15 +174,15 @@ jobs:
           all=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
           echo "collected HITL tests:"; echo "$all"
           if [ -z "$all" ]; then echo "no HITL-tagged tests found"; exit 1; fi
-          # Split the on-hardware suite: the from-source *netstack* targets GATE CI
-          # (the stack under active development), while the vendor/other HITL targets
-          # run for signal but are ALLOW-FAIL. The vendor firmware's known flakiness
-          # on the shared parallel bench — mid-sweep watchdog reboots (FUG-137) and
-          # provisioning contention (it lacks the netstack's L2CAP supervision-timeout
-          # fix) — is nondeterministic (a different handful fails each run) and must
-          # not block a netstack merge. Their logs still surface below.
-          netstack=$(echo "$all" | grep netstack || true)
-          vendor=$(echo "$all" | grep -v netstack || true)
+          # Every HITL-tagged test GATES CI and they run together in ONE pass — no
+          # name-based lane split. (The old netstack-vs-vendor grep split existed only
+          # to keep the ALLOW-FAIL vendor lane separate from the gating netstack lane;
+          # the vendor firmware + lane and the superseded //firmware/hybrid experiment
+          # are gone, so every remaining target gates — and grepping by name just risks
+          # silently sweeping up unrelated tests, e.g. hybrid_heap_hitl.) The bench
+          # reservation system routes each test to a DUT satisfying its caps/sku, so
+          # netstack (any C6) and pi-player (led-mapper-pi) fan out correctly from a
+          # single bazel invocation.
           server_arg=()
           if [ -n "$SERVER" ]; then server_arg=("--test_arg=--server=$SERVER"); fi
           run_hitl_set() {  # $1 = newline/space-separated bazel targets
@@ -190,12 +190,13 @@ jobs:
             n=$(echo "$t" | wc -w)
             if [ "$n" -eq 0 ]; then echo "(no targets in this set)"; return 0; fi
             echo "running $n HITL tests in parallel (queued on the bench)"
-            # --flaky_test_attempts=3: the whole set is fired at once onto a ~3-rig
-            # bench, so a held reservation can get preempted mid-test under contention
-            # (FUG-94) — a transient, infra-level flake, NOT a device/code failure. Bazel
-            # re-runs only FAILED tests, so a real regression still fails all 3 attempts
-            # and gates; a contention flake recovers. (Every netstack target passes
-            # deterministically when run in isolation.)
+            # --flaky_test_attempts=3: reservations QUEUE (never preempt) — a test holds
+            # its DUT until it releases — but a DUT's own bring-up can still flake per
+            # boot (e.g. the netstack WSS/TLS server occasionally not accepting a
+            # connection after a good WiFi join, a known firmware wedge), and a fresh
+            # flash on the retry usually clears it. Bazel re-runs only FAILED tests, so a
+            # real regression still fails all 3 attempts and gates while a transient
+            # per-boot wedge recovers. (Every target passes deterministically in isolation.)
             bazel test $t \
               -c opt \
               --experimental_worker_for_repo_fetching=off \
@@ -211,25 +212,17 @@ jobs:
               --test_env=HITL_EXCLUDE_HOSTS \
               "${server_arg[@]}"
           }
-          # Fence the netstack (GATING) lane off hitl-rig-3: its Pi 3 onboard AP drops the
-          # DUT's protected UNICAST frames, so the heapless netstack never answers a TCP
-          # SYN there (broadcast/DHCP works; tcpdump shows a SYN storm with zero SYN-ACK).
-          # It's a pre-existing firmware RX bug, unrelated to this reservation refactor —
-          # the old thundering-herd pool just rarely scheduled netstack tests onto rig-3 —
-          # and is tracked for a focused RX reverse-engineering fix. Until then the netstack
-          # lane runs on the Pi 5 rigs (rig-1/rig-2), where it passes 2-wide. The VENDOR
-          # lane below still uses rig-3: the vendor Wi-Fi stack decrypts unicast in hardware
-          # and works there.
-          #
-          # amd-rig needs no host fence here: its sole DUT (c6-sdr) is SDR-hardwired to a
-          # HackRF with no antenna (OTA netstack e2e can't pass), but #168 marks that unit
-          # pin_only so caps-only netstack reservations skip it — amd-rig offers no eligible
-          # unit to this lane. (Confirmed live: curl amd-rig:8087/status → c6-sdr pin_only=true.)
-          echo "::group::netstack HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$netstack"
-          echo "::endgroup::"
-          echo "::group::vendor HITL tests (allow-fail: reported, non-gating)"
-          run_hitl_set "$vendor" || echo "::warning title=vendor HITL::vendor HITL tests failed — allowed, does not gate CI"
+          # rig-3 is fenced fleet-wide (HITL_EXCLUDE_HOSTS): its Pi 3 onboard AP drops the
+          # heapless netstack's protected UNICAST frames, so netstack e2e never gets a
+          # SYN-ACK there (broadcast/DHCP works; a pre-existing firmware RX bug, tracked
+          # for a focused RX fix). No other HITL test needs rig-3, so excluding it globally
+          # is harmless. amd-rig needs no fence: its sole DUT (c6-sdr) is SDR-hardwired with
+          # no antenna and marked pin_only, and the harness excludes pin_only units from
+          # caps-only requests on both selection paths (_unit_serves + _unit_matches), so
+          # _pick_server never routes a netstack reservation there (confirmed live:
+          # curl amd-rig:8087/status -> c6-sdr pin_only=true).
+          echo "::group::HITL tests (GATING)"
+          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
           echo "::endgroup::"
 
       # Report the run's pass/fail to Grafana Cloud (optional; no-op without the

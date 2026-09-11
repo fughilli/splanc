@@ -31,49 +31,11 @@ hitl_test(
     ],
     data = [
         "//firmware/player_app:board_caps.textproto",
-        "//firmware/player_app:esp32c6_flashbundle",
         "@hitl_reserve//cmd/hitl",
     ],
+    exclude_skus = ["esp32c6"],
     main = "hitl_improv_e2e.py",
     requires = ["improv"],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# Offline player-protocol-over-BLE e2e: flash, then drive the full ledmapper.v1
-# over the device's player GATT service with NO WiFi/TLS/cert — the phone-hotspot
-# offline-config path. Hello->welcome proves the transport; a submit_map sharded
-# into small BLE windows proves multi-frame upload reassembly (the same path
-# effect uploads now use). Two targets, one per firmware variant on the same C6
-# SKU: this fan-out flashes the VENDOR bundle (improv_ble.cpp / Bluedroid); the
-# ble_player_e2e_netstack py_test below flashes the HEAPLESS-NETSTACK bundle
-# (improv_ble_netstack.cpp + firmware/blehost + firmware/netstack GATT). The
-# protobuf codec (//pi/server proto_wire) stays on this driver side; the shipped
-# hitl_ble_player.py does only BLE transport + framing on the rig.
-hitl_test(
-    name = "ble_player_e2e",
-    srcs = [
-        "hitl_ble_player.py",  # shipped into the reservation (scp) + run there
-        "hitl_ble_player_e2e.py",
-        "hitl_e2e.py",  # reused for flash() + default_bundle() on the C6 path
-    ],
-    data = [
-        "//firmware/player_app:board_caps.textproto",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    main = "hitl_ble_player_e2e.py",
-    # `flash` restricts the fan-out to the esp32c6 (we flash the vendor bundle;
-    # the Pi is pre-imaged with the Rust player, which has no player GATT service
-    # yet); `improv` documents the BLE dependency. Fans to ble_player_e2e_esp32c6.
-    requires = [
-        "flash",
-        "improv",
-    ],
     deps = [
         ":harness",
         "//pi/server",
@@ -147,44 +109,6 @@ py_library(
     deps = ["//shared/protocol/proto:ledmapper_py_proto"],
 )
 
-# On-hardware orchestrator: reserve a free rig from the pool (the checkout
-# mechanism), flash, ImprovBLE-provision, then check time-sync + rename over the
-# player WebSocket. proto_wire (the §7 WebSocket wire) comes from //pi/server;
-# websockets is the client transport. Needs a reachable rig + a board, so it's a
-# py_test tagged ["manual", "hitl"]: `manual` keeps it out of `bazel test //...`,
-# and the .github/workflows/hitl.yaml workflow discovers the `hitl`-tagged tests
-# by query and `bazel test`s them against a real rig (timeout=eternal — a
-# flash+provision cycle runs minutes). Still `bazel run`-able for a local one-off.
-py_test(
-    name = "e2e",
-    timeout = "eternal",
-    srcs = ["hitl_e2e.py"],
-    # The firmware flash-bundle rides in runfiles so `bazel run` finds it without
-    # a separate build step or a workspace-relative path (bazel run's cwd is the
-    # runfiles tree). --bundle still overrides it for a prebuilt tar. The `hitl`
-    # CLI also rides in runfiles: hitl_client shells out to it for the whole
-    # reserve/flash/tunnel flow (default_hitl() resolves it there).
-    data = [
-        # The board-caps descriptor pins the BOARD CAPS phase to exactly what the
-        # image embeds (loaded from runfiles as the expected value).
-        "//firmware/player_app:board_caps.textproto",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_e2e.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # Same e2e driver, but against the HEAPLESS-NETSTACK player variant
 # (//firmware/player_app:esp32c6_netstack): BLE Improv provisioning -> our heapless
 # MAC/WPA2/CCMP/DHCP/TCP/TLS/WS -> lm_player_handle, no vendor WiFi on the data path.
@@ -204,42 +128,6 @@ py_test(
     },
     imports = ["."],
     main = "hitl_e2e.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# On-hardware LED-driver correctness test (logic-analyzer rig): reserve, flash,
-# provision, drive a static counting pattern over the player WebSocket, then
-# `hitl-capture` the WS2812 wire via the rig's shared FX2 and assert the decoded
-# pixels match. Also verifies the configurable wire color order (FUG-123) as a
-# folded-in phase — reconfigures channel 0 to non-default orders and asserts the
-# DIN permutes as predicted (kept in this one target so the single analyzer rig
-# isn't contended by a second one). Needs a logic-analyzer rig (Pi 3 + FX2 tapping
-# the DUT's DIN), so it's manual+hitl like :e2e; the pattern/pixel + color-order
-# contracts are unit-tested off hardware in //pi/hitl/tests:hitl_test
-# (test_led_pattern.py, test_hardware_config_pattern.py). The `hitl-capture` tool
-# itself is baked into the reservation container (nix/container.nix).
-py_test(
-    name = "led_capture",
-    timeout = "eternal",
-    srcs = ["hitl_led_capture.py"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        # The compiled JIT-bench effect for --jit-verify (FUG-134). The OPTIMIZED
-        # .fxb the firmware ships, so it lowers to a native RV32 segment on-device.
-        "//firmware/player_app:jit_bench_fxb_file",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_led_capture.py",
     tags = [
         "hitl",
         "manual",
@@ -310,39 +198,6 @@ hitl_test(
     ],
 )
 
-# FUG-134: the JIT-correctness sibling of :led_capture, the LED-wire analogue of
-# the :fx_bench / :fx_bench_jit split. PR #114 shipped the on-device RV32IM JIT ON
-# by default; this pins --jit-verify, which drives a JIT-able fx effect
-# (jit_bench.fx) with the JIT OFF then ON on the SAME flashed firmware and asserts
-# the captured WS2812 pixels are BIT-IDENTICAL — so the CI HITL lane proves the JIT
-# renders identically to the interpreter on real silicon (a W^X/PMP/i-cache/codegen
-# bug only manifests on the chip). Same analyzer rig + capture path as :led_capture.
-py_test(
-    name = "led_capture_jit",
-    timeout = "eternal",
-    srcs = ["hitl_led_capture.py"],
-    args = ["--jit-verify"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        # The OPTIMIZED .fxb the firmware ships, so it lowers to a native RV32
-        # segment on-device — the program under differential test.
-        "//firmware/player_app:jit_bench_fxb_file",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_led_capture.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # JIT-correctness over the heapless esp32c6_netstack drop-in on the analyzer rig (rig-2):
 # the netstack sibling of :led_capture_jit, exactly as :led_capture_netstack is to
 # :led_capture. Streams jit_bench.fx JIT-OFF then JIT-ON over the heapless WiFi/TLS
@@ -387,7 +242,8 @@ py_binary(
     name = "serial_probe",
     srcs = ["hitl_serial_probe.py"],
     data = [
-        "//firmware/player_app:esp32c6_flashbundle",
+        # The vendor bundle was removed; flash the surviving netstack player image.
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
         "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],
@@ -453,38 +309,6 @@ py_binary(
     ],
 )
 
-# On-hardware mapping-sequence-trigger test (FUG-62): reserve a rig, flash,
-# activate an effect, send start_mapping, and assert the device shows
-# mapping-pattern frames (get_frame_timing ticks) — the regression guard for the
-# render_once reorder that lets a capture preempt a resumed effect. Like :e2e /
-# :fx_bench it's a manual+hitl py_test (needs a rig + board); the verdict logic
-# (mapping_trigger_core) is unit-tested in //pi/hitl/tests. It
-# reuses an .fx from the fx benchmarks (compiled via fx_compile) just to obtain a
-# valid active effect, and rides the flash-bundle + hitl CLI in runfiles.
-py_test(
-    name = "mapping_trigger",
-    timeout = "eternal",
-    srcs = ["hitl_mapping.py"],
-    data = [
-        ":fx_benchmarks",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_mapping.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # The calibration micro-programs (FUG-11), as `.fx` source the harness compiles
 # with fx_compile and runs on the real C6. Auto-generated from the web
 # calibration source of truth (web/src/effects/calibrationBenchmarks.ts, via
@@ -494,41 +318,6 @@ py_test(
 filegroup(
     name = "fx_benchmarks",
     srcs = glob(["benchmarks/*.fx"]),
-)
-
-# On-hardware FX benchmark (FUG-11): reserve a rig, flash, drive the calibration
-# micro-programs on the real C6, and write a device-measurement bundle for the
-# web builder to fit + validate into an authoritative cost profile. Like :e2e
-# it's a manual+hitl py_test (needs a rig + board); the pure logic it depends on
-# (fx_bench_core) is unit-tested in //pi/hitl/tests. --replay
-# rebuilds a bundle from a recorded session with no hardware. The calibration
-# `.fx` programs and the fx_compile CLI ride in runfiles so `bazel run` finds
-# them without a workspace-relative path (default --benchmarks-dir/--fx-compile).
-py_test(
-    name = "fx_bench",
-    timeout = "eternal",
-    srcs = ["fx_bench.py"],
-    data = [
-        ":fx_benchmarks",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-        # The unified golden (full bundle + margins), shared with the web
-        # estimator test — the margin check reads it from runfiles.
-        "//web:tests/testdata/device-bench-esp32c6.json",
-    ],
-    imports = ["."],
-    main = "fx_bench.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
 )
 
 # Same effects benchmark against the heapless esp32c6_netstack drop-in. The fixture
@@ -556,39 +345,6 @@ py_test(
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         "HITL_CHUNK_BYTES": "1024",
     },
-    imports = ["."],
-    main = "fx_bench.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# FUG-125: the JIT-enabled sibling of :fx_bench. The shipped firmware runs the
-# on-device JIT by DEFAULT, so :fx_bench pins it OFF (set_jit false) to keep
-# checking the interpreter golden, and THIS target pins it ON (--jit) and checks
-# the separate device-bench-esp32c6-jit.json golden. Same flashed firmware, same
-# calibration corpus — only the runtime JIT differs, so the two lanes enforce the
-# interpreter cost model and the JIT-accelerated cost model independently.
-py_test(
-    name = "fx_bench_jit",
-    timeout = "eternal",
-    srcs = ["fx_bench.py"],
-    args = ["--jit"],
-    data = [
-        ":fx_benchmarks",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-        # The JIT golden (JIT pinned ON); its interpreter twin is on :fx_bench.
-        "//web:tests/testdata/device-bench-esp32c6-jit.json",
-    ],
     imports = ["."],
     main = "fx_bench.py",
     tags = [
@@ -640,70 +396,6 @@ py_test(
     ],
 )
 
-# On-hardware JIT-on soak (FUG-135): reserve a rig, flash, provision, load a
-# JIT-able effect (benchmarks/lavalamp.heldout.fx, compiled via fx_compile), drive
-# set_perf FULL for ~30 s, and assert the DUT never faults / reboots and stays
-# healthy — no Guru Meditation / watchdog / extra boot banner in serial, update=ok
-# throughout, and a stable heap_min_free. The shipped firmware runs the on-device
-# JIT by default, but :e2e never loads a JIT-able effect under sustained load, so a
-# JIT stability regression slips through this lane otherwise. Like :fx_bench it's a
-# manual+hitl py_test (needs a rig + board); the verdict logic (jit_soak_core) is
-# unit-tested off hardware in //pi/hitl/tests. --device-ws hits a reachable board
-# directly (a WS-only soak, no rig serial). Rides the flash-bundle + fx_compile +
-# the benchmark .fx + the hitl CLI in runfiles.
-py_test(
-    name = "jit_soak",
-    timeout = "eternal",
-    srcs = ["hitl_jit_soak.py"],
-    data = [
-        ":fx_benchmarks",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_jit_soak.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# On-hardware large-map upload test (FUG-74): reserve a rig, flash, then shard a
-# ~14 KB submit_map + a multi-KB submit_topology into UploadChunk windows over
-# the player WebSocket and assert they upload, decode, and round-trip via
-# get_stored_map — the regression guard for the wss OOM ("Send failed: socket
-# closed") on a big map. Like :e2e it's a manual+hitl py_test (needs a rig +
-# board); the chunking/fixture logic (map_upload_core) is unit-tested in
-# //pi/hitl/tests. --device-ws hits an already-reachable board directly.
-py_test(
-    name = "map_upload",
-    timeout = "eternal",
-    srcs = ["hitl_map_upload.py"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_map_upload.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # Same sharded-upload test against the heapless esp32c6_netstack drop-in. The
 # from-scratch TLS decrypts each record into one contiguous heap buffer while
 # BLE+WiFi+LED+FX are all resident, so a 4KB record overflows the C6's fragmented
@@ -737,62 +429,6 @@ py_test(
     ],
 )
 
-# On-hardware rename -> wss-wedge repro (FUG-85 follow-up): reserve, flash,
-# provision, then rename the device and probe whether its TLS server recovers,
-# capturing the serial `[wss]`/heap lines. A manual+hitl py_test; --device-ws
-# hits a reachable board directly (how the fix was verified against lilbuddy).
-py_test(
-    name = "rename_wss",
-    timeout = "eternal",
-    srcs = ["hitl_rename_wss.py"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_rename_wss.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# On-hardware concurrent-TLS-slot churn resilience (FUG-136): reserve, flash,
-# provision, then fire N simultaneous wss:443 handshakes + a cert-page HTTPS GET
-# competing for the device's 2 TLS slots and assert it degrades gracefully
-# (serves/sheds, then recovers) rather than wedging until reboot. Unlike
-# rename_wss (a repro that exits 0), this ASSERTS — a wedge/crash exits non-zero,
-# so the HITL lane gates the regression. The verdict + taxonomy are pure-logic
-# unit-tested in //pi/hitl/tests (tls_churn_core). --device-ws hits a board
-# directly. A manual+hitl py_test like the other on-hardware drivers.
-py_test(
-    name = "tls_churn",
-    timeout = "eternal",
-    srcs = ["hitl_tls_churn.py"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_tls_churn.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # Connection-churn resilience against the heapless esp32c6_netstack drop-in. The netstack
 # TLS server is SINGLE-connection (one TcpConn / one ~6 KB mbedTLS session), so it serves
 # one and sheds the rest — excess SYNs are never accepted, so there is no multi-session heap
@@ -812,39 +448,6 @@ py_test(
     },
     imports = ["."],
     main = "hitl_tls_churn.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# On-hardware video-streaming performance test: reserve, flash, provision, load a
-# WxH texture effect, then stream a scrolling-bars pattern into it and assert the
-# device sustains >=10 FPS. The frame encoding + FPS measurement run in the Rust
-# stream_bench binary, built on the TouchDesigner plugin's OWN encoder/transport
-# (//tools/touchdesigner/core), so a PASS certifies the real plugin path. Like
-# :fx_bench it compiles the effect with fx_compile and rides the flash-bundle +
-# `hitl` CLI in runfiles; the pure logic (video_bench_core) is unit-tested in
-# //pi/hitl/tests. --device-ws ws://<ip>:81/ws hits a reachable board directly.
-py_test(
-    name = "video_stream",
-    timeout = "eternal",
-    srcs = ["hitl_video_stream.py"],
-    data = [
-        "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "//tools/touchdesigner/stream_bench",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_video_stream.py",
     tags = [
         "hitl",
         "manual",
@@ -894,68 +497,6 @@ py_test(
     ],
 )
 
-# Uniform-update drop-rate / bandwidth bench (FUG: slider drags losing the final
-# value). Reserves a rig, flashes + provisions the DUT, then blasts N set_uniforms
-# and confirms the device processed all of them (playback_state reply per message
-# + an ordered get_effect_uniforms barrier) while measuring bandwidth — proving
-# the transport isn't the loss. Like :e2e / :fx_bench it's a manual+hitl py_test
-# (needs a rig + board); the pure summary/verdict logic (uniform_bench_core) is
-# unit-tested in //pi/hitl/tests. --device-ws hits an already-reachable board
-# directly. Rides the flash-bundle + hitl CLI + probe .fx + fx_compile in runfiles.
-py_test(
-    name = "uniform_bench",
-    timeout = "eternal",
-    srcs = ["uniform_bench.py"],
-    data = [
-        "uniform_bench_probe.fx",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "uniform_bench.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# Regression guard for the LED-freeze fix (async ring logger): reserve, flash,
-# ship led_freeze_probe.py into the reservation and run it on the rig's serial —
-# it asserts the [fx] render loop keeps advancing frames while the console is
-# backpressured (the old blocking logger froze the strip there). hitl-tagged so
-# the CI HITL lane runs it; no provisioning needed (effects run from boot).
-py_test(
-    name = "led_freeze",
-    timeout = "eternal",
-    srcs = ["hitl_led_freeze.py"],
-    data = [
-        "benchmarks/empty.fx",
-        "led_freeze_probe.py",
-        "//firmware/player_app:esp32c6_flashbundle",
-        "//fx_compiler:fx_compile",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_led_freeze.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
 # TLS-slot-starvation repro (max_open_sockets=2 -> -0x7780 field storm). Flash +
 # provision the DUT, tunnel :443, sweep concurrent TLS handshakes. See the module
 # docstring. Manual (needs a rig); not in the hitl-tagged CI lane.
@@ -963,35 +504,8 @@ py_binary(
     name = "slot_repro",
     srcs = ["hitl_slot_repro.py"],
     data = [
-        "//firmware/player_app:esp32c6_flashbundle",
-        "@hitl_reserve//cmd/hitl",
-    ],
-    imports = ["."],
-    main = "hitl_slot_repro.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [
-        ":harness",
-        "//pi/server",
-        "@rules_python//python/runfiles",
-        requirement("websockets"),
-    ],
-)
-
-# Regression guard for the connection fix: the SAME script as :slot_repro, but as
-# a hitl-tagged py_test — it asserts <=2 concurrent ws sessions serve cleanly, a
-# reconnecting client (even with one held) never storms, and a served welcome
-# beats the 10s connectTimeoutMs. Runs in the CI HITL lane (bazel query on
-# tag:hitl). Reproduces the field -0x7780 storm as a failing assertion if the
-# slot budget or reconnect behaviour regresses.
-py_test(
-    name = "slot_guard",
-    timeout = "eternal",
-    srcs = ["hitl_slot_repro.py"],
-    data = [
-        "//firmware/player_app:esp32c6_flashbundle",
+        # The vendor bundle was removed; flash the surviving netstack player image.
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
         "@hitl_reserve//cmd/hitl",
     ],
     imports = ["."],

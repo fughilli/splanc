@@ -394,15 +394,13 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # main @ afe8101 (PR #5 squash-merged): --max-concurrent N caps how many
-    # reservations may be Active on a host at once regardless of unit count, so a rig
-    # with 4 units doesn't run 4 DUTs' flash/provision/TLS on one shared USB bus + a
-    # weak SBC CPU (the source of concurrent-CI flakes); nix/hitl-app.nix passes 2
-    # fleet-wide. 0 = unlimited (default). Prior: PR #4 (--net-host, host net ns for
-    # radios), PR #3 (--mount, dbus socket for BLE). Backward-compatible (opt-in).
-    # Keep in lockstep with the hitl-reserve rev in pi/hitl/flake.nix / flake.lock
-    # (bump all three together).
-    commit = "afe81016d45da0a26ec25bc0c1362b0b5564843b",
+    # main @ 825d155 (PR #6 squash-merged): the WS2812 analyzer capture pre-triggers
+    # (captureratio=2) so sigrok doesn't drop bit 0 of the frame — fixes fpga_ws281x's
+    # LSB-shift + short-pixel decode. Prior: PR #5 (--max-concurrent host cap;
+    # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
+    # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
+    # pi/hitl/flake.nix / flake.lock (bump all three together).
+    commit = "825d1554bbff27460b8a6a869b82448e4135c006",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 

@@ -133,10 +133,9 @@ jobs:
       # netstack image compiles too, and the site can bundle both as the "This
       # build (dev)" flash source (build-site downloads these + stages /firmware/).
       # The heavy ESP toolchain lives only in this job.
-      - name: Build firmware flash bundles (esp32c6 vendor + netstack)
+      - name: Build firmware flash bundles (esp32c6 netstack)
         run: |
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
-            //firmware/player_app:esp32c6_flashbundle \
             //firmware/player_app:esp32c6_netstack_flashbundle
 
       - name: Upload flash bundle artifacts

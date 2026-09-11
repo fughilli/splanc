@@ -13,7 +13,7 @@ test (`requires = ["improv"]`) fans to esp32c6 + led-mapper-pi + any future SKU 
 load("@rules_python//python:defs.bzl", "py_test")
 load("//pi/hitl:skus.bzl", "hitl_skus_with")
 
-def hitl_test(name, srcs, main, requires, data = [], deps = [], args = [], **kwargs):
+def hitl_test(name, srcs, main, requires, data = [], deps = [], args = [], exclude_skus = [], **kwargs):
     """Emit one `hitl`+`manual`-tagged py_test per SKU whose caps ⊇ `requires`.
 
     Args:
@@ -24,11 +24,15 @@ def hitl_test(name, srcs, main, requires, data = [], deps = [], args = [], **kwa
       data: runtime data deps, forwarded to each generated py_test.
       deps: library deps, forwarded to each generated py_test.
       args: base args; each variant additionally gets `--sku` + `--require-caps`.
+      exclude_skus: SKUs to drop from the fan-out even though their caps match —
+        for a contract test that a matching SKU can no longer serve (e.g. the
+        esp32c6 vendor firmware was deprecated, so its player has no image to run,
+        while the esp32c6 SKU itself stays for the netstack tests).
       **kwargs: extra py_test attrs (forwarded).
     """
-    skus = hitl_skus_with(requires)
+    skus = [s for s in hitl_skus_with(requires) if s not in exclude_skus]
     if not skus:
-        fail("hitl_test(%s): no SKU in //pi/hitl:skus.bzl provides caps %s" % (name, requires))
+        fail("hitl_test(%s): no SKU in //pi/hitl:skus.bzl provides caps %s (after excluding %s)" % (name, requires, exclude_skus))
     caps_arg = "--require-caps=" + ",".join(requires)
     for sku in skus:
         py_test(

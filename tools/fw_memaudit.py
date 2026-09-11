@@ -15,7 +15,7 @@ It shells out to the toolchain's `readelf`/`nm` (auto-detecting the RISC-V
 `riscv32-esp-elf-*` from the Bazel cache; falls back to generic binutils, which
 read the cross ELF fine), plus `addr2line` to attribute symbols `nm -l` can't.
 
-    bazel build -c opt //firmware/player_app:esp32c6
+    bazel build -c opt //firmware/player_app:esp32c6_netstack
     python3 tools/fw_memaudit.py            # auto-locates the built ELF
     python3 tools/fw_memaudit.py --elf x.elf --top 40 --min 256 --depth 3
     python3 tools/fw_memaudit.py --json     # machine-readable tree
@@ -50,13 +50,13 @@ def find_tool(name: str) -> str:
 
 
 def locate_elf() -> str:
-    """Find the most recently built esp32c6 ELF under any bazel-out config."""
+    """Find the most recently built esp32c6_netstack ELF under any bazel-out config."""
     roots = ["bazel-out", os.path.expanduser("~/.cache/bazel-volumetric")]
     found: list[str] = []
     for r in roots:
-        found += glob.glob(f"{r}/**/firmware/player_app/esp32c6.elf", recursive=True)
+        found += glob.glob(f"{r}/**/firmware/player_app/esp32c6_netstack.elf", recursive=True)
     if not found:
-        sys.exit("error: no esp32c6.elf found — build it or pass --elf")
+        sys.exit("error: no esp32c6_netstack.elf found — build it or pass --elf")
     return max(found, key=os.path.getmtime)
 
 
@@ -152,7 +152,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--elf", help="firmware ELF (default: auto-locate the built esp32c6.elf)")
+    ap.add_argument(
+        "--elf", help="firmware ELF (default: auto-locate the built esp32c6_netstack.elf)"
+    )
     ap.add_argument("--toolchain", help="cross-tool prefix, e.g. riscv32-esp-elf-")
     ap.add_argument("--top", type=int, default=30, help="how many biggest symbols to list")
     ap.add_argument(
