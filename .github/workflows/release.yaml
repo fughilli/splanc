@@ -68,19 +68,20 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      - name: Build both flashbundles (vendor + netstack)
+      # The vendor player firmware was deprecated/removed; only the heapless-netstack
+      # variant ships now. (The webapp's release source still recognizes an
+      # esp32c6-vendor-*.tar for OLD releases; new releases carry only -netstack-.)
+      - name: Build the netstack flashbundle
         run: |
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
-            //firmware/player_app:esp32c6_flashbundle \
             //firmware/player_app:esp32c6_netstack_flashbundle
 
-      # Rename to versioned, variant-tagged asset names the webapp's release source
+      # Rename to a versioned, variant-tagged asset name the webapp's release source
       # matches (web/src/flash/githubReleaseRepo.ts ASSET_RE = esp32c6-<variant>-*.tar).
       - name: Stage release assets
         run: |
           VER="${GITHUB_REF_NAME#firmware-v}"
           mkdir -p _assets
-          cp bazel-bin/firmware/player_app/esp32c6_flashbundle.tar "_assets/esp32c6-vendor-${VER}.tar"
           cp bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar "_assets/esp32c6-netstack-${VER}.tar"
 
       - name: Publish Release

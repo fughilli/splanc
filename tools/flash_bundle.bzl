@@ -35,7 +35,7 @@ flash_bundle = rule(
     attrs = {
         "flash": attr.label(
             mandatory = True,
-            doc = "An esptool_flash target (e.g. //firmware/player_app:flash_esp32c6).",
+            doc = "An esptool_flash target (e.g. //firmware/player_app:flash_esp32c6_netstack).",
         ),
         "_builder": attr.label(
             default = "//tools:mk_flashbundle",

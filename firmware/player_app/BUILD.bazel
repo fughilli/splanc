@@ -227,61 +227,13 @@ c_resource_library(
     srcs = [":board_caps_binaryproto"],
 )
 
-cc_binary(
-    name = "player_app",
-    srcs = [
-        "improv_ble.cpp",
-        "improv_ble.h",
-        "led_config.h",
-        "main.cpp",
-        "player_ffi.h",
-        "serial_log.h",
-        "ws2812_rmt.cpp",
-        "ws2812_rmt.h",
-        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
-    ],
-    # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
-    # subclass of its polymorphic types must not demand base typeinfo.
-    copts = ["-fno-rtti"],
-    # LED cap SSOT (led_caps.bzl): kMaxLeds / NUM_LEDS derive from LM_MAX_LEDS.
-    local_defines = ["LM_MAX_LEDS=%d" % MAX_LEDS],
-    target_compatible_with = select({
-        "@embedded//platforms:is_esp32c6": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
-    deps = [
-        ":board_caps_res",
-        ":color_correction",
-        ":improv_codec",
-        ":player_ffi",
-        ":ws_codec",
-        "//firmware/landing:landing_page",
-        "@embedded//libs/tls:selfsigned",
-        # NOT @embedded//libs/pins: it propagates LED_DATA_PIN=8 (the
-        # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
-        "@embedded//libs/board:arduino_core",
-        "@embedded//libs/vendor:ble",
-        "@embedded//libs/vendor:preferences",
-        "@embedded//libs/vendor:webserver",
-        "@embedded//libs/vendor:wifi",
-    ],
-)
-
-# opt_mode="opt": the image is unusable unoptimized (fastbuild is far larger and
-# slower), so the target pins -c opt via the board transition — no need to pass
-# `-c opt` on the command line. tags=manual keeps it OUT of the `//...` wildcard
-# so routine `bazel test //...` (incl. dev on a small container) stays light —
-# this image compiles mbedtls + the Arduino core FROM SOURCE. CI still builds it,
-# explicitly, in the dedicated `firmware` job (.github/workflows/test.yaml).
-# Build locally with:
-#   bazelisk build -c opt //firmware/player_app:esp32c6
-firmware_binary(
-    name = "esp32c6",
-    binary = ":player_app",
-    board = "esp32c6",
-    opt_mode = "opt",
-    tags = ["manual"],
-)
+# -- Vendor player firmware REMOVED -------------------------------------------
+# The vendor-WiFi/BT player build (:player_app cc_binary + :esp32c6 firmware_binary
+# + :flash_esp32c6 + :esp32c6_flashbundle) is deprecated and deleted: the heapless
+# netstack variant below is the shipping player transport, and the vendor HITL lane
+# was retired. The esp32c6 SKU/board lives on (the netstack tests reserve C6 DUTs);
+# only the vendor *image* is gone. The :oscbench / :fxjitbench dev images still build
+# the vendor stack for one-off benchmarking (tags=manual, not in CI).
 
 # -- Heapless-netstack player variant (esp32c6_netstack) ----------------------
 # The same LED Mapper player, but the ENTIRE WiFi transport is ours from the PHY
@@ -516,23 +468,6 @@ flash_bundle(
     tags = ["manual"],
 )
 
-# The image (~2.05 MB at -c opt: WiFi + BLE + webserver + the RMT driver + the
-# protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
-# no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
-# app + nvs, fits the common 4 MB-flash C6 devkits; a dual-OTA 8 MB table
-# would overrun a 4 MB chip and boot-loop).
-esptool_flash(
-    name = "flash_esp32c6",
-    app = ":esp32c6",
-    partitions = "@embedded//libs/vendor:partitions_huge_app",
-    tags = ["manual"],
-)
-
-# A self-describing flash bundle (flash.json manifest + the four bins) built from
-# the flash launcher — one artifact the HITL rig flashes in a single step, no
-# hand-copied offsets. Consumed by `bazel run //pi/hitl:hitl -- flash …`.
-flash_bundle(
-    name = "esp32c6_flashbundle",
-    flash = ":flash_esp32c6",
-    tags = ["manual"],
-)
+# (:flash_esp32c6 + :esp32c6_flashbundle removed with the vendor player image above —
+# see the "Vendor player firmware REMOVED" note. The netstack flashbundle
+# (:esp32c6_netstack_flashbundle) is the one the HITL rig flashes now.)

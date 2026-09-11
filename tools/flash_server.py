@@ -430,7 +430,9 @@ def main() -> int:
         help="repo root to run bazel in (default: $BUILD_WORKSPACE_DIRECTORY under `bazel run`)",
     )
     ap.add_argument(
-        "--target", default="//firmware/player_app:flash_esp32c6", help="bazel flash target"
+        "--target",
+        default="//firmware/player_app:flash_esp32c6_netstack",
+        help="bazel flash target",
     )
     ap.add_argument(
         "--bazel", default=os.environ.get("BAZEL", "bazel"), help="bazel/bazelisk binary"
