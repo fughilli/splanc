@@ -358,7 +358,11 @@ git_override(
     # PR #15 fixes flake-source staging on macOS: $TMPDIR under the /var symlink (nix
     # rejects a symlink-traversing path: input) + a read-only cp -rL copy that macOS
     # rename(2) can't move — so deploy_live couldn't build from a Mac at all.
-    commit = "f2d056cd16e527d1bfb8722b4ffd58d954616ff7",  # macOS flakesrc-staging fix (PR #15 merged)
+    # PR #16 adds amd64 (x86_64) support: an `amd64-generic` board with family =
+    # "x86_64" swaps mkSbcSystem to a stock-nixpkgs UEFI/systemd-boot system and
+    # makes sbc_application emit `image_installer` (a bootable install USB) +
+    # deploy_live — the //pi/hitl:hitl_sdr amd-rig target rides this.
+    commit = "ccc7dd0d48b5b687f896264538789344dffa0edd",  # amd64 (x86_64) support (PR #16 merged)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
@@ -390,11 +394,14 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # main @ c6699e9 (PR #3 squash-merged): --mount injects bind mounts (the dbus socket for BLE).
-    # advertisement + runtime seeded-units file + zero-unit hosts — what the splanc
-    # deploy needs for full parity. Keep this in lockstep with the hitl-reserve rev in
+    # main @ 51c57f6 (PR #4 squash-merged): --net-host runs a reservation environment
+    # with the host net namespace so it can drive host radios directly (WiFi over
+    # nl80211), the complement to --mount (the dbus socket for BLE, PR #3). Needed by
+    # the amd-rig SDR bench (//pi/hitl:hitl_sdr) so an agent gets the full WiFi+BT
+    # stack alongside the SDR + C6. Backward-compatible (opt-in flag; the Pi rigs
+    # don't pass it). Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "c6699e9003b54ea602b3df5166cf46a47b928663",
+    commit = "51c57f6fc54d84dd0b0aa02582e472c7ce06a3a3",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 

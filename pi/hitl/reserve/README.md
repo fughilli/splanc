@@ -22,14 +22,29 @@ bazel run //pi/hitl/reserve:hitl-reserved -- \
   --host "$(hostname)" --workspace splanc --image hitl-test:latest
 
 # Client:
-export HITL_HOSTS="hitl-rig-1,hitl-rig-2,hitl-rig-3"
+export HITL_HOSTS="hitl-rig-1,hitl-rig-2,hitl-rig-3,amd-rig"
 bazel run //pi/hitl/reserve:hitl -- status
 bazel run //pi/hitl/reserve:hitl -- reserve --type esp32c6 -- ./run-test.sh
 bazel run //pi/hitl/reserve:hitl -- reserve --unit led-mapper-pi-1   # the pin-only Pi
+bazel run //pi/hitl/reserve:hitl -- reserve --type esp32c6+hackrf -- ./sdr-re.sh  # amd-rig composite
 ```
 
-[`catalog.json`](catalog.json) expresses the splanc fleet in the new schema; set
-the Pi's real address and per-rig `--host`/`--workspace` at deploy.
+[`catalog.json`](catalog.json) expresses the splanc **Pi fleet** in the new schema;
+set the Pi's real address and per-rig `--host`/`--workspace` at deploy.
+
+### amd-rig — the SDR bench ([`catalog-sdr.json`](catalog-sdr.json))
+
+`amd-rig` is an x86_64 mini-PC (deployed by `//pi/hitl:hitl_sdr`, an `amd64-generic`
+board variant of the same flake — see the `pi/hitl/BUILD.bazel` header). It offers
+**one composite reservable unit**, `c6-sdr` (type `esp32c6+hackrf`): an ESP32-C6
+wired next to a HackRF One, handed out **together as a single atomic reservation**
+for reverse-engineering the ESP32's lower-layer WiFi/BT stacks. The reservation
+environment carries the ESP32 toolbox **and** an SDR toolbox (`hackrf_info`/
+`hackrf_transfer`/`hackrf_sweep` + GNU Radio with gr-osmosdr, plus `gnuradio-python`
+for flowgraphs — see `nix/container.nix` `withSdr`). Reserve it with `--type
+esp32c6+hackrf` (or `--unit c6-sdr`); the daemon runs the environment privileged
+(single-unit bench) so it reaches both the C6's tty/USB-JTAG and the tty-less
+HackRF's raw USB.
 
 ## Concept mapping (pi/hitl → hitl-reserve)
 

@@ -38,7 +38,8 @@ filegroup(
     srcs = [
         "flake.lock",
         "flake.nix",
-        "//pi/hitl/reserve:catalog.json",  # reserve/ is its own package
+        "//pi/hitl/reserve:catalog.json",  # Pi fleet catalog (reserve/ is its own package)
+        "//pi/hitl/reserve:catalog-sdr.json",  # amd-rig SDR bench catalog (hitl_sdr)
     ] + glob([
         "nix/**",
         "observability/**",
@@ -101,6 +102,32 @@ sbc_application(
     flake = "pi/hitl",
     flake_srcs = [":flake_srcs"],
     hostname = "hitl-rig",
+    wifi_config_file = _wifi_config,
+)
+
+# amd64 (x86_64) SDR HITL bench — `amd-rig`. The SAME flake, switched to the
+# stock-nixpkgs UEFI system builder by the amd64-generic board (family = x86_64,
+# exported as $SBC_BOARD_FAMILY): flake.nix then selects nix/hitl-sdr.nix +
+# reserve/catalog-sdr.json and bakes hostName = "amd-rig". Offers ONE composite
+# reservable unit (an ESP32-C6 + a HackRF One reserved together) for lower-layer
+# ESP32 WiFi/BT RE, with the SDR toolbox (hackrf CLI + GNU Radio) in the
+# reservation environment. Gives //pi/hitl:hitl_sdr.{image_installer,deploy_live,
+# ssh,keys,seed_tailscale,update}. amd-rig is already installed (via sbc-deploy's
+# hello-amd64), so the live path is deploy_live:
+#   bazel run //pi/hitl:hitl_sdr.deploy_live   -- amd-rig   # push to the booted box
+#   bazel run //pi/hitl:hitl_sdr.image_installer -- --no-write   # (re)build an install USB
+# NB: an x86_64 closure needs an x86_64 builder — run from the macOS host (managed
+# x86 builder VM) or on amd-rig itself, not the aarch64 dev container.
+#
+# hostname = "amd-rig" is the config's baked hostName / nixosConfigurations attr
+# (flake.nix sets it under family = x86_64) that deploy_live/ssh build.
+sbc_application(
+    name = "hitl_sdr",
+    board = "@sbc_deploy//deploy/boards:amd64-generic",
+    flake = "pi/hitl",
+    flake_srcs = [":flake_srcs"],
+    hostname = "amd-rig",
+    # amd-rig is wired (Ethernet); a baked WiFi profile is harmless but unused.
     wifi_config_file = _wifi_config,
 )
 
