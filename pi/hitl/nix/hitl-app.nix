@@ -532,6 +532,16 @@ in
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
+          # Host concurrency cap: never run more than 2 reservation environments at
+          # once on a rig, even where more units are free (rig-1 carries 4). A rig's
+          # single shared USB 2.0 bus + the SBC CPU can't sustain N-wide
+          # flash/provision/TLS without flaking under concurrent CI, so bound peak
+          # concurrency fleet-wide; surplus reservations queue (FIFO) and start as
+          # active ones release — throughput is preserved, only simultaneity is
+          # capped. A no-op on the 1-2 unit rigs (rig-2/rig-3, amd-rig). Relax (raise
+          # or drop) once the netstack RX overhead is trimmed and the bench is proven
+          # flake-free at higher concurrency.
+          "--max-concurrent 2"
           # Reservation containers reach the daemon's shared-resource brokers (e.g.
           # the logic analyzer at POST /shared/logic-analyzer) over the podman host
           # gateway; keep the port in sync with --addr above ($HITL_BROKER_URL).

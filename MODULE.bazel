@@ -394,14 +394,15 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # main @ 51c57f6 (PR #4 squash-merged): --net-host runs a reservation environment
-    # with the host net namespace so it can drive host radios directly (WiFi over
-    # nl80211), the complement to --mount (the dbus socket for BLE, PR #3). Needed by
-    # the amd-rig SDR bench (//pi/hitl:hitl_sdr) so an agent gets the full WiFi+BT
-    # stack alongside the SDR + C6. Backward-compatible (opt-in flag; the Pi rigs
-    # don't pass it). Keep in lockstep with the hitl-reserve rev in
-    # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "51c57f6fc54d84dd0b0aa02582e472c7ce06a3a3",
+    # main @ afe8101 (PR #5 squash-merged): --max-concurrent N caps how many
+    # reservations may be Active on a host at once regardless of unit count, so a rig
+    # with 4 units doesn't run 4 DUTs' flash/provision/TLS on one shared USB bus + a
+    # weak SBC CPU (the source of concurrent-CI flakes); nix/hitl-app.nix passes 2
+    # fleet-wide. 0 = unlimited (default). Prior: PR #4 (--net-host, host net ns for
+    # radios), PR #3 (--mount, dbus socket for BLE). Backward-compatible (opt-in).
+    # Keep in lockstep with the hitl-reserve rev in pi/hitl/flake.nix / flake.lock
+    # (bump all three together).
+    commit = "afe81016d45da0a26ec25bc0c1362b0b5564843b",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
