@@ -34,9 +34,10 @@
 
   "units": [
     {
-      "comment": "The composite unit: C6 + HackRF reserved together as one atomic unit for lower-layer RE. Its capabilities are the union of both components (flash/monitor/jtag/gdb + sdr/rx/tx/wideband). Target it with `hitl reserve --type esp32c6+hackrf` or `--unit c6-sdr`.",
+      "comment": "The composite unit: C6 + HackRF reserved together as one atomic unit for lower-layer RE. Its capabilities are the union of both components (flash/monitor/jtag/gdb + sdr/rx/tx/wideband). Target it with `hitl reserve --type esp32c6+hackrf` or `--unit c6-sdr`. pin_only: this C6 is SDR-hardwired (wired to the HackRF, no antenna) and there's only one, so it must NOT absorb ordinary caps-only work — e.g. the netstack/vendor tests that reserve 'any DUT with flash+improv+wss-app' would otherwise match it and steal the SDR bench. pin_only makes it reachable ONLY by an explicit target (its unit name or the esp32c6+hackrf type, both of which the SDR reservations use); a bare caps-only/any request skips it. See engine eligible(): by-name and by-type opt past pin-only, caps-only gets !PinOnly.",
       "name": "c6-sdr",
       "type": "esp32c6+hackrf",
+      "pin_only": true,
       "components": ["c6-0", "sdr-0"]
     }
   ]
