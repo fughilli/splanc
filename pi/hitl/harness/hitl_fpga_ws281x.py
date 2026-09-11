@@ -234,15 +234,22 @@ async def _drive_counting(ws_url: str, num_ports: int, leds_per_port: int) -> No
 
 
 def _dut_addr(res: Reservation) -> str:
-    """The network DUT's LAN address, from `$HITL_DUT_ADDR` in the reservation
-    container (seeded via //pi/hitl:seed_network_dut) — the far end for res.forward.
-    The Pi's WSS isn't the container's, so we tunnel to it explicitly."""
-    proc = res.ssh('printf %s "$HITL_DUT_ADDR"', capture=True, timeout=20)
+    """The network DUT's LAN address — the far end for res.forward to its WSS.
+
+    Prefer `$HITL_ADDRESS`: the daemon resolves the network component's address
+    (which may be an mDNS `foo.local`) to an IP HOST-SIDE via getent/nss-mdns and
+    injects it under this var precisely because the reservation container has NO
+    mDNS resolver. res.forward's far end is container-side, so dialing the raw
+    `$HITL_DUT_ADDR` (`.local`, seeded verbatim) resets before it reaches the Pi
+    (the player never even logs the connection). Fall back to `$HITL_DUT_ADDR`
+    for a seed/daemon that predates the resolved var."""
+    proc = res.ssh('printf %s "${HITL_ADDRESS:-$HITL_DUT_ADDR}"', capture=True, timeout=20)
     addr = (proc.stdout or "").strip()
     if proc.returncode != 0 or not addr:
         raise SystemExit(
-            f"[fpga] could not resolve $HITL_DUT_ADDR for the network DUT "
-            f"(rc={proc.returncode}): {proc.stdout!r} {proc.stderr!r}"
+            f"[fpga] could not resolve the network DUT address "
+            f"($HITL_ADDRESS/$HITL_DUT_ADDR, rc={proc.returncode}): "
+            f"{proc.stdout!r} {proc.stderr!r}"
         )
     return addr
 
