@@ -296,6 +296,23 @@ vite_bin.vite(
         "vite.config.ts",
         "wall.html",
         ":build_info_json",  # stamped git build info (read by vite.config.ts)
+        # The tsconfig chain, DECLARED. rolldown's transform resolves a tsconfig
+        # by walking up from the entry (cwd is bazel-out/.../bin/web via chdir),
+        # so what it finds depends on the BIN tree, not the source tree. Neither
+        # file used to be an input here, which made the action's behaviour depend
+        # on whether some other target had already copied them to bin — and the
+        # Vite action runs unsandboxed (--strategy=Vite=local in .bazelrc), so it
+        # sees that shared tree. A full `bazel test //...` builds //web:tsconfig
+        # (ts_config), which copies web/tsconfig.json to bin as its own action,
+        # separate from the //:tsconfig_base copy of the root base config. Land
+        # the first before the second and Vite finds a tsconfig.json that
+        # `extends: "../tsconfig.base.json"` and dies with
+        #     Tsconfig not found .../bin/tsconfig.base.json
+        # which is exactly the flake seen in CI. Declaring BOTH pins the chain:
+        # the copies become dependencies of this action instead of a race.
+        # (:dev_server carries the same pair, for the same reason.)
+        "tsconfig.json",
+        "//:tsconfig_base_json",
         ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/esptool-js",
