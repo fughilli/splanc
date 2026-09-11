@@ -220,8 +220,17 @@ jobs:
           # lane runs on the Pi 5 rigs (rig-1/rig-2), where it passes 2-wide. The VENDOR
           # lane below still uses rig-3: the vendor Wi-Fi stack decrypts unicast in hardware
           # and works there.
+          #
+          # Also fence off amd-rig: its sole DUT (c6-sdr) is SDR-hardwired to a HackRF via an
+          # attenuator with NO antenna, so ordinary over-the-air netstack e2e can't pass there.
+          # #168 marks that unit pin_only so caps-only jobs skip it — but that's a catalog
+          # change and amd-rig (x86_64) hasn't been redeployed yet, so its live daemon still
+          # advertises c6-sdr to caps-only reservations and netstack tests land on it and fail.
+          # This host-level fence is the stopgap; drop it once amd-rig is redeployed and
+          # `curl amd-rig:8087/status` shows c6-sdr pin_only=true (pin_only then excludes it
+          # cleanly, no fence needed).
           echo "::group::netstack HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$netstack"
+          HITL_EXCLUDE_HOSTS="hitl-rig-3 amd-rig" run_hitl_set "$netstack"
           echo "::endgroup::"
           echo "::group::vendor HITL tests (allow-fail: reported, non-gating)"
           run_hitl_set "$vendor" || echo "::warning title=vendor HITL::vendor HITL tests failed — allowed, does not gate CI"
