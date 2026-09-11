@@ -1064,8 +1064,21 @@ void netstack_setup() {
   mac_own_bssid();            // own-MAC + g_bssid: hardware auto-ACK
   ns_mac_rx_install();        // re-own the RX ring
   esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
+  // Promiscuous / all-frames RX. REQUIRED for protected UNICAST on some APs: with the HW
+  // crypto engine off (HW_DECRYPT=false, the SW-CCMP round-trip path), the "real STA accept
+  // policy" filter drops individually-addressed protected frames while passing group ones —
+  // invisible on the Pi 5 rigs but FATAL on a Pi 3's onboard AP (brcmfmac), where the DUT
+  // associated + leased (broadcast DHCP) yet never saw a single unicast frame, so it never
+  // answered a TCP SYN (tcpdump: SYN storm, zero SYN-ACK). All-frames RX delivers the
+  // unicast RAW to our ring; the software address filter below (A1==our MAC / group, from
+  // our BSSID) still scopes it, and the SW CCMP path decrypts it (with the ccmp_nonce TID
+  // fix so QoS Data validates). auto-ACK stays keyed on the own-MAC register set above, so
+  // association survives. The `sink` no-op keeps the vendor from double-delivering. Verified
+  // on both a Pi 3 AP (recovers the SYN) and a Pi 5 AP (no regression).
+  esp_wifi_set_promiscuous_rx_cb(&sink);
+  esp_wifi_set_promiscuous(true);
 
-  // Sanity: continuous RX into our ring, no promiscuous.
+  // Sanity: continuous all-frames RX into our ring (promiscuous on; see above).
   uint8_t rx[400];
   uint32_t beacons = 0;
   for (int i = 0; i < 400; i++) {
@@ -1073,7 +1086,7 @@ void netstack_setup() {
     if (n && rx[0] == 0x80) beacons++;
     delay(3);
   }
-  Serial.printf("[netstack] RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n",
+  Serial.printf("[netstack] RX sanity (STA vif, promiscuous all-frames, SW CCMP): beacons=%u\n",
                 beacons);
   tls_init();
 }

@@ -491,10 +491,14 @@ fn mac_hdr_len(hdr: &[u8]) -> usize {
     }
 }
 
-fn ccmp_nonce(a2: &[u8], pn: u64) -> [u8; 13] {
+// `hdr` is the full MAC header (so we can read the QoS Control field). Per §12.5.3.2 the
+// nonce priority octet carries the TID (QoS Control bits 0-3) for a QoS Data frame — the
+// AAD (ccmp_aad) already keeps that TID, so hardcoding 0 here made the nonce inconsistent
+// with the AAD and failed the MIC for any QoS frame with a non-zero TID.
+fn ccmp_nonce(hdr: &[u8], pn: u64) -> [u8; 13] {
     let mut n = [0u8; 13];
-    n[0] = 0; // priority/mgmt flags (non-QoS data)
-    n[1..7].copy_from_slice(&a2[..6]);
+    n[0] = if hdr[0] & 0x80 != 0 && hdr.len() >= 26 { hdr[24] & 0x0f } else { 0 };
+    n[1..7].copy_from_slice(&hdr[10..16]); // A2 (transmitter address)
     for i in 0..6 {
         n[7 + i] = (pn >> (8 * (5 - i))) as u8; // PN, 48-bit big-endian
     }
@@ -534,7 +538,7 @@ pub fn ccmp_encap(hdr: &[u8], tk: &[u8; 16], pn: u64, keyid: u8, payload: &[u8],
     if hdr.len() < hlen {
         return 0;
     }
-    let nonce = ccmp_nonce(&hdr[10..16], pn);
+    let nonce = ccmp_nonce(hdr, pn);
     let (aad, alen) = ccmp_aad(hdr);
     out[..hlen].copy_from_slice(&hdr[..hlen]);
     out[hlen..hlen + 8].copy_from_slice(&ccmp_hdr(pn, keyid));
@@ -558,7 +562,7 @@ pub fn ccmp_decap(frame: &[u8], tk: &[u8; 16], out: &mut [u8]) -> Option<(usize,
         | (ch[5] as u64) << 24
         | (ch[6] as u64) << 32
         | (ch[7] as u64) << 40;
-    let nonce = ccmp_nonce(&frame[10..16], pn);
+    let nonce = ccmp_nonce(frame, pn);
     let (aad, alen) = ccmp_aad(frame);
     let clen = frame.len() - (hlen + 8);
     let body = hlen + 8;
