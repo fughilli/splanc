@@ -218,12 +218,19 @@ jobs:
           # and is tracked for a focused RX reverse-engineering fix. Until then the netstack
           # lane runs on the Pi 5 rigs (rig-1/rig-2), where it passes 2-wide.
           #
-          # amd-rig needs no host fence here: its sole DUT (c6-sdr) is SDR-hardwired to a
-          # HackRF with no antenna (OTA netstack e2e can't pass), but #168 marks that unit
-          # pin_only so caps-only netstack reservations skip it — amd-rig offers no eligible
-          # unit to this lane. (Confirmed live: curl amd-rig:8087/status → c6-sdr pin_only=true.)
+          # Also fence off amd-rig: its sole DUT (c6-sdr) is SDR-hardwired to a HackRF with
+          # no antenna, so OTA netstack e2e can't pass there. #168 marks it pin_only, which
+          # SHOULD make caps-only netstack reservations skip it — but relying on that alone
+          # is not enough for this lane: (1) amd-rig's deployed daemon predates the engine's
+          # pin_only-excludes-caps-only enforcement, so it still SERVES c6-sdr to caps-only
+          # requests (observed: e2e_netstack / tls_churn_netstack landed on amd-rig and
+          # failed); and (2) even a correct daemon would leave a netstack reservation that
+          # PICKED amd-rig with no eligible unit — it would queue/hang rather than cleanly
+          # skip. amd-rig has no netstack-capable DUT at all, so exclude it from this lane's
+          # POOL. (Drop once amd-rig runs a daemon that enforces pin_only AND the harness is
+          # proven to skip a no-eligible-unit host without hanging.)
           echo "::group::netstack HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$netstack"
+          HITL_EXCLUDE_HOSTS="hitl-rig-3 amd-rig" run_hitl_set "$netstack"
           echo "::endgroup::"
           # The ESP32-C6 vendor firmware and its HITL lane were removed; this lane
           # now runs only the pi-player (led-mapper-pi) tests, which GATE CI too.
