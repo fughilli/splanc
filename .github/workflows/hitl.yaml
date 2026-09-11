@@ -176,10 +176,11 @@ jobs:
           if [ -z "$all" ]; then echo "no HITL-tagged tests found"; exit 1; fi
           # Split the on-hardware suite into two GATING lanes: the from-source
           # *netstack* targets (the stack under active development) and the
-          # pi-player (led-mapper-pi) targets. The ESP32-C6 VENDOR player firmware
-          # and its HITL lane were removed, so the non-netstack set is now only the
-          # led-mapper-pi tests (fpga_ws281x, improv_e2e), which are deterministic
-          # on the bench and GATE CI like the netstack lane.
+          # pi-player (led-mapper-pi) targets. The ESP32-C6 VENDOR player firmware +
+          # its HITL lane, and the superseded //firmware/hybrid lab experiment, were
+          # removed — so the non-netstack set is now exactly the led-mapper-pi tests
+          # (fpga_ws281x, improv_e2e), which are deterministic on the bench and GATE
+          # CI like the netstack lane.
           netstack=$(echo "$all" | grep netstack || true)
           pi_player=$(echo "$all" | grep -v netstack || true)
           server_arg=()
