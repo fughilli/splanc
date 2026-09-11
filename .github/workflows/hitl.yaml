@@ -190,12 +190,13 @@ jobs:
             n=$(echo "$t" | wc -w)
             if [ "$n" -eq 0 ]; then echo "(no targets in this set)"; return 0; fi
             echo "running $n HITL tests in parallel (queued on the bench)"
-            # --flaky_test_attempts=3: the whole set is fired at once onto a ~3-rig
-            # bench, so a held reservation can get preempted mid-test under contention
-            # (FUG-94) — a transient, infra-level flake, NOT a device/code failure. Bazel
-            # re-runs only FAILED tests, so a real regression still fails all 3 attempts
-            # and gates; a contention flake recovers. (Every netstack target passes
-            # deterministically when run in isolation.)
+            # --flaky_test_attempts=3: reservations QUEUE (never preempt) — a test holds
+            # its DUT until it releases — but a DUT's own bring-up can still flake per
+            # boot (e.g. the netstack WSS/TLS server occasionally not accepting a
+            # connection after a good WiFi join, a known firmware wedge), and a fresh
+            # flash on the retry usually clears it. Bazel re-runs only FAILED tests, so a
+            # real regression still fails all 3 attempts and gates while a transient
+            # per-boot wedge recovers. (Every target passes deterministically in isolation.)
             bazel test $t \
               -c opt \
               --experimental_worker_for_repo_fetching=off \
