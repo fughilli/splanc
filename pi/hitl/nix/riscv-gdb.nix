@@ -4,14 +4,28 @@
 { pkgs }:
 let
   version = "17.1_20260402";
+  # Select the prebuilt asset by host arch (see openocd-esp32.nix): arm64 Pi rigs
+  # vs the x86_64 amd-rig SDR bench. Pinning aarch64 unconditionally shipped an
+  # aarch64 gdb onto the x86_64 amd-rig.
+  system = pkgs.stdenv.hostPlatform.system;
+  asset = {
+    "aarch64-linux" = {
+      triple = "aarch64-linux-gnu";
+      hash = "sha256-8YXZJEl3UPJUKQoyxIFjwI47KinrJI1znZCZDr7hf0Q=";
+    };
+    "x86_64-linux" = {
+      triple = "x86_64-linux-gnu";
+      hash = "sha256-NfPbhBM4y0+bxg11e8PoffpQ/1Bge8vDhnxbGsKN00I=";
+    };
+  }.${system} or (throw "riscv32-esp-elf-gdb: unsupported system ${system}");
 in
 pkgs.stdenv.mkDerivation {
   pname = "riscv32-esp-elf-gdb";
   inherit version;
 
   src = pkgs.fetchurl {
-    url = "https://github.com/espressif/binutils-gdb/releases/download/esp-gdb-v${version}/riscv32-esp-elf-gdb-${version}-aarch64-linux-gnu.tar.gz";
-    hash = "sha256-8YXZJEl3UPJUKQoyxIFjwI47KinrJI1znZCZDr7hf0Q=";
+    url = "https://github.com/espressif/binutils-gdb/releases/download/esp-gdb-v${version}/riscv32-esp-elf-gdb-${version}-${asset.triple}.tar.gz";
+    inherit (asset) hash;
   };
 
   nativeBuildInputs = [ pkgs.autoPatchelfHook ];
