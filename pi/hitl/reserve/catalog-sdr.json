@@ -1,5 +1,5 @@
 {
-  "comment": "amd-rig SDR HITL bench catalog (read by hitl-reserved --catalog on the amd64 //pi/hitl:hitl_sdr variant). Unlike the fleet-identical Pi catalog.json, this host offers ONE composite reservable unit: an ESP32-C6 wired next to a HackRF One, handed out together as a single atomic reservation for reverse-engineering the ESP32's lower-layer WiFi/BT stacks. No auto-discovery (discovery yields single-board units, not composites) and no FX2 analyzer / provisioning-AP (see nix/hitl-sdr.nix). host/workspace + the unit sshd port range are passed as flags by nix/hitl-sdr.nix, not baked here.",
+  "comment": "amd-rig SDR HITL bench catalog (read by hitl-reserved --catalog on the amd64 //pi/hitl:hitl_sdr variant). Unlike the fleet-identical Pi catalog.json, this host offers ONE composite reservable unit: TWO ESP32-C6s wired next to a HackRF One, handed out together as a single atomic reservation for reverse-engineering the ESP32's lower-layer WiFi/BT stacks (two C6s enable TX/RX-between-DUTs experiments; the HackRF is the on-air oracle). No auto-discovery (discovery yields single-board units, not composites) and no FX2 analyzer / provisioning-AP (see nix/hitl-sdr.nix). host/workspace + the unit sshd port range are passed as flags by nix/hitl-sdr.nix, not baked here.",
   "workspace": "splanc",
   "lease_seconds": 1800,
   "ssh_port_base": 2222,
@@ -17,13 +17,22 @@
 
   "components": [
     {
-      "comment": "The ESP32-C6 DUT, addressed by its built-in USB-JTAG by-id symlink (stable across re-enumeration) and pinned to /dev/ttyACM0 inside the reservation env so the toolbox (hitl-flash/monitor, default /dev/ttyACM0) works unchanged. HITL_ADAPTER_SERIAL selects this board's USB-JTAG for openocd/gdb.",
+      "comment": "Primary ESP32-C6 DUT (DUT 0), addressed by its built-in USB-JTAG by-id symlink (stable across re-enumeration) and pinned to /dev/ttyACM0. HITL_TTY + HITL_ADAPTER_SERIAL name DUT 0 for the in-container toolbox; the default (no --dut) resolves here, so single-DUT usage is unchanged.",
       "name": "c6-0",
       "type": "esp32c6",
       "devices": [
         "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:B0-if00:/dev/ttyACM0"
       ],
-      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:B0" }
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:B0", "HITL_TTY": "/dev/ttyACM0" }
+    },
+    {
+      "comment": "Second ESP32-C6 DUT (DUT 1), pinned to /dev/ttyACM1. Uses the suffixed env keys HITL_TTY_1 / HITL_ADAPTER_SERIAL_1 (distinct from DUT 0, so the daemon injects both without collision). Address it from the toolbox with `--dut 1` (hitl-monitor/flash/jtag/gdb) or `hitl-devices` to list the mapping.",
+      "name": "c6-1",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:D8-if00:/dev/ttyACM1"
+      ],
+      "env": { "HITL_ADAPTER_SERIAL_1": "58:E6:C5:11:FC:D8", "HITL_TTY_1": "/dev/ttyACM1" }
     },
     {
       "comment": "The HackRF One. A raw-USB SDR with no serial tty, so it isn't isolated by the tty→USB-port path; the reservation container runs privileged (single-unit bench) and sees the whole /dev/bus/usb, which includes the HackRF at 1d50:6089. hackrf_info + GNU Radio/gr-osmosdr in the env drive it.",
@@ -34,11 +43,11 @@
 
   "units": [
     {
-      "comment": "The composite unit: C6 + HackRF reserved together as one atomic unit for lower-layer RE. Its capabilities are the union of both components (flash/monitor/jtag/gdb + sdr/rx/tx/wideband). Target it with `hitl reserve --type esp32c6+hackrf` or `--unit c6-sdr`. pin_only: this C6 is SDR-hardwired (wired to the HackRF, no antenna) and there's only one, so it must NOT absorb ordinary caps-only work — e.g. the netstack/vendor tests that reserve 'any DUT with flash+improv+wss-app' would otherwise match it and steal the SDR bench. pin_only makes it reachable ONLY by an explicit target (its unit name or the esp32c6+hackrf type, both of which the SDR reservations use); a bare caps-only/any request skips it. See engine eligible(): by-name and by-type opt past pin-only, caps-only gets !PinOnly.",
+      "comment": "The composite unit: TWO C6s + HackRF reserved together as one atomic unit for lower-layer RE (two C6s enable TX/RX-between-DUTs experiments; the HackRF is the on-air oracle). Its capabilities are the union of the components (flash/monitor/jtag/gdb + sdr/rx/tx/wideband). Target it with `hitl reserve --type esp32c6+hackrf` or `--unit c6-sdr` (both unchanged — the second C6 joins the same unit, not a new type). In-container: default toolbox commands act on DUT 0 (ttyACM0); use `--dut 1` for the second C6, and `hitl-devices` to list both. pin_only: these C6s are SDR-hardwired (wired to the HackRF, no antenna) and this is the only such bench, so it must NOT absorb ordinary caps-only work — e.g. the netstack/vendor tests that reserve 'any DUT with flash+improv+wss-app' would otherwise match it and steal the SDR bench. pin_only makes it reachable ONLY by an explicit target (its unit name or the esp32c6+hackrf type, both of which the SDR reservations use); a bare caps-only/any request skips it. See engine eligible(): by-name and by-type opt past pin-only, caps-only gets !PinOnly.",
       "name": "c6-sdr",
       "type": "esp32c6+hackrf",
       "pin_only": true,
-      "components": ["c6-0", "sdr-0"]
+      "components": ["c6-0", "c6-1", "sdr-0"]
     }
   ]
 }

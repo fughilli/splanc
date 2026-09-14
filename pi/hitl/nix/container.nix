@@ -59,11 +59,29 @@ let
     text = ''
       cfg=(-s ${openocdEsp}/share/openocd/scripts -f board/esp32c6-builtin.cfg)
       # Multi-DUT: with several identical C6 USB-JTAGs on the same bus, select this
-      # DUT's adapter by serial (the daemon sets HITL_ADAPTER_SERIAL per DUT). Set
-      # before init so the adapter driver binds the right device. Unset (single-DUT)
-      # → openocd auto-picks the sole board, unchanged.
-      if [ -n "''${HITL_ADAPTER_SERIAL:-}" ]; then
-        cfg+=(-c "adapter serial ''${HITL_ADAPTER_SERIAL}")
+      # DUT's adapter by serial. A leading `--dut N` picks DUT N (resolving
+      # HITL_ADAPTER_SERIAL[_N], set per-DUT by the daemon); `--adapter-serial S`
+      # forces a serial. Default DUT 0 = HITL_ADAPTER_SERIAL, so single-DUT usage is
+      # unchanged; unset serial → openocd auto-picks the sole board.
+      dut=0; serial_override=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --dut) dut="''${2:-0}"; shift 2 ;;
+          --adapter-serial) serial_override="''${2:-}"; shift 2 ;;
+          *) break ;;
+        esac
+      done
+      serial="$serial_override"
+      if [ -z "$serial" ]; then
+        case "$dut" in
+          0) serial="''${HITL_ADAPTER_SERIAL:-}" ;;
+          1) serial="''${HITL_ADAPTER_SERIAL_1:-}" ;;
+          2) serial="''${HITL_ADAPTER_SERIAL_2:-}" ;;
+          *) serial="" ;;
+        esac
+      fi
+      if [ -n "$serial" ]; then
+        cfg+=(-c "adapter serial $serial")
       fi
       if [ "$#" -eq 0 ]; then
         exec ${openocdEsp}/bin/openocd "''${cfg[@]}" -c "init; halt; reg pc; reset run; shutdown"
@@ -80,13 +98,31 @@ let
   hitlGdb = p.writeShellApplication {
     name = "hitl-gdb";
     text = ''
+      # Multi-DUT selector (same as hitl-jtag): leading `--dut N` / `--adapter-serial S`.
+      dut=0; serial_override=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --dut) dut="''${2:-0}"; shift 2 ;;
+          --adapter-serial) serial_override="''${2:-}"; shift 2 ;;
+          *) break ;;
+        esac
+      done
       elf=""
       if [ "$#" -gt 0 ] && [ -f "$1" ]; then elf="$1"; shift; fi
       log=/tmp/hitl-openocd.log
+      serial="$serial_override"
+      if [ -z "$serial" ]; then
+        case "$dut" in
+          0) serial="''${HITL_ADAPTER_SERIAL:-}" ;;
+          1) serial="''${HITL_ADAPTER_SERIAL_1:-}" ;;
+          2) serial="''${HITL_ADAPTER_SERIAL_2:-}" ;;
+          *) serial="" ;;
+        esac
+      fi
       sel=()
-      # Multi-DUT: target this DUT's USB-JTAG by serial when the daemon set it.
-      if [ -n "''${HITL_ADAPTER_SERIAL:-}" ]; then
-        sel=(-c "adapter serial ''${HITL_ADAPTER_SERIAL}")
+      # Multi-DUT: target this DUT's USB-JTAG by serial when resolved above.
+      if [ -n "$serial" ]; then
+        sel=(-c "adapter serial $serial")
       fi
       ${openocdEsp}/bin/openocd -s ${openocdEsp}/share/openocd/scripts \
         -f board/esp32c6-builtin.cfg "''${sel[@]}" > "$log" 2>&1 &
@@ -117,8 +153,18 @@ let
           major = int(m.group(1)) if m else 4
           return ("write-flash", "--flash-mode", "--flash-freq", "--flash-size") if major >= 5 \
               else ("write_flash", "--flash_mode", "--flash_freq", "--flash_size")
+      def dut_port(dut, explicit):
+          # Resolve the serial port for a reserved DUT: --port wins; else the
+          # daemon-set HITL_TTY[_N] for DUT N; else the ttyACMN positional default.
+          if explicit:
+              return explicit
+          suf = "" if str(dut) == "0" else "_" + str(dut)
+          return os.environ.get("HITL_TTY" + suf,
+                                "/dev/ttyACM" + ("0" if suf == "" else str(dut)))
       ap = argparse.ArgumentParser()
-      ap.add_argument("bundle"); ap.add_argument("--port", default="/dev/ttyACM0")
+      ap.add_argument("bundle")
+      ap.add_argument("--dut", default="0", help="reserved DUT index (0,1,...); resolves --port from HITL_TTY[_N]")
+      ap.add_argument("--port", default=None, help="serial port (overrides --dut)")
       ap.add_argument("--baud", default="460800")
       ap.add_argument("--monitor", action="store_true", help="read serial after flashing")
       ap.add_argument("--monitor-seconds", type=float, default=10.0)
@@ -130,6 +176,7 @@ let
       ap.add_argument("--erase-fs", action="store_true",
                       help="full chip erase first (wipe NVS creds + littlefs) — HITL clean slate")
       a = ap.parse_args()
+      a.port = dut_port(a.dut, a.port)
       d = tempfile.mkdtemp(prefix="hitl-flash-")
       with tarfile.open(a.bundle) as t: t.extractall(d)
       m = json.load(open(os.path.join(d, "flash.json")))
@@ -163,14 +210,19 @@ let
     destination = "/bin/hitl-monitor";
     text = ''
       #!${pyEnv}/bin/python3
-      import argparse, subprocess, sys, time
+      import argparse, os, subprocess, sys, time
       import serial
       ap = argparse.ArgumentParser()
-      ap.add_argument("--port", default="/dev/ttyACM0")
+      ap.add_argument("--dut", default="0", help="reserved DUT index (0,1,...); resolves --port from HITL_TTY[_N]")
+      ap.add_argument("--port", default=None, help="serial port (overrides --dut)")
       ap.add_argument("--baud", type=int, default=115200)
       ap.add_argument("--seconds", type=float, default=0.0, help="0 = until interrupted")
       ap.add_argument("--reset", action="store_true", help="esptool hard-reset first (catch boot logs)")
       a = ap.parse_args()
+      if a.port is None:
+          suf = "" if str(a.dut) == "0" else "_" + str(a.dut)
+          a.port = os.environ.get("HITL_TTY" + suf,
+                                  "/dev/ttyACM" + ("0" if suf == "" else str(a.dut)))
       if a.reset:
           # esptool knows the native USB-Serial-JTAG reset sequence; a bare RTS
           # pulse does NOT reset a native-USB C6.
@@ -200,6 +252,26 @@ let
       finally:
           if ser is not None:
               ser.close()
+    '';
+  };
+
+  # hitl-devices: list the ESP32-C6 DUTs in this reservation and how to address them.
+  # On the amd-rig composite unit (two C6s) the daemon injects HITL_TTY[_N] /
+  # HITL_ADAPTER_SERIAL[_N] per DUT; this prints the DUT→tty/serial map so you know
+  # which `--dut N` selects which board. Single-DUT reservations show just DUT 0.
+  hitlDevices = p.writeShellApplication {
+    name = "hitl-devices";
+    text = ''
+      printf '%-4s %-14s %-20s\n' DUT TTY ADAPTER_SERIAL
+      printf '%-4s %-14s %-20s\n' 0 "''${HITL_TTY:-/dev/ttyACM0}" "''${HITL_ADAPTER_SERIAL:-?}"
+      if [ -n "''${HITL_TTY_1:-}''${HITL_ADAPTER_SERIAL_1:-}" ]; then
+        printf '%-4s %-14s %-20s\n' 1 "''${HITL_TTY_1:-?}" "''${HITL_ADAPTER_SERIAL_1:-?}"
+      fi
+      if [ -n "''${HITL_TTY_2:-}''${HITL_ADAPTER_SERIAL_2:-}" ]; then
+        printf '%-4s %-14s %-20s\n' 2 "''${HITL_TTY_2:-?}" "''${HITL_ADAPTER_SERIAL_2:-?}"
+      fi
+      echo
+      echo "Address a DUT with:  hitl-monitor|hitl-flash|hitl-jtag|hitl-gdb --dut <N>   (default 0)"
     '';
   };
 
@@ -332,6 +404,8 @@ let
     pyEnv
     hitlFlash
     hitlMonitor
+    # Lists the reserved DUTs (DUT→tty/serial map) so you know which `--dut N` is which.
+    hitlDevices
     # Shared logic analyzer capture (thin client to the daemon's /shared broker):
     hitlCapture
     # BLE central (drives the host bluetoothd over the mounted system D-Bus).
