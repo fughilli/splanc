@@ -14,6 +14,9 @@ import {
   contentToText,
   messagesToWllama,
   parseToolCalls,
+  stripCodeFence,
+  looksLikeEffectSource,
+  recoverSetScriptFromProse,
 } from "../src/effects/ai/providers/wllamaProtocol";
 import type { ChatMessage, ToolDef } from "../src/effects/ai/provider";
 
@@ -111,4 +114,56 @@ test("parseToolCalls: no tool call → empty calls, prose unchanged", () => {
   const { calls, text } = parseToolCalls("just a normal answer");
   assert.equal(calls.length, 0);
   assert.equal(text, "just a normal answer");
+});
+
+test("stripCodeFence: removes wrapping fences, keeps bare source", () => {
+  assert.equal(stripCodeFence("```glsl\nvec3 shade(Led l){return l.pos;}\n```"), "vec3 shade(Led l){return l.pos;}");
+  // fence hugging code with no language tag (observed small-model output)
+  assert.equal(stripCodeFence("```uniform float x=1.0;\nvoid update(){}"), "uniform float x=1.0;\nvoid update(){}");
+  assert.equal(stripCodeFence("uniform float x=1.0;"), "uniform float x=1.0;");
+});
+
+test("looksLikeEffectSource: needs both entry points", () => {
+  assert.equal(looksLikeEffectSource("void update(){} vec3 shade(Led l){ return vec3(1.0); }"), true);
+  assert.equal(looksLikeEffectSource("Here is how you could make a pinwheel effect..."), false);
+  assert.equal(looksLikeEffectSource("vec3 shade(Led l){ return vec3(1.0); }"), false); // no update
+});
+
+test("recoverSetScriptFromProse: pulls a program a model printed instead of tool-calling", () => {
+  const prose = "Sure! Here's a red effect:\n\n```\nvoid update(){}\nvec3 shade(Led led){ return vec3(1.0,0.0,0.0); }\n```\nHope that helps.";
+  const rec = recoverSetScriptFromProse(prose);
+  assert.ok(rec);
+  assert.equal(rec!.name, "set_script");
+  assert.match(rec!.input.source, /shade\(Led led\)/);
+  assert.doesNotMatch(rec!.input.source, /Hope that helps/); // prose stripped
+  // genuine prose (no program) → no recovery
+  assert.equal(recoverSetScriptFromProse("I can't do that, but here's an idea."), null);
+});
+
+test("parseToolCalls: tolerates a MISSING </tool_call> (small-model quirk)", () => {
+  // Valid JSON, no closing tag — must still be recognized as a call.
+  const raw = '<tool_call>{"name": "set_script", "arguments": {"summary":"red","source":"void update(){} vec3 shade(Led l){return vec3(1.0,0.0,0.0);}"}}';
+  const { calls } = parseToolCalls(raw);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.name, "set_script");
+  assert.match(String((calls[0]!.input as { source: string }).source), /shade\(Led l\)/);
+});
+
+test("parseToolCalls: braces inside string values don't break brace-matching", () => {
+  const raw = '<tool_call>{"name":"set_script","arguments":{"source":"void update(){ for(int i=0;i<3;i=i+1){} } vec3 shade(Led l){ return vec3(1.0); }"}}</tool_call>';
+  const { calls } = parseToolCalls(raw);
+  assert.equal(calls.length, 1);
+  assert.match(String((calls[0]!.input as { source: string }).source), /for\(int i=0/);
+});
+
+test("recoverSetScriptFromProse: salvages source from a TRUNCATED tool call", () => {
+  // Model started a tool call but never closed the JSON/tag (ran past the cap).
+  const raw = '<tool_call>{"name":"set_script","arguments":{"summary":"pinwheel","source":"void update(){}\\nvec3 shade(Led led){ return vec3(1.0,0.0,0.0); }';
+  // parseToolCalls can't parse the truncated JSON…
+  assert.equal(parseToolCalls(raw).calls.length, 0);
+  // …but recovery pulls the source string out of the partial JSON (no markup).
+  const rec = recoverSetScriptFromProse(raw);
+  assert.ok(rec);
+  assert.match(rec!.input.source, /vec3 shade\(Led led\)/);
+  assert.doesNotMatch(rec!.input.source, /tool_call|"name"/);
 });
