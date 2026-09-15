@@ -50,7 +50,7 @@ import board_caps
 import hitl_ws
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
-from provision import dut_target, ensure_booted, provision_dut
+from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
@@ -303,11 +303,13 @@ def run(args: argparse.Namespace) -> int:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
         # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
-        if not args.wifi_ssid and not args.skip_improv:
+        # Both provisioning paths (BLE Improv + wired serial) need the creds.
+        want_provision = not args.skip_improv or args.wire_provision
+        if not args.wifi_ssid and want_provision:
             creds = res.wifi()
             if creds:
                 args.wifi_ssid, args.wifi_pass = creds
-                print(f"[improv] provisioning onto the rig AP {args.wifi_ssid!r}", flush=True)
+                print(f"[provision] onto the rig AP {args.wifi_ssid!r}", flush=True)
         if not args.skip_flash:
             bundle = args.bundle or default_bundle()
             if not bundle:
@@ -315,7 +317,15 @@ def run(args: argparse.Namespace) -> int:
             flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
-        if not args.skip_improv:
+        # --wire-provision drives creds over the DUT's serial console (no BLE); otherwise
+        # provision over BLE Improv unless --skip-improv (device already on the network).
+        if args.wire_provision:
+            if not args.wifi_ssid:
+                raise E2EFailure(
+                    "--wifi-ssid (or $HITL_WIFI_SSID) is required with --wire-provision"
+                )
+            redirect = wire_provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+        elif not args.skip_improv:
             if not args.wifi_ssid:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
@@ -399,6 +409,11 @@ def main() -> int:
     )
     ap.add_argument("--skip-flash", action="store_true")
     ap.add_argument("--skip-improv", action="store_true")
+    ap.add_argument(
+        "--wire-provision",
+        action="store_true",
+        help="provision WiFi over the DUT's serial console (PROV command) instead of BLE Improv",
+    )
     ap.add_argument("--skip-ws", action="store_true")
     return run(ap.parse_args())
 
