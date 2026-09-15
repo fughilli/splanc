@@ -1415,22 +1415,36 @@ void netstack_loop() {
     static uint32_t redirect_first_ms = 0, redirect_last_ms = 0;
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
-      strncpy(g_ssid, s, sizeof g_ssid - 1);
-      strncpy(g_pass, p, sizeof g_pass - 1);
-      g_creds_ready = true;  // trigger association with the provisioner's creds
-      // The provisioned SSID may differ from an AP we already latched — most often the
-      // baked-cred fallback fired first (its 45s grace elapsed while the central was still
-      // connecting) and latched hitl-rig-3. g_ap_latched is a one-shot, so without this the
-      // radio stays aimed at the OLD BSSID/channel and the real network is never attempted.
-      // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
-      g_ap_latched = false;
-      st = AUTH;
-      // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
-      // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
-      ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
-      ble_creds_pending = true;
-      improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-      Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
+      // A central that missed our Improv result re-writes wifi-settings — often several times
+      // (the redirect below points at the lease IP, and if the central can't confirm it, its
+      // provisioning flow retries the SendWifi). If those creds match the network we're ALREADY
+      // associated to, tearing the link down (st=AUTH) drops any in-flight client — e.g. a map
+      // upload mid-WSS — and re-runs auth/4-way/TLS for nothing. Treat a duplicate SendWifi for
+      // the current SSID as idempotent: keep the link and just re-answer the redirect.
+      bool same_network = (strcmp(s, g_ssid) == 0 && strcmp(p, g_pass) == 0);
+      if (same_network && (st == DONE || g_leased)) {
+        redirect_first_ms = 0;  // re-arm the resend window so the central gets another redirect
+        ble_creds_pending = true;
+        Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — already associated, "
+                      "re-answering redirect (link kept)\n", (unsigned long)millis(), s);
+      } else {
+        strncpy(g_ssid, s, sizeof g_ssid - 1);
+        strncpy(g_pass, p, sizeof g_pass - 1);
+        g_creds_ready = true;  // trigger association with the provisioner's creds
+        // The provisioned SSID may differ from an AP we already latched — most often the
+        // baked-cred fallback fired first (its 45s grace elapsed while the central was still
+        // connecting) and latched hitl-rig-3. g_ap_latched is a one-shot, so without this the
+        // radio stays aimed at the OLD BSSID/channel and the real network is never attempted.
+        // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
+        g_ap_latched = false;
+        st = AUTH;
+        // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
+        // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
+        ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
+        ble_creds_pending = true;
+        improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
+      }
     }
     // Send the Provisioned redirect on first lease, then RE-SEND it a few times/sec while the
     // central is still connected. On a marginal BLE link the single post-join notification is
