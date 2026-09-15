@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 from urllib.parse import urlparse
 
@@ -230,3 +231,51 @@ def provision_dut(
             print(f"[improv] provision attempt {attempt}/{attempts} failed: {e}", flush=True)
     assert last is not None
     raise last
+
+
+# The DUT prints this once the heapless stack gets a DHCP lease (netstack_transport.cpp);
+# the em-dash is matched loosely so a console-encoding quirk can't break the parse.
+_LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
+_WIRE_ACK = "[wire] PROV received"
+
+
+def wire_provision_dut(res, ssid: str, password: str, timeout: float) -> str:
+    """Provision the DUT onto WiFi over its WIRED serial console; return the redirect URL.
+
+    The firmware bakes no WiFi credentials: with no BLE central it just idles until it
+    receives a `PROV <ssid> <pass>` line on its USB-serial console (netstack_transport.cpp).
+    The rig writes that line to the reserved DUT's tty (pinned to /dev/ttyACM0 in the
+    reservation's container, same as hitl_dut_id/hitl_led_freeze) and then captures the
+    console until the heapless stack reports a DHCP lease, from which we derive the same
+    `http://<ip>/` redirect the BLE path returns.
+
+    An SSID may not contain a space (the firmware splits creds on the first space); a
+    password may. Both are shell-quoted; the whole command is base64'd by ssh_serialized,
+    so no quoting survives to bite us.
+    """
+    if " " in ssid:
+        raise HarnessError(f"wired provisioning can't carry an SSID with a space: {ssid!r}")
+    print(f"[wire] provisioning DUT over serial -> ssid={ssid!r}", flush=True)
+    # printf's format is a single-quoted literal; the creds ride in as %s args. `stty raw`
+    # keeps the tty from mangling the line; `timeout … cat` bounds the capture window.
+    prov = "printf 'PROV %s %s\\n' {} {} > /dev/ttyACM0".format(
+        shlex.quote(ssid), shlex.quote(password)
+    )
+    cmd = (
+        "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
+        + prov
+        + f"; timeout {timeout:g} cat /dev/ttyACM0"
+    )
+    proc = res.ssh_serialized(cmd, capture=True, timeout=timeout + 30)
+    log = (proc.stdout or "") + (proc.stderr or "")
+    sys.stdout.write(log)
+    if _WIRE_ACK not in log:
+        raise HarnessError(
+            "DUT never acked the wired PROV command (no '[wire] PROV received' in serial)"
+        )
+    m = _LEASE_RE.search(log)
+    if not m:
+        raise HarnessError("wired provisioning: DUT accepted creds but never got a DHCP lease")
+    url = f"http://{m.group(1)}/"
+    print(f"[wire] OK — DUT joined WiFi, redirect={url}", flush=True)
+    return url

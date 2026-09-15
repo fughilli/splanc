@@ -112,19 +112,19 @@ void IRAM_ATTR sink(void *, wifi_promiscuous_pkt_type_t) {}
 
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
-const char *SSID = "hitl-rig-3";
-const char *PASS = "hitl-rig-3-provision";
-// Default to rig-3's AP; a WiFi scan (scan_and_latch_ap) overwrites these once the
-// provisioned SSID is known, so the netstack joins ANY rig's AP, not just this baked one.
+// No WiFi credentials are baked into the image: they arrive at runtime, over either BLE
+// Improv or the wired serial console (the "PROV <ssid> <pass>" command in netstack_loop).
+// A WiFi scan (scan_latch_ap) fills the real BSSID/channel once the provisioned SSID is
+// known — these are just pre-scan placeholders (a Pi-OUI BSSID), overwritten before auth.
 uint8_t g_bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 uint8_t g_chan = 6;
 uint8_t OUR_MAC[6];
-// Active WiFi credentials for the WPA2 PMK. Default to the baked rig AP so a no-BLE
-// (--skip-improv) run still associates; BLE Improv overwrites these from the provisioner
-// (same AP here). We only START associating once these are "committed" — see g_creds_ready.
+// Active WiFi credentials for the WPA2 PMK, committed at runtime from BLE Improv OR the
+// wired serial "PROV" command — never baked into the image. We only START associating
+// once these are "committed" — see g_creds_ready.
 char g_ssid[33];
 char g_pass[65];
-bool g_creds_ready = false;  // creds committed (from BLE, or the baked fallback)
+bool g_creds_ready = false;  // creds committed (from BLE Improv or wired serial provisioning)
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
@@ -1334,22 +1334,48 @@ void netstack_loop() {
   }
   } // end RX drain loop
 
-  // Commit WiFi credentials before associating — the proper Improv flow: on BLE provisioning
-  // associate with the creds the provisioner writes; with no BLE central (e.g. --skip-improv)
-  // fall back to the baked rig creds after a short grace so the transport still comes up.
+  // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
+  //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
+  //  (2) wired serial — the rig writes "PROV <ssid> <pass>\n" to the DUT's USB-serial console
+  //      (see just below), the no-BLE HITL path that replaced the old baked rig creds.
   // (Association coexists fine with an active BLE link — the earlier "join timeout" was NOT
   //  coex but blocking Serial.printf wedging loopTask when the port wasn't drained; see
   //  Serial.setTxTimeoutMs(0) in setup. Either association order works now.)
   //
-  // CRITICAL: once a central has EVER connected, suppress the baked fallback entirely. A
-  // connected central means a harness is actively provisioning us over BLE; the baked SSID
-  // is only this rig's default and on a shared bench (multiple rigs in radio range) it names
-  // a DIFFERENT rig's AP. Falling back mid-provisioning (e.g. between failed Improv attempts,
-  // when no central is momentarily connected) would latch+associate to the wrong rig's AP and
-  // lease an IP on that rig's subnet — unreachable from this rig's host (the wss ConnectionReset
-  // on rig-2). --skip-improv runs never connect a central, so the fallback still fires for them.
-  static bool g_ble_central_ever = false;
-  if (improv_ble_central_connected()) g_ble_central_ever = true;
+  // Wired provisioning: read the DUT's USB-serial console for a "PROV <ssid> <pass>" line and
+  // commit exactly like the BLE take path (re-latch the scan cache, restart the join from AUTH,
+  // derive the PMK off the hot path). Reads are non-blocking and independent of the async log
+  // drain task's writes, so this can't stall the render loop. Unmatched input is ignored.
+  if (PLAYER_MODE) {
+    static char pbuf[128];
+    static uint8_t plen = 0;
+    while (Serial.available() > 0) {
+      int c = Serial.read();
+      if (c < 0) break;
+      if (c == '\n' || c == '\r') {
+        pbuf[plen] = '\0';
+        char *sp;
+        if (plen > 5 && strncmp(pbuf, "PROV ", 5) == 0 &&
+            (sp = strchr(pbuf + 5, ' ')) != nullptr) {
+          *sp = '\0';
+          strncpy(g_ssid, pbuf + 5, sizeof g_ssid - 1);
+          strncpy(g_pass, sp + 1, sizeof g_pass - 1);
+          g_creds_ready = true;
+          g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
+          st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
+          ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
+                       strlen(g_pass));
+          Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
+                        (unsigned long)millis(), g_ssid);
+        }
+        plen = 0;
+      } else if (plen < sizeof(pbuf) - 1) {
+        pbuf[plen++] = (char)c;
+      } else {
+        plen = 0;  // oversized line — drop it
+      }
+    }
+  }
   // Log BLE link-state transitions (e.g. 7->6 = central dropped). A drop while leased==0 means the
   // link died mid-join before we could send the Improv redirect — the failure the PMK-off-the-hot-
   // path + coex duty-cycle defend against; low-noise telemetry (fires only on change, not per loop).
@@ -1362,20 +1388,6 @@ void netstack_loop() {
                     improv_ble_central_connected(), g_leased ? 1 : 0);
       diag_last_state = st_now;
     }
-  }
-  // Grace must outlast BLE provisioning: from boot a central has to scan+connect+subscribe+RPC,
-  // which routinely takes >15s — an 8s grace fired mid-provisioning and latched the baked
-  // (wrong-rig) SSID before the real creds arrived. 45s comfortably clears a successful
-  // provision (real creds set g_creds_ready via path 2 the instant they arrive, so provisioning
-  // is NOT delayed by this); the ever-connected guard suppresses it entirely once a central
-  // shows up. Only genuinely central-less --skip-improv runs wait out the full grace.
-  static const uint32_t kBakedFallbackMs = 45000;
-  if (PLAYER_MODE && !g_creds_ready && !g_ble_central_ever && millis() > kBakedFallbackMs) {
-    strncpy(g_ssid, SSID, sizeof g_ssid - 1);
-    strncpy(g_pass, PASS, sizeof g_pass - 1);
-    g_creds_ready = true;
-    ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
-    Serial.printf("[assoc] no BLE central — associating with baked creds ssid=%s\n", g_ssid);
   }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
