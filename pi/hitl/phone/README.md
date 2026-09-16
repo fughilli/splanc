@@ -50,6 +50,40 @@ driving API), `journey_runner.py` (runs the JSON journeys), `mock_device.py` (pr
 `proto_wire` mock backend), `reservation_backend.py` (real rig C6), `launcher.py`
 (headless Chromium / Android emulator), `phone_e2e.py` (the runner).
 
+## Android lane (Nix-provided SDK)
+
+The Android tools come from the Bazel-pinned nixpkgs — no manual Android SDK install:
+
+- **`adb` / platform-tools** — `@android_tools` (`//pi/hitl/phone:adb`). Cross-platform;
+  builds + runs on both aarch64 and x86-64.
+- **Emulator + Google-APIs system image** — the `@android_emulator` composed SDK
+  (`//pi/hitl/phone:android_emulator`), from `pi/hitl/phone/nix/android-emulator.nix`.
+  The Android SDK ships the emulator for **macOS (Intel + Apple Silicon) and linux-x86_64** —
+  but **not linux-aarch64** (verified: the derivation reports "no sources for os=linux,
+  arch=aarch64"). So the target is `target_compatible_with` macOS + linux-x86_64 and is
+  cleanly skipped as incompatible on linux-aarch64 (this CI container). The nix file picks a
+  **native-ABI** system image per host (arm64-v8a on Apple Silicon, x86_64 on x86_64). Tagged
+  `manual` (a multi-GB SDK download only this lane needs), so it stays out of
+  `bazel build //...`; build it explicitly. **Acceleration needs the host hypervisor** —
+  Hypervisor.framework on macOS, `/dev/kvm` on Linux.
+
+On the station:
+
+```sh
+export ANDROID_SDK_ROOT="$(bazel build //pi/hitl/phone:android_emulator \
+    --show_result=1 2>&1 | awk '/android_emulator/{print $NF}')/libexec/android-sdk"
+bazel run //pi/hitl/phone:phone_e2e -- --android --mock-device --journeys smoke,config
+```
+
+`launcher.py` creates the AVD from the bundled system image, boots the emulator headless,
+serves the built app, and opens it in the emulator's browser at
+`http://10.0.2.2:<port>/?driver=…` (10.0.2.2 is the emulator's host-loopback alias; the
+mock/rig device URL is rewritten to it too). Status: the Nix tools + lane are wired; adb
+builds + runs on aarch64 here, and the emulator SDK builds on macOS/linux-x86_64 (this
+aarch64-linux CI container has no upstream emulator, so its target is correctly skipped).
+Booting the emulator + running the journeys is for a station with a hypervisor — an
+Apple-silicon Mac, or a linux-x86_64 box with `/dev/kvm`.
+
 ## Journey format (`journeys/*.json`)
 
 Declarative, Maestro-inspired but over our semantic protocol (not DOM selectors):
@@ -83,11 +117,13 @@ events `ready`, `state`, `milestone` (`mapping_started`/`result_ready`/`hardware
 
 ## BOM (MVP stations)
 
-**Android station (build first — cleaner virtual BLE, no Apple signing):**
+**Android station** — an **Apple-silicon Mac mini** (emulator via Hypervisor.framework) OR a
+**Linux box with `/dev/kvm`** (≥16 GB RAM). Note: since the emulator runs on Apple silicon, the
+Mac mini below can host **both** the Android and iOS lanes — one machine covers both stations.
 | Item | Notes |
 |---|---|
-| Linux mini-PC (x86-64, ≥16 GB RAM, KVM) | runs the Android emulator + this station |
-| Android SDK + emulator + a system-image AVD, `adb` | the `--android` lane |
+| Apple-silicon Mac mini **or** linux-**x86-64** mini-PC with `/dev/kvm` | runs the emulator + this station (no linux-aarch64 emulator) |
+| Android SDK + emulator + system image + `adb` | **provided via Nix** — no ad-hoc install (below) |
 | USB Bluetooth dongle (e.g. RTL8761/CSR 4.0+) | for the real-BLE tier (Netsim/Bumble ↔ host BlueZ) |
 | 1× ESP32-C6 dev board (optional) | real device over RF; or use the shared rig |
 
@@ -109,8 +145,11 @@ synthetic source can't, enabling the exposure/blob-tuner hill-climb.
 
 ## Status
 
-Verified end to end: smoke + connect + config over the app-driver, against the mock
-(in-container) and a real rig C6. Remaining: Android emulator lane, real BLE via
-Netsim/Bumble (Android) + ImpossiBLE (iOS), the iOS station, and deepening the mapping
-journey (the capture-screen lifecycle + synthetic camera through the solve — currently
-exercised at the RPC-flow level).
+Verified end to end (in-container): smoke + connect + config over the app-driver, against
+the mock and a real rig C6; the Android SDK/adb/emulator are wired into the build via Nix
+(adb builds + runs on aarch64 here; the emulator SDK builds on macOS/linux-x86_64 and its
+target is correctly skipped as incompatible on this aarch64-linux CI container). Remaining:
+boot the emulator + run the journeys on a station with a hypervisor (Apple-silicon Mac or
+linux-x86_64 + KVM), real BLE via Netsim/Bumble (Android) + ImpossiBLE (iOS), the iOS
+station, and deepening the mapping journey (the capture-screen lifecycle + synthetic camera
+through the solve — currently exercised at the RPC-flow level).

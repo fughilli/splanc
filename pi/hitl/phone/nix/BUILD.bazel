@@ -1,0 +1,9 @@
+"""Nix source for the phone HITL station's Android emulator SDK.
+
+The .nix file is consumed by rules_nixpkgs `nix_pkg.file` in //MODULE.bazel (the
+@android_emulator repo); exported here so the module extension can reference it.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["android-emulator.nix"])

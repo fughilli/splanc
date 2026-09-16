@@ -77,9 +77,19 @@ async def run(args: argparse.Namespace) -> int:
             args.device_ws = mock.url
             print(f"[phone] mock device at {mock.url}", flush=True)
         # Bring the app up pointed at us.
-        pw = browser = None
+        pw = browser = emu = None
         if args.android:
-            launcher.launch_android_pwa(args.pwa_url, port)
+            # The emulator reaches the station host as 10.0.2.2 (its loopback alias), so
+            # rewrite localhost device/driver URLs to it. Serve the built app locally.
+            args.device_ws = args.device_ws.replace("127.0.0.1", "10.0.2.2").replace(
+                "localhost", "10.0.2.2"
+            )
+            emu = launcher.boot_android_avd()
+            base, _httpd = launcher.serve_dir(_web_dist())
+            host_port = base.rstrip("/").rsplit(":", 1)[1]
+            pwa = args.pwa_url or f"http://10.0.2.2:{host_port}/"
+            print(f"[phone] opening {pwa} in the emulator", flush=True)
+            launcher.launch_android_pwa(pwa, port)
         else:
             base, _httpd = launcher.serve_dir(_web_dist())
             url = f"{base}?driver=ws://127.0.0.1:{port}/"
@@ -110,6 +120,8 @@ async def run(args: argparse.Namespace) -> int:
                 await browser.close()
             if pw is not None:
                 await pw.stop()
+            if emu is not None:
+                emu.terminate()
 
     print("[phone] ALL JOURNEYS PASSED", flush=True)
     return 0

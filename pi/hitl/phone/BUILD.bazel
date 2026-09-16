@@ -52,3 +52,41 @@ py_binary(
         requirement("websockets"),
     ],
 )
+
+# adb / platform-tools from the pinned nixpkgs (@android_tools) — the Android lane's debug
+# tool. Cross-platform: builds + runs on the aarch64 container AND the x86_64 station.
+#   bazel build //pi/hitl/phone:adb  →  bazel-bin/.../adb (or the /nix/store path)
+filegroup(
+    name = "adb",
+    srcs = ["@android_tools//:adb"],
+)
+
+# macOS (Intel + Apple Silicon) is where the emulator + this station can co-host both lanes.
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+# Android emulator + a native-ABI Google-APIs system image (Nix @android_emulator, from
+# pi/hitl/phone/nix/android-emulator.nix). The Android SDK ships the emulator for macOS
+# (Intel + Apple Silicon) and linux-x86_64 — but NOT linux-aarch64 (verified: the
+# android-sdk-emulator derivation reports "no sources for os=linux, arch=aarch64"). So the
+# target is compatible on macOS + linux-x86_64 and cleanly INCOMPATIBLE (skipped) on
+# linux-aarch64, e.g. this CI container. Also tagged `manual` so it stays out of
+# `bazel build //...` (a multi-GB SDK download only the Android lane needs) — build it
+# explicitly. On the station, point ANDROID_SDK_ROOT at the libexec/android-sdk/ tree in
+# its output; launcher.py resolves adb + emulator + avdmanager from there. Acceleration
+# needs the host hypervisor — Hypervisor.framework on macOS, /dev/kvm on Linux.
+filegroup(
+    name = "android_emulator",
+    srcs = ["@android_emulator//:sdk"],
+    tags = ["manual"],
+    target_compatible_with = select({
+        "@platforms//os:macos": [],
+        ":linux_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)

@@ -493,6 +493,49 @@ filegroup(
 )
 use_repo(nix_pkg, "minify")
 
+# Android platform-tools (adb, fastboot) for the phone-in-the-loop HITL station's
+# Android lane (//pi/hitl/phone) — from the pinned nixpkgs so the station needs no
+# ad-hoc Android SDK install. adb is cross-platform: it builds + runs on the aarch64
+# container AND the x86_64 station. (The emulator itself is x86_64-Linux-only — Google
+# ships no aarch64 Linux emulator — so it lives in a separate, platform-guarded target;
+# see //pi/hitl/phone:BUILD.)
+nix_pkg.attr(
+    name = "android_tools",
+    attr = "android-tools",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(name = "adb", srcs = ["bin/adb"])
+
+filegroup(name = "fastboot", srcs = ["bin/fastboot"])
+
+filegroup(name = "bin", srcs = glob(["bin/*"]))
+""",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "android_tools")
+
+# Android emulator + a Google-APIs system image (the phone HITL station's Android lane,
+# //pi/hitl/phone:android_emulator). x86_64-linux ONLY — Google ships no aarch64-linux
+# emulator — so the consuming Bazel target is target_compatible_with x86_64-linux and an
+# aarch64 build skips it. nix_pkg is LAZY (realized only when a target that uses it is
+# built), so this costs the aarch64 container nothing. See pi/hitl/phone/nix/android-emulator.nix.
+nix_pkg.file(
+    name = "android_emulator",
+    attr = "sdk",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sdk",
+    srcs = glob(["libexec/android-sdk/**"], allow_empty = True),
+)
+""",
+    file = "//pi/hitl/phone/nix:android-emulator.nix",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "android_emulator")
+
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.
 # rules_python provides a hermetic interpreter, so a system Python is not
