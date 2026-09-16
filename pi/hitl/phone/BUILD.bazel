@@ -61,32 +61,23 @@ filegroup(
     srcs = ["@android_tools//:adb"],
 )
 
-# macOS (Intel + Apple Silicon) is where the emulator + this station can co-host both lanes.
-config_setting(
-    name = "linux_x86_64",
-    constraint_values = [
-        "@platforms//os:linux",
-        "@platforms//cpu:x86_64",
-    ],
-)
-
 # Android emulator + a native-ABI Google-APIs system image (Nix @android_emulator, from
-# pi/hitl/phone/nix/android-emulator.nix). The Android SDK ships the emulator for macOS
-# (Intel + Apple Silicon) and linux-x86_64 — but NOT linux-aarch64 (verified: the
-# android-sdk-emulator derivation reports "no sources for os=linux, arch=aarch64"). So the
-# target is compatible on macOS + linux-x86_64 and cleanly INCOMPATIBLE (skipped) on
-# linux-aarch64, e.g. this CI container. Also tagged `manual` so it stays out of
-# `bazel build //...` (a multi-GB SDK download only the Android lane needs) — build it
-# explicitly. On the station, point ANDROID_SDK_ROOT at the libexec/android-sdk/ tree in
-# its output; launcher.py resolves adb + emulator + avdmanager from there. Acceleration
-# needs the host hypervisor — Hypervisor.framework on macOS, /dev/kvm on Linux.
+# pi/hitl/phone/nix/android-emulator.nix). Supported on macOS (Intel + Apple Silicon) and
+# Linux (x86_64 + aarch64): x86_64/macOS use nixpkgs' upstream emulator; aarch64-linux uses a
+# CUSTOM derivation that fetches Google's CI emulator (upstream ships none) — see the nix file
+# (that leg needs a CURRENT ci.android.com build pinned; the example one is GC'd). So the
+# target is compatible on macOS + Linux and INCOMPATIBLE (skipped) elsewhere (e.g. Windows).
+# Also tagged `manual` so it stays out of `bazel build //...` (a multi-GB SDK download only the
+# Android lane needs) — build it explicitly. On the station, point ANDROID_SDK_ROOT at the
+# libexec/android-sdk/ tree in its output; launcher.py resolves adb + emulator + avdmanager
+# from there. Acceleration needs the host hypervisor — Hypervisor.framework / /dev/kvm.
 filegroup(
     name = "android_emulator",
     srcs = ["@android_emulator//:sdk"],
     tags = ["manual"],
     target_compatible_with = select({
         "@platforms//os:macos": [],
-        ":linux_x86_64": [],
+        "@platforms//os:linux": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )

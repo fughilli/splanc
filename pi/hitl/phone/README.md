@@ -58,12 +58,20 @@ The Android tools come from the Bazel-pinned nixpkgs — no manual Android SDK i
   builds + runs on both aarch64 and x86-64.
 - **Emulator + Google-APIs system image** — the `@android_emulator` composed SDK
   (`//pi/hitl/phone:android_emulator`), from `pi/hitl/phone/nix/android-emulator.nix`.
-  The Android SDK ships the emulator for **macOS (Intel + Apple Silicon) and linux-x86_64** —
-  but **not linux-aarch64** (verified: the derivation reports "no sources for os=linux,
-  arch=aarch64"). So the target is `target_compatible_with` macOS + linux-x86_64 and is
-  cleanly skipped as incompatible on linux-aarch64 (this CI container). The nix file picks a
-  **native-ABI** system image per host (arm64-v8a on Apple Silicon, x86_64 on x86_64). Tagged
-  `manual` (a multi-GB SDK download only this lane needs), so it stays out of
+  Supported on **macOS (Intel + Apple Silicon)** and **Linux (x86_64 + aarch64)**:
+
+  - macOS + linux-x86_64 use **nixpkgs' upstream** androidenv emulator.
+  - **linux-aarch64** — nixpkgs (and dl.google.com) ship no aarch64-Linux emulator, so a
+    **custom derivation** fetches Google's CI emulator (ci.android.com, the only source) and
+    patches it exactly as `emulator.nix` does. ci.android.com serves it via a _temporary
+    signed_ URL and **garbage-collects old builds**, so a fixed-output derivation (pinned by
+    content hash) resolves the signed URL at build time; a **current** `emulatorBuild` + its
+    hash must be pinned in the nix file (the checked-in example build is GC'd — see the
+    PIN MAINTENANCE note there). The fetch machinery is verified; only the live pin is a
+    maintenance step.
+
+  The nix file picks a **native-ABI** system image per host (arm64-v8a on ARM, x86_64 on
+  x86_64). Tagged `manual` (a multi-GB SDK download only this lane needs), so it stays out of
   `bazel build //...`; build it explicitly. **Acceleration needs the host hypervisor** —
   Hypervisor.framework on macOS, `/dev/kvm` on Linux.
 
@@ -122,7 +130,7 @@ events `ready`, `state`, `milestone` (`mapping_started`/`result_ready`/`hardware
 Mac mini below can host **both** the Android and iOS lanes — one machine covers both stations.
 | Item | Notes |
 |---|---|
-| Apple-silicon Mac mini **or** linux-**x86-64** mini-PC with `/dev/kvm` | runs the emulator + this station (no linux-aarch64 emulator) |
+| Apple-silicon Mac mini **or** a Linux box (x86-64, or aarch64 with a pinned CI emulator) with a hypervisor (`/dev/kvm`) | runs the emulator + this station |
 | Android SDK + emulator + system image + `adb` | **provided via Nix** — no ad-hoc install (below) |
 | USB Bluetooth dongle (e.g. RTL8761/CSR 4.0+) | for the real-BLE tier (Netsim/Bumble ↔ host BlueZ) |
 | 1× ESP32-C6 dev board (optional) | real device over RF; or use the shared rig |
@@ -147,9 +155,10 @@ synthetic source can't, enabling the exposure/blob-tuner hill-climb.
 
 Verified end to end (in-container): smoke + connect + config over the app-driver, against
 the mock and a real rig C6; the Android SDK/adb/emulator are wired into the build via Nix
-(adb builds + runs on aarch64 here; the emulator SDK builds on macOS/linux-x86_64 and its
-target is correctly skipped as incompatible on this aarch64-linux CI container). Remaining:
-boot the emulator + run the journeys on a station with a hypervisor (Apple-silicon Mac or
-linux-x86_64 + KVM), real BLE via Netsim/Bumble (Android) + ImpossiBLE (iOS), the iOS
-station, and deepening the mapping journey (the capture-screen lifecycle + synthetic camera
-through the solve — currently exercised at the RPC-flow level).
+(adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 upstream, and
+the custom linux-aarch64 fetch machinery is verified — it needs a current CI build pinned,
+since the example is GC'd). Remaining: pin a current aarch64 emulator build (or just use an
+x86_64/macOS station), boot the emulator + run the journeys on a host with a hypervisor
+(Apple-silicon Mac or Linux + KVM), real BLE via Netsim/Bumble (Android) + ImpossiBLE (iOS),
+the iOS station, and deepening the mapping journey (the capture-screen lifecycle + synthetic
+camera through the solve — currently exercised at the RPC-flow level).
