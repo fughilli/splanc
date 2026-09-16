@@ -20,7 +20,6 @@ import asyncio
 import os
 import socket
 import sys
-import tempfile
 
 import journeys
 import launcher
@@ -54,35 +53,37 @@ async def run(args: argparse.Namespace) -> int:
     results: dict[str, object] = {}
     async with AppDriver.serve(port) as drv:
         # Bring the app up pointed at us.
-        app_proc = None
+        pw = browser = None
         if args.android:
             launcher.launch_android_pwa(args.pwa_url, port)
         else:
             base, _httpd = launcher.serve_dir(_web_dist())
             url = f"{base}?driver=ws://127.0.0.1:{port}/"
             print(f"[phone] launching browser at {url}", flush=True)
-            app_proc = launcher.launch_chromium(url, tempfile.mkdtemp(prefix="phone-hitl-"))
+            pw, browser = await launcher.open_chromium(url)
 
         print("[phone] waiting for the app to connect back…", flush=True)
         await drv.wait_ready(timeout=args.ready_timeout)
         print("[phone] app ready — running journeys", flush=True)
 
         try:
-            wanted = args.journeys.split(",") if args.journeys else list(journeys.ALL)
-            if "connect" in wanted:
-                results["connect"] = await journeys.journey_connect(
-                    drv, wss_url=args.device_ws, ssid=args.wifi_ssid, password=args.wifi_pass
-                )
-                print("[phone] PASS connect", flush=True)
-            if "mapping" in wanted:
-                results["mapping"] = await journeys.journey_mapping(drv, led_count=args.led_count)
-                print("[phone] PASS mapping", flush=True)
-            if "config" in wanted:
-                results["config"] = await journeys.journey_config(drv)
-                print("[phone] PASS config", flush=True)
+            wanted = args.journeys.split(",") if args.journeys else ["connect", "mapping", "config"]
+            for name in wanted:
+                fn = journeys.ALL[name]
+                if name == "connect":
+                    results[name] = await fn(
+                        drv, wss_url=args.device_ws, ssid=args.wifi_ssid, password=args.wifi_pass
+                    )
+                elif name == "mapping":
+                    results[name] = await fn(drv, led_count=args.led_count)
+                else:
+                    results[name] = await fn(drv)
+                print(f"[phone] PASS {name}", flush=True)
         finally:
-            if app_proc is not None:
-                app_proc.terminate()
+            if browser is not None:
+                await browser.close()
+            if pw is not None:
+                await pw.stop()
 
     print("[phone] ALL JOURNEYS PASSED", flush=True)
     return 0
@@ -106,17 +107,25 @@ def main() -> int:
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID", "FugLink"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument(
-        "--journeys", default="", help="comma list: connect,mapping,config (default all)"
+        "--journeys",
+        default="",
+        help="comma list: smoke,connect,mapping,config (default all but smoke)",
     )
     ap.add_argument("--led-count", type=int, default=30)
     ap.add_argument("--driver-port", type=int, default=0)
     ap.add_argument("--ready-timeout", type=float, default=60.0)
     args = ap.parse_args()
-    if not args.device_ws and (not args.journeys or "connect" in args.journeys):
+    needs_device = any(
+        j in (args.journeys or "connect,mapping,config") for j in ("connect", "mapping", "config")
+    )
+    if not args.device_ws and needs_device:
         print(
-            "note: --device-ws not set; connect/mapping/config need a device backend",
+            "note: --device-ws not set; connect/mapping/config need a device backend "
+            "(use --journeys smoke for a device-free check)",
             file=sys.stderr,
         )
+    if not args.android:
+        launcher.ensure_chromium()  # sync context, before the asyncio loop
     return asyncio.run(run(args))
 
 

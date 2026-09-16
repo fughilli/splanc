@@ -35,6 +35,7 @@ py_binary(
     deps = [
         ":phone",
         "@rules_python//python/runfiles",
+        requirement("playwright"),
         requirement("websockets"),
     ],
 )

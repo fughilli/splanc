@@ -12,6 +12,19 @@ from __future__ import annotations
 from driver_server import AppDriver, DriverError
 
 
+async def journey_smoke(drv: AppDriver) -> dict:
+    """Device-free smoke: prove the app-driver loop + virtual BLE work end to end in
+    a real browser with NO device backend. The virtual Improv peripheral answers the
+    provision RPC with a redirect purely in-app, so this needs no network or rig."""
+    await drv.navigate("/onboard")
+    snap = await drv.query("appState")
+    prov = await drv.provision_ble("FugLink", "smoke-pass")
+    urls = prov.get("urls") or []
+    if not urls:
+        raise DriverError(f"virtual provisioning returned no redirect: {prov}")
+    return {"appState": snap, "provisioned": prov}
+
+
 async def journey_connect(drv: AppDriver, *, wss_url: str, ssid: str, password: str) -> dict:
     """Scan for + connect to a device: BLE-provision (virtual Improv), then connect
     the player socket to the (rig-forwarded) real C6 wss. Assert we reach connected
@@ -52,6 +65,7 @@ async def journey_config(drv: AppDriver, *, gpio: int = 8, color_order: str = "G
 
 
 ALL = {
+    "smoke": journey_smoke,
     "connect": journey_connect,
     "mapping": journey_mapping,
     "config": journey_config,

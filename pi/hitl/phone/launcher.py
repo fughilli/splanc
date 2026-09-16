@@ -15,6 +15,7 @@ import os
 import shutil
 import socketserver
 import subprocess
+import sys
 import threading
 
 
@@ -26,28 +27,35 @@ def serve_dir(directory: str, port: int = 0) -> tuple[str, socketserver.TCPServe
     return f"http://127.0.0.1:{httpd.server_address[1]}/", httpd
 
 
-def _find_chromium() -> str:
-    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
-        p = shutil.which(name)
-        if p:
-            return p
-    raise RuntimeError("no chromium/google-chrome on PATH for the browser lane")
+def ensure_chromium() -> None:
+    """Make sure Playwright's Chromium is available; install it once if not (needs
+    network the first time, like the docs capturer). Call from a SYNC context — not
+    inside the asyncio loop — since it uses the sync Playwright API to probe."""
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch(headless=True).close()
+        return
+    except Exception:  # noqa: BLE001 — not installed / launch failed → install below
+        pass
+    print("Installing Chromium for Playwright (one-time)…", file=sys.stderr)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in sys.path if x))
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, env=env)
 
 
-def launch_chromium(url: str, user_data_dir: str) -> subprocess.Popen:
-    """Launch headless Chromium at `url`. Flags allow the self-signed device cert
-    and Web Bluetooth stubs the app never really touches under the driver guard."""
-    argv = [
-        _find_chromium(),
-        "--headless=new",
-        "--no-sandbox",
-        "--disable-gpu",
-        f"--user-data-dir={user_data_dir}",
-        "--ignore-certificate-errors",
-        "--autoplay-policy=no-user-gesture-required",
-        url,
-    ]
-    return subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+async def open_chromium(url: str):
+    """Launch headless Chromium and navigate to `url` (the app connects back to the
+    driver WS on load). Returns (playwright, browser); the caller closes both."""
+    from playwright.async_api import async_playwright
+
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=True, args=["--no-sandbox", "--ignore-certificate-errors"]
+    )
+    page = await browser.new_page()
+    await page.goto(url)
+    return pw, browser
 
 
 # --- Android lane (Phase 1) ------------------------------------------------
