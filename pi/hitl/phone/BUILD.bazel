@@ -15,10 +15,11 @@ py_library(
     name = "phone",
     srcs = [
         "driver_server.py",
-        "journeys.py",
+        "journey_runner.py",
         "launcher.py",
         "mock_device.py",
     ],
+    data = glob(["journeys/*.json"]),
     imports = ["."],
     deps = [
         "//pi/server",

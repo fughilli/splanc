@@ -1,0 +1,19 @@
+{
+  "name": "config",
+  "description": "Configure hardware (GPIO / wire color order) and gamma; assert the device echoes the config. Requires a connected device (runFlow connect).",
+  "inputs": { "gpio": 8, "colorOrder": "GRB" },
+  "steps": [
+    { "runFlow": "connect" },
+    {
+      "description": "set a channel's GPIO + wire color order; the device replies hardware_config_state",
+      "do": "setHardwareConfig",
+      "with": { "channel": 0, "gpio": "${gpio}", "colorOrder": "${colorOrder}", "commit": true },
+      "expect": { "channels": "nonempty" }
+    },
+    {
+      "description": "set the gamma curve (per-channel color correction)",
+      "do": "setColorCorrection",
+      "with": { "gamma": [2.2, 2.2, 2.2], "commit": true }
+    }
+  ]
+}

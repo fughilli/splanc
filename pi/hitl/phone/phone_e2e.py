@@ -22,9 +22,9 @@ import os
 import socket
 import sys
 
-import journeys
 import launcher
 from driver_server import AppDriver
+from journey_runner import load_journeys, run_journey
 from mock_device import MockDeviceServer
 
 
@@ -32,6 +32,22 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _journeys_dir() -> str:
+    """Locate the JSON journey data dir (next to this file, or in runfiles)."""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "journeys")
+    if os.path.isdir(here):
+        return here
+    try:
+        from python.runfiles import runfiles  # type: ignore
+
+        p = runfiles.Create().Rlocation("_main/pi/hitl/phone/journeys")
+        if p and os.path.isdir(p):
+            return p
+    except Exception:  # noqa: BLE001
+        pass
+    raise SystemExit("journeys/ dir not found")
 
 
 def _web_dist() -> str:
@@ -74,18 +90,20 @@ async def run(args: argparse.Namespace) -> int:
         await drv.wait_ready(timeout=args.ready_timeout)
         print("[phone] app ready — running journeys", flush=True)
 
+        registry = load_journeys(_journeys_dir())
+        context = {
+            "device_ws": args.device_ws,
+            "ssid": args.wifi_ssid,
+            "password": args.wifi_pass,
+            "led_count": args.led_count,
+        }
         try:
-            wanted = args.journeys.split(",") if args.journeys else ["connect", "mapping", "config"]
+            wanted = args.journeys.split(",") if args.journeys else ["connect", "config"]
             for name in wanted:
-                fn = journeys.ALL[name]
-                if name == "connect":
-                    results[name] = await fn(
-                        drv, wss_url=args.device_ws, ssid=args.wifi_ssid, password=args.wifi_pass
-                    )
-                elif name == "mapping":
-                    results[name] = await fn(drv, led_count=args.led_count)
-                else:
-                    results[name] = await fn(drv)
+                journey = registry.get(name)
+                if journey is None:
+                    raise SystemExit(f"no journey {name!r} in {_journeys_dir()}")
+                results[name] = await run_journey(drv, journey, registry, context)
                 print(f"[phone] PASS {name}", flush=True)
         finally:
             if browser is not None:

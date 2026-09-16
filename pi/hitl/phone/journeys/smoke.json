@@ -1,0 +1,15 @@
+{
+  "name": "smoke",
+  "description": "Device-free: prove the app-driver loop + virtual BLE with no backend.",
+  "steps": [
+    { "do": "navigate", "with": { "path": "/onboard" } },
+    { "query": "appState", "as": "state", "expect": { "status.state": "present" } },
+    {
+      "description": "virtual Improv provisioning answers the RPC in-app (no radio)",
+      "do": "provisionBle",
+      "with": { "ssid": "FugLink", "password": "smoke-pass" },
+      "timeout": 90,
+      "expect": { "urls": "nonempty" }
+    }
+  ]
+}
