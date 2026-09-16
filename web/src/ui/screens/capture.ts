@@ -27,9 +27,11 @@ import {
 } from "../../cv/exposure";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
+import { driverActive } from "../../driver/guard";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
+import { SyntheticCaptureSource } from "../../xr/syntheticCaptureSource";
 import {
   NativeCaptureSource,
   nativeCaptureAvailable,
@@ -250,10 +252,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
     return ok;
   });
-  let capture: MediaStreamCaptureSource | NativeCaptureSource | null = null;
+  let capture: MediaStreamCaptureSource | NativeCaptureSource | SyntheticCaptureSource | null = null;
   // Set only on the iOS native path; used to push detect params down and to undo
   // the page transparency the native preview layer needs.
   let nativeSource: NativeCaptureSource | null = null;
+  // Set only under the HITL app-driver (?driver=): a hardware-free synthetic scene.
+  let syntheticSource: SyntheticCaptureSource | null = null;
   let capturing = false;
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
@@ -305,7 +309,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // detector's threshold pass and ships the sparse result.
       let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
       let detectGl: WebGL2RenderingContext;
-      if (nativeCaptureAvailable()) {
+      if (driverActive()) {
+        // HITL app-driver: a hardware-free synthetic scene. Like the native path it
+        // ships pre-reduced frames, so the detector skips its GPU pass — give it a
+        // throwaway context and a no-op exposure target.
+        const sc = new SyntheticCaptureSource({ ledCount });
+        capture = sc;
+        syntheticSource = sc;
+        await sc.start();
+        exposureTarget = sc;
+        detectGl = offscreenGl();
+      } else if (nativeCaptureAvailable()) {
         const nc = new NativeCaptureSource({ kSeed: cached, fxOverride: forcedFx ?? undefined });
         capture = nc;
         nativeSource = nc;
@@ -412,6 +426,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         return pl;
       };
       let pipeline = makePipeline(params, epoch);
+      // Hand the synthetic scene the negotiated code-book so it renders the exact
+      // hue-code + frame timing the decoder expects (matches the device side).
+      syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
       guideEl.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
       capturing = true;
