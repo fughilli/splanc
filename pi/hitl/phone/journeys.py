@@ -56,10 +56,15 @@ async def journey_mapping(drv: AppDriver, *, led_count: int = 30) -> dict:
 
 
 async def journey_config(drv: AppDriver, *, gpio: int = 8, color_order: str = "GRB") -> dict:
-    """Configure gamma / hardware settings and assert the device echoes them."""
-    await drv.navigate("/settings/hardware")
+    """Configure gamma / hardware settings and assert the device echoes them.
+
+    Drives the client config RPCs directly (the harness path) rather than the
+    Hardware Setup screen — mounting that screen fires its own getHardwareConfig,
+    which would collide with our setHardwareConfig on the same reply type (the app
+    allows one pending request per reply). Screen-driven config is a later refinement."""
     hw = await drv.set_hw_config(channel=0, gpio=gpio, colorOrder=color_order, commit=True)
-    await drv.navigate("/settings/color-correction")
+    if not (hw or {}).get("channels"):
+        raise DriverError(f"set_hardware_config did not echo channels: {hw}")
     cc = await drv.set_color_correction(gamma=[2.2, 2.2, 2.2], commit=True)
     return {"hardware_config_state": hw, "color_correction": cc}
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import socket
 import sys
@@ -24,6 +25,7 @@ import sys
 import journeys
 import launcher
 from driver_server import AppDriver
+from mock_device import MockDeviceServer
 
 
 def _free_port() -> int:
@@ -51,7 +53,13 @@ def _web_dist() -> str:
 async def run(args: argparse.Namespace) -> int:
     port = args.driver_port or _free_port()
     results: dict[str, object] = {}
-    async with AppDriver.serve(port) as drv:
+    async with contextlib.AsyncExitStack() as stack:
+        drv = await stack.enter_async_context(AppDriver.serve(port))
+        # Optional self-contained device backend (no rig): a mock speaking the proto.
+        if args.mock_device and not args.device_ws:
+            mock = await stack.enter_async_context(MockDeviceServer())
+            args.device_ws = mock.url
+            print(f"[phone] mock device at {mock.url}", flush=True)
         # Bring the app up pointed at us.
         pw = browser = None
         if args.android:
@@ -102,7 +110,12 @@ def main() -> int:
     ap.add_argument(
         "--device-ws",
         default=os.environ.get("PHONE_DEVICE_WS", ""),
-        help="device wss URL (rig-forwarded C6 or mock)",
+        help="device wss URL (rig-forwarded C6); overrides --mock-device",
+    )
+    ap.add_argument(
+        "--mock-device",
+        action="store_true",
+        help="spin up a self-contained mock device backend (no rig) and point the app at it",
     )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID", "FugLink"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
@@ -118,10 +131,10 @@ def main() -> int:
     needs_device = any(
         j in (args.journeys or "connect,mapping,config") for j in ("connect", "mapping", "config")
     )
-    if not args.device_ws and needs_device:
+    if not args.device_ws and not args.mock_device and needs_device:
         print(
-            "note: --device-ws not set; connect/mapping/config need a device backend "
-            "(use --journeys smoke for a device-free check)",
+            "note: no device backend; connect/mapping/config need one "
+            "(pass --mock-device, or --device-ws <rig C6>, or run --journeys smoke)",
             file=sys.stderr,
         )
     if not args.android:

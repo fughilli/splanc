@@ -17,9 +17,13 @@ py_library(
         "driver_server.py",
         "journeys.py",
         "launcher.py",
+        "mock_device.py",
     ],
     imports = ["."],
-    deps = [requirement("websockets")],
+    deps = [
+        "//pi/server",
+        requirement("websockets"),
+    ],
 )
 
 py_binary(
