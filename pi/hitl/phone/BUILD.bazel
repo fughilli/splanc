@@ -1,0 +1,40 @@
+"""Phone-in-the-loop HITL station (FUG — drive the app over a WebSocket).
+
+The app (loaded with ?driver=) connects back to `driver_server` and executes the
+real user journeys on command; this station drives them and asserts on the app's
+replies. Browser lane now (headless Chromium serving //web:dist); Android emulator
++ real-C6-via-rig lanes staged next. See pi/hitl/phone/README (plan) for phases.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "phone",
+    srcs = [
+        "driver_server.py",
+        "journeys.py",
+        "launcher.py",
+    ],
+    imports = ["."],
+    deps = [requirement("websockets")],
+)
+
+py_binary(
+    name = "phone_e2e",
+    srcs = ["phone_e2e.py"],
+    data = ["//web:dist"],
+    imports = ["."],
+    main = "phone_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":phone",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)

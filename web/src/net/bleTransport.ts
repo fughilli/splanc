@@ -14,6 +14,7 @@
  * chunked uploads, clock sync, and every RPC run unchanged over Bluetooth.
  */
 
+import { driverActive } from "../driver/guard";
 import { FrameReassembler, chunkBytes, frameWithLength } from "./bleFrame";
 import type { SocketFactory, SocketLike } from "./client";
 import { IMPROV_SERVICE } from "./improv";
@@ -76,6 +77,11 @@ export function bleAvailable(): boolean {
  * and list the player service as optional so we may use it after connecting.
  */
 export async function requestBleDevice(): Promise<BleDevice> {
+  // HITL app-driver: substitute a virtual player peripheral (no real radio).
+  if (driverActive()) {
+    const { makeVirtualPlayerDevice } = await import("./virtualBle");
+    return makeVirtualPlayerDevice();
+  }
   const bt = (
     navigator as {
       bluetooth?: { requestDevice(o: unknown): Promise<unknown> };
