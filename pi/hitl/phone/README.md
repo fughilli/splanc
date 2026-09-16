@@ -61,14 +61,17 @@ The Android tools come from the Bazel-pinned nixpkgs — no manual Android SDK i
   Supported on **macOS (Intel + Apple Silicon)** and **Linux (x86_64 + aarch64)**:
 
   - macOS + linux-x86_64 use **nixpkgs' upstream** androidenv emulator.
-  - **linux-aarch64** — nixpkgs (and dl.google.com) ship no aarch64-Linux emulator, so a
-    **custom derivation** fetches Google's CI emulator (ci.android.com, the only source) and
-    patches it exactly as `emulator.nix` does. ci.android.com serves it via a _temporary
-    signed_ URL and **garbage-collects old builds**, so a fixed-output derivation (pinned by
-    content hash) resolves the signed URL at build time; a **current** `emulatorBuild` + its
-    hash must be pinned in the nix file (the checked-in example build is GC'd — see the
-    PIN MAINTENANCE note there). The fetch machinery is verified; only the live pin is a
-    maintenance step.
+  - **linux-aarch64** — nixpkgs (and dl.google.com's SDK channel) ship no aarch64-Linux
+    emulator, so a **custom derivation** fetches Google's CI emulator (ci.android.com, the only
+    source) and patches it exactly as `emulator.nix` does. ci.android.com serves it only via a
+    _temporary signed_ URL and **garbage-collects old builds**, so a fixed-output derivation
+    (pinned by content hash) resolves that URL at build time via the build API's
+    `…/artifacts/<zip>/url?redirect=true` (anonymous access verified reachable). **Two fields
+    must be pinned** in the nix file — a **current** `emulatorBuild` id + its `outputHash`; it
+    ships UNSET (build `0`) and fails loudly until filled in. The build id must be read off the
+    [emulator grid](https://ci.android.com/builds/branches/aosp-emu-master-dev/grid) **in a
+    browser** — the build-list API is anonymously rate-limited/deprecated and the grid is
+    JS-rendered — see the PIN MAINTENANCE note in the nix file.
 
   The nix file picks a **native-ABI** system image per host (arm64-v8a on ARM, x86_64 on
   x86_64). Tagged `manual` (a multi-GB SDK download only this lane needs), so it stays out of
@@ -155,10 +158,14 @@ synthetic source can't, enabling the exposure/blob-tuner hill-climb.
 
 Verified end to end (in-container): smoke + connect + config over the app-driver, against
 the mock and a real rig C6; the Android SDK/adb/emulator are wired into the build via Nix
-(adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 upstream, and
-the custom linux-aarch64 fetch machinery is verified — it needs a current CI build pinned,
-since the example is GC'd). Remaining: pin a current aarch64 emulator build (or just use an
-x86_64/macOS station), boot the emulator + run the journeys on a host with a hypervisor
-(Apple-silicon Mac or Linux + KVM), real BLE via Netsim/Bumble (Android) + ImpossiBLE (iOS),
-the iOS station, and deepening the mapping journey (the capture-screen lifecycle + synthetic
-camera through the solve — currently exercised at the RPC-flow level).
+(adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 from upstream).
+The custom linux-aarch64 emulator derivation is complete and its download endpoint
+(ci.android.com's `getdownloadurl?redirect=true`) is verified anonymously reachable, but it is
+**not yet pinned**: a current `aosp-emu-master-dev` build id + hash must be filled in (the id
+has to be read off the grid in a browser — the build-list API is rate-limited/deprecated). It
+ships UNSET and fails loudly until pinned. Remaining: pin a current aarch64 emulator build (or
+just use an x86_64/macOS station, which needs no pin), boot the emulator + run the journeys on
+a host with a hypervisor (Apple-silicon Mac or Linux + KVM), real BLE via Netsim/Bumble
+(Android) + ImpossiBLE (iOS), the iOS station, and deepening the mapping journey (the
+capture-screen lifecycle + synthetic camera through the solve — currently exercised at the
+RPC-flow level).

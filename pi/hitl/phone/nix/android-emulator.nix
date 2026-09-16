@@ -36,40 +36,53 @@ let
   };
 
   # The arm64-linux emulator, from Google's CI (aosp-emu-master-dev) — the only source, since
-  # neither nixpkgs' manifest nor dl.google.com ships a linux-aarch64 emulator.
+  # neither nixpkgs' manifest nor dl.google.com's SDK channel ships a linux-aarch64 emulator.
+  # (repository2-*.xml carries emulator-linux_x64 + emulator-darwin_aarch64 only — verified —
+  # so the released SDK build numbers do NOT have a linux_aarch64 target; don't reuse those.)
   #
-  # PIN MAINTENANCE: set `emulatorBuild` to a CURRENT build from
-  #   https://ci.android.com/builds/branches/aosp-emu-master-dev/grid
-  # then build once — nix prints the real `got:` hash — and paste it into `outputHash`.
-  # Old builds are garbage-collected (the storage object 404s as NoSuchKey), so the build
-  # number must be recent. The fetch machinery below is verified working (it scrapes the CI
-  # page → resolves the temporary signed storage.googleapis.com URL → downloads → nix pins by
-  # OUTPUT hash); only a live build number + its hash need filling in.
-  emulatorBuild = "8632828"; # EXAMPLE — purged; replace with a current build id.
-  # ci.android.com serves an HTML page whose JS points at a TEMPORARY signed
-  # storage.googleapis.com URL (Expires=…&Signature=…) — there is no stable direct URL,
-  # so a plain fetchurl can't pin it. A fixed-output derivation is the right tool: it is
-  # reproducible by its OUTPUT hash (the artifact's content sha256, which Google embeds in
-  # the signed URL's path), while its builder gets network access to resolve the fresh
-  # signed URL each build. Bump the build + re-pin outputHash when updating.
+  # PIN MAINTENANCE — fill in two fields, `emulatorBuild` + `outputHash`:
+  #   1. Read a CURRENT build id off the emulator branch grid, IN A BROWSER:
+  #        https://ci.android.com/builds/branches/aosp-emu-master-dev/grid
+  #      Pick a green build whose targets include `emulator-linux_aarch64`. Scripted discovery
+  #      is unreliable: the build-LIST REST API is anonymously rate-limited and deprecated
+  #      ("migrate to Build API v4"), and the grid renders its build list via JS — so read the
+  #      number by eye. (The DOWNLOAD path used below is fine anonymously; only listing is walled.)
+  #   2. Run `bazel build //pi/hitl/phone:android_emulator` once — nix prints the real `got:`
+  #      hash on the mismatch — and paste it into `outputHash`.
+  # Old builds are garbage-collected (getdownloadurl then 404s "attempt … not found"), so the id
+  # must be recent. Left UNSET (0) intentionally: the fetch fails loudly until pinned, rather
+  # than pretending a purged example is real.
+  emulatorBuild = "0"; # UNSET — put a current aosp-emu-master-dev build id here (see above).
+  # There is no stable direct URL: ci.android.com serves the artifact only via a TEMPORARY
+  # signed storage.googleapis.com URL (Expires=…&Signature=…), and its build API's
+  # `…/artifacts/<zip>/url?redirect=true` 302-redirects to that signed URL. Anonymous access is
+  # allowed for public builds (verified: the endpoint returns semantic 404s, not auth errors).
+  # A fixed-output derivation is the right tool — reproducible by its OUTPUT hash (the zip's
+  # content sha256) while its builder gets network to resolve the fresh signed URL each build.
+  emulatorApi = "https://androidbuildinternal.googleapis.com/android/internal/build/v3";
+  emulatorArtifact = "sdk-repo-linux_aarch64-emulator-${emulatorBuild}.zip";
   emulatorSrc = stdenv.mkDerivation {
-    name = "sdk-repo-linux_aarch64-emulator-${emulatorBuild}.zip";
+    name = emulatorArtifact;
     nativeBuildInputs = with pkgs; [
       cacert
       curl
       gnugrep
-      gnused
     ];
     outputHashMode = "flat";
     outputHash = lib.fakeHash; # replace with the `got:` hash after pinning a current build.
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     buildCommand = ''
-      page="$(curl -sL -A 'Mozilla/5.0' "https://ci.android.com/builds/submitted/${emulatorBuild}/emulator-linux_aarch64/latest/sdk-repo-linux_aarch64-emulator-${emulatorBuild}.zip")"
-      url="$(printf '%s' "$page" \
-        | grep -oE 'https://storage.googleapis.com/android-build/[^"'"'"' <>]*sdk-repo-linux_aarch64-emulator-[0-9]+\.zip[^"'"'"' <>]*' \
-        | head -1 | sed 's/\\u0026/\&/g')"
-      echo "resolved signed URL: ''${url%%\?*}?…" >&2
-      curl -sL -A 'Mozilla/5.0' "$url" -o "$out"
+      url="${emulatorApi}/builds/${emulatorBuild}/emulator-linux_aarch64/attempts/latest/artifacts/${emulatorArtifact}/url?redirect=true"
+      # -f: the API 404s (JSON) for a purged/missing build → fail the build, don't hash an error.
+      # -L: follow the 302 to the signed storage.googleapis.com URL.
+      curl -fsSL -A 'Mozilla/5.0' "$url" -o "$out"
+      # Belt-and-suspenders: a real artifact starts with the ZIP magic "PK".
+      if ! head -c2 "$out" | grep -q 'PK'; then
+        echo "ci.android.com returned no zip for build ${emulatorBuild} — purged, or no linux_aarch64 target on this build?" >&2
+        head -c 400 "$out" >&2
+        echo >&2
+        exit 1
+      fi
     '';
   };
   emulator = stdenv.mkDerivation {

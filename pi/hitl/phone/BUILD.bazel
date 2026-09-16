@@ -65,7 +65,8 @@ filegroup(
 # pi/hitl/phone/nix/android-emulator.nix). Supported on macOS (Intel + Apple Silicon) and
 # Linux (x86_64 + aarch64): x86_64/macOS use nixpkgs' upstream emulator; aarch64-linux uses a
 # CUSTOM derivation that fetches Google's CI emulator (upstream ships none) — see the nix file
-# (that leg needs a CURRENT ci.android.com build pinned; the example one is GC'd). So the
+# (that leg ships UNSET and needs a current aosp-emu-master-dev build id + hash pinned first —
+# read it off the grid in a browser; the build-list API is rate-limited). So the
 # target is compatible on macOS + Linux and INCOMPATIBLE (skipped) elsewhere (e.g. Windows).
 # Also tagged `manual` so it stays out of `bazel build //...` (a multi-GB SDK download only the
 # Android lane needs) — build it explicitly. On the station, point ANDROID_SDK_ROOT at the
