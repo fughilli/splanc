@@ -135,6 +135,12 @@ def main() -> int:
         action="store_true",
         help="spin up a self-contained mock device backend (no rig) and point the app at it",
     )
+    ap.add_argument(
+        "--reservation",
+        action="store_true",
+        help="reserve + flash + provision a REAL ESP32-C6 on the rig and point the app at it",
+    )
+    ap.add_argument("--hitl-server", default=os.environ.get("HITL_SERVER"), help="pin a rig")
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID", "FugLink"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument(
@@ -149,15 +155,22 @@ def main() -> int:
     needs_device = any(
         j in (args.journeys or "connect,mapping,config") for j in ("connect", "mapping", "config")
     )
-    if not args.device_ws and not args.mock_device and needs_device:
+    if not args.device_ws and not args.mock_device and not args.reservation and needs_device:
         print(
             "note: no device backend; connect/mapping/config need one "
-            "(pass --mock-device, or --device-ws <rig C6>, or run --journeys smoke)",
+            "(pass --mock-device, --reservation, --device-ws <rig C6>, or run --journeys smoke)",
             file=sys.stderr,
         )
-    if not args.android:
-        launcher.ensure_chromium()  # sync context, before the asyncio loop
-    return asyncio.run(run(args))
+    with contextlib.ExitStack() as stack:
+        # Real rig C6: reserve + flash + provision + forward BEFORE the async run; the
+        # tunnel/heartbeat live in their own subprocess/thread, so they survive it.
+        if args.reservation and not args.device_ws:
+            from reservation_backend import ReservationBackend
+
+            args.device_ws = stack.enter_context(ReservationBackend(server=args.hitl_server))
+        if not args.android:
+            launcher.ensure_chromium()  # sync context, before the asyncio loop
+        return asyncio.run(run(args))
 
 
 if __name__ == "__main__":
