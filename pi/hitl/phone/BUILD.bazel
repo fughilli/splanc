@@ -34,6 +34,9 @@ py_binary(
     srcs = ["phone_e2e.py"],
     data = [
         "//firmware/player_app:esp32c6_netstack_flashbundle",
+        # The phone-solver deployment (wasm + JS glue + worker), served at /solver/
+        # like the real Pi server does — the deep mapping journey solves on-device.
+        "//solver:solver_web",
         "//web:dist",
     ],
     env = {

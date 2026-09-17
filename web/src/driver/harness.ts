@@ -22,7 +22,7 @@ import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
 import type { Router } from "../ui/app/router";
-import { setDriverActive } from "./guard";
+import { driverCapture, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
 
@@ -109,6 +109,60 @@ async function handle(msg: Incoming): Promise<unknown> {
       const reply = await client().stopMapping();
       emit("milestone", { name: "result_ready", detail: reply as unknown as Json });
       return reply;
+    }
+
+    // --- deep capture (the real screen: synthetic camera → detect → decode →
+    // solve, not just the start/stop-mapping RPC). openCapture navigates to the
+    // capture screen (it auto-starts and owns the mapping lifecycle); finishCapture
+    // lets the synthetic sweep accumulate parallax, then ends it and returns the
+    // SOLVED map (how many LED positions were actually recovered). ----------------
+    case "openCapture": {
+      const leds = Number(p.ledCount ?? 0);
+      driverRouter?.navigate(leds > 0 ? `/capture?leds=${leds}` : "/capture");
+      return { route: location.hash };
+    }
+    case "captureStats": {
+      const ctrl = driverCapture();
+      if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
+      return ctrl.stats() as unknown as Json;
+    }
+    case "awaitDecode": {
+      // Poll live decode health until `minIds` distinct LED ids are recovered
+      // through the REAL detector + decoder (the part the synthetic camera drives),
+      // or the timeout elapses. Returns the final stats either way.
+      const minIds = Number(p.minIds ?? 0);
+      const deadline = Date.now() + Number(p.timeoutMs ?? 30000);
+      for (;;) {
+        const ctrl = driverCapture();
+        const st = ctrl?.stats() ?? { ids: 0, total: 0, tracks: 0, observations: 0 };
+        if (st.ids >= minIds && st.total > 0) {
+          emit("milestone", { name: "decoded", detail: st as unknown as Json });
+          return st as unknown as Json;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`decode timeout: ${st.ids}/${minIds} ids after ${p.timeoutMs ?? 30000}ms`);
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    case "finishCapture": {
+      // Give the ~6 s synthetic arc time to render enough parallax before solving.
+      const dwellMs = Number(p.captureMs ?? 7000);
+      await new Promise((r) => setTimeout(r, dwellMs));
+      const ctrl = driverCapture();
+      if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
+      // Bound the solve: the VIO solver can stall on a synthetic scene that lacks
+      // real inertial data (solve() itself has no timeout), and a hung solve must
+      // not wedge the journey. Surface a clear error instead.
+      const solveMs = Number(p.solveMs ?? 60000);
+      const result = await Promise.race([
+        ctrl.finish(),
+        new Promise<never>((_res, rej) =>
+          setTimeout(() => rej(new Error(`solve did not converge within ${solveMs}ms`)), solveMs),
+        ),
+      ]);
+      emit("milestone", { name: "map_solved", detail: result as unknown as Json });
+      return result as unknown as Json;
     }
 
     // --- device configuration --------------------------------------------

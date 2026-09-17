@@ -56,6 +56,11 @@ async def open_chromium(url: str):
         headless=True, args=["--no-sandbox", "--ignore-certificate-errors"]
     )
     page = await browser.new_page()
+    # Pipe the app's console + uncaught errors to our stderr — the only window into
+    # the in-page journey (solve progress, decode counts, failures) when it's headless.
+    if os.environ.get("PHONE_PAGE_LOG", "1") != "0":
+        page.on("console", lambda m: print(f"[page:{m.type}] {m.text}", file=sys.stderr))
+        page.on("pageerror", lambda e: print(f"[page:error] {e}", file=sys.stderr))
     await page.goto(url)
     return pw, browser
 

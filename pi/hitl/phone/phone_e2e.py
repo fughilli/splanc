@@ -21,6 +21,7 @@ import contextlib
 import os
 import socket
 import sys
+import tempfile
 
 import launcher
 from driver_server import AppDriver
@@ -66,6 +67,48 @@ def _web_dist() -> str:
     raise SystemExit("web app not found: set $HITL_WEB_DIST or add //web:dist as a data dep")
 
 
+def _solver_web() -> str | None:
+    """Locate the phone-solver deployment (worker.js + wasm), served at /solver/."""
+    env = os.environ.get("HITL_SOLVER_WEB")
+    if env and os.path.isdir(env):
+        return env
+    try:
+        from python.runfiles import runfiles  # type: ignore
+
+        p = runfiles.Create().Rlocation("_main/solver/solver_web")
+        if p and os.path.isdir(p):
+            return p
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+_MERGED_ROOT: str | None = None
+
+
+def _serve_root() -> str:
+    """A serve root that is the built web app with the solver bundle mounted at
+    /solver/ — the way the real Pi server stages them side by side. The deep
+    mapping journey's on-device solve loads /solver/worker.js + wasm from here;
+    //web:dist alone doesn't carry them. Assembled once via symlinks."""
+    global _MERGED_ROOT
+    if _MERGED_ROOT is not None:
+        return _MERGED_ROOT
+    dist = _web_dist()
+    solver = _solver_web()
+    if solver is None:
+        # No solver bundle available — serve the app as-is (the on-device solve
+        # will 404 and the deep capture journey will fail; the RPC journeys run).
+        _MERGED_ROOT = dist
+        return dist
+    root = tempfile.mkdtemp(prefix="phone-hitl-web-")
+    for entry in os.listdir(dist):
+        os.symlink(os.path.join(dist, entry), os.path.join(root, entry))
+    os.symlink(solver, os.path.join(root, "solver"))
+    _MERGED_ROOT = root
+    return root
+
+
 async def run(args: argparse.Namespace) -> int:
     port = args.driver_port or _free_port()
     results: dict[str, object] = {}
@@ -85,13 +128,13 @@ async def run(args: argparse.Namespace) -> int:
                 "localhost", "10.0.2.2"
             )
             emu = launcher.boot_android_avd()
-            base, _httpd = launcher.serve_dir(_web_dist())
+            base, _httpd = launcher.serve_dir(_serve_root())
             host_port = base.rstrip("/").rsplit(":", 1)[1]
             pwa = args.pwa_url or f"http://10.0.2.2:{host_port}/"
             print(f"[phone] opening {pwa} in the emulator", flush=True)
             launcher.launch_android_pwa(pwa, port)
         else:
-            base, _httpd = launcher.serve_dir(_web_dist())
+            base, _httpd = launcher.serve_dir(_serve_root())
             url = f"{base}?driver=ws://127.0.0.1:{port}/"
             print(f"[phone] launching browser at {url}", flush=True)
             pw, browser = await launcher.open_chromium(url)

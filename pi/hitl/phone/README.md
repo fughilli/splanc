@@ -18,6 +18,10 @@ bazel run //pi/hitl/phone:phone_e2e -- --browser --journeys smoke
 # Connect + config against a self-contained mock device (no rig)
 bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys smoke,config
 
+# Deep mapping: drive the REAL capture screen — synthetic camera → real detector →
+# real decoder — and assert every LED id is recovered end to end through the app
+bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys mapping_capture
+
 # Connect + config against a REAL ESP32-C6 on the rig (reserve+flash+provision+forward)
 HITL_OWNER=you bazel run //pi/hitl/phone:phone_e2e -- \
     --browser --reservation --hitl-server http://hitl-rig-2:8087 --journeys config
@@ -43,7 +47,16 @@ Hardware is substituted behind the same guard so journeys run with no radio / no
 - **Synthetic camera** (`web/src/xr/syntheticCaptureSource.ts`) — renders the known
   fixture's LEDs projected on a camera arc, coloured with the real hue-code, into a
   reduced frame the real detector + decoder consume (reuses the `pipeline_synthetic`
-  infra: `geom/pinhole` + `code/gray`).
+  infra: `geom/pinhole` + `code/gray`). The `mapping_capture` journey drives the real
+  `/capture` screen with this source and asserts the real decoder recovers every LED id
+  (`openCapture` + `awaitDecode`) — end to end through the app, not the mapping RPC.
+  The final VIO **solve** (`finishCapture`) is wired but not in the default journey: the
+  visual-**inertial** solver needs real motion/IMU the headless synthetic scene doesn't yet
+  synthesize (planar fixture, no DeviceMotion) — a follow-up. The solve's correctness is
+  otherwise covered by the Rust solver tests; `finishCapture` is timeout-bounded so a
+  non-converging solve fails cleanly rather than hanging. The solver deployment
+  (`//solver:solver_web` — wasm + worker) is served at `/solver/` in this lane, as the Pi
+  server does, so the on-device solve path can load.
 
 Station pieces (`pi/hitl/phone/`): `driver_server.py` (WS control channel + async
 driving API), `journey_runner.py` (runs the JSON journeys), `mock_device.py` (proto
@@ -122,9 +135,17 @@ Declarative, Maestro-inspired but over our semantic protocol (not DOM selectors)
 - Expect DSL: `present` · `nonempty` · `{equals}` · `{contains}`, dotted paths into replies.
 
 App-driver methods (`web/src/driver/harness.ts`): commands `navigate`, `connect`,
-`provisionBle`, `connectBle`, `startMapping`, `stopMapping`, `setHardwareConfig`,
-`getHardwareConfig`, `setColorCorrection`; queries `appState`, `welcome`, `store`;
-events `ready`, `state`, `milestone` (`mapping_started`/`result_ready`/`hardware_config_state`), `error`.
+`provisionBle`, `connectBle`, `startMapping`, `stopMapping`, `openCapture`, `captureStats`,
+`awaitDecode`, `finishCapture`, `setHardwareConfig`, `getHardwareConfig`, `setColorCorrection`;
+queries `appState`, `welcome`, `store`; events `ready`, `state`, `milestone`
+(`mapping_started`/`result_ready`/`decoded`/`map_solved`/`hardware_config_state`), `error`.
+
+`startMapping`/`stopMapping` drive the mapping RPCs directly; the capture commands go a level
+deeper against the REAL capture screen (it auto-runs the app's own start-mapping and feeds the
+synthetic camera through the real detector + decoder): `openCapture` navigates to it,
+`captureStats`/`awaitDecode` read live decode health and block until all LED ids are recovered
+(returns `{ ids, total, tracks, observations }`), and `finishCapture` ends the sweep and runs
+the VIO solve, returning `{ mapId, ledCount, solved }` (timeout-bounded — see the note above).
 
 ## BOM (MVP stations)
 
@@ -156,8 +177,11 @@ synthetic source can't, enabling the exposure/blob-tuner hill-climb.
 
 ## Status
 
-Verified end to end (in-container): smoke + connect + config over the app-driver, against
-the mock and a real rig C6; the Android SDK/adb/emulator are wired into the build via Nix
+Verified end to end (in-container): smoke + connect + config + mapping + **mapping_capture**
+over the app-driver, against the mock (and connect/config/mapping against a real rig C6). The
+`mapping_capture` journey drives the real capture screen and the synthetic camera through the
+real detector + decoder, recovering all LED ids (the full VIO solve is the documented
+follow-up — needs synthetic IMU). The Android SDK/adb/emulator are wired into the build via Nix
 (adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 from upstream).
 The custom linux-aarch64 emulator derivation is complete and its download endpoint
 (ci.android.com's `getdownloadurl?redirect=true`) is verified anonymously reachable, but it is

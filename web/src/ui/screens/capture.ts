@@ -27,7 +27,12 @@ import {
 } from "../../cv/exposure";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
-import { driverActive } from "../../driver/guard";
+import {
+  type DriverCaptureResult,
+  type DriverDecodeStats,
+  driverActive,
+  registerDriverCapture,
+} from "../../driver/guard";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
@@ -269,6 +274,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let lastLedCount = 64;
   let startedAt = 0;
   let timerTick: number | null = null;
+  // Under the HITL app-driver only: the pending finish() the harness is awaiting,
+  // resolved with the solved-map summary once stopCapture() finishes the solve.
+  let driverSolveResolve: ((r: DriverCaptureResult) => void) | null = null;
+  let driverSolveReject: ((e: unknown) => void) | null = null;
+  // Live decode health for the harness (the same numbers the HUD shows).
+  let driverDecodeStats: DriverDecodeStats = { ids: 0, total: 0, tracks: 0, observations: 0 };
 
   function client() {
     return appState.client;
@@ -486,6 +497,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
                 (scn ? ` clip ${pct(scn.clipFrac)}` : "")
               : `LED ${br}%`) + expLine;
+          driverDecodeStats = {
+            ids: s.uniqueIds.size,
+            total: params.ledCount,
+            tracks: s.tracks,
+            observations: localDetections.length,
+          };
           hudStats.textContent =
             `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
             `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
@@ -762,6 +779,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         { error: true },
       );
       await c.stopMappingNoSolve().catch(() => undefined);
+      driverSolveReject?.(
+        new Error(
+          solverAgent.available
+            ? "nothing to solve — no LEDs decoded from the synthetic scene"
+            : "the in-browser solver failed to load",
+        ),
+      );
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate("/maps");
       return;
     }
@@ -882,10 +908,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           ? `Saved ${map.leds.length} LEDs`
           : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
       );
+      driverSolveResolve?.({ mapId: id, ledCount: lastLedCount, solved: map.leds.length });
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate(`/map/${id}`);
     } catch (e) {
       nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
+      driverSolveReject?.(e);
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate("/maps");
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
@@ -896,8 +928,27 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
   return {
     el,
-    onMount: () => void startCapture(),
+    onMount: () => {
+      // Under the HITL driver, expose a controller so the harness can end the
+      // capture and await the solved map (see driver/harness.ts finishCapture).
+      if (driverActive()) {
+        registerDriverCapture({
+          stats: () => driverDecodeStats,
+          finish: () =>
+            new Promise<DriverCaptureResult>((resolve, reject) => {
+              driverSolveResolve = resolve;
+              driverSolveReject = reject;
+              void stopCapture();
+            }),
+        });
+      }
+      void startCapture();
+    },
     onUnmount: () => {
+      if (driverActive()) registerDriverCapture(null);
+      driverSolveReject?.(new Error("capture screen unmounted before solve"));
+      driverSolveResolve = null;
+      driverSolveReject = null;
       capturing = false;
       stopTimer();
       imuRecorder?.stop();
