@@ -91,6 +91,10 @@ async function main(): Promise<void> {
     const { initDemoMode } = await import("../../demo/init");
     initDemoMode(new Set(demoParam.split(",")));
   } else if (driverParam) {
+    // `?ble=real` drives with the OS Web Bluetooth stack (emulator real-BLE lane,
+    // pairing with a software Bumble peripheral); default is the in-app virtual mock.
+    const { setDriverBleMode } = await import("../../driver/guard");
+    setDriverBleMode(qs.get("ble") === "real" ? "real" : "virtual");
     // Install the driver (sets driverActive + opens the control WS) BEFORE
     // router.start() so the BLE/capture swaps are live before any screen mounts.
     const { initDriver } = await import("../../driver/harness");

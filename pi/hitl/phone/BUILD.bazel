@@ -7,7 +7,7 @@ replies. Browser lane now (headless Chromium serving //web:dist); Android emulat
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -54,6 +54,41 @@ py_binary(
         requirement("playwright"),
         requirement("websockets"),
     ],
+)
+
+# Software Improv BLE peripheral (Bumble) for the real-BLE lane — the app pairs with
+# it over a real BLE stack instead of the app-seam virtual mock. Kept out of the core
+# `phone` lib so only the real-BLE lane pulls the bumble dependency.
+py_library(
+    name = "ble_peripheral",
+    srcs = ["ble_peripheral.py"],
+    imports = ["."],
+    deps = [requirement("bumble")],
+)
+
+# Real-GATT test: a Bumble central drives the full Improv handshake against the
+# peripheral over a LocalLink (two full BLE stacks, no radio, no emulator).
+py_test(
+    name = "ble_peripheral_test",
+    srcs = ["ble_peripheral_test.py"],
+    imports = ["."],
+    deps = [
+        ":ble_peripheral",
+        requirement("bumble"),
+    ],
+)
+
+# Station runner: advertise the Improv peripheral on a real transport (the emulator's
+# `android-netsim`, a host BlueZ adapter, or a RootCanal instance). Runs on the
+# hypervisor station beside the booted emulator; the app pairs with it over real BLE.
+#   bazel run //pi/hitl/phone:ble_peripheral_server -- --transport android-netsim --redirect http://<c6-ip>/
+py_binary(
+    name = "ble_peripheral_server",
+    srcs = ["ble_peripheral.py"],
+    imports = ["."],
+    main = "ble_peripheral.py",
+    tags = ["manual"],
+    deps = [requirement("bumble")],
 )
 
 # adb / platform-tools from the pinned nixpkgs (@android_tools) — the Android lane's debug

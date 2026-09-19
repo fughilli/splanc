@@ -23,7 +23,7 @@
  * shared unchanged (docs/design/ios-support.md §4.2).
  */
 
-import { driverActive } from "../driver/guard";
+import { driverUsesVirtualBle } from "../driver/guard";
 import { isNativePlatform } from "./native";
 
 // Improv BLE service + characteristic UUIDs (spec constants).
@@ -185,9 +185,11 @@ export async function retryGatt<T>(
  * ask for credentials after.
  */
 export async function requestImprovDevice(): Promise<ImprovDevice> {
-  // HITL app-driver: substitute a virtual Improv peripheral (no real radio).
-  // Dynamic-imported so virtualBle never enters the production bundle.
-  if (driverActive()) {
+  // HITL app-driver (virtual-BLE mode): substitute a virtual Improv peripheral (no
+  // real radio). Dynamic-imported so virtualBle never enters the production bundle.
+  // In real-BLE mode the driver falls through to Web Bluetooth below — the emulator
+  // lane pairs with a software Bumble peripheral over its Netsim controller.
+  if (driverUsesVirtualBle()) {
     const { makeVirtualImprovDevice } = await import("./virtualBle");
     return makeVirtualImprovDevice();
   }

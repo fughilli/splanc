@@ -108,6 +108,35 @@ aarch64-linux CI container has no upstream emulator, so its target is correctly 
 Booting the emulator + running the journeys is for a station with a hypervisor — an
 Apple-silicon Mac, or a linux-x86_64 box with `/dev/kvm`.
 
+## Real-BLE lane (Bumble software peripheral)
+
+By default the driver swaps a virtual Improv/player peripheral in behind the guard (CI +
+browser lane). The **real-BLE lane** instead has the app pair over the actual OS BLE stack with
+a **software Improv peripheral** — the same GATT service a real ESP32-C6 advertises — so we
+exercise real pairing/provisioning, not the app-seam mock.
+
+- **`ble_peripheral.py`** — a [Bumble](https://github.com/google/bumble) Improv GATT server
+  (`//pi/hitl/phone:ble_peripheral`). Mirrors `web/src/net/improv.ts` (UUIDs + wire) and the
+  mock's behaviour: on a wifi-settings RPC it answers on RPC_RESULT with a redirect URL (e.g.
+  the rig-forwarded C6 endpoint) and steps CURRENT_STATE → PROVISIONED, so real BLE
+  provisioning hands off to a real device connection.
+- **`ble_peripheral_test`** — a Bumble **central** drives the full Improv handshake against the
+  peripheral over a Bumble LocalLink: two complete BLE stacks (LL/L2CAP/ATT/GATT), **no radio,
+  no emulator**. Verified in-container (incl. MTU negotiation + the Improv error path), so the
+  peripheral's protocol is proven without a hypervisor.
+- **App toggle:** load the app with `?driver=…&ble=real` — the improv/bleTransport swap points
+  fall through to real Web Bluetooth instead of the virtual mock (`driverUsesVirtualBle()`).
+- **On a hypervisor station:** point the Android emulator at its Netsim controller and run
+  `bazel run //pi/hitl/phone:ble_peripheral_server -- --transport android-netsim --redirect
+http://<c6-ip>/`. The emulator's guest BLE stack then discovers the peripheral. (Other
+  transports: `hci-socket:0` for a host BlueZ adapter, `tcp-client:HOST:PORT` for RootCanal.)
+
+**Station-only spike (not verified here):** whether emulator-Chrome's Web Bluetooth _chooser_
+can be driven under automation over Netsim is the remaining unknown (there's no user gesture in
+a headless run) — it needs a hypervisor host to try, and may require Chrome
+auto-accept-Bluetooth flags or a thin Capacitor-Android wrapper. The peripheral + protocol (the
+hard, portable part) are done and CI-tested; the emulator boot + chooser is the station step.
+
 ## Journey format (`journeys/*.json`)
 
 Declarative, Maestro-inspired but over our semantic protocol (not DOM selectors):
@@ -188,9 +217,10 @@ The custom linux-aarch64 emulator derivation is complete and its download endpoi
 (ci.android.com's `getdownloadurl?redirect=true`) is verified anonymously reachable, but it is
 **not yet pinned**: a current `aosp-emu-master-dev` build id + hash must be filled in (the id
 has to be read off the grid in a browser — the build-list API is rate-limited/deprecated). It
-ships UNSET and fails loudly until pinned. Remaining: pin a current aarch64 emulator build (or
-just use an x86_64/macOS station, which needs no pin), boot the emulator + run the journeys on
-a host with a hypervisor (Apple-silicon Mac or Linux + KVM), real BLE via Netsim/Bumble
-(Android) + ImpossiBLE (iOS), the iOS station, and deepening the mapping journey (the
-capture-screen lifecycle + synthetic camera through the solve — currently exercised at the
-RPC-flow level).
+ships UNSET and fails loudly until pinned. The **real-BLE** peripheral (Bumble Improv GATT) +
+its real-GATT test are done and CI-tested in-container, and the app has the `?ble=real` toggle;
+what's left there is the station-only spike (emulator boot + Netsim + the Web Bluetooth chooser
+under automation). Remaining: pin a current aarch64 emulator build (or just use an x86_64/macOS
+station, which needs no pin), boot the emulator + run the journeys on a host with a hypervisor
+(Apple-silicon Mac or Linux + KVM), the emulator real-BLE spike over Netsim, then the iOS
+station (ImpossiBLE).

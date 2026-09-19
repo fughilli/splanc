@@ -25,6 +25,29 @@ export function setDriverActive(value: boolean): void {
   active = value;
 }
 
+/** How the driven app should get BLE: the in-app `virtual` Improv/player mock
+ * (CI + browser lane, no radio), or the `real` OS Web Bluetooth stack (the
+ * emulator real-BLE lane, which pairs with a software Bumble peripheral over the
+ * emulator's Netsim controller). Default `virtual`. */
+export type DriverBleMode = "virtual" | "real";
+
+let bleMode: DriverBleMode = "virtual";
+
+/** Set from `?ble=real` on the driven load (see ui/app/main.ts). */
+export function setDriverBleMode(mode: DriverBleMode): void {
+  bleMode = mode;
+}
+
+export function driverBleMode(): DriverBleMode {
+  return bleMode;
+}
+
+/** True when the app-seam BLE mock should be substituted — i.e. driven AND not in
+ * real-BLE mode. The single predicate the improv/bleTransport swap points read. */
+export function driverUsesVirtualBle(): boolean {
+  return active && bleMode === "virtual";
+}
+
 /** Live decode health from the running capture (what the on-screen HUD shows):
  * how many distinct LED ids the real detector+decoder has recovered so far. This
  * is the part the synthetic camera uniquely exercises through the real app. */
