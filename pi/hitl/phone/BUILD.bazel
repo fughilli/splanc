@@ -100,12 +100,12 @@ filegroup(
 )
 
 # Android emulator + a native-ABI Google-APIs system image (Nix @android_emulator, from
-# pi/hitl/phone/nix/android-emulator.nix). Supported on macOS (Intel + Apple Silicon) and
-# Linux (x86_64 + aarch64): x86_64/macOS use nixpkgs' upstream emulator; aarch64-linux uses a
-# CUSTOM derivation that fetches Google's CI emulator (upstream ships none) — see the nix file
-# (that leg ships UNSET and needs a current aosp-emu-master-dev build id + hash pinned first —
-# read it off the grid in a browser; the build-list API is rate-limited). So the
-# target is compatible on macOS + Linux and INCOMPATIBLE (skipped) elsewhere (e.g. Windows).
+# pi/hitl/phone/nix/android-emulator.nix). USE a macOS (Intel + Apple Silicon) or linux-x86_64
+# station: those get the emulator from nixpkgs' upstream androidenv (no pin). aarch64-linux has
+# a CUSTOM derivation for the CI emulator, but that source is DISCONTINUED upstream (the branch
+# froze in 2025-03 and its artifacts are GC'd — nothing live to pin; see the nix file), so the
+# arm64-linux target can't build today. The target stays compatible on macOS + Linux and
+# INCOMPATIBLE (skipped) elsewhere (e.g. Windows).
 # Also tagged `manual` so it stays out of `bazel build //...` (a multi-GB SDK download only the
 # Android lane needs) — build it explicitly. On the station, point ANDROID_SDK_ROOT at the
 # libexec/android-sdk/ tree in its output; launcher.py resolves adb + emulator + avdmanager

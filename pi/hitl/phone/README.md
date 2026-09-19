@@ -73,18 +73,16 @@ The Android tools come from the Bazel-pinned nixpkgs — no manual Android SDK i
   (`//pi/hitl/phone:android_emulator`), from `pi/hitl/phone/nix/android-emulator.nix`.
   Supported on **macOS (Intel + Apple Silicon)** and **Linux (x86_64 + aarch64)**:
 
-  - macOS + linux-x86_64 use **nixpkgs' upstream** androidenv emulator.
-  - **linux-aarch64** — nixpkgs (and dl.google.com's SDK channel) ship no aarch64-Linux
-    emulator, so a **custom derivation** fetches Google's CI emulator (ci.android.com, the only
-    source) and patches it exactly as `emulator.nix` does. ci.android.com serves it only via a
-    _temporary signed_ URL and **garbage-collects old builds**, so a fixed-output derivation
-    (pinned by content hash) resolves that URL at build time via the build API's
-    `…/artifacts/<zip>/url?redirect=true` (anonymous access verified reachable). **Two fields
-    must be pinned** in the nix file — a **current** `emulatorBuild` id + its `outputHash`; it
-    ships UNSET (build `0`) and fails loudly until filled in. The build id must be read off the
-    [emulator grid](https://ci.android.com/builds/branches/aosp-emu-master-dev/grid) **in a
-    browser** — the build-list API is anonymously rate-limited/deprecated and the grid is
-    JS-rendered — see the PIN MAINTENANCE note in the nix file.
+  - macOS (Apple Silicon + Intel) + linux-x86_64 use **nixpkgs' upstream** androidenv emulator —
+    **no pinning, nothing to maintain**. These are the stations to use.
+  - **linux-aarch64 is discontinued upstream** (checked 2026-09). nixpkgs and dl.google.com ship
+    no aarch64-Linux emulator; its only public source was Google's CI (`aosp-emu-master-dev`),
+    which is now **frozen** — last green build `13278466` (2025-03-28), and even that build's zip
+    has been garbage-collected (confirmed: the grid download 404s). No successor branch publishes
+    a `linux_aarch64` target. So there is **nothing live to pin**. The custom derivation +
+    fetch machinery remain in `android-emulator.nix` (verified reachable) in case Google
+    republishes, but today an arm64-**Linux** station (Asahi / arm cloud) can only get the
+    emulator by building it from source. **Just use a macOS or linux-x86_64 station instead.**
 
   The nix file picks a **native-ABI** system image per host (arm64-v8a on ARM, x86_64 on
   x86_64). Tagged `manual` (a multi-GB SDK download only this lane needs), so it stays out of
@@ -213,14 +211,13 @@ real detector + decoder (all LED ids recovered); `mapping_solve` adds the synthe
 runs the real on-device VIO solve to a solved map (sub-pixel reprojection, full fixture
 recovered). The Android SDK/adb/emulator are wired into the build via Nix
 (adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 from upstream).
-The custom linux-aarch64 emulator derivation is complete and its download endpoint
-(ci.android.com's `getdownloadurl?redirect=true`) is verified anonymously reachable, but it is
-**not yet pinned**: a current `aosp-emu-master-dev` build id + hash must be filled in (the id
-has to be read off the grid in a browser — the build-list API is rate-limited/deprecated). It
-ships UNSET and fails loudly until pinned. The **real-BLE** peripheral (Bumble Improv GATT) +
+The custom linux-aarch64 emulator derivation is complete and its download endpoint is verified
+reachable, but the arm64-**Linux** emulator is **discontinued upstream** (the CI branch froze in
+2025-03 and its artifacts are GC'd — nothing live to pin), so use a **macOS or linux-x86_64
+station**, where the emulator comes from nixpkgs with no pin. The **real-BLE** peripheral
+(Bumble Improv GATT) +
 its real-GATT test are done and CI-tested in-container, and the app has the `?ble=real` toggle;
 what's left there is the station-only spike (emulator boot + Netsim + the Web Bluetooth chooser
-under automation). Remaining: pin a current aarch64 emulator build (or just use an x86_64/macOS
-station, which needs no pin), boot the emulator + run the journeys on a host with a hypervisor
-(Apple-silicon Mac or Linux + KVM), the emulator real-BLE spike over Netsim, then the iOS
-station (ImpossiBLE).
+under automation). Remaining: on a **macOS or linux-x86_64 + KVM** station (arm64-Linux
+emulator is discontinued upstream — no pin possible), boot the emulator + run the journeys,
+then the emulator real-BLE spike over Netsim, then the iOS station (ImpossiBLE).

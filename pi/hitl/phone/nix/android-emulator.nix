@@ -35,24 +35,29 @@ let
     includeNDK = false;
   };
 
-  # The arm64-linux emulator, from Google's CI (aosp-emu-master-dev) — the only source, since
+  # The arm64-linux emulator's only public source was Google's CI (aosp-emu-master-dev), since
   # neither nixpkgs' manifest nor dl.google.com's SDK channel ships a linux-aarch64 emulator.
-  # (repository2-*.xml carries emulator-linux_x64 + emulator-darwin_aarch64 only — verified —
-  # so the released SDK build numbers do NOT have a linux_aarch64 target; don't reuse those.)
+  # (repository2-*.xml carries emulator-linux_x64 + emulator-darwin_aarch64 only — verified.)
   #
-  # PIN MAINTENANCE — fill in two fields, `emulatorBuild` + `outputHash`:
-  #   1. Read a CURRENT build id off the emulator branch grid, IN A BROWSER:
-  #        https://ci.android.com/builds/branches/aosp-emu-master-dev/grid
-  #      Pick a green build whose targets include `emulator-linux_aarch64`. Scripted discovery
-  #      is unreliable: the build-LIST REST API is anonymously rate-limited and deprecated
-  #      ("migrate to Build API v4"), and the grid renders its build list via JS — so read the
-  #      number by eye. (The DOWNLOAD path used below is fine anonymously; only listing is walled.)
-  #   2. Run `bazel build //pi/hitl/phone:android_emulator` once — nix prints the real `got:`
-  #      hash on the mismatch — and paste it into `outputHash`.
-  # Old builds are garbage-collected (getdownloadurl then 404s "attempt … not found"), so the id
-  # must be recent. Left UNSET (0) intentionally: the fetch fails loudly until pinned, rather
-  # than pretending a purged example is real.
-  emulatorBuild = "0"; # UNSET — put a current aosp-emu-master-dev build id here (see above).
+  # ⚠ DISCONTINUED UPSTREAM (checked 2026-09): aosp-emu-master-dev is FROZEN — its last green
+  # build is 13278466 (2025-03-28) and even that build's linux_aarch64 zip has been
+  # garbage-collected (getdownloadurl → "attempt … not found"; a maintainer confirmed the grid
+  # download 404s). No successor branch publishes a linux_aarch64 target, and the current
+  # released emulator (build ~16.3M) has no linux_aarch64 target at all. So there is nothing
+  # live to pin: this leg cannot be completed from Google's CI right now.
+  #
+  # → USE A DIFFERENT STATION. macOS (Apple Silicon or Intel) and linux-x86_64 get the emulator
+  #   from nixpkgs upstream (the `base` SDK above, includeEmulator on those hosts) — NO pin
+  #   needed. Only a native arm64-LINUX station (Asahi / arm cloud) hits this gap; the sole
+  #   remaining route there is building the emulator from source (repo init … emu-master-dev),
+  #   which is a multi-hour build and out of scope here.
+  #
+  # If Google ever republishes a linux_aarch64 emulator: set `emulatorBuild` to that build id
+  # and run `bazel build //pi/hitl/phone:android_emulator` once — nix prints the real `got:`
+  # hash — then paste it into `outputHash`. The fetch machinery below (the getdownloadurl
+  # redirect API) is verified reachable; it just has nothing to fetch today. Left UNSET (0) so
+  # it fails loudly rather than pretending a purged build is real.
+  emulatorBuild = "0"; # UNSET — arm64-linux emulator is discontinued upstream (see above).
   # There is no stable direct URL: ci.android.com serves the artifact only via a TEMPORARY
   # signed storage.googleapis.com URL (Expires=…&Signature=…), and its build API's
   # `…/artifacts/<zip>/url?redirect=true` 302-redirects to that signed URL. Anonymous access is
