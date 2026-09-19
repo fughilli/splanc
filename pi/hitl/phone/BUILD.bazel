@@ -18,6 +18,7 @@ py_library(
         "journey_runner.py",
         "launcher.py",
         "mock_device.py",
+        "phone_target.py",
         "reservation_backend.py",
     ],
     data = glob(["journeys/*.json"]),
@@ -54,6 +55,15 @@ py_binary(
         requirement("playwright"),
         requirement("websockets"),
     ],
+)
+
+# Dry-run tests for the phone targets: assert each target's reachability model +
+# command plan (adb/simctl/devicectl) WITHOUT hardware. Runs in CI/in-container.
+py_test(
+    name = "phone_target_test",
+    srcs = ["phone_target_test.py"],
+    imports = ["."],
+    deps = [":phone"],
 )
 
 # Software Improv BLE peripheral (Bumble) for the real-BLE lane — the app pairs with
