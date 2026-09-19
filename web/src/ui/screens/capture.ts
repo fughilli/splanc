@@ -365,11 +365,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // DeviceMotion mapping was fitted on an Android handset and has never been
       // right here (mis-oriented maps; docs/design/ios-support.md §4.7). Both
       // expose flush(), so the batch tick below is identical either way.
-      if (nativeSource === null) {
+      // Under the HITL driver the synthetic source emits IMU consistent with its
+      // own pose track (no DeviceMotion in a headless browser); otherwise record
+      // real device motion.
+      if (nativeSource === null && syntheticSource === null) {
         imuRecorder = new ImuRecorder(imuMapping);
         imuRecorder.start();
       }
-      const imuFlusher: { flush(): ImuSample[] } | null = nativeSource ?? imuRecorder;
+      const imuFlusher: { flush(): ImuSample[] } | null =
+        syntheticSource ?? nativeSource ?? imuRecorder;
 
       const detector = new DetectorGL(detectGl, detectorOpts);
       // The native reduction must threshold with the SAME value the servo below
@@ -843,10 +847,27 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(logged)).then((path) => {
         if (path !== null) nativeLog(`[solve] session log saved: ${path}`);
       });
-      const solved = await solverAgent.solve(
-        problem,
-        (snap: SolveSnapshot) => renderSolveSnapshot(snap),
-      );
+      if (driverActive()) {
+        const s0 = localImu[0];
+        console.info(
+          `[solve] problem detections=${localDetections.length} imu=${localImu.length} ` +
+            `ledCount=${lastLedCount} imu0=${
+              s0
+                ? `t${s0.t.toFixed(0)} g[${s0.gyro.map((x) => x.toFixed(2))}] a[${s0.accel.map((x) => x.toFixed(2))}]`
+                : "none"
+            }`,
+        );
+      }
+      let lastProg = -1;
+      const solved = await solverAgent.solve(problem, (snap: SolveSnapshot) => {
+        renderSolveSnapshot(snap);
+        if (driverActive() && snap.progress - lastProg >= 0.2) {
+          lastProg = snap.progress;
+          console.info(
+            `[solve] progress=${(snap.progress * 100).toFixed(0)}% rms=${snap.rmsPx?.toFixed(1)} leds=${snap.leds?.length ?? 0}`,
+          );
+        }
+      });
       // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
       // on the LED centroid — the natural fixture origin — before the device
       // and the library both take it, so they agree.

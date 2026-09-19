@@ -106,6 +106,12 @@ class MockDevice:
         if kind == "get_status":
             return {"type": "status", "identified": 0, "total": self._led_count, "lowParallax": 0}
         if kind == "stop_mapping":
+            # The phone-solve path stops with solveOnHost=false and awaits a
+            # `mapping_stopped` ack (it then solves locally + submits the map);
+            # the host-solve path awaits `result_ready`. Reply to match, or the
+            # app hangs waiting for the wrong message.
+            if msg.get("solveOnHost") is False:
+                return {"type": "mapping_stopped", "detections": 0, "imuSamples": 0}
             return {"type": "result_ready", "mapId": "mock-map"}
         if kind in ("submit_map", "submit_topology"):
             return {"type": "result_ready", "mapId": "mock-map"}

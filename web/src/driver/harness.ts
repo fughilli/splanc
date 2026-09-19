@@ -161,6 +161,12 @@ async function handle(msg: Incoming): Promise<unknown> {
           setTimeout(() => rej(new Error(`solve did not converge within ${solveMs}ms`)), solveMs),
         ),
       ]);
+      // A real solve recovers most of the fixture; a near-empty map means the VIO
+      // failed even though a map object came back. Fail the journey on that.
+      const need = Math.max(1, Math.floor(result.ledCount * 0.5));
+      if (result.solved < need) {
+        throw new Error(`solve recovered only ${result.solved}/${result.ledCount} LEDs`);
+      }
       emit("milestone", { name: "map_solved", detail: result as unknown as Json });
       return result as unknown as Json;
     }

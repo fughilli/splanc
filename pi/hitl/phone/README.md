@@ -19,8 +19,8 @@ bazel run //pi/hitl/phone:phone_e2e -- --browser --journeys smoke
 bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys smoke,config
 
 # Deep mapping: drive the REAL capture screen — synthetic camera → real detector →
-# real decoder — and assert every LED id is recovered end to end through the app
-bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys mapping_capture
+# real decoder (mapping_capture), plus the real VIO solve with synthetic IMU (mapping_solve)
+bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys mapping_capture,mapping_solve
 
 # Connect + config against a REAL ESP32-C6 on the rig (reserve+flash+provision+forward)
 HITL_OWNER=you bazel run //pi/hitl/phone:phone_e2e -- \
@@ -47,16 +47,16 @@ Hardware is substituted behind the same guard so journeys run with no radio / no
 - **Synthetic camera** (`web/src/xr/syntheticCaptureSource.ts`) — renders the known
   fixture's LEDs projected on a camera arc, coloured with the real hue-code, into a
   reduced frame the real detector + decoder consume (reuses the `pipeline_synthetic`
-  infra: `geom/pinhole` + `code/gray`). The `mapping_capture` journey drives the real
-  `/capture` screen with this source and asserts the real decoder recovers every LED id
-  (`openCapture` + `awaitDecode`) — end to end through the app, not the mapping RPC.
-  The final VIO **solve** (`finishCapture`) is wired but not in the default journey: the
-  visual-**inertial** solver needs real motion/IMU the headless synthetic scene doesn't yet
-  synthesize (planar fixture, no DeviceMotion) — a follow-up. The solve's correctness is
-  otherwise covered by the Rust solver tests; `finishCapture` is timeout-bounded so a
-  non-converging solve fails cleanly rather than hanging. The solver deployment
-  (`//solver:solver_web` — wasm + worker) is served at `/solver/` in this lane, as the Pi
-  server does, so the on-device solve path can load.
+  infra: `geom/pinhole` + `code/gray`). It also emits a **synthetic IMU** stream — body-frame
+  angular velocity + specific force `Rᵀ·(a_world − g)` derived from the same pose arc (a port
+  of the solver's own `synth.rs`), stamped in the frames' clock — so the real visual-**inertial**
+  solver can recover scale. Two journeys drive the real `/capture` screen with this source:
+  `mapping_capture` (`openCapture` + `awaitDecode`) asserts the real decoder recovers every LED
+  id; `mapping_solve` (`openCapture` + `finishCapture`) runs the real on-device VIO solve and
+  asserts a solved map (LED positions recovered, ≥ half the fixture) — both end to end through
+  the app, not the mapping RPC. `finishCapture` is timeout-bounded so a bad solve fails cleanly
+  rather than hanging. The solver deployment (`//solver:solver_web` — wasm + worker) is served at
+  `/solver/` in this lane, as the Pi server does, so the on-device solve path can load.
 
 Station pieces (`pi/hitl/phone/`): `driver_server.py` (WS control channel + async
 driving API), `journey_runner.py` (runs the JSON journeys), `mock_device.py` (proto
@@ -177,11 +177,12 @@ synthetic source can't, enabling the exposure/blob-tuner hill-climb.
 
 ## Status
 
-Verified end to end (in-container): smoke + connect + config + mapping + **mapping_capture**
-over the app-driver, against the mock (and connect/config/mapping against a real rig C6). The
-`mapping_capture` journey drives the real capture screen and the synthetic camera through the
-real detector + decoder, recovering all LED ids (the full VIO solve is the documented
-follow-up — needs synthetic IMU). The Android SDK/adb/emulator are wired into the build via Nix
+Verified end to end (in-container): smoke + connect + config + mapping + **mapping_capture** +
+**mapping_solve** over the app-driver, against the mock (and connect/config/mapping against a
+real rig C6). `mapping_capture` drives the real capture screen + synthetic camera through the
+real detector + decoder (all LED ids recovered); `mapping_solve` adds the synthetic IMU and
+runs the real on-device VIO solve to a solved map (sub-pixel reprojection, full fixture
+recovered). The Android SDK/adb/emulator are wired into the build via Nix
 (adb builds + runs on aarch64 here; the emulator builds on macOS/linux-x86_64 from upstream).
 The custom linux-aarch64 emulator derivation is complete and its download endpoint
 (ci.android.com's `getdownloadurl?redirect=true`) is verified anonymously reachable, but it is
