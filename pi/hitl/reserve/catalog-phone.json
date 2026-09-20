@@ -21,29 +21,32 @@
 
   "components": [
     {
-      "comment": "The real-phone unit's C6 DUT. FILL the by-id serial from the live rig: `ls /dev/serial/by-id` on amd-rig (usb-Espressif_USB_JTAG_serial_debug_unit_<MAC>-if00). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 and from c6-b below.",
+      "comment": "The real-phone unit's C6 DUT (read off the live rig 2026-09-20). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 (…FC:B0) and from c6-b. (Spare C6 …8C:FD:49:11:32:18 is unassigned — add a third unit or auto-discovery later.)",
       "name": "c6-a",
       "type": "esp32c6",
       "devices": [
-        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_FILL:FILL:FILL:FILL:FILL:AA-if00:/dev/ttyACM0"
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:D8-if00:/dev/ttyACM0"
       ],
-      "env": { "HITL_ADAPTER_SERIAL": "FILL:FILL:FILL:FILL:FILL:AA" }
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:D8" }
     },
     {
-      "comment": "The emulator unit's C6 DUT (second board). FILL its by-id serial too.",
+      "comment": "The emulator unit's C6 DUT (second free board).",
       "name": "c6-b",
       "type": "esp32c6",
       "devices": [
-        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_FILL:FILL:FILL:FILL:FILL:BB-if00:/dev/ttyACM0"
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:F9:83:C8-if00:/dev/ttyACM0"
       ],
-      "env": { "HITL_ADAPTER_SERIAL": "FILL:FILL:FILL:FILL:FILL:BB" }
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:F9:83:C8" }
     },
     {
-      "comment": "The Android dev device (USB). adb enumerates it by its device serial (HITL_ANDROID_SERIAL, from `adb devices`); pass its raw-USB node so the isolated env can reach it. FILL the by-id/by-path from the live rig: adb devices → the serial; `ls -l /dev/serial/by-id` won't list a phone (not a CDC-serial), so use the phone's /dev/bus/usb by-path or a udev-created symlink (see hitl-phone-daemon.nix udev rule). Placeholder maps a stable by-path; adjust to the actual phone.",
+      "comment": "The Android dev device: a Samsung SM-A115U (Galaxy A11, Android 10), adb serial R95N90G5WSB (04e8:6860). NOT a USB passthrough into the env — instead the env uses a HOST-side adb server over --net-host (127.0.0.1:5037, authorized by the persistent bench key at /var/lib/hitl-phone/adb/adbkey, tapped once 2026-09-20) and targets this serial. So this component carries no device node, just the env markers.",
       "name": "android-dev",
       "type": "android-dev",
-      "devices": ["/dev/hitl-android-phone:/dev/hitl-android-phone"],
-      "env": { "HITL_ANDROID_SERIAL": "FILLADBSERIAL", "HITL_PHONE_TARGET": "android-phone" }
+      "env": {
+        "HITL_ANDROID_SERIAL": "R95N90G5WSB",
+        "ADB_SERVER_SOCKET": "tcp:127.0.0.1:5037",
+        "HITL_PHONE_TARGET": "android-phone"
+      }
     },
     {
       "comment": "KVM acceleration for the x86_64 Android emulator (amd-rig is x86_64, so the upstream nixpkgs emulator + an x86_64 system image run at native speed under /dev/kvm). Passed as a device into the emulator unit's env; the kvm group + udev give the agent uid access (hitl-phone-daemon.nix).",

@@ -1,7 +1,22 @@
 # A SECOND hitl-reserved instance for amd-rig: the PHONE bench (android-phone +
-# android-emu units), running the ISOLATED multi-DUT model so its two units run
-# concurrently without colliding on adb's fixed port 5037 / the emulator console
-# ports (bridge networking → each reservation gets its own network namespace).
+# android-emu units).
+#
+# ⚠ DESIGN UPDATE (2026-09-20, validated live on amd-rig) — this module still shows the
+# ISOLATED/bridge model below, but it is being REFACTORED to net-host + host-side services:
+#   * A bridge container CANNOT reach a host adb server: `adb start-server` binds 127.0.0.1
+#     only, and podman here doesn't define host.containers.internal. Confirmed live.
+#   * So the phone bench will run adb + the emulator as HOST services and give the reservation
+#     envs `--net-host` (as the SDR bench already does): the env's adb client hits
+#     127.0.0.1:5037 (the host adb server, authorized by the persistent bench key), and targets
+#     its serial (R95N90G5WSB for the phone, emulator-5554 for the emulator). No per-env adb
+#     server → no port-5037 collisions → no USB passthrough of the (non-tty) phone.
+#   * Consequence: the android-emu unit must ALSO use the host adb server + a HOST-side emulator
+#     (not an in-env emulator), else it collides on 5037 under net-host. That host-emulator
+#     service is the remaining Phase-B wiring; the phone unit's path (adb auth + host server +
+#     net-host) is validated.
+# The catalog (reserve/catalog-phone.json) already reflects this (android-dev has no device
+# node, just ADB_SERVER_SOCKET=tcp:127.0.0.1:5037). The flags/mounts below flip to net-host in
+# that refactor.
 #
 # ADDITIVE module: imported ALONGSIDE nix/hitl-sdr.nix on amd-rig. hitl-sdr.nix owns
 # the shared system bits (podman, tailscale, the hitl-agent user, the C6 udev rule for
