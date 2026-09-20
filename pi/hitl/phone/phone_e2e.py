@@ -26,7 +26,6 @@ import tempfile
 import launcher
 from driver_server import AppDriver
 from journey_runner import load_journeys, run_journey
-from mock_device import MockDeviceServer
 from phone_target import StationPorts, make_target
 
 
@@ -131,6 +130,8 @@ async def run(args: argparse.Namespace, target) -> int:
         drv = await stack.enter_async_context(AppDriver.serve(port))
         # Optional self-contained device backend (no rig): a mock speaking the proto.
         if args.mock_device and not args.device_ws:
+            from mock_device import MockDeviceServer  # lazy: pulls server.proto_wire
+
             mock = await stack.enter_async_context(MockDeviceServer())
             args.device_ws = mock.url
             print(f"[phone] mock device at {mock.url}", flush=True)

@@ -55,9 +55,11 @@ let
     ln -s ${p.esptool}/bin/espsecure.py $out/bin/espsecure
   '';
 
-  # Python with pyserial + bleak actually importable (listing them separately does
-  # NOT put them on sys.path). bleak = BLE central via the host bluetoothd/D-Bus.
-  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak ]);
+  # Python with pyserial + bleak + websockets actually importable (listing them
+  # separately does NOT put them on sys.path). bleak = BLE central via the host
+  # bluetoothd/D-Bus; websockets = the phone-HITL harness driver_server (shipped into
+  # the env on the phone bench). This is the toolbox's `python3` on PATH.
+  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak websockets ]);
 
   # Android toolbox (withAndroid): adb + the x86_64 emulator SDK + a Google-APIs
   # x86_64 system image (all from nixpkgs upstream — amd-rig is x86_64), plus a
@@ -75,15 +77,13 @@ let
     includeNDK = false;
   };
   androidSdkRoot = "${androidComposition.androidsdk}/libexec/android-sdk";
-  # NB: no `bumble` — nixpkgs has no python3Packages.bumble, and it's only needed for the
-  # emulator lane's SOFTWARE Improv peripheral (ble_peripheral.py). The real-phone lane uses
-  # the device's own radio. Package bumble for nix when wiring the emulator BLE lane.
-  phoneEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak websockets ]);
   androidTools = with p; [
     android-tools # adb / fastboot (device-facing)
     androidComposition.androidsdk # emulator + system image + cmdline-tools
-    phoneEnv # runs the shipped harness (phone_e2e)
     jdk17 # avdmanager/emulator need a JRE
+    # pyEnv (above) already carries the harness deps (pyserial/bleak/websockets) and is
+    # the toolbox python3. NB: no `bumble` in nixpkgs — the emulator lane's software Improv
+    # peripheral needs it; package it for nix when wiring that lane.
   ];
 
   # Espressif OpenOCD — the C6's (RISC-V) built-in USB-JTAG (mainline openocd only
