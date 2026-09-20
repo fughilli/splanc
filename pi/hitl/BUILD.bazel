@@ -39,6 +39,7 @@ filegroup(
         "flake.lock",
         "flake.nix",
         "//pi/hitl/reserve:catalog.json",  # Pi fleet catalog (reserve/ is its own package)
+        "//pi/hitl/reserve:catalog-phone.json",  # amd-rig phone bench (hitl_sdr 2nd daemon)
         "//pi/hitl/reserve:catalog-sdr.json",  # amd-rig SDR bench catalog (hitl_sdr)
     ] + glob([
         "nix/**",

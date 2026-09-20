@@ -75,7 +75,10 @@ let
     includeNDK = false;
   };
   androidSdkRoot = "${androidComposition.androidsdk}/libexec/android-sdk";
-  phoneEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak websockets bumble ]);
+  # NB: no `bumble` — nixpkgs has no python3Packages.bumble, and it's only needed for the
+  # emulator lane's SOFTWARE Improv peripheral (ble_peripheral.py). The real-phone lane uses
+  # the device's own radio. Package bumble for nix when wiring the emulator BLE lane.
+  phoneEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak websockets ]);
   androidTools = with p; [
     android-tools # adb / fastboot (device-facing)
     androidComposition.androidsdk # emulator + system image + cmdline-tools
