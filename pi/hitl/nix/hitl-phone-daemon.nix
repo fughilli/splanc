@@ -26,6 +26,33 @@ let
   unitPorts = lib.genList (i: sshPortBase + i) maxUnits;
 in
 {
+  # Generate a STABLE adb signing key for the phone bench once, on the host. Every
+  # phone reservation env mounts this same key (below), so the Android device authorizes
+  # it a SINGLE time ("Always allow from this computer") and all future autonomous runs
+  # are pre-authorized — no re-tap. adb keygen writes adbkey (+ adbkey.pub); world-read
+  # so the container's non-root agent (uid 1000) can offer it (a lab-bench key, not a
+  # production secret). To (re)authorize: on the host, `HOME=/var/lib/hitl-phone
+  # ${pkgs.android-tools}/bin/adb start-server && adb devices`, then tap Allow on the phone.
+  systemd.services.hitl-phone-adbkey = {
+    description = "Generate the phone bench's stable adb signing key";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "hitl-manager-phone.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      StateDirectory = "hitl-phone";
+      ExecStart = pkgs.writeShellScript "hitl-phone-adbkey" ''
+        set -eu
+        d=/var/lib/hitl-phone/adb
+        mkdir -p "$d"
+        if [ ! -f "$d/adbkey" ]; then
+          ${pkgs.android-tools}/bin/adb keygen "$d/adbkey"
+        fi
+        chmod 0644 "$d/adbkey" "$d/adbkey.pub" 2>/dev/null || true
+      '';
+    };
+  };
+
   # Load the phone image into podman on boot / after a deploy that changed it. Mirrors
   # hitl-sdr.nix's hitl-image-load, but for the phone image + tag (separate service so
   # the two daemons' images are managed independently).
@@ -71,8 +98,8 @@ in
   systemd.services.hitl-manager-phone = {
     description = "HITL reservation manager (phone bench)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" "tailscaled.service" "hitl-image-load-phone.service" ];
-    wants = [ "network-online.target" "hitl-image-load-phone.service" ];
+    after = [ "network-online.target" "tailscaled.service" "hitl-image-load-phone.service" "hitl-phone-adbkey.service" ];
+    wants = [ "network-online.target" "hitl-image-load-phone.service" "hitl-phone-adbkey.service" ];
     restartTriggers = [ "${hitl}/bin/hitl-reserved" "${phoneCatalog}" ];
     unitConfig.StartLimitIntervalSec = 0;
     path = [ pkgs.podman pkgs.iproute2 pkgs.openssh pkgs.getent ];
@@ -92,6 +119,9 @@ in
         # Share the host system D-Bus so the env's BlueZ tooling can drive the host
         # bluetoothd if a lane needs host-side BLE (harmless if absent).
         "--mount /run/dbus/system_bus_socket:/run/dbus/system_bus_socket"
+        # The bench's stable adb signing key → every env offers the key the phone
+        # authorized once (the entrypoint installs it to ~agent/.android/adbkey).
+        "--mount /var/lib/hitl-phone/adb:/run/hitl-adb:ro"
         "--state-dir /var/lib/hitl-phone"
         "--broker-url http://host.containers.internal:${toString apiPort}"
       ];

@@ -419,6 +419,16 @@ let
       # Fix home ownership at runtime (root here); build-time chown isn't allowed.
       chown -R "$user":"$user" "/home/$user" 2>/dev/null || true
       install -d -m700 -o "$user" -g "$user" "/home/$user/.ssh"
+      # ~/.android for a persistent adb signing key: the phone daemon mounts the
+      # bench's stable adbkey at /run/hitl-adb/adbkey (see hitl-phone-daemon.nix), so
+      # every reservation offers the SAME key the phone authorized once (no re-tap).
+      install -d -m700 -o "$user" -g "$user" "/home/$user/.android"
+      if [ -f /run/hitl-adb/adbkey ]; then
+        install -m600 -o "$user" -g "$user" /run/hitl-adb/adbkey "/home/$user/.android/adbkey"
+        [ -f /run/hitl-adb/adbkey.pub ] && install -m644 -o "$user" -g "$user" \
+          /run/hitl-adb/adbkey.pub "/home/$user/.android/adbkey.pub" || true
+        echo "hitl: installed the bench adb signing key for $user" >&2
+      fi
       if [ -f /run/hitl/authorized_keys ]; then
         install -m600 -o "$user" -g "$user" /run/hitl/authorized_keys "/home/$user/.ssh/authorized_keys"
         echo "hitl: installed $(wc -l < "/home/$user/.ssh/authorized_keys") authorized key(s) for $user" >&2
