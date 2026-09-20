@@ -185,6 +185,19 @@ class AndroidDeviceTarget(PhoneTarget):
     def host_alias(self) -> str:
         return "127.0.0.1"  # via adb reverse
 
+    #: launch package: "" = the phone's default browser (VIEW intent); or a specific
+    #: browser component like "com.android.chrome/com.google.android.apps.chrome.Main".
+    #: Override via $HITL_ANDROID_BROWSER on a station where the default isn't wanted.
+    @staticmethod
+    def _launch_argv(url: str) -> list[str]:
+        # Single-quote the URL so the phone's shell doesn't treat `&` in the query
+        # (`&ble=real`) as a background operator and truncate it.
+        argv = ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", f"'{url}'"]
+        browser = os.environ.get("HITL_ANDROID_BROWSER", "")
+        if browser:
+            argv[3:3] = ["-n", browser]
+        return argv
+
     def command_plan(self, ports: StationPorts, app_url: str = "") -> list[list[str]]:
         base = _adb_prefix(resolve=False)
         plan = [
@@ -192,18 +205,7 @@ class AndroidDeviceTarget(PhoneTarget):
             for p in (ports.http, ports.driver, ports.device)
             if p
         ]
-        plan.append(
-            base
-            + [
-                "shell",
-                "am",
-                "start",
-                "-a",
-                "android.intent.action.VIEW",
-                "-d",
-                app_url or self.app_url(ports),
-            ]
-        )
+        plan.append(base + self._launch_argv(app_url or self.app_url(ports)))
         return plan
 
     def setup(self, ports: StationPorts) -> None:
@@ -214,19 +216,7 @@ class AndroidDeviceTarget(PhoneTarget):
             self._reversed.append(p)
 
     async def launch(self, ports: StationPorts) -> None:
-        subprocess.run(
-            _adb_prefix()
-            + [
-                "shell",
-                "am",
-                "start",
-                "-a",
-                "android.intent.action.VIEW",
-                "-d",
-                self.app_url(ports),
-            ],
-            check=True,
-        )
+        subprocess.run(_adb_prefix() + self._launch_argv(self.app_url(ports)), check=True)
 
     async def close(self) -> None:
         for p in self._reversed:
