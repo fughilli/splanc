@@ -72,7 +72,10 @@
       "pin_only": true,
       "components": ["c6-b", "kvm"],
       "capabilities": ["android-emu", "kvm", "flash", "improv", "wss-app"],
-      "env": { "HITL_PHONE_TARGET": "android-emu" }
+      "env": {
+        "HITL_PHONE_TARGET": "android-emu",
+        "ADB_SERVER_SOCKET": "tcp:127.0.0.1:5037"
+      }
     }
   ]
 }
