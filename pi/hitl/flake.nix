@@ -68,6 +68,7 @@
           then [
             (import ./nix/hitl-sdr.nix { hitlSrc = hitl-reserve; })
             (import ./nix/hitl-phone-daemon.nix { hitlSrc = hitl-reserve; })
+            ./nix/hitl-amd-ap.nix
             ./observability/alloy.nix
           ]
           else [ (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; }) ./observability/alloy.nix ];
