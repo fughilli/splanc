@@ -185,6 +185,22 @@ class AndroidDeviceTarget(PhoneTarget):
     def host_alias(self) -> str:
         return "127.0.0.1"  # via adb reverse
 
+    @staticmethod
+    def _unlock_argv() -> list[list[str]]:
+        """Wake + dismiss the keyguard so the browser can foreground. A secure lock
+        needs the PIN ($HITL_ANDROID_PIN, injected by the reservation env — never in
+        the repo): wake, swipe the lock-screen up to reveal the PIN pad, type it,
+        submit. No PIN set → just wake + swipe (works for None/Swipe locks)."""
+        argv = [
+            ["shell", "input", "keyevent", "KEYCODE_WAKEUP"],
+            ["shell", "input", "swipe", "360", "1200", "360", "300"],
+        ]
+        pin = os.environ.get("HITL_ANDROID_PIN", "")
+        if pin:
+            argv.append(["shell", "input", "text", pin])
+            argv.append(["shell", "input", "keyevent", "66"])  # ENTER
+        return argv
+
     #: launch package: "" = the phone's default browser (VIEW intent); or a specific
     #: browser component like "com.android.chrome/com.google.android.apps.chrome.Main".
     #: Override via $HITL_ANDROID_BROWSER on a station where the default isn't wanted.
@@ -200,7 +216,8 @@ class AndroidDeviceTarget(PhoneTarget):
 
     def command_plan(self, ports: StationPorts, app_url: str = "") -> list[list[str]]:
         base = _adb_prefix(resolve=False)
-        plan = [
+        plan = [base + u for u in self._unlock_argv()]
+        plan += [
             base + ["reverse", f"tcp:{p}", f"tcp:{p}"]
             for p in (ports.http, ports.driver, ports.device)
             if p
@@ -209,6 +226,8 @@ class AndroidDeviceTarget(PhoneTarget):
         return plan
 
     def setup(self, ports: StationPorts) -> None:
+        for argv in self._unlock_argv():
+            subprocess.run(_adb_prefix() + argv, check=False)
         for p in (ports.http, ports.driver, ports.device):
             if not p:
                 continue

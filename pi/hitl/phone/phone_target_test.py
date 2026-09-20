@@ -62,6 +62,23 @@ class CommandPlanTests(unittest.TestCase):
         # device_ws stays loopback (reverse handles it) — no rewrite
         self.assertEqual(t.rewrite_device_ws("wss://127.0.0.1:8443/ws"), "wss://127.0.0.1:8443/ws")
 
+    def test_android_device_plan_wakes_and_uses_pin_when_set(self) -> None:
+        # no PIN → wake + swipe only (works for None/Swipe locks)
+        plan = AndroidDeviceTarget().command_plan(PORTS)
+        joined = [" ".join(c) for c in plan]
+        self.assertTrue(any("KEYCODE_WAKEUP" in c for c in joined))
+        self.assertFalse(any("input text" in c for c in joined))
+        # PIN set → the plan types it + submits, before any reverse/launch
+        os.environ["HITL_ANDROID_PIN"] = "1234"
+        try:
+            joined = [" ".join(c) for c in AndroidDeviceTarget().command_plan(PORTS)]
+        finally:
+            del os.environ["HITL_ANDROID_PIN"]
+        self.assertTrue(any("input text 1234" in c for c in joined))
+        pin_i = next(i for i, c in enumerate(joined) if "input text 1234" in c)
+        rev_i = next(i for i, c in enumerate(joined) if "reverse" in c)
+        self.assertLess(pin_i, rev_i)  # unlock happens before the reverses
+
     def test_ios_sim_launches_then_openurl_loopback(self) -> None:
         t = IosSimulatorTarget()
         plan = t.command_plan(PORTS)
