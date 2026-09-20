@@ -14,6 +14,7 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "phone",
     srcs = [
+        "android_ble_provision.py",
         "driver_server.py",
         "journey_runner.py",
         "launcher.py",
@@ -62,6 +63,15 @@ py_binary(
 py_test(
     name = "phone_target_test",
     srcs = ["phone_target_test.py"],
+    imports = ["."],
+    deps = [":phone"],
+)
+
+# Dry-run tests for the real-Android-BLE UI provisioner: the view-tree parse + the
+# crowded-chooser disambiguation, on captured uiautomator XML. No hardware.
+py_test(
+    name = "android_ble_provision_test",
+    srcs = ["android_ble_provision_test.py"],
     imports = ["."],
     deps = [":phone"],
 )

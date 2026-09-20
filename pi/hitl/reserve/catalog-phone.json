@@ -21,7 +21,7 @@
 
   "components": [
     {
-      "comment": "The real-phone unit's C6 DUT (read off the live rig 2026-09-20). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 (…FC:B0) and from c6-b. (Spare C6 …8C:FD:49:11:32:18 is unassigned — add a third unit or auto-discovery later.)",
+      "comment": "The real-phone unit's C6 DUT (read off the live rig 2026-09-20). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 (…FC:B0) and from c6-b. Flashed with the netstack player firmware it advertises Improv as \"Led Widget E2F5EF\" (identity MAC 58:E6:C5:11:FC:DA, BLE addr d1:fe:ff:c5:e6:58) — the real-BLE UI provisioner (android_ble_provision.py) matches the \"E2F5EF\" fragment to pick it out of the crowded lab airspace in the OS Bluetooth chooser. (Spare C6 …8C:FD:49:11:32:18 is unassigned — add a third unit or auto-discovery later.)",
       "name": "c6-a",
       "type": "esp32c6",
       "devices": [
