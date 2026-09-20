@@ -161,11 +161,80 @@ class AndroidBleProvisioner:
         x, y = n.center
         self.tap(x, y)
 
+    def grant_scan_permissions(self, package: str = "") -> None:
+        """Grant the browser the location permission BLE scanning needs. Android gates
+        `navigator.bluetooth` scanning on ACCESS_FINE_LOCATION (the chooser otherwise
+        shows "Chrome needs location access to scan for devices" and lists nothing).
+        Granting via `pm grant` persists and needs no UI. Package defaults to Chrome
+        (or the package half of $HITL_ANDROID_BROWSER)."""
+        if not package:
+            browser = os.environ.get("HITL_ANDROID_BROWSER", "")
+            package = browser.split("/")[0] if "/" in browser else "com.android.chrome"
+        for perm in (
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_COARSE_LOCATION",
+        ):
+            try:
+                self._shell("pm", "grant", package, perm)
+            except subprocess.SubprocessError:
+                pass
+
+    def _bt_on(self) -> bool:
+        return self._shell("settings", "get", "global", "bluetooth_on", capture=True).strip() == "1"
+
+    def ensure_bluetooth(self) -> None:
+        """Turn the radio fully on (the chooser refuses with 'Turn on Bluetooth to
+        allow pairing' otherwise). `svc bluetooth enable` is ignored on some Samsung
+        builds (the adapter sits in BLE_ON / enabled:false), so fall back to tapping
+        the Settings toggle, then return home. Idempotent — no-ops when already on."""
+        if self._bt_on():
+            return
+        try:
+            self._shell("svc", "bluetooth", "enable")
+        except subprocess.SubprocessError:
+            pass
+        time.sleep(3.0)
+        if self._bt_on():
+            return
+        # UI fallback: the Bluetooth settings screen's toggle Switch
+        self._shell("am", "start", "-a", "android.settings.BLUETOOTH_SETTINGS")
+        time.sleep(3.0)
+        sw = self.find(cls="Switch")
+        if sw and "off" in sw.text.lower():
+            self.tap_node(sw)
+            time.sleep(4.0)
+        self._shell("input", "keyevent", "3")  # HOME, off the settings screen
+        time.sleep(1.0)
+
+    def hide_keyboard(self) -> None:
+        """Dismiss the soft keyboard (BACK when it's up) so buttons below it — the
+        'Scan for device' CTA — are visible + tappable at their un-occluded position."""
+        self._shell("input", "keyevent", "4")
+        time.sleep(1.0)
+
+    def dismiss_dialogs(self) -> None:
+        """Cancel any Bluetooth chooser / dialog left open by a prior run — it's a modal
+        that would otherwise sit over the app's onboarding button. Tap 'Cancel' while
+        one is present (bounded)."""
+        for _ in range(3):
+            cancel = next(
+                (n for n in self.dump() if n.clickable and n.text.strip().lower() == "cancel"),
+                None,
+            )
+            if not cancel:
+                return
+            self.tap_node(cancel)
+
     # --- the flow -----------------------------------------------------------
     def provision(self, ssid: str, password: str, name_match: str, timeout: float = 60.0) -> bool:
         """Run the full UI provisioning. Assumes the app is already open on its
         onboarding screen (caller serves + reverses + launches). Returns True once the
         chooser selection is accepted (the app then does Improv over the real radio)."""
+        # 0) BLE scanning needs the browser's location permission (persists) + the radio on
+        self.grant_scan_permissions()
+        self.ensure_bluetooth()
+        self.dismiss_dialogs()  # clear any chooser/dialog left open by a prior run
+
         # 1) open the in-app BLE form
         btn = self.find(desc="Add device (Bluetooth)")
         if not btn:
@@ -186,7 +255,8 @@ class AndroidBleProvisioner:
         self.tap_node(pw_field)
         self.type_text(password)
 
-        # 3) fire the real chooser
+        # 3) hide the keyboard (it occludes the CTA) then fire the real chooser
+        self.hide_keyboard()
         scan = self.find(text="Scan for device")
         if not scan:
             print("[ble-ui] no 'Scan for device' button", file=sys.stderr)
@@ -194,22 +264,43 @@ class AndroidBleProvisioner:
         self.tap_node(scan)
 
         # 4) the OS chooser populates as it discovers; poll for our row, then confirm
+        # Our DUT is often weaker-signal than the lab's other Improv nodes, so it sorts
+        # to the BOTTOM of the chooser, below the fold — scroll the list each poll until
+        # it renders (the chooser is a scrollable list in the dialog's upper half). Let
+        # the live list populate + stop re-sorting first, else scrolling chases a moving
+        # target as new scan results reorder the rows.
+        time.sleep(7)
         deadline = time.time() + timeout
         row = None
         while time.time() < deadline:
             row = find_chooser_row(self.dump(), name_match)
             if row:
                 break
-            time.sleep(1.0)
+            self._shell("input", "swipe", "360", "500", "360", "250")
+            time.sleep(1.5)
         if not row:
             print(f"[ble-ui] {name_match!r} never appeared in the chooser", file=sys.stderr)
             return False
         self.tap_node(row)
-        # confirm button: "Pair"/"Connect"/"Add" (varies by OS). Tap if present.
-        confirm = self.find(text="Pair") or self.find(text="Connect") or self.find(text="Add")
-        if confirm:
-            self.tap_node(confirm)
-        print(f"[ble-ui] selected {name_match!r} in the chooser", flush=True)
+        time.sleep(1.5)  # let the row selection enable the confirm button
+        # confirm button: an EXACT, clickable "Pair"/"Connect"/"Add" — NOT the dialog
+        # title "<origin> wants to pair" (a non-clickable TextView that a substring
+        # match would wrongly grab, leaving the chooser open).
+        confirm = next(
+            (
+                n
+                for n in self.dump()
+                if n.clickable and n.text.strip().lower() in ("pair", "connect", "add")
+            ),
+            None,
+        )
+        if not confirm:
+            print(
+                "[ble-ui] no clickable Pair/Connect button after selecting the row", file=sys.stderr
+            )
+            return False
+        self.tap_node(confirm)
+        print(f"[ble-ui] selected {name_match!r} + tapped {confirm.text.strip()!r}", flush=True)
         return True
 
 
