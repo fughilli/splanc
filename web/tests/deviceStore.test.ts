@@ -28,7 +28,7 @@ class MemStorage {
 const mem = new MemStorage();
 (globalThis as { localStorage?: unknown }).localStorage = mem;
 
-import { deviceStore } from "../src/store/deviceStore";
+import { deviceStore, deviceDisambiguator } from "../src/store/deviceStore";
 
 beforeEach(() => {
   mem.clear();
@@ -107,14 +107,30 @@ test("records without a MAC yet are not merged (identity unknown)", () => {
   assert.equal(deviceStore.list().length, 2);
 });
 
-test("re-scanning the same BLE device (stable ble: URL) reuses its record", () => {
-  // Regression: connectOverBle now keys on the stable advertised name via
-  // bleDeviceUrl (not Web Bluetooth's session-scoped device.id), so disconnect +
-  // re-scan lands on the SAME store id — no duplicate even before a welcome
-  // arrives (a flaky BLE reconnect may never deliver one to trigger MAC-merge).
-  const url = "ble:Led Widget E2F5EF"; // what bleDeviceUrl produces for this device
-  const first = deviceStore.upsert(url, "Led Widget E2F5EF");
-  const second = deviceStore.upsert(url, "Led Widget E2F5EF");
-  assert.equal(first.id, second.id);
-  assert.equal(deviceStore.list().length, 1);
+test("a BLE device.id churn is reconciled by the welcome MAC (no lasting duplicate)", () => {
+  // The real reconnect scenario: connectOverBle keys on device.id (bleDeviceUrl).
+  // On platforms where device.id changes across sessions, a re-scan makes a second
+  // ble: record — but the SAME physical device reports the same welcome MAC, so the
+  // authoritative MAC-merge collapses the two into one. Distinct MACs never merge,
+  // and a rename can't split them (the MAC, not the name, is the identity).
+  const first = deviceStore.upsert("ble:session-A"); // first scan
+  deviceStore.applyWelcome(first.id, { mac: "58:E6:C5:11:FC:DA", deviceName: "Kitchen" });
+  const second = deviceStore.upsert("ble:session-B"); // reconnect, device.id churned
+  deviceStore.applyWelcome(second.id, { mac: "58:E6:C5:11:FC:DA", deviceName: "Kitchen" });
+  assert.equal(deviceStore.list().length, 1); // collapsed onto the fresh record
+});
+
+test("two BLE devices sharing a display name stay distinct (keyed on identity, not name)", () => {
+  const a = deviceStore.upsert("ble:dev-1", "Kitchen");
+  deviceStore.applyWelcome(a.id, { mac: "AA:AA:AA:AA:AA:AA", deviceName: "Kitchen" });
+  const b = deviceStore.upsert("ble:dev-2", "Kitchen");
+  deviceStore.applyWelcome(b.id, { mac: "BB:BB:BB:BB:BB:BB", deviceName: "Kitchen" });
+  assert.equal(deviceStore.list().length, 2); // same name, different MAC -> two entries
+  // …and the drawer can tell them apart by the stable MAC suffix (not the name).
+  assert.equal(deviceDisambiguator({ bleMac: "58:E6:C5:11:FC:DA" }), "11FCDA");
+  assert.notEqual(
+    deviceDisambiguator({ bleMac: "AA:AA:AA:AA:AA:AA" }),
+    deviceDisambiguator({ bleMac: "BB:BB:BB:BB:BB:BB" }),
+  );
+  assert.equal(deviceDisambiguator({ bleMac: "" }), ""); // unknown until connected
 });

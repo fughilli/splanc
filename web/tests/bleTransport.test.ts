@@ -7,27 +7,28 @@ import { test } from "node:test";
 import { BleSocket, bleDeviceUrl } from "../src/net/bleTransport";
 import { FrameReassembler, frameWithLength } from "../src/net/bleFrame";
 
-// bleDeviceUrl is the drawer's dedup key for a BLE device. It MUST be stable
-// across re-scans of the same physical device, because Web Bluetooth's
-// device.id is session-scoped and changes — keying on it duplicated the entry
-// every reconnect. Key on the (stable, MAC-derived) advertised name instead.
-test("bleDeviceUrl is stable across sessions even when device.id changes", () => {
-  const first = bleDeviceUrl({ id: "session-A-11", name: "Led Widget E2F5EF" });
-  const second = bleDeviceUrl({ id: "session-B-99", name: "Led Widget E2F5EF" });
-  assert.equal(first, second); // same physical device -> one drawer entry
-  assert.equal(first, "ble:Led Widget E2F5EF");
+// bleDeviceUrl is the drawer's dedup key for a BLE device. It keys on Web
+// Bluetooth's device.id — unique per physical device and rename-invariant — NOT
+// the advertised name (which is user-editable and non-unique). The two
+// requirements below are the reason the name can't be the key.
+test("bleDeviceUrl survives a rename (keyed on device.id, not the editable name)", () => {
+  const before = bleDeviceUrl({ id: "dev-1", name: "Led Widget E2F5EF" });
+  const afterRename = bleDeviceUrl({ id: "dev-1", name: "Kitchen" });
+  assert.equal(before, afterRename); // same physical device -> same record after a rename
+  assert.equal(before, "ble:dev-1");
 });
 
-test("bleDeviceUrl distinguishes different devices by name", () => {
+test("bleDeviceUrl disambiguates two DISTINCT devices that share a display name", () => {
+  // Both renamed to "Kitchen" — keying on the name would merge them; device.id must not.
   assert.notEqual(
-    bleDeviceUrl({ id: "x", name: "Led Widget E2F5EF" }),
-    bleDeviceUrl({ id: "x", name: "Led Widget AB12CD" }),
+    bleDeviceUrl({ id: "dev-1", name: "Kitchen" }),
+    bleDeviceUrl({ id: "dev-2", name: "Kitchen" }),
   );
 });
 
-test("bleDeviceUrl falls back to id, then a constant, for a nameless device", () => {
+test("bleDeviceUrl falls back defensively for an id-less device", () => {
   assert.equal(bleDeviceUrl({ id: "abc" }), "ble:abc");
-  assert.equal(bleDeviceUrl({}), "ble:device");
+  assert.equal(bleDeviceUrl({ name: "whatever" }), "ble:unknown"); // never keys on the name
 });
 
 type Listener = (ev: { target: unknown }) => void;

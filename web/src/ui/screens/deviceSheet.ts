@@ -15,7 +15,12 @@ import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
 import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
-import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
+import {
+  deviceStore,
+  deviceHost,
+  deviceDisambiguator,
+  type KnownDevice,
+} from "../../store/deviceStore";
 import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { appendGrouped, openFolderPicker } from "./folders";
 
@@ -183,11 +188,22 @@ function render(): HTMLElement {
     wrap.append(empty);
   }
 
+  // Display names that appear on more than one device — those rows get the
+  // MAC-suffix disambiguator so a user with two "Kitchen"s can tell them apart.
+  const nameCounts = new Map<string, number>();
+  for (const d of devices) nameCounts.set(d.label, (nameCounts.get(d.label) ?? 0) + 1);
   appendGrouped(
     wrap,
     devices,
     (dev) => dev.folder,
-    (dev) => deviceRow(dev, dev.id === activeId, status, deviceProber.isReachable(dev.id)),
+    (dev) =>
+      deviceRow(
+        dev,
+        dev.id === activeId,
+        status,
+        deviceProber.isReachable(dev.id),
+        (nameCounts.get(dev.label) ?? 0) > 1,
+      ),
     { scope: "devices" },
   );
 
@@ -232,6 +248,9 @@ function deviceRow(
   isActive: boolean,
   status = appState.status,
   isReachable = false,
+  // Set when another device in the list shares this display name: append the
+  // MAC-suffix disambiguator so the two entries are distinguishable.
+  ambiguousName = false,
 ): HTMLElement {
   const row = document.createElement("div");
   row.className = "device-row";
@@ -255,11 +274,15 @@ function deviceRow(
   name.textContent = dev.label;
   const meta = document.createElement("div");
   meta.className = "device-url";
-  meta.textContent = isActive
+  const base = isActive
     ? connectedMeta(status)
     : isReachable
       ? `on this network · ${deviceHost(dev)}`
       : deviceHost(dev);
+  // Disambiguate colliding display names with the stable MAC suffix so two
+  // devices both called "Kitchen" are still tellable apart.
+  const tag = ambiguousName ? deviceDisambiguator(dev) : "";
+  meta.textContent = tag ? `${base} · ${tag}` : base;
   info.append(name, meta);
 
   const btns = document.createElement("div");

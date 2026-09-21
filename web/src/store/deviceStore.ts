@@ -107,6 +107,15 @@ export function deviceHost(dev: KnownDevice): string {
   }
 }
 
+/** A short stable tag that tells two same-named devices apart: the last three
+ * octets of the device's MAC ("E2F5EF") — the identity suffix the default
+ * "Led Widget XXXXXX" name derives from. "" until a MAC is known (connect once).
+ * MAC-based, never name-based, so a rename can't change or hide it. */
+export function deviceDisambiguator(dev: Pick<KnownDevice, "bleMac">): string {
+  const hex = (dev.bleMac ?? "").replace(/[^0-9a-f]/gi, "").toUpperCase();
+  return hex.length >= 6 ? hex.slice(-6) : hex;
+}
+
 class DeviceStore {
   private listeners = new Set<Listener>();
 

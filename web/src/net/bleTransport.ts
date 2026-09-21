@@ -64,22 +64,29 @@ export interface BleDevice {
 }
 
 /**
- * Stable known-devices key (a synthetic `ble:` URL) for a BLE-connected device.
+ * Known-devices key (a synthetic `ble:` URL) for a BLE-connected device.
  *
- * Web Bluetooth's `device.id` is session/origin-scoped and can change across
- * re-scans of the SAME physical device (notably on Android Chrome / after a
- * permission reset), so keying the drawer on it spawned a DUPLICATE entry every
- * time you disconnected and reconnected — the store's MAC-based dedup only folds
- * them AFTER a `welcome` lands, which a flaky/aborted BLE reconnect may never
- * deliver, leaving the stray entry behind. The advertised `device.name` is
- * derived from the device's stable BT MAC (the "Led Widget XXXXXX" identity
- * suffix) and is stable across sessions, so key on it; fall back to the id (then
- * a constant) only for a nameless device. The URL is just a store key + label —
- * the live GATT link uses the BleDevice object, not this string — so this only
- * affects dedup, never connectivity.
+ * Key on Web Bluetooth's `device.id`, NOT the advertised name: the name is
+ * user-editable and non-unique, so keying on it would (a) orphan a device's
+ * record the moment the user renames it, and (b) merge two DISTINCT devices that
+ * happen to share a display name into one entry. `device.id` is unique per
+ * physical device and rename-invariant — the right scan-time identity.
+ *
+ * Its one weakness is that it can churn across sessions on some platforms
+ * (Android Chrome / after a permission reset). That's reconciled by the
+ * authoritative merge in deviceStore.applyWelcome on the device's `welcome` MAC
+ * (esp_read_mac(ESP_MAC_BT) — a stable per-device identity, itself rename- and
+ * session-invariant): on the next successful connect the two id-keyed records
+ * collapse into one, and distinct MACs are never merged. So the MAC is the true
+ * identity; `device.id` is just the best proxy available before we've connected.
+ *
+ * The URL is only a store key + display fallback — the live GATT link uses the
+ * BleDevice object, not this string — so this choice affects dedup, never
+ * connectivity. (Web Bluetooth always populates device.id; the fallback is
+ * defensive.)
  */
 export function bleDeviceUrl(device: Pick<BleDevice, "id" | "name">): string {
-  return `ble:${device.name || device.id || "device"}`;
+  return `ble:${device.id || "unknown"}`;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
