@@ -80,6 +80,21 @@ in
   };
   networking.firewall.trustedInterfaces = [ iface ];
 
+  # Intra-BSS (STA-to-STA) forwarding. This is a NON-bridged AP, so mac80211 hands a
+  # frame from one associated STA destined to another up to the kernel, which then has
+  # to HAIRPIN-route it back out ${iface}. nixos's forward chain only ACCEPTs
+  # ${iface}->${uplink} (the NAT uplink) + RELATED/ESTABLISHED, so a NEW intra-AP flow
+  # (the phone reaching the reserved C6's wss, both on ${iface}) fell through to the
+  # default DROP — host->STA worked but STA->STA hung. Allow the hairpin so the phone
+  # can reach the C6 directly at the IP in its cert. (trustedInterfaces only opens
+  # INPUT, not FORWARD, so this explicit rule is needed.)
+  networking.firewall.extraCommands = ''
+    iptables -I FORWARD 1 -i ${iface} -o ${iface} -j ACCEPT
+  '';
+  networking.firewall.extraStopCommands = ''
+    iptables -D FORWARD -i ${iface} -o ${iface} -j ACCEPT 2>/dev/null || true
+  '';
+
   # hostapd on the NM-unmanaged radio.
   systemd.services.amd-ap = {
     description = "amd-rig HITL provisioning AP (hostapd on ${iface})";

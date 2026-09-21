@@ -271,27 +271,24 @@ class AndroidBleProvisioner:
         # Already trusted? the landing page says "Certificate accepted".
         if any("accepted" in n.text.lower() for n in self.dump()):
             return True
-        adv = None
-        for _ in range(4):
-            adv = next(
-                (
-                    n
-                    for n in self.dump()
-                    if n.clickable and n.text.strip().lower().startswith("advanced")
-                ),
-                None,
-            )
-            if adv:
+
+        # Chrome's interstitial renders "Advanced" then a "Proceed to <host> (unsafe)"
+        # LINK. uiautomator does NOT mark either as clickable=true (they're spans in a
+        # WebView), so match by TEXT and tap the node center. Expand Advanced only if the
+        # Proceed link isn't already showing (the interstitial may open expanded).
+        def by_text(prefix: str):
+            return next((n for n in self.dump() if n.text.strip().lower().startswith(prefix)), None)
+
+        for _ in range(5):
+            if by_text("proceed"):
                 break
+            adv = by_text("advanced")
+            if adv and "hide" not in adv.text.lower():
+                self.tap_node(adv)
             time.sleep(2)
-        if not adv:
-            print("[cert] no 'Advanced' interstitial button appeared", file=sys.stderr)
-            return False
-        self.tap_node(adv)
-        time.sleep(2)
-        proc = next((n for n in self.dump() if n.clickable and "proceed" in n.text.lower()), None)
+        proc = by_text("proceed")
         if not proc:
-            print("[cert] no 'Proceed' link after Advanced", file=sys.stderr)
+            print("[cert] no 'Proceed' link on the interstitial", file=sys.stderr)
             return False
         self.tap_node(proc)
         time.sleep(5)
