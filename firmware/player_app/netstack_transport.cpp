@@ -1692,21 +1692,16 @@ void netstack_loop() {
         }
       } else if (PLAYER_MODE) {
         if (!ws_pump()) {
-          // Peer torn/ungraceful (ws_pump saw close_notify/error). Don't just close_notify
-          // and spin — the slot would stay ESTABLISHED for 6-12s until a watchdog/RTO frees
-          // it, delaying recovery enough to miss a tight window. Tear it down + re-listen
-          // NOW so the next client connects immediately.
+          // Peer torn/ungraceful, OR a one-shot GET / (the cert-trust page) that ws_pump
+          // served and asked to close. Send close_notify and let the clean FIN drive the
+          // s==4/0 re-listen path below. An earlier revision re-listened INLINE here for
+          // faster recovery, but that abandoned the connection before close_notify was
+          // transmitted — which broke the cert-trust GET that immediately follows a WS
+          // session (e2e_netstack): the next GET / went unanswered (read timeout). The
+          // stalled-wedge cases are already covered by the pre-WS and post-WS
+          // progress-keyed reclaim gates above, so the fast inline path wasn't buying
+          // robustness — only the regression. Close cleanly and re-listen on the FIN.
           mbedtls_ssl_close_notify(&g_ssl);
-          static uint32_t wiss = 0x7000;
-          ns_tcp_listen(g_offer_ip, SERVER_PORT, wiss);
-          wiss += 0x1000;
-          mbedtls_ssl_session_reset(&g_ssl);
-          g_tls_hs = false;
-          g_ws_up = false;
-          g_ws_rxlen = 0;
-          g_bio_tx = g_bio_rx = 0;
-          last_state = 99;
-          s = ns_tcp_state();
         } else {
           // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
           // a window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
