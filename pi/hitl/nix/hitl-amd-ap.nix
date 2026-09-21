@@ -30,7 +30,12 @@ let
   # World-readable, same posture as the Pi rigs' apPsk (the harness/agent knows it;
   # it's a lab provisioning AP, not a secret). ≥8 chars for WPA2.
   psk = "amd-rig-provision";
-  channel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
+  # Fixed 2.4 GHz channel (the C6 is 2.4-only). Channel 1, NOT 6: the HITL rigs
+  # (hitl-rig-1/2/...) all run their provisioning APs on ch6, and this always-on AP
+  # co-channel with them added congestion that tipped the RF-sensitive netstack wss
+  # contention gates (tls_churn/improv_e2e) into failing. ch1 is non-overlapping with
+  # the rigs' ch6 (and clear in the amd-rig scan) so the phone bench doesn't perturb CI.
+  channel = 1;
   # Commercial-AP mimic knobs (env-flag pattern, like hitl-app.nix's apBroadcastDhcp):
   rekeySecs = let v = builtins.getEnv "SBC_AP_REKEY"; in if v == "" then 0 else lib.toInt v;
   broadcastDhcp = builtins.getEnv "SBC_AP_LENIENT" != "1";
