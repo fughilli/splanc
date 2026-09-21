@@ -611,6 +611,35 @@ void handle_arp(const uint8_t *pt, int pl) {
   tx_l2(hdr, payload, 8 + 28, nullptr);
 }
 
+// Announce our IP<->MAC to the whole BSS (gratuitous ARP, RFC 5227): SPA=TPA=our IP,
+// broadcast. Our ARP *responder* only helps a peer that ARPs us AND whose request
+// reaches us AND whose reply gets back — on a plain AP (no proxy-ARP, unlike a
+// commercial router that answers from DHCP snooping) that request/reply round-trip is
+// unreliable for a from-scratch stack, so peers (the phone, the AP host) can't resolve
+// us and see ERR_ADDRESS_UNREACHABLE. A proactive announcement uses only our WORKING TX
+// path, so every peer learns us with no request needed. Sent on lease + periodically.
+void send_gratuitous_arp() {
+  if (!g_leased) return;
+  uint8_t payload[8 + 28];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06};
+  memcpy(payload, llc, 8);
+  uint8_t *r = payload + 8;
+  r[0] = 0x00; r[1] = 0x01;      // htype: Ethernet
+  r[2] = 0x08; r[3] = 0x00;      // ptype: IPv4
+  r[4] = 6; r[5] = 4;            // hlen, plen
+  r[6] = 0x00; r[7] = 0x01;      // oper: request (announcement)
+  memcpy(r + 8, OUR_MAC, 6);     // sha = our MAC
+  memcpy(r + 14, g_offer_ip, 4); // spa = our IP
+  memset(r + 18, 0, 6);          // tha = 0
+  memcpy(r + 24, g_offer_ip, 4); // tpa = our IP (gratuitous)
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  uint8_t hdr[24]; // ToDS + Protected; a3 = broadcast so the AP floods it to the BSS
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
+  hdr[22] = 0; hdr[23] = 0;
+  tx_l2(hdr, payload, 8 + 28, "gratuitous ARP");
+}
+
 void handle_l3(const uint8_t *pt, int pl) {
   // EAPOL-Key (ethertype 0x888E) over the established, encrypted link: the AP's periodic
   // GROUP-KEY REKEY (message 1). If we ignore it, the authenticator times out the Group
@@ -707,6 +736,7 @@ void handle_l3(const uint8_t *pt, int pl) {
         else
           Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
                         dh[19], (unsigned)g_lease_secs);
+        send_gratuitous_arp(); // announce so peers can reach us without ARPing first
       }
     }
   }
@@ -1509,6 +1539,16 @@ void netstack_loop() {
       Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
       g_leased = false;
       g_have_offer = false;
+    }
+  }
+  // Periodic gratuitous ARP: peers' ARP caches age out, and a peer that joined AFTER our
+  // lease announcement (e.g. the phone joining the AP after the C6) never heard it — keep
+  // re-announcing so we stay reachable without relying on our ARP responder round-trip.
+  if (st == DONE && g_leased) {
+    static uint32_t garp_ms = 0;
+    if (millis() - garp_ms > 20000) {
+      garp_ms = millis();
+      send_gratuitous_arp();
     }
   }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo

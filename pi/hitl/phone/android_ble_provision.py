@@ -212,6 +212,91 @@ class AndroidBleProvisioner:
         self._shell("input", "keyevent", "4")
         time.sleep(1.0)
 
+    def join_wifi(self, ssid: str, psk: str) -> bool:
+        """Join a WPA2 network via the Settings UI. `cmd wifi connect-network` is blocked
+        for the shell uid on Android 10 ("Uid 2000 does not have access to wifi commands"),
+        so open Wi-Fi settings, tap the SSID, type the password, Connect. A network the
+        phone already saved connects with no password prompt. Returns True once Connect is
+        tapped (caller verifies the association)."""
+        self._shell("svc", "wifi", "enable")
+        time.sleep(2)
+        self._shell("am", "start", "-a", "android.settings.WIFI_SETTINGS")
+        time.sleep(4)
+        net = self.find(text=ssid)
+        for _ in range(4):
+            if net:
+                break
+            self._shell("input", "swipe", "360", "1000", "360", "500")
+            time.sleep(1)
+            net = self.find(text=ssid)
+        if not net:
+            print(f"[wifi] {ssid!r} not in the network list", file=sys.stderr)
+            return False
+        self.tap_node(net)
+        time.sleep(2)
+        pw = self.find(cls="EditText", password=True)
+        if pw:  # a fresh (unsaved) network prompts for the password
+            self.tap_node(pw)
+            self.type_text(psk)
+            conn = next(
+                (n for n in self.dump() if n.clickable and n.text.strip().lower() == "connect"),
+                None,
+            )
+            if conn:
+                self.tap_node(conn)
+        time.sleep(8)
+        return True
+
+    def accept_cert(self, host: str) -> bool:
+        """Trust the device's self-signed cert: visit its https origin and tap through
+        Chrome's interstitial (Advanced -> Proceed). The per-host exception then covers
+        the app's cross-origin wss to the same host (the device serves a one-shot cert
+        landing page at https://<host>/). Returns True once Proceed is tapped or the
+        landing page is already showing."""
+        browser = os.environ.get(
+            "HITL_ANDROID_BROWSER",
+            "com.android.chrome/com.google.android.apps.chrome.IntentDispatcher",
+        )
+        self._shell(
+            "am",
+            "start",
+            "-n",
+            browser,
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            f"https://{host}/",
+        )
+        time.sleep(8)
+        # Already trusted? the landing page says "Certificate accepted".
+        if any("accepted" in n.text.lower() for n in self.dump()):
+            return True
+        adv = None
+        for _ in range(4):
+            adv = next(
+                (
+                    n
+                    for n in self.dump()
+                    if n.clickable and n.text.strip().lower().startswith("advanced")
+                ),
+                None,
+            )
+            if adv:
+                break
+            time.sleep(2)
+        if not adv:
+            print("[cert] no 'Advanced' interstitial button appeared", file=sys.stderr)
+            return False
+        self.tap_node(adv)
+        time.sleep(2)
+        proc = next((n for n in self.dump() if n.clickable and "proceed" in n.text.lower()), None)
+        if not proc:
+            print("[cert] no 'Proceed' link after Advanced", file=sys.stderr)
+            return False
+        self.tap_node(proc)
+        time.sleep(5)
+        return True
+
     def dismiss_dialogs(self) -> None:
         """Cancel any Bluetooth chooser / dialog left open by a prior run — it's a modal
         that would otherwise sit over the app's onboarding button. Tap 'Cancel' while
