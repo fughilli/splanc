@@ -180,6 +180,21 @@ impl TcpConn {
         SND_BUF - self.snd_len
     }
 
+    /// Oldest unacked send sequence. Advances when the peer ACKs our data — the real
+    /// forward-progress signal a liveness watchdog needs. A saturating stream keeps the
+    /// send window near-full (tx_room low) yet snd_una climbs steadily; only a genuinely
+    /// silent peer freezes snd_una. Watchdogs must key on THIS, not on window occupancy.
+    pub fn snd_una(&self) -> u32 {
+        self.snd_una
+    }
+
+    /// Next expected receive sequence. Advances when the peer sends us data (e.g. the TLS
+    /// ClientHello / handshake flight). Lets a pre-WS watchdog tell a live-but-slow
+    /// handshake (rcv_nxt moving) from a truly stalled peer (frozen).
+    pub fn rcv_nxt(&self) -> u32 {
+        self.rcv_nxt
+    }
+
     /// Put the next in-flight segment on air if the peer's window allows, building it into
     /// `out`. Returns its length, or 0 if nothing to send / the window is full. Call
     /// repeatedly (each loop and after `enqueue`) to stream the window out; arms the RTO
