@@ -60,9 +60,17 @@
         # hitl-alloy service is gated on /var/lib/hitl/grafana.env existing
         # (ConditionPathExists), so a rig without Grafana creds just doesn't
         # start it. Seed the creds with `bazel run //pi/hitl:seed_grafana`.
+        # amd-rig (x86_64) runs TWO reservation daemons: the SDR bench (hitl-sdr.nix,
+        # privileged/net-host, one composite unit) and — additively — the phone bench
+        # (hitl-phone-daemon.nix, isolated multi-DUT: android-phone + android-emu units).
         appModules =
           if isX86
-          then [ (import ./nix/hitl-sdr.nix { hitlSrc = hitl-reserve; }) ./observability/alloy.nix ]
+          then [
+            (import ./nix/hitl-sdr.nix { hitlSrc = hitl-reserve; })
+            (import ./nix/hitl-phone-daemon.nix { hitlSrc = hitl-reserve; })
+            ./nix/hitl-amd-ap.nix
+            ./observability/alloy.nix
+          ]
           else [ (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; }) ./observability/alloy.nix ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };

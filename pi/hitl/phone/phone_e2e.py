@@ -26,7 +26,7 @@ import tempfile
 import launcher
 from driver_server import AppDriver
 from journey_runner import load_journeys, run_journey
-from mock_device import MockDeviceServer
+from phone_target import StationPorts, make_target
 
 
 def _free_port() -> int:
@@ -109,48 +109,57 @@ def _serve_root() -> str:
     return root
 
 
-async def run(args: argparse.Namespace) -> int:
+def _device_port(device_ws: str) -> int:
+    """The local port of a 127.0.0.1 device wss, so the target can make it reachable
+    from the phone (adb reverse / rewrite). 0 when there's no local device backend."""
+    import urllib.parse
+
+    try:
+        u = urllib.parse.urlparse(device_ws)
+        if u.hostname in ("127.0.0.1", "localhost") and u.port:
+            return u.port
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+async def run(args: argparse.Namespace, target) -> int:
     port = args.driver_port or _free_port()
     results: dict[str, object] = {}
     async with contextlib.AsyncExitStack() as stack:
         drv = await stack.enter_async_context(AppDriver.serve(port))
         # Optional self-contained device backend (no rig): a mock speaking the proto.
         if args.mock_device and not args.device_ws:
+            from mock_device import MockDeviceServer  # lazy: pulls server.proto_wire
+
             mock = await stack.enter_async_context(MockDeviceServer())
             args.device_ws = mock.url
             print(f"[phone] mock device at {mock.url}", flush=True)
-        # Bring the app up pointed at us.
-        pw = browser = emu = None
-        if args.android:
-            # The emulator reaches the station host as 10.0.2.2 (its loopback alias), so
-            # rewrite localhost device/driver URLs to it. Serve the built app locally.
-            args.device_ws = args.device_ws.replace("127.0.0.1", "10.0.2.2").replace(
-                "localhost", "10.0.2.2"
-            )
-            emu = launcher.boot_android_avd()
-            base, _httpd = launcher.serve_dir(_serve_root())
-            host_port = base.rstrip("/").rsplit(":", 1)[1]
-            pwa = args.pwa_url or f"http://10.0.2.2:{host_port}/"
-            print(f"[phone] opening {pwa} in the emulator", flush=True)
-            launcher.launch_android_pwa(pwa, port)
-        else:
-            base, _httpd = launcher.serve_dir(_serve_root())
-            url = f"{base}?driver=ws://127.0.0.1:{port}/"
-            print(f"[phone] launching browser at {url}", flush=True)
-            pw, browser = await launcher.open_chromium(url)
-
-        print("[phone] waiting for the app to connect back…", flush=True)
-        await drv.wait_ready(timeout=args.ready_timeout)
-        print("[phone] app ready — running journeys", flush=True)
-
-        registry = load_journeys(_journeys_dir())
-        context = {
-            "device_ws": args.device_ws,
-            "ssid": args.wifi_ssid,
-            "password": args.wifi_pass,
-            "led_count": args.led_count,
-        }
+        base, _httpd = launcher.serve_dir(_serve_root())
+        http_port = int(base.rstrip("/").rsplit(":", 1)[1])
+        ports = StationPorts(http=http_port, driver=port, device=_device_port(args.device_ws))
+        # The target makes the station reachable from the phone's vantage point and
+        # rewrites the device wss accordingly (loopback / 10.0.2.2 / LAN / adb reverse).
+        target.setup(ports)
+        device_ws = target.rewrite_device_ws(args.device_ws)
+        print(
+            f"[phone] target={target.name} ble={target.ble_mode} "
+            f"app={target.app_url(ports)} device_ws={device_ws or '(none)'}",
+            flush=True,
+        )
+        await target.launch(ports)
         try:
+            print("[phone] waiting for the app to connect back…", flush=True)
+            await drv.wait_ready(timeout=args.ready_timeout)
+            print("[phone] app ready — running journeys", flush=True)
+
+            registry = load_journeys(_journeys_dir())
+            context = {
+                "device_ws": device_ws,
+                "ssid": args.wifi_ssid,
+                "password": args.wifi_pass,
+                "led_count": args.led_count,
+            }
             wanted = args.journeys.split(",") if args.journeys else ["connect", "config"]
             for name in wanted:
                 journey = registry.get(name)
@@ -159,12 +168,7 @@ async def run(args: argparse.Namespace) -> int:
                 results[name] = await run_journey(drv, journey, registry, context)
                 print(f"[phone] PASS {name}", flush=True)
         finally:
-            if browser is not None:
-                await browser.close()
-            if pw is not None:
-                await pw.stop()
-            if emu is not None:
-                emu.terminate()
+            await target.close()
 
     print("[phone] ALL JOURNEYS PASSED", flush=True)
     return 0
@@ -175,6 +179,18 @@ def main() -> int:
     lane = ap.add_mutually_exclusive_group()
     lane.add_argument("--browser", action="store_true", help="headless Chromium lane (default)")
     lane.add_argument("--android", action="store_true", help="Android emulator PWA lane")
+    ap.add_argument(
+        "--phone-target",
+        default="",
+        help="explicit target: browser|android-emu|android-phone|ios-sim|ios-phone "
+        "(else $HITL_PHONE_TARGET, else browser). Overrides --browser/--android.",
+    )
+    ap.add_argument(
+        "--ble-mode",
+        default="",
+        choices=["", "virtual", "real"],
+        help="override the target's BLE mode (e.g. real BLE on the emulator lane)",
+    )
     ap.add_argument(
         "--pwa-url",
         default=os.environ.get("PHONE_PWA_URL", ""),
@@ -216,6 +232,12 @@ def main() -> int:
             "(pass --mock-device, --reservation, --device-ws <rig C6>, or run --journeys smoke)",
             file=sys.stderr,
         )
+    # Select the phone target: explicit flag wins, then --browser/--android, then env.
+    spec = args.phone_target or (
+        "android-emu" if args.android else "browser" if args.browser else None
+    )
+    target = make_target(spec, ble_mode=args.ble_mode or None)
+
     with contextlib.ExitStack() as stack:
         # Real rig C6: reserve + flash + provision + forward BEFORE the async run; the
         # tunnel/heartbeat live in their own subprocess/thread, so they survive it.
@@ -223,9 +245,9 @@ def main() -> int:
             from reservation_backend import ReservationBackend
 
             args.device_ws = stack.enter_context(ReservationBackend(server=args.hitl_server))
-        if not args.android:
+        if target.name == "browser":
             launcher.ensure_chromium()  # sync context, before the asyncio loop
-        return asyncio.run(run(args))
+        return asyncio.run(run(args, target))
 
 
 if __name__ == "__main__":

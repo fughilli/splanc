@@ -8,15 +8,26 @@
 # withSdr = true adds the HackRF CLI + GNU Radio (gr-osmosdr) so a composite
 # esp32c6+hackrf reservation (amd-rig, //pi/hitl:hitl_sdr) can drive the SDR
 # alongside the C6, and names the image `hitl-sdr:latest` instead of hitl-test.
-{ pkgs, withSdr ? false }:
+#
+# withAndroid = true adds adb + the x86_64 Android emulator SDK + a system image
+# (nixpkgs upstream — amd-rig is x86_64, so no arm64-Linux gap) + a python that can
+# run the phone-HITL harness (websockets + bumble), and names the image
+# `hitl-phone:latest`. Used by amd-rig's SECOND daemon (nix/hitl-phone-daemon.nix)
+# for the android-phone / android-emu units. The emulator needs /dev/kvm (the unit's
+# kvm component). Distinct daemon from the SDR bench, so distinct image.
+{ pkgs, withSdr ? false, withAndroid ? false }:
 let
   # esptool pulls python-ecdsa, which nixpkgs currently flags insecure. Permit it
   # just for this image by re-importing nixpkgs with the allowance, so the caller
-  # needn't set it globally.
+  # needn't set it globally. withAndroid also needs the Android SDK license accepted
+  # + unfree allowed (the emulator + system image are unfree).
   p = import pkgs.path {
     inherit (pkgs.stdenv.hostPlatform) system;
     config = (pkgs.config or { }) // {
       permittedInsecurePackages = [ "python3.12-ecdsa-0.19.1" ];
+    } // pkgs.lib.optionalAttrs withAndroid {
+      allowUnfree = true;
+      android_sdk.accept_license = true;
     };
     # ecdsa's test suite has a flaky signals/threads case
     # (test_multithreading_with_interrupts asserts a KeyboardInterrupt that a
@@ -44,9 +55,36 @@ let
     ln -s ${p.esptool}/bin/espsecure.py $out/bin/espsecure
   '';
 
-  # Python with pyserial + bleak actually importable (listing them separately does
-  # NOT put them on sys.path). bleak = BLE central via the host bluetoothd/D-Bus.
-  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak ]);
+  # Python with pyserial + bleak + websockets actually importable (listing them
+  # separately does NOT put them on sys.path). bleak = BLE central via the host
+  # bluetoothd/D-Bus; websockets = the phone-HITL harness driver_server (shipped into
+  # the env on the phone bench). This is the toolbox's `python3` on PATH.
+  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak websockets ]);
+
+  # Android toolbox (withAndroid): adb + the x86_64 emulator SDK + a Google-APIs
+  # x86_64 system image (all from nixpkgs upstream — amd-rig is x86_64), plus a
+  # python that can run the shipped phone-HITL harness in the reservation env
+  # (driver_server → websockets; ble_peripheral → bumble; provisioning → bleak).
+  # The client scp's the harness + built web app into the env and runs phone_e2e
+  # there (the phone's loopback reverses to the RIG, so the app + WS must be rig-local).
+  androidComposition = p.androidenv.composeAndroidPackages {
+    platformVersions = [ "34" ];
+    abiVersions = [ "x86_64" ];
+    systemImageTypes = [ "google_apis" ];
+    includeEmulator = true;
+    includeSystemImages = true;
+    includeSources = false;
+    includeNDK = false;
+  };
+  androidSdkRoot = "${androidComposition.androidsdk}/libexec/android-sdk";
+  androidTools = with p; [
+    android-tools # adb / fastboot (device-facing)
+    androidComposition.androidsdk # emulator + system image + cmdline-tools
+    jdk17 # avdmanager/emulator need a JRE
+    # pyEnv (above) already carries the harness deps (pyserial/bleak/websockets) and is
+    # the toolbox python3. NB: no `bumble` in nixpkgs — the emulator lane's software Improv
+    # peripheral needs it; package it for nix when wiring that lane.
+  ];
 
   # Espressif OpenOCD — the C6's (RISC-V) built-in USB-JTAG (mainline openocd only
   # covers Xtensa esp32/s2/s3). Needs raw USB (the daemon passes /dev/bus/usb).
@@ -351,7 +389,7 @@ let
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port
     # bluez python3Packages.bleak   # BLE scan/connect/commands
-  ] ++ p.lib.optionals withSdr sdrTools;
+  ] ++ p.lib.optionals withSdr sdrTools ++ p.lib.optionals withAndroid androidTools;
   toolPath = p.lib.makeBinPath toolbox;
 
   sshdConfig = p.writeText "sshd_config" ''
@@ -414,7 +452,7 @@ in
 p.dockerTools.buildLayeredImage {
   # hitl-sdr for the amd-rig SDR bench (esp32c6+hackrf), hitl-test for the Pi rigs;
   # the app module's --image / imageRef must match (hitl-sdr.nix / hitl-app.nix).
-  name = if withSdr then "hitl-sdr" else "hitl-test";
+  name = if withAndroid then "hitl-phone" else if withSdr then "hitl-sdr" else "hitl-test";
   tag = "latest";
   # zstd, not the dockerTools default gz. This image is ~4 GB uncompressed and
   # gets compressed on the ephemeral builder VM, which is the bottleneck: for an
@@ -460,6 +498,11 @@ p.dockerTools.buildLayeredImage {
       # bleak/dbus-fast default to /var/run/dbus/... which the container lacks;
       # point them at the mounted host socket so BLE reaches the host bluetoothd.
       "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"
+    ] ++ p.lib.optionals withAndroid [
+      # adb/avdmanager/emulator + the harness resolve the SDK from here (launcher.py
+      # _sdk_tool reads $ANDROID_SDK_ROOT).
+      "ANDROID_SDK_ROOT=${androidSdkRoot}"
+      "ANDROID_HOME=${androidSdkRoot}"
     ];
   };
 }

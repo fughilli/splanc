@@ -76,6 +76,8 @@ uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK aft
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_state();
+uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
+uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
 // Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
 void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
@@ -129,6 +131,11 @@ bool g_creds_ready = false;  // creds committed (from BLE Improv or wired serial
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
+// Lease lifetime (option 51) + when it was (re)acquired, for T1 renewal. A commercial
+// AP hands short leases and DROPS a client whose lease lapses without renewing — the
+// heapless netstack acquired the lease once and never renewed, so it went unreachable
+// a lease-time after provisioning (the CoolerKids "works briefly, then dead" symptom).
+uint32_t g_lease_secs = 0, g_lease_ms = 0, g_last_renew_ms = 0;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
@@ -606,6 +613,37 @@ void handle_arp(const uint8_t *pt, int pl) {
   tx_l2(hdr, payload, 8 + 28, nullptr);
 }
 
+// Announce our IP<->MAC to the whole BSS (gratuitous ARP, RFC 5227): SPA=TPA=our IP,
+// broadcast. Our ARP *responder* only helps a peer whose request reaches us AND whose
+// reply gets back — on a plain AP (no proxy-ARP, unlike a commercial router that answers
+// from DHCP snooping) that round-trip is unreliable for a from-scratch stack, so a peer
+// (e.g. the phone joining the AP AFTER the C6 leased) can't resolve us and gets
+// ERR_ADDRESS_UNREACHABLE. A proactive announcement uses only our working TX path. The
+// CALLER gates this to the pre-connection window (no active wss) — a broadcast frame
+// interleaved with an ESTABLISHED wss dropped the peer's session (the improv_e2e wss
+// wedge), so we announce only until a client is connected, never during a live session.
+void send_gratuitous_arp() {
+  if (!g_leased) return;
+  uint8_t payload[8 + 28];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06};
+  memcpy(payload, llc, 8);
+  uint8_t *r = payload + 8;
+  r[0] = 0x00; r[1] = 0x01;      // htype: Ethernet
+  r[2] = 0x08; r[3] = 0x00;      // ptype: IPv4
+  r[4] = 6; r[5] = 4;            // hlen, plen
+  r[6] = 0x00; r[7] = 0x01;      // oper: request (announcement)
+  memcpy(r + 8, OUR_MAC, 6);     // sha = our MAC
+  memcpy(r + 14, g_offer_ip, 4); // spa = our IP
+  memset(r + 18, 0, 6);          // tha = 0
+  memcpy(r + 24, g_offer_ip, 4); // tpa = our IP (gratuitous)
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  uint8_t hdr[24]; // ToDS + Protected; a3 = broadcast so the AP floods it to the BSS
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
+  hdr[22] = 0; hdr[23] = 0;
+  tx_l2(hdr, payload, 8 + 28, "gratuitous ARP");
+}
+
 void handle_l3(const uint8_t *pt, int pl) {
   // EAPOL-Key (ethertype 0x888E) over the established, encrypted link: the AP's periodic
   // GROUP-KEY REKEY (message 1). If we ignore it, the authenticator times out the Group
@@ -681,6 +719,8 @@ void handle_l3(const uint8_t *pt, int pl) {
       while (o + 1 < end && *o != 255) {
         if (*o == 53) mt = o[2];
         else if (*o == 54) memcpy(g_server_id, o + 2, 4);
+        else if (*o == 51 && o[1] == 4) // lease time (seconds), for T1 renewal
+          g_lease_secs = ((uint32_t)o[2] << 24) | (o[3] << 16) | (o[4] << 8) | o[5];
         o += 2 + o[1];
       }
       Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt, dh[16], dh[17], dh[18], dh[19]);
@@ -690,10 +730,16 @@ void handle_l3(const uint8_t *pt, int pl) {
         Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
       } else if (mt == 5) {
+        bool first = !g_leased;
         g_leased = true;
+        g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4);
-        Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
-                      (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        if (first)
+          Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                        (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        else
+          Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
+                        dh[19], (unsigned)g_lease_secs);
       }
     }
   }
@@ -1480,6 +1526,43 @@ void netstack_loop() {
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");
   }
+  // DHCP T1 renewal: once leased, renew at half the lease so a short-lease commercial AP
+  // never lets our binding lapse — otherwise the AP reclaims the IP and we go silently
+  // unreachable a lease-time after provisioning (the CoolerKids drop). Reuse the broadcast
+  // REQUEST (a3=bcast reaches the server); dnsmasq/home routers re-ACK a REQUEST for the
+  // IP we already hold, which refreshes g_lease_ms via the mt==5 handler.
+  if (st == DONE && g_leased && g_lease_secs > 0) {
+    uint32_t age = (millis() - g_lease_ms) / 1000;
+    // Renew at T1 — but ONLY while no wss is up: send_dhcp broadcasts (a3=bcast), and a
+    // broadcast frame interleaved with a LIVE wss drops the peer's session (same reason
+    // the gratuitous ARP is gated). The rig/home lease is long vs a session, so deferring
+    // the renewal until the wss is idle is safe.
+    if (age >= g_lease_secs / 2 && !g_ws_up && millis() - g_last_renew_ms > 5000) {
+      g_last_renew_ms = millis();
+      Serial.printf("[dhcp] T1 renew (age=%us/%us)\n", (unsigned)age, (unsigned)g_lease_secs);
+      send_dhcp(3, g_offer_ip, g_server_id, "RENEW");
+    }
+    if (age >= g_lease_secs) { // expired with no ACK — fall back to a fresh DORA
+      Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
+      g_leased = false;
+      g_have_offer = false;
+    }
+  }
+  // Gratuitous-ARP announce, ONLY while no wss client is connected. A peer that joins
+  // the AP after us (the phone joining amd-rig-ap after the C6 leased) can't resolve us
+  // via our unreliable responder round-trip on a plain AP, so re-announce every ~3s so it
+  // learns us before it connects. Gated on !g_ws_up: a broadcast frame interleaved with a
+  // LIVE wss dropped the session (the improv_e2e wedge), so once a client is up we go
+  // quiet and never perturb it.
+  {
+    uint32_t ts = ns_tcp_state();
+    bool idle = (ts != 2 && ts != 6) && !g_ws_up;  // no client Established/SynRcvd, no wss
+    static uint32_t garp_ms = 0;
+    if (st == DONE && g_leased && idle && millis() - garp_ms > 3000) {
+      garp_ms = millis();
+      send_gratuitous_arp();
+    }
+  }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo
   // server (10.42.0.1:7777) and exchange data over the heapless stack.
   if (st == DONE && g_leased && !g_tcp_started && millis() - t > 700) {
@@ -1523,24 +1606,35 @@ void netstack_loop() {
     // force a fresh listener (ns_tcp_listen swaps the conn to a clean LISTEN), abandoning the
     // dead peer and freeing the slot. This is the tls_churn anti-wedge gate.
     {
-      static uint32_t est_since = 0;
+      static uint32_t hs_since = 0;
+      static uint32_t last_prog = 0;
       bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
       bool handshaking = (s == 6) || (s == 2 && !up);  // SynRcvd, or Established pre-WS
       if (handshaking) {
-        if (est_since == 0) est_since = millis() == 0 ? 1 : millis();
-        else if (millis() - est_since > 3000) {
-          Serial.println("*** SERVER handshake wedge (SynRcvd/pre-WS) — reclaiming (re-listen) ***");
+        // Reclaim on a STALLED handshake, not wall-clock. Progress = TLS bytes moving in
+        // EITHER direction (g_bio_rx + g_bio_tx): a live handshake alternates — the client
+        // sends ClientHello/Finished (bio_rx), the server sends its cert flight (bio_tx) —
+        // so keying on rcv-only would murder the slot while the SERVER is talking and the
+        // client is legitimately quiet. In SynRcvd no TLS has started so both are 0/const
+        // and the timer runs on wall-clock (a true no-final-ACK wedge). Reset on any TLS
+        // progress; fire only when nothing has flowed either way for 4s.
+        uint32_t prog = (uint32_t)g_bio_rx + (uint32_t)g_bio_tx + ns_tcp_rcv_nxt();
+        if (hs_since == 0 || prog != last_prog) {
+          hs_since = millis() == 0 ? 1 : millis();
+          last_prog = prog;
+        } else if (millis() - hs_since > 4000) {
+          Serial.println("*** SERVER handshake wedge (peer silent pre-WS) — reclaiming ***");
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;
           if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
-          est_since = 0;
+          hs_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
           s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
         }
       } else {
-        est_since = 0;
+        hs_since = 0;
       }
     }
     // Post-WS peer-gone reclaim. The block above only catches a wedge BEFORE the WS is up.
@@ -1555,11 +1649,20 @@ void netstack_loop() {
     // simply reconnects, in exchange for never staying permanently unreachable.
     {
       static uint32_t txstuck_since = 0;
+      static uint32_t last_una = 0;
       bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
-      if (s == 2 && up && ns_tcp_tx_room() < 512) {
-        if (txstuck_since == 0) txstuck_since = millis() == 0 ? 1 : millis();
-        else if (millis() - txstuck_since > 6000) {
-          Serial.println("*** SERVER post-WS peer-gone wedge (tx window pinned) — reclaiming (re-listen) ***");
+      // Only meaningful when we have UNACKED data outstanding (tx_room < SND_BUF=2048): a
+      // live reader ACKs it, so snd_una advances — even on a SATURATING stream that keeps
+      // the window pinned full (the old tx_room<512 test murdered healthy backlogged
+      // streams: led_capture/fx_bench). Key on snd_una FROZEN, not on window occupancy.
+      // Idle (nothing outstanding) → skip; only a peer that stopped ACKing for 6s is gone.
+      if (s == 2 && up && ns_tcp_tx_room() < 2048) {
+        uint32_t una = ns_tcp_snd_una();
+        if (txstuck_since == 0 || una != last_una) {
+          txstuck_since = millis() == 0 ? 1 : millis();
+          last_una = una;
+        } else if (millis() - txstuck_since > 6000) {
+          Serial.println("*** SERVER post-WS peer-gone (no ACK 6s) — reclaiming ***");
           static uint32_t piss = 0x6000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, piss);
           piss += 0x1000;
@@ -1570,7 +1673,7 @@ void netstack_loop() {
           s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
         }
       } else {
-        txstuck_since = 0;  // window draining (or not up) — peer is alive
+        txstuck_since = 0;  // idle (nothing unacked) or not up — peer is fine
       }
     }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
@@ -1588,13 +1691,25 @@ void netstack_loop() {
           g_bio_tx = g_bio_rx = 0;
         }
       } else if (PLAYER_MODE) {
-        if (!ws_pump()) { mbedtls_ssl_close_notify(&g_ssl); }
-        // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened a
-        // window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
-        // resumes (prevents a zero-window deadlock on large client->device transfers).
-        uint8_t wack[80];
-        uint32_t wn = ns_tcp_window_ack(wack, sizeof wack);
-        if (wn > 0) send_ip(wack, wn);
+        if (!ws_pump()) {
+          // Peer torn/ungraceful, OR a one-shot GET / (the cert-trust page) that ws_pump
+          // served and asked to close. Send close_notify and let the clean FIN drive the
+          // s==4/0 re-listen path below. An earlier revision re-listened INLINE here for
+          // faster recovery, but that abandoned the connection before close_notify was
+          // transmitted — which broke the cert-trust GET that immediately follows a WS
+          // session (e2e_netstack): the next GET / went unanswered (read timeout). The
+          // stalled-wedge cases are already covered by the pre-WS and post-WS
+          // progress-keyed reclaim gates above, so the fast inline path wasn't buying
+          // robustness — only the regression. Close cleanly and re-listen on the FIN.
+          mbedtls_ssl_close_notify(&g_ssl);
+        } else {
+          // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
+          // a window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
+          // resumes (prevents a zero-window deadlock on large client->device transfers).
+          uint8_t wack[80];
+          uint32_t wn = ns_tcp_window_ack(wack, sizeof wack);
+          if (wn > 0) send_ip(wack, wn);
+        }
       } else {
         uint8_t rb[600];
         int r = mbedtls_ssl_read(&g_ssl, rb, sizeof(rb));
