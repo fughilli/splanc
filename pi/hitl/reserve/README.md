@@ -46,6 +46,51 @@ esp32c6+hackrf` (or `--unit c6-sdr`); the daemon runs the environment privileged
 (single-unit bench) so it reaches both the C6's tty/USB-JTAG and the tty-less
 HackRF's raw USB.
 
+### Mac mini — the iOS bench ([`catalog-mac.json`](catalog-mac.json))
+
+The Mac mini runs the **darwin runner** (`hitl-reserved --runner darwin`, added in
+[hitl-reserve#7](https://github.com/fughilli/hitl-reserve/pull/7)) via the
+nix-darwin module [`nix/hitl-darwin.nix`](../nix/hitl-darwin.nix). There is **no
+container**: a Mac is multi-tenant, so a reservation is a scoped SSH grant into a
+shared `hitl` user, with the unit's env forced per `authorized_keys` line. Two
+units, each with its own C6: **`ios-phone`** (a real iPhone + `c6-c`; build/install
+the Capacitor app via `devicectl`, provision the C6 over real CoreBluetooth) and
+**`ios-sim`** (`c6-d` + the Simulator via `simctl`; `pin_only`). The iPhone,
+Simulator, and each C6 are all reached host-native from the reservation session
+(`tools/ios_build_server.py` drives xcodebuild/simctl/devicectl; `esptool` flashes
+the C6 over `/dev/cu.usbmodem*`).
+
+**Deploying it (on the Mac — can't be built from the Linux container):**
+
+1. **Merge & pin the darwin runner.** After hitl-reserve#7 lands, bump _both_
+   pins to its merge SHA: the `hitl-reserve` input in [`../flake.nix`](../flake.nix)
+   and the `@hitl_reserve` `git_override` in the root `MODULE.bazel`.
+2. **Wire the flake** — add a nix-darwin input + a `darwinConfigurations` output to
+   [`../flake.nix`](../flake.nix) (kept out of the committed flake so it can't break
+   the _Linux_ rig eval, which can't fetch/evaluate nix-darwin):
+
+   ```nix
+   # inputs:
+   darwin.url = "github:LnL7/nix-darwin";
+   darwin.inputs.nixpkgs.follows = "nixpkgs";
+   # outputs (alongside `project // { … }`):
+   darwinConfigurations.mac-mini = darwin.lib.darwinSystem {
+     system = "aarch64-darwin";
+     modules = [ (import ./nix/hitl-darwin.nix { hitlSrc = hitl-reserve; }) ];
+   };
+   ```
+
+3. **One-time Mac state** (hardware/Apple-account, not nix-managed): install the
+   Xcode Command Line Tools + sign in for a device-provisioning profile; connect the
+   iPhone + both C6s; `tailscale up`.
+4. **Fill the placeholders** in `catalog-mac.json`: the iPhone `HITL_IOS_UDID`
+   (`xcrun xctrace list devices`) and each C6's `HITL_ESP_PORT` (`ls /dev/cu.usbmodem*`).
+5. **Switch:** `darwin-rebuild switch --flake .#mac-mini`.
+
+Then, from this container, reserve `--unit ios-phone` / `--unit ios-sim` on the
+Mac's tailnet and run the journey suite (`phone_e2e --phone-target ios-phone` /
+`ios-sim`) — the normal remote HITL loop.
+
 ## Concept mapping (pi/hitl → hitl-reserve)
 
 | pi/hitl (managerd)                                      | hitl-reserve                                                                             |
