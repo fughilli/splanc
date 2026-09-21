@@ -5,6 +5,106 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## HANDOFF (2026-09-21) — deploy per-rig AP channels, then re-run HITL tests
+
+Session was interrupted to restart the container after **expanding the colima
+disk** (the container's `/` hit 93%; `/nix/store` alone was 48G). Everything below
+is committed + pushed, so nothing is lost — you're resuming ONE blocked op: the
+rig deploy. If memory is available, see `[[mac-hitl-and-app-fixes]]`,
+`[[netstack-wss-deflake]]`.
+
+### THE ONE BLOCKED TASK: deploy #182 to the two test rigs
+
+**What/why:** rig-1 and rig-2 run the netstack HITL suite concurrently
+(`--max-concurrent 2`) but their provisioning APs BOTH sat on 2.4 GHz channel 6 →
+co-channel contention → the RF-sensitive wss _opening handshake_ timed out →
+flaked `fx_bench_jit_netstack` (failed 3/3 on a #180 CI run; `e2e_netstack` +
+others passed). PR **#182** (`claude/per-rig-ap-channels`, tip `f4d96a91`) pins
+per-rig channels in `pi/hitl/nix/hitl-app.nix`: **rig-1→1, rig-2→11** (host-
+conditional on `config.networking.hostName`), else→6. WiFi APs don't channel-hop
+(that's BLE/FHSS); static non-overlapping 1/6/11 is the fix.
+
+**Deploy command (per rig):** `bazel run //pi/hitl:update -- hitl-rig-1` and
+`... -- hitl-rig-2`, from the `claude/per-rig-ap-channels` branch (its working
+tree is the flake source `:update` stages).
+
+- USE `:update`, NOT raw `:hitl.deploy_live`. `:update` autodetects each rig's
+  board + committed `/var/lib/sbc/profile` and preserves it. **rig-2 has
+  `SBC_ANALYZER=1`** (verified: Saleae FX2 `0925:3881` present) — a raw
+  `deploy_live` without that flag would strip the FX2 logic-analyzer and break
+  `led_capture`. `:update` avoids that footgun.
+- Known quirk ([[hitl-deploy-bazel-run-hang]]): the wrapper HANGS after "Switch
+  complete" — watch the output, then stop the task and verify independently.
+- Export the git ssh key before the deploy (below); run
+  `git checkout -- MODULE.bazel.lock` after any bazel run (it churns it).
+
+```sh
+export GIT_SSH_COMMAND="ssh -i /workspace/pi/secrets/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+```
+
+**Why it was blocked (fix is the disk expansion you're doing):** the deploy builds
+the full Pi closure LOCALLY first, and the RPi kernel (`linux_rpi-bcm2712-6.12.87`,
+NOT in the binary cache) compiled from scratch and overflowed the ~5G of free
+space. After the disk grows this should just work locally. ALTERNATIVE if disk is
+still tight: build ON the rig (sbc_deploy.sh honors these via `--max-jobs 0
+--builders`; the rig already has the unchanged kernel, so it only builds the tiny
+config derivation):
+
+```sh
+export SBC_NIX_BUILDERS="ssh-ng://root@hitl-rig-1 aarch64-linux /workspace/pi/secrets/deploy_key 4"
+export NIX_SSHOPTS="-i /workspace/pi/secrets/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+```
+
+**SAFETY (verified):** the rigs are managed over **Ethernet/tailnet**; the AP
+(`wlan0`, NM connection `hitl-ap`) is a DEDICATED DUT radio — so an AP channel
+change CANNOT strand a rig (you can always ssh back over Ethernet). The failed
+deploy died in the local build phase, BEFORE any switch, so **both rigs are
+untouched** — verified rig-1 post-failure: ch6, `hitl-manager` active. The closure
+staged for deploy was audited PRISTINE (every file under `pi/hitl/nix/**` +
+`observability/**` is git-tracked + unmodified; `hitl-darwin.nix` from #181 is
+correctly absent on this branch; branch diff vs main is ONLY the `apChannel`
+change).
+
+**Verify after each deploy** (ssh as root with the deploy key) — expect rig-1
+channel `1`, rig-2 channel `11`, daemon `active`. Deploy rig-1 first, FULLY
+verify, THEN rig-2 (sequential + verified):
+
+```sh
+ssh -i pi/secrets/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+  root@hitl-rig-1 'nmcli -g 802-11-wireless.channel connection show hitl-ap; systemctl is-active hitl-manager'
+```
+
+**Then re-run the tests:** re-trigger #180's `hitl_tests` (push an empty commit or
+use the GH API to re-run the failed job) OR run the netstack suite directly
+(`bazel run //pi/hitl/harness:fx_bench_jit_netstack -- --server http://hitl-rig-2:8087`,
+etc.). Confirm `fx_bench_jit` / `led_capture_jit` stop flaking now the rigs are on
+distinct channels. Note the standalone harness runs auto-background if wrapped in
+`timeout`; poll the output file for the RESULT line.
+
+### The four open PRs (all pushed, all mine this session)
+
+- **#180** `claude/app-fw-version-and-dedup` (tip `767140ac`) — device-card fixes:
+  (1) firmware version was ALWAYS "unknown" because `deviceStore.normalize()`
+  dropped `fwGitCommit/fwGitDirty/fwVersion` on every read-back (fixed; real bug);
+  (2) BLE drawer dedup keyed on `device.id` (unique + rename-invariant), NOT the
+  editable name; welcome-MAC merge (`esp_read_mac(ESP_MAC_BT)`, stable) reconciles
+  id churn; `deviceDisambiguator` shows the MAC suffix for same-named devices;
+  (3) provisional BLE entry with no MAC is pruned on a failed connect (no stray
+  dup). `//web:unit_tests` 78/78, typecheck clean. CI green EXCEPT the `fx_bench_jit`
+  RF flake #182 fixes — so #180 effectively depends on #182 landing+deploy for a
+  clean `hitl_tests`.
+- **#181** `claude/mac-ios-units` (tip `2fac0ade`) — Mac mini iOS bench: catalog +
+  `nix/hitl-darwin.nix`. Deploy is the user's (`darwin-rebuild switch`, needs the
+  Mac). Depends on hitl-reserve#7 + its pin bump. Flake `darwinConfigurations`
+  wiring is DOCUMENTED in `reserve/README.md`, not committed (would break Linux
+  eval).
+- **#182** `claude/per-rig-ap-channels` (tip `f4d96a91`) — THIS handoff's deploy.
+- **hitl-reserve#7** `claude/darwin-runner` — the macOS execution backend the Mac
+  bench needs. After it merges, bump BOTH pins: the `hitl-reserve` input in
+  `pi/hitl/flake.nix` and the `@hitl_reserve` git_override in root `MODULE.bazel`.
+
+Currently checked out on `claude/per-rig-ap-channels`, working tree clean.
+
 ## HANDOFF — merging the from-source heapless BLE+WiFi netstack line (branch `claude/pmk-freeze-fix`)
 
 Context for whoever picks this up: I was handed a session with a lot of accumulated
