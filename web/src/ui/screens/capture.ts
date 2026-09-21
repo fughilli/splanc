@@ -27,9 +27,16 @@ import {
 } from "../../cv/exposure";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
+import {
+  type DriverCaptureResult,
+  type DriverDecodeStats,
+  driverActive,
+  registerDriverCapture,
+} from "../../driver/guard";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
+import { SyntheticCaptureSource } from "../../xr/syntheticCaptureSource";
 import {
   NativeCaptureSource,
   nativeCaptureAvailable,
@@ -250,10 +257,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
     return ok;
   });
-  let capture: MediaStreamCaptureSource | NativeCaptureSource | null = null;
+  let capture: MediaStreamCaptureSource | NativeCaptureSource | SyntheticCaptureSource | null = null;
   // Set only on the iOS native path; used to push detect params down and to undo
   // the page transparency the native preview layer needs.
   let nativeSource: NativeCaptureSource | null = null;
+  // Set only under the HITL app-driver (?driver=): a hardware-free synthetic scene.
+  let syntheticSource: SyntheticCaptureSource | null = null;
   let capturing = false;
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
@@ -265,6 +274,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let lastLedCount = 64;
   let startedAt = 0;
   let timerTick: number | null = null;
+  // Under the HITL app-driver only: the pending finish() the harness is awaiting,
+  // resolved with the solved-map summary once stopCapture() finishes the solve.
+  let driverSolveResolve: ((r: DriverCaptureResult) => void) | null = null;
+  let driverSolveReject: ((e: unknown) => void) | null = null;
+  // Live decode health for the harness (the same numbers the HUD shows).
+  let driverDecodeStats: DriverDecodeStats = { ids: 0, total: 0, tracks: 0, observations: 0 };
 
   function client() {
     return appState.client;
@@ -305,7 +320,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // detector's threshold pass and ships the sparse result.
       let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
       let detectGl: WebGL2RenderingContext;
-      if (nativeCaptureAvailable()) {
+      if (driverActive()) {
+        // HITL app-driver: a hardware-free synthetic scene. Like the native path it
+        // ships pre-reduced frames, so the detector skips its GPU pass — give it a
+        // throwaway context and a no-op exposure target.
+        const sc = new SyntheticCaptureSource({ ledCount });
+        capture = sc;
+        syntheticSource = sc;
+        await sc.start();
+        exposureTarget = sc;
+        detectGl = offscreenGl();
+      } else if (nativeCaptureAvailable()) {
         const nc = new NativeCaptureSource({ kSeed: cached, fxOverride: forcedFx ?? undefined });
         capture = nc;
         nativeSource = nc;
@@ -340,11 +365,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // DeviceMotion mapping was fitted on an Android handset and has never been
       // right here (mis-oriented maps; docs/design/ios-support.md §4.7). Both
       // expose flush(), so the batch tick below is identical either way.
-      if (nativeSource === null) {
+      // Under the HITL driver the synthetic source emits IMU consistent with its
+      // own pose track (no DeviceMotion in a headless browser); otherwise record
+      // real device motion.
+      if (nativeSource === null && syntheticSource === null) {
         imuRecorder = new ImuRecorder(imuMapping);
         imuRecorder.start();
       }
-      const imuFlusher: { flush(): ImuSample[] } | null = nativeSource ?? imuRecorder;
+      const imuFlusher: { flush(): ImuSample[] } | null =
+        syntheticSource ?? nativeSource ?? imuRecorder;
 
       const detector = new DetectorGL(detectGl, detectorOpts);
       // The native reduction must threshold with the SAME value the servo below
@@ -412,6 +441,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         return pl;
       };
       let pipeline = makePipeline(params, epoch);
+      // Hand the synthetic scene the negotiated code-book so it renders the exact
+      // hue-code + frame timing the decoder expects (matches the device side).
+      syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
       guideEl.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
       capturing = true;
@@ -469,6 +501,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
                 (scn ? ` clip ${pct(scn.clipFrac)}` : "")
               : `LED ${br}%`) + expLine;
+          driverDecodeStats = {
+            ids: s.uniqueIds.size,
+            total: params.ledCount,
+            tracks: s.tracks,
+            observations: localDetections.length,
+          };
           hudStats.textContent =
             `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
             `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
@@ -745,6 +783,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         { error: true },
       );
       await c.stopMappingNoSolve().catch(() => undefined);
+      driverSolveReject?.(
+        new Error(
+          solverAgent.available
+            ? "nothing to solve — no LEDs decoded from the synthetic scene"
+            : "the in-browser solver failed to load",
+        ),
+      );
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate("/maps");
       return;
     }
@@ -800,10 +847,27 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(logged)).then((path) => {
         if (path !== null) nativeLog(`[solve] session log saved: ${path}`);
       });
-      const solved = await solverAgent.solve(
-        problem,
-        (snap: SolveSnapshot) => renderSolveSnapshot(snap),
-      );
+      if (driverActive()) {
+        const s0 = localImu[0];
+        console.info(
+          `[solve] problem detections=${localDetections.length} imu=${localImu.length} ` +
+            `ledCount=${lastLedCount} imu0=${
+              s0
+                ? `t${s0.t.toFixed(0)} g[${s0.gyro.map((x) => x.toFixed(2))}] a[${s0.accel.map((x) => x.toFixed(2))}]`
+                : "none"
+            }`,
+        );
+      }
+      let lastProg = -1;
+      const solved = await solverAgent.solve(problem, (snap: SolveSnapshot) => {
+        renderSolveSnapshot(snap);
+        if (driverActive() && snap.progress - lastProg >= 0.2) {
+          lastProg = snap.progress;
+          console.info(
+            `[solve] progress=${(snap.progress * 100).toFixed(0)}% rms=${snap.rmsPx?.toFixed(1)} leds=${snap.leds?.length ?? 0}`,
+          );
+        }
+      });
       // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
       // on the LED centroid — the natural fixture origin — before the device
       // and the library both take it, so they agree.
@@ -865,10 +929,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           ? `Saved ${map.leds.length} LEDs`
           : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
       );
+      driverSolveResolve?.({ mapId: id, ledCount: lastLedCount, solved: map.leds.length });
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate(`/map/${id}`);
     } catch (e) {
       nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
+      driverSolveReject?.(e);
+      driverSolveResolve = null;
+      driverSolveReject = null;
       router.navigate("/maps");
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
@@ -879,8 +949,27 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
   return {
     el,
-    onMount: () => void startCapture(),
+    onMount: () => {
+      // Under the HITL driver, expose a controller so the harness can end the
+      // capture and await the solved map (see driver/harness.ts finishCapture).
+      if (driverActive()) {
+        registerDriverCapture({
+          stats: () => driverDecodeStats,
+          finish: () =>
+            new Promise<DriverCaptureResult>((resolve, reject) => {
+              driverSolveResolve = resolve;
+              driverSolveReject = reject;
+              void stopCapture();
+            }),
+        });
+      }
+      void startCapture();
+    },
     onUnmount: () => {
+      if (driverActive()) registerDriverCapture(null);
+      driverSolveReject?.(new Error("capture screen unmounted before solve"));
+      driverSolveResolve = null;
+      driverSolveReject = null;
       capturing = false;
       stopTimer();
       imuRecorder?.stop();

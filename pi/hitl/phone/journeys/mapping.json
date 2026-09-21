@@ -1,0 +1,21 @@
+{
+  "name": "mapping",
+  "description": "Drive the mapping RPC flow: start_mapping negotiates the code-book, then stop_mapping returns result_ready. (This exercises the mapping ORCHESTRATION over the app-driver; the deeper capture-screen path — synthetic camera feeding detections through the real decoder + solve — is a follow-up.) Requires a connected device.",
+  "inputs": { "led_count": 30 },
+  "steps": [
+    { "runFlow": "connect" },
+    {
+      "description": "begin mapping; the device answers mapping_started with the code-book + epoch",
+      "do": "startMapping",
+      "with": { "ledCount": "${led_count}" },
+      "timeout": 120
+    },
+    { "await": "milestone:mapping_started", "timeout": 60 },
+    {
+      "description": "finish; the device (or phone-solve) returns result_ready with a map id",
+      "do": "stopMapping",
+      "timeout": 180,
+      "expect": { "mapId": "present" }
+    }
+  ]
+}

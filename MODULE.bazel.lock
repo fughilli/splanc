@@ -574,7 +574,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "E4ucUN5Jn/YmDTyx5yC65QcL+uDL3u7smcb/18pFmjE=",
+        "usagesDigest": "9zlBvbjjaWxM6+LHaHsdrCV4XUpTQ/Bp8BCuXBWB1Zw=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -594,11 +594,46 @@
               "quiet": false,
               "fail_not_supported": true
             }
+          },
+          "android_tools": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "android_tools",
+              "attribute_path": "android-tools",
+              "nix_file_deps": {},
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~nixpkgs//:nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(name = \"adb\", srcs = [\"bin/adb\"])\n\nfilegroup(name = \"fastboot\", srcs = [\"bin/fastboot\"])\n\nfilegroup(name = \"bin\", srcs = glob([\"bin/*\"]))\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "android_emulator": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "android_emulator",
+              "attribute_path": "sdk",
+              "nix_file": "@@//pi/hitl/phone/nix:android-emulator.nix",
+              "nix_file_deps": {},
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~nixpkgs//:nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"sdk\",\n    srcs = glob([\"libexec/android-sdk/**\"], allow_empty = True),\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
           }
         },
         "moduleExtensionMetadata": {
           "explicitRootModuleDirectDeps": [
-            "minify"
+            "minify",
+            "android_tools",
+            "android_emulator"
           ],
           "explicitRootModuleDirectDevDeps": [],
           "useAllRepos": "NO",

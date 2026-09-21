@@ -1,0 +1,20 @@
+{
+  "name": "mapping_capture",
+  "description": "Deep mapping path: drive the REAL capture screen under the synthetic camera. openCapture navigates to /capture — the app runs its OWN start_mapping, and the synthetic scene feeds the real detector + decoder — then awaitDecode asserts that all LED ids were actually recovered end to end through the app (not the start/stop-mapping RPC, and not a unit test). The final VIO solve is exercised by finishCapture, but the default journey stops at decode: the visual-inertial solver needs real inertial data the headless synthetic scene doesn't yet synthesize (follow-up — see README). Needs a connected device.",
+  "inputs": { "led_count": 30, "min_ids": 30 },
+  "steps": [
+    { "runFlow": "connect" },
+    {
+      "description": "navigate to the capture screen; it auto-starts the synthetic capture + mapping",
+      "do": "openCapture",
+      "with": { "ledCount": "${led_count}" }
+    },
+    {
+      "description": "wait until the real decoder recovers every LED id from the synthetic scene",
+      "do": "awaitDecode",
+      "with": { "minIds": "${min_ids}", "timeoutMs": 40000 },
+      "timeout": 60,
+      "expect": { "ids": "present", "observations": "present" }
+    }
+  ]
+}

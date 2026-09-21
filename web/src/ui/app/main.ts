@@ -69,9 +69,14 @@ async function main(): Promise<void> {
   // so the user guide can screenshot those states. No-op in every normal load.
   const demoParam = new URLSearchParams(location.search).get("demo");
 
+  // Phone-in-the-loop HITL: a `?driver=<ws-url>` flag lazy-loads the app-driver
+  // control channel (drives the real user journeys over a WebSocket + substitutes
+  // a virtual BLE device / synthetic camera). No-op in every normal load.
+  const driverParam = new URLSearchParams(location.search).get("driver");
+
   // Lazily probe known devices' liveness in the background (1/min → 1/10min).
-  // Skipped in demo mode so a real probe can't override the injected device state.
-  if (!demoParam) deviceProber.start();
+  // Skipped in demo/driver mode so a real probe can't override the driven state.
+  if (!demoParam && !driverParam) deviceProber.start();
 
   const router = new Router(shell.outlet);
   shell.attach(router);
@@ -85,6 +90,15 @@ async function main(): Promise<void> {
   if (demoParam) {
     const { initDemoMode } = await import("../../demo/init");
     initDemoMode(new Set(demoParam.split(",")));
+  } else if (driverParam) {
+    // `?ble=real` drives with the OS Web Bluetooth stack (emulator real-BLE lane,
+    // pairing with a software Bumble peripheral); default is the in-app virtual mock.
+    const { setDriverBleMode } = await import("../../driver/guard");
+    setDriverBleMode(qs.get("ble") === "real" ? "real" : "virtual");
+    // Install the driver (sets driverActive + opens the control WS) BEFORE
+    // router.start() so the BLE/capture swaps are live before any screen mounts.
+    const { initDriver } = await import("../../driver/harness");
+    await initDriver(driverParam, router);
   } else {
     appState.restoreActive(urlOverride);
   }

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# apt-install <package>... — install apt packages in the running container AND
+# record them as a new dated RUN layer in the workspace container overlay
+# (.claude-container-overlay/Dockerfile), so the next image rebuild bakes them
+# in permanently. Packages already recorded in the Dockerfile are installed
+# but not re-recorded.
+set -euo pipefail
+
+OVERLAY_DIR="${CLAUDE_OVERLAY_DIR:-/workspace/.claude-container-overlay}"
+DOCKERFILE="$OVERLAY_DIR/Dockerfile"
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: apt-install <package>..." >&2
+    exit 2
+fi
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO=sudo
+    else
+        echo "apt-install: not root and no sudo in this image" \
+             "(relaunch the container to pick up the overlay's sudo layer)" >&2
+        exit 1
+    fi
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+$SUDO apt-get update
+$SUDO apt-get install -y --no-install-recommends "$@"
+
+# Record packages not already listed in an overlay install block. Generated
+# (and existing) blocks list one package per line as `        <pkg> \`.
+mkdir -p "$OVERLAY_DIR"
+touch "$DOCKERFILE"
+new_pkgs=()
+for pkg in "$@"; do
+    if ! grep -qxF "        ${pkg} \\" "$DOCKERFILE"; then
+        new_pkgs+=("$pkg")
+    fi
+done
+
+if [ "${#new_pkgs[@]}" -eq 0 ]; then
+    echo "apt-install: all packages already recorded in $DOCKERFILE"
+    exit 0
+fi
+
+{
+    echo ""
+    echo "# $(date +%F): ${new_pkgs[*]} (recorded by apt-install)"
+    echo "RUN apt-get update && apt-get install -y --no-install-recommends \\"
+    printf '        %s \\\n' "${new_pkgs[@]}"
+    echo "    && rm -rf /var/lib/apt/lists/*"
+} >> "$DOCKERFILE"
+
+echo "apt-install: recorded ${new_pkgs[*]} in $DOCKERFILE" \
+     "(baked into the image at the next container launch)"
