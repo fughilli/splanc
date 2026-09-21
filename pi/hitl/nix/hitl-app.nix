@@ -99,7 +99,20 @@ let
   # below; nix `let` bindings are order-independent.)
   apIface = if useApDongle then "ap0" else "wlan0";
   apConn = "hitl-ap";
-  apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
+  # Fixed 2.4 GHz channel (the C6 is 2.4-only), assigned PER RIG from the three
+  # non-overlapping 2.4 GHz channels (1/6/11). rig-1 and rig-2 run the netstack
+  # suite CONCURRENTLY (--max-concurrent 2), so a shared channel made their APs
+  # co-channel and their DUTs contend for airtime — which timed out the
+  # RF-sensitive wss opening handshake and flaked fx_bench_jit/led_capture_jit.
+  # WiFi APs don't channel-hop (that's BLE/FHSS) and hostapd ACS only picks once at
+  # boot (two rigs can collide), so pin distinct channels statically: rig-1→1,
+  # rig-2→11 (max separation), everything else (rig-3 Pi 3, one-off boxes)→6.
+  # amd-rig's provisioning AP is already pinned to ch1 in hitl-amd-ap.nix; it
+  # doesn't run the netstack suite, so its overlap with rig-1 is benign.
+  apChannel =
+    if config.networking.hostName == "hitl-rig-1" then 1
+    else if config.networking.hostName == "hitl-rig-2" then 11
+    else 6;
   # Canonical naming (README "Rig naming"): the AP SSID IS the system hostname, so
   # a box is addressed identically everywhere (hostname = tailscale name = SSID).
   apSsid = config.networking.hostName;
