@@ -129,6 +129,11 @@ bool g_creds_ready = false;  // creds committed (from BLE Improv or wired serial
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
+// Lease lifetime (option 51) + when it was (re)acquired, for T1 renewal. A commercial
+// AP hands short leases and DROPS a client whose lease lapses without renewing — the
+// heapless netstack acquired the lease once and never renewed, so it went unreachable
+// a lease-time after provisioning (the CoolerKids "works briefly, then dead" symptom).
+uint32_t g_lease_secs = 0, g_lease_ms = 0, g_last_renew_ms = 0;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
@@ -681,6 +686,8 @@ void handle_l3(const uint8_t *pt, int pl) {
       while (o + 1 < end && *o != 255) {
         if (*o == 53) mt = o[2];
         else if (*o == 54) memcpy(g_server_id, o + 2, 4);
+        else if (*o == 51 && o[1] == 4) // lease time (seconds), for T1 renewal
+          g_lease_secs = ((uint32_t)o[2] << 24) | (o[3] << 16) | (o[4] << 8) | o[5];
         o += 2 + o[1];
       }
       Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt, dh[16], dh[17], dh[18], dh[19]);
@@ -690,10 +697,16 @@ void handle_l3(const uint8_t *pt, int pl) {
         Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
       } else if (mt == 5) {
+        bool first = !g_leased;
         g_leased = true;
+        g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4);
-        Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
-                      (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        if (first)
+          Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                        (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        else
+          Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
+                        dh[19], (unsigned)g_lease_secs);
       }
     }
   }
@@ -1479,6 +1492,24 @@ void netstack_loop() {
     t = millis();
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");
+  }
+  // DHCP T1 renewal: once leased, renew at half the lease so a short-lease commercial AP
+  // never lets our binding lapse — otherwise the AP reclaims the IP and we go silently
+  // unreachable a lease-time after provisioning (the CoolerKids drop). Reuse the broadcast
+  // REQUEST (a3=bcast reaches the server); dnsmasq/home routers re-ACK a REQUEST for the
+  // IP we already hold, which refreshes g_lease_ms via the mt==5 handler.
+  if (st == DONE && g_leased && g_lease_secs > 0) {
+    uint32_t age = (millis() - g_lease_ms) / 1000;
+    if (age >= g_lease_secs / 2 && millis() - g_last_renew_ms > 5000) {
+      g_last_renew_ms = millis();
+      Serial.printf("[dhcp] T1 renew (age=%us/%us)\n", (unsigned)age, (unsigned)g_lease_secs);
+      send_dhcp(3, g_offer_ip, g_server_id, "RENEW");
+    }
+    if (age >= g_lease_secs) { // expired with no ACK — fall back to a fresh DORA
+      Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
+      g_leased = false;
+      g_have_offer = false;
+    }
   }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo
   // server (10.42.0.1:7777) and exchange data over the heapless stack.
