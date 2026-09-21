@@ -63,6 +63,25 @@ export interface BleDevice {
   addEventListener(type: string, cb: () => void): void;
 }
 
+/**
+ * Stable known-devices key (a synthetic `ble:` URL) for a BLE-connected device.
+ *
+ * Web Bluetooth's `device.id` is session/origin-scoped and can change across
+ * re-scans of the SAME physical device (notably on Android Chrome / after a
+ * permission reset), so keying the drawer on it spawned a DUPLICATE entry every
+ * time you disconnected and reconnected — the store's MAC-based dedup only folds
+ * them AFTER a `welcome` lands, which a flaky/aborted BLE reconnect may never
+ * deliver, leaving the stray entry behind. The advertised `device.name` is
+ * derived from the device's stable BT MAC (the "Led Widget XXXXXX" identity
+ * suffix) and is stable across sessions, so key on it; fall back to the id (then
+ * a constant) only for a nameless device. The URL is just a store key + label —
+ * the live GATT link uses the BleDevice object, not this string — so this only
+ * affects dedup, never connectivity.
+ */
+export function bleDeviceUrl(device: Pick<BleDevice, "id" | "name">): string {
+  return `ble:${device.name || device.id || "device"}`;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** True if this browser exposes Web Bluetooth. */

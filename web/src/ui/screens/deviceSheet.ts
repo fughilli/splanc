@@ -11,7 +11,7 @@
  * not as a one-tap top-level button, so it can't be hit by accident.
  */
 
-import { buildLabel, commitUrl } from "../../buildInfo";
+import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
 import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
@@ -327,6 +327,7 @@ function connectedMeta(status = appState.status): string {
  * LAN address / MAC / folder. */
 function openDeviceDetail(dev: KnownDevice): void {
   const cur = deviceStore.get(dev.id) ?? dev;
+  const fwFields = firmwareCardFields(cur);
   const sheet = Sheet("Device");
   sheet.body.className = "device-detail";
   const isActive = deviceStore.activeId() === dev.id && (appState.client?.isConnected ?? false);
@@ -346,8 +347,10 @@ function openDeviceDetail(dev: KnownDevice): void {
   };
 
   // Like rowFor, but the value is a link to the GitHub commit page (FUG-126).
-  const commitRowFor = (cap: string, commit: string, dirty: boolean): HTMLElement => {
-    if (!commit) return rowFor(cap, "unknown (connect once)");
+  // Values come pre-computed in FirmwareCardFields so the version + build rows
+  // stay in lockstep with buildInfo.firmwareCardFields (which the unit test pins).
+  const buildRowFor = (cap: string, fw: FirmwareCardFields): HTMLElement => {
+    if (!fw.buildUrl) return rowFor(cap, fw.build);
     const r = document.createElement("div");
     r.className = "device-detail-row";
     const c = document.createElement("span");
@@ -355,9 +358,9 @@ function openDeviceDetail(dev: KnownDevice): void {
     c.textContent = cap;
     const a = document.createElement("a");
     a.className = "device-detail-val metric about-link";
-    a.href = commitUrl(commit);
-    a.textContent = buildLabel(commit, dirty);
-    a.title = commit;
+    a.href = fw.buildUrl;
+    a.textContent = fw.build;
+    a.title = fw.commit;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     r.append(c, a);
@@ -496,8 +499,8 @@ function openDeviceDetail(dev: KnownDevice): void {
     divider,
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
-    rowFor("Firmware version", cur.fwVersion || "unknown (connect once)"),
-    commitRowFor("Firmware build", cur.fwGitCommit ?? "", cur.fwGitDirty ?? false),
+    rowFor("Firmware version", fwFields.version),
+    buildRowFor("Firmware build", fwFields),
     rowFor("Folder", cur.folder || "Ungrouped"),
   );
 }

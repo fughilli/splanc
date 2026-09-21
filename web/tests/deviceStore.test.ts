@@ -106,3 +106,15 @@ test("records without a MAC yet are not merged (identity unknown)", () => {
   deviceStore.applyWelcome(ip.id, { mac: "" }); // no identity learned
   assert.equal(deviceStore.list().length, 2);
 });
+
+test("re-scanning the same BLE device (stable ble: URL) reuses its record", () => {
+  // Regression: connectOverBle now keys on the stable advertised name via
+  // bleDeviceUrl (not Web Bluetooth's session-scoped device.id), so disconnect +
+  // re-scan lands on the SAME store id — no duplicate even before a welcome
+  // arrives (a flaky BLE reconnect may never deliver one to trigger MAC-merge).
+  const url = "ble:Led Widget E2F5EF"; // what bleDeviceUrl produces for this device
+  const first = deviceStore.upsert(url, "Led Widget E2F5EF");
+  const second = deviceStore.upsert(url, "Led Widget E2F5EF");
+  assert.equal(first.id, second.id);
+  assert.equal(deviceStore.list().length, 1);
+});

@@ -4,8 +4,31 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BleSocket } from "../src/net/bleTransport";
+import { BleSocket, bleDeviceUrl } from "../src/net/bleTransport";
 import { FrameReassembler, frameWithLength } from "../src/net/bleFrame";
+
+// bleDeviceUrl is the drawer's dedup key for a BLE device. It MUST be stable
+// across re-scans of the same physical device, because Web Bluetooth's
+// device.id is session-scoped and changes — keying on it duplicated the entry
+// every reconnect. Key on the (stable, MAC-derived) advertised name instead.
+test("bleDeviceUrl is stable across sessions even when device.id changes", () => {
+  const first = bleDeviceUrl({ id: "session-A-11", name: "Led Widget E2F5EF" });
+  const second = bleDeviceUrl({ id: "session-B-99", name: "Led Widget E2F5EF" });
+  assert.equal(first, second); // same physical device -> one drawer entry
+  assert.equal(first, "ble:Led Widget E2F5EF");
+});
+
+test("bleDeviceUrl distinguishes different devices by name", () => {
+  assert.notEqual(
+    bleDeviceUrl({ id: "x", name: "Led Widget E2F5EF" }),
+    bleDeviceUrl({ id: "x", name: "Led Widget AB12CD" }),
+  );
+});
+
+test("bleDeviceUrl falls back to id, then a constant, for a nameless device", () => {
+  assert.equal(bleDeviceUrl({ id: "abc" }), "ble:abc");
+  assert.equal(bleDeviceUrl({}), "ble:device");
+});
 
 type Listener = (ev: { target: unknown }) => void;
 
