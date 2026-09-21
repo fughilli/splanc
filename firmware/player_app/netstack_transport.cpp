@@ -1499,20 +1499,25 @@ void netstack_loop() {
     uint32_t s = ns_tcp_state();
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
-    // stress) can leave the single connection slot stuck ESTABLISHED with the client gone
-    // mid-TLS-handshake (or pre-WS): the s==4/0 re-listen below never fires (the peer sent no
-    // FIN), so every later client is rejected — a persistent wss wedge. The write-stall guard
-    // (tls_write_all) only covers a stalled reply, not the accept/handshake phase. So bound
-    // the not-yet-serving stretch: once ESTABLISHED-but-not-up exceeds a few seconds (a real
-    // handshake+WS completes in <3s), force a fresh listener — ns_tcp_listen swaps the conn to
-    // a clean LISTEN state — abandoning the dead peer and freeing the slot for the next client.
+    // stress) can leave the single connection slot stuck mid-accept: the DOMINANT wedge is
+    // SynRcvd (s==6) — the client that won the LISTEN race sent no final ACK (the host fired
+    // several handshakes and abandoned the losers), so the slot sits in SynRcvd forever. The
+    // Rust dead-peer RTO only arms when sent>0 (SynRcvd has nothing queued), and a mismatched
+    // second SYN is dropped at the peer-match gate, so EVERY later client times out. The
+    // less-common wedge is ESTABLISHED-but-not-up (the peer vanished mid-TLS/pre-WS). Neither
+    // is covered by the s==4/0 re-listen below (no FIN) nor the tls_write_all stall guard
+    // (that's the reply phase). So bound the not-yet-serving stretch — SynRcvd OR pre-WS
+    // Established — and once it exceeds ~3s (a real handshake+WS completes in <3s on the LAN),
+    // force a fresh listener (ns_tcp_listen swaps the conn to a clean LISTEN), abandoning the
+    // dead peer and freeing the slot. This is the tls_churn anti-wedge gate.
     {
       static uint32_t est_since = 0;
       bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
-      if (s == 2 && !up) {
+      bool handshaking = (s == 6) || (s == 2 && !up);  // SynRcvd, or Established pre-WS
+      if (handshaking) {
         if (est_since == 0) est_since = millis() == 0 ? 1 : millis();
-        else if (millis() - est_since > 8000) {
-          Serial.println("*** SERVER half-open handshake wedge — reclaiming (re-listen) ***");
+        else if (millis() - est_since > 3000) {
+          Serial.println("*** SERVER handshake wedge (SynRcvd/pre-WS) — reclaiming (re-listen) ***");
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;
