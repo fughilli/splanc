@@ -53,7 +53,11 @@ function labelForUrl(wssUrl: string): string {
   }
 }
 
-/** Fill in fields absent from older stored records. */
+/** Fill in fields absent from older stored records. NB: every read() maps stored
+ * records through here, so any field NOT copied is silently dropped on read-back.
+ * The firmware build info (fwGitCommit/fwGitDirty/fwVersion) was missing — so the
+ * device card always re-read "unknown (connect once)" even right after a welcome
+ * populated it. Preserve them (kept optional so older records without them work). */
 function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): KnownDevice {
   return {
     id: d.id,
@@ -64,6 +68,9 @@ function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): Kn
     ...(d.bleId ? { bleId: d.bleId } : {}),
     ...(d.folder ? { folder: d.folder } : {}),
     ...(d.pendingName ? { pendingName: d.pendingName } : {}),
+    ...(d.fwGitCommit !== undefined ? { fwGitCommit: d.fwGitCommit } : {}),
+    ...(d.fwGitDirty !== undefined ? { fwGitDirty: d.fwGitDirty } : {}),
+    ...(d.fwVersion !== undefined ? { fwVersion: d.fwVersion } : {}),
     lastSeen: d.lastSeen ?? new Date(0).toISOString(),
   };
 }
@@ -98,6 +105,15 @@ export function deviceHost(dev: KnownDevice): string {
   } catch {
     return dev.wssUrl;
   }
+}
+
+/** A short stable tag that tells two same-named devices apart: the last three
+ * octets of the device's MAC ("E2F5EF") — the identity suffix the default
+ * "Led Widget XXXXXX" name derives from. "" until a MAC is known (connect once).
+ * MAC-based, never name-based, so a rename can't change or hide it. */
+export function deviceDisambiguator(dev: Pick<KnownDevice, "bleMac">): string {
+  const hex = (dev.bleMac ?? "").replace(/[^0-9a-f]/gi, "").toUpperCase();
+  return hex.length >= 6 ? hex.slice(-6) : hex;
 }
 
 class DeviceStore {

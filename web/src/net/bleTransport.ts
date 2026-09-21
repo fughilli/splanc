@@ -63,6 +63,32 @@ export interface BleDevice {
   addEventListener(type: string, cb: () => void): void;
 }
 
+/**
+ * Known-devices key (a synthetic `ble:` URL) for a BLE-connected device.
+ *
+ * Key on Web Bluetooth's `device.id`, NOT the advertised name: the name is
+ * user-editable and non-unique, so keying on it would (a) orphan a device's
+ * record the moment the user renames it, and (b) merge two DISTINCT devices that
+ * happen to share a display name into one entry. `device.id` is unique per
+ * physical device and rename-invariant — the right scan-time identity.
+ *
+ * Its one weakness is that it can churn across sessions on some platforms
+ * (Android Chrome / after a permission reset). That's reconciled by the
+ * authoritative merge in deviceStore.applyWelcome on the device's `welcome` MAC
+ * (esp_read_mac(ESP_MAC_BT) — a stable per-device identity, itself rename- and
+ * session-invariant): on the next successful connect the two id-keyed records
+ * collapse into one, and distinct MACs are never merged. So the MAC is the true
+ * identity; `device.id` is just the best proxy available before we've connected.
+ *
+ * The URL is only a store key + display fallback — the live GATT link uses the
+ * BleDevice object, not this string — so this choice affects dedup, never
+ * connectivity. (Web Bluetooth always populates device.id; the fallback is
+ * defensive.)
+ */
+export function bleDeviceUrl(device: Pick<BleDevice, "id" | "name">): string {
+  return `ble:${device.id || "unknown"}`;
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** True if this browser exposes Web Bluetooth. */

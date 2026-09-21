@@ -107,11 +107,12 @@ class AppState {
     void (async () => {
       try {
         await client.connect();
-        const sync = await client.syncClock();
-        deviceStore.upsert(wssUrl, label); // refresh lastSeen
-        // Fold the device's identity (MAC + name) into its record, and push a
-        // rename that was queued while it was disconnected so its Bluetooth name
-        // tracks the display name the user set.
+        // Fold the device's identity (MAC + name + build) into its record as soon
+        // as we're connected — BEFORE the clock sync — so the device is recorded by
+        // its true MAC even if a later step fails, and so a provisional BLE entry
+        // that never learns a MAC is distinguishable from a confirmed one in the
+        // failure path below. Also push a rename queued while disconnected so the
+        // device's Bluetooth name tracks the display name the user set.
         const w = client.welcome;
         if (w) {
           deviceStore.applyWelcome(dev.id, {
@@ -137,6 +138,8 @@ class AppState {
               .catch(() => undefined);
           }
         }
+        const sync = await client.syncClock();
+        deviceStore.upsert(wssUrl, label); // refresh lastSeen
         this.setStatus({
           state: "connected",
           text: "connected",
@@ -145,6 +148,23 @@ class AppState {
         });
         void sync;
       } catch {
+        // Drop a PROVISIONAL BLE entry that never learned an identity (no welcome
+        // MAC). It's keyed on an ephemeral Web Bluetooth device.id, so a failed or
+        // aborted (re)connect would otherwise strand a duplicate next to the
+        // device's real MAC-keyed record — and a `ble:` URL can't be reconnected
+        // anyway (the live GATT object is gone; there's nothing to retry). An
+        // already-identified device (has a MAC) and every wss entry (stable host
+        // key, retryable) are kept.
+        if (wssUrl.startsWith("ble:") && !deviceStore.get(dev.id)?.bleMac) {
+          deviceStore.forget(dev.id);
+          this.setStatus({
+            state: "error",
+            text: "connection failed",
+            certUrl: null,
+            error: "Bluetooth connection failed — re-scan to try again",
+          });
+          return;
+        }
         // The likely cause for a cross-origin wss target is the player's
         // self-signed cert (a WebSocket can never prompt for it). Surface the
         // trust URL. For a cert-trust target the client has STOPPED retrying (so

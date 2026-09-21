@@ -151,8 +151,21 @@ async def _ws_checks(
             )
         if not isinstance(fw_dirty, bool):
             raise E2EFailure(f"welcome fwGitDirty not a bool: {fw_dirty!r}")
+        # …and the release version (nearest firmware-v* tag, "0.0.0-dev" on an
+        # untagged build). The app shows this on the device card as "Firmware
+        # version"; the firmware must always report a concrete, non-empty value
+        # (a blank one renders as "unknown"). Accept a semver-ish string with an
+        # optional -dev / -<n>-g<sha> suffix; reject empty/missing.
+        fw_version = welcome.get("fwVersion")
+        if not isinstance(fw_version, str) or not re.fullmatch(
+            r"\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?", fw_version
+        ):
+            raise E2EFailure(
+                f"welcome fwVersion missing/malformed: {fw_version!r} "
+                "(expected a release version like '1.2.0' or '0.0.0-dev')"
+            )
         print(
-            f"[ws] BUILD INFO OK — fwGitCommit={fw_commit[:8]} dirty={fw_dirty}",
+            f"[ws] BUILD INFO OK — fwGitCommit={fw_commit[:8]} dirty={fw_dirty} version={fw_version}",
             flush=True,
         )
 
