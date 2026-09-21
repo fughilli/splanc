@@ -612,12 +612,14 @@ void handle_arp(const uint8_t *pt, int pl) {
 }
 
 // Announce our IP<->MAC to the whole BSS (gratuitous ARP, RFC 5227): SPA=TPA=our IP,
-// broadcast. Our ARP *responder* only helps a peer that ARPs us AND whose request
-// reaches us AND whose reply gets back — on a plain AP (no proxy-ARP, unlike a
-// commercial router that answers from DHCP snooping) that request/reply round-trip is
-// unreliable for a from-scratch stack, so peers (the phone, the AP host) can't resolve
-// us and see ERR_ADDRESS_UNREACHABLE. A proactive announcement uses only our WORKING TX
-// path, so every peer learns us with no request needed. Sent on lease + periodically.
+// broadcast. Our ARP *responder* only helps a peer whose request reaches us AND whose
+// reply gets back — on a plain AP (no proxy-ARP, unlike a commercial router that answers
+// from DHCP snooping) that round-trip is unreliable for a from-scratch stack, so a peer
+// (e.g. the phone joining the AP AFTER the C6 leased) can't resolve us and gets
+// ERR_ADDRESS_UNREACHABLE. A proactive announcement uses only our working TX path. The
+// CALLER gates this to the pre-connection window (no active wss) — a broadcast frame
+// interleaved with an ESTABLISHED wss dropped the peer's session (the improv_e2e wss
+// wedge), so we announce only until a client is connected, never during a live session.
 void send_gratuitous_arp() {
   if (!g_leased) return;
   uint8_t payload[8 + 28];
@@ -736,7 +738,6 @@ void handle_l3(const uint8_t *pt, int pl) {
         else
           Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
                         dh[19], (unsigned)g_lease_secs);
-        send_gratuitous_arp(); // announce so peers can reach us without ARPing first
       }
     }
   }
@@ -1541,12 +1542,17 @@ void netstack_loop() {
       g_have_offer = false;
     }
   }
-  // Periodic gratuitous ARP: peers' ARP caches age out, and a peer that joined AFTER our
-  // lease announcement (e.g. the phone joining the AP after the C6) never heard it — keep
-  // re-announcing so we stay reachable without relying on our ARP responder round-trip.
-  if (st == DONE && g_leased) {
+  // Gratuitous-ARP announce, ONLY while no wss client is connected. A peer that joins
+  // the AP after us (the phone joining amd-rig-ap after the C6 leased) can't resolve us
+  // via our unreliable responder round-trip on a plain AP, so re-announce every ~3s so it
+  // learns us before it connects. Gated on !g_ws_up: a broadcast frame interleaved with a
+  // LIVE wss dropped the session (the improv_e2e wedge), so once a client is up we go
+  // quiet and never perturb it.
+  {
+    uint32_t ts = ns_tcp_state();
+    bool idle = (ts != 2 && ts != 6) && !g_ws_up;  // no client Established/SynRcvd, no wss
     static uint32_t garp_ms = 0;
-    if (millis() - garp_ms > 20000) {
+    if (st == DONE && g_leased && idle && millis() - garp_ms > 3000) {
       garp_ms = millis();
       send_gratuitous_arp();
     }
