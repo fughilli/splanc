@@ -48,20 +48,37 @@ class ReservationBackend:
         owner: str | None = None,
         flash: bool = True,
         monitor_seconds: float = 8.0,
+        ssid: str | None = None,
+        psk: str = "",
     ) -> None:
         self._res = Reservation(server=server, owner=owner)
         self._flash = flash
         self._monitor = monitor_seconds
         self._forward_cm: Any = None
         self.device_ws = ""
+        # Explicit provisioning network (overrides the rig-advertised AP). Needed to
+        # test networks the daemon can't advertise (a phone hotspot, a commercial AP),
+        # and to guarantee the DUT and the phone join the SAME network. Resolved creds
+        # are exposed as .ssid/.psk so the caller can point the phone at them too.
+        self._ssid = ssid
+        self._psk = psk
+        self.ssid = ""
+        self.psk = ""
 
     def __enter__(self) -> str:
         res = self._res
         res.acquire()
-        creds = res.wifi()
-        if not creds:
-            raise SystemExit("rig serves no provisioning AP")
-        ssid, psk = creds
+        if self._ssid:
+            ssid, psk = self._ssid, self._psk
+        else:
+            creds = res.wifi()
+            if not creds:
+                raise SystemExit(
+                    "no provisioning network: the rig advertises none "
+                    "(/status.provisioning empty) and no --wifi-ssid was given"
+                )
+            ssid, psk = creds
+        self.ssid, self.psk = ssid, psk
         if self._flash:
             bundle = _bundle()
             remote = "/tmp/" + os.path.basename(bundle)

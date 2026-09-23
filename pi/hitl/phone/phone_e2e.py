@@ -244,7 +244,15 @@ def main() -> int:
         if args.reservation and not args.device_ws:
             from reservation_backend import ReservationBackend
 
-            args.device_ws = stack.enter_context(ReservationBackend(server=args.hitl_server))
+            backend = ReservationBackend(
+                server=args.hitl_server,
+                ssid=args.wifi_ssid or None,
+                psk=args.wifi_pass,
+            )
+            args.device_ws = stack.enter_context(backend)
+            # The DUT was provisioned onto backend.ssid; point the phone's own join at
+            # the SAME resolved network so they can actually reach each other.
+            args.wifi_ssid, args.wifi_pass = backend.ssid, backend.psk
         if target.name == "browser":
             launcher.ensure_chromium()  # sync context, before the asyncio loop
         return asyncio.run(run(args, target))
