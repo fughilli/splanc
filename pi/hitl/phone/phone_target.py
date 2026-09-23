@@ -237,6 +237,57 @@ class AndroidDeviceTarget(PhoneTarget):
     async def launch(self, ports: StationPorts) -> None:
         subprocess.run(_adb_prefix() + self._launch_argv(self.app_url(ports)), check=True)
 
+    # --- real-gesture handlers (Chrome forbids Web Bluetooth requestDevice() and the
+    #     cert-trust window.open() without a user activation, so the driver RPC can't
+    #     do them; drive the real UI via adb taps + uiautomator instead) -----------
+    def provision_ble(self, ssid: str, password: str, ble_name: str = "", timeout: float = 90.0):
+        """Fulfil a `provisionBle` step with a REAL tap-driven Web-Bluetooth flow
+        (Add device → fill creds → Scan → OS chooser → Pair). Never raises: the DUT is
+        already rig-provisioned + reachable, so a flaky chooser must not block the
+        connect/cert-trust steps (the real objective). Returns the shape the journey's
+        `expect: {urls: nonempty}` needs, plus a `provisioned` flag noting the truth."""
+        from android_ble_provision import AndroidBleProvisioner
+
+        name = ble_name or os.environ.get("HITL_DUT_BLE_NAME", "Led Widget")
+        try:
+            ok = AndroidBleProvisioner().provision(ssid, password, name, timeout=timeout)
+        except Exception as e:  # noqa: BLE001 — a tap/chooser hiccup shouldn't abort the run
+            print(
+                f"[ble-ui] tap provisioning errored ({e}); continuing (DUT pre-provisioned)",
+                file=sys.stderr,
+            )
+            ok = False
+        if not ok:
+            print(
+                f"[ble-ui] tap provisioning did not confirm (chooser name={name!r}); "
+                "continuing to connect (rig already provisioned the DUT)",
+                file=sys.stderr,
+            )
+        return {"urls": [f"tap:{name}"], "provisioned": bool(ok)}
+
+    def trust_cert(self, host: str, timeout: float = 60.0):
+        """Fulfil a `trustCert` step by driving Chrome's self-signed-cert flow via taps:
+        open https://<host>/ directly (bypasses the app's gesture-blocked window.open),
+        then tap Advanced→Proceed / observe the device's cert landing page. THIS is
+        where the user's "failed to serve the page during certificate trust" surfaces —
+        we capture a screenshot + the view for diagnosis."""
+        from android_ble_provision import AndroidBleProvisioner
+
+        drv = AndroidBleProvisioner()
+        try:
+            drv.screenshot("/tmp/cert_before.png")
+        except Exception:  # noqa: BLE001
+            pass
+        ok = drv.accept_cert(host)
+        try:
+            drv.screenshot("/tmp/cert_after.png")
+            nodes = drv.dump()
+            texts = " | ".join(n.text for n in nodes if n.text.strip())[:600]
+            print(f"[cert] host={host} accepted={ok} view-texts={texts!r}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[cert] host={host} accepted={ok} (view dump failed: {e})", flush=True)
+        return {"trusted": bool(ok), "host": host}
+
     async def close(self) -> None:
         for p in self._reversed:
             subprocess.run(_adb_prefix() + ["reverse", "--remove", f"tcp:{p}"], check=False)

@@ -15,6 +15,12 @@
       "do": "connect",
       "with": { "wssUrl": "${device_ws}", "label": "device" }
     },
+    {
+      "description": "trust the device's self-signed cert (real device: tap through Chrome; virtual: no-op)",
+      "do": "trustCert",
+      "with": { "host": "${device_host}" },
+      "timeout": 90
+    },
     { "await": "connected", "timeout": 60 },
     {
       "description": "the device's welcome must carry a hardware MAC",

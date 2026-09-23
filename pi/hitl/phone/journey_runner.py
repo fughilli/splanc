@@ -24,6 +24,7 @@ Expectations (per result field; dotted paths dig into nested dicts; "" or "$" = 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -32,6 +33,25 @@ from typing import Any
 from driver_server import AppDriver, DriverError
 
 _VAR = re.compile(r"\$\{([a-zA-Z0-9_]+)\}")
+
+# Journey commands that, on a REAL-BLE target, must be driven by a real user gesture
+# (adb taps + uiautomator) instead of the driver RPC — Chrome forbids
+# navigator.bluetooth.requestDevice() and the cert-trust window.open() without one.
+# Maps the journey command -> the PhoneTarget method that fulfils it.
+_GESTURE_HANDLERS = {"provisionBle": "provision_ble", "trustCert": "trust_cert"}
+
+
+async def _do(drv: AppDriver, target: Any, cmd: str, timeout: float, params: dict[str, Any]) -> Any:
+    """Dispatch a `do` command: to the target's tap-driven handler when it's a
+    gesture-gated command on a real-BLE target, else to the app-driver RPC. A
+    `trustCert` on a lane that needs no real trust (virtual BLE / browser) is a no-op."""
+    if target is not None and getattr(target, "ble_mode", "") == "real":
+        meth = getattr(target, _GESTURE_HANDLERS.get(cmd, ""), None)
+        if meth is not None:
+            return await asyncio.to_thread(meth, **params)  # sync adb work off the loop
+    if cmd == "trustCert":
+        return {"skipped": True}  # browser uses --ignore-certificate-errors; mock BLE has no TLS
+    return await drv.command(cmd, timeout=timeout, **params)
 
 
 def _interp(obj: Any, ctx: dict[str, Any]) -> Any:
@@ -104,8 +124,11 @@ async def run_journey(
     journey: dict[str, Any],
     registry: dict[str, dict[str, Any]],
     context: dict[str, Any] | None = None,
+    target: Any = None,
 ) -> list[dict[str, Any]]:
-    """Execute one journey; raise DriverError on any expectation failure."""
+    """Execute one journey; raise DriverError on any expectation failure. `target` (a
+    PhoneTarget) lets gesture-gated commands (provisionBle/trustCert) be driven via
+    real taps on a real-BLE device instead of the driver RPC."""
     ctx: dict[str, Any] = dict(journey.get("inputs") or {})
     ctx.update(context or {})
     out: list[dict[str, Any]] = []
@@ -114,11 +137,11 @@ async def run_journey(
             sub = registry.get(step["runFlow"])
             if sub is None:
                 raise DriverError(f"runFlow: no journey {step['runFlow']!r}")
-            out.extend(await run_journey(drv, sub, registry, ctx))
+            out.extend(await run_journey(drv, sub, registry, ctx, target))
             continue
         if "do" in step:
             params = _interp(step.get("with") or {}, ctx)
-            res = await drv.command(step["do"], timeout=step.get("timeout", 60.0), **params)
+            res = await _do(drv, target, step["do"], step.get("timeout", 60.0), params)
             _check(res, step.get("expect"))
         elif "query" in step:
             params = _interp(step.get("with") or {}, ctx)
