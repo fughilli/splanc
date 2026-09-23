@@ -57,6 +57,22 @@ _wifi_config = (glob(
     allow_empty = True,
 ) or ["wifi.yaml.example"])[0]
 
+# Post-build closure push to the self-hosted Attic nix cache (sbc-deploy #25). After
+# a successful image/system build, deploy_live pushes the realised closure here so
+# the next deploy of any rig — and this container — substitutes the expensive paths
+# (the from-source linux_rpi-bcm2712 kernel above all) instead of rebuilding. Runs
+# even on a fully-cached build (keeps the cache warm) and is best-effort (never fails
+# a deploy). attic_cache is "<login-name>:<cache>" (the login name is the part before
+# the first ':'); attic_endpoint drives a self-contained `attic login` first.
+#
+# The push is TOKENLESS: the cache node fronts atticd with a Caddy proxy that injects
+# the shared bearer, so a plain `attic login <name> <endpoint>` (no token) authorizes
+# the push. atticd itself has no anonymous-push mode — the proxy IS the mechanism —
+# and the tag:attic tailnet ACL is the sole access boundary. See tools/attic-cache.
+_attic_cache = "attic:splanc"
+
+_attic_endpoint = "http://attic.tail6b8ad3.ts.net:8080"
+
 sbc_application(
     # The logic analyzer is no longer a deploy-time capability: every image ships
     # sigrok + the FX2 broker and the daemon self-gates on the FX2 being physically
@@ -64,6 +80,8 @@ sbc_application(
     # drift. See nix/hitl-app.nix and internal/analyzer. (No detect_caps_cmd — the
     # remaining SBC_* dongle knobs aren't board-probed.)
     name = "hitl",
+    attic_cache = _attic_cache,
+    attic_endpoint = _attic_endpoint,
     flake = "pi/hitl",
     flake_srcs = [":flake_srcs"],
     hostname = "hitl-rig",
@@ -99,6 +117,8 @@ alias(
 #   SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host>
 sbc_application(
     name = "hitl_pi3",
+    attic_cache = _attic_cache,
+    attic_endpoint = _attic_endpoint,
     board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
     flake = "pi/hitl",
     flake_srcs = [":flake_srcs"],
@@ -124,6 +144,8 @@ sbc_application(
 # (flake.nix sets it under family = x86_64) that deploy_live/ssh build.
 sbc_application(
     name = "hitl_sdr",
+    attic_cache = _attic_cache,
+    attic_endpoint = _attic_endpoint,
     board = "@sbc_deploy//deploy/boards:amd64-generic",
     flake = "pi/hitl",
     flake_srcs = [":flake_srcs"],
