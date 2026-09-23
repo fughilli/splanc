@@ -574,9 +574,33 @@ function trustCert(certUrl: string): void {
   };
   window.addEventListener("message", onMessage);
   document.addEventListener("visibilitychange", onVisible);
-  popup = window.open(certUrl, "ledmapper-cert", "width=420,height=560");
+  // Open the popup blank IN the click gesture (so it isn't blocked), then navigate
+  // it to the cert URL after a short settle. The device has a single TLS slot: the
+  // wss we just disconnect()ed above is still closing/re-listening on the device, so
+  // an IMMEDIATE cert-page GET races the slot free and Chrome gets ERR_TIMED_OUT
+  // ("failed to serve the page during certificate trust"). A brief delay lets the
+  // device send close_notify + FIN and re-LISTEN before the popup hits it — mirrors
+  // the 800ms reconnect settle in finish(); the open side needs it too.
+  popup = window.open("about:blank", "ledmapper-cert", "width=420,height=560");
   if (popup === null) {
     toast("Popup blocked — open the device page, accept the warning, then return", { error: true });
     window.open(certUrl, "_blank", "noopener");
+    return;
   }
+  try {
+    popup.document.write(
+      "<!doctype html><meta charset=utf-8><title>Certificate</title>" +
+        "<body style='font:15px system-ui;padding:2rem;color:#333'>Preparing the device page…</body>",
+    );
+  } catch {
+    /* a cross-origin document.write may be refused — the navigate below still runs */
+  }
+  window.setTimeout(() => {
+    if (done) return; // trust already resolved (message/visibility) — don't re-navigate
+    try {
+      popup!.location.href = certUrl;
+    } catch {
+      window.open(certUrl, "_blank", "noopener");
+    }
+  }, 900);
 }
