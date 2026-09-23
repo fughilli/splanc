@@ -8,19 +8,29 @@
   # keys). The CLI is `packages.<system>.hitl` for agents to `nix run` / install.
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
+  # Build-time substituter for the machine that BUILDS the closure (the deployer:
+  # this dev container, a rig, or the Mac's builder VM) — so `nix build` pulls the
+  # kernel etc. from the self-hosted Attic cache instead of rebuilding from source.
+  # sbc-deploy passes --accept-flake-config (#22), so this is honored non-interactively.
+  # The matching ON-RIG substituter is nix/attic-substituter.nix (baked into the system).
+  nixConfig = {
+    extra-substituters = [ "http://attic.tail6b8ad3.ts.net:8080/splanc" ];
+    extra-trusted-public-keys = [ "splanc:MWmTqIgwyOOGTh2wazhPPnVAsIIAV9pEXqhhorIWdvw=" ];
+  };
+
   inputs = {
-    # sbc-deploy main @ 773117c (#18 makes the deploy_live hardware guard
-    # family-aware: it read the Pi-only /proc/device-tree/model, so an x86_64
-    # deploy verified nothing and `update` died on one; x86 identity now comes
-    # from SMBIOS). Carries #16 (amd64/x86_64 support: an `amd64-generic` board
-    # whose family = "x86_64" swaps mkSbcSystem to a stock-nixpkgs UEFI system and
-    # gives image_installer + deploy_live — the amd-rig `hitl_sdr` variant rides
-    # this), #14/#15 (hermetic flake_srcs staging, macOS fixes) and #7/#8
-    # (persistent hostname identity, `update` autodetect). Kept in lockstep with
-    # the @sbc_deploy git_override in //MODULE.bazel. (#18 touches only
-    # deploy/scripts/, i.e. nothing this ?dir=nix input evaluates; the narHash
-    # still moves, since it covers the whole fetched tree, not just the subdir.)
-    sbc-deploy.url = "github:fughilli/sbc-deploy/773117cc05e0292a54cbb3da8b308885c2d62f65?dir=nix";
+    # sbc-deploy main @ 23c03bd. Carries the cache-aware deploy series #22–#26:
+    # #25 adds the `attic_cache`/`attic_endpoint` sbc_application attrs (best-effort
+    # post-build closure push to Attic — //pi/hitl:BUILD wires them to the tag:attic
+    # node); #22 --accept-flake-config, #23 nix copy --substitute-on-destination,
+    # #24 --tailscale-ssh, #26 secret_tool. Earlier: #18 (deploy_live hardware guard
+    # is family-aware — x86 identity via SMBIOS, not the Pi-only device-tree model),
+    # #16 (amd64/x86_64 `amd64-generic` board → image_installer + deploy_live, the
+    # amd-rig `hitl_sdr` variant), #14/#15 (hermetic flake_srcs staging, macOS fixes),
+    # #7/#8 (persistent hostname identity, `update` autodetect). Kept in lockstep with
+    # the @sbc_deploy git_override in //MODULE.bazel. (#22–#26 also touch nix/, so
+    # this ?dir=nix input's narHash moves in step with the deploy scripts.)
+    sbc-deploy.url = "github:fughilli/sbc-deploy/23c03bdcefa0cd4b90ea1ec611456984d91a389a?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
 
     # The generalized reservation system. Not a flake (plain Go module source);
@@ -63,15 +73,24 @@
         # amd-rig (x86_64) runs TWO reservation daemons: the SDR bench (hitl-sdr.nix,
         # privileged/net-host, one composite unit) and — additively — the phone bench
         # (hitl-phone-daemon.nix, isolated multi-DUT: android-phone + android-emu units).
+        # ./nix/attic-substituter.nix (both families): the self-hosted Attic cache as
+        # a trusted substituter, so a deploy's --substitute-on-destination and on-rig
+        # nix pull the kernel etc. from the cache instead of rebuilding. See flake.nix
+        # nixConfig for the matching build-time (deployer) substituter.
         appModules =
           if isX86
           then [
             (import ./nix/hitl-sdr.nix { hitlSrc = hitl-reserve; })
             (import ./nix/hitl-phone-daemon.nix { hitlSrc = hitl-reserve; })
             ./nix/hitl-amd-ap.nix
+            ./nix/attic-substituter.nix
             ./observability/alloy.nix
           ]
-          else [ (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; }) ./observability/alloy.nix ];
+          else [
+            (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; })
+            ./nix/attic-substituter.nix
+            ./observability/alloy.nix
+          ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };
 

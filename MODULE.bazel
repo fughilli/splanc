@@ -372,7 +372,18 @@ git_override(
     # sub-board granularity to check. amd-rig's SMBIOS is unprogrammed ("Default
     # string" throughout), so placeholder DMI values are filtered rather than
     # reported as a name.
-    commit = "773117cc05e0292a54cbb3da8b308885c2d62f65",  # x86 hardware guard via DMI (PR #18 merged)
+    # PR #22–#26 (all squash-merged to main): the deploy learns to work WITH a binary
+    # cache. #22 passes --accept-flake-config so the consumer flake's nixConfig
+    # substituters are honored non-interactively. #23 adds `nix copy
+    # --substitute-on-destination` so a board pulls closure paths from its own
+    # substituters instead of over the deployer's uplink. #24 adds a `--tailscale-ssh`
+    # deploy mode (tailnet identity, no baked key). #25 adds the
+    # `attic_cache`/`attic_endpoint` sbc_application attrs — a best-effort post-build
+    # push of the realised closure to an Attic cache (tokenless login; keeps the cache
+    # warm even on a fully-cached build). #26 adds a `secret_tool` seam to fetch the
+    # deploy key / tailscale authkey on demand. //pi/hitl:BUILD wires #25 to the
+    # tag:attic cache node; the rest are latent until opted into.
+    commit = "23c03bdcefa0cd4b90ea1ec611456984d91a389a",  # attic cache push + deploy cache-awareness (PR #22–#26)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
