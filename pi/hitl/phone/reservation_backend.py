@@ -68,6 +68,17 @@ class ReservationBackend:
     def __enter__(self) -> str:
         res = self._res
         res.acquire()
+        # After acquire(), any failure means __exit__ WON'T run (the context was never
+        # entered), so a raise here would leave the unit leased until the daemon's
+        # lease timeout — stranding the bench and queueing the next run behind a dead
+        # reservation. Release on any failure.
+        try:
+            return self._setup(res)
+        except BaseException:
+            self._safe_release()
+            raise
+
+    def _setup(self, res: Any) -> str:
         if self._ssid:
             ssid, psk = self._ssid, self._psk
         else:
@@ -80,19 +91,7 @@ class ReservationBackend:
             ssid, psk = creds
         self.ssid, self.psk = ssid, psk
         if self._flash:
-            bundle = _bundle()
-            remote = "/tmp/" + os.path.basename(bundle)
-            print(f"[rig] flashing {os.path.basename(bundle)} -> {res.host}", flush=True)
-            res.scp_to([bundle], "/tmp/")
-            proc = res.ssh(
-                f"hitl-flash {remote} --erase-fs --monitor --monitor-seconds {self._monitor:g}",
-                capture=True,
-                timeout=self._monitor + 180,
-            )
-            log = (proc.stdout or "") + (proc.stderr or "")
-            if proc.returncode != 0:
-                raise SystemExit(f"hitl-flash exited {proc.returncode}")
-            ensure_booted(res, log, self._monitor)
+            self._flash_dut(res)
         print("[rig] provisioning DUT onto the rig AP over BLE Improv…", flush=True)
         redirect = provision_dut(res, ssid, psk, timeout=90.0, attempts=3)
         host, port = dut_target(redirect, "wss")
@@ -101,6 +100,55 @@ class ReservationBackend:
         self.device_ws = f"wss://127.0.0.1:{local_port}/ws"
         print(f"[rig] DUT reachable at {self.device_ws} (tunnel -> {host}:{port})", flush=True)
         return self.device_ws
+
+    def _flash_dut(self, res: Any, attempts: int = 3) -> None:
+        # hitl-flash intermittently exits nonzero on the C6's GPIO9 USB_BOOT
+        # strap-race ("did not boot from flash" / exit 2) — a transient that clears on
+        # a retry (hitl-flash resets the board each run), not a real flash failure.
+        # Retry the whole flash a few times so a strap flake doesn't fail the run
+        # (and, before the release fix above, leak the lease).
+        bundle = _bundle()
+        remote = "/tmp/" + os.path.basename(bundle)
+        print(f"[rig] flashing {os.path.basename(bundle)} -> {res.host}", flush=True)
+        res.scp_to([bundle], "/tmp/")
+        last = ""
+        for attempt in range(1, attempts + 1):
+            proc = res.ssh(
+                f"hitl-flash {remote} --erase-fs --monitor --monitor-seconds {self._monitor:g}",
+                capture=True,
+                timeout=self._monitor + 180,
+            )
+            log = (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode == 0:
+                try:
+                    ensure_booted(res, log, self._monitor)
+                    return
+                except Exception as e:  # noqa: BLE001 — a boot flake is retryable
+                    last = f"boot check: {e}"
+            else:
+                lines = log.strip().splitlines()
+                last = lines[-1] if lines else f"exit {proc.returncode}"
+            print(
+                f"[rig] flash attempt {attempt}/{attempts} failed ({last}) — retrying",
+                flush=True,
+            )
+        raise SystemExit(f"hitl-flash failed after {attempts} attempts: {last}")
+
+    def _safe_release(self) -> None:
+        """Release the lease (and tear down a half-open forward) after a failed
+        __enter__, so a flake doesn't strand the reserved unit."""
+        try:
+            if self._forward_cm is not None:
+                try:
+                    self._forward_cm.__exit__(None, None, None)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._forward_cm = None
+        finally:
+            try:
+                self._res.release()
+            except Exception:  # noqa: BLE001
+                pass
 
     def __exit__(self, *exc: Any) -> None:
         try:
