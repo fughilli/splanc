@@ -145,7 +145,14 @@ class AppDriver:
             return snap
         while loop.time() < deadline:
             ev = await self.wait_event("state", timeout=deadline - loop.time())
-            if (ev.get("status") or {}).get("state") == "connected":
+            st = ev.get("status") or {}
+            print(
+                f"[state] t={loop.time()-deadline+timeout:5.1f}s state={st.get('state')!r} "
+                f"attempt={st.get('attempt')} url={st.get('url') or ''} "
+                f"trust={st.get('trustNeeded')}",
+                flush=True,
+            )
+            if st.get("state") == "connected":
                 return ev
         raise DriverError("never reached connected")
 

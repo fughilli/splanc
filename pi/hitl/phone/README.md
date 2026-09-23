@@ -135,6 +135,59 @@ a headless run) — it needs a hypervisor host to try, and may require Chrome
 auto-accept-Bluetooth flags or a thin Capacitor-Android wrapper. The peripheral + protocol (the
 hard, portable part) are done and CI-tested; the emulator boot + chooser is the station step.
 
+## Real-Android bench device prep (amd-rig `android-phone` unit)
+
+The physical real-phone unit is a **Samsung Galaxy A11 (SM-A115U)**, adb serial
+`R95N90G5WSB`, attached to **amd-rig** and handed out as the reservable `android-phone` unit
+(`reserve/catalog-phone.json`). The harness reaches it through amd-rig's **host adb server**
+(net-host, authorized once with the bench key at `/var/lib/hitl-phone/adb/adbkey`) — so
+`adb -s R95N90G5WSB …` works from a reservation or straight from an amd-rig root shell.
+
+**One-time setup (persisted on the device/host, never committed):** USB debugging on; the bench
+adb key accepted on the phone; the screen-lock PIN + Wi-Fi PSKs are supplied via env at runtime.
+After a reboot the phone sits at the FBE lock screen — unlock over adb with:
+
+```sh
+adb -s R95N90G5WSB shell input keyevent KEYCODE_WAKEUP
+adb -s R95N90G5WSB shell input swipe 360 1400 360 400          # reveal the PIN pad
+adb -s R95N90G5WSB shell input text "$PIN" && adb -s R95N90G5WSB shell input keyevent 66
+adb -s R95N90G5WSB shell 'dumpsys window | grep mDreamingLockscreen'   # == false once unlocked
+```
+
+**Debloat (2026-09-22).** Stock OneUI ships a lot of idle cruft — background push/telemetry/sync
+churn + RAM pressure on a 2 GB device, plus non-determinism (Play silently auto-updating Chrome
+mid-campaign). We stripped it to a lean, reproducible bench. Everything below is **per-user and
+reversible** — nothing touches `/system`:
+
+- **Method:** `pm uninstall --user 0 <pkg>` (remove for user 0; undo with
+  `pm install-existing --user 0 <pkg>`). For system-context services that respawn after that,
+  also `pm disable-user --user 0 <pkg>` (undo with `pm enable <pkg>`). A factory reset restores all.
+- **Removed (~61 pkgs, 298 → 237):** Samsung consumer apps (Internet/`sbrowser`, Notes, Galaxy
+  Store, Themes, Samsung Free, Social, Cloud, Smart Switch/View, Stickers, Weather/`daemonapp`,
+  dressroom, Calendar, Clock, Members, Device Care/`lool`); Google preloads (YouTube, Duo);
+  idle telemetry/scanners (`diagmonagent`, `sdhms`, `cmh`, Digital Wellbeing/`forest`, `rubin`,
+  Samsung Push Service/`spp.push`, billing, OTA/`wssyncmldm`); Google Assistant + hotword
+  (`googlequicksearchbox`); and — **this device has no SIM and never will** — the whole Samsung
+  telephony/IMS/VoLTE stack (dialer, incallui, telephonyui, imssettings, `sec.ims*`, `sec.epdg*`,
+  carrier apps, messaging).
+- **KEPT — do NOT remove:** Chrome, WebView, Bluetooth, Settings, the Samsung launcher, GMS/Play
+  Services, the keyboard (`honeyboard`) — and the **AOSP telephony CORE** (`com.android.phone`,
+  `com.android.server.telecom`, `com.android.providers.telephony`): uninstalling those triggers
+  `"Phone keeps stopping"` boot-loops. GMS must stay too (Chrome/WebView/SafetyNet need it).
+- **Play Store: frozen** (`pm disable-user --user 0 com.android.vending`), not removed — frees
+  ~125 MB and, more importantly, **pins the browser** so Chrome/WebView don't shift under a test
+  campaign. Update them by sideload instead:
+  `adb install -r chrome-<ver>-arm64.apk` / `android-system-webview-<ver>.apk` (Google-signed
+  APKs; verify with `adb shell dumpsys webviewupdate`). Thaw Play if ever needed with
+  `pm enable com.android.vending`, update, then re-freeze.
+
+Result: idle available RAM ~900 MB (was ~530 MB stock), no background telemetry/push. **On the
+floor:** the resident ~1 GB that remains is the OneUI + full-GMS _system_ layer (`system_server`,
+GMS ~286 MB, SystemUI, HALs, zygote) — not reachable by `pm uninstall`; a chunk of "used" is also
+reclaimable page cache, and ~190 MB of the "2 GB" is firmware-reserved carveouts the kernel never
+sees. Going below the ~1 GB floor needs root (freeze/strip GMS+Knox) or a minimal GSI reflash —
+out of scope for this bench.
+
 ## Journey format (`journeys/*.json`)
 
 Declarative, Maestro-inspired but over our semantic protocol (not DOM selectors):

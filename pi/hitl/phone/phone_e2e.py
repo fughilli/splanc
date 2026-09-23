@@ -154,8 +154,17 @@ async def run(args: argparse.Namespace, target) -> int:
             print("[phone] app ready — running journeys", flush=True)
 
             registry = load_journeys(_journeys_dir())
+            # host:port the app derives its cert-trust origin from (https://<device_host>/).
+            # For a real device this is the adb-reversed loopback the wss uses.
+            device_host = ""
+            if device_ws:
+                from urllib.parse import urlparse
+
+                u = urlparse(device_ws)
+                device_host = f"{u.hostname}:{u.port}" if u.port else (u.hostname or "")
             context = {
                 "device_ws": device_ws,
+                "device_host": device_host,
                 "ssid": args.wifi_ssid,
                 "password": args.wifi_pass,
                 "led_count": args.led_count,
@@ -165,7 +174,7 @@ async def run(args: argparse.Namespace, target) -> int:
                 journey = registry.get(name)
                 if journey is None:
                     raise SystemExit(f"no journey {name!r} in {_journeys_dir()}")
-                results[name] = await run_journey(drv, journey, registry, context)
+                results[name] = await run_journey(drv, journey, registry, context, target)
                 print(f"[phone] PASS {name}", flush=True)
         finally:
             await target.close()
