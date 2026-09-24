@@ -1,0 +1,8808 @@
+{
+  "schema": 1,
+  "board": "/Users/kevin/Documents/Codex/splanc-handoff-2026-09-10/splanc-mini-transfer/work/splanc/output/fresh-pnr-20260919/fresh-28-final/splanc_mini.fab.board.kicad_pcb",
+  "sha256": "81ed33e04e74336da39614733900f3a2e293d713f23717fb0a61642877f543d7",
+  "frame": "PCB lower-left, X right, Y towards rear, Z from PCB bottom",
+  "outline": {
+    "width_mm": 70.0,
+    "height_mm": 55.0,
+    "thickness_mm": 1.6
+  },
+  "native_origin": [
+    30.0,
+    85.0
+  ],
+  "mounts": [
+    {
+      "x": 4.0,
+      "y": 4.0,
+      "diameter_mm": 2.7
+    },
+    {
+      "x": 66.0,
+      "y": 4.0,
+      "diameter_mm": 2.7
+    },
+    {
+      "x": 4.0,
+      "y": 51.0,
+      "diameter_mm": 2.7
+    },
+    {
+      "x": 66.0,
+      "y": 51.0,
+      "diameter_mm": 2.7
+    }
+  ],
+  "components": [
+    {
+      "ref": "C50",
+      "value": "",
+      "address": "board.pd.cc_dec_1",
+      "position": [
+        24.25,
+        21.375
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            24.25,
+            20.955
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            24.25,
+            21.795
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C12",
+      "value": "",
+      "address": "board.converter.compensation_pole",
+      "position": [
+        38.625,
+        51.5
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            39.045,
+            51.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            38.205,
+            51.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C22",
+      "value": "",
+      "address": "board.converter.output_cap6._p",
+      "position": [
+        44.625,
+        32.75
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            44.625,
+            31.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            44.625,
+            33.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R15",
+      "value": "",
+      "address": "board.fb_bot._p",
+      "position": [
+        1.0,
+        24.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            1.0,
+            23.75
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            1.0,
+            25.25
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C17",
+      "value": "",
+      "address": "board.converter.output_cap1._p",
+      "position": [
+        33.5,
+        49.875
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            34.5,
+            49.875
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            32.5,
+            49.875
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C63",
+      "value": "",
+      "address": "board.pd.output_dec_2",
+      "position": [
+        24.75,
+        16.125
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            26.340000000000003,
+            16.125
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            23.159999999999997,
+            16.125
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "USB1",
+      "value": "",
+      "address": "board.usbc",
+      "position": [
+        14.0,
+        3.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            11.11,
+            4.810000000000002
+          ],
+          "size": [
+            0.65,
+            0.65
+          ],
+          "drill_mm": 0.65
+        },
+        {
+          "number": "",
+          "position": [
+            16.89,
+            4.810000000000002
+          ],
+          "size": [
+            0.65,
+            0.65
+          ],
+          "drill_mm": 0.65
+        },
+        {
+          "number": "1",
+          "position": [
+            9.68,
+            5.319999999999993
+          ],
+          "size": [
+            1.0,
+            2.1
+          ],
+          "drill_mm": 0.6
+        },
+        {
+          "number": "2",
+          "position": [
+            18.32,
+            5.319999999999993
+          ],
+          "size": [
+            1.0,
+            2.1
+          ],
+          "drill_mm": 0.6
+        },
+        {
+          "number": "3",
+          "position": [
+            18.32,
+            1.1400000000000006
+          ],
+          "size": [
+            1.0,
+            1.8
+          ],
+          "drill_mm": 0.6
+        },
+        {
+          "number": "4",
+          "position": [
+            9.68,
+            1.1400000000000006
+          ],
+          "size": [
+            1.0,
+            1.8
+          ],
+          "drill_mm": 0.6
+        },
+        {
+          "number": "A1B12",
+          "position": [
+            10.799999999999997,
+            5.909999999999997
+          ],
+          "size": [
+            0.6,
+            1.05
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A4B9",
+          "position": [
+            11.600000000000001,
+            5.909999999999997
+          ],
+          "size": [
+            0.6,
+            1.05
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A5",
+          "position": [
+            12.75,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A6",
+          "position": [
+            13.75,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A7",
+          "position": [
+            14.25,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A8",
+          "position": [
+            15.25,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B1A12",
+          "position": [
+            17.200000000000003,
+            5.909999999999997
+          ],
+          "size": [
+            0.6,
+            1.05
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B4A9",
+          "position": [
+            16.4,
+            5.909999999999997
+          ],
+          "size": [
+            0.6,
+            1.05
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B5",
+          "position": [
+            15.75,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B6",
+          "position": [
+            14.75,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B7",
+          "position": [
+            13.25,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B8",
+          "position": [
+            12.25,
+            5.859999999999999
+          ],
+          "size": [
+            0.3,
+            1.15
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R34",
+      "value": "",
+      "address": "board.status_led_r._p",
+      "position": [
+        26.0,
+        7.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            26.0,
+            6.569999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            26.0,
+            7.430000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U4",
+      "value": "",
+      "address": "board.compass",
+      "position": [
+        59.0,
+        48.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "A1",
+          "position": [
+            58.8,
+            48.2
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "A2",
+          "position": [
+            59.2,
+            48.2
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B1",
+          "position": [
+            58.8,
+            47.8
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "B2",
+          "position": [
+            59.2,
+            47.8
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C53",
+      "value": "",
+      "address": "board.pd.input_dec_0",
+      "position": [
+        9.375,
+        18.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            9.375,
+            17.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            9.375,
+            19.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U5",
+      "value": "",
+      "address": "board.converter.ic",
+      "position": [
+        39.0,
+        41.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.150000000000006,
+            42.79
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            37.099999999999994,
+            42.0
+          ],
+          "size": [
+            0.6,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            37.16,
+            41.5
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            37.16,
+            41.0
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            37.16,
+            40.5
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            37.099999999999994,
+            40.0
+          ],
+          "size": [
+            0.6,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            37.150000000000006,
+            39.21
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            37.870000000000005,
+            39.33
+          ],
+          "size": [
+            0.25,
+            0.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            38.379999999999995,
+            39.33
+          ],
+          "size": [
+            0.25,
+            0.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            38.870000000000005,
+            39.33
+          ],
+          "size": [
+            0.25,
+            0.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            39.599999999999994,
+            39.33
+          ],
+          "size": [
+            0.25,
+            0.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            40.099999999999994,
+            39.33
+          ],
+          "size": [
+            0.25,
+            0.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            40.849999999999994,
+            39.21
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            40.900000000000006,
+            40.0
+          ],
+          "size": [
+            0.6,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "15",
+          "position": [
+            40.84,
+            40.5
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "16",
+          "position": [
+            40.84,
+            41.0
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "17",
+          "position": [
+            40.84,
+            41.5
+          ],
+          "size": [
+            0.72,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "18",
+          "position": [
+            40.900000000000006,
+            42.0
+          ],
+          "size": [
+            0.6,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "19",
+          "position": [
+            40.849999999999994,
+            42.79
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "20",
+          "position": [
+            40.05,
+            42.64
+          ],
+          "size": [
+            0.25,
+            0.68
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "21",
+          "position": [
+            39.25,
+            42.68
+          ],
+          "size": [
+            0.25,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "22",
+          "position": [
+            38.75,
+            42.68
+          ],
+          "size": [
+            0.25,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "23",
+          "position": [
+            37.95,
+            42.64
+          ],
+          "size": [
+            0.25,
+            0.68
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "24",
+          "position": [
+            38.379999999999995,
+            41.0
+          ],
+          "size": [
+            0.38,
+            1.43
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "24",
+          "position": [
+            38.379999999999995,
+            41.0
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "25",
+          "position": [
+            39.0,
+            41.0
+          ],
+          "size": [
+            0.38,
+            1.43
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "26",
+          "position": [
+            39.620000000000005,
+            41.0
+          ],
+          "size": [
+            0.38,
+            1.43
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U3",
+      "value": "",
+      "address": "board.buck",
+      "position": [
+        4.0,
+        24.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            5.299999999999997,
+            23.549999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            5.299999999999997,
+            24.5
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            5.299999999999997,
+            25.450000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            2.700000000000003,
+            25.450000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            2.700000000000003,
+            23.549999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R19",
+      "value": "",
+      "address": "board.led0.load_ilim._p",
+      "position": [
+        57.0,
+        22.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            56.56999999999999,
+            22.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            57.43000000000001,
+            22.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "value": "",
+      "address": "board.bmp_io_dec._p",
+      "position": [
+        53.25,
+        47.625
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            53.25,
+            48.045
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.25,
+            47.205
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C49",
+      "value": "",
+      "address": "board.pd.cc_bias_dec._p",
+      "position": [
+        20.0,
+        7.625
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            20.0,
+            6.924999999999997
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            20.0,
+            8.325000000000003
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C59",
+      "value": "",
+      "address": "board.pd.ldo3_dec._p",
+      "position": [
+        16.625,
+        18.75
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            16.625,
+            17.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            16.625,
+            19.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C4",
+      "value": "",
+      "address": "board.buck_in._p",
+      "position": [
+        4.0,
+        21.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            3.0,
+            21.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            5.0,
+            21.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R24",
+      "value": "",
+      "address": "board.led1.load_ilim._p",
+      "position": [
+        57.0,
+        33.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            56.56999999999999,
+            33.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            57.43000000000001,
+            33.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C60",
+      "value": "",
+      "address": "board.pd.logic_dec._p",
+      "position": [
+        18.0,
+        10.375
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            19.0,
+            10.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            17.0,
+            10.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C62",
+      "value": "",
+      "address": "board.pd.output_dec_1",
+      "position": [
+        28.5,
+        19.625
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            26.909999999999997,
+            19.625
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            30.090000000000003,
+            19.625
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R25",
+      "value": "",
+      "address": "board.led1.shunt._p",
+      "position": [
+        51.5,
+        31.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            50.5,
+            31.0
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            52.5,
+            31.0
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C58",
+      "value": "",
+      "address": "board.pd.ldo1_dec._p",
+      "position": [
+        19.375,
+        18.75
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            19.375,
+            19.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            19.375,
+            17.75
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R32",
+      "value": "",
+      "address": "board.scl_pu._p",
+      "position": [
+        8.25,
+        15.125
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            8.25,
+            14.694999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            8.25,
+            15.555000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "SW4",
+      "value": "",
+      "address": "board.btn_user2",
+      "position": [
+        59.0,
+        3.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            56.879999999999995,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "",
+          "position": [
+            61.120000000000005,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "1",
+          "position": [
+            57.775000000000006,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            59.0,
+            4.480000000000004
+          ],
+          "size": [
+            0.6,
+            1.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            60.224999999999994,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            60.849999999999994,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            57.150000000000006,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R4",
+      "value": "",
+      "address": "board.converter.current_limit._p",
+      "position": [
+        28.0,
+        42.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            28.0,
+            42.805
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            28.0,
+            41.945
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C25",
+      "value": "",
+      "address": "board.converter.vcc_dec._p",
+      "position": [
+        41.25,
+        44.625
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            40.25,
+            44.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            42.25,
+            44.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "Q2",
+      "value": "",
+      "address": "board.converter.low_fet",
+      "position": [
+        50.875,
+        41.625
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            52.785,
+            44.595
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            51.504999999999995,
+            44.595
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            50.245000000000005,
+            44.595
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            48.974999999999994,
+            44.595
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            48.974999999999994,
+            38.655
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            50.245000000000005,
+            38.655
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            51.504999999999995,
+            38.655
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            52.785,
+            38.655
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            50.875,
+            40.835
+          ],
+          "size": [
+            4.2,
+            3.58
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R7",
+      "value": "",
+      "address": "board.converter.fb_bottom._p",
+      "position": [
+        39.625,
+        37.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            39.19499999999999,
+            37.0
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            40.05500000000001,
+            37.0
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U14",
+      "value": "",
+      "address": "board.mic_sd_shift",
+      "position": [
+        55.0,
+        10.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            56.349999999999994,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            56.349999999999994,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            56.349999999999994,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            53.650000000000006,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            53.650000000000006,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            53.650000000000006,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C23",
+      "value": "",
+      "address": "board.converter.output_cap7._p",
+      "position": [
+        35.25,
+        52.375
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            36.25,
+            52.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            34.25,
+            52.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C26",
+      "value": "",
+      "address": "board.en_cap._p",
+      "position": [
+        42.875,
+        26.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            42.455,
+            26.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.295,
+            26.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C64",
+      "value": "",
+      "address": "board.pd.output_dec_3",
+      "position": [
+        12.625,
+        21.25
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            12.625,
+            22.840000000000003
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            12.625,
+            19.659999999999997
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C32",
+      "value": "",
+      "address": "board.led0.shifter_dec._p",
+      "position": [
+        60.0,
+        15.700000000000003
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            60.0,
+            15.280000000000001
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            60.0,
+            16.120000000000005
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "CN2",
+      "value": "",
+      "address": "board.led1.conn",
+      "position": [
+        64.0,
+        31.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            64.0,
+            33.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        },
+        {
+          "number": "2",
+          "position": [
+            64.0,
+            31.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        },
+        {
+          "number": "3",
+          "position": [
+            64.0,
+            29.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        }
+      ]
+    },
+    {
+      "ref": "R16",
+      "value": "",
+      "address": "board.fb_top._p",
+      "position": [
+        1.0,
+        21.75
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            1.0,
+            22.18
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            1.0,
+            21.32
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U7",
+      "value": "",
+      "address": "board.led0.ina",
+      "position": [
+        51.0,
+        16.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            53.11,
+            15.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.11,
+            15.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            53.11,
+            16.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            53.11,
+            16.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            53.11,
+            17.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            48.89,
+            17.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            48.89,
+            16.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            48.89,
+            16.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            48.89,
+            15.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            48.89,
+            15.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C21",
+      "value": "",
+      "address": "board.converter.output_cap5._p",
+      "position": [
+        33.375,
+        43.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            33.375,
+            42.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            33.375,
+            44.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U17",
+      "value": "",
+      "address": "board.mpu",
+      "position": [
+        40.0,
+        19.0
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            40.75,
+            20.25
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            40.25,
+            20.25
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            39.75,
+            20.25
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            39.25,
+            20.25
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            39.0,
+            19.5
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            39.0,
+            19.0
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            39.0,
+            18.5
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            39.25,
+            17.75
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            39.75,
+            17.75
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            40.25,
+            17.75
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            40.75,
+            17.75
+          ],
+          "size": [
+            0.65,
+            0.25
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            41.0,
+            18.5
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            41.0,
+            19.0
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            41.0,
+            19.5
+          ],
+          "size": [
+            0.25,
+            0.65
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R36",
+      "value": "",
+      "address": "board.u2_pullup._p",
+      "position": [
+        38.625,
+        6.875
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.875,
+            6.875
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            39.375,
+            6.875
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R11",
+      "value": "",
+      "address": "board.converter.mode",
+      "position": [
+        42.5,
+        34.125
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            42.5,
+            34.555
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            42.5,
+            33.695
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C35",
+      "value": "",
+      "address": "board.led1.shifter_a_dec._p",
+      "position": [
+        54.400000000000006,
+        30.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            54.400000000000006,
+            30.08
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            54.400000000000006,
+            30.92
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R27",
+      "value": "",
+      "address": "board.mic_data_pd._p",
+      "position": [
+        59.25,
+        9.625
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            59.25,
+            10.055000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            59.25,
+            9.194999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C51",
+      "value": "",
+      "address": "board.pd.cc_dec_2",
+      "position": [
+        27.125,
+        12.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            26.705,
+            12.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            27.545,
+            12.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R26",
+      "value": "",
+      "address": "board.led1.term._p",
+      "position": [
+        63.0,
+        25.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            62.56999999999999,
+            25.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            63.43000000000001,
+            25.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R28",
+      "value": "",
+      "address": "board.pd.cc_fault_pullup._p",
+      "position": [
+        21.25,
+        10.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            21.25,
+            10.805000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            21.25,
+            9.944999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R22",
+      "value": "",
+      "address": "board.led1.en_pd._p",
+      "position": [
+        47.0,
+        33.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            46.56999999999999,
+            33.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.43000000000001,
+            33.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C56",
+      "value": "",
+      "address": "board.pd.input_dec_3",
+      "position": [
+        29.75,
+        14.375
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            28.75,
+            14.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            30.75,
+            14.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U2",
+      "value": "",
+      "address": "board.buck_l._p",
+      "position": [
+        4.0,
+        31.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            4.0,
+            28.08
+          ],
+          "size": [
+            2.42,
+            3.43
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            4.0,
+            33.92
+          ],
+          "size": [
+            2.42,
+            3.43
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C18",
+      "value": "",
+      "address": "board.converter.output_cap2._p",
+      "position": [
+        45.25,
+        42.375
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            44.25,
+            42.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            46.25,
+            42.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C36",
+      "value": "",
+      "address": "board.led1.shifter_dec._p",
+      "position": [
+        60.0,
+        26.700000000000003
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            60.0,
+            26.28
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            60.0,
+            27.119999999999997
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "L2",
+      "value": "",
+      "address": "board.converter.inductor",
+      "position": [
+        35.0,
+        31.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            30.25,
+            31.0
+          ],
+          "size": [
+            3.5,
+            3.5
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            39.75,
+            31.0
+          ],
+          "size": [
+            3.5,
+            3.5
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R18",
+      "value": "",
+      "address": "board.led0.fault_pu._p",
+      "position": [
+        48.0,
+        20.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            48.0,
+            19.25
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            48.0,
+            20.75
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C54",
+      "value": "",
+      "address": "board.pd.input_dec_1",
+      "position": [
+        8.75,
+        12.625
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            9.75,
+            12.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            7.75,
+            12.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C16",
+      "value": "",
+      "address": "board.converter.output_cap0._p",
+      "position": [
+        34.25,
+        46.875
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            35.25,
+            46.875
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            33.25,
+            46.875
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "SW1",
+      "value": "",
+      "address": "board.btn_boot",
+      "position": [
+        42.0,
+        3.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            39.879999999999995,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "",
+          "position": [
+            44.120000000000005,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "1",
+          "position": [
+            40.775000000000006,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            42.0,
+            4.480000000000004
+          ],
+          "size": [
+            0.6,
+            1.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            43.224999999999994,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            43.849999999999994,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            40.150000000000006,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "LED1",
+      "value": "",
+      "address": "board.power_led",
+      "position": [
+        22.0,
+        4.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            21.25,
+            4.0
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            22.75,
+            4.0
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U12",
+      "value": "",
+      "address": "board.led1.shifter",
+      "position": [
+        57.0,
+        27.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            55.650000000000006,
+            27.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            55.650000000000006,
+            27.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            55.650000000000006,
+            26.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            58.349999999999994,
+            26.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            58.349999999999994,
+            27.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            58.349999999999994,
+            27.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C38",
+      "value": "",
+      "address": "board.mic_sck_shift_a_dec._p",
+      "position": [
+        41.0,
+        13.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            41.0,
+            13.795000000000002
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            41.0,
+            12.954999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C28",
+      "value": "",
+      "address": "board.esp_dec._p",
+      "position": [
+        32.25,
+        52.125
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            32.25,
+            52.545
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            32.25,
+            51.705
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "value": "",
+      "address": "board.boot_pullup._p",
+      "position": [
+        44.125,
+        28.125
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            44.875,
+            28.125
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.375,
+            28.125
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C13",
+      "value": "",
+      "address": "board.converter.input_cap0",
+      "position": [
+        30.125,
+        42.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            30.125,
+            40.91
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            30.125,
+            44.09
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "MIC1",
+      "value": "",
+      "address": "board.mic",
+      "position": [
+        63.0,
+        10.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            63.67,
+            9.989999999999995
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.5
+        },
+        {
+          "number": "1",
+          "position": [
+            61.59,
+            9.099999999999994
+          ],
+          "size": [
+            0.6,
+            0.53
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            62.41,
+            9.099999999999994
+          ],
+          "size": [
+            0.6,
+            0.53
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            63.22,
+            9.540000000000006
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            63.230000000000004,
+            10.450000000000003
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            64.1,
+            9.530000000000001
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            64.11,
+            10.450000000000003
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            64.41,
+            8.959999999999994
+          ],
+          "size": [
+            0.35,
+            0.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            64.39,
+            11.049999999999997
+          ],
+          "size": [
+            0.35,
+            0.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            62.41,
+            10.89
+          ],
+          "size": [
+            0.6,
+            0.53
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            61.59,
+            10.89
+          ],
+          "size": [
+            0.6,
+            0.53
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            61.59,
+            10.0
+          ],
+          "size": [
+            0.6,
+            0.53
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "SW2",
+      "value": "",
+      "address": "board.btn_reset",
+      "position": [
+        34.0,
+        3.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            31.880000000000003,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "",
+          "position": [
+            36.120000000000005,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "1",
+          "position": [
+            32.775,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            34.0,
+            4.480000000000004
+          ],
+          "size": [
+            0.6,
+            1.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            35.224999999999994,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            35.849999999999994,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            32.15,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C10",
+      "value": "",
+      "address": "board.converter.compensation_a._p",
+      "position": [
+        43.125,
+        29.75
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            42.705,
+            29.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.545,
+            29.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C8",
+      "value": "",
+      "address": "board.converter.bootstrap1._p",
+      "position": [
+        36.25,
+        44.625
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            36.25,
+            45.045
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            36.25,
+            44.205
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C40",
+      "value": "",
+      "address": "board.mic_sd_shift_a_dec._p",
+      "position": [
+        53.625,
+        13.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            54.045,
+            13.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.205,
+            13.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "MH1",
+      "value": "PNR mounting hole",
+      "address": "",
+      "position": [
+        4.0,
+        4.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            4.0,
+            4.0
+          ],
+          "size": [
+            2.7,
+            2.7
+          ],
+          "drill_mm": 2.7
+        }
+      ]
+    },
+    {
+      "ref": "R35",
+      "value": "",
+      "address": "board.u1_pullup._p",
+      "position": [
+        46.625,
+        24.125
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            47.375,
+            24.125
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            45.875,
+            24.125
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R23",
+      "value": "",
+      "address": "board.led1.fault_pu._p",
+      "position": [
+        48.0,
+        31.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            48.0,
+            30.25
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            48.0,
+            31.75
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C29",
+      "value": "",
+      "address": "board.led0.chan_bulk._p",
+      "position": [
+        52.0,
+        23.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            51.0,
+            23.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.0,
+            23.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U10",
+      "value": "",
+      "address": "board.led1.ina",
+      "position": [
+        51.0,
+        27.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            53.11,
+            26.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.11,
+            26.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            53.11,
+            27.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            53.11,
+            27.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            53.11,
+            28.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            48.89,
+            28.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            48.89,
+            27.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            48.89,
+            27.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            48.89,
+            26.5
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            48.89,
+            26.0
+          ],
+          "size": [
+            0.28,
+            1.62
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C45",
+      "value": "",
+      "address": "board.mic_ws_shift_b_dec._p",
+      "position": [
+        51.75,
+        12.625
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            51.75,
+            12.204999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            51.75,
+            13.045000000000002
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U15",
+      "value": "",
+      "address": "board.mic_supply",
+      "position": [
+        37.0,
+        10.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            38.3,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            38.3,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            38.3,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            35.7,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            35.7,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R17",
+      "value": "",
+      "address": "board.led0.en_pd._p",
+      "position": [
+        47.0,
+        22.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            46.56999999999999,
+            22.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.43000000000001,
+            22.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U18",
+      "value": "",
+      "address": "board.pd.cc_protection",
+      "position": [
+        24.0,
+        10.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            23.200000000000003,
+            9.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            23.6,
+            9.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            24.0,
+            9.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            24.4,
+            9.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            24.799999999999997,
+            9.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            25.5,
+            9.700000000000003
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            25.5,
+            10.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            25.5,
+            10.5
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            25.5,
+            10.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            25.5,
+            11.299999999999997
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            24.799999999999997,
+            12.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            24.4,
+            12.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            24.0,
+            12.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            23.6,
+            12.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "15",
+          "position": [
+            23.200000000000003,
+            12.0
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "16",
+          "position": [
+            22.5,
+            11.299999999999997
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "17",
+          "position": [
+            22.5,
+            10.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "18",
+          "position": [
+            22.5,
+            10.5
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "19",
+          "position": [
+            22.5,
+            10.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "20",
+          "position": [
+            22.5,
+            9.700000000000003
+          ],
+          "size": [
+            0.2,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "21",
+          "position": [
+            24.0,
+            10.5
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "21",
+          "position": [
+            24.0,
+            10.5
+          ],
+          "size": [
+            1.7,
+            1.7
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R31",
+      "value": "",
+      "address": "board.power_led_r._p",
+      "position": [
+        22.0,
+        7.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            22.0,
+            6.569999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            22.0,
+            7.430000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C55",
+      "value": "",
+      "address": "board.pd.input_dec_2",
+      "position": [
+        22.375,
+        20.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            22.375,
+            19.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            22.375,
+            21.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R33",
+      "value": "",
+      "address": "board.sda_pu._p",
+      "position": [
+        60.75,
+        13.375
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            60.75,
+            12.944999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            60.75,
+            13.805000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U6",
+      "value": "",
+      "address": "board.esp",
+      "position": [
+        17.25,
+        40.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            8.5,
+            48.25
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            8.5,
+            46.99
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            8.5,
+            45.72
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            8.5,
+            44.45
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            8.5,
+            43.18
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            8.5,
+            41.9
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            8.5,
+            40.63
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            8.5,
+            39.37
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            8.5,
+            38.1
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            8.5,
+            36.83
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            8.5,
+            35.56
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            8.5,
+            34.29
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            8.5,
+            33.01
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            8.5,
+            31.75
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "15",
+          "position": [
+            26.0,
+            31.75
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "16",
+          "position": [
+            26.0,
+            33.01
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "17",
+          "position": [
+            26.0,
+            34.29
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "18",
+          "position": [
+            26.0,
+            35.56
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "19",
+          "position": [
+            26.0,
+            36.83
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "20",
+          "position": [
+            26.0,
+            38.1
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "21",
+          "position": [
+            26.0,
+            39.37
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "22",
+          "position": [
+            26.0,
+            40.63
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "23",
+          "position": [
+            26.0,
+            41.9
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "24",
+          "position": [
+            26.0,
+            43.18
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "25",
+          "position": [
+            26.0,
+            44.45
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "26",
+          "position": [
+            26.0,
+            45.72
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "27",
+          "position": [
+            26.0,
+            46.99
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "28",
+          "position": [
+            26.0,
+            48.25
+          ],
+          "size": [
+            1.5,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "29",
+          "position": [
+            14.5,
+            43.78
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "30",
+          "position": [
+            15.75,
+            43.78
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "31",
+          "position": [
+            16.990000000000002,
+            43.78
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "32",
+          "position": [
+            16.990000000000002,
+            42.53
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "33",
+          "position": [
+            15.75,
+            42.53
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "34",
+          "position": [
+            14.5,
+            42.53
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "35",
+          "position": [
+            14.5,
+            41.28
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "36",
+          "position": [
+            15.75,
+            41.28
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "37",
+          "position": [
+            14.5,
+            43.16
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            14.5,
+            41.91
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            15.119999999999997,
+            43.78
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            15.119999999999997,
+            42.53
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            15.119999999999997,
+            41.28
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            15.75,
+            43.16
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            15.75,
+            41.91
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.369999999999997,
+            43.78
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.369999999999997,
+            42.53
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.369999999999997,
+            41.28
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.990000000000002,
+            43.16
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.990000000000002,
+            41.91
+          ],
+          "size": [
+            0.5,
+            0.5
+          ],
+          "drill_mm": 0.3
+        },
+        {
+          "number": "37",
+          "position": [
+            16.990000000000002,
+            41.28
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R13",
+      "value": "",
+      "address": "board.converter.shunt._p",
+      "position": [
+        45.25,
+        36.625
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            43.769999999999996,
+            36.625
+          ],
+          "size": [
+            1.21,
+            1.7
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            46.730000000000004,
+            36.625
+          ],
+          "size": [
+            1.21,
+            1.7
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C41",
+      "value": "",
+      "address": "board.mic_sd_shift_b_dec._p",
+      "position": [
+        52.0,
+        8.875
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            52.0,
+            9.295000000000002
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            52.0,
+            8.454999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C57",
+      "value": "",
+      "address": "board.pd.input_dec_4",
+      "position": [
+        6.375,
+        16.0
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            6.375,
+            17.0
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            6.375,
+            15.0
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "value": "",
+      "address": "board.pd.vbus_tvs",
+      "position": [
+        28.125,
+        9.625
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            28.775,
+            10.605000000000004
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            28.125,
+            10.605000000000004
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            27.475,
+            10.605000000000004
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            27.475,
+            8.644999999999996
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            28.125,
+            8.644999999999996
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            28.775,
+            8.644999999999996
+          ],
+          "size": [
+            0.4,
+            0.45
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            28.125,
+            9.625
+          ],
+          "size": [
+            1.0,
+            1.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C14",
+      "value": "",
+      "address": "board.converter.input_cap1",
+      "position": [
+        29.875,
+        48.75
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            29.875,
+            47.16
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            29.875,
+            50.34
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "value": "",
+      "address": "board.a_dec._p",
+      "position": [
+        10.125,
+        21.75
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            10.545000000000002,
+            21.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            9.704999999999998,
+            21.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "CN1",
+      "value": "",
+      "address": "board.led0.conn",
+      "position": [
+        64.0,
+        20.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            64.0,
+            22.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        },
+        {
+          "number": "2",
+          "position": [
+            64.0,
+            20.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        },
+        {
+          "number": "3",
+          "position": [
+            64.0,
+            18.0
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.999998
+        }
+      ]
+    },
+    {
+      "ref": "R5",
+      "value": "",
+      "address": "board.converter.enable_bottom._p",
+      "position": [
+        46.625,
+        45.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            46.19499999999999,
+            45.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.05500000000001,
+            45.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R20",
+      "value": "",
+      "address": "board.led0.shunt._p",
+      "position": [
+        51.5,
+        20.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            50.5,
+            20.0
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            52.5,
+            20.0
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C46",
+      "value": "",
+      "address": "board.mpu_dec._p",
+      "position": [
+        37.0,
+        20.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.0,
+            20.795
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            37.0,
+            19.955
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U11",
+      "value": "",
+      "address": "board.led1.load_sw",
+      "position": [
+        57.0,
+        31.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            58.03,
+            30.35
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            58.03,
+            31.0
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            58.03,
+            31.65
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            55.97,
+            31.65
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            55.97,
+            31.0
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            55.97,
+            30.35
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            57.0,
+            31.0
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "7",
+          "position": [
+            57.0,
+            31.0
+          ],
+          "size": [
+            1.0,
+            1.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C48",
+      "value": "",
+      "address": "board.mpu_reservoir._p",
+      "position": [
+        40.75,
+        22.875
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            40.75,
+            23.575000000000003
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            40.75,
+            22.174999999999997
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C19",
+      "value": "",
+      "address": "board.converter.output_cap3._p",
+      "position": [
+        38.0,
+        49.625
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.0,
+            49.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            39.0,
+            49.625
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R14",
+      "value": "",
+      "address": "board.en_pullup._p",
+      "position": [
+        48.875,
+        52.375
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            49.625,
+            52.375
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            48.125,
+            52.375
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R29",
+      "value": "",
+      "address": "board.pd.current_bottom._p",
+      "position": [
+        15.0,
+        10.125
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            15.0,
+            9.694999999999993
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            15.0,
+            10.555000000000007
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C5",
+      "value": "",
+      "address": "board.buck_out._p",
+      "position": [
+        4.0,
+        37.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            5.0,
+            37.0
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            3.0,
+            37.0
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C39",
+      "value": "",
+      "address": "board.mic_sck_shift_b_dec._p",
+      "position": [
+        43.0,
+        13.375
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            43.0,
+            12.954999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.0,
+            13.795000000000002
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C6",
+      "value": "",
+      "address": "board.compass_dec._p",
+      "position": [
+        55.25,
+        48.125
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            55.25,
+            48.545
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            55.25,
+            47.705
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R30",
+      "value": "",
+      "address": "board.pd.current_top._p",
+      "position": [
+        13.125,
+        10.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            12.695,
+            10.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            13.555,
+            10.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R6",
+      "value": "",
+      "address": "board.converter.enable_top._p",
+      "position": [
+        28.0,
+        40.125
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            28.0,
+            39.695
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            28.0,
+            40.555
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C52",
+      "value": "",
+      "address": "board.pd.cc_supply_dec._p",
+      "position": [
+        15.375,
+        21.75
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            15.795000000000002,
+            21.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            14.954999999999998,
+            21.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U8",
+      "value": "",
+      "address": "board.led0.load_sw",
+      "position": [
+        57.0,
+        20.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            58.03,
+            19.349999999999994
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            58.03,
+            20.0
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            58.03,
+            20.650000000000006
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            55.97,
+            20.650000000000006
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            55.97,
+            20.0
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            55.97,
+            19.349999999999994
+          ],
+          "size": [
+            0.36,
+            0.61
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            57.0,
+            20.0
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "7",
+          "position": [
+            57.0,
+            20.0
+          ],
+          "size": [
+            1.0,
+            1.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C47",
+      "value": "",
+      "address": "board.mpu_io_dec._p",
+      "position": [
+        35.125,
+        19.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            35.545,
+            19.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            34.705,
+            19.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C34",
+      "value": "",
+      "address": "board.led1.ina_dec._p",
+      "position": [
+        47.0,
+        27.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            47.0,
+            26.58
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.0,
+            27.42
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U19",
+      "value": "",
+      "address": "board.pd.ctrl",
+      "position": [
+        18.0,
+        14.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            15.100000000000001,
+            15.0
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            15.100000000000001,
+            14.599999999999994
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            15.100000000000001,
+            14.200000000000003
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            15.100000000000001,
+            13.799999999999997
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            15.100000000000001,
+            13.400000000000006
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            15.100000000000001,
+            13.0
+          ],
+          "size": [
+            0.6,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            15.600000000000001,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            16.0,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            16.4,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            16.799999999999997,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            17.200000000000003,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            17.6,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            18.0,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            18.4,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "15",
+          "position": [
+            18.799999999999997,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "16",
+          "position": [
+            19.200000000000003,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "17",
+          "position": [
+            19.6,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "18",
+          "position": [
+            20.0,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "19",
+          "position": [
+            20.4,
+            12.099999999999994
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "20",
+          "position": [
+            20.9,
+            12.879999999999995
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "21",
+          "position": [
+            20.9,
+            13.319999999999993
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "22",
+          "position": [
+            20.78,
+            13.329999999999998
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "22",
+          "position": [
+            20.9,
+            13.780000000000001
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "23",
+          "position": [
+            20.9,
+            14.219999999999999
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "24",
+          "position": [
+            20.9,
+            14.680000000000007
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "25",
+          "position": [
+            20.78,
+            14.680000000000007
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "25",
+          "position": [
+            20.9,
+            15.120000000000005
+          ],
+          "size": [
+            0.6,
+            0.22
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "26",
+          "position": [
+            20.4,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "27",
+          "position": [
+            20.0,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "28",
+          "position": [
+            19.6,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "29",
+          "position": [
+            19.200000000000003,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "30",
+          "position": [
+            18.799999999999997,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "31",
+          "position": [
+            18.4,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "32",
+          "position": [
+            18.0,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "33",
+          "position": [
+            17.6,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "33",
+          "position": [
+            17.799999999999997,
+            15.780000000000001
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "34",
+          "position": [
+            17.200000000000003,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "35",
+          "position": [
+            16.799999999999997,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "35",
+          "position": [
+            17.0,
+            15.780000000000001
+          ],
+          "size": [
+            0.01,
+            0.01
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "36",
+          "position": [
+            16.4,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "37",
+          "position": [
+            16.0,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "38",
+          "position": [
+            15.600000000000001,
+            15.900000000000006
+          ],
+          "size": [
+            0.2,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "39",
+          "position": [
+            16.42,
+            14.0
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "39",
+          "position": [
+            17.04,
+            14.620000000000005
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "39",
+          "position": [
+            17.04,
+            14.0
+          ],
+          "size": [
+            2.65,
+            2.65
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "39",
+          "position": [
+            17.04,
+            13.379999999999995
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "39",
+          "position": [
+            17.659999999999997,
+            14.0
+          ],
+          "size": [
+            0.45,
+            0.45
+          ],
+          "drill_mm": 0.2
+        },
+        {
+          "number": "40",
+          "position": [
+            19.560000000000002,
+            14.0
+          ],
+          "size": [
+            1.53,
+            2.65
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R9",
+      "value": "",
+      "address": "board.converter.frequency1._p",
+      "position": [
+        45.125,
+        38.75
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            44.69499999999999,
+            38.75
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            45.55500000000001,
+            38.75
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C20",
+      "value": "",
+      "address": "board.converter.output_cap4._p",
+      "position": [
+        29.25,
+        37.375
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            30.25,
+            37.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            28.25,
+            37.375
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R8",
+      "value": "",
+      "address": "board.converter.fb_top._p",
+      "position": [
+        43.125,
+        40.25
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            42.69499999999999,
+            40.25
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.55500000000001,
+            40.25
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "Q1",
+      "value": "",
+      "address": "board.converter.high_fet",
+      "position": [
+        43.375,
+        50.5
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            45.285,
+            53.47
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            44.004999999999995,
+            53.47
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            42.745000000000005,
+            53.47
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            41.474999999999994,
+            53.47
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            41.474999999999994,
+            47.53
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            42.745000000000005,
+            47.53
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            44.004999999999995,
+            47.53
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            45.285,
+            47.53
+          ],
+          "size": [
+            0.57,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            43.375,
+            49.71
+          ],
+          "size": [
+            4.2,
+            3.58
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "value": "",
+      "address": "board.converter.compensation_r._p",
+      "position": [
+        32.75,
+        39.625
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            32.75,
+            40.055
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            32.75,
+            39.195
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "value": "",
+      "address": "board.bmp_dec._p",
+      "position": [
+        48.75,
+        50.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            48.75,
+            50.795
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            48.75,
+            49.955
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C11",
+      "value": "",
+      "address": "board.converter.compensation_b._p",
+      "position": [
+        39.125,
+        46.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            38.705,
+            46.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            39.545,
+            46.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "MH2",
+      "value": "PNR mounting hole",
+      "address": "",
+      "position": [
+        66.0,
+        4.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            66.0,
+            4.0
+          ],
+          "size": [
+            2.7,
+            2.7
+          ],
+          "drill_mm": 2.7
+        }
+      ]
+    },
+    {
+      "ref": "R21",
+      "value": "",
+      "address": "board.led0.term._p",
+      "position": [
+        63.0,
+        14.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            62.56999999999999,
+            14.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            63.43000000000001,
+            14.5
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U9",
+      "value": "",
+      "address": "board.led0.shifter",
+      "position": [
+        57.0,
+        16.0
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            55.650000000000006,
+            16.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            55.650000000000006,
+            16.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            55.650000000000006,
+            15.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            58.349999999999994,
+            15.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            58.349999999999994,
+            16.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            58.349999999999994,
+            16.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U16",
+      "value": "",
+      "address": "board.mic_ws_shift",
+      "position": [
+        49.0,
+        10.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            50.349999999999994,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            50.349999999999994,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            50.349999999999994,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            47.650000000000006,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            47.650000000000006,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            47.650000000000006,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C9",
+      "value": "",
+      "address": "board.converter.bootstrap2._p",
+      "position": [
+        36.875,
+        37.5
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.295,
+            37.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            36.455,
+            37.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C61",
+      "value": "",
+      "address": "board.pd.output_dec_0",
+      "position": [
+        12.5,
+        15.75
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            12.5,
+            14.159999999999997
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            12.5,
+            17.340000000000003
+          ],
+          "size": [
+            1.49,
+            1.73
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R10",
+      "value": "",
+      "address": "board.converter.frequency2._p",
+      "position": [
+        37.25,
+        46.875
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            37.25,
+            46.445
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            37.25,
+            47.305
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C24",
+      "value": "",
+      "address": "board.converter.output_hf._p",
+      "position": [
+        41.75,
+        37.375
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            41.75,
+            37.795
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            41.75,
+            36.955
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "MH4",
+      "value": "PNR mounting hole",
+      "address": "",
+      "position": [
+        4.0,
+        51.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            4.0,
+            51.0
+          ],
+          "size": [
+            2.7,
+            2.7
+          ],
+          "drill_mm": 2.7
+        }
+      ]
+    },
+    {
+      "ref": "C27",
+      "value": "",
+      "address": "board.esp_bulk._p",
+      "position": [
+        46.625,
+        5.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            45.925,
+            5.0
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.325,
+            5.0
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R37",
+      "value": "",
+      "address": "board.download_pullup._p",
+      "position": [
+        27.875,
+        24.125
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            27.875,
+            23.375
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            27.875,
+            24.875
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C42",
+      "value": "",
+      "address": "board.mic_supply_in._p",
+      "position": [
+        37.125,
+        13.75
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            36.705,
+            13.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            37.545,
+            13.75
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C15",
+      "value": "",
+      "address": "board.converter.input_hf._p",
+      "position": [
+        34.5,
+        39.125
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            34.5,
+            38.425
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            34.5,
+            39.825
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "SW3",
+      "value": "",
+      "address": "board.btn_user1",
+      "position": [
+        51.0,
+        3.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            48.879999999999995,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "",
+          "position": [
+            53.120000000000005,
+            3.569999999999993
+          ],
+          "size": [
+            0.9,
+            0.9
+          ],
+          "drill_mm": 0.9
+        },
+        {
+          "number": "1",
+          "position": [
+            49.775000000000006,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            51.0,
+            4.480000000000004
+          ],
+          "size": [
+            0.6,
+            1.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            52.224999999999994,
+            4.480000000000004
+          ],
+          "size": [
+            0.2,
+            0.2
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            52.849999999999994,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            49.150000000000006,
+            2.489999999999995
+          ],
+          "size": [
+            1.3,
+            0.84
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U13",
+      "value": "",
+      "address": "board.mic_sck_shift",
+      "position": [
+        43.0,
+        10.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            44.349999999999994,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            44.349999999999994,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            44.349999999999994,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            41.650000000000006,
+            10.950000000000003
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            41.650000000000006,
+            10.0
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            41.650000000000006,
+            9.049999999999997
+          ],
+          "size": [
+            1.1,
+            0.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C33",
+      "value": "",
+      "address": "board.led1.chan_bulk._p",
+      "position": [
+        52.0,
+        34.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            51.0,
+            34.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            53.0,
+            34.5
+          ],
+          "size": [
+            1.41,
+            1.35
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "U1",
+      "value": "",
+      "address": "board.bmp",
+      "position": [
+        51.0,
+        48.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            50.22,
+            48.25
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            50.22,
+            47.75
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            50.5,
+            47.22
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            51.0,
+            47.22
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            51.5,
+            47.22
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            51.78,
+            47.75
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            51.78,
+            48.25
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            51.5,
+            48.78
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            51.0,
+            48.78
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            50.5,
+            48.78
+          ],
+          "size": [
+            0.3,
+            0.3
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C43",
+      "value": "",
+      "address": "board.mic_supply_out._p",
+      "position": [
+        40.25,
+        8.875
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            40.25,
+            9.295000000000002
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            40.25,
+            8.454999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C44",
+      "value": "",
+      "address": "board.mic_ws_shift_a_dec._p",
+      "position": [
+        46.375,
+        7.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            45.955,
+            7.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            46.795,
+            7.0
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "value": "",
+      "address": "board.bmp_supply_r._p",
+      "position": [
+        48.0,
+        48.125
+      ],
+      "rotation": -90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            48.0,
+            48.555
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            48.0,
+            47.695
+          ],
+          "size": [
+            0.57,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "MH3",
+      "value": "PNR mounting hole",
+      "address": "",
+      "position": [
+        66.0,
+        51.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "",
+          "position": [
+            66.0,
+            51.0
+          ],
+          "size": [
+            2.7,
+            2.7
+          ],
+          "drill_mm": 2.7
+        }
+      ]
+    },
+    {
+      "ref": "C37",
+      "value": "",
+      "address": "board.mic_dec._p",
+      "position": [
+        59.375,
+        11.5
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            58.955,
+            11.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            59.795,
+            11.5
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "L1",
+      "value": "",
+      "address": "board.aferrite._p",
+      "position": [
+        5.0,
+        45.25
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            5.0,
+            44.28
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            5.0,
+            46.22
+          ],
+          "size": [
+            1.13,
+            1.38
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "D2",
+      "value": "",
+      "address": "board.usb_data_esd",
+      "position": [
+        11.229393000000002,
+        9.370518000000004
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            10.729393000000002,
+            9.720517999999998
+          ],
+          "size": [
+            0.2,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            10.729393000000002,
+            9.020517999999996
+          ],
+          "size": [
+            0.2,
+            0.3
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            11.729393000000002,
+            9.370518000000004
+          ],
+          "size": [
+            0.2,
+            0.3
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "R12",
+      "value": "",
+      "address": "board.converter.pg_pullup._p",
+      "position": [
+        46.125,
+        40.375
+      ],
+      "rotation": 180.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            46.875,
+            40.375
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            45.375,
+            40.375
+          ],
+          "size": [
+            0.81,
+            0.86
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C30",
+      "value": "",
+      "address": "board.led0.ina_dec._p",
+      "position": [
+        47.0,
+        16.0
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            47.0,
+            15.579999999999998
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            47.0,
+            16.42
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C31",
+      "value": "",
+      "address": "board.led0.shifter_a_dec._p",
+      "position": [
+        54.400000000000006,
+        19.5
+      ],
+      "rotation": 90.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            54.400000000000006,
+            19.08
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            54.400000000000006,
+            19.92
+          ],
+          "size": [
+            0.5,
+            0.54
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "C7",
+      "value": "",
+      "address": "board.compass_reservoir._p",
+      "position": [
+        55.625,
+        46.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            54.925,
+            46.0
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            56.325,
+            46.0
+          ],
+          "size": [
+            0.8,
+            0.9
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "LED2",
+      "value": "",
+      "address": "board.status_led",
+      "position": [
+        26.0,
+        4.0
+      ],
+      "rotation": 0.0,
+      "side": "top",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            25.25,
+            4.0
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            26.75,
+            4.0
+          ],
+          "size": [
+            0.8,
+            0.8
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    },
+    {
+      "ref": "TP1",
+      "value": "MINI-EOL-V1",
+      "address": "board.eol",
+      "position": [
+        45.0,
+        13.5
+      ],
+      "rotation": 0.0,
+      "side": "bottom",
+      "pads": [
+        {
+          "number": "1",
+          "position": [
+            41.19,
+            18.58
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "2",
+          "position": [
+            43.730000000000004,
+            18.58
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "3",
+          "position": [
+            46.269999999999996,
+            18.58
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "4",
+          "position": [
+            48.81,
+            18.58
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "5",
+          "position": [
+            41.19,
+            16.040000000000006
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "6",
+          "position": [
+            43.730000000000004,
+            16.040000000000006
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "7",
+          "position": [
+            46.269999999999996,
+            16.040000000000006
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "8",
+          "position": [
+            48.81,
+            16.040000000000006
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "9",
+          "position": [
+            41.19,
+            13.5
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "10",
+          "position": [
+            43.730000000000004,
+            13.5
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "11",
+          "position": [
+            46.269999999999996,
+            13.5
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "12",
+          "position": [
+            48.81,
+            13.5
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "13",
+          "position": [
+            41.19,
+            10.959999999999994
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "14",
+          "position": [
+            43.730000000000004,
+            10.959999999999994
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "15",
+          "position": [
+            46.269999999999996,
+            10.959999999999994
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "16",
+          "position": [
+            48.81,
+            10.959999999999994
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "17",
+          "position": [
+            41.19,
+            8.420000000000002
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "18",
+          "position": [
+            43.730000000000004,
+            8.420000000000002
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "19",
+          "position": [
+            46.269999999999996,
+            8.420000000000002
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        },
+        {
+          "number": "20",
+          "position": [
+            48.81,
+            8.420000000000002
+          ],
+          "size": [
+            1.6,
+            1.6
+          ],
+          "drill_mm": 0.0
+        }
+      ]
+    }
+  ]
+}

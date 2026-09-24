@@ -252,3 +252,46 @@ the objective within it; and wirelength + routability do the rest.
   against wirelength, rather than hand-placing.
 - The result is a first-spin layout for an EE to review, not a substitute for
   one. Fixed poses and keep-outs are trustworthy; soft preferences are advisory.
+
+### Current-aware native routing and differential endpoint topology
+
+An optional `electrical_fab` JSON on `pcb_pnr` enables the native electrical
+routing stage after placement, signal routing and plane fill. Source annotations
+are resolved by atopile instance address and pin number; never encode generated
+reference designators. The report records source path, line and digest.
+
+```ato
+# @pnr-current {"target":"board.supply","pads":["1"],"rms_current_a":2,"peak_current_a":3}
+# @pnr-current {"target":"board.sensor","pads":["1"],"scope":"terminal","rms_current_a":0.05,"peak_current_a":0.1}
+```
+
+A net-wide annotation sizes a distribution trunk. A terminal annotation sizes
+only the isolated pad group it completely covers; it does not reduce the net's
+trunk width. Branch allocations are explicit, not inferred from component names.
+`neck_max_length_mm` authorizes only a short, pad-centered escape with checked
+loss/drop budgets and a full-width continuation. Missing authorization does not
+permit automatic neck-down. The compiler takes the maximum of fabrication,
+explicit class width and current-derived minimum. Inner and outer copper use
+separate current-width calculations. Via banks use RMS heating and peak-drop
+budgets; protected source arrays remain protected during cleanup.
+
+The fabrication model must declare copper weight, allowed temperature rise,
+board thickness, minimum via plating and barrel loss/drop budgets. These are
+engineering assumptions, not a thermal or fabrication qualification. The current
+width calculation is an IPC-2221 screening approximation; validate against the
+actual stackup, cooling environment and fabrication process.
+
+`@pnr-pair` annotations supply an ordered terminal chain and bounded local
+auxiliary branches; see the USB annotation in `splanc_mini.ato` for the JSON
+schema. Width, gap and skew remain in the normal `diff_pair` rule. The native
+adapter routes an envelope and offsets both conductors together, checks exact
+mate clearance, tunes bounded length mismatch, and measures connected endpoint
+paths including known via travel. It rejects ambiguous cycles and missing layer
+heights. A pair-support placement proposal is accepted only with a complete
+native-checked reroute of both polarities and preserved return connectivity.
+
+Current limitations: coupled trunks use F.Cu; local branches may change layers.
+The planner does not yet repair already-connected but poorly matched pairs.
+Impedance qualification requires actual stackup dimensions and a separate
+validated impedance calculation. The electrical audit reports these limitations
+and cannot turn zero native opens into an electrical PASS by itself.

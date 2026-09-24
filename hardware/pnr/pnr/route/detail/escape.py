@@ -40,18 +40,22 @@ class Escape:
     from; the rest is geometry to emit that bonds the pad to that cell."""
 
     net: str
-    kind: str  # "onlayer" | "via_in_pad" | "dogbone"
+    kind: str  # "onlayer" | "offgrid" | "via_in_pad" | "dogbone"
     access: Cell
     pad_xy: Tuple[float, float]
     side_layer: str = "F.Cu"  # the pad's own layer (name)
     stub_to: Optional[Tuple[float, float]] = None  # dog-bone stub end (mm, cell ctr)
+    stub_path: Optional[List[Tuple[float, float]]] = None
     via_xy: Optional[Tuple[float, float]] = None  # via site (mm): pad ctr or stub end
+    segments: Optional[list] = None  # joint access: (layer name, exact start, end)
 
 
 @dataclass
 class EscapePlan:
     net_access: Dict[str, List[Cell]] = field(default_factory=dict)
     escapes: List[Escape] = field(default_factory=list)
+    blocked_nets: Set[str] = field(default_factory=set)
+    diagnostics: dict = field(default_factory=dict)
 
 
 def _line_clear(
@@ -59,7 +63,9 @@ def _line_clear(
 ) -> bool:
     """True if every cell a dog-bone stub would cross (pad cell → offset cell) is
     routable by ``net`` — so the reserved stub doesn't collide with other copper."""
-    return all(grid.passable(layer, ci + di * k, cj + dj * k, net) for k in range(dist + 1))
+    return all(
+        grid.passable(layer, ci + di * k, cj + dj * k, net) for k in range(dist + 1)
+    )
 
 
 def _via_clean(grid: RouteGrid, i: int, j: int, net: str, via_keepout: int) -> bool:
@@ -67,7 +73,10 @@ def _via_clean(grid: RouteGrid, i: int, j: int, net: str, via_keepout: int) -> b
     keep-out halo (all layers) touches no cell owned by another net. A Ø0.45 via
     dropped in a 0.5 mm-pitch pad field would short its neighbours; this rejects that
     (the pad must then dog-bone out, or stay unrouted — honest ground truth)."""
+    if not grid.hole_site_clear(grid.center_of(i, j)):
+        return False
     for la in range(grid.nlayers):
+        if not grid.via_passable(la,i,j,net):return False
         for di in range(-via_keepout, via_keepout + 1):
             for dj in range(-via_keepout, via_keepout + 1):
                 owner = grid.pad_net.get((la, i + di, j + dj))
@@ -94,6 +103,10 @@ def plan_escapes(
     allow_via_in_pad: bool = True,
     allow_dogbone: bool = True,
     dogbone_reach: int = 4,
+    joint: bool = True,
+    joint_max_options: int = 16,
+    joint_max_states: int = 20000,
+    joint_max_cluster_size: int = 24,
 ) -> EscapePlan:
     """Plan a legal escape for every pad of the routable ``net_names``.
 
@@ -104,7 +117,15 @@ def plan_escapes(
     escapes and the maze stay clear. Returns the per-pad access cells + the escape
     geometry to emit.
     """
+    if joint:
+        from .joint_escape import plan_joint_escapes
+        return plan_joint_escapes(grid, graph, net_names, via_keepout=via_keepout,
+            allow_via_in_pad=allow_via_in_pad, allow_dogbone=allow_dogbone,
+            dogbone_reach=dogbone_reach, max_options=joint_max_options,
+            max_states=joint_max_states, max_cluster_size=joint_max_cluster_size)
     plan = EscapePlan()
+    plan.diagnostics = {"model": "legacy-sequential", "complete": None}
+    grid.protected_escape_access = {}
     # Reserve cells taken by an escape via's keep-out, keyed to the owning net so the
     # maze (which reads grid.pad_net) treats them as that net's copper.
     for comp in graph.components:
@@ -129,6 +150,14 @@ def plan_escapes(
             )
             plan.net_access.setdefault(net, []).append(esc.access)
             plan.escapes.append(esc)
+            if grid.passable(esc.access.layer,esc.access.i,esc.access.j,net):
+                grid.protected_escape_access[(esc.access.layer,esc.access.i,esc.access.j)]=net
+            if esc.kind != 'offgrid':
+                end = esc.stub_to or grid.center_of(esc.access.i,esc.access.j)
+                la = esc.access.layer if esc.kind=='via_in_pad' else side
+                grid.escape_segments.append((la,net,esc.pad_xy,end))
+            if esc.via_xy:
+                grid.escape_vias.append((net,esc.via_xy))
     return plan
 
 
@@ -153,6 +182,79 @@ def _reserve_line(
         grid.pad_net.setdefault((layer, ci + di * k, cj + dj * k), net)
 
 
+def _offgrid_escape(grid, net, center, pad_xy, side, part_center):
+    """Bridge a fine-pitch terminal to the coarse grid using checked real geometry."""
+    from pnr.writeback import _segment_distance_sq
+    from .keyhole import elbows, length
+    import math
+    # The exact bridge oracle currently reserves signal-width corridors. Wider
+    # classes use the existing conservative escape path until width-aware halos.
+    if grid.net_widths.get(net, grid.track_width) > grid.track_width + 1e-9:
+        return None
+    radius = grid.track_width / 2 + grid.clearance
+
+    def clear(a, b):
+        # Static exclusions remain absolute, including no-net pads and edge inset.
+        steps = max(1, math.ceil(math.dist(a,b)/(grid.pitch/4)))
+        for step in range(steps+1):
+            x=a[0]+(b[0]-a[0])*step/steps; y=a[1]+(b[1]-a[1])*step/steps
+            for dx,dy in ((0,0),(radius,0),(-radius,0),(0,radius),(0,-radius)):
+                i,j=grid.cell_of(x+dx,y+dy)
+                if not (0<=x+dx<=grid.width and 0<=y+dy<=grid.height) or grid.blocked[side,j,i]:
+                    return False
+        for layer, owner, r in grid.pad_rectangles:
+            if layer != side or owner == net:
+                continue
+            if max(a[0],b[0])+radius<r.left or min(a[0],b[0])-radius>r.right or max(a[1],b[1])+radius<r.bottom or min(a[1],b[1])-radius>r.top:
+                continue
+            if any(r.left<=p[0]<=r.right and r.bottom<=p[1]<=r.top for p in (a,b)):
+                return False
+            corners=[(r.left,r.bottom),(r.right,r.bottom),(r.right,r.top),(r.left,r.top)]
+            if any(_segment_distance_sq(a,b,corners[i],corners[(i+1)%4]) < radius*radius-1e-10 for i in range(4)):
+                return False
+        for layer,owner,c,d in grid.escape_segments:
+            if layer==side and owner!=net and _segment_distance_sq(a,b,c,d) < (grid.track_width+grid.clearance)**2-1e-10:
+                return False
+        for owner,p in grid.escape_vias:
+            if owner!=net and _segment_distance_sq(a,b,p,p) < (grid.via_radius+radius)**2-1e-10:
+                return False
+        return True
+
+    candidates=[]
+    for di in range(-4,5):
+        for dj in range(-4,5):
+            i,j=center.i+di,center.j+dj
+            if not grid.passable(side,i,j,net):continue
+            c=Cell(side,i,j)
+            if not _has_free_neighbor(grid,c,net):continue
+            q=grid.center_of(i,j)
+            candidates.append((math.dist(pad_xy,q),i,j,q))
+    for _,i,j,q in sorted(candidates):
+        for path in sorted(elbows(pad_xy,q),key=lambda p:(length(p),len(p))):
+            if all(clear(a,b) for a,b in zip(path,path[1:])):
+                # A geometrically legal escape may still reserve a coarse cell
+                # used as an earlier terminal. Try another path/portal instead
+                # of invalidating an already chosen source behind the maze.
+                from pnr.place.geometry import Rect
+                occupied=set()
+                for a,b in zip(path,path[1:]):
+                    box=Rect((a[0]+b[0])/2,(a[1]+b[1])/2,abs(a[0]-b[0]),abs(a[1]-b[1]))
+                    grid._mark_rect(side,box,grid.track_width+grid.clearance,lambda la,x,y:occupied.add((la,x,y)))
+                if any(owner!=net and cell in occupied for cell,owner in getattr(grid,'protected_escape_access',{}).items()):continue
+                for a,b in zip(path,path[1:]):
+                    grid.escape_segments.append((side,net,a,b))
+                    # Reserve the entire escape corridor against later grid routes.
+                    from pnr.place.geometry import Rect
+                    box=Rect((a[0]+b[0])/2,(a[1]+b[1])/2,abs(a[0]-b[0]),abs(a[1]-b[1]))
+                    def reserve(la,x,y):
+                        key=(la,x,y);old=grid.pad_net.get(key)
+                        grid.pad_net[key]=net if old is None or old==net else '\0conflict'
+                    grid._mark_rect(side,box,grid.track_width+grid.clearance,reserve)
+                return Escape(net=net,kind='offgrid',access=Cell(side,i,j),pad_xy=pad_xy,
+                              side_layer=grid.layers[side],stub_path=path)
+    return None
+
+
 def _plan_one(
     grid: RouteGrid,
     net: str,
@@ -168,20 +270,34 @@ def _plan_one(
 ) -> Escape:
     ci, cj = center.i, center.j
     # 0) On-layer: the net can already leave the pad on its own layer.
-    if _has_free_neighbor(grid, center, net):
+    if grid.passable(side, ci, cj, net) and _has_free_neighbor(grid, center, net):
         return Escape(
-            net=net, kind="onlayer", access=center, pad_xy=pad_xy, side_layer=grid.layers[side]
+            net=net,
+            kind="onlayer",
+            access=center,
+            pad_xy=pad_xy,
+            side_layer=grid.layers[side],
         )
+
+    offgrid = _offgrid_escape(grid,net,center,pad_xy,side,part_center) if allow_dogbone else None
+    if offgrid is not None:
+        return offgrid
 
     # 1) Via-in-pad (E2): a via straight down the pad centre to another layer with
     # room. Prefer the opposite outer layer, then the inner-layer gaps.
     if allow_via_in_pad:
-        order = [la for la in (grid.nlayers - 1, 1, 2) if 0 <= la < grid.nlayers and la != side]
+        order = [
+            la
+            for la in (grid.nlayers - 1, 1, 2)
+            if 0 <= la < grid.nlayers and la != side
+        ]
         for la in order:
             tgt = Cell(la, ci, cj)
             if (
                 grid.via_passable(la, ci, cj, net)
+                and grid.passable(la,ci,cj,net)
                 and _has_free_neighbor(grid, tgt, net)
+                and grid.hole_site_clear(pad_xy)
                 and _via_clean(grid, ci, cj, net, via_keepout)
             ):
                 _reserve_via(grid, ci, cj, net, via_keepout)
@@ -208,7 +324,9 @@ def _plan_one(
                     continue
                 # same-layer dog-bone (stub then leave on the pad's layer)
                 same = Cell(side, ni, nj)
-                if grid.passable(side, ni, nj, net) and _has_free_neighbor(grid, same, net):
+                if grid.passable(side, ni, nj, net) and _has_free_neighbor(
+                    grid, same, net
+                ):
                     _reserve_line(grid, side, ci, cj, di, dj, dist, net)
                     return Escape(
                         net=net,
@@ -225,6 +343,7 @@ def _plan_one(
                     tgt = Cell(la, ni, nj)
                     if (
                         grid.via_passable(la, ni, nj, net)
+                        and grid.passable(la,ni,nj,net)
                         and _has_free_neighbor(grid, tgt, net)
                         and _via_clean(grid, ni, nj, net, via_keepout)
                     ):
@@ -256,3 +375,61 @@ def _outward_order(pad_xy: Tuple[float, float], part_center: Tuple[float, float]
     if abs(dx) >= abs(dy):
         return [(sx, 0), (0, sy), (0, -sy), (-sx, 0)]
     return [(0, sy), (sx, 0), (-sx, 0), (0, -sy)]
+
+
+def trapped_access_sites(grid, net_access, unrouted, reach_mm=0.75, budget=256):
+    """Localize statically trapped escapes for placement feedback.
+
+    Flood only a small neighborhood. Reaching its boundary, a possible through
+    via, or the work budget is inconclusive. Report only exhausted neighborhoods;
+    these are grid-model observations, not native geometric impossibility proofs.
+    Ignore provisional route occupancy so one unlucky routing order cannot by
+    itself cause the placer to move a component.
+    """
+    import math
+    from collections import deque
+
+    radius = max(1, math.ceil(reach_mm / grid.pitch))
+    sites = {}
+    for net in sorted(unrouted):
+        found = set()
+        for access in net_access.get(net, []):
+            # Maze search rejects an inaccessible source before exploring any
+            # neighbor. A neighboring free cell cannot rescue that terminal.
+            if not grid.passable(access.layer,access.i,access.j,net):
+                x,y=grid.center_of(access.i,access.j)
+                found.add((min(x,grid.width-1e-9),min(y,grid.height-1e-9)))
+                continue
+            queue = deque([(access.i, access.j)])
+            seen = set(queue)
+            escaped = False
+            while queue and len(seen) <= budget:
+                i, j = queue.popleft()
+                if max(abs(i - access.i), abs(j - access.j)) >= radius:
+                    escaped = True
+                    break
+                if grid.nlayers > 1 and all(
+                    grid.via_passable(la, i, j, net) for la in range(grid.nlayers)
+                ):
+                    escaped = True
+                    break
+                for di, dj in (
+                    (1, 0),
+                    (-1, 0),
+                    (0, 1),
+                    (0, -1),
+                    (1, 1),
+                    (1, -1),
+                    (-1, 1),
+                    (-1, -1),
+                ):
+                    p = (i + di, j + dj)
+                    if p not in seen and grid.passable(access.layer, *p, net):
+                        seen.add(p)
+                        queue.append(p)
+            if not escaped and not queue:
+                x, y = grid.center_of(access.i, access.j)
+                found.add((min(x, grid.width - 1e-9), min(y, grid.height - 1e-9)))
+        if found:
+            sites[net] = sorted(found)
+    return sites

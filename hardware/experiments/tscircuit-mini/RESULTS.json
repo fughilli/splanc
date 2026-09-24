@@ -1,0 +1,70 @@
+{
+  "packages": {
+    "@tscircuit/capacity-autorouter": "0.0.897",
+    "circuit-json-to-kicad": "0.0.210",
+    "circuit-to-svg": "0.0.413",
+    "kicad-to-circuit-json": "0.0.126",
+    "polygon-clipping": "0.15.7",
+    "tscircuit": "0.0.2495"
+  },
+  "nativeDrc": {
+    "roundtrip/native-drc.json": {
+      "unconnected": 0,
+      "violations": {
+        "clearance": 240,
+        "hole_clearance": 199,
+        "solder_mask_bridge": 199,
+        "track_dangling": 11,
+        "via_dangling": 1,
+        "isolated_copper": 1,
+        "lib_footprint_issues": 141,
+        "nonmirrored_text_on_back_layer": 2
+      },
+      "mode_opens": 0
+    },
+    "roundtrip/metadata-repaired-drc.json": {
+      "unconnected": 174,
+      "violations": {
+        "clearance": 204,
+        "hole_clearance": 199,
+        "track_dangling": 11,
+        "via_dangling": 1,
+        "isolated_copper": 1,
+        "lib_footprint_issues": 141,
+        "nonmirrored_text_on_back_layer": 2
+      },
+      "mode_opens": 1
+    },
+    "mode-native-drc.json": {
+      "unconnected": 410,
+      "violations": {
+        "clearance": 1,
+        "lib_footprint_issues": 137
+      },
+      "mode_opens": 0
+    },
+    "mode-conservative-native-drc.json": {
+      "unconnected": 410,
+      "violations": {
+        "clearance": 1,
+        "lib_footprint_issues": 137
+      },
+      "mode_opens": 0
+    },
+    "mode-inflated-native-drc.json": {
+      "unconnected": 410,
+      "violations": {},
+      "mode_opens": 0
+    }
+  },
+  "fullBoard": {
+    "solved": false,
+    "failed": true,
+    "error": "AutoroutingPipelineSolver9_PreloadedTraceGraph error: Error: Pipeline9: differential pair connection \"Dpos\" must resolve to exactly one final point-pair connection, got 3",
+    "phase": "lengthMatchingPostProcessingSolver",
+    "lastObservedSeconds": 206.28250366700001,
+    "derivedFromCapturedLog": true,
+    "inputSha256": "6190739bb5a241bba06f1f184e80de8a9524c88f096b46aebf16480f35e9b809",
+    "partialNativeBoardAvailable": false
+  }
+}

@@ -1,0 +1,13 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component LDO:
+    trait is_atomic_part<manufacturer="Diodes", partnumber="AP2112K-3.3TRG1", footprint="LDO.kicad_mod", symbol="LDO.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Diodes", partno="AP2112K-3.3TRG1">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4
+    signal p5 ~ pin 5

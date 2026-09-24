@@ -1,0 +1,44 @@
+from "parts/MAXM10S/MAXM10S.ato" import MAXM10S
+from "parts/UFL/UFL.ato" import UFL
+from "parts/L27N/L27N.ato" import L27N
+from "passives.ato" import C100n
+from "passives.ato" import C10n
+from "passives.ato" import C10u
+from "passives.ato" import R10
+from "passives.ato" import R10k
+
+module GNSS:
+    signal P3V3
+    signal GND
+    signal TX
+    signal RX
+    signal PPS
+    signal RESET
+    gnss = new MAXM10S
+    gnss.p1 ~ GND
+    gnss.p2 ~ RX
+    gnss.p3 ~ TX
+    gnss.p4 ~ PPS
+    gnss.p6 ~ P3V3
+    gnss.p7 ~ P3V3
+    gnss.p8 ~ P3V3
+    gnss.p9 ~ RESET
+    gnss.p10 ~ GND
+    gnss.p12 ~ GND
+    antenna = new UFL
+    antenna.p2 ~ GND
+    dc_block = new C10n
+    dc_block.p1 ~ gnss.p11
+    dc_block.p2 ~ antenna.p1
+    bias = new L27N
+    bias.p1 ~ antenna.p1
+    bias.p2 ~ gnss.p14
+    bulk = new C10u
+    bulk.p1 ~ P3V3
+    bulk.p2 ~ GND
+    dec = new C100n
+    dec.p1 ~ P3V3
+    dec.p2 ~ GND
+    reset_pu = new R10k
+    reset_pu.p1 ~ P3V3
+    reset_pu.p2 ~ RESET

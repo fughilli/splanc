@@ -1,0 +1,10 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component L2U2:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="2.2uH shielded Isat>=3A", footprint="L2U2.kicad_mod", symbol="L2U2.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="2.2uH shielded Isat>=3A">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

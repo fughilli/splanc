@@ -1,0 +1,25 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component USB:
+    trait is_atomic_part<manufacturer="HRO", partnumber="TYPE-C-31-M-12", footprint="USB.kicad_mod", symbol="USB.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="HRO", partno="TYPE-C-31-M-12">
+    trait has_designator_prefix<prefix="U">
+    signal pA1 ~ pin A1
+    signal pA4 ~ pin A4
+    signal pA5 ~ pin A5
+    signal pA6 ~ pin A6
+    signal pA7 ~ pin A7
+    signal pA8 ~ pin A8
+    signal pA9 ~ pin A9
+    signal pA12 ~ pin A12
+    signal pB1 ~ pin B1
+    signal pB4 ~ pin B4
+    signal pB5 ~ pin B5
+    signal pB6 ~ pin B6
+    signal pB7 ~ pin B7
+    signal pB8 ~ pin B8
+    signal pB9 ~ pin B9
+    signal pB12 ~ pin B12
+    signal pSH ~ pin SH

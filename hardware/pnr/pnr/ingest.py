@@ -58,6 +58,11 @@ def _board_frame(board) -> Tuple[_Frame, Optional[BoardOutline]]:
     import pcbnew  # local: only present under the KiCad interpreter
 
     edges = board.GetBoardEdgesBoundingBox()
+    # The drawing bbox includes Edge.Cuts stroke width, shifting every pad and
+    # enlarging the board. Use the physical contour when it is available.
+    contour = pcbnew.SHAPE_POLY_SET()
+    if board.GetBoardPolygonOutlines(contour, False) and contour.OutlineCount():
+        edges = contour.BBox()
     have_outline = edges.GetWidth() > 0 and edges.GetHeight() > 0
     box = edges if have_outline else board.ComputeBoundingBox(False)
     frame = _Frame(box.GetLeft(), box.GetBottom())
@@ -96,7 +101,8 @@ def _phys_bbox_mm(fp) -> Tuple[float, float]:
     tiny 0402 to ~4x5 mm. We want the copper/silk body for placement, so we ask
     for the text-excluded box (the arg signature varies across KiCad versions)."""
     # Measure in the local frame; placement applies rotation separately.
-    fp = fp.Duplicate()
+    import pcbnew
+    fp = pcbnew.FOOTPRINT(fp)
     fp.SetOrientationDegrees(0)
     origin = fp.GetPosition()
     for args in ((False, False), (False,), ()):
@@ -134,7 +140,7 @@ def _component(fp, frame: _Frame) -> Component:
     # text-excluded body box (any silk keep-out area is drawn on the body).
     try:
         layer = pcbnew.B_CrtYd if fp.IsFlipped() else pcbnew.F_CrtYd
-        local_fp = fp.Duplicate()
+        local_fp = pcbnew.FOOTPRINT(fp)
         local_fp.SetOrientationDegrees(0)
         cyard = local_fp.GetCourtyard(layer).BBox()
         origin = local_fp.GetPosition()
@@ -146,6 +152,21 @@ def _component(fp, frame: _Frame) -> Component:
             courtyard_mm = bbox_mm
     except Exception:  # pragma: no cover - version shim
         courtyard_mm = bbox_mm
+
+    # Some library courtyards exclude a silk pin-1 marker or even copper.
+    # Reserve the real pad/silk envelope as well; F.Fab drawings and labels
+    # are documentation and must not enlarge physical placement occupancy.
+    local_fp = pcbnew.FOOTPRINT(fp)
+    local_fp.SetOrientationDegrees(0)
+    origin = local_fp.GetPosition()
+    items = list(local_fp.Pads()) + [item for item in local_fp.GraphicalItems()
+             if item.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS)
+             and isinstance(item, pcbnew.PCB_SHAPE)]
+    for item in items:
+        box = item.GetBoundingBox()
+        extent = (2*_mm(max(abs(box.GetLeft()-origin.x),abs(box.GetRight()-origin.x))),
+                  2*_mm(max(abs(box.GetTop()-origin.y),abs(box.GetBottom()-origin.y))))
+        courtyard_mm = tuple(max(a,b) for a,b in zip(courtyard_mm,extent))
 
     pads: List[Pad] = []
     for pad in fp.Pads():
@@ -160,6 +181,13 @@ def _component(fp, frame: _Frame) -> Component:
         # access cell on the wrong pad, shorting neighbouring nets).
         sz = pad.GetSize()
         w_mm, h_mm = _mm(sz.x), _mm(sz.y)
+        # Size is expressed in the pad's own axes, not the footprint axes.
+        # Preserve the pad-local rotation before the component rotation is
+        # reapplied by pad_rects. AABB conservatively bounds non-cardinal pads.
+        import math
+        angle = math.radians(pad.GetOrientationDegrees() - fp.GetOrientationDegrees())
+        ca, sa = abs(math.cos(angle)), abs(math.sin(angle))
+        w_mm, h_mm = ca*w_mm + sa*h_mm, sa*w_mm + ca*h_mm
         # Custom-shape pads (exposed thermal die-pads etc.) report a tiny anchor for
         # GetSize() but their real copper is the primitive set — use the copper
         # bounding box instead, else the router models a big pad as a point and
@@ -172,7 +200,12 @@ def _component(fp, frame: _Frame) -> Component:
             is_custom = False
         if is_custom:
             bb = pad.GetBoundingBox()
-            bw, bh = _mm(bb.GetWidth()), _mm(bb.GetHeight())
+            anchor = pad.GetPosition()
+            # The custom primitive set need not be centered on its construction
+            # anchor. The graph stores an anchor-centered rectangle, so bound
+            # both sides relative to that anchor, not just the bbox dimensions.
+            bw = 2 * _mm(max(abs(anchor.x-bb.GetLeft()),abs(bb.GetRight()-anchor.x)))
+            bh = 2 * _mm(max(abs(anchor.y-bb.GetTop()),abs(bb.GetBottom()-anchor.y)))
             if int(round(fp.GetOrientationDegrees())) % 180 == 90:
                 bw, bh = bh, bw
             w_mm, h_mm = max(w_mm, bw), max(h_mm, bh)
@@ -191,6 +224,12 @@ def _component(fp, frame: _Frame) -> Component:
                 offset=(_mm(p0.x), -_mm(p0.y)),
                 size=(w_mm, h_mm),
                 through_hole=bool(through),
+                drill_size=(_mm(pad.GetDrillSize().x), _mm(pad.GetDrillSize().y)),
+                plated=bool(pad.GetAttribute() == pcbnew.PAD_ATTRIB_PTH),
+                plated_land_radius=(min(_mm(sz.x), _mm(sz.y)) / 2
+                    if pad.GetAttribute() == pcbnew.PAD_ATTRIB_PTH and pad.GetShape() in
+                    (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_OVAL,
+                     pcbnew.PAD_SHAPE_RECT, pcbnew.PAD_SHAPE_ROUNDRECT) else 0.0),
             )
         )
 
@@ -205,6 +244,7 @@ def _component(fp, frame: _Frame) -> Component:
         bbox=bbox_mm,
         locked=bool(getattr(fp, "IsLocked", lambda: False)()),
         pads=pads,
+        smd_body=bool(fp.GetAttributes() & pcbnew.FP_SMD),
     )
 
 

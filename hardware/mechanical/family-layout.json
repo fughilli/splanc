@@ -1,0 +1,63 @@
+{
+  "revision": "compact-handheld-r9",
+  "units": "mm",
+  "splanc_and_gnss": {
+    "led_connectors": [
+      [
+        94,
+        25
+      ],
+      [
+        94,
+        36
+      ]
+    ],
+    "button_row": "south; unchanged",
+    "connector_access": "top-entry bowl at east edge"
+  },
+  "max": {
+    "outside": [
+      292,
+      134,
+      43
+    ],
+    "previous_outside": [
+      335,
+      134,
+      53
+    ],
+    "pi_local_to_case": {
+      "rotation_z_degrees": 90,
+      "translation": [
+        285,
+        28,
+        8
+      ]
+    },
+    "hat_local_to_case": {
+      "rotation_z_degrees": 90,
+      "translation": [
+        285,
+        28,
+        28
+      ]
+    },
+    "ethernet_usb_side": "north: Ethernet with underside latch relief; USB-A enclosed",
+    "pi_power_hdmi_side": "east: USB-C power only; HDMI enclosed",
+    "board_level_mounts_unchanged": true,
+    "hat_standoff_mm": 18.4,
+    "usb_bridge_outline_mm": [
+      24,
+      32,
+      1.6
+    ],
+    "usb_bridge_connector_spacing_mm": 18.4
+  },
+  "qualification": "mechanical fit prototype; not tooling release",
+  "source_parameters": "hardware/mechanical/enclosure-spec.json",
+  "handheld_outside_heights_mm": {
+    "mini": 17.2,
+    "splanc_and_gnss": 17.2
+  },
+  "handheld_pcb_bottom_z_mm": 4.2
+}

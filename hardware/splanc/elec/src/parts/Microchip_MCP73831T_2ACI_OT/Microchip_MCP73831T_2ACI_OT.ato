@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Microchip_MCP73831T_2ACI_OT_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C424093", date="2026-08-20T03:04:19.347522+00:00", checksum="9f5e42e84b2673f04f84b2a2a72ea1d6239f57b56fe15a276f34dacf76cdccfb">
+
+    trait is_atomic_part<manufacturer="Microchip", partnumber="MCP73831T-2ACI/OT", footprint="SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BL.kicad_mod", symbol="MCP73831T-2ACI_OT.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C424093", manufacturer="Microchip", partno="MCP73831T-2ACI/OT">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal PROG ~ pin 5
+    signal STAT ~ pin 1
+    signal VBAT ~ pin 3
+    signal VDD ~ pin 4
+    signal VSS ~ pin 2

@@ -1,0 +1,30 @@
+{
+  "lv": {
+    "native_unconnected_count": 226,
+    "footprints": 56,
+    "circuit_components": 52,
+    "connected_pads_checked": 294,
+    "atopile_net_partition_matches": true,
+    "no_tracks": true,
+    "mounts_checked": 4
+  },
+  "power": {
+    "native_unconnected_count": 920,
+    "footprints": 321,
+    "circuit_components": 317,
+    "connected_pads_checked": 1159,
+    "atopile_net_partition_matches": true,
+    "no_tracks": true,
+    "mounts_checked": 4,
+    "telemetry_and_safe_off_checks": true
+  },
+  "usb_bridge": {
+    "native_unconnected_count": 8,
+    "footprints": 3,
+    "circuit_components": 3,
+    "connected_pads_checked": 13,
+    "atopile_net_partition_matches": true,
+    "no_tracks": true,
+    "mounts_checked": 0
+  }
+}

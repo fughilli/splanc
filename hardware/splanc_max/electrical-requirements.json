@@ -1,0 +1,30 @@
+{
+  "schema": "splanc-max-requirements-v1",
+  "copper_oz": {
+    "lv": 1,
+    "power": 2
+  },
+  "max_temperature_rise_C": 20,
+  "channels": 20,
+  "per_channel_A": 2,
+  "aggregate_A": 40,
+  "notes": "No inferred ampacity qualification. Busbars must carry aggregate current, not a narrow PCB neck.",
+  "pairs": [
+    {
+      "board": "lv",
+      "positive": "USB_DP",
+      "negative": "USB_DM",
+      "differential_impedance_ohm": 90,
+      "max_skew_mm": 0.5,
+      "coupled": true
+    }
+  ],
+  "isolation": {
+    "domains": [
+      "DGND",
+      "PGND"
+    ],
+    "minimum_copper_clearance_mm": 3.2,
+    "functional_only": true
+  }
+}

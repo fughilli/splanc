@@ -1,0 +1,119 @@
+(footprint "WSL2512_2mOhm"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "Vishay WSL2512 1-4.9mOhm; datasheet 30100 rev 23-Nov-2023 p2")
+	(property "Reference" "REF**"
+		(at 0 -2.6 0)
+		(layer "F.SilkS")
+		(uuid "9a2d08dd-fa46-4627-a641-5fafe178c830")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "WSL25122L000FEA"
+		(at 0 2.6 0)
+		(layer "F.Fab")
+		(uuid "0eaeb616-4e02-43f3-ba57-4a9d1df7b314")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "68bdca04-481f-43f7-a540-d6385cd0ce33")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "3fe48858-9c74-413c-8dbb-8626f50f11c2")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -3.175 -2.1)
+		(end 3.175 -2.1)
+		(stroke
+			(width 0.15)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "caaa390f-f1b2-48a9-a3b9-d2220611bd5d")
+	)
+	(fp_line
+		(start -3.175 2.1)
+		(end 3.175 2.1)
+		(stroke
+			(width 0.15)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "3ae887ef-0636-4b9e-bea3-a0cc689f817a")
+	)
+	(fp_rect
+		(start -3.94 -2.09)
+		(end 3.94 2.09)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "de6e2a44-8e4b-4a71-8e1b-c8c083bb2c5c")
+	)
+	(fp_rect
+		(start -3.175 -1.59)
+		(end 3.175 1.59)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "e186c3d6-135b-4020-b8f1-37c47b85aed6")
+	)
+	(pad "1" smd rect
+		(at -2.16 0)
+		(size 3.05 3.68)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "5741a480-2aa8-4f4e-b31d-52f4da3d9e70")
+	)
+	(pad "2" smd rect
+		(at 2.16 0)
+		(size 3.05 3.68)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "6a51e5be-ddb0-45da-a8f4-39e12b9e5567")
+	)
+	(model "${KIPRJMOD}/../../src/parts/Vishay_WSL25122L000FEA/WSL2512_representative.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

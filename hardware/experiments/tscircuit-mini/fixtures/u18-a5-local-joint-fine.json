@@ -1,0 +1,22 @@
+{
+  "nets": [
+    "A5",
+    "B5"
+  ],
+  "source_pad": "U18.7",
+  "target_pad": "U18.4",
+  "bounds": [
+    43,
+    65,
+    48,
+    70
+  ],
+  "pitch": 0.05,
+  "max_expansions": 100000,
+  "max_orders": 32,
+  "max_seconds": 45,
+  "layers": true,
+  "preserve_copper": false,
+  "joint": true,
+  "relocate_vias": true
+}

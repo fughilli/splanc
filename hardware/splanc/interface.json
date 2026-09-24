@@ -1,0 +1,178 @@
+{
+  "schema": "splanc-mechanical-v1",
+  "units": "mm",
+  "coordinate_system": "lower-left origin, x right, y north/rear",
+  "status": "engineering-draft-unrouted",
+  "boards": {
+    "splanc": {
+      "outline": {
+        "width_mm": 100,
+        "height_mm": 80,
+        "thickness_mm": 1.6
+      },
+      "mounts": [
+        {
+          "x": 4,
+          "y": 4,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 96,
+          "y": 4,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 4,
+          "y": 76,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 96,
+          "y": 76,
+          "diameter_mm": 2.7
+        }
+      ],
+      "connectors": [
+        {
+          "ref": "board.usbc",
+          "position": [
+            18,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            10,
+            4.5
+          ],
+          "center_z_above_pcb_mm": 1.5,
+          "kind": "usb_c"
+        },
+        {
+          "ref": "board.led0.conn",
+          "position": [
+            94,
+            25
+          ],
+          "edge": "top",
+          "opening": [
+            9,
+            7
+          ],
+          "center_z_above_pcb_mm": 5.9,
+          "kind": "jst_ph3_vertical"
+        },
+        {
+          "ref": "board.led1.conn",
+          "position": [
+            94,
+            36
+          ],
+          "edge": "top",
+          "opening": [
+            9,
+            7
+          ],
+          "center_z_above_pcb_mm": 5.9,
+          "kind": "jst_ph3_vertical"
+        }
+      ],
+      "buttons": [
+        {
+          "ref": "board.btn_user1",
+          "position": [
+            82,
+            3.5
+          ]
+        },
+        {
+          "ref": "board.btn_user2",
+          "position": [
+            89,
+            3.5
+          ]
+        },
+        {
+          "ref": "board.btn_boot",
+          "position": [
+            44,
+            3.5
+          ]
+        },
+        {
+          "ref": "board.btn_reset",
+          "position": [
+            32,
+            3.5
+          ]
+        }
+      ],
+      "indicators": [
+        {
+          "ref": "board.power_led",
+          "position": [
+            27,
+            10
+          ]
+        },
+        {
+          "ref": "board.status_led",
+          "position": [
+            33,
+            10
+          ]
+        }
+      ],
+      "microphone": {
+        "ref": "board.mic",
+        "position": [
+          90,
+          55
+        ],
+        "acoustic_port": "bottom"
+      },
+      "antenna_keepouts": [
+        {
+          "ref": "board.esp.wireless",
+          "rectangle": [
+            5,
+            64,
+            30,
+            80
+          ]
+        },
+        {
+          "ref": "board.esp.uwb",
+          "rectangle": [
+            62,
+            66,
+            90,
+            80
+          ]
+        }
+      ],
+      "optional_gnss": {
+        "module": "MAX-M10S-00B",
+        "position": [
+          48,
+          57
+        ],
+        "antenna_connector": [
+          49,
+          68
+        ],
+        "antenna_mpn": "Taoglas AP.25F.07.0078A",
+        "antenna_envelope_mm": [
+          25,
+          25,
+          8
+        ],
+        "antenna_position_xy": [
+          48,
+          47
+        ],
+        "cable_length_mm": 78,
+        "mounting": "lid internal, facing outward"
+      }
+    }
+  }
+}

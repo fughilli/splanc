@@ -1,0 +1,125 @@
+{
+  "schema": "splanc-source-checkpoint-artifacts-v1",
+  "files": [
+    {
+      "path": "hardware/mechanical/assets/max-connectors/degson-2edgkdf-3-plug.step",
+      "bytes": 264638,
+      "sha256": "fb5df71b46497e90047c090c529a30188929798f7d8f6c742fa19eb80b6bf100",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/max-connectors/degson-2edgrc-3-header-normalized.step",
+      "bytes": 1953432,
+      "sha256": "b46aa933bdf4b219e1c09232bec8d319c8c507b4c2225bcaf2f74d8dd5e09a40",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/max-connectors/degson-2edgrc-3-header.step",
+      "bytes": 1053397,
+      "sha256": "894a575ce5ba9fde759ccd508a88d0adc6868258d3c24581f068ccd74d378ee7",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/max-connectors/phoenix-1757255-header.step",
+      "bytes": 130852,
+      "sha256": "b7739c5a904aef2a0d8c9a8190259d58c6ddbeab5031b8cea374fb50f64dcd31",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/max-connectors/wurth-5580510.step",
+      "bytes": 211077,
+      "sha256": "94af2ac098db93428ca6e5b32c500c908459c6e66097a9c2cb35e296c27c5eff",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/pi5-visible-ports.step.gz",
+      "bytes": 5942306,
+      "sha256": "0f8b9e25efbf302a0342d104834bd34e86c04e9c3ef08a40f4e9cafc61103360",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/assets/reference-electronics.json.gz",
+      "bytes": 7273802,
+      "sha256": "014d8b631af2eef771a7a808b5d46810aa78e39b384b5551756628cbe19139fe",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/mechanical/releases/mini-highlight-preview-r1.mp4",
+      "bytes": 205334,
+      "sha256": "5ae8492a15b1b28317af5c2d3eb8d76b906f7e8cb4eff04fb4287dd35e24d6bd",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc/boards/fp-lib-table",
+      "bytes": 21203,
+      "sha256": "c402b31eec75d8d0b7890ca382da5e48cffd7dc07b7aadeb31a5dd6853312c7a",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc/boards/splanc_base.kicad_pcb",
+      "bytes": 869349,
+      "sha256": "69b748d184010f3715f378debf13be0f83d5b4fc97e571a406f7a2015b0b3771",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc/boards/splanc_base.kicad_pro",
+      "bytes": 9514,
+      "sha256": "233a0351c0fb0062c08fbfbbff0c1def62f7ccaf43f98806e92691b1b3b2ac71",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc/boards/splanc_gps.kicad_pcb",
+      "bytes": 900652,
+      "sha256": "c9487ae12e6818db578937cdaad0af1fe961e4df73863afe298f85b74f44fba7",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc/boards/splanc_gps.kicad_pro",
+      "bytes": 462,
+      "sha256": "106757d9b4a0f1e0a40dd424800a97cbf8cd6ec7f3c9e2b4747e3ca8bc7b7b94",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_lv.kicad_pcb",
+      "bytes": 235311,
+      "sha256": "232b2347975fa21aeb4f459b72e9a0afb4f64bc59d0e7b09de4dd37c10d74a0c",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_lv.kicad_pro",
+      "bytes": 384,
+      "sha256": "3533ca3a647163e98f7f1069f665687cb6e5aec50db766927a85315ea6800165",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_power.kicad_pcb",
+      "bytes": 1164824,
+      "sha256": "4a266054c9c4b04c29f1e8263332f27c6521069600dc5ff5fc168c60c5979ebd",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_power.kicad_pro",
+      "bytes": 384,
+      "sha256": "3533ca3a647163e98f7f1069f665687cb6e5aec50db766927a85315ea6800165",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_usb_bridge.kicad_pcb",
+      "bytes": 10106,
+      "sha256": "f5f9f09d8fc8d01705fccbf0958dd4b131d50b288558e153d1c1af64a1f54c2e",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/boards/splanc_max_usb_bridge.kicad_pro",
+      "bytes": 9615,
+      "sha256": "4ca073fa40303264a6be5df8657b02a0c372dc23e9059be059d68e318a4eb233",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    },
+    {
+      "path": "hardware/splanc_max/elec/src/parts/OUT/degson-2edgrc-3-header-normalized.step",
+      "bytes": 1953432,
+      "sha256": "b46aa933bdf4b219e1c09232bec8d319c8c507b4c2225bcaf2f74d8dd5e09a40",
+      "status": "Retained locally; generated/reference asset omitted from source-only PR checkpoint"
+    }
+  ]
+}

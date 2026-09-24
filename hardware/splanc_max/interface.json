@@ -1,0 +1,485 @@
+{
+  "schema": "splanc-mechanical-v1",
+  "units": "mm",
+  "status": "rough-unrouted-design-review-required",
+  "boards": {
+    "lv": {
+      "outline": {
+        "width_mm": 85,
+        "height_mm": 56,
+        "thickness_mm": 1.6
+      },
+      "mounts": [
+        {
+          "x": 3.5,
+          "y": 3.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 61.5,
+          "y": 3.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 3.5,
+          "y": 52.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 61.5,
+          "y": 52.5,
+          "diameter_mm": 2.7
+        }
+      ],
+      "connectors": [
+        {
+          "ref": "J2",
+          "position": [
+            85,
+            29.1
+          ],
+          "edge": "east",
+          "opening": [
+            10,
+            5
+          ],
+          "kind": "usb_c",
+          "center_z_above_pcb_mm": 2
+        },
+        {
+          "ref": "J3",
+          "position": [
+            65,
+            12
+          ],
+          "edge": "internal",
+          "opening": [
+            34,
+            7
+          ],
+          "kind": "ribbon50",
+          "center_z_above_pcb_mm": 4
+        }
+      ]
+    },
+    "power": {
+      "outline": {
+        "width_mm": 200,
+        "height_mm": 120,
+        "thickness_mm": 1.6
+      },
+      "mounts": [
+        {
+          "x": 5,
+          "y": 15,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 195,
+          "y": 15,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 5,
+          "y": 105,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 195,
+          "y": 105,
+          "diameter_mm": 3.2
+        }
+      ],
+      "connectors": [
+        {
+          "ref": "J1",
+          "position": [
+            28,
+            60
+          ],
+          "edge": "internal",
+          "opening": [
+            7,
+            34
+          ],
+          "kind": "ribbon50",
+          "center_z_above_pcb_mm": 4
+        },
+        {
+          "ref": "J2",
+          "position": [
+            0,
+            45
+          ],
+          "edge": "west",
+          "opening": [
+            13,
+            13
+          ],
+          "kind": "power_lug_positive",
+          "center_z_above_pcb_mm": 8
+        },
+        {
+          "ref": "J3",
+          "position": [
+            0,
+            75
+          ],
+          "edge": "west",
+          "opening": [
+            13,
+            13
+          ],
+          "kind": "power_lug_return",
+          "center_z_above_pcb_mm": 8
+        },
+        {
+          "ref": "J10",
+          "position": [
+            14.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J11",
+          "position": [
+            33.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J12",
+          "position": [
+            52.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J13",
+          "position": [
+            71.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J14",
+          "position": [
+            90.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J15",
+          "position": [
+            109.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J16",
+          "position": [
+            128.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J17",
+          "position": [
+            147.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J18",
+          "position": [
+            166.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J19",
+          "position": [
+            185.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J20",
+          "position": [
+            14.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J21",
+          "position": [
+            33.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J22",
+          "position": [
+            52.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J23",
+          "position": [
+            71.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J24",
+          "position": [
+            90.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J25",
+          "position": [
+            109.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J26",
+          "position": [
+            128.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J27",
+          "position": [
+            147.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J28",
+          "position": [
+            166.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J29",
+          "position": [
+            185.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        }
+      ]
+    },
+    "usb_bridge": {
+      "outline": {
+        "width_mm": 24,
+        "height_mm": 32,
+        "thickness_mm": 1.6
+      },
+      "mounts": [],
+      "connectors": [
+        {
+          "ref": "J1",
+          "position": [
+            12,
+            7
+          ],
+          "edge": "internal",
+          "opening": [
+            12.2,
+            4.5
+          ],
+          "kind": "usb_a_male_vertical",
+          "center_z_above_pcb_mm": 6
+        },
+        {
+          "ref": "J2",
+          "position": [
+            12,
+            25.4
+          ],
+          "edge": "internal",
+          "opening": [
+            8.4,
+            2.6
+          ],
+          "kind": "usb_c_male_vertical",
+          "center_z_above_pcb_mm": 6
+        }
+      ]
+    }
+  },
+  "power": {
+    "channels": 20,
+    "continuous_current_A_per_channel": 2,
+    "aggregate_current_A": 40,
+    "default_input_V": [
+      12,
+      24
+    ],
+    "busbars": [
+      {
+        "net": "LED_VIN",
+        "x": 13,
+        "y": 35,
+        "length_mm": 160,
+        "width_mm": 8,
+        "thickness_mm": 2
+      },
+      {
+        "net": "PGND",
+        "x": 13,
+        "y": 77,
+        "length_mm": 160,
+        "width_mm": 8,
+        "thickness_mm": 2
+      }
+    ],
+    "qualification": "thermal, protection, connector and current-sharing qualification pending"
+  }
+}

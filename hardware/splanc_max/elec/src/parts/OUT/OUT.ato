@@ -1,0 +1,11 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component OUT:
+    trait is_atomic_part<manufacturer="DEGSON", partnumber="2EDGRC-5.08-03P-14-100A(H)", footprint="OUT.kicad_mod", symbol="OUT.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="DEGSON", partno="2EDGRC-5.08-03P-14-100A(H)">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3

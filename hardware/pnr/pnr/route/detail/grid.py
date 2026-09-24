@@ -60,6 +60,7 @@ class RouteGrid:
         self.ny = max(1, int(np.ceil(height / pitch)))
         # Static obstacles (True = never routable) per layer.
         self.blocked = np.zeros((self.nlayers, self.ny, self.nx), dtype=bool)
+        self.via_blocked = np.zeros_like(self.blocked)
         # Pad cells: (layer, i, j) -> net name (routable only by that net; the net's
         # connection point). This is the pad body + its *track* clearance halo
         # (clearance + ½track) — a track may run this close to the pad.
@@ -72,6 +73,41 @@ class RouteGrid:
         self.via_halo: Dict[Tuple[int, int, int], str] = {}
         # Access cell per (net, pad_key) recorded during build.
         self.access: Dict[Tuple[str, str], Cell] = {}
+        self.pad_rectangles = []
+        self.escape_segments = []
+        self.escape_vias = []
+        self.net_widths = {}
+        self.via_spacing = 2 * self.via_radius
+        self.via_drill_radius = self.via_radius  # conservative until fab rules supply the drill
+        self.hole_clearance = .2
+        self.source_drills = []  # centre, conservative radius; slots use enclosing circle
+        self.plated_ports = []  # net, exact centre, conservative in-land radius
+
+
+    def plated_transition(self, net, i, j):
+        """Exact source PTH centre when this column fits its existing copper land.
+
+        Only positively identified plated pads participate. The inscribed circle
+        is conservative for native round/rectangular/oval lands. Route writeback
+        bonds each used layer to this centre and emits no duplicate drill.
+        """
+        import math
+        point = self.center_of(i, j)
+        width = self.net_widths.get(net, self.track_width)
+        for owner, centre, radius in self.plated_ports:
+            if owner == net and math.dist(point, centre) + width / 2 <= radius - 1e-7:
+                return centre
+        return None
+
+    def hole_site_clear(self, point, sites=()):
+        """Same-net copper may merge; two distinct drills still need spacing."""
+        import math
+        if any(math.dist(point, p) < radius + self.via_drill_radius + self.hole_clearance - 1e-7
+               for p, radius in self.source_drills):
+            return False
+        return all(math.dist(point, p) < 1e-7 or
+                   math.dist(point, p) >= self.via_spacing - 1e-7
+                   for p in [xy for _, xy in self.escape_vias] + list(sites))
 
     # -- coordinate mapping --------------------------------------------------
 
@@ -106,7 +142,10 @@ class RouteGrid:
         """True if net ``net`` may drop a **via** at cell (layer, i, j): passable for
         a track *and* clear of every other net's wider via-halo (a via is fatter than
         a track, so it needs more room from foreign pads)."""
-        if not self.passable(layer, i, j, net):
+        if not self.in_bounds(i,j) or self.via_blocked[layer,j,i]:
+            return False
+        owner = self.pad_net.get((layer,i,j))
+        if owner is not None and owner != net:
             return False
         vh = self.via_halo.get((layer, i, j))
         return vh is None or vh == net
@@ -140,30 +179,28 @@ class RouteGrid:
         tighter reservation a track actually needs. The pad's centre is its access.
         """
 
-        def own(la, i, j):
-            self.pad_net[(la, i, j)] = net
+        self.pad_rectangles.append((layer,net,r))
 
-        def reserve(la, i, j):
-            self.pad_net.setdefault((la, i, j), net)
+        def reserve(table, la, i, j):
+            key = (la, i, j)
+            owner = table.get(key)
+            # An overlap belongs to neither net. A later pad must never erase a
+            # foreign pad's clearance halo (or vice versa).
+            table[key] = net if owner is None or owner == net else "\0conflict"
 
-        def reserve_via(la, i, j):
-            self.via_halo.setdefault((la, i, j), net)
+        self._mark_rect(layer, r, self.clearance + self.via_radius,
+                        lambda la, i, j: reserve(self.via_halo, la, i, j))
+        self._mark_rect(layer, r, self.clearance + 0.5 * self.track_width,
+                        lambda la, i, j: reserve(self.pad_net, la, i, j))
 
-        # Widest ring first (vias), then the track ring, then the body — inner marks
-        # win where they overlap.
-        self._mark_rect(layer, r, self.clearance + self.via_radius, reserve_via)
-        self._mark_rect(layer, r, self.clearance + 0.5 * self.track_width, reserve)
-        self._mark_rect(layer, r, 0.0, own)
-        # Access = centre cell.
-        ci, cj = self.cell_of(r.cx, r.cy)
-        self.pad_net.setdefault((layer, ci, cj), net)
-
-    def block_region(self, r: Rect, layers: Optional[List[int]] = None, grow: float = 0.0) -> None:
+    def block_region(self, r: Rect, layers: Optional[List[int]] = None, grow: float = 0.0, block_vias: bool = True) -> None:
         """Block a rectangular region (e.g. a keep-out, or no-net copper) on the
         given layers (all by default), grown by ``grow`` — never routable."""
         lays = range(self.nlayers) if layers is None else layers
         for la in lays:
             self._mark_rect(la, r, grow, lambda L, i, j: self.blocked.__setitem__((L, j, i), True))
+            if block_vias:
+                self._mark_rect(la, r, grow, lambda L, i, j: self.via_blocked.__setitem__((L,j,i),True))
 
     def block_edge_inset(self, inset: float) -> None:
         """Block every routing cell whose centre is within ``inset`` of the board
@@ -184,6 +221,7 @@ class RouteGrid:
             for i, j in border:
                 if (la, i, j) not in self.pad_net:
                     self.blocked[la, j, i] = True
+                    self.via_blocked[la,j,i] = True
 
     @classmethod
     def from_graph(
@@ -215,11 +253,21 @@ class RouteGrid:
                 # A through-hole pad occupies (and must be cleared on) *every* signal
                 # layer; an SMD pad only the component's side.
                 pad_layers = tuple(range(g.nlayers)) if pad.through_hole else (side,)
+                if max(pad.drill_size) > 0:
+                    # Circular envelope is conservative for oval/rotated slots;
+                    # source drills are obstacles even for copper on the same net.
+                    g.source_drills.append(((r.cx, r.cy), max(pad.drill_size) / 2))
+                    if pad.plated is True and net and pad.plated_land_radius > 0:
+                        g.plated_ports.append((net, (r.cx, r.cy), pad.plated_land_radius))
                 if not net:
-                    # No-net copper (mounting/NC/shield pads) is still copper: block
-                    # it (+ a clearance halo) so routing keeps away — it can't be an
-                    # access point, so it is a hard obstacle, not an own-net cell.
-                    g.block_region(r, layers=list(pad_layers), grow=g.clearance + g.via_radius)
+                    # NC/mounting pads remain foreign copper on every actual pad
+                    # layer. Preserve their exact rectangles and separate track/
+                    # via halos, just like assigned pads. Encoding only a via-
+                    # expanded absolute mask double-inflates nearby pin escapes
+                    # and wrongly seals ordinary SOT-23 pin rows. No routable net
+                    # has the empty name, and no access point is created here.
+                    for la in pad_layers:
+                        g.add_pad(la, "", r)
                     continue
                 for la in pad_layers:
                     g.add_pad(la, net, r)

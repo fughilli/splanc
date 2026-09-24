@@ -1,0 +1,10 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component R_10k_0_1percent_bus_divider_lower:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="10k 0.1percent bus divider lower R0603 engineering specification", footprint="R_10k_0_1percent_bus_divider_lower.kicad_mod", symbol="R_10k_0_1percent_bus_divider_lower.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="10k 0.1percent bus divider lower R0603 engineering specification">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

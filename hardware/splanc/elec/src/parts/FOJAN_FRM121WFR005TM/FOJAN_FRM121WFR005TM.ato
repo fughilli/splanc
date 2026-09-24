@@ -1,0 +1,18 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component FOJAN_FRM121WFR005TM_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+
+    trait is_atomic_part<manufacturer="FOJAN", partnumber="FRM121WFR005TM", footprint="R1206.kicad_mod", symbol="FRM121WFR005TM.kicad_sym", model="R1206_L3.2-W1.6-H0.6.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C7419996", manufacturer="FOJAN", partno="FRM121WFR005TM">
+    trait has_designator_prefix<prefix="R">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/a129741bf6e2c80df7be7029264e9e86.pdf?productCode=C7419996">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

@@ -1,0 +1,18 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component VISHAY_IHLP2525CZER1R0M01_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+
+    trait is_atomic_part<manufacturer="VISHAY", partnumber="IHLP2525CZER1R0M01", footprint="IND-SMD_L6.5-W6.5_IHLP-2525.kicad_mod", symbol="IHLP2525CZER1R0M01.kicad_sym", model="IND-SMD_L6.5-W6.5-H3.0_IHLP-2525.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C845018", manufacturer="VISHAY", partno="IHLP2525CZER1R0M01">
+    trait has_designator_prefix<prefix="U">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/8351d94385375f88426db52d94b6c4c2.pdf?productCode=C845018">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

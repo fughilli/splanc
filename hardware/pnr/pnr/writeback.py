@@ -30,6 +30,40 @@ _EDGE_LAYER = '(layer "Edge.Cuts")'
 _GR_TOKEN = re.compile(r"\(gr_(?:line|rect|poly|arc|curve)\b")
 
 
+def normalize_duplicate_drill_text(text):
+    """Remove only identical drilled pad definitions within one footprint.
+
+    Compare every serialized property except UUID. This preserves thermal arrays,
+    overlapping SMD/through-hole pads and different net/padstack definitions.
+    Text normalization avoids KiCad 10's unsafe native child-removal lifetime.
+    """
+    token = re.compile(r'"(?:\\.|[^"\\])*"|[()]|[^\s()]+')
+    tokens = list(token.finditer(text))
+    stack, seen, deletions = [], {}, []
+    for i, match in enumerate(tokens):
+        value = match.group()
+        if value == '(':
+            stack.append((tokens[i + 1].group(), match.start()))
+        elif value == ')':
+            head, start = stack.pop()
+            if head != 'pad' or not stack or stack[-1][0] != 'footprint':
+                continue
+            block = text[start:match.end()]
+            words = token.findall(block)
+            if len(words) < 4 or words[3] not in ('thru_hole', 'np_thru_hole'):
+                continue
+            canonical = tuple(token.findall(re.sub(r'\(uuid\s+"[^"\n]+"\)', '', block)))
+            footprint = stack[-1][1]
+            definitions = seen.setdefault(footprint, set())
+            if canonical in definitions:
+                deletions.append((start, match.end()))
+            else:
+                definitions.add(canonical)
+    for start, end in reversed(deletions):
+        text = text[:start] + text[end:]
+    return text
+
+
 def strip_edge_cuts(text: str) -> str:
     """Remove every board-graphic (`gr_line`/`gr_rect`/…) on the ``Edge.Cuts``
     layer from a ``.kicad_pcb`` s-expression.
@@ -358,6 +392,77 @@ def _clear_segment(a, b, radius, netcode, obstacles):
     return True
 
 
+def _has_through_access(board, pad):
+    """Actual connected copper already contains a through-layer contact.
+
+    This is an escape-reuse check, not a claim that a filled plane is connected.
+    Native DRC still decides the latter. Footprint thermal holes count as access.
+    """
+    import pcbnew
+    for item in [pad] + list(board.GetConnectivity().GetConnectedItems(pad)):
+        if item.GetNetCode() != pad.GetNetCode():
+            continue
+        # GetConnectedItems may expose a via through a base SWIG wrapper.
+        if item.GetClass() == 'PCB_VIA':
+            return True
+        if isinstance(item, pcbnew.PAD) and item.GetAttribute() == pcbnew.PAD_ATTRIB_PTH:
+            return True
+    return False
+
+
+def _reuse_surface_ground(board, pad, obstacles, trace_w, clr, max_length_mm=3.0, oracle=None):
+    """Try a short checked surface connection before adding a ground via.
+
+    Restrict reuse to the same package; do not daisy-chain unrelated ground
+    returns or apply this signal-leaf policy to power-plane nets.
+    """
+    import pcbnew
+    import math
+    surface = pcbnew.B_Cu if pad.IsOnLayer(pcbnew.B_Cu) and not pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu
+    p = pad.GetPosition()
+    point = (p.x, p.y)
+    choices = []
+    for other in pad.GetParentFootprint().Pads():
+        if other.m_Uuid == pad.m_Uuid or other.GetNetCode() != pad.GetNetCode() or not other.IsOnLayer(surface):
+            continue
+        if other.GetAttribute() not in (pcbnew.PAD_ATTRIB_SMD, pcbnew.PAD_ATTRIB_PTH) or not _has_through_access(board, other):
+            continue
+        q = other.GetPosition()
+        target = (q.x, q.y)
+        if math.dist(point, target) <= _nm(max_length_mm):
+            choices.append(target)
+    for target in sorted(choices, key=lambda q: math.dist(point, q)):
+        # Native fanout's conservative obstacle model applies unchanged.
+        clear = (oracle.clear(pad.GetNetname(),surface,tuple(x/1e6 for x in point),
+                              tuple(x/1e6 for x in target),trace_w/1e6) if oracle else
+                 _clear_segment(point,target,trace_w/2.+clr,pad.GetNetCode(),obstacles))
+        if not clear:
+            continue
+        track = pcbnew.PCB_TRACK(board)
+        track.SetStart(p)
+        track.SetEnd(pcbnew.VECTOR2I(*target))
+        track.SetWidth(trace_w)
+        track.SetLayer(surface)
+        track.SetNetCode(pad.GetNetCode())
+        board.Add(track)
+        obstacles.append((point, target, trace_w/2., pad.GetNetCode()))
+        if oracle:
+            oracle.reserve_track(pad.GetNetname(),surface,tuple(x/1e6 for x in point),
+                                 tuple(x/1e6 for x in target),trace_w/1e6)
+        board.BuildConnectivity()
+        return True
+    return False
+
+
+def outline_bounds(board):
+    """Physical outline bounds, excluding Edge.Cuts drawing stroke width."""
+    import pcbnew
+    contour = pcbnew.SHAPE_POLY_SET()
+    if board.GetBoardPolygonOutlines(contour, False) and contour.OutlineCount():
+        return contour.BBox()
+    return board.GetBoardEdgesBoundingBox()
+
+
 def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=None) -> int:
     """Add only checked external pad-to-plane escapes; never force via-in-pad.
 
@@ -375,14 +480,32 @@ def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=No
     trace_w = _nm(fab['track_width_mm'])
     via_keep = max(via_r+clr, drill_d/2.+_nm(fab['hole_clearance_mm']))
     obstacles = _collect_obstacles(board)
-    bounds = board.GetBoardEdgesBoundingBox()
+    bounds = outline_bounds(board)
     edge = via_r + _nm(fab['edge_clearance_mm'])
+    oracle = None
+    if bounds.GetWidth() and bounds.GetHeight():
+        import copy
+        from pnr.native_electrical import Oracle
+        checked_rules=copy.deepcopy(rules or {})
+        checked_rules['fab']=dict(fab,clearance_mm=clr/1e6)
+        oracle=Oracle(board,checked_rules)
     added, skipped = 0, []
+    board.BuildConnectivity()
     for fp in board.GetFootprints():
         center = fp.GetPosition()
         for pad in fp.Pads():
             if pad.GetNetCode() != netcode or pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
                 continue
+            # Plane attachment is still a current-carrying trace. Resolve its
+            # required width from the same source policy as ordinary routing;
+            # the fabrication minimum is not a per-net width specification.
+            from pnr.pad_entry import required_width
+            trace_w = _nm(required_width(pad, rules or {}))
+            if pad.GetNetname() == 'lv' and _has_through_access(board, pad):
+                continue
+            if pad.GetNetname() == 'lv' and _reuse_surface_ground(board, pad, obstacles, trace_w, clr, oracle=oracle):
+                continue
+            surface = (pcbnew.B_Cu if pad.IsOnLayer(pcbnew.B_Cu) and not pad.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu)
             pos = pad.GetPosition()
             point = (pos.x,pos.y)
             size = pad.GetSize()
@@ -399,10 +522,13 @@ def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=No
                     if not (bounds.GetLeft()+edge <= x <= bounds.GetRight()-edge and
                             bounds.GetTop()+edge <= y <= bounds.GetBottom()-edge):
                         continue
-                    if not _clear_segment(target,target,via_keep,netcode,obstacles):
-                        continue
-                    if not _clear_segment(point,target,trace_w/2.+clr,netcode,obstacles):
-                        continue
+                    if oracle:
+                        a,z=tuple(v/1e6 for v in point),tuple(v/1e6 for v in target)
+                        if not oracle.via(pad.GetNetname(),z,via_d/1e6,drill_d/1e6):continue
+                        if not oracle.clear(pad.GetNetname(),surface,a,z,trace_w/1e6):continue
+                    else:
+                        if not _clear_segment(target,target,via_keep,netcode,obstacles):continue
+                        if not _clear_segment(point,target,trace_w/2.+clr,netcode,obstacles):continue
                     via = pcbnew.PCB_VIA(board)
                     via.SetPosition(pcbnew.VECTOR2I(x,y))
                     via.SetViaType(pcbnew.VIATYPE_THROUGH)
@@ -426,7 +552,11 @@ def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2, rules=No
                     # Hole spacing applies even between vias on the same net.
                     obstacles.append((target,target,drill_d/2.,-1))
                     obstacles.append((point,target,trace_w/2.,netcode))
+                    if oracle:
+                        oracle.reserve_via(pad.GetNetname(),z,via_d/1e6,drill_d/1e6)
+                        oracle.reserve_track(pad.GetNetname(),surface,a,z,trace_w/1e6)
                     added += 1
+                    board.BuildConnectivity()
                     placed = True
                     break
                 if placed:
@@ -783,7 +913,7 @@ def apply_copper_keepouts(board, graph, rules, height):
         zone.SetLayerSet(pcbnew.LSET.AllCuMask(board.GetCopperLayerCount()))
         zone.SetDoNotAllowTracks(True)
         zone.SetDoNotAllowVias(True)
-        zone.SetDoNotAllowCopperPour(True)
+        zone.SetDoNotAllowZoneFills(True)
         zone.SetDoNotAllowPads(False)
         zone.SetDoNotAllowFootprints(False)
         polygon = zone.Outline()
@@ -842,7 +972,7 @@ def apply_mounting_holes(board, rules, height):
         zone.SetLayerSet(pcbnew.LSET.AllCuMask(board.GetCopperLayerCount()))
         zone.SetDoNotAllowTracks(True)
         zone.SetDoNotAllowVias(True)
-        zone.SetDoNotAllowCopperPour(True)
+        zone.SetDoNotAllowZoneFills(True)
         # NPTH hole is inside its own rule area; component exclusion is enforced
         # by both-face courtyards plus the conservative placement rectangle.
         zone.SetDoNotAllowPads(False)
@@ -903,7 +1033,7 @@ def writeback(
     # outline at the placement region so every pad is inside it.
     with open(out_pcb, encoding="utf-8") as fh:
         text = fh.read()
-    text = frame_region(strip_edge_cuts(text), width, height)
+    text = frame_region(strip_edge_cuts(normalize_duplicate_drill_text(text)), width, height)
     with open(out_pcb, "w", encoding="utf-8") as fh:
         fh.write(text)
     if rules and out_pcb.endswith(".kicad_pcb"):

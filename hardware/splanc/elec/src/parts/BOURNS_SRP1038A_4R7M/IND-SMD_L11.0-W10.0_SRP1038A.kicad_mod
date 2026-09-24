@@ -1,0 +1,138 @@
+(footprint "BOURNS_SRP1038A_4R7M:IND-SMD_L11.0-W10.0_SRP1038A"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "52084684-3fa7-4f37-80c2-a666495a5ff8")
+	(property "Reference" "REF**"
+		(at 0 -4)
+		(layer "F.SilkS")
+		(uuid "9a2e8342-9064-4677-82f8-01ca61ba1393")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "IND-SMD_L11.0-W10.0_SRP1038A"
+		(at 0 4)
+		(layer "F.Fab")
+		(uuid "b678a02d-d013-4b04-b4a8-d59705cb8fe4")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_circle
+		(center -5.5 5)
+		(end -5.47 5)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "45679e8f-dc66-443a-883c-2ee4d90c5242")
+	)
+	(fp_line
+		(start 5.08 -1.91)
+		(end 5.08 -4.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "3aa61ad4-0697-4d1b-80c8-023870882319")
+	)
+	(fp_line
+		(start 5.08 -4.95)
+		(end -5.08 -4.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "956a14ea-9162-4974-b643-57aa2490dc44")
+	)
+	(fp_line
+		(start -5.08 -4.95)
+		(end -5.08 -1.91)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "e85adf0c-2900-4c67-8be1-eb3a1b0c7746")
+	)
+	(fp_line
+		(start -5.08 1.9)
+		(end -5.08 4.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "672a38d2-9198-4ead-8b8e-45c12a821980")
+	)
+	(fp_line
+		(start -5.08 4.95)
+		(end 5.08 4.95)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "ae489cc1-a85d-4d7a-b58b-e00be926c11b")
+	)
+	(fp_line
+		(start 5.08 4.95)
+		(end 5.08 1.9)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "22f13a60-62c1-47bc-be9e-52d6e59da687")
+	)
+	(pad "1" smd rect
+		(at -4.75 0 180)
+		(size 3.5 3.5)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "22111130-867f-4e7a-8ac7-eea02f2fecb0")
+	)
+	(pad "2" smd rect
+		(at 4.75 0 0)
+		(size 3.5 3.5)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "acede1ce-39ad-4de4-be25-c62e10fd488b")
+	)
+	(model "${KIPRJMOD}/../../src/parts/BOURNS_SRP1038A_4R7M/IND-SMD_L11.0-W10.0_SRP1038A.STEP"
+		(offset
+			(xyz 0 -0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+)

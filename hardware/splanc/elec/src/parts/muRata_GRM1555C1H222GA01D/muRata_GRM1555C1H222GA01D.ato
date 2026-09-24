@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component muRata_GRM1555C1H222GA01D_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2987940", date="2026-09-09T18:52:49.892944+00:00", checksum="5cf76a32eca3dcc73f5c9d6af07d313566eae320018211c2f417c39b8fef0d60">
+
+    trait is_atomic_part<manufacturer="muRata", partnumber="GRM1555C1H222GA01D", footprint="C0402.kicad_mod", symbol="GRM1555C1H222GA01D.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2987940", manufacturer="muRata", partno="GRM1555C1H222GA01D">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 1
+    pin 2
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

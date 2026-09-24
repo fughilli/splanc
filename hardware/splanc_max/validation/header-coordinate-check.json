@@ -1,0 +1,262 @@
+[
+  {
+    "ref": "J10",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT0",
+    "pin3": "RETURN0",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J11",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT1",
+    "pin3": "RETURN1",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J12",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT2",
+    "pin3": "RETURN2",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J13",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT3",
+    "pin3": "RETURN3",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J14",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT4",
+    "pin3": "RETURN4",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J15",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT5",
+    "pin3": "RETURN5",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J16",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT6",
+    "pin3": "RETURN6",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J17",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT7",
+    "pin3": "RETURN7",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J18",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT8",
+    "pin3": "RETURN8",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J19",
+    "native_front_y": 120.0,
+    "rotation": 0,
+    "pin1": "OUT9",
+    "pin3": "RETURN9",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J20",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT10",
+    "pin3": "RETURN10",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J21",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT11",
+    "pin3": "RETURN11",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J22",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT12",
+    "pin3": "RETURN12",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J23",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT13",
+    "pin3": "RETURN13",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J24",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT14",
+    "pin3": "RETURN14",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J25",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT15",
+    "pin3": "RETURN15",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J26",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT16",
+    "pin3": "RETURN16",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J27",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT17",
+    "pin3": "RETURN17",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J28",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT18",
+    "pin3": "RETURN18",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  },
+  {
+    "ref": "J29",
+    "native_front_y": 0.0,
+    "rotation": 180,
+    "pin1": "OUT19",
+    "pin3": "RETURN19",
+    "body_mm": [
+      17.24,
+      12,
+      8.6
+    ],
+    "drill_mm": 1.5
+  }
+]

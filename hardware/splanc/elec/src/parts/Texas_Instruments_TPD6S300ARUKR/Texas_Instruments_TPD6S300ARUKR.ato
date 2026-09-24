@@ -1,0 +1,36 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPD6S300ARUKR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2876380", date="2026-09-09T19:34:32.781297+00:00", checksum="0029e8ffb691801bda65a6186c917001a1d5538acdc8fe1063d75c9b29e01d01">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPD6S300ARUKR", footprint="WQFN-20_L3.0-W3.0-P0.40-TL-EP1.7.kicad_mod", symbol="TPD6S300ARUKR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2876380", manufacturer="Texas Instruments", partno="TPD6S300ARUKR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal CC1 ~ pin 12
+    signal CC2 ~ pin 11
+    signal C_CC1 ~ pin 4
+    signal C_CC2 ~ pin 5
+    signal C_SUB1 ~ pin 1
+    signal C_SUB2 ~ pin 2
+    signal D1 ~ pin 20
+    signal D2 ~ pin 19
+    signal GND ~ pin 18
+    GND ~ pin 13
+    GND ~ pin 8
+    signal N_C ~ pin 17
+    N_C ~ pin 16
+    signal PAD ~ pin 21
+    signal RPD_G1 ~ pin 7
+    signal RPD_G2 ~ pin 6
+    signal SBU2 ~ pin 14
+    signal SUB1 ~ pin 15
+    signal VBIAS ~ pin 3
+    signal VPWR ~ pin 10
+    signal nFLT ~ pin 9

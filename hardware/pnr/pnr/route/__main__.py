@@ -27,6 +27,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("graph", help="BoardGraph JSON (pnr.ingest --dump-json)")
     ap.add_argument("constraints", help="constraints.yaml")
+    ap.add_argument("--annotation-source", action="append", default=[])
+    ap.add_argument("--electrical-fab")
+    ap.add_argument("--plane-access-fab")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--iters", type=int, default=600)
     ap.add_argument("--max-rounds", type=int, default=6)
@@ -93,7 +96,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="exit 0 even if the loop did not drive overflow to 0 (for previews)",
     )
+    ap.add_argument('--initial-pool', action='store_true',
+                    help='Explore diverse legal global starts and detail-route a bounded shortlist')
+    ap.add_argument('--initial-starts', type=int, default=None)
+    ap.add_argument('--initial-finalists', type=int, default=None)
+    ap.add_argument('--initial-proxy-budget', type=int, default=None)
     args = ap.parse_args(argv)
+    initial_pool = None
+    if args.initial_pool or any(v is not None for v in
+                               (args.initial_starts,args.initial_finalists,args.initial_proxy_budget)):
+        if not args.detail_loop:
+            ap.error('--initial-pool requires --detail-loop for equal-budget finalist routing')
+        from pnr.place.initial_pool import InitialPoolConfig
+        inherited = InitialPoolConfig.from_environment() or InitialPoolConfig()
+        starts = args.initial_starts if args.initial_starts is not None else inherited.starts
+        finalists = args.initial_finalists if args.initial_finalists is not None else min(inherited.route_finalists,starts)
+        try:
+            initial_pool = InitialPoolConfig(starts=starts,route_finalists=finalists,
+                proxy_budget=args.initial_proxy_budget if args.initial_proxy_budget is not None else starts,
+                proxy_pitch_mm=inherited.proxy_pitch_mm,proxy_passes=inherited.proxy_passes)
+        except ValueError as error:
+            ap.error(str(error))
 
     import yaml
 
@@ -109,6 +132,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     net_names = [n.name for n in graph.nets]
     rules = compile_routing_rules(constraints, net_names)
+    if args.electrical_fab:
+        from pnr.electrical import annotations,resolve_currents,compile_policy,resolve_pair_chains
+        with open(args.electrical_fab) as f: fab=json.load(f)
+        rules=compile_policy(rules,resolve_currents(annotations(args.annotation_source),graph.components),fab)
+        rules=resolve_pair_chains(rules,args.annotation_source,graph.components)
+    if args.plane_access_fab:
+        from pnr.plane_intent import read_annotations, resolve
+        rules["plane_access_intents"] = resolve(read_annotations(args.annotation_source), graph.components)
+        rules["plane_access_fab"] = json.loads(open(args.plane_access_fab).read())
     route_pitch = args.route_pitch or None  # 0 => auto from the fab profile
 
     placed, report = route_and_place(
@@ -126,6 +158,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         auto_outline=args.auto_outline,
         outline_max_scale=args.outline_max_scale,
         spread=args.place_spread,
+        initial_pool=initial_pool,
     )
     print(report.summary())
 
@@ -142,7 +175,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_routes:
         from pnr.route.detail.router import route_board
 
-        board = route_board(
+        board = (report.detail_result if not args.no_escape else None) or route_board(
             placed,
             constraints,
             rules,

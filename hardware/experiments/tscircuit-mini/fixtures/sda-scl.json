@@ -1,0 +1,9 @@
+{
+  "nets": ["scl", "sda"],
+  "source_pad": "U7.5",
+  "target_pad": "U10.5",
+  "bounds": [78, 54, 88, 70],
+  "pitch": 0.1,
+  "max_orders": 8,
+  "max_expansions": 10000
+}

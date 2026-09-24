@@ -1,0 +1,13 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component YAGEO_PA1206FRE470R01L_package:
+
+    trait is_atomic_part<manufacturer="YAGEO", partnumber="PA1206FRE470R01L", footprint="R1206.kicad_mod", symbol="PA1206FRE470R01L.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C513611", manufacturer="YAGEO", partno="PA1206FRE470R01L">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

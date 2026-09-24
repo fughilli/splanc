@@ -1,0 +1,221 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-09-21T20:08:05",
+    "ignored_checks": [
+        {
+            "description": "Footprint has no courtyard defined",
+            "key": "missing_courtyard"
+        },
+        {
+            "description": "Track endpoint not centered on via",
+            "key": "track_not_centered_on_via"
+        },
+        {
+            "description": "Tuning profile track geometries",
+            "key": "tuning_profile_track_geometries"
+        },
+        {
+            "description": "Footprint doesn't match symbol's footprint filters",
+            "key": "footprint_filters_mismatch"
+        },
+        {
+            "description": "Footprint component type doesn't match footprint pads",
+            "key": "footprint_type_mismatch"
+        }
+    ],
+    "included_severities": [
+        "error",
+        "warning"
+    ],
+    "kicad_version": "10.0.6",
+    "schematic_parity": [],
+    "source": "splanc_max_usb_bridge.kicad_pcb",
+    "unconnected_items": [
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "Pad 1 [USB_VBUS] of R1 on F.Cu",
+                    "pos": {
+                        "x": 4.175,
+                        "y": 18.0
+                    },
+                    "uuid": "99851a2b-fe27-4bd3-a1b5-6786d7c9e6af"
+                },
+                {
+                    "description": "PTH pad 1 [USB_VBUS] of J1",
+                    "pos": {
+                        "x": 10.0,
+                        "y": 33.0
+                    },
+                    "uuid": "ce590f99-24c5-4d50-b96c-15bff5077b7f"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 1 [USB_VBUS] of J2",
+                    "pos": {
+                        "x": 9.5,
+                        "y": 6.6
+                    },
+                    "uuid": "cd739909-bec2-4772-a577-0967adf6d6d9"
+                },
+                {
+                    "description": "Pad 1 [USB_VBUS] of R1 on F.Cu",
+                    "pos": {
+                        "x": 4.175,
+                        "y": 18.0
+                    },
+                    "uuid": "99851a2b-fe27-4bd3-a1b5-6786d7c9e6af"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "Pad 2 [CC] of R1 on F.Cu",
+                    "pos": {
+                        "x": 5.825,
+                        "y": 18.0
+                    },
+                    "uuid": "1c21962b-bad8-4f81-a243-a5faddde08da"
+                },
+                {
+                    "description": "PTH pad 5 [CC] of J2",
+                    "pos": {
+                        "x": 13.5,
+                        "y": 6.6
+                    },
+                    "uuid": "62921f63-abed-4caf-bd07-0f32366d810f"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 2 [USB_DM] of J2",
+                    "pos": {
+                        "x": 10.5,
+                        "y": 6.6
+                    },
+                    "uuid": "ed144ddf-69ce-45eb-be5e-bfaf265e9304"
+                },
+                {
+                    "description": "PTH pad 2 [USB_DM] of J1",
+                    "pos": {
+                        "x": 11.0,
+                        "y": 33.0
+                    },
+                    "uuid": "e8bdc378-baf7-4c53-af17-cb4cfe71921a"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 3 [USB_DP] of J2",
+                    "pos": {
+                        "x": 11.5,
+                        "y": 6.6
+                    },
+                    "uuid": "42bc30b1-20d3-4f3e-b990-ae4baeb8368a"
+                },
+                {
+                    "description": "PTH pad 3 [USB_DP] of J1",
+                    "pos": {
+                        "x": 12.0,
+                        "y": 33.0
+                    },
+                    "uuid": "989d7470-1f3a-48ff-88ad-1aea12a7a078"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 4 [USB_GND] of J2",
+                    "pos": {
+                        "x": 12.5,
+                        "y": 6.6
+                    },
+                    "uuid": "c1d26dd9-5c11-4a0f-833b-1e4d9087b140"
+                },
+                {
+                    "description": "PTH pad 4 [USB_GND] of J1",
+                    "pos": {
+                        "x": 13.0,
+                        "y": 33.0
+                    },
+                    "uuid": "5996e5a7-9ba9-4f7e-b4ba-f81e483442dd"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 4 [USB_GND] of J1",
+                    "pos": {
+                        "x": 13.0,
+                        "y": 33.0
+                    },
+                    "uuid": "5996e5a7-9ba9-4f7e-b4ba-f81e483442dd"
+                },
+                {
+                    "description": "PTH pad 5 [USB_GND] of J1",
+                    "pos": {
+                        "x": 14.0,
+                        "y": 33.0
+                    },
+                    "uuid": "54d38d05-b351-4ecf-a049-d9ad5708f089"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        },
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "PTH pad 6 [USB_GND] of J2",
+                    "pos": {
+                        "x": 14.5,
+                        "y": 6.6
+                    },
+                    "uuid": "ef1e35ff-3c87-4d81-add5-dbee4824e902"
+                },
+                {
+                    "description": "PTH pad 4 [USB_GND] of J2",
+                    "pos": {
+                        "x": 12.5,
+                        "y": 6.6
+                    },
+                    "uuid": "c1d26dd9-5c11-4a0f-833b-1e4d9087b140"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        }
+    ],
+    "violations": []
+}

@@ -1,0 +1,25 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_INA226AIDGSR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C49851", date="2026-08-20T03:04:35.561935+00:00", checksum="348e689faa6519bed628bdfc7853518d8662dae32b9c37cb97ade4910d415f72">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="INA226AIDGSR", footprint="MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL.kicad_mod", symbol="INA226AIDGSR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C49851", manufacturer="Texas Instruments", partno="INA226AIDGSR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal A0 ~ pin 2
+    signal A1 ~ pin 1
+    signal Alert ~ pin 3
+    signal GND ~ pin 7
+    signal SCL ~ pin 5
+    signal SDA ~ pin 4
+    signal VBUS ~ pin 8
+    signal VINneg ~ pin 9
+    signal VINpos ~ pin 10
+    signal VSpos ~ pin 6

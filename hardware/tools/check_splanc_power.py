@@ -182,7 +182,9 @@ def check(path, require_layout=False, mini=False):
             next(iter(f.Pads())).GetDrillSize().x == 2700000 for f in mounts))
         mounting_keepouts = [z for z in board.Zones() if z.GetZoneName().startswith('PNR mounting:')]
         require('four all-copper mounting keepouts', len(mounting_keepouts) == 4 and all(
-            z.GetDoNotAllowTracks() and z.GetDoNotAllowVias() and z.GetDoNotAllowCopperPour() and
+            z.GetDoNotAllowTracks() and z.GetDoNotAllowVias() and
+            (z.GetDoNotAllowZoneFills() if hasattr(z, 'GetDoNotAllowZoneFills')
+             else z.GetDoNotAllowCopperPour()) and
             z.GetLayerSet().CuStack().size() == 4 for z in mounting_keepouts))
         matching = True
         for address, fp in footprints.items():

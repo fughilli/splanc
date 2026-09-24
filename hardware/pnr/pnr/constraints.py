@@ -121,11 +121,9 @@ def width_for_current(
     ``width = A / (thickness[mils] · 1.378·copper_oz)``. ``k`` = 0.048 external /
     0.024 internal. Lets a net class be specified by *amperage* instead of a raw
     width, so power rails get sized for their expected current."""
-    k = 0.048 if external else 0.024
-    area_mils2 = (current_a / (k * (delta_t_c**0.44))) ** (1.0 / 0.725)
-    thickness_mils = 1.378 * copper_oz  # 1 oz ≈ 1.378 mil
-    width_mils = area_mils2 / thickness_mils
-    return width_mils * 0.0254  # mils -> mm
+    from pnr.electrical import current_width
+    return current_width(current_a, copper_oz, delta_t_c, external)
+
 
 
 @dataclass
@@ -147,15 +145,20 @@ class NetClass:
     nets: Tuple[str, ...] = ()
     plane_layer: Optional[str] = None
     current_a: Optional[float] = None
+    copper_oz: float = 1.0
+    delta_t_c: float = 10.0
+    external: bool = True
 
     def resolved_width_mm(self, floor_mm: float) -> Optional[float]:
-        """The class width: explicit ``width_mm``, else derived from ``current_a``
-        (IPC-2221), else ``None``. Never below the fab ``floor_mm``."""
-        if self.width_mm:
-            return max(self.width_mm, floor_mm)
-        if self.current_a:
-            return max(width_for_current(self.current_a), floor_mm)
-        return None
+        """Maximum of the explicit width, current screen and fabrication floor."""
+        candidates = [floor_mm]
+        if self.width_mm is not None:
+            from pnr.plane_intent import positive
+            candidates.append(positive(self.width_mm, "width_mm"))
+        if self.current_a is not None:
+            candidates.append(width_for_current(self.current_a, copper_oz=self.copper_oz,
+                                                delta_t_c=self.delta_t_c, external=self.external))
+        return max(candidates) if self.width_mm is not None or self.current_a is not None else None
 
 
 @dataclass
@@ -309,9 +312,12 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
         "net_classes": [
             {
                 "name": nc.name,
-                # Resolved width: explicit, else IPC-2221 from current_a, else the
-                # fab default — the router emits each net's tracks at this width.
+                # Use every applicable minimum, including the current-derived width.
                 "width_mm": nc.resolved_width_mm(fab.track_width_mm),
+                "current_a": nc.current_a,
+                "copper_oz": nc.copper_oz,
+                "delta_t_c": nc.delta_t_c,
+                "external": nc.external,
                 "clearance_mm": nc.clearance_mm,
                 "plane_layer": nc.plane_layer,
                 "nets": list(_expand_nets(nc.nets, net_names)),
@@ -492,6 +498,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str], addresses=None, pi
         "edge_align",
         "keepout",
         "side_pref",
+        "side",
         "group",
         "net_class",
         "diff_pair",
@@ -566,6 +573,21 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str], addresses=None, pi
             )
         )
 
+    # side: HARD — constrain the copper side while leaving XY/rotation movable.
+    # This is deliberately separate from fixed, whose absent XY resolves to the
+    # board centre, and from side_pref, which is only a soft preference.
+    for side, patterns in (doc.get("side") or {}).items():
+        if side not in SIDES:
+            raise ConstraintError(f"side: {side!r} not one of {SIDES}")
+        refs = _expand_refs(patterns or [], known_refs, warnings, f"side.{side}")
+        for ref in refs:
+            prior = [c.params['side'] for c in constraints if ref in c.refs
+                     and c.kind in ('fixed', 'side') and c.params.get('side')]
+            if any(value != side for value in prior):
+                raise ConstraintError(f"conflicting hard side rules for {ref}")
+        constraints.append(Constraint(kind="side", enforcement=Enforcement.HARD,
+                                      refs=refs, params={"side": side}))
+
     # side_pref: SOFT — bias a set of parts to a side.
     for side, patterns in (doc.get("side_pref") or {}).items():
         _require_enum(side, SIDES, "side_pref key")
@@ -624,6 +646,9 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str], addresses=None, pi
                 nets=tuple(str(n) for n in nets),
                 plane_layer=spec.get("plane_layer"),
                 current_a=_opt_float(spec.get("current_a")),
+                copper_oz=float(spec.get("copper_oz", 1.0)),
+                delta_t_c=float(spec.get("delta_t_c", 10.0)),
+                external=bool(spec.get("external", True)),
             )
         )
 

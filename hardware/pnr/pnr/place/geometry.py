@@ -89,9 +89,27 @@ def set_component_side(comp: Component, side: str):
         comp.side = side
 
 
+def resolve_hard_sides(constraints):
+    """Resolve physical side rules without adding a position lock."""
+    sides = {}
+    for con in constraints.hard:
+        if con.kind not in ('fixed', 'side') or not con.params.get('side'):
+            continue
+        for ref in con.refs:
+            if ref in sides and sides[ref] != con.params['side']:
+                raise ValueError(f'conflicting hard side rules for {ref}')
+            sides[ref] = con.params['side']
+    return sides
+
+
+def apply_hard_sides(graph, constraints):
+    for ref, side in resolve_hard_sides(constraints).items():
+        set_component_side(graph.component(ref), side)
+
+
 def occupied_sides(comp: Component):
     """Reserve through-hole component bodies on both sides, conservatively."""
-    return ("top", "bottom") if any(p.through_hole for p in comp.pads) else (comp.side,)
+    return ("top", "bottom") if not comp.smd_body and any(p.through_hole for p in comp.pads) else (comp.side,)
 
 
 def courtyard_rect(comp: Component) -> Rect:
@@ -262,3 +280,18 @@ def keepout_rects(
             elif edge == "west":
                 rects.append(Rect(cr.left - depth / 2, cr.cy, depth, cr.h))
     return rects
+
+
+def placement_rects(comp):
+    """Physical reservations: body courtyard plus opposite-side plated holes.
+
+    KiCad's explicit SMD attribute distinguishes a surface body containing
+    thermal holes from a through-hole body/connector. Holes still exclude
+    opposite components at their actual pad extents, not the whole body.
+    """
+    result=[(side,courtyard_rect(comp)) for side in occupied_sides(comp)]
+    if comp.smd_body:
+        opposite='bottom' if comp.side=='top' else 'top'
+        for pad,(_,_,rect) in zip(comp.pads,pad_rects(comp)):
+            if pad.through_hole:result.append((opposite,rect))
+    return result

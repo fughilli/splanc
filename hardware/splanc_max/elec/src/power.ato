@@ -1,0 +1,1873 @@
+from "parts/ADC/ADC.ato" import ADC
+from "parts/BUCK/BUCK.ato" import BUCK
+from "parts/CSA/CSA.ato" import CSA
+from "parts/C_100nF16V/C_100nF16V.ato" import C_100nF16V
+from "parts/C_100nF50V/C_100nF50V.ato" import C_100nF50V
+from "parts/C_10nF50V_bus_divider_filter/C_10nF50V_bus_divider_filter.ato" import C_10nF50V_bus_divider_filter
+from "parts/C_10nF50V_voltage_filter/C_10nF50V_voltage_filter.ato" import C_10nF50V_voltage_filter
+from "parts/C_10uF10V/C_10uF10V.ato" import C_10uF10V
+from "parts/C_1nF16V_current_filter/C_1nF16V_current_filter.ato" import C_1nF16V_current_filter
+from "parts/C_1uF10V/C_1uF10V.ato" import C_1uF10V
+from "parts/C_1uF10V_ADC_supply/C_1uF10V_ADC_supply.ato" import C_1uF10V_ADC_supply
+from "parts/ISO/ISO.ato" import ISO
+from "parts/ISOSPI/ISOSPI.ato" import ISOSPI
+from "parts/LUG/LUG.ato" import LUG
+from "parts/MUX/MUX.ato" import MUX
+from "parts/NPN/NPN.ato" import NPN
+from "parts/OUT/OUT.ato" import OUT
+from "parts/REF/REF.ato" import REF
+from "parts/RIBBON/RIBBON.ato" import RIBBON
+from "parts/R_100R_current_filter/R_100R_current_filter.ato" import R_100R_current_filter
+from "parts/R_100R_series/R_100R_series.ato" import R_100R_series
+from "parts/R_100k/R_100k.ato" import R_100k
+from "parts/R_100k_0_1percent_bus_divider_upper/R_100k_0_1percent_bus_divider_upper.ato" import R_100k_0_1percent_bus_divider_upper
+from "parts/R_100k_0_1percent_voltage_divider_upper/R_100k_0_1percent_voltage_divider_upper.ato" import R_100k_0_1percent_voltage_divider_upper
+from "parts/R_100k_mux_address_pulldown/R_100k_mux_address_pulldown.ato" import R_100k_mux_address_pulldown
+from "parts/R_100k_pulldown/R_100k_pulldown.ato" import R_100k_pulldown
+from "parts/R_10k/R_10k.ato" import R_10k
+from "parts/R_10k_0_1percent_bus_divider_lower/R_10k_0_1percent_bus_divider_lower.ato" import R_10k_0_1percent_bus_divider_lower
+from "parts/R_10k_0_1percent_voltage_divider_lower/R_10k_0_1percent_voltage_divider_lower.ato" import R_10k_0_1percent_voltage_divider_lower
+from "parts/R_1_00k_currentlimit_nominal2_47A/R_1_00k_currentlimit_nominal2_47A.ato" import R_1_00k_currentlimit_nominal2_47A
+from "parts/R_4_7k_aggregate_open_drain_status_pullup/R_4_7k_aggregate_open_drain_status_pullup.ato" import R_4_7k_aggregate_open_drain_status_pullup
+from "parts/SHIFT/SHIFT.ato" import SHIFT
+from "parts/SHUNT/SHUNT.ato" import SHUNT
+from "parts/SW/SW.ato" import SW
+
+module SplancMaxPower:
+    signal ADC_MISO
+    signal BUS_VMON
+    signal CL0
+    signal CL1
+    signal CL10
+    signal CL11
+    signal CL12
+    signal CL13
+    signal CL14
+    signal CL15
+    signal CL16
+    signal CL17
+    signal CL18
+    signal CL19
+    signal CL2
+    signal CL3
+    signal CL4
+    signal CL5
+    signal CL6
+    signal CL7
+    signal CL8
+    signal CL9
+    signal DATA0
+    signal DATA1
+    signal DATA10
+    signal DATA11
+    signal DATA12
+    signal DATA13
+    signal DATA14
+    signal DATA15
+    signal DATA16
+    signal DATA17
+    signal DATA18
+    signal DATA19
+    signal DATA2
+    signal DATA3
+    signal DATA4
+    signal DATA5
+    signal DATA6
+    signal DATA7
+    signal DATA8
+    signal DATA9
+    signal DGND
+    signal EN0
+    signal EN1
+    signal EN10
+    signal EN11
+    signal EN12
+    signal EN13
+    signal EN14
+    signal EN15
+    signal EN16
+    signal EN17
+    signal EN18
+    signal EN19
+    signal EN2
+    signal EN3
+    signal EN4
+    signal EN5
+    signal EN6
+    signal EN7
+    signal EN8
+    signal EN9
+    signal FAULT_N
+    signal ISENSE0
+    signal ISENSE1
+    signal ISENSE10
+    signal ISENSE11
+    signal ISENSE12
+    signal ISENSE13
+    signal ISENSE14
+    signal ISENSE15
+    signal ISENSE16
+    signal ISENSE17
+    signal ISENSE18
+    signal ISENSE19
+    signal ISENSE2
+    signal ISENSE3
+    signal ISENSE4
+    signal ISENSE5
+    signal ISENSE6
+    signal ISENSE7
+    signal ISENSE8
+    signal ISENSE9
+    signal ISENSE_RAW0
+    signal ISENSE_RAW1
+    signal ISENSE_RAW10
+    signal ISENSE_RAW11
+    signal ISENSE_RAW12
+    signal ISENSE_RAW13
+    signal ISENSE_RAW14
+    signal ISENSE_RAW15
+    signal ISENSE_RAW16
+    signal ISENSE_RAW17
+    signal ISENSE_RAW18
+    signal ISENSE_RAW19
+    signal ISENSE_RAW2
+    signal ISENSE_RAW3
+    signal ISENSE_RAW4
+    signal ISENSE_RAW5
+    signal ISENSE_RAW6
+    signal ISENSE_RAW7
+    signal ISENSE_RAW8
+    signal ISENSE_RAW9
+    signal ISO_CS0
+    signal ISO_CS1
+    signal ISO_DATA0
+    signal ISO_DATA1
+    signal ISO_DATA10
+    signal ISO_DATA11
+    signal ISO_DATA12
+    signal ISO_DATA13
+    signal ISO_DATA14
+    signal ISO_DATA15
+    signal ISO_DATA16
+    signal ISO_DATA17
+    signal ISO_DATA18
+    signal ISO_DATA19
+    signal ISO_DATA2
+    signal ISO_DATA3
+    signal ISO_DATA4
+    signal ISO_DATA5
+    signal ISO_DATA6
+    signal ISO_DATA7
+    signal ISO_DATA8
+    signal ISO_DATA9
+    signal ISO_LATCH
+    signal ISO_MOSI
+    signal ISO_SAFE_ENABLE
+    signal ISO_SCLK
+    signal LED_DATA0
+    signal LED_DATA1
+    signal LED_DATA10
+    signal LED_DATA11
+    signal LED_DATA12
+    signal LED_DATA13
+    signal LED_DATA14
+    signal LED_DATA15
+    signal LED_DATA16
+    signal LED_DATA17
+    signal LED_DATA18
+    signal LED_DATA19
+    signal LED_DATA2
+    signal LED_DATA3
+    signal LED_DATA4
+    signal LED_DATA5
+    signal LED_DATA6
+    signal LED_DATA7
+    signal LED_DATA8
+    signal LED_DATA9
+    signal LED_VIN
+    signal LV3V3
+    signal MUX_OUT0
+    signal MUX_OUT1
+    signal MUX_OUT2
+    signal MUX_OUT3
+    signal MUX_OUT4
+    signal MUX_S0
+    signal MUX_S1
+    signal MUX_S2
+    signal OE_BASE
+    signal OUT0
+    signal OUT1
+    signal OUT10
+    signal OUT11
+    signal OUT12
+    signal OUT13
+    signal OUT14
+    signal OUT15
+    signal OUT16
+    signal OUT17
+    signal OUT18
+    signal OUT19
+    signal OUT2
+    signal OUT3
+    signal OUT4
+    signal OUT5
+    signal OUT6
+    signal OUT7
+    signal OUT8
+    signal OUT9
+    signal P5V
+    signal PGND
+    signal P_CS0
+    signal P_CS1
+    signal P_LATCH
+    signal P_MISO
+    signal P_MOSI
+    signal P_SCLK
+    signal REF2V5
+    signal RETURN0
+    signal RETURN1
+    signal RETURN10
+    signal RETURN11
+    signal RETURN12
+    signal RETURN13
+    signal RETURN14
+    signal RETURN15
+    signal RETURN16
+    signal RETURN17
+    signal RETURN18
+    signal RETURN19
+    signal RETURN2
+    signal RETURN3
+    signal RETURN4
+    signal RETURN5
+    signal RETURN6
+    signal RETURN7
+    signal RETURN8
+    signal RETURN9
+    signal SAFE_ENABLE
+    signal SHIFT0
+    signal SHIFT1
+    signal SHIFT2
+    signal SHIFT_OE_N
+    signal UNUSED_ISO21
+    signal UNUSED_ISO22
+    signal UNUSED_ISO23
+    signal UNUSED_SHIFT23
+    signal VMON0
+    signal VMON1
+    signal VMON10
+    signal VMON11
+    signal VMON12
+    signal VMON13
+    signal VMON14
+    signal VMON15
+    signal VMON16
+    signal VMON17
+    signal VMON18
+    signal VMON19
+    signal VMON2
+    signal VMON3
+    signal VMON4
+    signal VMON5
+    signal VMON6
+    signal VMON7
+    signal VMON8
+    signal VMON9
+    J1 = new RIBBON
+    J1.p1 ~ DATA0
+    J1.p2 ~ DGND
+    J1.p3 ~ DATA1
+    J1.p4 ~ DGND
+    J1.p5 ~ DATA2
+    J1.p6 ~ DGND
+    J1.p7 ~ DATA3
+    J1.p8 ~ DGND
+    J1.p9 ~ DATA4
+    J1.p10 ~ DGND
+    J1.p11 ~ DATA5
+    J1.p12 ~ DGND
+    J1.p13 ~ DATA6
+    J1.p14 ~ DGND
+    J1.p15 ~ DATA7
+    J1.p16 ~ DGND
+    J1.p17 ~ DATA8
+    J1.p18 ~ DGND
+    J1.p19 ~ DATA9
+    J1.p20 ~ DGND
+    J1.p21 ~ DATA10
+    J1.p22 ~ DGND
+    J1.p23 ~ DATA11
+    J1.p24 ~ DGND
+    J1.p25 ~ DATA12
+    J1.p26 ~ DGND
+    J1.p27 ~ DATA13
+    J1.p28 ~ DGND
+    J1.p29 ~ DATA14
+    J1.p30 ~ DGND
+    J1.p31 ~ DATA15
+    J1.p32 ~ DGND
+    J1.p33 ~ DATA16
+    J1.p34 ~ DGND
+    J1.p35 ~ DATA17
+    J1.p36 ~ DGND
+    J1.p37 ~ DATA18
+    J1.p38 ~ DGND
+    J1.p39 ~ DATA19
+    J1.p40 ~ DGND
+    J1.p41 ~ P_SCLK
+    J1.p42 ~ P_MOSI
+    J1.p43 ~ P_LATCH
+    J1.p44 ~ P_CS0
+    J1.p45 ~ P_CS1
+    J1.p46 ~ P_MISO
+    J1.p47 ~ LV3V3
+    J1.p48 ~ DGND
+    J1.p49 ~ SAFE_ENABLE
+    J1.p50 ~ DGND
+    J2 = new LUG
+    J2.p1 ~ LED_VIN
+    J3 = new LUG
+    J3.p1 ~ PGND
+    U1 = new ISO
+    U1.p1 ~ LV3V3
+    U1.p8 ~ DGND
+    U1.p9 ~ PGND
+    U1.p16 ~ P5V
+    U1.p2 ~ DATA0
+    U1.p15 ~ ISO_DATA0
+    U1.p3 ~ DATA1
+    U1.p14 ~ ISO_DATA1
+    U1.p4 ~ DATA2
+    U1.p13 ~ ISO_DATA2
+    U1.p5 ~ DATA3
+    U1.p12 ~ ISO_DATA3
+    U1.p6 ~ DATA4
+    U1.p11 ~ ISO_DATA4
+    U1.p7 ~ DATA5
+    U1.p10 ~ ISO_DATA5
+    U2 = new ISO
+    U2.p1 ~ LV3V3
+    U2.p8 ~ DGND
+    U2.p9 ~ PGND
+    U2.p16 ~ P5V
+    U2.p2 ~ DATA6
+    U2.p15 ~ ISO_DATA6
+    U2.p3 ~ DATA7
+    U2.p14 ~ ISO_DATA7
+    U2.p4 ~ DATA8
+    U2.p13 ~ ISO_DATA8
+    U2.p5 ~ DATA9
+    U2.p12 ~ ISO_DATA9
+    U2.p6 ~ DATA10
+    U2.p11 ~ ISO_DATA10
+    U2.p7 ~ DATA11
+    U2.p10 ~ ISO_DATA11
+    U3 = new ISO
+    U3.p1 ~ LV3V3
+    U3.p8 ~ DGND
+    U3.p9 ~ PGND
+    U3.p16 ~ P5V
+    U3.p2 ~ DATA12
+    U3.p15 ~ ISO_DATA12
+    U3.p3 ~ DATA13
+    U3.p14 ~ ISO_DATA13
+    U3.p4 ~ DATA14
+    U3.p13 ~ ISO_DATA14
+    U3.p5 ~ DATA15
+    U3.p12 ~ ISO_DATA15
+    U3.p6 ~ DATA16
+    U3.p11 ~ ISO_DATA16
+    U3.p7 ~ DATA17
+    U3.p10 ~ ISO_DATA17
+    U4 = new ISO
+    U4.p1 ~ LV3V3
+    U4.p8 ~ DGND
+    U4.p9 ~ PGND
+    U4.p16 ~ P5V
+    U4.p2 ~ DATA18
+    U4.p15 ~ ISO_DATA18
+    U4.p3 ~ DATA19
+    U4.p14 ~ ISO_DATA19
+    U4.p4 ~ SAFE_ENABLE
+    U4.p13 ~ ISO_SAFE_ENABLE
+    U4.p5 ~ DGND
+    U4.p12 ~ UNUSED_ISO21
+    U4.p6 ~ DGND
+    U4.p11 ~ UNUSED_ISO22
+    U4.p7 ~ DGND
+    U4.p10 ~ UNUSED_ISO23
+    U5 = new ISOSPI
+    U5.p1 ~ LV3V3
+    U5.p8 ~ DGND
+    U5.p9 ~ PGND
+    U5.p16 ~ P5V
+    U5.p7 ~ P_MISO
+    U5.p10 ~ ADC_MISO
+    U5.p2 ~ P_SCLK
+    U5.p15 ~ ISO_SCLK
+    U5.p3 ~ P_MOSI
+    U5.p14 ~ ISO_MOSI
+    U5.p4 ~ P_LATCH
+    U5.p13 ~ ISO_LATCH
+    U5.p5 ~ P_CS0
+    U5.p12 ~ ISO_CS0
+    U5.p6 ~ P_CS1
+    U5.p11 ~ ISO_CS1
+    U6 = new SHIFT
+    U6.p16 ~ P5V
+    U6.p8 ~ PGND
+    U6.p10 ~ P5V
+    U6.p13 ~ SHIFT_OE_N
+    U6.p11 ~ ISO_SCLK
+    U6.p12 ~ ISO_LATCH
+    U6.p14 ~ ISO_MOSI
+    U6.p9 ~ SHIFT0
+    U6.p15 ~ EN0
+    U6.p1 ~ EN1
+    U6.p2 ~ EN2
+    U6.p3 ~ EN3
+    U6.p4 ~ EN4
+    U6.p5 ~ EN5
+    U6.p6 ~ EN6
+    U6.p7 ~ EN7
+    U7 = new SHIFT
+    U7.p16 ~ P5V
+    U7.p8 ~ PGND
+    U7.p10 ~ P5V
+    U7.p13 ~ SHIFT_OE_N
+    U7.p11 ~ ISO_SCLK
+    U7.p12 ~ ISO_LATCH
+    U7.p14 ~ SHIFT0
+    U7.p9 ~ SHIFT1
+    U7.p15 ~ EN8
+    U7.p1 ~ EN9
+    U7.p2 ~ EN10
+    U7.p3 ~ EN11
+    U7.p4 ~ EN12
+    U7.p5 ~ EN13
+    U7.p6 ~ EN14
+    U7.p7 ~ EN15
+    U8 = new SHIFT
+    U8.p16 ~ P5V
+    U8.p8 ~ PGND
+    U8.p10 ~ P5V
+    U8.p13 ~ SHIFT_OE_N
+    U8.p11 ~ ISO_SCLK
+    U8.p12 ~ ISO_LATCH
+    U8.p14 ~ SHIFT1
+    U8.p9 ~ SHIFT2
+    U8.p15 ~ EN16
+    U8.p1 ~ EN17
+    U8.p2 ~ EN18
+    U8.p3 ~ EN19
+    U8.p4 ~ MUX_S0
+    U8.p5 ~ MUX_S1
+    U8.p6 ~ MUX_S2
+    U8.p7 ~ UNUSED_SHIFT23
+    U9 = new ADC
+    U9.p1 ~ MUX_OUT0
+    U9.p2 ~ MUX_OUT1
+    U9.p3 ~ MUX_OUT2
+    U9.p4 ~ MUX_OUT3
+    U9.p5 ~ MUX_OUT4
+    U9.p6 ~ REF2V5
+    U9.p7 ~ BUS_VMON
+    U9.p8 ~ FAULT_N
+    U9.p9 ~ PGND
+    U9.p10 ~ ISO_CS0
+    U9.p11 ~ ISO_MOSI
+    U9.p12 ~ ADC_MISO
+    U9.p13 ~ ISO_SCLK
+    U9.p14 ~ PGND
+    U9.p15 ~ P5V
+    U9.p16 ~ P5V
+    U50 = new CSA
+    U50.p4 ~ P5V
+    U50.p11 ~ PGND
+    U50.p1 ~ ISENSE_RAW0
+    U50.p3 ~ RETURN0
+    U50.p2 ~ PGND
+    U50.p7 ~ ISENSE_RAW1
+    U50.p5 ~ RETURN1
+    U50.p6 ~ PGND
+    U50.p8 ~ ISENSE_RAW2
+    U50.p10 ~ RETURN2
+    U50.p9 ~ PGND
+    U50.p14 ~ ISENSE_RAW3
+    U50.p12 ~ RETURN3
+    U50.p13 ~ PGND
+    U60 = new MUX
+    U60.p3 ~ MUX_OUT0
+    U60.p6 ~ PGND
+    U60.p7 ~ PGND
+    U60.p8 ~ PGND
+    U60.p16 ~ P5V
+    U60.p11 ~ MUX_S0
+    U60.p10 ~ MUX_S1
+    U60.p9 ~ MUX_S2
+    U60.p13 ~ ISENSE0
+    U60.p14 ~ ISENSE1
+    U60.p15 ~ ISENSE2
+    U60.p12 ~ ISENSE3
+    U60.p1 ~ VMON0
+    U60.p5 ~ VMON1
+    U60.p2 ~ VMON2
+    U60.p4 ~ VMON3
+    C100 = new C_100nF16V
+    C100.p1 ~ P5V
+    C100.p2 ~ PGND
+    C105 = new C_100nF16V
+    C105.p1 ~ P5V
+    C105.p2 ~ PGND
+    U51 = new CSA
+    U51.p4 ~ P5V
+    U51.p11 ~ PGND
+    U51.p1 ~ ISENSE_RAW4
+    U51.p3 ~ RETURN4
+    U51.p2 ~ PGND
+    U51.p7 ~ ISENSE_RAW5
+    U51.p5 ~ RETURN5
+    U51.p6 ~ PGND
+    U51.p8 ~ ISENSE_RAW6
+    U51.p10 ~ RETURN6
+    U51.p9 ~ PGND
+    U51.p14 ~ ISENSE_RAW7
+    U51.p12 ~ RETURN7
+    U51.p13 ~ PGND
+    U61 = new MUX
+    U61.p3 ~ MUX_OUT1
+    U61.p6 ~ PGND
+    U61.p7 ~ PGND
+    U61.p8 ~ PGND
+    U61.p16 ~ P5V
+    U61.p11 ~ MUX_S0
+    U61.p10 ~ MUX_S1
+    U61.p9 ~ MUX_S2
+    U61.p13 ~ ISENSE4
+    U61.p14 ~ ISENSE5
+    U61.p15 ~ ISENSE6
+    U61.p12 ~ ISENSE7
+    U61.p1 ~ VMON4
+    U61.p5 ~ VMON5
+    U61.p2 ~ VMON6
+    U61.p4 ~ VMON7
+    C101 = new C_100nF16V
+    C101.p1 ~ P5V
+    C101.p2 ~ PGND
+    C106 = new C_100nF16V
+    C106.p1 ~ P5V
+    C106.p2 ~ PGND
+    U52 = new CSA
+    U52.p4 ~ P5V
+    U52.p11 ~ PGND
+    U52.p1 ~ ISENSE_RAW8
+    U52.p3 ~ RETURN8
+    U52.p2 ~ PGND
+    U52.p7 ~ ISENSE_RAW9
+    U52.p5 ~ RETURN9
+    U52.p6 ~ PGND
+    U52.p8 ~ ISENSE_RAW10
+    U52.p10 ~ RETURN10
+    U52.p9 ~ PGND
+    U52.p14 ~ ISENSE_RAW11
+    U52.p12 ~ RETURN11
+    U52.p13 ~ PGND
+    U62 = new MUX
+    U62.p3 ~ MUX_OUT2
+    U62.p6 ~ PGND
+    U62.p7 ~ PGND
+    U62.p8 ~ PGND
+    U62.p16 ~ P5V
+    U62.p11 ~ MUX_S0
+    U62.p10 ~ MUX_S1
+    U62.p9 ~ MUX_S2
+    U62.p13 ~ ISENSE8
+    U62.p14 ~ ISENSE9
+    U62.p15 ~ ISENSE10
+    U62.p12 ~ ISENSE11
+    U62.p1 ~ VMON8
+    U62.p5 ~ VMON9
+    U62.p2 ~ VMON10
+    U62.p4 ~ VMON11
+    C102 = new C_100nF16V
+    C102.p1 ~ P5V
+    C102.p2 ~ PGND
+    C107 = new C_100nF16V
+    C107.p1 ~ P5V
+    C107.p2 ~ PGND
+    U53 = new CSA
+    U53.p4 ~ P5V
+    U53.p11 ~ PGND
+    U53.p1 ~ ISENSE_RAW12
+    U53.p3 ~ RETURN12
+    U53.p2 ~ PGND
+    U53.p7 ~ ISENSE_RAW13
+    U53.p5 ~ RETURN13
+    U53.p6 ~ PGND
+    U53.p8 ~ ISENSE_RAW14
+    U53.p10 ~ RETURN14
+    U53.p9 ~ PGND
+    U53.p14 ~ ISENSE_RAW15
+    U53.p12 ~ RETURN15
+    U53.p13 ~ PGND
+    U63 = new MUX
+    U63.p3 ~ MUX_OUT3
+    U63.p6 ~ PGND
+    U63.p7 ~ PGND
+    U63.p8 ~ PGND
+    U63.p16 ~ P5V
+    U63.p11 ~ MUX_S0
+    U63.p10 ~ MUX_S1
+    U63.p9 ~ MUX_S2
+    U63.p13 ~ ISENSE12
+    U63.p14 ~ ISENSE13
+    U63.p15 ~ ISENSE14
+    U63.p12 ~ ISENSE15
+    U63.p1 ~ VMON12
+    U63.p5 ~ VMON13
+    U63.p2 ~ VMON14
+    U63.p4 ~ VMON15
+    C103 = new C_100nF16V
+    C103.p1 ~ P5V
+    C103.p2 ~ PGND
+    C108 = new C_100nF16V
+    C108.p1 ~ P5V
+    C108.p2 ~ PGND
+    U54 = new CSA
+    U54.p4 ~ P5V
+    U54.p11 ~ PGND
+    U54.p1 ~ ISENSE_RAW16
+    U54.p3 ~ RETURN16
+    U54.p2 ~ PGND
+    U54.p7 ~ ISENSE_RAW17
+    U54.p5 ~ RETURN17
+    U54.p6 ~ PGND
+    U54.p8 ~ ISENSE_RAW18
+    U54.p10 ~ RETURN18
+    U54.p9 ~ PGND
+    U54.p14 ~ ISENSE_RAW19
+    U54.p12 ~ RETURN19
+    U54.p13 ~ PGND
+    U64 = new MUX
+    U64.p3 ~ MUX_OUT4
+    U64.p6 ~ PGND
+    U64.p7 ~ PGND
+    U64.p8 ~ PGND
+    U64.p16 ~ P5V
+    U64.p11 ~ MUX_S0
+    U64.p10 ~ MUX_S1
+    U64.p9 ~ MUX_S2
+    U64.p13 ~ ISENSE16
+    U64.p14 ~ ISENSE17
+    U64.p15 ~ ISENSE18
+    U64.p12 ~ ISENSE19
+    U64.p1 ~ VMON16
+    U64.p5 ~ VMON17
+    U64.p2 ~ VMON18
+    U64.p4 ~ VMON19
+    C104 = new C_100nF16V
+    C104.p1 ~ P5V
+    C104.p2 ~ PGND
+    C109 = new C_100nF16V
+    C109.p1 ~ P5V
+    C109.p2 ~ PGND
+    R100 = new R_100k_mux_address_pulldown
+    R100.p1 ~ MUX_S0
+    R100.p2 ~ PGND
+    R101 = new R_100k_mux_address_pulldown
+    R101.p1 ~ MUX_S1
+    R101.p2 ~ PGND
+    R102 = new R_100k_mux_address_pulldown
+    R102.p1 ~ MUX_S2
+    R102.p2 ~ PGND
+    R103 = new R_4_7k_aggregate_open_drain_status_pullup
+    R103.p1 ~ P5V
+    R103.p2 ~ FAULT_N
+    R104 = new R_100k_0_1percent_bus_divider_upper
+    R104.p1 ~ LED_VIN
+    R104.p2 ~ BUS_VMON
+    R105 = new R_10k_0_1percent_bus_divider_lower
+    R105.p1 ~ BUS_VMON
+    R105.p2 ~ PGND
+    C110 = new C_10nF50V_bus_divider_filter
+    C110.p1 ~ BUS_VMON
+    C110.p2 ~ PGND
+    C111 = new C_1uF10V_ADC_supply
+    C111.p1 ~ P5V
+    C111.p2 ~ PGND
+    Q1 = new NPN
+    Q1.p1 ~ OE_BASE
+    Q1.p2 ~ PGND
+    Q1.p3 ~ SHIFT_OE_N
+    R90 = new R_10k
+    R90.p1 ~ P5V
+    R90.p2 ~ SHIFT_OE_N
+    R91 = new R_10k
+    R91.p1 ~ ISO_SAFE_ENABLE
+    R91.p2 ~ OE_BASE
+    R92 = new R_100k
+    R92.p1 ~ OE_BASE
+    R92.p2 ~ PGND
+    U11 = new REF
+    U11.p1 ~ P5V
+    U11.p2 ~ PGND
+    U11.p3 ~ REF2V5
+    U12 = new BUCK
+    U12.p1 ~ LED_VIN
+    U12.p2 ~ PGND
+    U12.p3 ~ P5V
+    J10 = new OUT
+    J10.p1 ~ OUT0
+    J10.p2 ~ LED_DATA0
+    J10.p3 ~ RETURN0
+    U20 = new SW
+    U20.p2 ~ PGND
+    U20.p3 ~ EN0
+    U20.p5 ~ OUT0
+    U20.p6 ~ OUT0
+    U20.p7 ~ OUT0
+    U20.p8 ~ LED_VIN
+    U20.p9 ~ LED_VIN
+    U20.p10 ~ LED_VIN
+    U20.p12 ~ P5V
+    U20.p13 ~ CL0
+    U20.p14 ~ FAULT_N
+    U20.p15 ~ PGND
+    R1 = new R_1_00k_currentlimit_nominal2_47A
+    R1.p1 ~ CL0
+    R1.p2 ~ PGND
+    RS0 = new SHUNT
+    RS0.p1 ~ RETURN0
+    RS0.p2 ~ PGND
+    RVH0 = new R_100k_0_1percent_voltage_divider_upper
+    RVH0.p1 ~ OUT0
+    RVH0.p2 ~ VMON0
+    RVL0 = new R_10k_0_1percent_voltage_divider_lower
+    RVL0.p1 ~ VMON0
+    RVL0.p2 ~ PGND
+    CV0 = new C_10nF50V_voltage_filter
+    CV0.p1 ~ VMON0
+    CV0.p2 ~ PGND
+    RI0 = new R_100R_current_filter
+    RI0.p1 ~ ISENSE_RAW0
+    RI0.p2 ~ ISENSE0
+    CI0 = new C_1nF16V_current_filter
+    CI0.p1 ~ ISENSE0
+    CI0.p2 ~ PGND
+    R3 = new R_100k_pulldown
+    R3.p1 ~ EN0
+    R3.p2 ~ PGND
+    R4 = new R_100R_series
+    R4.p1 ~ ISO_DATA0
+    R4.p2 ~ LED_DATA0
+    C1 = new C_100nF50V
+    C1.p1 ~ OUT0
+    C1.p2 ~ PGND
+    J11 = new OUT
+    J11.p1 ~ OUT1
+    J11.p2 ~ LED_DATA1
+    J11.p3 ~ RETURN1
+    U21 = new SW
+    U21.p2 ~ PGND
+    U21.p3 ~ EN1
+    U21.p5 ~ OUT1
+    U21.p6 ~ OUT1
+    U21.p7 ~ OUT1
+    U21.p8 ~ LED_VIN
+    U21.p9 ~ LED_VIN
+    U21.p10 ~ LED_VIN
+    U21.p12 ~ P5V
+    U21.p13 ~ CL1
+    U21.p14 ~ FAULT_N
+    U21.p15 ~ PGND
+    R5 = new R_1_00k_currentlimit_nominal2_47A
+    R5.p1 ~ CL1
+    R5.p2 ~ PGND
+    RS1 = new SHUNT
+    RS1.p1 ~ RETURN1
+    RS1.p2 ~ PGND
+    RVH1 = new R_100k_0_1percent_voltage_divider_upper
+    RVH1.p1 ~ OUT1
+    RVH1.p2 ~ VMON1
+    RVL1 = new R_10k_0_1percent_voltage_divider_lower
+    RVL1.p1 ~ VMON1
+    RVL1.p2 ~ PGND
+    CV1 = new C_10nF50V_voltage_filter
+    CV1.p1 ~ VMON1
+    CV1.p2 ~ PGND
+    RI1 = new R_100R_current_filter
+    RI1.p1 ~ ISENSE_RAW1
+    RI1.p2 ~ ISENSE1
+    CI1 = new C_1nF16V_current_filter
+    CI1.p1 ~ ISENSE1
+    CI1.p2 ~ PGND
+    R7 = new R_100k_pulldown
+    R7.p1 ~ EN1
+    R7.p2 ~ PGND
+    R8 = new R_100R_series
+    R8.p1 ~ ISO_DATA1
+    R8.p2 ~ LED_DATA1
+    C2 = new C_100nF50V
+    C2.p1 ~ OUT1
+    C2.p2 ~ PGND
+    J12 = new OUT
+    J12.p1 ~ OUT2
+    J12.p2 ~ LED_DATA2
+    J12.p3 ~ RETURN2
+    U22 = new SW
+    U22.p2 ~ PGND
+    U22.p3 ~ EN2
+    U22.p5 ~ OUT2
+    U22.p6 ~ OUT2
+    U22.p7 ~ OUT2
+    U22.p8 ~ LED_VIN
+    U22.p9 ~ LED_VIN
+    U22.p10 ~ LED_VIN
+    U22.p12 ~ P5V
+    U22.p13 ~ CL2
+    U22.p14 ~ FAULT_N
+    U22.p15 ~ PGND
+    R9 = new R_1_00k_currentlimit_nominal2_47A
+    R9.p1 ~ CL2
+    R9.p2 ~ PGND
+    RS2 = new SHUNT
+    RS2.p1 ~ RETURN2
+    RS2.p2 ~ PGND
+    RVH2 = new R_100k_0_1percent_voltage_divider_upper
+    RVH2.p1 ~ OUT2
+    RVH2.p2 ~ VMON2
+    RVL2 = new R_10k_0_1percent_voltage_divider_lower
+    RVL2.p1 ~ VMON2
+    RVL2.p2 ~ PGND
+    CV2 = new C_10nF50V_voltage_filter
+    CV2.p1 ~ VMON2
+    CV2.p2 ~ PGND
+    RI2 = new R_100R_current_filter
+    RI2.p1 ~ ISENSE_RAW2
+    RI2.p2 ~ ISENSE2
+    CI2 = new C_1nF16V_current_filter
+    CI2.p1 ~ ISENSE2
+    CI2.p2 ~ PGND
+    R11 = new R_100k_pulldown
+    R11.p1 ~ EN2
+    R11.p2 ~ PGND
+    R12 = new R_100R_series
+    R12.p1 ~ ISO_DATA2
+    R12.p2 ~ LED_DATA2
+    C3 = new C_100nF50V
+    C3.p1 ~ OUT2
+    C3.p2 ~ PGND
+    J13 = new OUT
+    J13.p1 ~ OUT3
+    J13.p2 ~ LED_DATA3
+    J13.p3 ~ RETURN3
+    U23 = new SW
+    U23.p2 ~ PGND
+    U23.p3 ~ EN3
+    U23.p5 ~ OUT3
+    U23.p6 ~ OUT3
+    U23.p7 ~ OUT3
+    U23.p8 ~ LED_VIN
+    U23.p9 ~ LED_VIN
+    U23.p10 ~ LED_VIN
+    U23.p12 ~ P5V
+    U23.p13 ~ CL3
+    U23.p14 ~ FAULT_N
+    U23.p15 ~ PGND
+    R13 = new R_1_00k_currentlimit_nominal2_47A
+    R13.p1 ~ CL3
+    R13.p2 ~ PGND
+    RS3 = new SHUNT
+    RS3.p1 ~ RETURN3
+    RS3.p2 ~ PGND
+    RVH3 = new R_100k_0_1percent_voltage_divider_upper
+    RVH3.p1 ~ OUT3
+    RVH3.p2 ~ VMON3
+    RVL3 = new R_10k_0_1percent_voltage_divider_lower
+    RVL3.p1 ~ VMON3
+    RVL3.p2 ~ PGND
+    CV3 = new C_10nF50V_voltage_filter
+    CV3.p1 ~ VMON3
+    CV3.p2 ~ PGND
+    RI3 = new R_100R_current_filter
+    RI3.p1 ~ ISENSE_RAW3
+    RI3.p2 ~ ISENSE3
+    CI3 = new C_1nF16V_current_filter
+    CI3.p1 ~ ISENSE3
+    CI3.p2 ~ PGND
+    R15 = new R_100k_pulldown
+    R15.p1 ~ EN3
+    R15.p2 ~ PGND
+    R16 = new R_100R_series
+    R16.p1 ~ ISO_DATA3
+    R16.p2 ~ LED_DATA3
+    C4 = new C_100nF50V
+    C4.p1 ~ OUT3
+    C4.p2 ~ PGND
+    J14 = new OUT
+    J14.p1 ~ OUT4
+    J14.p2 ~ LED_DATA4
+    J14.p3 ~ RETURN4
+    U24 = new SW
+    U24.p2 ~ PGND
+    U24.p3 ~ EN4
+    U24.p5 ~ OUT4
+    U24.p6 ~ OUT4
+    U24.p7 ~ OUT4
+    U24.p8 ~ LED_VIN
+    U24.p9 ~ LED_VIN
+    U24.p10 ~ LED_VIN
+    U24.p12 ~ P5V
+    U24.p13 ~ CL4
+    U24.p14 ~ FAULT_N
+    U24.p15 ~ PGND
+    R17 = new R_1_00k_currentlimit_nominal2_47A
+    R17.p1 ~ CL4
+    R17.p2 ~ PGND
+    RS4 = new SHUNT
+    RS4.p1 ~ RETURN4
+    RS4.p2 ~ PGND
+    RVH4 = new R_100k_0_1percent_voltage_divider_upper
+    RVH4.p1 ~ OUT4
+    RVH4.p2 ~ VMON4
+    RVL4 = new R_10k_0_1percent_voltage_divider_lower
+    RVL4.p1 ~ VMON4
+    RVL4.p2 ~ PGND
+    CV4 = new C_10nF50V_voltage_filter
+    CV4.p1 ~ VMON4
+    CV4.p2 ~ PGND
+    RI4 = new R_100R_current_filter
+    RI4.p1 ~ ISENSE_RAW4
+    RI4.p2 ~ ISENSE4
+    CI4 = new C_1nF16V_current_filter
+    CI4.p1 ~ ISENSE4
+    CI4.p2 ~ PGND
+    R19 = new R_100k_pulldown
+    R19.p1 ~ EN4
+    R19.p2 ~ PGND
+    R20 = new R_100R_series
+    R20.p1 ~ ISO_DATA4
+    R20.p2 ~ LED_DATA4
+    C5 = new C_100nF50V
+    C5.p1 ~ OUT4
+    C5.p2 ~ PGND
+    J15 = new OUT
+    J15.p1 ~ OUT5
+    J15.p2 ~ LED_DATA5
+    J15.p3 ~ RETURN5
+    U25 = new SW
+    U25.p2 ~ PGND
+    U25.p3 ~ EN5
+    U25.p5 ~ OUT5
+    U25.p6 ~ OUT5
+    U25.p7 ~ OUT5
+    U25.p8 ~ LED_VIN
+    U25.p9 ~ LED_VIN
+    U25.p10 ~ LED_VIN
+    U25.p12 ~ P5V
+    U25.p13 ~ CL5
+    U25.p14 ~ FAULT_N
+    U25.p15 ~ PGND
+    R21 = new R_1_00k_currentlimit_nominal2_47A
+    R21.p1 ~ CL5
+    R21.p2 ~ PGND
+    RS5 = new SHUNT
+    RS5.p1 ~ RETURN5
+    RS5.p2 ~ PGND
+    RVH5 = new R_100k_0_1percent_voltage_divider_upper
+    RVH5.p1 ~ OUT5
+    RVH5.p2 ~ VMON5
+    RVL5 = new R_10k_0_1percent_voltage_divider_lower
+    RVL5.p1 ~ VMON5
+    RVL5.p2 ~ PGND
+    CV5 = new C_10nF50V_voltage_filter
+    CV5.p1 ~ VMON5
+    CV5.p2 ~ PGND
+    RI5 = new R_100R_current_filter
+    RI5.p1 ~ ISENSE_RAW5
+    RI5.p2 ~ ISENSE5
+    CI5 = new C_1nF16V_current_filter
+    CI5.p1 ~ ISENSE5
+    CI5.p2 ~ PGND
+    R23 = new R_100k_pulldown
+    R23.p1 ~ EN5
+    R23.p2 ~ PGND
+    R24 = new R_100R_series
+    R24.p1 ~ ISO_DATA5
+    R24.p2 ~ LED_DATA5
+    C6 = new C_100nF50V
+    C6.p1 ~ OUT5
+    C6.p2 ~ PGND
+    J16 = new OUT
+    J16.p1 ~ OUT6
+    J16.p2 ~ LED_DATA6
+    J16.p3 ~ RETURN6
+    U26 = new SW
+    U26.p2 ~ PGND
+    U26.p3 ~ EN6
+    U26.p5 ~ OUT6
+    U26.p6 ~ OUT6
+    U26.p7 ~ OUT6
+    U26.p8 ~ LED_VIN
+    U26.p9 ~ LED_VIN
+    U26.p10 ~ LED_VIN
+    U26.p12 ~ P5V
+    U26.p13 ~ CL6
+    U26.p14 ~ FAULT_N
+    U26.p15 ~ PGND
+    R25 = new R_1_00k_currentlimit_nominal2_47A
+    R25.p1 ~ CL6
+    R25.p2 ~ PGND
+    RS6 = new SHUNT
+    RS6.p1 ~ RETURN6
+    RS6.p2 ~ PGND
+    RVH6 = new R_100k_0_1percent_voltage_divider_upper
+    RVH6.p1 ~ OUT6
+    RVH6.p2 ~ VMON6
+    RVL6 = new R_10k_0_1percent_voltage_divider_lower
+    RVL6.p1 ~ VMON6
+    RVL6.p2 ~ PGND
+    CV6 = new C_10nF50V_voltage_filter
+    CV6.p1 ~ VMON6
+    CV6.p2 ~ PGND
+    RI6 = new R_100R_current_filter
+    RI6.p1 ~ ISENSE_RAW6
+    RI6.p2 ~ ISENSE6
+    CI6 = new C_1nF16V_current_filter
+    CI6.p1 ~ ISENSE6
+    CI6.p2 ~ PGND
+    R27 = new R_100k_pulldown
+    R27.p1 ~ EN6
+    R27.p2 ~ PGND
+    R28 = new R_100R_series
+    R28.p1 ~ ISO_DATA6
+    R28.p2 ~ LED_DATA6
+    C7 = new C_100nF50V
+    C7.p1 ~ OUT6
+    C7.p2 ~ PGND
+    J17 = new OUT
+    J17.p1 ~ OUT7
+    J17.p2 ~ LED_DATA7
+    J17.p3 ~ RETURN7
+    U27 = new SW
+    U27.p2 ~ PGND
+    U27.p3 ~ EN7
+    U27.p5 ~ OUT7
+    U27.p6 ~ OUT7
+    U27.p7 ~ OUT7
+    U27.p8 ~ LED_VIN
+    U27.p9 ~ LED_VIN
+    U27.p10 ~ LED_VIN
+    U27.p12 ~ P5V
+    U27.p13 ~ CL7
+    U27.p14 ~ FAULT_N
+    U27.p15 ~ PGND
+    R29 = new R_1_00k_currentlimit_nominal2_47A
+    R29.p1 ~ CL7
+    R29.p2 ~ PGND
+    RS7 = new SHUNT
+    RS7.p1 ~ RETURN7
+    RS7.p2 ~ PGND
+    RVH7 = new R_100k_0_1percent_voltage_divider_upper
+    RVH7.p1 ~ OUT7
+    RVH7.p2 ~ VMON7
+    RVL7 = new R_10k_0_1percent_voltage_divider_lower
+    RVL7.p1 ~ VMON7
+    RVL7.p2 ~ PGND
+    CV7 = new C_10nF50V_voltage_filter
+    CV7.p1 ~ VMON7
+    CV7.p2 ~ PGND
+    RI7 = new R_100R_current_filter
+    RI7.p1 ~ ISENSE_RAW7
+    RI7.p2 ~ ISENSE7
+    CI7 = new C_1nF16V_current_filter
+    CI7.p1 ~ ISENSE7
+    CI7.p2 ~ PGND
+    R31 = new R_100k_pulldown
+    R31.p1 ~ EN7
+    R31.p2 ~ PGND
+    R32 = new R_100R_series
+    R32.p1 ~ ISO_DATA7
+    R32.p2 ~ LED_DATA7
+    C8 = new C_100nF50V
+    C8.p1 ~ OUT7
+    C8.p2 ~ PGND
+    J18 = new OUT
+    J18.p1 ~ OUT8
+    J18.p2 ~ LED_DATA8
+    J18.p3 ~ RETURN8
+    U28 = new SW
+    U28.p2 ~ PGND
+    U28.p3 ~ EN8
+    U28.p5 ~ OUT8
+    U28.p6 ~ OUT8
+    U28.p7 ~ OUT8
+    U28.p8 ~ LED_VIN
+    U28.p9 ~ LED_VIN
+    U28.p10 ~ LED_VIN
+    U28.p12 ~ P5V
+    U28.p13 ~ CL8
+    U28.p14 ~ FAULT_N
+    U28.p15 ~ PGND
+    R33 = new R_1_00k_currentlimit_nominal2_47A
+    R33.p1 ~ CL8
+    R33.p2 ~ PGND
+    RS8 = new SHUNT
+    RS8.p1 ~ RETURN8
+    RS8.p2 ~ PGND
+    RVH8 = new R_100k_0_1percent_voltage_divider_upper
+    RVH8.p1 ~ OUT8
+    RVH8.p2 ~ VMON8
+    RVL8 = new R_10k_0_1percent_voltage_divider_lower
+    RVL8.p1 ~ VMON8
+    RVL8.p2 ~ PGND
+    CV8 = new C_10nF50V_voltage_filter
+    CV8.p1 ~ VMON8
+    CV8.p2 ~ PGND
+    RI8 = new R_100R_current_filter
+    RI8.p1 ~ ISENSE_RAW8
+    RI8.p2 ~ ISENSE8
+    CI8 = new C_1nF16V_current_filter
+    CI8.p1 ~ ISENSE8
+    CI8.p2 ~ PGND
+    R35 = new R_100k_pulldown
+    R35.p1 ~ EN8
+    R35.p2 ~ PGND
+    R36 = new R_100R_series
+    R36.p1 ~ ISO_DATA8
+    R36.p2 ~ LED_DATA8
+    C9 = new C_100nF50V
+    C9.p1 ~ OUT8
+    C9.p2 ~ PGND
+    J19 = new OUT
+    J19.p1 ~ OUT9
+    J19.p2 ~ LED_DATA9
+    J19.p3 ~ RETURN9
+    U29 = new SW
+    U29.p2 ~ PGND
+    U29.p3 ~ EN9
+    U29.p5 ~ OUT9
+    U29.p6 ~ OUT9
+    U29.p7 ~ OUT9
+    U29.p8 ~ LED_VIN
+    U29.p9 ~ LED_VIN
+    U29.p10 ~ LED_VIN
+    U29.p12 ~ P5V
+    U29.p13 ~ CL9
+    U29.p14 ~ FAULT_N
+    U29.p15 ~ PGND
+    R37 = new R_1_00k_currentlimit_nominal2_47A
+    R37.p1 ~ CL9
+    R37.p2 ~ PGND
+    RS9 = new SHUNT
+    RS9.p1 ~ RETURN9
+    RS9.p2 ~ PGND
+    RVH9 = new R_100k_0_1percent_voltage_divider_upper
+    RVH9.p1 ~ OUT9
+    RVH9.p2 ~ VMON9
+    RVL9 = new R_10k_0_1percent_voltage_divider_lower
+    RVL9.p1 ~ VMON9
+    RVL9.p2 ~ PGND
+    CV9 = new C_10nF50V_voltage_filter
+    CV9.p1 ~ VMON9
+    CV9.p2 ~ PGND
+    RI9 = new R_100R_current_filter
+    RI9.p1 ~ ISENSE_RAW9
+    RI9.p2 ~ ISENSE9
+    CI9 = new C_1nF16V_current_filter
+    CI9.p1 ~ ISENSE9
+    CI9.p2 ~ PGND
+    R39 = new R_100k_pulldown
+    R39.p1 ~ EN9
+    R39.p2 ~ PGND
+    R40 = new R_100R_series
+    R40.p1 ~ ISO_DATA9
+    R40.p2 ~ LED_DATA9
+    C10 = new C_100nF50V
+    C10.p1 ~ OUT9
+    C10.p2 ~ PGND
+    J20 = new OUT
+    J20.p1 ~ OUT10
+    J20.p2 ~ LED_DATA10
+    J20.p3 ~ RETURN10
+    U30 = new SW
+    U30.p2 ~ PGND
+    U30.p3 ~ EN10
+    U30.p5 ~ OUT10
+    U30.p6 ~ OUT10
+    U30.p7 ~ OUT10
+    U30.p8 ~ LED_VIN
+    U30.p9 ~ LED_VIN
+    U30.p10 ~ LED_VIN
+    U30.p12 ~ P5V
+    U30.p13 ~ CL10
+    U30.p14 ~ FAULT_N
+    U30.p15 ~ PGND
+    R41 = new R_1_00k_currentlimit_nominal2_47A
+    R41.p1 ~ CL10
+    R41.p2 ~ PGND
+    RS10 = new SHUNT
+    RS10.p1 ~ RETURN10
+    RS10.p2 ~ PGND
+    RVH10 = new R_100k_0_1percent_voltage_divider_upper
+    RVH10.p1 ~ OUT10
+    RVH10.p2 ~ VMON10
+    RVL10 = new R_10k_0_1percent_voltage_divider_lower
+    RVL10.p1 ~ VMON10
+    RVL10.p2 ~ PGND
+    CV10 = new C_10nF50V_voltage_filter
+    CV10.p1 ~ VMON10
+    CV10.p2 ~ PGND
+    RI10 = new R_100R_current_filter
+    RI10.p1 ~ ISENSE_RAW10
+    RI10.p2 ~ ISENSE10
+    CI10 = new C_1nF16V_current_filter
+    CI10.p1 ~ ISENSE10
+    CI10.p2 ~ PGND
+    R43 = new R_100k_pulldown
+    R43.p1 ~ EN10
+    R43.p2 ~ PGND
+    R44 = new R_100R_series
+    R44.p1 ~ ISO_DATA10
+    R44.p2 ~ LED_DATA10
+    C11 = new C_100nF50V
+    C11.p1 ~ OUT10
+    C11.p2 ~ PGND
+    J21 = new OUT
+    J21.p1 ~ OUT11
+    J21.p2 ~ LED_DATA11
+    J21.p3 ~ RETURN11
+    U31 = new SW
+    U31.p2 ~ PGND
+    U31.p3 ~ EN11
+    U31.p5 ~ OUT11
+    U31.p6 ~ OUT11
+    U31.p7 ~ OUT11
+    U31.p8 ~ LED_VIN
+    U31.p9 ~ LED_VIN
+    U31.p10 ~ LED_VIN
+    U31.p12 ~ P5V
+    U31.p13 ~ CL11
+    U31.p14 ~ FAULT_N
+    U31.p15 ~ PGND
+    R45 = new R_1_00k_currentlimit_nominal2_47A
+    R45.p1 ~ CL11
+    R45.p2 ~ PGND
+    RS11 = new SHUNT
+    RS11.p1 ~ RETURN11
+    RS11.p2 ~ PGND
+    RVH11 = new R_100k_0_1percent_voltage_divider_upper
+    RVH11.p1 ~ OUT11
+    RVH11.p2 ~ VMON11
+    RVL11 = new R_10k_0_1percent_voltage_divider_lower
+    RVL11.p1 ~ VMON11
+    RVL11.p2 ~ PGND
+    CV11 = new C_10nF50V_voltage_filter
+    CV11.p1 ~ VMON11
+    CV11.p2 ~ PGND
+    RI11 = new R_100R_current_filter
+    RI11.p1 ~ ISENSE_RAW11
+    RI11.p2 ~ ISENSE11
+    CI11 = new C_1nF16V_current_filter
+    CI11.p1 ~ ISENSE11
+    CI11.p2 ~ PGND
+    R47 = new R_100k_pulldown
+    R47.p1 ~ EN11
+    R47.p2 ~ PGND
+    R48 = new R_100R_series
+    R48.p1 ~ ISO_DATA11
+    R48.p2 ~ LED_DATA11
+    C12 = new C_100nF50V
+    C12.p1 ~ OUT11
+    C12.p2 ~ PGND
+    J22 = new OUT
+    J22.p1 ~ OUT12
+    J22.p2 ~ LED_DATA12
+    J22.p3 ~ RETURN12
+    U32 = new SW
+    U32.p2 ~ PGND
+    U32.p3 ~ EN12
+    U32.p5 ~ OUT12
+    U32.p6 ~ OUT12
+    U32.p7 ~ OUT12
+    U32.p8 ~ LED_VIN
+    U32.p9 ~ LED_VIN
+    U32.p10 ~ LED_VIN
+    U32.p12 ~ P5V
+    U32.p13 ~ CL12
+    U32.p14 ~ FAULT_N
+    U32.p15 ~ PGND
+    R49 = new R_1_00k_currentlimit_nominal2_47A
+    R49.p1 ~ CL12
+    R49.p2 ~ PGND
+    RS12 = new SHUNT
+    RS12.p1 ~ RETURN12
+    RS12.p2 ~ PGND
+    RVH12 = new R_100k_0_1percent_voltage_divider_upper
+    RVH12.p1 ~ OUT12
+    RVH12.p2 ~ VMON12
+    RVL12 = new R_10k_0_1percent_voltage_divider_lower
+    RVL12.p1 ~ VMON12
+    RVL12.p2 ~ PGND
+    CV12 = new C_10nF50V_voltage_filter
+    CV12.p1 ~ VMON12
+    CV12.p2 ~ PGND
+    RI12 = new R_100R_current_filter
+    RI12.p1 ~ ISENSE_RAW12
+    RI12.p2 ~ ISENSE12
+    CI12 = new C_1nF16V_current_filter
+    CI12.p1 ~ ISENSE12
+    CI12.p2 ~ PGND
+    R51 = new R_100k_pulldown
+    R51.p1 ~ EN12
+    R51.p2 ~ PGND
+    R52 = new R_100R_series
+    R52.p1 ~ ISO_DATA12
+    R52.p2 ~ LED_DATA12
+    C13 = new C_100nF50V
+    C13.p1 ~ OUT12
+    C13.p2 ~ PGND
+    J23 = new OUT
+    J23.p1 ~ OUT13
+    J23.p2 ~ LED_DATA13
+    J23.p3 ~ RETURN13
+    U33 = new SW
+    U33.p2 ~ PGND
+    U33.p3 ~ EN13
+    U33.p5 ~ OUT13
+    U33.p6 ~ OUT13
+    U33.p7 ~ OUT13
+    U33.p8 ~ LED_VIN
+    U33.p9 ~ LED_VIN
+    U33.p10 ~ LED_VIN
+    U33.p12 ~ P5V
+    U33.p13 ~ CL13
+    U33.p14 ~ FAULT_N
+    U33.p15 ~ PGND
+    R53 = new R_1_00k_currentlimit_nominal2_47A
+    R53.p1 ~ CL13
+    R53.p2 ~ PGND
+    RS13 = new SHUNT
+    RS13.p1 ~ RETURN13
+    RS13.p2 ~ PGND
+    RVH13 = new R_100k_0_1percent_voltage_divider_upper
+    RVH13.p1 ~ OUT13
+    RVH13.p2 ~ VMON13
+    RVL13 = new R_10k_0_1percent_voltage_divider_lower
+    RVL13.p1 ~ VMON13
+    RVL13.p2 ~ PGND
+    CV13 = new C_10nF50V_voltage_filter
+    CV13.p1 ~ VMON13
+    CV13.p2 ~ PGND
+    RI13 = new R_100R_current_filter
+    RI13.p1 ~ ISENSE_RAW13
+    RI13.p2 ~ ISENSE13
+    CI13 = new C_1nF16V_current_filter
+    CI13.p1 ~ ISENSE13
+    CI13.p2 ~ PGND
+    R55 = new R_100k_pulldown
+    R55.p1 ~ EN13
+    R55.p2 ~ PGND
+    R56 = new R_100R_series
+    R56.p1 ~ ISO_DATA13
+    R56.p2 ~ LED_DATA13
+    C14 = new C_100nF50V
+    C14.p1 ~ OUT13
+    C14.p2 ~ PGND
+    J24 = new OUT
+    J24.p1 ~ OUT14
+    J24.p2 ~ LED_DATA14
+    J24.p3 ~ RETURN14
+    U34 = new SW
+    U34.p2 ~ PGND
+    U34.p3 ~ EN14
+    U34.p5 ~ OUT14
+    U34.p6 ~ OUT14
+    U34.p7 ~ OUT14
+    U34.p8 ~ LED_VIN
+    U34.p9 ~ LED_VIN
+    U34.p10 ~ LED_VIN
+    U34.p12 ~ P5V
+    U34.p13 ~ CL14
+    U34.p14 ~ FAULT_N
+    U34.p15 ~ PGND
+    R57 = new R_1_00k_currentlimit_nominal2_47A
+    R57.p1 ~ CL14
+    R57.p2 ~ PGND
+    RS14 = new SHUNT
+    RS14.p1 ~ RETURN14
+    RS14.p2 ~ PGND
+    RVH14 = new R_100k_0_1percent_voltage_divider_upper
+    RVH14.p1 ~ OUT14
+    RVH14.p2 ~ VMON14
+    RVL14 = new R_10k_0_1percent_voltage_divider_lower
+    RVL14.p1 ~ VMON14
+    RVL14.p2 ~ PGND
+    CV14 = new C_10nF50V_voltage_filter
+    CV14.p1 ~ VMON14
+    CV14.p2 ~ PGND
+    RI14 = new R_100R_current_filter
+    RI14.p1 ~ ISENSE_RAW14
+    RI14.p2 ~ ISENSE14
+    CI14 = new C_1nF16V_current_filter
+    CI14.p1 ~ ISENSE14
+    CI14.p2 ~ PGND
+    R59 = new R_100k_pulldown
+    R59.p1 ~ EN14
+    R59.p2 ~ PGND
+    R60 = new R_100R_series
+    R60.p1 ~ ISO_DATA14
+    R60.p2 ~ LED_DATA14
+    C15 = new C_100nF50V
+    C15.p1 ~ OUT14
+    C15.p2 ~ PGND
+    J25 = new OUT
+    J25.p1 ~ OUT15
+    J25.p2 ~ LED_DATA15
+    J25.p3 ~ RETURN15
+    U35 = new SW
+    U35.p2 ~ PGND
+    U35.p3 ~ EN15
+    U35.p5 ~ OUT15
+    U35.p6 ~ OUT15
+    U35.p7 ~ OUT15
+    U35.p8 ~ LED_VIN
+    U35.p9 ~ LED_VIN
+    U35.p10 ~ LED_VIN
+    U35.p12 ~ P5V
+    U35.p13 ~ CL15
+    U35.p14 ~ FAULT_N
+    U35.p15 ~ PGND
+    R61 = new R_1_00k_currentlimit_nominal2_47A
+    R61.p1 ~ CL15
+    R61.p2 ~ PGND
+    RS15 = new SHUNT
+    RS15.p1 ~ RETURN15
+    RS15.p2 ~ PGND
+    RVH15 = new R_100k_0_1percent_voltage_divider_upper
+    RVH15.p1 ~ OUT15
+    RVH15.p2 ~ VMON15
+    RVL15 = new R_10k_0_1percent_voltage_divider_lower
+    RVL15.p1 ~ VMON15
+    RVL15.p2 ~ PGND
+    CV15 = new C_10nF50V_voltage_filter
+    CV15.p1 ~ VMON15
+    CV15.p2 ~ PGND
+    RI15 = new R_100R_current_filter
+    RI15.p1 ~ ISENSE_RAW15
+    RI15.p2 ~ ISENSE15
+    CI15 = new C_1nF16V_current_filter
+    CI15.p1 ~ ISENSE15
+    CI15.p2 ~ PGND
+    R63 = new R_100k_pulldown
+    R63.p1 ~ EN15
+    R63.p2 ~ PGND
+    R64 = new R_100R_series
+    R64.p1 ~ ISO_DATA15
+    R64.p2 ~ LED_DATA15
+    C16 = new C_100nF50V
+    C16.p1 ~ OUT15
+    C16.p2 ~ PGND
+    J26 = new OUT
+    J26.p1 ~ OUT16
+    J26.p2 ~ LED_DATA16
+    J26.p3 ~ RETURN16
+    U36 = new SW
+    U36.p2 ~ PGND
+    U36.p3 ~ EN16
+    U36.p5 ~ OUT16
+    U36.p6 ~ OUT16
+    U36.p7 ~ OUT16
+    U36.p8 ~ LED_VIN
+    U36.p9 ~ LED_VIN
+    U36.p10 ~ LED_VIN
+    U36.p12 ~ P5V
+    U36.p13 ~ CL16
+    U36.p14 ~ FAULT_N
+    U36.p15 ~ PGND
+    R65 = new R_1_00k_currentlimit_nominal2_47A
+    R65.p1 ~ CL16
+    R65.p2 ~ PGND
+    RS16 = new SHUNT
+    RS16.p1 ~ RETURN16
+    RS16.p2 ~ PGND
+    RVH16 = new R_100k_0_1percent_voltage_divider_upper
+    RVH16.p1 ~ OUT16
+    RVH16.p2 ~ VMON16
+    RVL16 = new R_10k_0_1percent_voltage_divider_lower
+    RVL16.p1 ~ VMON16
+    RVL16.p2 ~ PGND
+    CV16 = new C_10nF50V_voltage_filter
+    CV16.p1 ~ VMON16
+    CV16.p2 ~ PGND
+    RI16 = new R_100R_current_filter
+    RI16.p1 ~ ISENSE_RAW16
+    RI16.p2 ~ ISENSE16
+    CI16 = new C_1nF16V_current_filter
+    CI16.p1 ~ ISENSE16
+    CI16.p2 ~ PGND
+    R67 = new R_100k_pulldown
+    R67.p1 ~ EN16
+    R67.p2 ~ PGND
+    R68 = new R_100R_series
+    R68.p1 ~ ISO_DATA16
+    R68.p2 ~ LED_DATA16
+    C17 = new C_100nF50V
+    C17.p1 ~ OUT16
+    C17.p2 ~ PGND
+    J27 = new OUT
+    J27.p1 ~ OUT17
+    J27.p2 ~ LED_DATA17
+    J27.p3 ~ RETURN17
+    U37 = new SW
+    U37.p2 ~ PGND
+    U37.p3 ~ EN17
+    U37.p5 ~ OUT17
+    U37.p6 ~ OUT17
+    U37.p7 ~ OUT17
+    U37.p8 ~ LED_VIN
+    U37.p9 ~ LED_VIN
+    U37.p10 ~ LED_VIN
+    U37.p12 ~ P5V
+    U37.p13 ~ CL17
+    U37.p14 ~ FAULT_N
+    U37.p15 ~ PGND
+    R69 = new R_1_00k_currentlimit_nominal2_47A
+    R69.p1 ~ CL17
+    R69.p2 ~ PGND
+    RS17 = new SHUNT
+    RS17.p1 ~ RETURN17
+    RS17.p2 ~ PGND
+    RVH17 = new R_100k_0_1percent_voltage_divider_upper
+    RVH17.p1 ~ OUT17
+    RVH17.p2 ~ VMON17
+    RVL17 = new R_10k_0_1percent_voltage_divider_lower
+    RVL17.p1 ~ VMON17
+    RVL17.p2 ~ PGND
+    CV17 = new C_10nF50V_voltage_filter
+    CV17.p1 ~ VMON17
+    CV17.p2 ~ PGND
+    RI17 = new R_100R_current_filter
+    RI17.p1 ~ ISENSE_RAW17
+    RI17.p2 ~ ISENSE17
+    CI17 = new C_1nF16V_current_filter
+    CI17.p1 ~ ISENSE17
+    CI17.p2 ~ PGND
+    R71 = new R_100k_pulldown
+    R71.p1 ~ EN17
+    R71.p2 ~ PGND
+    R72 = new R_100R_series
+    R72.p1 ~ ISO_DATA17
+    R72.p2 ~ LED_DATA17
+    C18 = new C_100nF50V
+    C18.p1 ~ OUT17
+    C18.p2 ~ PGND
+    J28 = new OUT
+    J28.p1 ~ OUT18
+    J28.p2 ~ LED_DATA18
+    J28.p3 ~ RETURN18
+    U38 = new SW
+    U38.p2 ~ PGND
+    U38.p3 ~ EN18
+    U38.p5 ~ OUT18
+    U38.p6 ~ OUT18
+    U38.p7 ~ OUT18
+    U38.p8 ~ LED_VIN
+    U38.p9 ~ LED_VIN
+    U38.p10 ~ LED_VIN
+    U38.p12 ~ P5V
+    U38.p13 ~ CL18
+    U38.p14 ~ FAULT_N
+    U38.p15 ~ PGND
+    R73 = new R_1_00k_currentlimit_nominal2_47A
+    R73.p1 ~ CL18
+    R73.p2 ~ PGND
+    RS18 = new SHUNT
+    RS18.p1 ~ RETURN18
+    RS18.p2 ~ PGND
+    RVH18 = new R_100k_0_1percent_voltage_divider_upper
+    RVH18.p1 ~ OUT18
+    RVH18.p2 ~ VMON18
+    RVL18 = new R_10k_0_1percent_voltage_divider_lower
+    RVL18.p1 ~ VMON18
+    RVL18.p2 ~ PGND
+    CV18 = new C_10nF50V_voltage_filter
+    CV18.p1 ~ VMON18
+    CV18.p2 ~ PGND
+    RI18 = new R_100R_current_filter
+    RI18.p1 ~ ISENSE_RAW18
+    RI18.p2 ~ ISENSE18
+    CI18 = new C_1nF16V_current_filter
+    CI18.p1 ~ ISENSE18
+    CI18.p2 ~ PGND
+    R75 = new R_100k_pulldown
+    R75.p1 ~ EN18
+    R75.p2 ~ PGND
+    R76 = new R_100R_series
+    R76.p1 ~ ISO_DATA18
+    R76.p2 ~ LED_DATA18
+    C19 = new C_100nF50V
+    C19.p1 ~ OUT18
+    C19.p2 ~ PGND
+    J29 = new OUT
+    J29.p1 ~ OUT19
+    J29.p2 ~ LED_DATA19
+    J29.p3 ~ RETURN19
+    U39 = new SW
+    U39.p2 ~ PGND
+    U39.p3 ~ EN19
+    U39.p5 ~ OUT19
+    U39.p6 ~ OUT19
+    U39.p7 ~ OUT19
+    U39.p8 ~ LED_VIN
+    U39.p9 ~ LED_VIN
+    U39.p10 ~ LED_VIN
+    U39.p12 ~ P5V
+    U39.p13 ~ CL19
+    U39.p14 ~ FAULT_N
+    U39.p15 ~ PGND
+    R77 = new R_1_00k_currentlimit_nominal2_47A
+    R77.p1 ~ CL19
+    R77.p2 ~ PGND
+    RS19 = new SHUNT
+    RS19.p1 ~ RETURN19
+    RS19.p2 ~ PGND
+    RVH19 = new R_100k_0_1percent_voltage_divider_upper
+    RVH19.p1 ~ OUT19
+    RVH19.p2 ~ VMON19
+    RVL19 = new R_10k_0_1percent_voltage_divider_lower
+    RVL19.p1 ~ VMON19
+    RVL19.p2 ~ PGND
+    CV19 = new C_10nF50V_voltage_filter
+    CV19.p1 ~ VMON19
+    CV19.p2 ~ PGND
+    RI19 = new R_100R_current_filter
+    RI19.p1 ~ ISENSE_RAW19
+    RI19.p2 ~ ISENSE19
+    CI19 = new C_1nF16V_current_filter
+    CI19.p1 ~ ISENSE19
+    CI19.p2 ~ PGND
+    R79 = new R_100k_pulldown
+    R79.p1 ~ EN19
+    R79.p2 ~ PGND
+    R80 = new R_100R_series
+    R80.p1 ~ ISO_DATA19
+    R80.p2 ~ LED_DATA19
+    C20 = new C_100nF50V
+    C20.p1 ~ OUT19
+    C20.p2 ~ PGND
+    C30 = new C_100nF16V
+    C30.p1 ~ P5V
+    C30.p2 ~ PGND
+    C31 = new C_100nF16V
+    C31.p1 ~ P5V
+    C31.p2 ~ PGND
+    C32 = new C_100nF16V
+    C32.p1 ~ P5V
+    C32.p2 ~ PGND
+    C33 = new C_100nF16V
+    C33.p1 ~ P5V
+    C33.p2 ~ PGND
+    C34 = new C_100nF16V
+    C34.p1 ~ P5V
+    C34.p2 ~ PGND
+    C35 = new C_100nF16V
+    C35.p1 ~ P5V
+    C35.p2 ~ PGND
+    C36 = new C_100nF16V
+    C36.p1 ~ P5V
+    C36.p2 ~ PGND
+    C37 = new C_100nF16V
+    C37.p1 ~ P5V
+    C37.p2 ~ PGND
+    C38 = new C_100nF16V
+    C38.p1 ~ P5V
+    C38.p2 ~ PGND
+    C39 = new C_100nF16V
+    C39.p1 ~ P5V
+    C39.p2 ~ PGND
+    C40 = new C_100nF16V
+    C40.p1 ~ P5V
+    C40.p2 ~ PGND
+    C41 = new C_100nF16V
+    C41.p1 ~ P5V
+    C41.p2 ~ PGND
+    C42 = new C_100nF16V
+    C42.p1 ~ P5V
+    C42.p2 ~ PGND
+    C43 = new C_100nF16V
+    C43.p1 ~ P5V
+    C43.p2 ~ PGND
+    C44 = new C_100nF16V
+    C44.p1 ~ P5V
+    C44.p2 ~ PGND
+    C45 = new C_100nF16V
+    C45.p1 ~ P5V
+    C45.p2 ~ PGND
+    C46 = new C_100nF16V
+    C46.p1 ~ P5V
+    C46.p2 ~ PGND
+    C47 = new C_100nF16V
+    C47.p1 ~ P5V
+    C47.p2 ~ PGND
+    C48 = new C_100nF16V
+    C48.p1 ~ P5V
+    C48.p2 ~ PGND
+    C49 = new C_100nF16V
+    C49.p1 ~ P5V
+    C49.p2 ~ PGND
+    C50 = new C_100nF16V
+    C50.p1 ~ P5V
+    C50.p2 ~ PGND
+    C51 = new C_100nF16V
+    C51.p1 ~ P5V
+    C51.p2 ~ PGND
+    C52 = new C_100nF16V
+    C52.p1 ~ P5V
+    C52.p2 ~ PGND
+    C53 = new C_100nF16V
+    C53.p1 ~ P5V
+    C53.p2 ~ PGND
+    C60 = new C_100nF16V
+    C60.p1 ~ LV3V3
+    C60.p2 ~ DGND
+    C61 = new C_100nF16V
+    C61.p1 ~ LV3V3
+    C61.p2 ~ DGND
+    C62 = new C_100nF16V
+    C62.p1 ~ LV3V3
+    C62.p2 ~ DGND
+    C63 = new C_100nF16V
+    C63.p1 ~ LV3V3
+    C63.p2 ~ DGND
+    C64 = new C_100nF16V
+    C64.p1 ~ LV3V3
+    C64.p2 ~ DGND
+    C70 = new C_10uF10V
+    C70.p1 ~ P5V
+    C70.p2 ~ PGND
+    C71 = new C_1uF10V
+    C71.p1 ~ REF2V5
+    C71.p2 ~ PGND
+    # @pnr-current {"target": "U20", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U20", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J10", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J10", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS0", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS0", "positive_pad": "1", "negative_pad": "2", "sense_component": "U50", "sense_positive_pad": "3", "sense_negative_pad": "2", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U21", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U21", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J11", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J11", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS1", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS1", "positive_pad": "1", "negative_pad": "2", "sense_component": "U50", "sense_positive_pad": "5", "sense_negative_pad": "6", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U22", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U22", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J12", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J12", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS2", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS2", "positive_pad": "1", "negative_pad": "2", "sense_component": "U50", "sense_positive_pad": "10", "sense_negative_pad": "9", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U23", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U23", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J13", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J13", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS3", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS3", "positive_pad": "1", "negative_pad": "2", "sense_component": "U50", "sense_positive_pad": "12", "sense_negative_pad": "13", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U24", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U24", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J14", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J14", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS4", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS4", "positive_pad": "1", "negative_pad": "2", "sense_component": "U51", "sense_positive_pad": "3", "sense_negative_pad": "2", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U25", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U25", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J15", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J15", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS5", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS5", "positive_pad": "1", "negative_pad": "2", "sense_component": "U51", "sense_positive_pad": "5", "sense_negative_pad": "6", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U26", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U26", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J16", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J16", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS6", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS6", "positive_pad": "1", "negative_pad": "2", "sense_component": "U51", "sense_positive_pad": "10", "sense_negative_pad": "9", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U27", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U27", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J17", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J17", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS7", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS7", "positive_pad": "1", "negative_pad": "2", "sense_component": "U51", "sense_positive_pad": "12", "sense_negative_pad": "13", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U28", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U28", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J18", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J18", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS8", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS8", "positive_pad": "1", "negative_pad": "2", "sense_component": "U52", "sense_positive_pad": "3", "sense_negative_pad": "2", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U29", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U29", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J19", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J19", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS9", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS9", "positive_pad": "1", "negative_pad": "2", "sense_component": "U52", "sense_positive_pad": "5", "sense_negative_pad": "6", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U30", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U30", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J20", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J20", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS10", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS10", "positive_pad": "1", "negative_pad": "2", "sense_component": "U52", "sense_positive_pad": "10", "sense_negative_pad": "9", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U31", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U31", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J21", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J21", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS11", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS11", "positive_pad": "1", "negative_pad": "2", "sense_component": "U52", "sense_positive_pad": "12", "sense_negative_pad": "13", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U32", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U32", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J22", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J22", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS12", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS12", "positive_pad": "1", "negative_pad": "2", "sense_component": "U53", "sense_positive_pad": "3", "sense_negative_pad": "2", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U33", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U33", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J23", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J23", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS13", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS13", "positive_pad": "1", "negative_pad": "2", "sense_component": "U53", "sense_positive_pad": "5", "sense_negative_pad": "6", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U34", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U34", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J24", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J24", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS14", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS14", "positive_pad": "1", "negative_pad": "2", "sense_component": "U53", "sense_positive_pad": "10", "sense_negative_pad": "9", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U35", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U35", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J25", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J25", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS15", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS15", "positive_pad": "1", "negative_pad": "2", "sense_component": "U53", "sense_positive_pad": "12", "sense_negative_pad": "13", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U36", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U36", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J26", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J26", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS16", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS16", "positive_pad": "1", "negative_pad": "2", "sense_component": "U54", "sense_positive_pad": "3", "sense_negative_pad": "2", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U37", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U37", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J27", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J27", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS17", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS17", "positive_pad": "1", "negative_pad": "2", "sense_component": "U54", "sense_positive_pad": "5", "sense_negative_pad": "6", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U38", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U38", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J28", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J28", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS18", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS18", "positive_pad": "1", "negative_pad": "2", "sense_component": "U54", "sense_positive_pad": "10", "sense_negative_pad": "9", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "U39", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "U39", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J29", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "J29", "pads": ["3"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-current {"target": "RS19", "pads": ["1", "2"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
+    # @pnr-kelvin {"shunt": "RS19", "positive_pad": "1", "negative_pad": "2", "sense_component": "U54", "sense_positive_pad": "12", "sense_negative_pad": "13", "avoid_shared_power_neck": true}
+    # @pnr-current {"target": "J2", "pads": ["1"], "scope": "terminal", "rms_current_a": 40, "peak_current_a": 56}
+    # @pnr-current {"target": "J3", "pads": ["1"], "scope": "terminal", "rms_current_a": 40, "peak_current_a": 56}

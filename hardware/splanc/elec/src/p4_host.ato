@@ -1,0 +1,235 @@
+from "parts/ESP32P4/ESP32P4.ato" import ESP32P4
+from "parts/DWM3000/DWM3000.ato" import DWM3000
+from "parts/QSPI/QSPI.ato" import QSPI
+from "parts/R499K/R499K.ato" import R499K
+from "parts/C22P/C22P.ato" import C22P
+from "parts/L2U2/L2U2.ato" import L2U2
+from "parts/XTAL40/XTAL40.ato" import XTAL40
+from "parts/C6DEBUG/C6DEBUG.ato" import C6DEBUG
+from "passives.ato" import C100n
+from "passives.ato" import C1u
+from "passives.ato" import C10u
+from "passives.ato" import C22u
+from "passives.ato" import C4u7
+from "passives.ato" import C10n
+from "passives.ato" import R10k
+from "passives.ato" import R100k
+from "passives.ato" import R0
+from "parts/Espressif_Systems_ESP32_C6_WROOM_1_N8/Espressif_Systems_ESP32_C6_WROOM_1_N8.ato" import Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+from "parts/Texas_Instruments_TLV62569DBVR/Texas_Instruments_TLV62569DBVR.ato" import Texas_Instruments_TLV62569DBVR_package
+
+module P4Host:
+    p4 = new ESP32P4
+    signal P3V3
+    signal GND ~ p4.p105
+    signal EN ~ p4.p103
+    signal CORE
+    signal PSRAM
+    signal FLASHV
+    signal IO0 ~ p4.p104
+    signal IO1 ~ p4.p1
+    signal IO2 ~ p4.p12
+    signal IO3 ~ p4.p13
+    signal IO4 ~ p4.p14
+    signal IO5 ~ p4.p15
+    signal IO6 ~ p4.p6
+    signal IO7 ~ p4.p7
+    signal IO10 ~ p4.p11
+    signal IO18 ~ p4.p19
+    signal IO19 ~ p4.p20
+    signal IO20 ~ p4.p22
+    signal IO21 ~ p4.p23
+    signal IO22 ~ p4.p24
+    signal IO23 ~ p4.p25
+    signal IO8 ~ p4.p68
+    signal IO9 ~ p4.p66
+    signal IO12 ~ p4.p49
+    signal IO13 ~ p4.p50
+    signal TXD0 ~ p4.p69
+    signal RXD0 ~ p4.p70
+    p4.p9 ~ P3V3
+    p4.p21 ~ P3V3
+    p4.p51 ~ P3V3
+    p4.p62 ~ P3V3
+    p4.p75 ~ P3V3
+    p4.p77 ~ P3V3
+    p4.p85 ~ P3V3
+    p4.p96 ~ P3V3
+    p4.p101 ~ P3V3
+    p4.p102 ~ P3V3
+    p4.p26 ~ CORE
+    p4.p54 ~ CORE
+    p4.p76 ~ CORE
+    p4.p91 ~ CORE
+    p4.p59 ~ PSRAM
+    p4.p67 ~ PSRAM
+    p4.p72 ~ PSRAM
+    p4.p71 ~ FLASHV
+    p4.p30 ~ FLASHV
+    core_buck = new Texas_Instruments_TLV62569DBVR_package
+    core_buck.VIN ~ P3V3
+    core_buck.GND ~ GND
+    core_buck.EN ~ p4.p79
+    core_buck.FB ~ p4.p78
+    core_l = new L2U2
+    core_l.p1 ~ core_buck.SW
+    core_l.p2 ~ CORE
+    core_rtop = new R499K
+    core_rtop.p1 ~ CORE
+    core_rtop.p2 ~ core_buck.FB
+    core_rbottom = new R499K
+    core_rbottom.p1 ~ core_buck.FB
+    core_rbottom.p2 ~ GND
+    core_cff = new C22P
+    core_cff.p1 ~ CORE
+    core_cff.p2 ~ core_buck.FB
+    core_in = new C4u7
+    core_in.p1 ~ P3V3
+    core_in.p2 ~ GND
+    core_out = new C22u
+    core_out.p1 ~ CORE
+    core_out.p2 ~ GND
+    flash_dec = new C1u
+    flash_dec.p1 ~ FLASHV
+    flash_dec.p2 ~ GND
+    psram_dec = new C1u
+    psram_dec.p1 ~ PSRAM
+    psram_dec.p2 ~ GND
+    input_bulk = new C10u
+    input_bulk.p1 ~ P3V3
+    input_bulk.p2 ~ GND
+    usb_4u7 = new C4u7
+    usb_4u7.p1 ~ P3V3
+    usb_4u7.p2 ~ GND
+    usb_10n = new C10n
+    usb_10n.p1 ~ P3V3
+    usb_10n.p2 ~ GND
+    dec0 = new C100n
+    dec0.p1 ~ P3V3
+    dec0.p2 ~ GND
+    dec1 = new C100n
+    dec1.p1 ~ P3V3
+    dec1.p2 ~ GND
+    dec2 = new C100n
+    dec2.p1 ~ P3V3
+    dec2.p2 ~ GND
+    dec3 = new C100n
+    dec3.p1 ~ P3V3
+    dec3.p2 ~ GND
+    dec4 = new C100n
+    dec4.p1 ~ P3V3
+    dec4.p2 ~ GND
+    dec5 = new C100n
+    dec5.p1 ~ P3V3
+    dec5.p2 ~ GND
+    dec6 = new C100n
+    dec6.p1 ~ P3V3
+    dec6.p2 ~ GND
+    dec7 = new C100n
+    dec7.p1 ~ P3V3
+    dec7.p2 ~ GND
+    dec8 = new C100n
+    dec8.p1 ~ P3V3
+    dec8.p2 ~ GND
+    dec9 = new C100n
+    dec9.p1 ~ P3V3
+    dec9.p2 ~ GND
+    dec10 = new C100n
+    dec10.p1 ~ CORE
+    dec10.p2 ~ GND
+    dec11 = new C100n
+    dec11.p1 ~ CORE
+    dec11.p2 ~ GND
+    dec12 = new C100n
+    dec12.p1 ~ CORE
+    dec12.p2 ~ GND
+    dec13 = new C100n
+    dec13.p1 ~ CORE
+    dec13.p2 ~ GND
+    dec14 = new C100n
+    dec14.p1 ~ PSRAM
+    dec14.p2 ~ GND
+    dec15 = new C100n
+    dec15.p1 ~ PSRAM
+    dec15.p2 ~ GND
+    dec16 = new C100n
+    dec16.p1 ~ FLASHV
+    dec16.p2 ~ GND
+    flash = new QSPI
+    flash.p1 ~ p4.p27
+    flash.p2 ~ p4.p28
+    flash.p3 ~ p4.p29
+    flash.p4 ~ GND
+    flash.p5 ~ p4.p33
+    flash.p6 ~ p4.p32
+    flash.p7 ~ p4.p31
+    flash.p8 ~ FLASHV
+    xtal = new XTAL40
+    xtal.p1 ~ p4.p100
+    xtal.p3 ~ p4.p99
+    xtal.p2 ~ GND
+    xtal.p4 ~ GND
+    xtal_c0 = new C22P
+    xtal_c0.p1 ~ p4.p99
+    xtal_c0.p2 ~ GND
+    xtal_c1 = new C22P
+    xtal_c1.p1 ~ p4.p100
+    xtal_c1.p2 ~ GND
+    wireless = new Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+    wireless.P3V3 ~ P3V3
+    wireless.GND ~ GND
+    p4.p57 ~ wireless.IO10
+    p4.p58 ~ wireless.IO11
+    p4.p60 ~ wireless.IO18
+    p4.p61 ~ wireless.IO19
+    p4.p63 ~ wireless.IO20
+    p4.p64 ~ wireless.IO21
+    radio_pu_EN = new R10k
+    radio_pu_EN.p1 ~ P3V3
+    radio_pu_EN.p2 ~ wireless.EN
+    radio_pu_IO8 = new R10k
+    radio_pu_IO8.p1 ~ P3V3
+    radio_pu_IO8.p2 ~ wireless.IO8
+    radio_pu_IO9 = new R10k
+    radio_pu_IO9.p1 ~ P3V3
+    radio_pu_IO9.p2 ~ wireless.IO9
+    c6_debug = new C6DEBUG
+    c6_debug.p1 ~ P3V3
+    c6_debug.p2 ~ GND
+    c6_debug.p3 ~ wireless.TXD0
+    c6_debug.p4 ~ wireless.RXD0
+    c6_debug.p5 ~ wireless.EN
+    c6_debug.p6 ~ wireless.IO9
+    radio_reset = new C1u
+    radio_reset.p1 ~ wireless.EN
+    radio_reset.p2 ~ GND
+    uwb = new DWM3000
+    uwb.p2 ~ GND
+    uwb.p3 ~ p4.p84
+    uwb.p5 ~ P3V3
+    uwb.p6 ~ P3V3
+    uwb.p7 ~ P3V3
+    uwb.p8 ~ GND
+    uwb.p16 ~ GND
+    uwb.p17 ~ p4.p80
+    uwb.p18 ~ p4.p81
+    uwb.p19 ~ p4.p82
+    uwb.p20 ~ p4.p83
+    uwb.p21 ~ GND
+    uwb.p22 ~ p4.p86
+    uwb.p23 ~ GND
+    uwb.p24 ~ GND
+    uwb_bulk = new C10u
+    uwb_bulk.p1 ~ P3V3
+    uwb_bulk.p2 ~ GND
+    uwb_dec = new C100n
+    uwb_dec.p1 ~ P3V3
+    uwb_dec.p2 ~ GND
+    uwb_irq_pd = new R100k
+    uwb_irq_pd.p1 ~ uwb.p22
+    uwb_irq_pd.p2 ~ GND
+    signal GPS_TX ~ p4.p87
+    signal GPS_RX ~ p4.p88
+    signal GPS_PPS ~ p4.p89
+    signal GPS_RESET ~ p4.p90
+    # @pnr-current {"target": "p4", "pads": ["9", "21", "51", "62", "75", "77", "85", "96", "101", "102"], "scope": "terminal", "rms_current_a": 0.6, "peak_current_a": 0.9}

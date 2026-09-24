@@ -1,0 +1,10 @@
+requires-atopile: '>=0.15.0,<0.16.0'
+builds:
+  base:
+    entry: elec/src/splanc.ato:Splanc
+    targets: [build-design]
+    exclude_targets: [default, picker]
+  gps:
+    entry: elec/src/splanc.ato:SplancGPS
+    targets: [build-design]
+    exclude_targets: [default, picker]
