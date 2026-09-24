@@ -292,6 +292,10 @@ class AndroidDeviceTarget(PhoneTarget):
         for p in self._reversed:
             subprocess.run(_adb_prefix() + ["reverse", "--remove", f"tcp:{p}"], check=False)
         self._reversed.clear()
+        # Leave the display OFF between runs — the real bench phone idles with the
+        # screen on otherwise, burning OLED/panel lifetime. KEYCODE_SLEEP always
+        # sleeps (unlike KEYCODE_POWER, which would toggle an already-off screen on).
+        subprocess.run(_adb_prefix() + ["shell", "input", "keyevent", "KEYCODE_SLEEP"], check=False)
 
 
 # --- iOS (simulator + real device), via tools/ios_build_server.py ------------
@@ -364,6 +368,15 @@ class IosDeviceTarget(PhoneTarget):
     async def launch(self, ports: StationPorts) -> None:
         for argv in self.command_plan(ports):
             subprocess.run(argv, check=True)
+
+    async def close(self) -> None:
+        # Leave the iPhone display OFF between runs (mirrors the Android
+        # KEYCODE_SLEEP) — the bench idles otherwise, burning panel lifetime.
+        # idevicediagnostics sleep works over usbmux (no Xcode / Developer Mode).
+        argv = ["idevicediagnostics"]
+        if self.udid:
+            argv += ["-u", self.udid]
+        subprocess.run(argv + ["sleep"], check=False)
 
 
 _TARGETS: dict[str, type[PhoneTarget]] = {
