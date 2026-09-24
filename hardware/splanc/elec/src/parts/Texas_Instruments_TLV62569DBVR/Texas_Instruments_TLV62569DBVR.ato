@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TLV62569DBVR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C141836", date="2026-08-20T03:04:31.443497+00:00", checksum="4bbb197734cd4d103f9246a147ec1509b65f6d2c1d611c35ed98cc46547f580c">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TLV62569DBVR", footprint="SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR.kicad_mod", symbol="TLV62569DBVR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C141836", manufacturer="Texas Instruments", partno="TLV62569DBVR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal EN ~ pin 1
+    signal FB ~ pin 5
+    signal GND ~ pin 2
+    signal SW ~ pin 3
+    signal VIN ~ pin 4

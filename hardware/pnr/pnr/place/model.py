@@ -31,7 +31,7 @@ import torch
 from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
 
-from .geometry import keepout_rects, resolve_fixed_poses
+from .geometry import keepout_rects, resolve_fixed_poses, occupied_sides
 
 # Reproducibility ("same inputs -> same board", design §10): run torch
 # single-threaded so the float reductions don't vary with thread scheduling.
@@ -67,6 +67,8 @@ def global_place(
     w_group: float = 0.5,
     w_plane: float = 0.05,
     w_plane_sep: float = 0.35,
+    initial_positions: Optional[Dict[str, Tuple[float, float]]] = None,
+    initial_rotations: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, float]]:
     """Optimize continuous centres (+ orientation); return positions and angles.
 
@@ -83,6 +85,8 @@ def global_place(
     n = len(comps)
     idx = {c.ref: i for i, c in enumerate(comps)}
 
+    side_overlap = torch.tensor([[bool(set(occupied_sides(a)) & set(occupied_sides(b)))
+                                  for b in comps] for a in comps], dtype=torch.float32)
     half = _base_half_sizes(graph)  # (n, 2), unrotated
     # Inflate the *spreading* footprint (not WL, not the reported courtyard): a
     # per-part ``inflation`` floor (congested parts, from the loop) OR a global
@@ -119,12 +123,27 @@ def global_place(
     init = torch.rand(n, 2)
     init[:, 0] = half[:, 0] + init[:, 0] * (width - 2 * half[:, 0])
     init[:, 1] = half[:, 1] + init[:, 1] * (height - 2 * half[:, 1])
+    # Explicit global starts let the initial pool explore different arrangements
+    # instead of replacing every supplied source pose with the same random path.
+    if initial_positions is not None:
+        for ref, xy in initial_positions.items():
+            if ref not in idx or len(xy) != 2:
+                raise ValueError("invalid initial placement reference/coordinate")
+            point = torch.tensor(xy, dtype=torch.float32)
+            if not bool(torch.isfinite(point).all()):
+                raise ValueError("initial placement contains non-finite coordinates")
+            init[idx[ref]] = point
     move = torch.nn.Parameter(init.clone())
 
     params = [move]
     rot_logits = None
     if orient:
-        rot_logits = torch.nn.Parameter(torch.zeros(n, 4))
+        logits = torch.zeros(n, 4)
+        for ref, angle in (initial_rotations or {}).items():
+            if ref not in idx or not torch.isfinite(torch.tensor(float(angle))):
+                raise ValueError("invalid initial rotation")
+            logits[idx[ref], int(round(angle / 90.0)) % 4] = 2.0
+        rot_logits = torch.nn.Parameter(logits)
         params.append(rot_logits)
     fixed_onehot = torch.nn.functional.one_hot(fixed_angle_idx, 4).float()
 
@@ -244,7 +263,7 @@ def global_place(
         sh = hh.unsqueeze(1) + hh.unsqueeze(0) + clearance
         ox = torch.clamp(sw - dx, min=0.0)
         oy = torch.clamp(sh - dy, min=0.0)
-        overlap = torch.triu(ox * oy, diagonal=1).sum()
+        overlap = torch.triu(ox * oy * side_overlap, diagonal=1).sum()
 
         # Outline containment.
         cx, cy = pos[:, 0], pos[:, 1]

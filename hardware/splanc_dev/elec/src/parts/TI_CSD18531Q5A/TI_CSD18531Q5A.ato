@@ -1,0 +1,26 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component TI_CSD18531Q5A_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2683366", date="2026-09-09T22:57:13.187359+00:00", checksum="2d11ffd9e5c99d0d2f2f8276f03b28d25bc9dfe99e97b25b8c8b00c3e09a5d7c">
+
+    trait is_atomic_part<manufacturer="TI", partnumber="CSD18531Q5A", footprint="PQFN-8_L5.8-W4.9-P1.27-LS6.0-BL.kicad_mod", symbol="CSD18531Q5A.kicad_sym", model="PQFN-8_L5.8-W4.9-H1.0-P1.27-LS6.0-BL.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2683366", manufacturer="TI", partno="CSD18531Q5A">
+    trait has_designator_prefix<prefix="Q">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/936c14765727c3a405a82c1a4fe38025.pdf?productCode=C2683366">
+
+    # pins
+    signal D ~ pin 5
+    D ~ pin 6
+    D ~ pin 7
+    D ~ pin 8
+    D ~ pin 9
+    signal G ~ pin 4
+    signal S ~ pin 1
+    S ~ pin 2
+    S ~ pin 3

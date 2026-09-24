@@ -1,0 +1,145 @@
+import ElectricPower
+from "parts/Texas_Instruments_TPS552882RPMR/Texas_Instruments_TPS552882RPMR.ato" import Texas_Instruments_TPS552882RPMR_package
+from "parts/TI_CSD18531Q5A/TI_CSD18531Q5A.ato" import TI_CSD18531Q5A_package
+from "parts/BOURNS_SRP1038A_4R7M/BOURNS_SRP1038A_4R7M.ato" import BOURNS_SRP1038A_4R7M_package
+from "parts/UNI_ROYAL_0402WGF2492TCE/UNI_ROYAL_0402WGF2492TCE.ato" import UNI_ROYAL_0402WGF2492TCE_package
+from "parts/Samsung_CL31B106KBHNNNE/Samsung_CL31B106KBHNNNE.ato" import Samsung_CL31B106KBHNNNE_package
+from "parts/Samsung_CL05C331JB5NNNC/Samsung_CL05C331JB5NNNC.ato" import Samsung_CL05C331JB5NNNC_package
+from "passives.ato" import C100n
+from "passives.ato" import C100n_50V
+from "passives.ato" import C10u
+from "passives.ato" import C22u
+from "passives.ato" import C47n
+from "passives.ato" import R100k
+from "passives.ato" import R31k6
+from "passives.ato" import R2k
+from "passives.ato" import R10k
+from "passives.ato" import RshuntSystem
+
+module System5V:
+    """3–21V input, nominal 5V output. Buck on USB PD/2S, boost on 1S.
+    Always on while the source selector supplies power; channel eFuses gate LEDs.
+    400kHz nominal, 4.7uH, internal-LDO PFM mode, 10.44A average inductor limit.
+    Compensation is preliminary averaged-model design, requiring bench validation.
+    """
+    input = new ElectricPower
+    output = new ElectricPower
+    logic = new ElectricPower
+    signal power_good
+    input.lv ~ output.lv
+    input.lv ~ logic.lv
+    ic = new Texas_Instruments_TPS552882RPMR_package
+    ic.VIN ~ input.hv
+    ic.PGND ~ input.lv
+    ic.AGND ~ input.lv
+    ic.DITH_SYNC ~ input.lv
+    # CDC left open disables cable-drop compensation.
+    mode = new UNI_ROYAL_0402WGF2492TCE_package
+    mode.p1 ~ ic.MODE
+    mode.p2 ~ input.lv
+    enable_top = new R100k
+    enable_bottom = new R100k
+    enable_top.p1 ~ input.hv
+    enable_top.p2 ~ ic.EN_UVLO
+    enable_bottom.p1 ~ ic.EN_UVLO
+    enable_bottom.p2 ~ input.lv
+    frequency1 = new R100k
+    frequency2 = new R100k
+    frequency1.p1 ~ ic.FSW
+    frequency2.p1 ~ ic.FSW
+    frequency1.p2 ~ input.lv
+    frequency2.p2 ~ input.lv
+    current_limit = new R31k6
+    current_limit.p1 ~ ic.ILIM
+    current_limit.p2 ~ input.lv
+    high_fet = new TI_CSD18531Q5A_package
+    low_fet = new TI_CSD18531Q5A_package
+    high_fet.D ~ input.hv
+    high_fet.S ~ ic.SW1
+    high_fet.G ~ ic.DR1H
+    low_fet.D ~ ic.SW1
+    low_fet.S ~ input.lv
+    low_fet.G ~ ic.DR1L
+    inductor = new BOURNS_SRP1038A_4R7M_package
+    inductor.p1 ~ ic.SW1
+    inductor.p2 ~ ic.SW2
+    bootstrap1 = new C100n
+    bootstrap1.p1 ~ ic.BOOT1
+    bootstrap1.p2 ~ ic.SW1
+    bootstrap2 = new C100n
+    bootstrap2.p1 ~ ic.BOOT2
+    bootstrap2.p2 ~ ic.SW2
+    vcc_dec = new C10u
+    vcc_dec.p1 ~ ic.VCC
+    vcc_dec.p2 ~ input.lv
+    shunt = new RshuntSystem
+    shunt.p1 ~ ic.VOUT
+    shunt.p2 ~ output.hv
+    ic.ISP ~ ic.VOUT
+    ic.ISN ~ output.hv
+    fb_top = new R100k
+    fb_bottom = new R31k6
+    fb_top.p1 ~ output.hv
+    fb_top.p2 ~ ic.FB
+    fb_bottom.p1 ~ ic.FB
+    fb_bottom.p2 ~ input.lv
+    compensation_r = new R2k
+    compensation_a = new C47n
+    compensation_b = new C47n
+    compensation_pole = new Samsung_CL05C331JB5NNNC_package
+    compensation_r.p1 ~ ic.COMP
+    compensation_r.p2 ~ compensation_a.p1
+    compensation_a.p2 ~ compensation_b.p1
+    compensation_b.p2 ~ input.lv
+    compensation_pole.p1 ~ ic.COMP
+    compensation_pole.p2 ~ input.lv
+    ic.PG ~ power_good
+    pg_pullup = new R10k
+    pg_pullup.p1 ~ logic.hv
+    pg_pullup.p2 ~ power_good
+    input_hf = new C100n_50V
+    input_hf.p1 ~ input.hv
+    input_hf.p2 ~ input.lv
+    output_hf = new C100n
+    output_hf.p1 ~ ic.VOUT
+    output_hf.p2 ~ input.lv
+
+    input_cap0 = new Samsung_CL31B106KBHNNNE_package
+    input_cap0.p1 ~ input.hv
+    input_cap0.p2 ~ input.lv
+
+    input_cap1 = new Samsung_CL31B106KBHNNNE_package
+    input_cap1.p1 ~ input.hv
+    input_cap1.p2 ~ input.lv
+
+    output_cap0 = new C22u
+    output_cap0.p1 ~ ic.VOUT
+    output_cap0.p2 ~ input.lv
+
+    output_cap1 = new C22u
+    output_cap1.p1 ~ ic.VOUT
+    output_cap1.p2 ~ input.lv
+
+    output_cap2 = new C22u
+    output_cap2.p1 ~ ic.VOUT
+    output_cap2.p2 ~ input.lv
+
+    output_cap3 = new C22u
+    output_cap3.p1 ~ ic.VOUT
+    output_cap3.p2 ~ input.lv
+
+    output_cap4 = new C22u
+    output_cap4.p1 ~ ic.VOUT
+    output_cap4.p2 ~ input.lv
+
+    output_cap5 = new C22u
+    output_cap5.p1 ~ ic.VOUT
+    output_cap5.p2 ~ input.lv
+
+    output_cap6 = new C22u
+    output_cap6.p1 ~ ic.VOUT
+    output_cap6.p2 ~ input.lv
+
+    output_cap7 = new C22u
+    output_cap7.p1 ~ ic.VOUT
+    output_cap7.p2 ~ input.lv

@@ -1,0 +1,83 @@
+{
+  "date": "2026-09-21",
+  "currency": "USD",
+  "volume_per_product": 1000,
+  "products": {
+    "Mini": {
+      "cost_low_mid_high": [
+        32.66,
+        41.98,
+        53.34
+      ],
+      "launch_price": 52.99,
+      "target_margin": 0.2,
+      "target_price_at_mid_cost": 52.47,
+      "margin_low_mid_high_cost": [
+        0.3837,
+        0.2079,
+        -0.0066
+      ],
+      "gross_profit_at_mid_cost": 11.01,
+      "margin_after_tool_amortized": 0.3588,
+      "contribution_after_example_8percent_platform_payment_fee": 0.1279,
+      "scope": "Mini electronics +clamshell; no power supply"
+    },
+    "Splanc": {
+      "cost_low_mid_high": [
+        62.79,
+        75.71,
+        100.8
+      ],
+      "launch_price": 109,
+      "target_margin": 0.3,
+      "target_price_at_mid_cost": 108.16,
+      "margin_low_mid_high_cost": [
+        0.4239,
+        0.3054,
+        0.0752
+      ],
+      "gross_profit_at_mid_cost": 33.29,
+      "margin_after_tool_amortized": 0.4155,
+      "contribution_after_example_8percent_platform_payment_fee": 0.2254,
+      "scope": "P4+C6 wireless companion+Mini sensors+UWB; noGNSS"
+    },
+    "Splanc GNSS": {
+      "cost_low_mid_high": [
+        80.78,
+        97.17,
+        130.08
+      ],
+      "launch_price": 139,
+      "target_margin": 0.3,
+      "target_price_at_mid_cost": 138.82,
+      "margin_low_mid_high_cost": [
+        0.4188,
+        0.3009,
+        0.0642
+      ],
+      "gross_profit_at_mid_cost": 41.83,
+      "margin_after_tool_amortized": 0.3873,
+      "contribution_after_example_8percent_platform_payment_fee": 0.2209,
+      "scope": "Splanc plus MAX-M10S-00B, selected Taoglas AP.25F.07.0078A active antenna and RF support/test; same shell"
+    },
+    "MAX": {
+      "cost_low_mid_high": [
+        132.54,
+        177.86,
+        262.57
+      ],
+      "launch_price": 299,
+      "target_margin": 0.4,
+      "target_price_at_mid_cost": 296.44,
+      "margin_low_mid_high_cost": [
+        0.5567,
+        0.4051,
+        0.1218
+      ],
+      "gross_profit_at_mid_cost": 121.14,
+      "margin_after_tool_amortized": 0.4787,
+      "contribution_after_example_8percent_platform_payment_fee": 0.3251,
+      "scope": "LV+200x120power board+USBbridge+ribbon+box; DEGSON connector pairs; shared ADC/quad CSA telemetry; Pi/storage/cooler/supplies excluded"
+    }
+  }
+}

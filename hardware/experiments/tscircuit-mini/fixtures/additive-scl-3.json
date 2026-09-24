@@ -1,0 +1,20 @@
+{
+  "nets": [
+    "scl"
+  ],
+  "source_pad": "TP1.14",
+  "target_pad": "U7.5",
+  "bounds": [
+    70,
+    65,
+    87,
+    78
+  ],
+  "pitch": 0.1,
+  "max_expansions": 100000,
+  "max_orders": 1,
+  "max_seconds": 30,
+  "layers": true,
+  "preserve_copper": true,
+  "joint": true
+}

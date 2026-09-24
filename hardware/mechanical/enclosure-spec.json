@@ -1,0 +1,163 @@
+{
+  "revision": "compact-handheld-r9",
+  "units": "mm",
+  "edge_chamfer": 0.5,
+  "handheld": {
+    "wall": 2.2,
+    "floor": 1.6,
+    "board_z": 4.2,
+    "board_clearance": 1.0,
+    "corner_radius": 3.0,
+    "button": {
+      "center_z": 9.1,
+      "rear_y": 1.45,
+      "rear_width": 5.2,
+      "rear_height": 2.4,
+      "depth": 6.0,
+      "draft_deg": 0.95,
+      "aperture": [
+        5.7,
+        2.9
+      ],
+      "spring_width": 0.8,
+      "spring_thickness": 0.3,
+      "rail_z": 16.0,
+      "rail_height": 1.8,
+      "raised_seam_z": 15.5,
+      "retainer_z": 16.1,
+      "retainer_depth": 0.8
+    },
+    "mini": {
+      "board": [
+        70,
+        55
+      ],
+      "top": 18.8,
+      "split": 9,
+      "buttons": [
+        34,
+        42,
+        51,
+        59
+      ],
+      "led_ports": [
+        [
+          64,
+          20
+        ],
+        [
+          64,
+          31
+        ]
+      ],
+      "usb_x": 14,
+      "lightpipes": [
+        [
+          22,
+          4
+        ],
+        [
+          26,
+          4
+        ]
+      ],
+      "logo_width": 34,
+      "outside_height_mm": 17.2
+    },
+    "splanc": {
+      "board": [
+        100,
+        80
+      ],
+      "top": 18.8,
+      "split": 10,
+      "buttons": [
+        32,
+        44,
+        82,
+        89
+      ],
+      "led_ports": [
+        [
+          94,
+          25
+        ],
+        [
+          94,
+          36
+        ]
+      ],
+      "usb_x": 18,
+      "lightpipes": [
+        [
+          27,
+          10
+        ],
+        [
+          33,
+          10
+        ]
+      ],
+      "logo_width": 46,
+      "outside_height_mm": 17.2
+    },
+    "roof": 1.6,
+    "assembly_z_shift_mm": -1.6
+  },
+  "max": {
+    "outside": [
+      292,
+      134,
+      43
+    ],
+    "wall": 2.8,
+    "floor": 2.5,
+    "split": 37,
+    "pi_origin": [
+      285,
+      28,
+      8
+    ],
+    "pi_rotation_deg": 90,
+    "hat_z": 28,
+    "power_origin": [
+      7,
+      7,
+      8
+    ],
+    "case_mounts": [
+      [
+        4,
+        4
+      ],
+      [
+        288,
+        4
+      ],
+      [
+        4,
+        130
+      ],
+      [
+        288,
+        130
+      ],
+      [
+        146,
+        4
+      ],
+      [
+        146,
+        130
+      ]
+    ],
+    "ethernet_center_x": 274.8,
+    "ethernet_inner_y": 114.0,
+    "power_center_y": 39.2,
+    "exposed_pi_ports": [
+      "Ethernet",
+      "USB-C power"
+    ],
+    "logo_width": 82
+  }
+}

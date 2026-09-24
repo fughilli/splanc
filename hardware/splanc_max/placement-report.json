@@ -1,0 +1,20 @@
+{
+  "lv": {
+    "footprints": 56,
+    "overlap_pairs": [],
+    "width_mm": 85,
+    "height_mm": 56
+  },
+  "power": {
+    "footprints": 321,
+    "overlap_pairs": [],
+    "width_mm": 200,
+    "height_mm": 120
+  },
+  "usb_bridge": {
+    "footprints": 3,
+    "overlap_pairs": [],
+    "width_mm": 24,
+    "height_mm": 32
+  }
+}

@@ -1,0 +1,51 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Espressif_Systems_ESP32_C6_WROOM_1_N8_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C5366877", date="2026-08-20T03:04:15.382587+00:00", checksum="b4a6918146ed21eed3833807aab779b65c117e29bb1aedb4ee155dc7567a9fdb">
+
+    trait is_atomic_part<manufacturer="Espressif Systems", partnumber="ESP32-C6-WROOM-1-N8", footprint="WIRELM-SMD_ESP32-C6-WROOM-1.kicad_mod", symbol="ESP32-C6-WROOM-1-N8.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C5366877", manufacturer="Espressif Systems", partno="ESP32-C6-WROOM-1-N8">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal EN ~ pin 3
+    signal GND ~ pin 1
+    GND ~ pin 28
+    GND ~ pin 29
+    GND ~ pin 30
+    GND ~ pin 31
+    GND ~ pin 32
+    GND ~ pin 33
+    GND ~ pin 34
+    GND ~ pin 35
+    GND ~ pin 36
+    GND ~ pin 37
+    signal IO0 ~ pin 8
+    signal IO1 ~ pin 9
+    signal IO2 ~ pin 27
+    signal IO3 ~ pin 26
+    signal IO4 ~ pin 4
+    signal IO5 ~ pin 5
+    signal IO6 ~ pin 6
+    signal IO7 ~ pin 7
+    signal IO8 ~ pin 10
+    signal IO9 ~ pin 15
+    signal IO10 ~ pin 11
+    signal IO11 ~ pin 12
+    signal IO12 ~ pin 13
+    signal IO13 ~ pin 14
+    signal IO15 ~ pin 23
+    signal IO18 ~ pin 16
+    signal IO19 ~ pin 17
+    signal IO20 ~ pin 18
+    signal IO21 ~ pin 19
+    signal IO22 ~ pin 20
+    signal IO23 ~ pin 21
+    signal P3V3 ~ pin 2
+    signal RXD0 ~ pin 24
+    signal TXD0 ~ pin 25

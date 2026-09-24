@@ -1,0 +1,23 @@
+{
+  "nets": [
+    "A5",
+    "B5",
+    "VBIAS"
+  ],
+  "source_pad": "U18.4",
+  "target_pad": "USB1.A5",
+  "bounds": [
+    43,
+    64,
+    48,
+    70
+  ],
+  "pitch": 0.05,
+  "max_expansions": 200000,
+  "max_orders": 32,
+  "max_seconds": 60,
+  "layers": true,
+  "preserve_copper": false,
+  "joint": true,
+  "relocate_vias": true
+}

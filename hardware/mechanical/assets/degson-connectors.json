@@ -1,0 +1,63 @@
+{
+  "status": "selected cost-down connector pair; manufacturer CAD; physical fit qualification pending",
+  "units": "mm",
+  "assets": [
+    {
+      "mpn": "2EDGRC-5.08-03P-14-100A(H)",
+      "manufacturer": "DEGSON",
+      "source_page": "https://www.degson.com.cn/content/details_552_619888.html?lang=degson",
+      "source_step": "https://www.degson.com.cn/index.php?a=downloadFile&id=5124408&name=%27ZmlsZTQ=%27",
+      "file": "degson-2edgrc-3-header.step",
+      "normalized": "degson-2edgrc-3-header-normalized.step",
+      "transform": {
+        "rotation_x_deg": 180,
+        "translation_mm": [
+          -19.18,
+          2.1,
+          -1.4
+        ]
+      },
+      "normalized_bounds_mm": [
+        -3.540000099999999,
+        13.70000010000001,
+        -9.900000995170615,
+        2.1000000000000045,
+        -3.100000100409363,
+        8.60000009999998
+      ],
+      "pcb_pin_centers_mm": [
+        [
+          0,
+          0
+        ],
+        [
+          5.08,
+          0
+        ],
+        [
+          10.16,
+          0
+        ]
+      ],
+      "pcb_drill_mm": 1.5,
+      "mouth_direction": [
+        0,
+        -1,
+        0
+      ],
+      "datum_note": "Pin numbers assigned left to right looking at outward mouth; no numbered terminals on manufacturer CAD.",
+      "source_sha256": "894a575ce5ba9fde759ccd508a88d0adc6868258d3c24581f068ccd74d378ee7",
+      "normalized_sha256": "b46aa933bdf4b219e1c09232bec8d319c8c507b4c2225bcaf2f74d8dd5e09a40"
+    },
+    {
+      "mpn": "2EDGKDF-5.08-03P-14-00A(H)",
+      "manufacturer": "DEGSON",
+      "file": "degson-2edgkdf-3-plug.step",
+      "source_page": "https://www.degson.com/content/details_552_882880.html?lang=en",
+      "source_step": "https://www.degson.com/index.php?a=downloadFile&id=5119014&name=%27ZmlsZTQ=%27",
+      "status": "Actual mating-plug CAD retained; exterior renders show unplugged headers.",
+      "sha256": "fb5df71b46497e90047c090c529a30188929798f7d8f6c742fa19eb80b6bf100"
+    }
+  ],
+  "license": "Manufacturer reference CAD; original STEP headers preserved. No broader redistribution grant asserted."
+}

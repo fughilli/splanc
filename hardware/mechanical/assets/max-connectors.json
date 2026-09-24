@@ -1,0 +1,117 @@
+{
+  "date": "2026-09-21",
+  "units": "mm",
+  "status": "catalog_reference_models_not_manufacturing_qualification",
+  "assets": [
+    {
+      "id": "max-output-header",
+      "manufacturer": "Phoenix Contact",
+      "mpn": "1757255",
+      "description": "MSTBA 2,5/3-G-5,08 right-angle 3pin header",
+      "path": "hardware/mechanical/assets/max-connectors/phoenix-1757255-header.step",
+      "sha256": "b7739c5a904aef2a0d8c9a8190259d58c6ddbeab5031b8cea374fb50f64dcd31",
+      "source": "/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels/Connector_Phoenix_MSTB.3dshapes/PhoenixContact_MSTBA_2,5_3-G-5,08_1x03_P5.08mm_Horizontal.step",
+      "license": "CC-BY-SA4.0 with KiCad electronics-design exception; Rene Poeschl2017; full notice retained inSTEP",
+      "bbox": {
+        "min": [
+          -3.54,
+          -10,
+          -4
+        ],
+        "max": [
+          13.7,
+          2,
+          8.6
+        ]
+      },
+      "orientation": {
+        "mounting_plane_z": 0,
+        "pin1_xy": [
+          0,
+          0
+        ],
+        "pin2_xy": [
+          5.08,
+          0
+        ],
+        "pin3_xy": [
+          10.16,
+          0
+        ],
+        "mating_direction_native_step": [
+          0,
+          -1,
+          0
+        ],
+        "note": "KiCad footprint uses +Y toward mouth, 3D file uses -Y. Mirror relationship is coordinate convention, not model scaling."
+      },
+      "minimum_opening_width_with_0_4_each_side": 18.04,
+      "design_integration": "Power board200x120; lower-left design coordinates; native KiCadY=height-designY. South y7 uses0degrees pin1x=center\u22125.08; northy113 uses180degrees pin1x=center+5.08. Native pads and outward mouths verified in hardware/splanc_max/validation/header-coordinate-check.json. Pin1=OUT,2=DATA,3=PGND."
+    },
+    {
+      "id": "max-output-mating-plug",
+      "manufacturer": "Phoenix Contact",
+      "mpn": "1757022",
+      "description": "MSTB 2,5/3-ST-5,08 screw-terminal mating plug",
+      "path": null,
+      "source": "https://www.phoenixcontact.com/en-us/products/pcb-plug-mstb-25-3-st-508-1757022",
+      "status": "Catalog verified; model not acquired. Final render intentionally shows unplugged actual headers, not a made-up plug."
+    },
+    {
+      "id": "max-input-cable-lug",
+      "manufacturer": "Wuerth Elektronik",
+      "mpn": "5580510",
+      "description": "WA-CLUG M5 tubular cable lug for10mm2 wire",
+      "path": "hardware/mechanical/assets/max-connectors/wurth-5580510.step",
+      "sha256": "94af2ac098db93428ca6e5b32c500c908459c6e66097a9c2cb35e296c27c5eff",
+      "source": "https://www.we-online.com/components/products/media/141794",
+      "datasheet": "https://www.we-online.com/components/products/datasheet/5580510.pdf",
+      "source_method": "Official Downloads_STEP_5580510 hyperlink extracted from page2 of manufacturerPDF",
+      "license": "Manufacturer CAD reference; no additional license grant asserted",
+      "bbox": {
+        "min": [
+          -6,
+          0,
+          -4.25
+        ],
+        "max": [
+          6,
+          30.5,
+          3.5
+        ]
+      },
+      "orientation": {
+        "bolt_hole_center_xy": [
+          0,
+          22.5
+        ],
+        "bolt_hole_axis": [
+          0,
+          0,
+          1
+        ],
+        "bolt_hole_radius": 2.65,
+        "eye_underside_z": -4.25,
+        "barrel_direction_from_bolt": [
+          0,
+          -1,
+          0
+        ]
+      },
+      "status": "WARNING manufacturer-linked CAD is30.5mm long while2024PDF states22mm; fit unqualified. Do not scale to reconcile. Render only as catalog reference; physical lug selection and matching drawing revision remain open."
+    }
+  ],
+  "cost_delta_vs_historical_generic_pair": {
+    "old_pair_allowance": 1.1,
+    "header_10piece_usd": 0.735,
+    "plug_10piece_usd": 2.222,
+    "pair_reference": 2.957,
+    "pairs_per_system": 20,
+    "bom_delta": 37.14,
+    "note": "Small-quantity public distributor tier carried as conservative budget, NOT20kpairquotation. Currentpricingmodel includes delta; historicalMAXcostreport unchanged.",
+    "sources": [
+      "https://www.digikey.com/en/products/detail/phoenix-contact/1757255/260475",
+      "https://www.digikey.com/en/products/detail/phoenix-contact/1757022/260380"
+    ]
+  }
+}

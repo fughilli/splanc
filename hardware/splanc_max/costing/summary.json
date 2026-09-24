@@ -1,0 +1,91 @@
+{
+  "date": "2026-09-21",
+  "currency": "USD",
+  "build_quantity": 1000,
+  "state": "costdown_engineering_budget_not_supplier_quote",
+  "revision": "DEGSON_sharedADC_quadCSA_317powerparts",
+  "generated_component_counts": {
+    "lv": 52,
+    "power": 317,
+    "usb_bridge": 3
+  },
+  "assembly_delta_basis": "Power components190to317; incremental placement allowance3USD and calibration/test2USD midcase; power PCBarea increment1USD vs180x120historical. All engineering allowances.",
+  "bom_subtotals": {
+    "LV": 37.9499,
+    "power": 70.778,
+    "USB bridge": 1.4,
+    "interboard hardware": 2.65
+  },
+  "bom_per_set_low_mid_high": [
+    91.45,
+    112.78,
+    163.76
+  ],
+  "pcb_assembly_test_per_set_low_mid_high": [
+    18.35,
+    27.7,
+    41.9
+  ],
+  "pcba_set_low_mid_high": [
+    109.8,
+    140.48,
+    205.66
+  ],
+  "pcb_assembly_test": {
+    "LV": {
+      "pcb": [
+        2,
+        3,
+        4.5
+      ],
+      "assembly_test": [
+        2,
+        3.5,
+        5
+      ]
+    },
+    "power": {
+      "pcb": [
+        6,
+        8,
+        11
+      ],
+      "assembly_test": [
+        7,
+        10.5,
+        16
+      ],
+      "telemetry_calibration_test": [
+        1,
+        2,
+        4
+      ]
+    },
+    "USB bridge": {
+      "pcb": [
+        0.15,
+        0.3,
+        0.6
+      ],
+      "assembly_test": [
+        0.2,
+        0.4,
+        0.8
+      ]
+    }
+  },
+  "bom_mid_1000": 112780.0,
+  "procurement_allowance_3percent_mid": 116163.4,
+  "excludes": [
+    "Pi",
+    "microSD",
+    "power supplies",
+    "LED strips/cables",
+    "enclosure",
+    "freight",
+    "tax/duty",
+    "NRE",
+    "compliance",
+    "scrap/rework over3 percent"
+  ]
+}

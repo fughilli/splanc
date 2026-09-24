@@ -1,0 +1,23 @@
+load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
+
+atopile_project(
+    name = "splanc",
+    srcs = glob(["elec/src/**"]),
+    ato_yaml = "ato.yaml",
+    build = "base",
+    autoroute = False,
+    picker = False,
+    frozen = False,
+    visibility = ["//visibility:public"],
+)
+
+atopile_project(
+    name = "splanc_gps",
+    srcs = glob(["elec/src/**"]),
+    ato_yaml = "ato.yaml",
+    build = "gps",
+    autoroute = False,
+    picker = False,
+    frozen = False,
+    visibility = ["//visibility:public"],
+)

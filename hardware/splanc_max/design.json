@@ -1,0 +1,7176 @@
+{
+  "parts": {
+    "R": {
+      "mpn": "0603 resistor, value per BOM",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C": {
+      "mpn": "0603 capacitor, value/rating per BOM",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "FPGA": {
+      "mpn": "GW1NR-LV9QN88PC6/I5",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64",
+        "65",
+        "66",
+        "67",
+        "68",
+        "69",
+        "70",
+        "71",
+        "72",
+        "73",
+        "74",
+        "75",
+        "76",
+        "77",
+        "78",
+        "79",
+        "80",
+        "81",
+        "82",
+        "83",
+        "84",
+        "85",
+        "86",
+        "87",
+        "88",
+        "89"
+      ],
+      "footprint": "custom:QN88",
+      "manufacturer": "Gowin",
+      "footprint_status": "PROVISIONAL EP geometry: verify Gowin package drawing"
+    },
+    "FLASH": {
+      "mpn": "W25Q32JVSSIQ",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "footprint": "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+      "manufacturer": "Winbond"
+    },
+    "USB": {
+      "mpn": "TYPE-C-31-M-12",
+      "pins": [
+        "A1",
+        "A4",
+        "A5",
+        "A6",
+        "A7",
+        "A8",
+        "A9",
+        "A12",
+        "B1",
+        "B4",
+        "B5",
+        "B6",
+        "B7",
+        "B8",
+        "B9",
+        "B12",
+        "SH"
+      ],
+      "footprint": "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12",
+      "manufacturer": "HRO"
+    },
+    "PI": {
+      "mpn": "2x20 female HAT socket elevated18.4mm",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40"
+      ],
+      "footprint": "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical",
+      "manufacturer": "Design selection"
+    },
+    "RIBBON": {
+      "mpn": "2x25 keyed IDC 1.27mm",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50"
+      ],
+      "footprint": "custom:RIBBON",
+      "manufacturer": "Design selection",
+      "footprint_status": "connector MPN/mechanical locking selection pending"
+    },
+    "FTDI": {
+      "mpn": "FT2232HL",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "36",
+        "37",
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44",
+        "45",
+        "46",
+        "47",
+        "48",
+        "49",
+        "50",
+        "51",
+        "52",
+        "53",
+        "54",
+        "55",
+        "56",
+        "57",
+        "58",
+        "59",
+        "60",
+        "61",
+        "62",
+        "63",
+        "64"
+      ],
+      "footprint": "Package_QFP:LQFP-64_10x10mm_P0.5mm",
+      "manufacturer": "FTDI"
+    },
+    "OSC": {
+      "mpn": "27MHz CMOS3.3V oscillator",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "footprint": "Oscillator:Oscillator_SMD_Fox_FT5H_5.0x3.2mm",
+      "manufacturer": "Design selection"
+    },
+    "XTAL": {
+      "mpn": "12MHz crystal 18pF",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Crystal:Crystal_SMD_5032-2Pin_5.0x3.2mm",
+      "manufacturer": "Design selection"
+    },
+    "LDO": {
+      "mpn": "AP2112K-3.3TRG1",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "footprint": "Package_TO_SOT_SMD:SOT-23-5",
+      "manufacturer": "Diodes"
+    },
+    "LDO12": {
+      "mpn": "TLV75512PDBVR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "footprint": "Package_TO_SOT_SMD:SOT-23-5",
+      "manufacturer": "TI"
+    },
+    "LDO18": {
+      "mpn": "TLV75518PDBVR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "footprint": "Package_TO_SOT_SMD:SOT-23-5",
+      "manufacturer": "TI"
+    },
+    "SW": {
+      "mpn": "TPS1H100AQPWPRQ1",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15"
+      ],
+      "footprint": "Package_SO:Texas_HTSSOP-14-1EP_4.4x5mm_P0.65mm_EP3.4x5mm_Mask2.94x3.34mm",
+      "manufacturer": "TI"
+    },
+    "ISO": {
+      "mpn": "ISO7760FDWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "footprint": "Package_SO:SOIC-16W_7.5x10.3mm_P1.27mm",
+      "manufacturer": "TI"
+    },
+    "ISOSPI": {
+      "mpn": "ISO7761FDWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "footprint": "Package_SO:SOIC-16W_7.5x10.3mm_P1.27mm",
+      "manufacturer": "TI"
+    },
+    "SHIFT": {
+      "mpn": "SN74HC595PWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "footprint": "Package_SO:TSSOP-16_4.4x5mm_P0.65mm",
+      "manufacturer": "TI"
+    },
+    "ADC": {
+      "mpn": "MCP3208-CI/SL",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "footprint": "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm",
+      "manufacturer": "Microchip"
+    },
+    "CSA": {
+      "mpn": "INA4180A2IPWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14"
+      ],
+      "footprint": "Package_SO:TSSOP-14_4.4x5mm_P0.65mm",
+      "manufacturer": "TI"
+    },
+    "MUX": {
+      "mpn": "CD74HC4051PWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16"
+      ],
+      "footprint": "Package_SO:TSSOP-16_4.4x5mm_P0.65mm",
+      "manufacturer": "TI"
+    },
+    "SHUNT": {
+      "mpn": "PE2512FKE070R02L",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_2512_6332Metric",
+      "manufacturer": "YAGEO",
+      "resistance_ohm": 0.02,
+      "tolerance_percent": 1,
+      "power_W": 1,
+      "tcr_ppm_C": 50
+    },
+    "REF": {
+      "mpn": "REF3025AIDBZR",
+      "pins": [
+        "1",
+        "2",
+        "3"
+      ],
+      "footprint": "Package_TO_SOT_SMD:SOT-23",
+      "manufacturer": "TI"
+    },
+    "BUCK": {
+      "mpn": "R-78E5.0-0.5",
+      "pins": [
+        "1",
+        "2",
+        "3"
+      ],
+      "footprint": "custom:BUCK",
+      "manufacturer": "RECOM",
+      "footprint_status": "module envelope and pin pitch provisional,12/24Vdefault only"
+    },
+    "OUT": {
+      "mpn": "2EDGRC-5.08-03P-14-100A(H)",
+      "pins": [
+        "1",
+        "2",
+        "3"
+      ],
+      "footprint": "custom:OUT",
+      "manufacturer": "DEGSON",
+      "mating_plug": "2EDGKDF-5.08-03P-14-00A(H)",
+      "supplier_reference": "LCSC C669315",
+      "mating_supplier_reference": "LCSC C691852",
+      "footprint_status": "Official DEGSON drawing dimensions; pad drill1.5mm; physical fit qualification pending"
+    },
+    "LUG": {
+      "mpn": "M5 bolted copper busbar terminal",
+      "pins": [
+        "1"
+      ],
+      "footprint": "custom:LUG",
+      "manufacturer": "Design selection"
+    },
+    "SHIFT4": {
+      "mpn": "TXU0304PWR",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14"
+      ],
+      "footprint": "Package_SO:TSSOP-14_4.4x5mm_P0.65mm",
+      "manufacturer": "TI"
+    },
+    "NPN": {
+      "mpn": "MMBT3904",
+      "pins": [
+        "1",
+        "2",
+        "3"
+      ],
+      "footprint": "Package_TO_SOT_SMD:SOT-23",
+      "manufacturer": "onsemi"
+    },
+    "USBAP": {
+      "mpn": "USB-A male vertical, MPN selection pending",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "footprint": "custom:USBAP",
+      "manufacturer": "Design selection",
+      "footprint_status": "PROVISIONAL vertical male envelope; not an approved connector"
+    },
+    "USBCP": {
+      "mpn": "USB-C male vertical, MPN selection pending",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ],
+      "footprint": "custom:USBCP",
+      "manufacturer": "Design selection",
+      "footprint_status": "PROVISIONAL USB2 male envelope pinmap: VBUS,D-,D+,GND,CC,shield"
+    },
+    "R_5_1k": {
+      "mpn": "5.1k R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_10k": {
+      "mpn": "10k R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_100nF": {
+      "mpn": "100nF C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_18pF": {
+      "mpn": "18pF C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_12k1": {
+      "mpn": "12k1 R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_100nF16V": {
+      "mpn": "100nF16V C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_10uF10V": {
+      "mpn": "10uF10V C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100k_mux_address_pulldown": {
+      "mpn": "100k mux address pulldown R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_4_7k_aggregate_open_drain_status_pullup": {
+      "mpn": "4.7k aggregate open-drain status pullup R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100k_0_1percent_bus_divider_upper": {
+      "mpn": "100k 0.1percent bus divider upper R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_10k_0_1percent_bus_divider_lower": {
+      "mpn": "10k 0.1percent bus divider lower R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_10nF50V_bus_divider_filter": {
+      "mpn": "10nF50V bus divider filter C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_1uF10V_ADC_supply": {
+      "mpn": "1uF10V ADC supply C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100k": {
+      "mpn": "100k R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_1_00k_currentlimit_nominal2_47A": {
+      "mpn": "1.00k currentlimit nominal2.47A R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100k_0_1percent_voltage_divider_upper": {
+      "mpn": "100k 0.1percent voltage divider upper R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_10k_0_1percent_voltage_divider_lower": {
+      "mpn": "10k 0.1percent voltage divider lower R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_10nF50V_voltage_filter": {
+      "mpn": "10nF50V voltage filter C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100R_current_filter": {
+      "mpn": "100R current filter R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_1nF16V_current_filter": {
+      "mpn": "1nF16V current filter C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100k_pulldown": {
+      "mpn": "100k pulldown R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_100R_series": {
+      "mpn": "100R series R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_100nF50V": {
+      "mpn": "100nF50V C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "C_1uF10V": {
+      "mpn": "1uF10V C0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Capacitor_SMD:C_0603_1608Metric",
+      "manufacturer": "Design selection"
+    },
+    "R_56k1_": {
+      "mpn": "56k1% R0603 engineering specification",
+      "pins": [
+        "1",
+        "2"
+      ],
+      "footprint": "Resistor_SMD:R_0603_1608Metric",
+      "manufacturer": "Design selection"
+    }
+  },
+  "boards": {
+    "lv": {
+      "outline": {
+        "width_mm": 85,
+        "height_mm": 56,
+        "thickness_mm": 1.6
+      },
+      "mounts": [
+        {
+          "x": 3.5,
+          "y": 3.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 61.5,
+          "y": 3.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 3.5,
+          "y": 52.5,
+          "diameter_mm": 2.7
+        },
+        {
+          "x": 61.5,
+          "y": 52.5,
+          "diameter_mm": 2.7
+        }
+      ],
+      "connectors": [
+        {
+          "ref": "J2",
+          "position": [
+            85,
+            29.1
+          ],
+          "edge": "east",
+          "opening": [
+            10,
+            5
+          ],
+          "kind": "usb_c",
+          "center_z_above_pcb_mm": 2
+        },
+        {
+          "ref": "J3",
+          "position": [
+            65,
+            12
+          ],
+          "edge": "internal",
+          "opening": [
+            34,
+            7
+          ],
+          "kind": "ribbon50",
+          "center_z_above_pcb_mm": 4
+        }
+      ],
+      "components": [
+        {
+          "ref": "J1",
+          "part": "PI",
+          "position": [
+            7.1,
+            49
+          ],
+          "rotation": 90,
+          "nets": {
+            "2": "PI_5V",
+            "4": "PI_5V",
+            "6": "DGND",
+            "9": "DGND",
+            "14": "DGND",
+            "20": "DGND",
+            "25": "DGND",
+            "30": "DGND",
+            "34": "DGND",
+            "39": "DGND",
+            "19": "PI_MOSI",
+            "21": "PI_MISO",
+            "23": "PI_SCLK",
+            "24": "PI_CS",
+            "18": "PI_IRQ"
+          }
+        },
+        {
+          "ref": "J2",
+          "part": "USB",
+          "position": [
+            82.5,
+            29.1
+          ],
+          "rotation": 90,
+          "nets": {
+            "A1": "DGND",
+            "B1": "DGND",
+            "A12": "DGND",
+            "B12": "DGND",
+            "A4": "USB_VBUS",
+            "B4": "USB_VBUS",
+            "A9": "USB_VBUS",
+            "B9": "USB_VBUS",
+            "A6": "USB_DP",
+            "B6": "USB_DP",
+            "A7": "USB_DM",
+            "B7": "USB_DM",
+            "A5": "CC1",
+            "B5": "CC2",
+            "SH": "DGND"
+          }
+        },
+        {
+          "ref": "R1",
+          "part": "R_5_1k",
+          "position": [
+            78.0,
+            22.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CC1",
+            "2": "DGND"
+          },
+          "value": "5.1k"
+        },
+        {
+          "ref": "R2",
+          "part": "R_5_1k",
+          "position": [
+            75.0,
+            33.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CC2",
+            "2": "DGND"
+          },
+          "value": "5.1k"
+        },
+        {
+          "ref": "J3",
+          "part": "RIBBON",
+          "position": [
+            65,
+            12
+          ],
+          "rotation": 90,
+          "nets": {
+            "1": "DATA0",
+            "2": "DGND",
+            "3": "DATA1",
+            "4": "DGND",
+            "5": "DATA2",
+            "6": "DGND",
+            "7": "DATA3",
+            "8": "DGND",
+            "9": "DATA4",
+            "10": "DGND",
+            "11": "DATA5",
+            "12": "DGND",
+            "13": "DATA6",
+            "14": "DGND",
+            "15": "DATA7",
+            "16": "DGND",
+            "17": "DATA8",
+            "18": "DGND",
+            "19": "DATA9",
+            "20": "DGND",
+            "21": "DATA10",
+            "22": "DGND",
+            "23": "DATA11",
+            "24": "DGND",
+            "25": "DATA12",
+            "26": "DGND",
+            "27": "DATA13",
+            "28": "DGND",
+            "29": "DATA14",
+            "30": "DGND",
+            "31": "DATA15",
+            "32": "DGND",
+            "33": "DATA16",
+            "34": "DGND",
+            "35": "DATA17",
+            "36": "DGND",
+            "37": "DATA18",
+            "38": "DGND",
+            "39": "DATA19",
+            "40": "DGND",
+            "41": "P_SCLK",
+            "42": "P_MOSI",
+            "43": "P_LATCH",
+            "44": "P_CS0",
+            "45": "P_CS1",
+            "46": "P_MISO",
+            "47": "LV3V3",
+            "48": "DGND",
+            "49": "SAFE_ENABLE",
+            "50": "DGND"
+          }
+        },
+        {
+          "ref": "U1",
+          "part": "FPGA",
+          "position": [
+            29,
+            17
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "22": "CORE1V2",
+            "45": "CORE1V2",
+            "66": "CORE1V2",
+            "2": "DGND",
+            "21": "DGND",
+            "24": "DGND",
+            "43": "DGND",
+            "46": "DGND",
+            "65": "DGND",
+            "89": "DGND",
+            "23": "LV3V3",
+            "44": "LV3V3",
+            "58": "LV3V3",
+            "64": "LV3V3",
+            "67": "LV3V3",
+            "78": "LV3V3",
+            "12": "BANK1V8",
+            "25": "DATA0",
+            "26": "DATA1",
+            "27": "DATA2",
+            "28": "DATA3",
+            "29": "DATA4",
+            "30": "DATA5",
+            "31": "DATA6",
+            "32": "DATA7",
+            "33": "DATA8",
+            "34": "DATA9",
+            "35": "DATA10",
+            "36": "DATA11",
+            "37": "DATA12",
+            "38": "DATA13",
+            "39": "DATA14",
+            "40": "DATA15",
+            "41": "DATA16",
+            "42": "DATA17",
+            "47": "DATA18",
+            "48": "DATA19",
+            "49": "PI_MOSI",
+            "50": "PI_MISO",
+            "51": "PI_SCLK",
+            "53": "PI_CS",
+            "54": "PI_IRQ",
+            "68": "P_SCLK",
+            "69": "P_MOSI",
+            "70": "P_LATCH",
+            "71": "P_CS0",
+            "72": "P_CS1",
+            "73": "P_MISO",
+            "74": "SAFE_ENABLE",
+            "59": "F_CLK",
+            "60": "F_CS",
+            "61": "F_MOSI",
+            "62": "F_MISO",
+            "52": "CLK27",
+            "5": "JTAG_TMS",
+            "6": "JTAG_TCK",
+            "7": "JTAG_TDI",
+            "8": "JTAG_TDO",
+            "9": "RECONFIG",
+            "4": "JTAGSEL",
+            "87": "MODE1",
+            "88": "MODE0"
+          }
+        },
+        {
+          "ref": "U2",
+          "part": "FLASH",
+          "position": [
+            43.0,
+            15.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "F_CS",
+            "2": "F_MISO",
+            "3": "LV3V3",
+            "4": "DGND",
+            "5": "F_MOSI",
+            "6": "F_CLK",
+            "7": "LV3V3",
+            "8": "LV3V3"
+          }
+        },
+        {
+          "ref": "R10",
+          "part": "R_10k",
+          "position": [
+            20,
+            26
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MODE0",
+            "2": "BANK1V8"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R11",
+          "part": "R_10k",
+          "position": [
+            23.5,
+            26.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MODE1",
+            "2": "DGND"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R12",
+          "part": "R_10k",
+          "position": [
+            27.0,
+            26.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "JTAGSEL",
+            "2": "DGND"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R13",
+          "part": "R_10k",
+          "position": [
+            29.0,
+            24.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RECONFIG",
+            "2": "BANK1V8"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R14",
+          "part": "R_10k",
+          "position": [
+            32,
+            26
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "F_CS",
+            "2": "LV3V3"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "Y1",
+          "part": "OSC",
+          "position": [
+            42,
+            23
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND",
+            "3": "CLK27",
+            "4": "LV3V3"
+          }
+        },
+        {
+          "ref": "U3",
+          "part": "FTDI",
+          "position": [
+            59,
+            31
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "DGND",
+            "5": "DGND",
+            "10": "DGND",
+            "11": "DGND",
+            "15": "DGND",
+            "25": "DGND",
+            "35": "DGND",
+            "47": "DGND",
+            "51": "DGND",
+            "4": "LV3V3",
+            "9": "LV3V3",
+            "20": "LV3V3",
+            "31": "LV3V3",
+            "42": "LV3V3",
+            "50": "LV3V3",
+            "56": "LV3V3",
+            "12": "FT_CORE",
+            "37": "FT_CORE",
+            "64": "FT_CORE",
+            "6": "REFRES",
+            "7": "USB_DM",
+            "8": "USB_DP",
+            "2": "XTAL_IN",
+            "3": "XTAL_OUT",
+            "13": "DGND",
+            "14": "FT_RESET",
+            "49": "FT_CORE",
+            "16": "FT_TCK",
+            "17": "FT_TDI",
+            "18": "FT_TDO",
+            "19": "FT_TMS",
+            "38": "UART_TX",
+            "39": "UART_RX"
+          }
+        },
+        {
+          "ref": "Y2",
+          "part": "XTAL",
+          "position": [
+            48.5,
+            36.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "XTAL_IN",
+            "2": "XTAL_OUT"
+          }
+        },
+        {
+          "ref": "R22",
+          "part": "R_10k",
+          "position": [
+            52,
+            23
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "FT_RESET"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "C34",
+          "part": "C_100nF",
+          "position": [
+            55.5,
+            23.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "FT_RESET",
+            "2": "DGND"
+          },
+          "value": "100nF"
+        },
+        {
+          "ref": "C35",
+          "part": "C_18pF",
+          "position": [
+            48.0,
+            39.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "XTAL_IN",
+            "2": "DGND"
+          },
+          "value": "18pF"
+        },
+        {
+          "ref": "C36",
+          "part": "C_18pF",
+          "position": [
+            53.0,
+            39.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "XTAL_OUT",
+            "2": "DGND"
+          },
+          "value": "18pF"
+        },
+        {
+          "ref": "R20",
+          "part": "R_12k1",
+          "position": [
+            50.0,
+            28.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "REFRES",
+            "2": "DGND"
+          },
+          "value": "12k1"
+        },
+        {
+          "ref": "R21",
+          "part": "R_10k",
+          "position": [
+            50.0,
+            25.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "USB_VBUS",
+            "2": "USB_DETECT"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "U4",
+          "part": "SHIFT4",
+          "position": [
+            41,
+            33
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "FT_TCK",
+            "3": "FT_TDI",
+            "4": "FT_TMS",
+            "5": "FT_TDO",
+            "7": "DGND",
+            "8": "LV3V3",
+            "10": "JTAG_TDO",
+            "11": "JTAG_TMS",
+            "12": "JTAG_TDI",
+            "13": "JTAG_TCK",
+            "14": "BANK1V8"
+          }
+        },
+        {
+          "ref": "U5",
+          "part": "LDO",
+          "position": [
+            9,
+            9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "PI_5V",
+            "2": "DGND",
+            "3": "PI_5V",
+            "5": "LV3V3"
+          }
+        },
+        {
+          "ref": "U6",
+          "part": "LDO12",
+          "position": [
+            15,
+            9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND",
+            "3": "LV3V3",
+            "5": "CORE1V2"
+          }
+        },
+        {
+          "ref": "U7",
+          "part": "LDO18",
+          "position": [
+            21,
+            9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND",
+            "3": "LV3V3",
+            "5": "BANK1V8"
+          }
+        },
+        {
+          "ref": "C1",
+          "part": "C_100nF16V",
+          "position": [
+            9,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C2",
+          "part": "C_100nF16V",
+          "position": [
+            13,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C3",
+          "part": "C_100nF16V",
+          "position": [
+            17,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C4",
+          "part": "C_100nF16V",
+          "position": [
+            21,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C5",
+          "part": "C_100nF16V",
+          "position": [
+            25,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C6",
+          "part": "C_100nF16V",
+          "position": [
+            29,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C7",
+          "part": "C_100nF16V",
+          "position": [
+            33,
+            37
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C8",
+          "part": "C_100nF16V",
+          "position": [
+            37.0,
+            37.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C9",
+          "part": "C_100nF16V",
+          "position": [
+            41.0,
+            37.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C10",
+          "part": "C_100nF16V",
+          "position": [
+            9,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C11",
+          "part": "C_100nF16V",
+          "position": [
+            13,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C12",
+          "part": "C_100nF16V",
+          "position": [
+            17,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C13",
+          "part": "C_100nF16V",
+          "position": [
+            21,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C14",
+          "part": "C_100nF16V",
+          "position": [
+            25,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C15",
+          "part": "C_100nF16V",
+          "position": [
+            29,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C16",
+          "part": "C_100nF16V",
+          "position": [
+            33,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C17",
+          "part": "C_100nF16V",
+          "position": [
+            37,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C18",
+          "part": "C_100nF16V",
+          "position": [
+            41,
+            40
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C30",
+          "part": "C_10uF10V",
+          "position": [
+            8,
+            31
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "10uF10V"
+        },
+        {
+          "ref": "C31",
+          "part": "C_10uF10V",
+          "position": [
+            13,
+            31
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CORE1V2",
+            "2": "DGND"
+          },
+          "value": "10uF10V"
+        },
+        {
+          "ref": "C32",
+          "part": "C_10uF10V",
+          "position": [
+            18,
+            31
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "BANK1V8",
+            "2": "DGND"
+          },
+          "value": "10uF10V"
+        },
+        {
+          "ref": "C33",
+          "part": "C_10uF10V",
+          "position": [
+            23,
+            31
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "FT_CORE",
+            "2": "DGND"
+          },
+          "value": "10uF10V"
+        },
+        {
+          "ref": "C40",
+          "part": "C_100nF16V",
+          "position": [
+            7,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "BANK1V8",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C41",
+          "part": "C_100nF16V",
+          "position": [
+            11,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "BANK1V8",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C42",
+          "part": "C_100nF16V",
+          "position": [
+            15,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C43",
+          "part": "C_100nF16V",
+          "position": [
+            19.0,
+            28.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C44",
+          "part": "C_100nF16V",
+          "position": [
+            23.0,
+            28.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        }
+      ]
+    },
+    "power": {
+      "outline": {
+        "width_mm": 200,
+        "height_mm": 120,
+        "thickness_mm": 1.6
+      },
+      "mounts": [
+        {
+          "x": 5,
+          "y": 15,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 195,
+          "y": 15,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 5,
+          "y": 105,
+          "diameter_mm": 3.2
+        },
+        {
+          "x": 195,
+          "y": 105,
+          "diameter_mm": 3.2
+        }
+      ],
+      "connectors": [
+        {
+          "ref": "J1",
+          "position": [
+            28,
+            60
+          ],
+          "edge": "internal",
+          "opening": [
+            7,
+            34
+          ],
+          "kind": "ribbon50",
+          "center_z_above_pcb_mm": 4
+        },
+        {
+          "ref": "J2",
+          "position": [
+            0,
+            45
+          ],
+          "edge": "west",
+          "opening": [
+            13,
+            13
+          ],
+          "kind": "power_lug_positive",
+          "center_z_above_pcb_mm": 8
+        },
+        {
+          "ref": "J3",
+          "position": [
+            0,
+            75
+          ],
+          "edge": "west",
+          "opening": [
+            13,
+            13
+          ],
+          "kind": "power_lug_return",
+          "center_z_above_pcb_mm": 8
+        },
+        {
+          "ref": "J10",
+          "position": [
+            14.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J11",
+          "position": [
+            33.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J12",
+          "position": [
+            52.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J13",
+          "position": [
+            71.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J14",
+          "position": [
+            90.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J15",
+          "position": [
+            109.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J16",
+          "position": [
+            128.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J17",
+          "position": [
+            147.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J18",
+          "position": [
+            166.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J19",
+          "position": [
+            185.5,
+            0
+          ],
+          "edge": "south",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J20",
+          "position": [
+            14.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J21",
+          "position": [
+            33.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J22",
+          "position": [
+            52.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J23",
+          "position": [
+            71.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J24",
+          "position": [
+            90.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J25",
+          "position": [
+            109.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J26",
+          "position": [
+            128.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J27",
+          "position": [
+            147.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J28",
+          "position": [
+            166.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J29",
+          "position": [
+            185.5,
+            120
+          ],
+          "edge": "north",
+          "opening": [
+            18.1,
+            13
+          ],
+          "kind": "led_output3",
+          "center_z_above_pcb_mm": 4.3
+        }
+      ],
+      "components": [
+        {
+          "ref": "J1",
+          "part": "RIBBON",
+          "position": [
+            28,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "DATA0",
+            "2": "DGND",
+            "3": "DATA1",
+            "4": "DGND",
+            "5": "DATA2",
+            "6": "DGND",
+            "7": "DATA3",
+            "8": "DGND",
+            "9": "DATA4",
+            "10": "DGND",
+            "11": "DATA5",
+            "12": "DGND",
+            "13": "DATA6",
+            "14": "DGND",
+            "15": "DATA7",
+            "16": "DGND",
+            "17": "DATA8",
+            "18": "DGND",
+            "19": "DATA9",
+            "20": "DGND",
+            "21": "DATA10",
+            "22": "DGND",
+            "23": "DATA11",
+            "24": "DGND",
+            "25": "DATA12",
+            "26": "DGND",
+            "27": "DATA13",
+            "28": "DGND",
+            "29": "DATA14",
+            "30": "DGND",
+            "31": "DATA15",
+            "32": "DGND",
+            "33": "DATA16",
+            "34": "DGND",
+            "35": "DATA17",
+            "36": "DGND",
+            "37": "DATA18",
+            "38": "DGND",
+            "39": "DATA19",
+            "40": "DGND",
+            "41": "P_SCLK",
+            "42": "P_MOSI",
+            "43": "P_LATCH",
+            "44": "P_CS0",
+            "45": "P_CS1",
+            "46": "P_MISO",
+            "47": "LV3V3",
+            "48": "DGND",
+            "49": "SAFE_ENABLE",
+            "50": "DGND"
+          }
+        },
+        {
+          "ref": "J2",
+          "part": "LUG",
+          "position": [
+            7,
+            45
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LED_VIN"
+          }
+        },
+        {
+          "ref": "J3",
+          "part": "LUG",
+          "position": [
+            7,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "PGND"
+          }
+        },
+        {
+          "ref": "U1",
+          "part": "ISO",
+          "position": [
+            43,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "8": "DGND",
+            "9": "PGND",
+            "16": "P5V",
+            "2": "DATA0",
+            "15": "ISO_DATA0",
+            "3": "DATA1",
+            "14": "ISO_DATA1",
+            "4": "DATA2",
+            "13": "ISO_DATA2",
+            "5": "DATA3",
+            "12": "ISO_DATA3",
+            "6": "DATA4",
+            "11": "ISO_DATA4",
+            "7": "DATA5",
+            "10": "ISO_DATA5"
+          }
+        },
+        {
+          "ref": "U2",
+          "part": "ISO",
+          "position": [
+            43,
+            45
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "8": "DGND",
+            "9": "PGND",
+            "16": "P5V",
+            "2": "DATA6",
+            "15": "ISO_DATA6",
+            "3": "DATA7",
+            "14": "ISO_DATA7",
+            "4": "DATA8",
+            "13": "ISO_DATA8",
+            "5": "DATA9",
+            "12": "ISO_DATA9",
+            "6": "DATA10",
+            "11": "ISO_DATA10",
+            "7": "DATA11",
+            "10": "ISO_DATA11"
+          }
+        },
+        {
+          "ref": "U3",
+          "part": "ISO",
+          "position": [
+            43,
+            63
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "8": "DGND",
+            "9": "PGND",
+            "16": "P5V",
+            "2": "DATA12",
+            "15": "ISO_DATA12",
+            "3": "DATA13",
+            "14": "ISO_DATA13",
+            "4": "DATA14",
+            "13": "ISO_DATA14",
+            "5": "DATA15",
+            "12": "ISO_DATA15",
+            "6": "DATA16",
+            "11": "ISO_DATA16",
+            "7": "DATA17",
+            "10": "ISO_DATA17"
+          }
+        },
+        {
+          "ref": "U4",
+          "part": "ISO",
+          "position": [
+            43,
+            81
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "8": "DGND",
+            "9": "PGND",
+            "16": "P5V",
+            "2": "DATA18",
+            "15": "ISO_DATA18",
+            "3": "DATA19",
+            "14": "ISO_DATA19",
+            "4": "SAFE_ENABLE",
+            "13": "ISO_SAFE_ENABLE",
+            "5": "DGND",
+            "12": "UNUSED_ISO21",
+            "6": "DGND",
+            "11": "UNUSED_ISO22",
+            "7": "DGND",
+            "10": "UNUSED_ISO23"
+          }
+        },
+        {
+          "ref": "U5",
+          "part": "ISOSPI",
+          "position": [
+            43,
+            99
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "8": "DGND",
+            "9": "PGND",
+            "16": "P5V",
+            "7": "P_MISO",
+            "10": "ADC_MISO",
+            "2": "P_SCLK",
+            "15": "ISO_SCLK",
+            "3": "P_MOSI",
+            "14": "ISO_MOSI",
+            "4": "P_LATCH",
+            "13": "ISO_LATCH",
+            "5": "P_CS0",
+            "12": "ISO_CS0",
+            "6": "P_CS1",
+            "11": "ISO_CS1"
+          }
+        },
+        {
+          "ref": "U6",
+          "part": "SHIFT",
+          "position": [
+            65,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "16": "P5V",
+            "8": "PGND",
+            "10": "P5V",
+            "13": "SHIFT_OE_N",
+            "11": "ISO_SCLK",
+            "12": "ISO_LATCH",
+            "14": "ISO_MOSI",
+            "9": "SHIFT0",
+            "15": "EN0",
+            "1": "EN1",
+            "2": "EN2",
+            "3": "EN3",
+            "4": "EN4",
+            "5": "EN5",
+            "6": "EN6",
+            "7": "EN7"
+          }
+        },
+        {
+          "ref": "U7",
+          "part": "SHIFT",
+          "position": [
+            78,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "16": "P5V",
+            "8": "PGND",
+            "10": "P5V",
+            "13": "SHIFT_OE_N",
+            "11": "ISO_SCLK",
+            "12": "ISO_LATCH",
+            "14": "SHIFT0",
+            "9": "SHIFT1",
+            "15": "EN8",
+            "1": "EN9",
+            "2": "EN10",
+            "3": "EN11",
+            "4": "EN12",
+            "5": "EN13",
+            "6": "EN14",
+            "7": "EN15"
+          }
+        },
+        {
+          "ref": "U8",
+          "part": "SHIFT",
+          "position": [
+            91,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "16": "P5V",
+            "8": "PGND",
+            "10": "P5V",
+            "13": "SHIFT_OE_N",
+            "11": "ISO_SCLK",
+            "12": "ISO_LATCH",
+            "14": "SHIFT1",
+            "9": "SHIFT2",
+            "15": "EN16",
+            "1": "EN17",
+            "2": "EN18",
+            "3": "EN19",
+            "4": "MUX_S0",
+            "5": "MUX_S1",
+            "6": "MUX_S2",
+            "7": "UNUSED_SHIFT23"
+          }
+        },
+        {
+          "ref": "U9",
+          "part": "ADC",
+          "position": [
+            123,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MUX_OUT0",
+            "2": "MUX_OUT1",
+            "3": "MUX_OUT2",
+            "4": "MUX_OUT3",
+            "5": "MUX_OUT4",
+            "6": "REF2V5",
+            "7": "BUS_VMON",
+            "8": "FAULT_N",
+            "9": "PGND",
+            "10": "ISO_CS0",
+            "11": "ISO_MOSI",
+            "12": "ADC_MISO",
+            "13": "ISO_SCLK",
+            "14": "PGND",
+            "15": "P5V",
+            "16": "P5V"
+          }
+        },
+        {
+          "ref": "U50",
+          "part": "CSA",
+          "position": [
+            68,
+            43
+          ],
+          "rotation": 0,
+          "nets": {
+            "4": "P5V",
+            "11": "PGND",
+            "1": "ISENSE_RAW0",
+            "3": "RETURN0",
+            "2": "PGND",
+            "7": "ISENSE_RAW1",
+            "5": "RETURN1",
+            "6": "PGND",
+            "8": "ISENSE_RAW2",
+            "10": "RETURN2",
+            "9": "PGND",
+            "14": "ISENSE_RAW3",
+            "12": "RETURN3",
+            "13": "PGND"
+          }
+        },
+        {
+          "ref": "U60",
+          "part": "MUX",
+          "position": [
+            68,
+            52
+          ],
+          "rotation": 0,
+          "nets": {
+            "3": "MUX_OUT0",
+            "6": "PGND",
+            "7": "PGND",
+            "8": "PGND",
+            "16": "P5V",
+            "11": "MUX_S0",
+            "10": "MUX_S1",
+            "9": "MUX_S2",
+            "13": "ISENSE0",
+            "14": "ISENSE1",
+            "15": "ISENSE2",
+            "12": "ISENSE3",
+            "1": "VMON0",
+            "5": "VMON1",
+            "2": "VMON2",
+            "4": "VMON3"
+          }
+        },
+        {
+          "ref": "C100",
+          "part": "C_100nF16V",
+          "position": [
+            68.0,
+            47.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C105",
+          "part": "C_100nF16V",
+          "position": [
+            68.0,
+            56.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "U51",
+          "part": "CSA",
+          "position": [
+            91,
+            43
+          ],
+          "rotation": 0,
+          "nets": {
+            "4": "P5V",
+            "11": "PGND",
+            "1": "ISENSE_RAW4",
+            "3": "RETURN4",
+            "2": "PGND",
+            "7": "ISENSE_RAW5",
+            "5": "RETURN5",
+            "6": "PGND",
+            "8": "ISENSE_RAW6",
+            "10": "RETURN6",
+            "9": "PGND",
+            "14": "ISENSE_RAW7",
+            "12": "RETURN7",
+            "13": "PGND"
+          }
+        },
+        {
+          "ref": "U61",
+          "part": "MUX",
+          "position": [
+            91,
+            52
+          ],
+          "rotation": 0,
+          "nets": {
+            "3": "MUX_OUT1",
+            "6": "PGND",
+            "7": "PGND",
+            "8": "PGND",
+            "16": "P5V",
+            "11": "MUX_S0",
+            "10": "MUX_S1",
+            "9": "MUX_S2",
+            "13": "ISENSE4",
+            "14": "ISENSE5",
+            "15": "ISENSE6",
+            "12": "ISENSE7",
+            "1": "VMON4",
+            "5": "VMON5",
+            "2": "VMON6",
+            "4": "VMON7"
+          }
+        },
+        {
+          "ref": "C101",
+          "part": "C_100nF16V",
+          "position": [
+            91.0,
+            47.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C106",
+          "part": "C_100nF16V",
+          "position": [
+            91.0,
+            56.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "U52",
+          "part": "CSA",
+          "position": [
+            114,
+            43
+          ],
+          "rotation": 0,
+          "nets": {
+            "4": "P5V",
+            "11": "PGND",
+            "1": "ISENSE_RAW8",
+            "3": "RETURN8",
+            "2": "PGND",
+            "7": "ISENSE_RAW9",
+            "5": "RETURN9",
+            "6": "PGND",
+            "8": "ISENSE_RAW10",
+            "10": "RETURN10",
+            "9": "PGND",
+            "14": "ISENSE_RAW11",
+            "12": "RETURN11",
+            "13": "PGND"
+          }
+        },
+        {
+          "ref": "U62",
+          "part": "MUX",
+          "position": [
+            114,
+            52
+          ],
+          "rotation": 0,
+          "nets": {
+            "3": "MUX_OUT2",
+            "6": "PGND",
+            "7": "PGND",
+            "8": "PGND",
+            "16": "P5V",
+            "11": "MUX_S0",
+            "10": "MUX_S1",
+            "9": "MUX_S2",
+            "13": "ISENSE8",
+            "14": "ISENSE9",
+            "15": "ISENSE10",
+            "12": "ISENSE11",
+            "1": "VMON8",
+            "5": "VMON9",
+            "2": "VMON10",
+            "4": "VMON11"
+          }
+        },
+        {
+          "ref": "C102",
+          "part": "C_100nF16V",
+          "position": [
+            114.0,
+            47.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C107",
+          "part": "C_100nF16V",
+          "position": [
+            114.0,
+            56.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "U53",
+          "part": "CSA",
+          "position": [
+            137,
+            43
+          ],
+          "rotation": 0,
+          "nets": {
+            "4": "P5V",
+            "11": "PGND",
+            "1": "ISENSE_RAW12",
+            "3": "RETURN12",
+            "2": "PGND",
+            "7": "ISENSE_RAW13",
+            "5": "RETURN13",
+            "6": "PGND",
+            "8": "ISENSE_RAW14",
+            "10": "RETURN14",
+            "9": "PGND",
+            "14": "ISENSE_RAW15",
+            "12": "RETURN15",
+            "13": "PGND"
+          }
+        },
+        {
+          "ref": "U63",
+          "part": "MUX",
+          "position": [
+            137,
+            52
+          ],
+          "rotation": 0,
+          "nets": {
+            "3": "MUX_OUT3",
+            "6": "PGND",
+            "7": "PGND",
+            "8": "PGND",
+            "16": "P5V",
+            "11": "MUX_S0",
+            "10": "MUX_S1",
+            "9": "MUX_S2",
+            "13": "ISENSE12",
+            "14": "ISENSE13",
+            "15": "ISENSE14",
+            "12": "ISENSE15",
+            "1": "VMON12",
+            "5": "VMON13",
+            "2": "VMON14",
+            "4": "VMON15"
+          }
+        },
+        {
+          "ref": "C103",
+          "part": "C_100nF16V",
+          "position": [
+            137.0,
+            47.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C108",
+          "part": "C_100nF16V",
+          "position": [
+            137.0,
+            56.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "U54",
+          "part": "CSA",
+          "position": [
+            160,
+            43
+          ],
+          "rotation": 0,
+          "nets": {
+            "4": "P5V",
+            "11": "PGND",
+            "1": "ISENSE_RAW16",
+            "3": "RETURN16",
+            "2": "PGND",
+            "7": "ISENSE_RAW17",
+            "5": "RETURN17",
+            "6": "PGND",
+            "8": "ISENSE_RAW18",
+            "10": "RETURN18",
+            "9": "PGND",
+            "14": "ISENSE_RAW19",
+            "12": "RETURN19",
+            "13": "PGND"
+          }
+        },
+        {
+          "ref": "U64",
+          "part": "MUX",
+          "position": [
+            160,
+            52
+          ],
+          "rotation": 0,
+          "nets": {
+            "3": "MUX_OUT4",
+            "6": "PGND",
+            "7": "PGND",
+            "8": "PGND",
+            "16": "P5V",
+            "11": "MUX_S0",
+            "10": "MUX_S1",
+            "9": "MUX_S2",
+            "13": "ISENSE16",
+            "14": "ISENSE17",
+            "15": "ISENSE18",
+            "12": "ISENSE19",
+            "1": "VMON16",
+            "5": "VMON17",
+            "2": "VMON18",
+            "4": "VMON19"
+          }
+        },
+        {
+          "ref": "C104",
+          "part": "C_100nF16V",
+          "position": [
+            160.0,
+            47.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C109",
+          "part": "C_100nF16V",
+          "position": [
+            160.0,
+            56.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "R100",
+          "part": "R_100k_mux_address_pulldown",
+          "position": [
+            95,
+            64
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MUX_S0",
+            "2": "PGND"
+          },
+          "value": "100k mux address pulldown"
+        },
+        {
+          "ref": "R101",
+          "part": "R_100k_mux_address_pulldown",
+          "position": [
+            99,
+            64
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MUX_S1",
+            "2": "PGND"
+          },
+          "value": "100k mux address pulldown"
+        },
+        {
+          "ref": "R102",
+          "part": "R_100k_mux_address_pulldown",
+          "position": [
+            103,
+            64
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "MUX_S2",
+            "2": "PGND"
+          },
+          "value": "100k mux address pulldown"
+        },
+        {
+          "ref": "R103",
+          "part": "R_4_7k_aggregate_open_drain_status_pullup",
+          "position": [
+            144,
+            64
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "FAULT_N"
+          },
+          "value": "4.7k aggregate open-drain status pullup"
+        },
+        {
+          "ref": "R104",
+          "part": "R_100k_0_1percent_bus_divider_upper",
+          "position": [
+            150,
+            65
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LED_VIN",
+            "2": "BUS_VMON"
+          },
+          "value": "100k 0.1percent bus divider upper"
+        },
+        {
+          "ref": "R105",
+          "part": "R_10k_0_1percent_bus_divider_lower",
+          "position": [
+            155,
+            65
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "BUS_VMON",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent bus divider lower"
+        },
+        {
+          "ref": "C110",
+          "part": "C_10nF50V_bus_divider_filter",
+          "position": [
+            160,
+            65
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "BUS_VMON",
+            "2": "PGND"
+          },
+          "value": "10nF50V bus divider filter"
+        },
+        {
+          "ref": "C111",
+          "part": "C_1uF10V_ADC_supply",
+          "position": [
+            125.0,
+            67.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "1uF10V ADC supply"
+        },
+        {
+          "ref": "Q1",
+          "part": "NPN",
+          "position": [
+            65,
+            69
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OE_BASE",
+            "2": "PGND",
+            "3": "SHIFT_OE_N"
+          }
+        },
+        {
+          "ref": "R90",
+          "part": "R_10k",
+          "position": [
+            69,
+            69
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "SHIFT_OE_N"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R91",
+          "part": "R_10k",
+          "position": [
+            61,
+            69
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_SAFE_ENABLE",
+            "2": "OE_BASE"
+          },
+          "value": "10k"
+        },
+        {
+          "ref": "R92",
+          "part": "R_100k",
+          "position": [
+            61,
+            73
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OE_BASE",
+            "2": "PGND"
+          },
+          "value": "100k"
+        },
+        {
+          "ref": "U11",
+          "part": "REF",
+          "position": [
+            105,
+            70
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND",
+            "3": "REF2V5"
+          }
+        },
+        {
+          "ref": "U12",
+          "part": "BUCK",
+          "position": [
+            18,
+            94
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LED_VIN",
+            "2": "PGND",
+            "3": "P5V"
+          }
+        },
+        {
+          "ref": "J10",
+          "part": "OUT",
+          "position": [
+            9.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT0",
+            "2": "LED_DATA0",
+            "3": "RETURN0"
+          }
+        },
+        {
+          "ref": "U20",
+          "part": "SW",
+          "position": [
+            14.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN0",
+            "5": "OUT0",
+            "6": "OUT0",
+            "7": "OUT0",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL0",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R1",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            10.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL0",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS0",
+          "part": "SHUNT",
+          "position": [
+            14.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN0",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH0",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            10.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT0",
+            "2": "VMON0"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL0",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            14.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON0",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV0",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            18.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON0",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI0",
+          "part": "R_100R_current_filter",
+          "position": [
+            10.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW0",
+            "2": "ISENSE0"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI0",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            14.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE0",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R3",
+          "part": "R_100k_pulldown",
+          "position": [
+            18.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN0",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R4",
+          "part": "R_100R_series",
+          "position": [
+            18.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA0",
+            "2": "LED_DATA0"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C1",
+          "part": "C_100nF50V",
+          "position": [
+            14.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT0",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J11",
+          "part": "OUT",
+          "position": [
+            28.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT1",
+            "2": "LED_DATA1",
+            "3": "RETURN1"
+          }
+        },
+        {
+          "ref": "U21",
+          "part": "SW",
+          "position": [
+            32.5,
+            19.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN1",
+            "5": "OUT1",
+            "6": "OUT1",
+            "7": "OUT1",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL1",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R5",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            29.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL1",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS1",
+          "part": "SHUNT",
+          "position": [
+            32.5,
+            27.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN1",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH1",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            28.0,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT1",
+            "2": "VMON1"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL1",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            31.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON1",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV1",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            35.0,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON1",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI1",
+          "part": "R_100R_current_filter",
+          "position": [
+            29.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW1",
+            "2": "ISENSE1"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI1",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            33.5,
+            34.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE1",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R7",
+          "part": "R_100k_pulldown",
+          "position": [
+            35.0,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN1",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R8",
+          "part": "R_100R_series",
+          "position": [
+            37.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA1",
+            "2": "LED_DATA1"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C2",
+          "part": "C_100nF50V",
+          "position": [
+            33.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT1",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J12",
+          "part": "OUT",
+          "position": [
+            47.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT2",
+            "2": "LED_DATA2",
+            "3": "RETURN2"
+          }
+        },
+        {
+          "ref": "U22",
+          "part": "SW",
+          "position": [
+            52.5,
+            18.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN2",
+            "5": "OUT2",
+            "6": "OUT2",
+            "7": "OUT2",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL2",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R9",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            51.0,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL2",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS2",
+          "part": "SHUNT",
+          "position": [
+            53.5,
+            27.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN2",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH2",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            51.0,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT2",
+            "2": "VMON2"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL2",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            54.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON2",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV2",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            58.0,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON2",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI2",
+          "part": "R_100R_current_filter",
+          "position": [
+            48.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW2",
+            "2": "ISENSE2"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI2",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            52.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE2",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R11",
+          "part": "R_100k_pulldown",
+          "position": [
+            56.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN2",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R12",
+          "part": "R_100R_series",
+          "position": [
+            56.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA2",
+            "2": "LED_DATA2"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C3",
+          "part": "C_100nF50V",
+          "position": [
+            52.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT2",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J13",
+          "part": "OUT",
+          "position": [
+            66.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT3",
+            "2": "LED_DATA3",
+            "3": "RETURN3"
+          }
+        },
+        {
+          "ref": "U23",
+          "part": "SW",
+          "position": [
+            71.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN3",
+            "5": "OUT3",
+            "6": "OUT3",
+            "7": "OUT3",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL3",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R13",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            67.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL3",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS3",
+          "part": "SHUNT",
+          "position": [
+            71.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN3",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH3",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            67.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT3",
+            "2": "VMON3"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL3",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            71.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON3",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV3",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            75.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON3",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI3",
+          "part": "R_100R_current_filter",
+          "position": [
+            67.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW3",
+            "2": "ISENSE3"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI3",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            71.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE3",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R15",
+          "part": "R_100k_pulldown",
+          "position": [
+            75.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN3",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R16",
+          "part": "R_100R_series",
+          "position": [
+            75.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA3",
+            "2": "LED_DATA3"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C4",
+          "part": "C_100nF50V",
+          "position": [
+            71.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT3",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J14",
+          "part": "OUT",
+          "position": [
+            85.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT4",
+            "2": "LED_DATA4",
+            "3": "RETURN4"
+          }
+        },
+        {
+          "ref": "U24",
+          "part": "SW",
+          "position": [
+            90.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN4",
+            "5": "OUT4",
+            "6": "OUT4",
+            "7": "OUT4",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL4",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R17",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            86.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL4",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS4",
+          "part": "SHUNT",
+          "position": [
+            90.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN4",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH4",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            86.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT4",
+            "2": "VMON4"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL4",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            90.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON4",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV4",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            94.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON4",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI4",
+          "part": "R_100R_current_filter",
+          "position": [
+            86.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW4",
+            "2": "ISENSE4"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI4",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            90.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE4",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R19",
+          "part": "R_100k_pulldown",
+          "position": [
+            94.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN4",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R20",
+          "part": "R_100R_series",
+          "position": [
+            94.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA4",
+            "2": "LED_DATA4"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C5",
+          "part": "C_100nF50V",
+          "position": [
+            90.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT4",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J15",
+          "part": "OUT",
+          "position": [
+            104.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT5",
+            "2": "LED_DATA5",
+            "3": "RETURN5"
+          }
+        },
+        {
+          "ref": "U25",
+          "part": "SW",
+          "position": [
+            109.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN5",
+            "5": "OUT5",
+            "6": "OUT5",
+            "7": "OUT5",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL5",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R21",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            105.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL5",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS5",
+          "part": "SHUNT",
+          "position": [
+            109.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN5",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH5",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            105.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT5",
+            "2": "VMON5"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL5",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            109.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON5",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV5",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            113.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON5",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI5",
+          "part": "R_100R_current_filter",
+          "position": [
+            105.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW5",
+            "2": "ISENSE5"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI5",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            109.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE5",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R23",
+          "part": "R_100k_pulldown",
+          "position": [
+            113.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN5",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R24",
+          "part": "R_100R_series",
+          "position": [
+            113.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA5",
+            "2": "LED_DATA5"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C6",
+          "part": "C_100nF50V",
+          "position": [
+            109.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT5",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J16",
+          "part": "OUT",
+          "position": [
+            123.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT6",
+            "2": "LED_DATA6",
+            "3": "RETURN6"
+          }
+        },
+        {
+          "ref": "U26",
+          "part": "SW",
+          "position": [
+            128.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN6",
+            "5": "OUT6",
+            "6": "OUT6",
+            "7": "OUT6",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL6",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R25",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            124.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL6",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS6",
+          "part": "SHUNT",
+          "position": [
+            128.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN6",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH6",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            124.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT6",
+            "2": "VMON6"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL6",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            128.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON6",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV6",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            132.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON6",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI6",
+          "part": "R_100R_current_filter",
+          "position": [
+            124.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW6",
+            "2": "ISENSE6"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI6",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            128.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE6",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R27",
+          "part": "R_100k_pulldown",
+          "position": [
+            132.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN6",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R28",
+          "part": "R_100R_series",
+          "position": [
+            132.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA6",
+            "2": "LED_DATA6"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C7",
+          "part": "C_100nF50V",
+          "position": [
+            128.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT6",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J17",
+          "part": "OUT",
+          "position": [
+            142.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT7",
+            "2": "LED_DATA7",
+            "3": "RETURN7"
+          }
+        },
+        {
+          "ref": "U27",
+          "part": "SW",
+          "position": [
+            147.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN7",
+            "5": "OUT7",
+            "6": "OUT7",
+            "7": "OUT7",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL7",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R29",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            143.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL7",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS7",
+          "part": "SHUNT",
+          "position": [
+            147.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN7",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH7",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            143.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT7",
+            "2": "VMON7"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL7",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            147.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON7",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV7",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            151.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON7",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI7",
+          "part": "R_100R_current_filter",
+          "position": [
+            143.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW7",
+            "2": "ISENSE7"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI7",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            147.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE7",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R31",
+          "part": "R_100k_pulldown",
+          "position": [
+            151.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN7",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R32",
+          "part": "R_100R_series",
+          "position": [
+            151.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA7",
+            "2": "LED_DATA7"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C8",
+          "part": "C_100nF50V",
+          "position": [
+            147.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT7",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J18",
+          "part": "OUT",
+          "position": [
+            161.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT8",
+            "2": "LED_DATA8",
+            "3": "RETURN8"
+          }
+        },
+        {
+          "ref": "U28",
+          "part": "SW",
+          "position": [
+            166.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN8",
+            "5": "OUT8",
+            "6": "OUT8",
+            "7": "OUT8",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL8",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R33",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            162.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL8",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS8",
+          "part": "SHUNT",
+          "position": [
+            166.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN8",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH8",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            162.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT8",
+            "2": "VMON8"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL8",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            166.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON8",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV8",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            170.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON8",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI8",
+          "part": "R_100R_current_filter",
+          "position": [
+            162.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW8",
+            "2": "ISENSE8"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI8",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            166.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE8",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R35",
+          "part": "R_100k_pulldown",
+          "position": [
+            170.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN8",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R36",
+          "part": "R_100R_series",
+          "position": [
+            170.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA8",
+            "2": "LED_DATA8"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C9",
+          "part": "C_100nF50V",
+          "position": [
+            166.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT8",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J19",
+          "part": "OUT",
+          "position": [
+            180.42,
+            9.9
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT9",
+            "2": "LED_DATA9",
+            "3": "RETURN9"
+          }
+        },
+        {
+          "ref": "U29",
+          "part": "SW",
+          "position": [
+            185.5,
+            19
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN9",
+            "5": "OUT9",
+            "6": "OUT9",
+            "7": "OUT9",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL9",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R37",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            181.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL9",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS9",
+          "part": "SHUNT",
+          "position": [
+            185.5,
+            27
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN9",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH9",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            181.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT9",
+            "2": "VMON9"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL9",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            185.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON9",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV9",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            189.5,
+            30.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON9",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI9",
+          "part": "R_100R_current_filter",
+          "position": [
+            181.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW9",
+            "2": "ISENSE9"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI9",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            185.5,
+            34
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE9",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R39",
+          "part": "R_100k_pulldown",
+          "position": [
+            189.5,
+            23.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN9",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R40",
+          "part": "R_100R_series",
+          "position": [
+            189.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA9",
+            "2": "LED_DATA9"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C10",
+          "part": "C_100nF50V",
+          "position": [
+            185.5,
+            14
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT9",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J20",
+          "part": "OUT",
+          "position": [
+            19.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT10",
+            "2": "LED_DATA10",
+            "3": "RETURN10"
+          }
+        },
+        {
+          "ref": "U30",
+          "part": "SW",
+          "position": [
+            14.5,
+            101.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN10",
+            "5": "OUT10",
+            "6": "OUT10",
+            "7": "OUT10",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL10",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R41",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            10.0,
+            95.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL10",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS10",
+          "part": "SHUNT",
+          "position": [
+            14.5,
+            87.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN10",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH10",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            10.0,
+            90.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT10",
+            "2": "VMON10"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL10",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            10.0,
+            92.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON10",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV10",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            20.5,
+            88.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON10",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI10",
+          "part": "R_100R_current_filter",
+          "position": [
+            8.5,
+            86.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW10",
+            "2": "ISENSE10"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI10",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            14.5,
+            83.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE10",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R43",
+          "part": "R_100k_pulldown",
+          "position": [
+            20.5,
+            99.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN10",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R44",
+          "part": "R_100R_series",
+          "position": [
+            18.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA10",
+            "2": "LED_DATA10"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C11",
+          "part": "C_100nF50V",
+          "position": [
+            14.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT10",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J21",
+          "part": "OUT",
+          "position": [
+            38.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT11",
+            "2": "LED_DATA11",
+            "3": "RETURN11"
+          }
+        },
+        {
+          "ref": "U31",
+          "part": "SW",
+          "position": [
+            32.5,
+            101.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN11",
+            "5": "OUT11",
+            "6": "OUT11",
+            "7": "OUT11",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL11",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R45",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            29.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL11",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS11",
+          "part": "SHUNT",
+          "position": [
+            32.5,
+            93.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN11",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH11",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            29.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT11",
+            "2": "VMON11"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL11",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            33.5,
+            87.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON11",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV11",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            37.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON11",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI11",
+          "part": "R_100R_current_filter",
+          "position": [
+            29.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW11",
+            "2": "ISENSE11"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI11",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            33.5,
+            85.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE11",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R47",
+          "part": "R_100k_pulldown",
+          "position": [
+            35.0,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN11",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R48",
+          "part": "R_100R_series",
+          "position": [
+            37.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA11",
+            "2": "LED_DATA11"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C12",
+          "part": "C_100nF50V",
+          "position": [
+            33.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT11",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J22",
+          "part": "OUT",
+          "position": [
+            57.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT12",
+            "2": "LED_DATA12",
+            "3": "RETURN12"
+          }
+        },
+        {
+          "ref": "U32",
+          "part": "SW",
+          "position": [
+            53.5,
+            101.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN12",
+            "5": "OUT12",
+            "6": "OUT12",
+            "7": "OUT12",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL12",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R49",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            51.0,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL12",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS12",
+          "part": "SHUNT",
+          "position": [
+            53.5,
+            93.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN12",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH12",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            48.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT12",
+            "2": "VMON12"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL12",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            52.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON12",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV12",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            56.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON12",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI12",
+          "part": "R_100R_current_filter",
+          "position": [
+            51.0,
+            86.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW12",
+            "2": "ISENSE12"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI12",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            52.5,
+            84.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE12",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R51",
+          "part": "R_100k_pulldown",
+          "position": [
+            56.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN12",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R52",
+          "part": "R_100R_series",
+          "position": [
+            56.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA12",
+            "2": "LED_DATA12"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C13",
+          "part": "C_100nF50V",
+          "position": [
+            52.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT12",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J23",
+          "part": "OUT",
+          "position": [
+            76.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT13",
+            "2": "LED_DATA13",
+            "3": "RETURN13"
+          }
+        },
+        {
+          "ref": "U33",
+          "part": "SW",
+          "position": [
+            71.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN13",
+            "5": "OUT13",
+            "6": "OUT13",
+            "7": "OUT13",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL13",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R53",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            67.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL13",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS13",
+          "part": "SHUNT",
+          "position": [
+            71.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN13",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH13",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            67.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT13",
+            "2": "VMON13"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL13",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            71.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON13",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV13",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            75.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON13",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI13",
+          "part": "R_100R_current_filter",
+          "position": [
+            67.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW13",
+            "2": "ISENSE13"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI13",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            71.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE13",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R55",
+          "part": "R_100k_pulldown",
+          "position": [
+            75.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN13",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R56",
+          "part": "R_100R_series",
+          "position": [
+            75.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA13",
+            "2": "LED_DATA13"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C14",
+          "part": "C_100nF50V",
+          "position": [
+            71.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT13",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J24",
+          "part": "OUT",
+          "position": [
+            95.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT14",
+            "2": "LED_DATA14",
+            "3": "RETURN14"
+          }
+        },
+        {
+          "ref": "U34",
+          "part": "SW",
+          "position": [
+            90.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN14",
+            "5": "OUT14",
+            "6": "OUT14",
+            "7": "OUT14",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL14",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R57",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            86.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL14",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS14",
+          "part": "SHUNT",
+          "position": [
+            90.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN14",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH14",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            86.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT14",
+            "2": "VMON14"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL14",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            90.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON14",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV14",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            94.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON14",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI14",
+          "part": "R_100R_current_filter",
+          "position": [
+            86.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW14",
+            "2": "ISENSE14"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI14",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            90.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE14",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R59",
+          "part": "R_100k_pulldown",
+          "position": [
+            94.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN14",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R60",
+          "part": "R_100R_series",
+          "position": [
+            94.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA14",
+            "2": "LED_DATA14"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C15",
+          "part": "C_100nF50V",
+          "position": [
+            90.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT14",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J25",
+          "part": "OUT",
+          "position": [
+            114.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT15",
+            "2": "LED_DATA15",
+            "3": "RETURN15"
+          }
+        },
+        {
+          "ref": "U35",
+          "part": "SW",
+          "position": [
+            109.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN15",
+            "5": "OUT15",
+            "6": "OUT15",
+            "7": "OUT15",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL15",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R61",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            105.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL15",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS15",
+          "part": "SHUNT",
+          "position": [
+            109.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN15",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH15",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            105.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT15",
+            "2": "VMON15"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL15",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            109.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON15",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV15",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            113.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON15",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI15",
+          "part": "R_100R_current_filter",
+          "position": [
+            105.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW15",
+            "2": "ISENSE15"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI15",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            109.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE15",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R63",
+          "part": "R_100k_pulldown",
+          "position": [
+            113.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN15",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R64",
+          "part": "R_100R_series",
+          "position": [
+            113.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA15",
+            "2": "LED_DATA15"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C16",
+          "part": "C_100nF50V",
+          "position": [
+            109.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT15",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J26",
+          "part": "OUT",
+          "position": [
+            133.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT16",
+            "2": "LED_DATA16",
+            "3": "RETURN16"
+          }
+        },
+        {
+          "ref": "U36",
+          "part": "SW",
+          "position": [
+            128.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN16",
+            "5": "OUT16",
+            "6": "OUT16",
+            "7": "OUT16",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL16",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R65",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            124.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL16",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS16",
+          "part": "SHUNT",
+          "position": [
+            128.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN16",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH16",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            124.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT16",
+            "2": "VMON16"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL16",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            128.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON16",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV16",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            132.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON16",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI16",
+          "part": "R_100R_current_filter",
+          "position": [
+            124.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW16",
+            "2": "ISENSE16"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI16",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            128.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE16",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R67",
+          "part": "R_100k_pulldown",
+          "position": [
+            132.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN16",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R68",
+          "part": "R_100R_series",
+          "position": [
+            132.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA16",
+            "2": "LED_DATA16"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C17",
+          "part": "C_100nF50V",
+          "position": [
+            128.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT16",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J27",
+          "part": "OUT",
+          "position": [
+            152.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT17",
+            "2": "LED_DATA17",
+            "3": "RETURN17"
+          }
+        },
+        {
+          "ref": "U37",
+          "part": "SW",
+          "position": [
+            147.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN17",
+            "5": "OUT17",
+            "6": "OUT17",
+            "7": "OUT17",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL17",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R69",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            143.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL17",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS17",
+          "part": "SHUNT",
+          "position": [
+            147.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN17",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH17",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            143.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT17",
+            "2": "VMON17"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL17",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            147.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON17",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV17",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            151.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON17",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI17",
+          "part": "R_100R_current_filter",
+          "position": [
+            143.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW17",
+            "2": "ISENSE17"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI17",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            147.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE17",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R71",
+          "part": "R_100k_pulldown",
+          "position": [
+            151.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN17",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R72",
+          "part": "R_100R_series",
+          "position": [
+            151.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA17",
+            "2": "LED_DATA17"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C18",
+          "part": "C_100nF50V",
+          "position": [
+            147.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT17",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J28",
+          "part": "OUT",
+          "position": [
+            171.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT18",
+            "2": "LED_DATA18",
+            "3": "RETURN18"
+          }
+        },
+        {
+          "ref": "U38",
+          "part": "SW",
+          "position": [
+            166.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN18",
+            "5": "OUT18",
+            "6": "OUT18",
+            "7": "OUT18",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL18",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R73",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            162.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL18",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS18",
+          "part": "SHUNT",
+          "position": [
+            166.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN18",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH18",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            162.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT18",
+            "2": "VMON18"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL18",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            166.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON18",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV18",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            170.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON18",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI18",
+          "part": "R_100R_current_filter",
+          "position": [
+            162.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW18",
+            "2": "ISENSE18"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI18",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            166.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE18",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R75",
+          "part": "R_100k_pulldown",
+          "position": [
+            170.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN18",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R76",
+          "part": "R_100R_series",
+          "position": [
+            170.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA18",
+            "2": "LED_DATA18"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C19",
+          "part": "C_100nF50V",
+          "position": [
+            166.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT18",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "J29",
+          "part": "OUT",
+          "position": [
+            190.58,
+            110.1
+          ],
+          "rotation": 180,
+          "nets": {
+            "1": "OUT19",
+            "2": "LED_DATA19",
+            "3": "RETURN19"
+          }
+        },
+        {
+          "ref": "U39",
+          "part": "SW",
+          "position": [
+            185.5,
+            101
+          ],
+          "rotation": 0,
+          "nets": {
+            "2": "PGND",
+            "3": "EN19",
+            "5": "OUT19",
+            "6": "OUT19",
+            "7": "OUT19",
+            "8": "LED_VIN",
+            "9": "LED_VIN",
+            "10": "LED_VIN",
+            "12": "P5V",
+            "13": "CL19",
+            "14": "FAULT_N",
+            "15": "PGND"
+          }
+        },
+        {
+          "ref": "R77",
+          "part": "R_1_00k_currentlimit_nominal2_47A",
+          "position": [
+            181.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "CL19",
+            "2": "PGND"
+          },
+          "value": "1.00k currentlimit nominal2.47A"
+        },
+        {
+          "ref": "RS19",
+          "part": "SHUNT",
+          "position": [
+            185.5,
+            93
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "RETURN19",
+            "2": "PGND"
+          }
+        },
+        {
+          "ref": "RVH19",
+          "part": "R_100k_0_1percent_voltage_divider_upper",
+          "position": [
+            181.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT19",
+            "2": "VMON19"
+          },
+          "value": "100k 0.1percent voltage divider upper"
+        },
+        {
+          "ref": "RVL19",
+          "part": "R_10k_0_1percent_voltage_divider_lower",
+          "position": [
+            185.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON19",
+            "2": "PGND"
+          },
+          "value": "10k 0.1percent voltage divider lower"
+        },
+        {
+          "ref": "CV19",
+          "part": "C_10nF50V_voltage_filter",
+          "position": [
+            189.5,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "VMON19",
+            "2": "PGND"
+          },
+          "value": "10nF50V voltage filter"
+        },
+        {
+          "ref": "RI19",
+          "part": "R_100R_current_filter",
+          "position": [
+            181.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE_RAW19",
+            "2": "ISENSE19"
+          },
+          "value": "100R current filter"
+        },
+        {
+          "ref": "CI19",
+          "part": "C_1nF16V_current_filter",
+          "position": [
+            185.5,
+            86
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISENSE19",
+            "2": "PGND"
+          },
+          "value": "1nF16V current filter"
+        },
+        {
+          "ref": "R79",
+          "part": "R_100k_pulldown",
+          "position": [
+            189.5,
+            96.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "EN19",
+            "2": "PGND"
+          },
+          "value": "100k pulldown"
+        },
+        {
+          "ref": "R80",
+          "part": "R_100R_series",
+          "position": [
+            189.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "ISO_DATA19",
+            "2": "LED_DATA19"
+          },
+          "value": "100R series"
+        },
+        {
+          "ref": "C20",
+          "part": "C_100nF50V",
+          "position": [
+            185.5,
+            106
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "OUT19",
+            "2": "PGND"
+          },
+          "value": "100nF50V"
+        },
+        {
+          "ref": "C30",
+          "part": "C_100nF16V",
+          "position": [
+            60,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C31",
+          "part": "C_100nF16V",
+          "position": [
+            68,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C32",
+          "part": "C_100nF16V",
+          "position": [
+            76,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C33",
+          "part": "C_100nF16V",
+          "position": [
+            84,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C34",
+          "part": "C_100nF16V",
+          "position": [
+            92,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C35",
+          "part": "C_100nF16V",
+          "position": [
+            100,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C36",
+          "part": "C_100nF16V",
+          "position": [
+            108,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C37",
+          "part": "C_100nF16V",
+          "position": [
+            116,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C38",
+          "part": "C_100nF16V",
+          "position": [
+            124,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C39",
+          "part": "C_100nF16V",
+          "position": [
+            132,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C40",
+          "part": "C_100nF16V",
+          "position": [
+            140,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C41",
+          "part": "C_100nF16V",
+          "position": [
+            148,
+            75
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C42",
+          "part": "C_100nF16V",
+          "position": [
+            60,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C43",
+          "part": "C_100nF16V",
+          "position": [
+            68,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C44",
+          "part": "C_100nF16V",
+          "position": [
+            76,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C45",
+          "part": "C_100nF16V",
+          "position": [
+            84,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C46",
+          "part": "C_100nF16V",
+          "position": [
+            92,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C47",
+          "part": "C_100nF16V",
+          "position": [
+            100,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C48",
+          "part": "C_100nF16V",
+          "position": [
+            108,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C49",
+          "part": "C_100nF16V",
+          "position": [
+            116,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C50",
+          "part": "C_100nF16V",
+          "position": [
+            124,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C51",
+          "part": "C_100nF16V",
+          "position": [
+            132,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C52",
+          "part": "C_100nF16V",
+          "position": [
+            140,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C53",
+          "part": "C_100nF16V",
+          "position": [
+            148,
+            79
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C60",
+          "part": "C_100nF16V",
+          "position": [
+            35.0,
+            32.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C61",
+          "part": "C_100nF16V",
+          "position": [
+            35.0,
+            43.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C62",
+          "part": "C_100nF16V",
+          "position": [
+            35.0,
+            59.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C63",
+          "part": "C_100nF16V",
+          "position": [
+            35.0,
+            75.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C64",
+          "part": "C_100nF16V",
+          "position": [
+            34.0,
+            89.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LV3V3",
+            "2": "DGND"
+          },
+          "value": "100nF16V"
+        },
+        {
+          "ref": "C70",
+          "part": "C_10uF10V",
+          "position": [
+            22.0,
+            101.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "P5V",
+            "2": "PGND"
+          },
+          "value": "10uF10V"
+        },
+        {
+          "ref": "C71",
+          "part": "C_1uF10V",
+          "position": [
+            104.5,
+            74.0
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "REF2V5",
+            "2": "PGND"
+          },
+          "value": "1uF10V"
+        }
+      ]
+    },
+    "usb_bridge": {
+      "outline": {
+        "width_mm": 24,
+        "height_mm": 32,
+        "thickness_mm": 1.6
+      },
+      "mounts": [],
+      "connectors": [
+        {
+          "ref": "J1",
+          "position": [
+            12,
+            7
+          ],
+          "edge": "internal",
+          "opening": [
+            12.2,
+            4.5
+          ],
+          "kind": "usb_a_male_vertical",
+          "center_z_above_pcb_mm": 6
+        },
+        {
+          "ref": "J2",
+          "position": [
+            12,
+            25.4
+          ],
+          "edge": "internal",
+          "opening": [
+            8.4,
+            2.6
+          ],
+          "kind": "usb_c_male_vertical",
+          "center_z_above_pcb_mm": 6
+        }
+      ],
+      "components": [
+        {
+          "ref": "J1",
+          "part": "USBAP",
+          "position": [
+            12,
+            7
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "USB_VBUS",
+            "2": "USB_DM",
+            "3": "USB_DP",
+            "4": "USB_GND",
+            "5": "USB_GND"
+          }
+        },
+        {
+          "ref": "J2",
+          "part": "USBCP",
+          "position": [
+            12,
+            25.4
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "USB_VBUS",
+            "2": "USB_DM",
+            "3": "USB_DP",
+            "4": "USB_GND",
+            "5": "CC",
+            "6": "USB_GND"
+          }
+        },
+        {
+          "ref": "R1",
+          "part": "R_56k1_",
+          "position": [
+            5,
+            22
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "USB_VBUS",
+            "2": "CC"
+          },
+          "value": "56k1%"
+        }
+      ]
+    }
+  }
+}

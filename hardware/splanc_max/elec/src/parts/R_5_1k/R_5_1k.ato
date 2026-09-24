@@ -1,0 +1,10 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component R_5_1k:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="5.1k R0603 engineering specification", footprint="R_5_1k.kicad_mod", symbol="R_5_1k.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="5.1k R0603 engineering specification">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

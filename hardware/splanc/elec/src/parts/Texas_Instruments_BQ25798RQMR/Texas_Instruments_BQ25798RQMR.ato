@@ -1,0 +1,44 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_BQ25798RQMR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2876593", date="2026-09-09T17:41:53.146539+00:00", checksum="9400e3deaf321a0a7e6ac3e0b37400b6ca7cb7de306830022fa3200c8654c498">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="BQ25798RQMR", footprint="QFN-29_L4.0-W4.0-P0.40-TL-BQ25792RQMR.kicad_mod", symbol="BQ25798RQMR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2876593", manufacturer="Texas Instruments", partno="BQ25798RQMR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal ACDRV1 ~ pin 11
+    signal ACDRV2 ~ pin 10
+    signal BAT ~ pin 22
+    BAT ~ pin 23
+    signal BATP ~ pin 18
+    signal BTST1 ~ pin 4
+    signal BTST2 ~ pin 19
+    signal Dneg ~ pin 7
+    signal Dpos ~ pin 6
+    signal GND ~ pin 27
+    signal ILIM_HIZ ~ pin 17
+    signal PMID ~ pin 29
+    signal PROG ~ pin 20
+    signal REGN ~ pin 5
+    signal SCL ~ pin 14
+    signal SDA ~ pin 15
+    signal SDRV ~ pin 24
+    signal STAT ~ pin 1
+    signal SW1 ~ pin 28
+    signal SW2 ~ pin 26
+    signal SYS ~ pin 25
+    signal TS ~ pin 16
+    signal VAC1 ~ pin 9
+    signal VAC2 ~ pin 8
+    signal VBUS ~ pin 2
+    VBUS ~ pin 3
+    signal nCE ~ pin 13
+    signal nINT ~ pin 21
+    signal nQON ~ pin 12

@@ -1,0 +1,1 @@
+(footprint "LUG" (version 20241229) (generator "splanc_max") (layer "F.Cu") (property "Reference" "REF**" (at 0 -7.0) (layer "F.SilkS")) (property "Value" "LUG" (at 0 7.0) (layer "F.Fab")) (fp_rect (start -6.0 -6.0) (end 6.0 6.0) (stroke(width 0.15)(type default))(fill none)(layer "F.SilkS")) (pad "1" thru_hole circle (at 0 0) (size 10 10) (drill 5.3) (layers "*.Cu" "*.Mask")))

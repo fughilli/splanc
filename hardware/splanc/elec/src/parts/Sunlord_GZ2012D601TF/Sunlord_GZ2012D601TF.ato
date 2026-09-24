@@ -1,0 +1,21 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Sunlord_GZ2012D601TF_package:
+    """600Ω ±25% 100MHz"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C1017", date="2026-08-20T03:24:10.892506+00:00", checksum="47c5fc2d241bdf2cafb10367a2b872986534e936e5799ba93a4f1e167a6d40ef">
+
+    trait is_atomic_part<manufacturer="Sunlord", partnumber="GZ2012D601TF", footprint="L0805.kicad_mod", symbol="GZ2012D601TF.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C1017", manufacturer="Sunlord", partno="GZ2012D601TF">
+    trait has_designator_prefix<prefix="L">
+
+    # pins
+    pin 2
+    signal p2 ~ pin 2
+    pin 1
+    signal p1 ~ pin 1

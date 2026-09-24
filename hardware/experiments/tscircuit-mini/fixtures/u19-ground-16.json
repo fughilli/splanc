@@ -1,0 +1,19 @@
+{
+  "nets": [
+    "lv"
+  ],
+  "source_pad": "U19.16",
+  "target_pad": "U19.39",
+  "bounds": [
+    44,
+    68,
+    52,
+    75
+  ],
+  "pitch": 0.05,
+  "max_expansions": 20000,
+  "max_orders": 1,
+  "max_seconds": 30,
+  "preserve_copper": true,
+  "ground_leaf": true
+}

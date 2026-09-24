@@ -1,0 +1,11 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component REF:
+    trait is_atomic_part<manufacturer="TI", partnumber="REF3025AIDBZR", footprint="REF.kicad_mod", symbol="REF.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="TI", partno="REF3025AIDBZR">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3

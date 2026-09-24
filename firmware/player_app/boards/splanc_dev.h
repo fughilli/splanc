@@ -25,15 +25,18 @@
 #define SPLANC_I2C_SDA_PIN 6
 #define SPLANC_I2C_SCL_PIN 7
 
-// -- 5 V boost enable --------------------------------------------------------
-#define SPLANC_BOOST_EN_PIN 10
+// -- Factory-configured PD/1S/2S power revision ------------------------------
+#define SPLANC_HARDWARE_REVISION 2
+#define SPLANC_USB_SELECTED_N_PIN 10  // INPUT: LTC4421 CH1, LOW when USB selected
+#define SPLANC_USB_HOLDOFF_PIN 15  // HIGH inhibits USB mux input; LOW allows USB boot
+#define SPLANC_CHARGER_EN_PIN 11    // OUTPUT: high permits BQ25798 charging
 
-// -- I2S0 microphone (INMP441) ----------------------------------------------
+// -- I2S0 microphone (T5848, translated to 1.8V) ----------------------------------------------
 #define SPLANC_I2S_BCLK_PIN 18
 #define SPLANC_I2S_WS_PIN 19
 #define SPLANC_I2S_DIN_PIN 20  // NB: shares the GPIO number with a devkit LED pin
 
-// -- Shared sensor interrupt (MPU6050 INT) -----------------------------------
+// -- Sensor interrupt (ICM-42670-P INT1) -----------------------------------
 #define SPLANC_IMU_INT_PIN 21
 
 // -- User + system buttons ---------------------------------------------------
@@ -42,9 +45,11 @@
 #define SPLANC_BOOT_PIN 9  // BOOT strap / download button
 
 // -- I2C device addresses (7-bit) --------------------------------------------
-#define SPLANC_I2C_ADDR_QMC5883L 0x0D  // compass (DNP on first spin)
-#define SPLANC_I2C_ADDR_MAX17048 0x36  // fuel gauge
+#define SPLANC_I2C_ADDR_MMC5603NJ 0x30  // compass, populated
+#define SPLANC_I2C_ADDR_TPS25730 0x20  // USB PD contract/status
+#define SPLANC_I2C_ADDR_BQ34Z100 0x55  // factory-calibrated pack fuel gauge
+#define SPLANC_I2C_ADDR_BQ25798 0x6B  // charger
 #define SPLANC_I2C_ADDR_INA226_CH0 0x40
 #define SPLANC_I2C_ADDR_INA226_CH1 0x41
-#define SPLANC_I2C_ADDR_MPU6050 0x68
-#define SPLANC_I2C_ADDR_BMP280 0x76
+#define SPLANC_I2C_ADDR_ICM42670 0x68
+#define SPLANC_I2C_ADDR_BMP580 0x46

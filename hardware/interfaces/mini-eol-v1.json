@@ -1,0 +1,241 @@
+{
+  "id": "MINI-EOL-V1",
+  "revision": 1,
+  "units": "mm",
+  "frame": "DUT top view, origin at bottom-left outline, x right, y up; fixture top has same x/y",
+  "board_mm": [
+    70,
+    55
+  ],
+  "mount_centers_mm": [
+    [
+      4,
+      4
+    ],
+    [
+      66,
+      4
+    ],
+    [
+      66,
+      51
+    ],
+    [
+      4,
+      51
+    ]
+  ],
+  "array_center_mm": [
+    45,
+    13.5
+  ],
+  "pitch_mm": 2.54,
+  "pad_diameter_mm": 1.6,
+  "mask_expansion_mm": 0.05,
+  "landing_clearance_mm": [
+    10.5,
+    13
+  ],
+  "pads": [
+    {
+      "number": 1,
+      "signal": "GND",
+      "x_mm": -3.81,
+      "y_mm": 5.08,
+      "dut_endpoint": [
+        "usbc",
+        "A1B12"
+      ]
+    },
+    {
+      "number": 2,
+      "signal": "GND",
+      "x_mm": -1.27,
+      "y_mm": 5.08,
+      "dut_endpoint": [
+        "usbc",
+        "A1B12"
+      ]
+    },
+    {
+      "number": 3,
+      "signal": "GND",
+      "x_mm": 1.27,
+      "y_mm": 5.08,
+      "dut_endpoint": [
+        "usbc",
+        "A1B12"
+      ]
+    },
+    {
+      "number": 4,
+      "signal": "GND",
+      "x_mm": 3.81,
+      "y_mm": 5.08,
+      "dut_endpoint": [
+        "usbc",
+        "A1B12"
+      ]
+    },
+    {
+      "number": 5,
+      "signal": "5V_SENSE",
+      "x_mm": -3.81,
+      "y_mm": 2.54,
+      "dut_endpoint": [
+        "buck",
+        "1"
+      ]
+    },
+    {
+      "number": 6,
+      "signal": "3V3_SENSE",
+      "x_mm": -1.27,
+      "y_mm": 2.54,
+      "dut_endpoint": [
+        "esp",
+        "2"
+      ]
+    },
+    {
+      "number": 7,
+      "signal": "CH0_FAULT_N",
+      "x_mm": 1.27,
+      "y_mm": 2.54,
+      "dut_endpoint": [
+        "led0.load_sw",
+        "3"
+      ]
+    },
+    {
+      "number": 8,
+      "signal": "CH1_FAULT_N",
+      "x_mm": 3.81,
+      "y_mm": 2.54,
+      "dut_endpoint": [
+        "led1.load_sw",
+        "3"
+      ]
+    },
+    {
+      "number": 9,
+      "signal": "CH0_5V_SENSE",
+      "x_mm": -3.81,
+      "y_mm": 0.0,
+      "dut_endpoint": [
+        "led0.conn",
+        "1"
+      ]
+    },
+    {
+      "number": 10,
+      "signal": "CH1_5V_SENSE",
+      "x_mm": -1.27,
+      "y_mm": 0.0,
+      "dut_endpoint": [
+        "led1.conn",
+        "1"
+      ]
+    },
+    {
+      "number": 11,
+      "signal": "CH0_DATA_3V3",
+      "x_mm": 1.27,
+      "y_mm": 0.0,
+      "dut_endpoint": [
+        "esp",
+        "8"
+      ]
+    },
+    {
+      "number": 12,
+      "signal": "CH1_DATA_3V3",
+      "x_mm": 3.81,
+      "y_mm": 0.0,
+      "dut_endpoint": [
+        "esp",
+        "9"
+      ]
+    },
+    {
+      "number": 13,
+      "signal": "I2C_SDA",
+      "x_mm": -3.81,
+      "y_mm": -2.54,
+      "dut_endpoint": [
+        "mpu",
+        "14"
+      ]
+    },
+    {
+      "number": 14,
+      "signal": "I2C_SCL",
+      "x_mm": -1.27,
+      "y_mm": -2.54,
+      "dut_endpoint": [
+        "mpu",
+        "13"
+      ]
+    },
+    {
+      "number": 15,
+      "signal": "RESET_N",
+      "x_mm": 1.27,
+      "y_mm": -2.54,
+      "dut_endpoint": [
+        "esp",
+        "3"
+      ]
+    },
+    {
+      "number": 16,
+      "signal": "BOOT_N",
+      "x_mm": 3.81,
+      "y_mm": -2.54,
+      "dut_endpoint": [
+        "esp",
+        "15"
+      ]
+    },
+    {
+      "number": 17,
+      "signal": "USER1_N",
+      "x_mm": -3.81,
+      "y_mm": -5.08,
+      "dut_endpoint": [
+        "esp",
+        "20"
+      ]
+    },
+    {
+      "number": 18,
+      "signal": "USER2_N",
+      "x_mm": -1.27,
+      "y_mm": -5.08,
+      "dut_endpoint": [
+        "esp",
+        "21"
+      ]
+    },
+    {
+      "number": 19,
+      "signal": "UART_TX_DUT",
+      "x_mm": 1.27,
+      "y_mm": -5.08,
+      "dut_endpoint": [
+        "esp",
+        "25"
+      ]
+    },
+    {
+      "number": 20,
+      "signal": "UART_RX_DUT",
+      "x_mm": 3.81,
+      "y_mm": -5.08,
+      "dut_endpoint": [
+        "esp",
+        "24"
+      ]
+    }
+  ]
+}

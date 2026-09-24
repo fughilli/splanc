@@ -1,0 +1,24 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPD2S300YFFR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2650411", date="2026-09-09T18:57:10.383992+00:00", checksum="ac81900632ef5cfdf4c96fe7753f2335fc913fa7baedcd0031f8afb120915d9f">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPD2S300YFFR", footprint="DSBGA-9_L1.4-W1.3-R3-C3-P0.40-BL.kicad_mod", symbol="TPD2S300YFFR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2650411", manufacturer="Texas Instruments", partno="TPD2S300YFFR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal CC1 ~ pin B1
+    signal CC2 ~ pin B3
+    signal C_CC1 ~ pin A1
+    signal C_CC2 ~ pin A3
+    signal GND ~ pin B2
+    signal VBIAS ~ pin A2
+    signal VM ~ pin C3
+    signal VPWR ~ pin C2
+    signal nFLT ~ pin C1

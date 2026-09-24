@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Samsung_CL05B473KO5NNNC_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C307434", date="2026-09-09T18:14:09.834372+00:00", checksum="3f9aab212270eeb4a35e9b9c23a06063c41e0038d61ffc1a39adce26564320ca">
+
+    trait is_atomic_part<manufacturer="Samsung", partnumber="CL05B473KO5NNNC", footprint="C0402.kicad_mod", symbol="CL05B473KO5NNNC.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C307434", manufacturer="Samsung", partno="CL05B473KO5NNNC">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 1
+    pin 2
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

@@ -1,0 +1,20 @@
+{
+  "nets": [
+    "CC1"
+  ],
+  "source_pad": "U18.12",
+  "target_pad": "U19.28",
+  "bounds": [
+    40,
+    60,
+    61,
+    81
+  ],
+  "pitch": 0.1,
+  "max_expansions": 100000,
+  "max_orders": 1,
+  "max_seconds": 30,
+  "layers": true,
+  "preserve_copper": true,
+  "joint": true
+}

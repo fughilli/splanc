@@ -15,7 +15,12 @@
 // LED_DATA_PIN / LED_DATA_PIN_2 (and the rest of the board pin map), so the
 // #ifndef defaults below don't apply. With no board define, the default DevKit/
 // SuperMini wiring stands and existing targets are unaffected.
-#ifdef LM_BOARD_SPLANC_DEV
+#if defined(LM_BOARD_SPLANC_DEV) && defined(LM_BOARD_SPLANC_MINI)
+#error "Select exactly one Splanc board"
+#endif
+#ifdef LM_BOARD_SPLANC_MINI
+#include "firmware/player_app/boards/splanc_mini.h"
+#elif defined(LM_BOARD_SPLANC_DEV)
 #include "firmware/player_app/boards/splanc_dev.h"
 #endif
 

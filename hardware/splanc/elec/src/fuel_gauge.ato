@@ -1,0 +1,85 @@
+import ElectricPower
+from "parts/Texas_Instruments_BQ34Z100PWR_G1/Texas_Instruments_BQ34Z100PWR_G1.ato" import Texas_Instruments_BQ34Z100PWR_G1_package
+from "parts/Texas_Instruments_TPS70933DBVR/Texas_Instruments_TPS70933DBVR.ato" import Texas_Instruments_TPS70933DBVR_package
+from "parts/YAGEO_RT0603BRD07200KL/YAGEO_RT0603BRD07200KL.ato" import YAGEO_RT0603BRD07200KL_package
+from "parts/YAGEO_RT0603BRD0720KL/YAGEO_RT0603BRD0720KL.ato" import YAGEO_RT0603BRD0720KL_package
+from "parts/JST_B2B_PH_K_S_LF__SN/JST_B2B_PH_K_S_LF__SN.ato" import JST_B2B_PH_K_S_LF__SN_package
+from "passives.ato" import C100n
+from "passives.ato" import C1u
+from "passives.ato" import C4u7
+from "passives.ato" import R10
+from "passives.ato" import RshuntGauge
+
+module FuelGauge:
+    """BQ34Z100-G1, common hardware for factory 1S/2S and 1P/2P/3P.
+    Factory provision VOLTSEL=1, divider=11000 nominal, cell count and chemistry;
+    calibrate voltage/current/temperature and complete a learning cycle per pack.
+    200k/20k 0.1% divider is always connected (19–38uA on a charged pack).
+    Separate pack-mounted 103AT thermistor required: do not share charger TS.
+    This circuit is a gauge, not the pack's protection/balancing circuit.
+    """
+    pack = new ElectricPower
+    signal system_ground
+    signal sda
+    signal scl
+    # Only this 5 mOhm shunt joins pack negative to the main board ground.
+    shunt_a = new RshuntGauge
+    shunt_a.p1 ~ pack.lv
+    shunt_a.p2 ~ system_ground
+    ic = new Texas_Instruments_BQ34Z100PWR_G1_package
+    ic.VSS ~ pack.lv
+    ic.P1 ~ pack.lv
+    ic.P2 ~ pack.lv
+    ic.P5_HDQ ~ pack.lv
+    # VEN is unused because the divider is always connected.
+    ic.P3_SDA ~ sda
+    ic.P4_SCL ~ scl
+    supply = new Texas_Instruments_TPS70933DBVR_package
+    supply.IN ~ pack.hv
+    supply.GND ~ pack.lv
+    # EN left floating: internal current source enables TPS709; EN must not tie VIN.
+    supply.OUT ~ ic.REGIN
+    supply.OUT ~ ic.CE
+    supply_in = new C1u
+    supply_in.p1 ~ pack.hv
+    supply_in.p2 ~ pack.lv
+    supply_out = new C4u7
+    supply_out.p1 ~ supply.OUT
+    supply_out.p2 ~ pack.lv
+    regin_dec = new C100n
+    regin_dec.p1 ~ ic.REGIN
+    regin_dec.p2 ~ pack.lv
+    reg25_dec = new C1u
+    reg25_dec.p1 ~ ic.REG25
+    reg25_dec.p2 ~ pack.lv
+    divider_top = new YAGEO_RT0603BRD07200KL_package
+    divider_bottom = new YAGEO_RT0603BRD0720KL_package
+    divider_top.p1 ~ pack.hv
+    divider_top.p2 ~ ic.BAT
+    divider_bottom.p1 ~ ic.BAT
+    divider_bottom.p2 ~ pack.lv
+    voltage_filter = new C100n
+    voltage_filter.p1 ~ ic.BAT
+    voltage_filter.p2 ~ pack.lv
+    # Kelvin routes from the shunt pads, then symmetric 100 ohm / 100n filtering.
+    srp_r = new R10
+    srn_r = new R10
+    srp_r.p1 ~ pack.lv
+    srp_r.p2 ~ ic.SRP
+    srn_r.p1 ~ system_ground
+    srn_r.p2 ~ ic.SRN
+    differential_filter = new C100n
+    differential_filter.p1 ~ ic.SRP
+    differential_filter.p2 ~ ic.SRN
+    srp_filter = new C100n
+    srp_filter.p1 ~ ic.SRP
+    srp_filter.p2 ~ pack.lv
+    srn_filter = new C100n
+    srn_filter.p1 ~ ic.SRN
+    srn_filter.p2 ~ pack.lv
+    thermistor = new JST_B2B_PH_K_S_LF__SN_package
+    thermistor.p1 ~ ic.REG25
+    thermistor.p2 ~ ic.P6_TS
+    temperature_filter = new C100n
+    temperature_filter.p1 ~ ic.P6_TS
+    temperature_filter.p2 ~ pack.lv

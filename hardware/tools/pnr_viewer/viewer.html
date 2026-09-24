@@ -1,0 +1,77 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc Mini · PnR rounds</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#10151e;color:#e7edf7;font:14px system-ui}header{height:72px;padding:14px 24px;border-bottom:1px solid #303849;display:flex;align-items:center;justify-content:space-between}h1{font-size:19px;margin:0 0 4px}small,.muted{color:#9caec4}main{display:flex;height:calc(100vh - 72px)}aside{width:285px;flex-shrink:0;overflow:auto;padding:18px;border-right:1px solid #303849}section{margin-bottom:22px}h2{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:#9caec4;margin:0 0 10px}button,select,input[type=text]{background:#242f40;color:#e7edf7;border:1px solid #465570;border-radius:6px;padding:7px;cursor:pointer}button:hover{background:#384862}label{display:block;margin:8px 0;cursor:pointer}input[type=checkbox]{accent-color:#45c6b2;margin-right:8px}input[type=range]{width:100%;accent-color:#45c6b2}.row{display:flex;gap:7px;align-items:center}.row select{flex:1}#stage{position:relative;flex:1;min-width:0;background:#fafbfc}canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}#tip{position:absolute;bottom:14px;left:18px;background:#10151ee8;padding:10px 14px;border-radius:7px;pointer-events:none;max-width:80%;font-size:12px}#stats{line-height:1.8;margin-top:10px}#layers label{display:flex;align-items:center;font-size:12px;margin:5px 0}.swatch{width:8px;height:8px;border-radius:50%;margin-right:8px}.notice{font-size:11px;line-height:1.5;color:#aab7ca}kbd{border:1px solid #59677a;border-radius:3px;padding:1px 4px}#fit{position:absolute;right:16px;top:16px}summary{cursor:pointer;color:#9caec4;font-size:12px}
+</style>
+<header><div><h1>Splanc Mini / PnR rounds</h1><small>__EXPERIMENT__ · native KiCad geometry · top view, unmirrored</small></div><span class="muted">Experimental · incomplete routing</span></header>
+<main><aside><section><h2>Convergence</h2><div id="convergence" class="notice"></div><svg id="trend" viewBox="0 0 240 80" role="img" aria-label="Native opens and best-so-far convergence" style="width:100%;height:80px"></svg><h2>Iteration</h2><div class="row"><button id="prev" aria-label="Previous round">←</button><select id="round" aria-label="Round"></select><button id="next" aria-label="Next round">→</button></div><input id="slider" aria-label="Round slider" type="range" min="0" step="1"><label>Candidate batch <select id="variant" aria-label="Candidate batch"></select></label><label>Phase <select id="phase" aria-label="Phase"></select></label><div id="stats"></div><pre id="phase-notes" class="notice" style="white-space:pre-wrap"></pre></section>
+<section><h2>Comparison & connectivity</h2><label><input id="added" type="checkbox">Highlight added tracks <span style="color:#d7279f">●</span></label><label><input id="air" type="checkbox">Air wires <span style="color:#b17900">●</span></label><p class="notice">Added geometry is compared with the preceding phase of this candidate in native board coordinates. Moved routes count as new; splitting or reversing a segment does not. The first phase is the baseline.</p><p class="notice">Air wires are native DRC missing-connection links between reported item positions, not exact nearest-point ratsnest geometry. All layers are included.</p></section>
+<section><h2>Annotations</h2><label><input id="parts" type="checkbox" checked>Part references</label><label><input id="pads" type="checkbox">Pad indices</label><label><input id="nets" type="checkbox">Trace net names</label><input id="search" type="text" placeholder="Find part, e.g. U18" aria-label="Find part"><button id="find">Go</button></section>
+<section><h2>Layers</h2><div class="row"><button id="copper">Copper</button><button id="none">None</button><button id="all">All</button></div><label class="notice">Layer opacity <input id="opacity" type="range" min="0.1" max="1" value="0.85" step="0.05"></label><div id="layers"></div></section><details><summary>Checkpoint provenance</summary><p id="provenance" class="notice" style="overflow-wrap:anywhere"></p></details></aside>
+<div id="stage"><canvas id="canvas" aria-label="Interactive PCB layers"></canvas><button id="fit">Fit board</button><div id="tip">Scroll to zoom · drag to pan · ← / → rounds · hover tracks for net names</div></div></main>
+<script>
+const rounds=/*__DATA__*/;
+const searchSummary=/*__SEARCH__*/;
+window.addEventListener("DOMContentLoaded",drawConvergence);
+
+const $=id=>document.getElementById(id), canvas=$('canvas'),ctx=canvas.getContext('2d');
+let phaseIndex=0,variantIndex=0,index=0,scale=8,ox=0,oy=0,drag=null,cache=new Map(),selected=new Set(['F.Cu','Edge.Cuts']),pending=false;
+const palette={'F.Cu':'#db4343','In1.Cu':'#c2a331','In2.Cu':'#6bb97a','B.Cu':'#527bdb','Edge.Cuts':'#c5c5c5'};
+const layers=[...new Set(rounds.flatMap(r=>r.layers))].sort((a,b)=>{let p=['F.Cu','In1.Cu','In2.Cu','B.Cu','Edge.Cuts'];return (p.indexOf(a)<0?99:p.indexOf(a))-(p.indexOf(b)<0?99:p.indexOf(b))||a.localeCompare(b)});
+rounds.forEach((r,i)=>$('round').add(new Option(r.name,i)));$('slider').max=rounds.length-1;
+for(const layer of layers){let label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.checked=selected.has(layer);input.dataset.layer=layer;input.onchange=()=>{input.checked?selected.add(layer):selected.delete(layer);render()};label.append(input);let dot=document.createElement('span');dot.className='swatch';dot.style.background=palette[layer]||'#aaa';label.append(dot,document.createTextNode(layer));$('layers').append(label)}
+function current(){let v=rounds[index].variants[variantIndex];return v.phases[Math.min(phaseIndex,v.phases.length-1)]}
+function imageFor(layer){let key=index+':'+variantIndex+':'+phaseIndex+':'+layer;if(!cache.has(key)){let im=new Image();im.onload=render;im.onerror=()=>{$('tip').textContent='Layer image failed: '+layer};im.src=current().images[layer].url;cache.set(key,im)}return cache.get(key)}
+function line(a,b,color,width){ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
+function label(text,p,color,size=0.6){ctx.font=`${size}px system-ui`;ctx.lineWidth=0.12;ctx.strokeStyle='#ffffffdf';ctx.strokeText(text,...p);ctx.fillStyle=color;ctx.fillText(text,...p)}
+function render(){if(pending)return;pending=true;requestAnimationFrame(()=>{pending=false;const r=current(),dpr=devicePixelRatio||1,w=canvas.clientWidth,h=canvas.clientHeight;if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr)}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);ctx.translate(ox,oy);ctx.scale(scale,scale);
+for(const layer of layers.filter(l=>selected.has(l)&&r.images[l])){let im=imageFor(layer),v=r.images[layer].viewBox;if(im.complete&&im.naturalWidth){ctx.globalAlpha=+$('opacity').value;ctx.drawImage(im,...v)} }ctx.globalAlpha=1;
+if($('added').checked)for(const t of r.added)if(selected.has(t.layer))line(t.start,t.end,'#ec00a1',Math.max(t.width,2/scale));
+if($('air').checked) {ctx.setLineDash([3/scale,3/scale]);for(const a of r.airwires)for(let i=1;i<a.points.length;i++)line(a.points[0],a.points[i],'#aa7000',1.1/scale);ctx.setLineDash([])}
+if($('nets').checked){const occupied=new Set();for(const t of r.tracks){if(!selected.has(t.layer))continue;const p=t.start.map((v,i)=>(v+t.end[i])/2),key=t.net+':'+Math.round(p[0]/3)+':'+Math.round(p[1]/3);if(occupied.has(key))continue;occupied.add(key);label(t.net,p,'#724313',Math.max(.32,8/scale))}}
+for(const f of r.parts){if($('parts').checked)label(f.ref,[f.xy[0]+.35,f.xy[1]-.35],'#1254a2',Math.max(.55,10/scale));if($('pads').checked)for(const p of f.pads)if(p.layers.some(l=>selected.has(l)))label(p.number,p.xy,'#773c9c',Math.max(.28,8/scale))}
+let variant=rounds[index].variants[variantIndex];
+if(phaseIndex===variant.phases.length){
+ for(const t of rounds[index].feedback.targets||[]){line(t.source_xy,t.target_xy,'#d56e00',2/scale);label(t.mode,t.source_xy,'#934600',.7)}
+}
+if(phaseIndex===variant.phases.length+1){
+ const origin=r.engine_origin; const xy=p=>[origin[0]+p[0],origin[1]-p[1]];
+ for(const probe of rounds[index].decision.probes||[]){
+  for(const c of probe.shortlist||[]){const p=xy(c.position);ctx.beginPath();ctx.arc(...p,.65,0,Math.PI*2);ctx.strokeStyle='#9b35ba';ctx.lineWidth=1.5/scale;ctx.stroke();label(`${probe.ref}: ${c.cost.toFixed(1)}`,p,'#783394',.65)}
+ }
+ for(const move of rounds[index].search.alternatives?.[variantIndex]?.moves||rounds[index].search.local_feedback_move?.moves||[])line(xy(move.original),xy(move.position),'#00a394',3/scale);
+}
+});}
+function fit(){let b=rounds.flatMap(r=>[r.bounds]),x0=Math.min(...b.map(v=>v[0])),y0=Math.min(...b.map(v=>v[1])),x1=Math.max(...b.map(v=>v[2])),y1=Math.max(...b.map(v=>v[3]));scale=Math.min(canvas.clientWidth/(x1-x0+8),canvas.clientHeight/(y1-y0+8));ox=canvas.clientWidth/2-(x0+x1)/2*scale;oy=canvas.clientHeight/2-(y0+y1)/2*scale;render()}
+function drawConvergence(){
+ $('convergence').textContent=searchSummary.plateau_observed?`Observed plateau · ${searchSummary.completed_rounds} rounds · seed ${searchSummary.seed}. Six cold trials without a new best; not proof of a global optimum.`:'Incomplete search — not a convergence result.';
+ const values=rounds.map(r=>r.opens),lo=Math.min(...values)-1,hi=Math.max(...values)+1;
+ function line(vals,color){let e=document.createElementNS('http://www.w3.org/2000/svg','polyline');e.setAttribute('points',vals.map((v,i)=>`${5+i*230/Math.max(1,vals.length-1)},${75-70*(v-lo)/(hi-lo)}`).join(' '));e.setAttribute('stroke',color);e.setAttribute('fill','none');e.setAttribute('stroke-width','2');$('trend').append(e)}
+ line(values,'#ad82dc');line(rounds.map(r=>r.search.best_native_opens??r.opens),'#45c6b2');
+}
+function phaseChange(){
+ phaseIndex=+$('phase').value;let r=current(),iteration=rounds[index],v=iteration.variants[variantIndex];
+ $('added').disabled=phaseIndex===0;$('stats').textContent=`${r.opens} native opens · ${r.violations} violations`;
+ $('provenance').textContent=r.source+' SHA256 '+r.sha256;
+ let choice=iteration.search.alternatives?.[variantIndex];
+ $('phase-notes').textContent=phaseIndex===v.phases.length?`Feedback after all electrical phases. Each line is a remaining ${'native'} connection, labeled by routing mode.`:phaseIndex===v.phases.length+1?`Held out together: ${(iteration.decision.held_out||[]).join(', ')}. Purple: probed shortlist positions and costs. Green: selected batch moves. ${iteration.decision.combinatorial_space||0} combinations; ${iteration.decision.legal_configurations||0} legal.`:`Candidate ${variantIndex+1}${variantIndex===iteration.selected_alternative?' (selected)':''}. Final objective: ${JSON.stringify(choice?.objective||iteration.search.objective)}. Temperature ${iteration.search.temperature??'n/a'}. Iteration ${iteration.search.accepted?'accepted':'rejected'}.`;
+ render();
+}
+function variantChange(){
+ variantIndex=+$('variant').value;let v=rounds[index].variants[variantIndex];$('phase').replaceChildren();
+ v.phases.forEach((p,i)=>$('phase').add(new Option(p.name,i)));
+ $('phase').add(new Option('Placement feedback (all electrical modes)',v.phases.length));$('phase').add(new Option('Placement choices and batch moves',v.phases.length+1));
+ phaseIndex=Math.min(phaseIndex,v.phases.length+1);$('phase').value=phaseIndex;phaseChange();
+}
+function change(i){index=Math.max(0,Math.min(rounds.length-1,+i));let r=rounds[index];$('round').value=index;$('slider').value=index;$('prev').disabled=index===0;$('next').disabled=index===rounds.length-1;
+ $('variant').replaceChildren();r.variants.forEach((v,j)=>$('variant').add(new Option(v.name+(j===r.selected_alternative?' · selected':''),j)));$('variant').value=r.selected_alternative;variantChange();}
+$('phase').onchange=phaseChange;$('variant').onchange=variantChange;
+$('round').onchange=e=>change(e.target.value);$('slider').oninput=e=>change(e.target.value);$('prev').onclick=()=>change(index-1);$('next').onclick=()=>change(index+1);$('fit').onclick=fit;
+for(const id of ['added','air','parts','pads','nets','opacity'])$(id).oninput=render;
+function selectLayers(test){selected=new Set(layers.filter(test));document.querySelectorAll('[data-layer]').forEach(i=>i.checked=selected.has(i.dataset.layer));render()}
+$('copper').onclick=()=>selectLayers(l=>l.endsWith('.Cu')||l==='Edge.Cuts');$('none').onclick=()=>selectLayers(()=>false);$('all').onclick=()=>selectLayers(()=>true);
+$('find').onclick=()=>{let f=current().parts.find(p=>p.ref.toLowerCase()===$('search').value.trim().toLowerCase());if(!f){$('tip').textContent='Part not found in this round';return}scale=45;ox=canvas.clientWidth/2-f.xy[0]*scale;oy=canvas.clientHeight/2-f.xy[1]*scale;$('tip').textContent='Focused on '+f.ref;render()};$('search').onkeydown=e=>{if(e.key==='Enter')$('find').click()};
+canvas.onwheel=e=>{e.preventDefault();let rect=canvas.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,k=Math.exp(-e.deltaY*.001);let next=Math.max(2,Math.min(250,scale*k));k=next/scale;ox=x-(x-ox)*k;oy=y-(y-oy)*k;scale=next;render()};
+canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);drag=[e.clientX,e.clientY,ox,oy]};canvas.onpointerup=()=>drag=null;canvas.onpointercancel=()=>drag=null;
+canvas.onpointermove=e=>{if(drag){ox=drag[2]+e.clientX-drag[0];oy=drag[3]+e.clientY-drag[1];render();return}let rect=canvas.getBoundingClientRect(),p=[(e.clientX-rect.left-ox)/scale,(e.clientY-rect.top-oy)/scale],best=null,dist=1/scale*8;for(const t of current().tracks){if(!selected.has(t.layer))continue;let a=t.start,b=t.end,dx=b[0]-a[0],dy=b[1]-a[1],u=Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy||1))),d=Math.hypot(p[0]-a[0]-u*dx,p[1]-a[1]-u*dy);if(d<dist){best=t;dist=d}}$('tip').textContent=best?`${best.net} · ${best.layer} · ${best.width} mm`:'Scroll to zoom · drag to pan · ← / → rounds · hover tracks for net names'};
+document.onkeydown=e=>{if(['INPUT','SELECT'].includes(e.target.tagName))return;if(e.key==='ArrowLeft')change(index-1);if(e.key==='ArrowRight')change(index+1);if(e.key==='f')fit()};window.onresize=render;change(0);fit();
+</script></html>

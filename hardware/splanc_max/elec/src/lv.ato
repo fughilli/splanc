@@ -1,0 +1,434 @@
+from "parts/C_100nF/C_100nF.ato" import C_100nF
+from "parts/C_100nF16V/C_100nF16V.ato" import C_100nF16V
+from "parts/C_10uF10V/C_10uF10V.ato" import C_10uF10V
+from "parts/C_18pF/C_18pF.ato" import C_18pF
+from "parts/FLASH/FLASH.ato" import FLASH
+from "parts/FPGA/FPGA.ato" import FPGA
+from "parts/FTDI/FTDI.ato" import FTDI
+from "parts/LDO/LDO.ato" import LDO
+from "parts/LDO12/LDO12.ato" import LDO12
+from "parts/LDO18/LDO18.ato" import LDO18
+from "parts/OSC/OSC.ato" import OSC
+from "parts/PI/PI.ato" import PI
+from "parts/RIBBON/RIBBON.ato" import RIBBON
+from "parts/R_10k/R_10k.ato" import R_10k
+from "parts/R_12k1/R_12k1.ato" import R_12k1
+from "parts/R_5_1k/R_5_1k.ato" import R_5_1k
+from "parts/SHIFT4/SHIFT4.ato" import SHIFT4
+from "parts/USB/USB.ato" import USB
+from "parts/XTAL/XTAL.ato" import XTAL
+
+module SplancMaxLV:
+    signal BANK1V8
+    signal CC1
+    signal CC2
+    signal CLK27
+    signal CORE1V2
+    signal DATA0
+    signal DATA1
+    signal DATA10
+    signal DATA11
+    signal DATA12
+    signal DATA13
+    signal DATA14
+    signal DATA15
+    signal DATA16
+    signal DATA17
+    signal DATA18
+    signal DATA19
+    signal DATA2
+    signal DATA3
+    signal DATA4
+    signal DATA5
+    signal DATA6
+    signal DATA7
+    signal DATA8
+    signal DATA9
+    signal DGND
+    signal FT_CORE
+    signal FT_RESET
+    signal FT_TCK
+    signal FT_TDI
+    signal FT_TDO
+    signal FT_TMS
+    signal F_CLK
+    signal F_CS
+    signal F_MISO
+    signal F_MOSI
+    signal JTAGSEL
+    signal JTAG_TCK
+    signal JTAG_TDI
+    signal JTAG_TDO
+    signal JTAG_TMS
+    signal LV3V3
+    signal MODE0
+    signal MODE1
+    signal PI_5V
+    signal PI_CS
+    signal PI_IRQ
+    signal PI_MISO
+    signal PI_MOSI
+    signal PI_SCLK
+    signal P_CS0
+    signal P_CS1
+    signal P_LATCH
+    signal P_MISO
+    signal P_MOSI
+    signal P_SCLK
+    signal RECONFIG
+    signal REFRES
+    signal SAFE_ENABLE
+    signal UART_RX
+    signal UART_TX
+    signal USB_DETECT
+    signal USB_DM
+    signal USB_DP
+    signal USB_VBUS
+    signal XTAL_IN
+    signal XTAL_OUT
+    J1 = new PI
+    J1.p2 ~ PI_5V
+    J1.p4 ~ PI_5V
+    J1.p6 ~ DGND
+    J1.p9 ~ DGND
+    J1.p14 ~ DGND
+    J1.p20 ~ DGND
+    J1.p25 ~ DGND
+    J1.p30 ~ DGND
+    J1.p34 ~ DGND
+    J1.p39 ~ DGND
+    J1.p19 ~ PI_MOSI
+    J1.p21 ~ PI_MISO
+    J1.p23 ~ PI_SCLK
+    J1.p24 ~ PI_CS
+    J1.p18 ~ PI_IRQ
+    J2 = new USB
+    J2.pA1 ~ DGND
+    J2.pB1 ~ DGND
+    J2.pA12 ~ DGND
+    J2.pB12 ~ DGND
+    J2.pA4 ~ USB_VBUS
+    J2.pB4 ~ USB_VBUS
+    J2.pA9 ~ USB_VBUS
+    J2.pB9 ~ USB_VBUS
+    J2.pA6 ~ USB_DP
+    J2.pB6 ~ USB_DP
+    J2.pA7 ~ USB_DM
+    J2.pB7 ~ USB_DM
+    J2.pA5 ~ CC1
+    J2.pB5 ~ CC2
+    J2.pSH ~ DGND
+    R1 = new R_5_1k
+    R1.p1 ~ CC1
+    R1.p2 ~ DGND
+    R2 = new R_5_1k
+    R2.p1 ~ CC2
+    R2.p2 ~ DGND
+    J3 = new RIBBON
+    J3.p1 ~ DATA0
+    J3.p2 ~ DGND
+    J3.p3 ~ DATA1
+    J3.p4 ~ DGND
+    J3.p5 ~ DATA2
+    J3.p6 ~ DGND
+    J3.p7 ~ DATA3
+    J3.p8 ~ DGND
+    J3.p9 ~ DATA4
+    J3.p10 ~ DGND
+    J3.p11 ~ DATA5
+    J3.p12 ~ DGND
+    J3.p13 ~ DATA6
+    J3.p14 ~ DGND
+    J3.p15 ~ DATA7
+    J3.p16 ~ DGND
+    J3.p17 ~ DATA8
+    J3.p18 ~ DGND
+    J3.p19 ~ DATA9
+    J3.p20 ~ DGND
+    J3.p21 ~ DATA10
+    J3.p22 ~ DGND
+    J3.p23 ~ DATA11
+    J3.p24 ~ DGND
+    J3.p25 ~ DATA12
+    J3.p26 ~ DGND
+    J3.p27 ~ DATA13
+    J3.p28 ~ DGND
+    J3.p29 ~ DATA14
+    J3.p30 ~ DGND
+    J3.p31 ~ DATA15
+    J3.p32 ~ DGND
+    J3.p33 ~ DATA16
+    J3.p34 ~ DGND
+    J3.p35 ~ DATA17
+    J3.p36 ~ DGND
+    J3.p37 ~ DATA18
+    J3.p38 ~ DGND
+    J3.p39 ~ DATA19
+    J3.p40 ~ DGND
+    J3.p41 ~ P_SCLK
+    J3.p42 ~ P_MOSI
+    J3.p43 ~ P_LATCH
+    J3.p44 ~ P_CS0
+    J3.p45 ~ P_CS1
+    J3.p46 ~ P_MISO
+    J3.p47 ~ LV3V3
+    J3.p48 ~ DGND
+    J3.p49 ~ SAFE_ENABLE
+    J3.p50 ~ DGND
+    U1 = new FPGA
+    U1.p1 ~ CORE1V2
+    U1.p22 ~ CORE1V2
+    U1.p45 ~ CORE1V2
+    U1.p66 ~ CORE1V2
+    U1.p2 ~ DGND
+    U1.p21 ~ DGND
+    U1.p24 ~ DGND
+    U1.p43 ~ DGND
+    U1.p46 ~ DGND
+    U1.p65 ~ DGND
+    U1.p89 ~ DGND
+    U1.p23 ~ LV3V3
+    U1.p44 ~ LV3V3
+    U1.p58 ~ LV3V3
+    U1.p64 ~ LV3V3
+    U1.p67 ~ LV3V3
+    U1.p78 ~ LV3V3
+    U1.p12 ~ BANK1V8
+    U1.p25 ~ DATA0
+    U1.p26 ~ DATA1
+    U1.p27 ~ DATA2
+    U1.p28 ~ DATA3
+    U1.p29 ~ DATA4
+    U1.p30 ~ DATA5
+    U1.p31 ~ DATA6
+    U1.p32 ~ DATA7
+    U1.p33 ~ DATA8
+    U1.p34 ~ DATA9
+    U1.p35 ~ DATA10
+    U1.p36 ~ DATA11
+    U1.p37 ~ DATA12
+    U1.p38 ~ DATA13
+    U1.p39 ~ DATA14
+    U1.p40 ~ DATA15
+    U1.p41 ~ DATA16
+    U1.p42 ~ DATA17
+    U1.p47 ~ DATA18
+    U1.p48 ~ DATA19
+    U1.p49 ~ PI_MOSI
+    U1.p50 ~ PI_MISO
+    U1.p51 ~ PI_SCLK
+    U1.p53 ~ PI_CS
+    U1.p54 ~ PI_IRQ
+    U1.p68 ~ P_SCLK
+    U1.p69 ~ P_MOSI
+    U1.p70 ~ P_LATCH
+    U1.p71 ~ P_CS0
+    U1.p72 ~ P_CS1
+    U1.p73 ~ P_MISO
+    U1.p74 ~ SAFE_ENABLE
+    U1.p59 ~ F_CLK
+    U1.p60 ~ F_CS
+    U1.p61 ~ F_MOSI
+    U1.p62 ~ F_MISO
+    U1.p52 ~ CLK27
+    U1.p5 ~ JTAG_TMS
+    U1.p6 ~ JTAG_TCK
+    U1.p7 ~ JTAG_TDI
+    U1.p8 ~ JTAG_TDO
+    U1.p9 ~ RECONFIG
+    U1.p4 ~ JTAGSEL
+    U1.p87 ~ MODE1
+    U1.p88 ~ MODE0
+    U2 = new FLASH
+    U2.p1 ~ F_CS
+    U2.p2 ~ F_MISO
+    U2.p3 ~ LV3V3
+    U2.p4 ~ DGND
+    U2.p5 ~ F_MOSI
+    U2.p6 ~ F_CLK
+    U2.p7 ~ LV3V3
+    U2.p8 ~ LV3V3
+    R10 = new R_10k
+    R10.p1 ~ MODE0
+    R10.p2 ~ BANK1V8
+    R11 = new R_10k
+    R11.p1 ~ MODE1
+    R11.p2 ~ DGND
+    R12 = new R_10k
+    R12.p1 ~ JTAGSEL
+    R12.p2 ~ DGND
+    R13 = new R_10k
+    R13.p1 ~ RECONFIG
+    R13.p2 ~ BANK1V8
+    R14 = new R_10k
+    R14.p1 ~ F_CS
+    R14.p2 ~ LV3V3
+    Y1 = new OSC
+    Y1.p1 ~ LV3V3
+    Y1.p2 ~ DGND
+    Y1.p3 ~ CLK27
+    Y1.p4 ~ LV3V3
+    U3 = new FTDI
+    U3.p1 ~ DGND
+    U3.p5 ~ DGND
+    U3.p10 ~ DGND
+    U3.p11 ~ DGND
+    U3.p15 ~ DGND
+    U3.p25 ~ DGND
+    U3.p35 ~ DGND
+    U3.p47 ~ DGND
+    U3.p51 ~ DGND
+    U3.p4 ~ LV3V3
+    U3.p9 ~ LV3V3
+    U3.p20 ~ LV3V3
+    U3.p31 ~ LV3V3
+    U3.p42 ~ LV3V3
+    U3.p50 ~ LV3V3
+    U3.p56 ~ LV3V3
+    U3.p12 ~ FT_CORE
+    U3.p37 ~ FT_CORE
+    U3.p64 ~ FT_CORE
+    U3.p6 ~ REFRES
+    U3.p7 ~ USB_DM
+    U3.p8 ~ USB_DP
+    U3.p2 ~ XTAL_IN
+    U3.p3 ~ XTAL_OUT
+    U3.p13 ~ DGND
+    U3.p14 ~ FT_RESET
+    U3.p49 ~ FT_CORE
+    U3.p16 ~ FT_TCK
+    U3.p17 ~ FT_TDI
+    U3.p18 ~ FT_TDO
+    U3.p19 ~ FT_TMS
+    U3.p38 ~ UART_TX
+    U3.p39 ~ UART_RX
+    Y2 = new XTAL
+    Y2.p1 ~ XTAL_IN
+    Y2.p2 ~ XTAL_OUT
+    R22 = new R_10k
+    R22.p1 ~ LV3V3
+    R22.p2 ~ FT_RESET
+    C34 = new C_100nF
+    C34.p1 ~ FT_RESET
+    C34.p2 ~ DGND
+    C35 = new C_18pF
+    C35.p1 ~ XTAL_IN
+    C35.p2 ~ DGND
+    C36 = new C_18pF
+    C36.p1 ~ XTAL_OUT
+    C36.p2 ~ DGND
+    R20 = new R_12k1
+    R20.p1 ~ REFRES
+    R20.p2 ~ DGND
+    R21 = new R_10k
+    R21.p1 ~ USB_VBUS
+    R21.p2 ~ USB_DETECT
+    U4 = new SHIFT4
+    U4.p1 ~ LV3V3
+    U4.p2 ~ FT_TCK
+    U4.p3 ~ FT_TDI
+    U4.p4 ~ FT_TMS
+    U4.p5 ~ FT_TDO
+    U4.p7 ~ DGND
+    U4.p8 ~ LV3V3
+    U4.p10 ~ JTAG_TDO
+    U4.p11 ~ JTAG_TMS
+    U4.p12 ~ JTAG_TDI
+    U4.p13 ~ JTAG_TCK
+    U4.p14 ~ BANK1V8
+    U5 = new LDO
+    U5.p1 ~ PI_5V
+    U5.p2 ~ DGND
+    U5.p3 ~ PI_5V
+    U5.p5 ~ LV3V3
+    U6 = new LDO12
+    U6.p1 ~ LV3V3
+    U6.p2 ~ DGND
+    U6.p3 ~ LV3V3
+    U6.p5 ~ CORE1V2
+    U7 = new LDO18
+    U7.p1 ~ LV3V3
+    U7.p2 ~ DGND
+    U7.p3 ~ LV3V3
+    U7.p5 ~ BANK1V8
+    C1 = new C_100nF16V
+    C1.p1 ~ LV3V3
+    C1.p2 ~ DGND
+    C2 = new C_100nF16V
+    C2.p1 ~ LV3V3
+    C2.p2 ~ DGND
+    C3 = new C_100nF16V
+    C3.p1 ~ LV3V3
+    C3.p2 ~ DGND
+    C4 = new C_100nF16V
+    C4.p1 ~ LV3V3
+    C4.p2 ~ DGND
+    C5 = new C_100nF16V
+    C5.p1 ~ LV3V3
+    C5.p2 ~ DGND
+    C6 = new C_100nF16V
+    C6.p1 ~ LV3V3
+    C6.p2 ~ DGND
+    C7 = new C_100nF16V
+    C7.p1 ~ LV3V3
+    C7.p2 ~ DGND
+    C8 = new C_100nF16V
+    C8.p1 ~ LV3V3
+    C8.p2 ~ DGND
+    C9 = new C_100nF16V
+    C9.p1 ~ LV3V3
+    C9.p2 ~ DGND
+    C10 = new C_100nF16V
+    C10.p1 ~ CORE1V2
+    C10.p2 ~ DGND
+    C11 = new C_100nF16V
+    C11.p1 ~ CORE1V2
+    C11.p2 ~ DGND
+    C12 = new C_100nF16V
+    C12.p1 ~ CORE1V2
+    C12.p2 ~ DGND
+    C13 = new C_100nF16V
+    C13.p1 ~ CORE1V2
+    C13.p2 ~ DGND
+    C14 = new C_100nF16V
+    C14.p1 ~ CORE1V2
+    C14.p2 ~ DGND
+    C15 = new C_100nF16V
+    C15.p1 ~ CORE1V2
+    C15.p2 ~ DGND
+    C16 = new C_100nF16V
+    C16.p1 ~ CORE1V2
+    C16.p2 ~ DGND
+    C17 = new C_100nF16V
+    C17.p1 ~ CORE1V2
+    C17.p2 ~ DGND
+    C18 = new C_100nF16V
+    C18.p1 ~ CORE1V2
+    C18.p2 ~ DGND
+    C30 = new C_10uF10V
+    C30.p1 ~ LV3V3
+    C30.p2 ~ DGND
+    C31 = new C_10uF10V
+    C31.p1 ~ CORE1V2
+    C31.p2 ~ DGND
+    C32 = new C_10uF10V
+    C32.p1 ~ BANK1V8
+    C32.p2 ~ DGND
+    C33 = new C_10uF10V
+    C33.p1 ~ FT_CORE
+    C33.p2 ~ DGND
+    C40 = new C_100nF16V
+    C40.p1 ~ BANK1V8
+    C40.p2 ~ DGND
+    C41 = new C_100nF16V
+    C41.p1 ~ BANK1V8
+    C41.p2 ~ DGND
+    C42 = new C_100nF16V
+    C42.p1 ~ LV3V3
+    C42.p2 ~ DGND
+    C43 = new C_100nF16V
+    C43.p1 ~ LV3V3
+    C43.p2 ~ DGND
+    C44 = new C_100nF16V
+    C44.p1 ~ LV3V3
+    C44.p2 ~ DGND

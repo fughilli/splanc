@@ -1,0 +1,26 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component QST_QMC5883L_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C976032", date="2026-09-09T17:34:41.579777+00:00", checksum="18e37bb3b2d883024f71971eb93fcb691236437bd7e90141f8ae5d5b64227de2">
+
+    trait is_atomic_part<manufacturer="QST", partnumber="QMC5883L", footprint="LGA-16_L3.0-W3.0-P0.50-BL_SQ.kicad_mod", symbol="QMC5883L.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C976032", manufacturer="QST", partno="QMC5883L">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal C1 ~ pin 10
+    signal DRDY ~ pin 15
+    signal GND ~ pin 9
+    GND ~ pin 11
+    signal S1 ~ pin 4
+    signal SCL ~ pin 1
+    signal SDA ~ pin 16
+    signal SETC ~ pin 12
+    signal SETP ~ pin 8
+    signal VDD ~ pin 2
+    signal VDDIO ~ pin 13

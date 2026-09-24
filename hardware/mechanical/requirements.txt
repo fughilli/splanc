@@ -1,0 +1,5 @@
+cadquery==2.8.0
+trimesh==5.1.0
+pillow==12.3.0
+svgpathtools==1.8.0
+shapely==2.1.2

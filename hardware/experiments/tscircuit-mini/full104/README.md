@@ -1,0 +1,9 @@
+# Full104: repaired native feedback and independent refinement budget
+
+Run with `python3 /private/tmp/pnr-runtime.py hardware/experiments/tscircuit-mini/full104/run.py` from the repository root. Output directory must be new. Input baseline is relocate101 round02 placement, rebuilt through all electrical stages; this is not yet a fresh atopile production run. Four-component/four-location held-out batches, four sampled joint candidates, two independent evaluation workers. Fixed/relative/side/mount constraints remain enforced. Eight alternative batches may be tried if a particular holdout yields no joint candidates. Seed104; six warm iterations then six cold without improvement; caps48 rounds/48h are not plateau.
+
+Full103's generated MH footprints no longer enter the authored placement graph. Full103 saved native inventory regression now has137 entities, no placement hard violations,243 legal joint choices for seed104 and four samples. Physical keepouts persist. Main refinement's600s starts after prerequisites; prerequisite duration is recorded separately. Timer behavior has a deterministic regression; a full real-stage result remains pending until104 finishes its prerequisites.
+
+`PNR_LIVE_DIR` and isolated candidate/iteration environment identify events from each worker. The local viewer is http://127.0.0.1:8766; its server and snapshot format are described in hardware/tools/pnr_live/README.md. Native phase checkpoints, provisional net additions/removals, route trials, costs and joint configuration audits are emitted while the run executes. The PDF watcher is watch.py. All completed rounds still require image review.
+
+Frozen600 repository inputs: output/fresh-pnr-20260919/full104-source. Executed driver/runtime wrapper are archived under executed-tools. Original manual22 and protected fresh28 remain untouched. Electrical qualification/100% routing is not claimed.

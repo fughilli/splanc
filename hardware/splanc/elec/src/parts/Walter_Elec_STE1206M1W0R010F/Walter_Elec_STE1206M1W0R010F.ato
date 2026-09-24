@@ -1,0 +1,18 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Walter_Elec_STE1206M1W0R010F_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+
+    trait is_atomic_part<manufacturer="Walter Elec", partnumber="STE1206M1W0R010F", footprint="R1206.kicad_mod", symbol="STE1206M1W0R010F.kicad_sym", model="R1206_L3.2-W1.6-H0.6.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C201276", manufacturer="Walter Elec", partno="STE1206M1W0R010F">
+    trait has_designator_prefix<prefix="R">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/d69a625491d9454084fcedb1a8ae3e82.pdf?productCode=C201276">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

@@ -1,0 +1,320 @@
+{
+  "date": "2026-09-21",
+  "volume_per_product": 1000,
+  "currency": "USD",
+  "assumptions": [
+    "All costs planning estimates not purchase quotes",
+    "Taxes and separately charged shipping excluded from sale price",
+    "Component overage3percent added separately; not full warranty or yield qualification",
+    "Tooling fully amortized in first1000units of each main product; GNSS uses sameSplancshell",
+    "Grossmargin=(revenue-cost)/revenue; no markup confusion",
+    "Product completion allowances retained fromMAX model evenwhenunfitted",
+    "NoPi/storage/supplies/LEDstrips included",
+    "No customer outboundshipping, fulfillment labor, importduty, salescommission, complianceNRE orR&D allowance",
+    "8percent fee stress is illustrative notproviderquote"
+  ],
+  "new_parts": [
+    {
+      "part": "ESP32-P4NRW32X",
+      "price": 4.0479,
+      "tier": 1000,
+      "source": "https://www.lcsc.com/de/category/941.html?brand=877",
+      "note": "C54540373; 0stock; listed tier noallocation"
+    },
+    {
+      "part": "DWM3000TR13",
+      "price": 16.2125,
+      "tier": 500,
+      "source": "https://www.digikey.com/en/products/detail/qorvo/DWM3000TR13/24367320",
+      "note": "500reel price carried to1000; 2reels; 10388stock snapshot"
+    },
+    {
+      "part": "MAX-M10S-00B",
+      "price": 9.32826,
+      "tier": 500,
+      "source": "https://www.digikey.com/en/products/detail/u-blox/MAX-M10S-00B/15712909",
+      "note": "500reel; published500purchasecap requiresRFQ for1000"
+    },
+    {
+      "part": "P4flash/corebuck/crystal/support",
+      "price": 4,
+      "tier": null,
+      "source": "internal_engineering_allowance",
+      "note": "16MBflash$1 +power/crystal/support$3"
+    },
+    {
+      "part": "Taoglas AP.25F.07.0078A active antenna",
+      "price": 8.84762,
+      "tier": 600,
+      "source": "https://www.digikey.com/en/products/detail/taoglas-limited/AP-25F-07-0078A/2754153",
+      "note": "Selected physical antenna; 600 tier applies to 1000/1030 units; 1050 tier not used. Stock51 snapshot; 16 week lead; RFQ/allocation required."
+    },
+    {
+      "part": "GNSS U.FL/bias/protection",
+      "price": 1.2,
+      "tier": null,
+      "source": "internal_engineering_allowance",
+      "note": "Antenna priced separately at selected MPN."
+    }
+  ],
+  "products": {
+    "Mini": {
+      "cost_lines": [
+        {
+          "item": "components",
+          "low_mid_high": [
+            22,
+            24.00533,
+            28
+          ]
+        },
+        {
+          "item": "component_overage",
+          "low_mid_high": [
+            0.66,
+            0.7201599,
+            0.84
+          ]
+        },
+        {
+          "item": "pcb_assembly_test",
+          "low_mid_high": [
+            3,
+            4.75,
+            6.5
+          ]
+        },
+        {
+          "item": "shell_fasteners",
+          "low_mid_high": [
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "item": "tooling_amortized_over_1000",
+          "low_mid_high": [
+            4,
+            8,
+            12
+          ]
+        },
+        {
+          "item": "packaging",
+          "low_mid_high": [
+            1,
+            1.5,
+            2
+          ]
+        }
+      ],
+      "launch_price": 52.99,
+      "target_margin": 0.2,
+      "tooling_per_unit": 8,
+      "scope": "Mini electronics +clamshell; no power supply"
+    },
+    "Splanc": {
+      "cost_lines": [
+        {
+          "item": "components",
+          "low_mid_high": [
+            43,
+            48.26573,
+            60
+          ]
+        },
+        {
+          "item": "component_overage",
+          "low_mid_high": [
+            1.29,
+            1.4479719,
+            1.8
+          ]
+        },
+        {
+          "item": "pcb_assembly_test",
+          "low_mid_high": [
+            6,
+            8,
+            12
+          ]
+        },
+        {
+          "item": "shell_fasteners",
+          "low_mid_high": [
+            3,
+            4,
+            6
+          ]
+        },
+        {
+          "item": "tooling_amortized_over_1000",
+          "low_mid_high": [
+            8,
+            12,
+            18
+          ]
+        },
+        {
+          "item": "packaging",
+          "low_mid_high": [
+            1.5,
+            2,
+            3
+          ]
+        }
+      ],
+      "launch_price": 109,
+      "target_margin": 0.3,
+      "tooling_per_unit": 12,
+      "scope": "P4+C6 wireless companion+Mini sensors+UWB; noGNSS"
+    },
+    "Splanc GNSS": {
+      "cost_lines": [
+        {
+          "item": "components",
+          "low_mid_high": [
+            43,
+            48.26573,
+            60
+          ]
+        },
+        {
+          "item": "component_overage",
+          "low_mid_high": [
+            1.29,
+            1.4479719,
+            1.8
+          ]
+        },
+        {
+          "item": "pcb_assembly_test",
+          "low_mid_high": [
+            6,
+            8,
+            12
+          ]
+        },
+        {
+          "item": "shell_fasteners",
+          "low_mid_high": [
+            3,
+            4,
+            6
+          ]
+        },
+        {
+          "item": "tooling_amortized_over_1000",
+          "low_mid_high": [
+            8,
+            12,
+            18
+          ]
+        },
+        {
+          "item": "packaging",
+          "low_mid_high": [
+            1.5,
+            2,
+            3
+          ]
+        },
+        {
+          "item": "GNSS_module_antenna_RF_support",
+          "low_mid_high": [
+            16.5,
+            19.37588,
+            26
+          ]
+        },
+        {
+          "item": "GNSS_overage",
+          "low_mid_high": [
+            0.495,
+            0.5812764,
+            0.78
+          ]
+        },
+        {
+          "item": "GNSS_assembly_and_RF_test",
+          "low_mid_high": [
+            1,
+            1.5,
+            2.5
+          ]
+        }
+      ],
+      "launch_price": 139,
+      "target_margin": 0.3,
+      "tooling_per_unit": 12,
+      "scope": "Splanc plus MAX-M10S-00B, selected Taoglas AP.25F.07.0078A active antenna and RF support/test; same shell"
+    },
+    "MAX": {
+      "cost_lines": [
+        {
+          "item": "components",
+          "low_mid_high": [
+            91.45,
+            112.78,
+            163.76
+          ]
+        },
+        {
+          "item": "component_overage",
+          "low_mid_high": [
+            2.7435,
+            3.3834,
+            4.9128
+          ]
+        },
+        {
+          "item": "pcb_assembly_test",
+          "low_mid_high": [
+            18.35,
+            27.7,
+            41.9
+          ]
+        },
+        {
+          "item": "shell_fasteners",
+          "low_mid_high": [
+            6,
+            9,
+            12
+          ]
+        },
+        {
+          "item": "tooling_amortized_over_1000",
+          "low_mid_high": [
+            12,
+            22,
+            35
+          ]
+        },
+        {
+          "item": "packaging",
+          "low_mid_high": [
+            2,
+            3,
+            5
+          ]
+        }
+      ],
+      "launch_price": 299,
+      "target_margin": 0.4,
+      "tooling_per_unit": 22,
+      "scope": "LV+200x120power board+USBbridge+ribbon+box; DEGSON connector pairs; shared ADC/quad CSA telemetry; Pi/storage/cooler/supplies excluded",
+      "costdown_basis": {
+        "costing_source": "hardware/splanc_max/costing/summary.json",
+        "power_components": 317,
+        "prior_power_components": 190,
+        "incremental_mid_assembly_usd": 3,
+        "incremental_mid_calibration_usd": 2,
+        "new_telemetry_passives_allowance_usd": 2,
+        "historical_phoenix_cogs": 243.7171,
+        "notes": "Component tier references not quotes; complete current machine BOM budget replaces historical Phoenix delta. Tooling retained."
+      }
+    }
+  }
+}
