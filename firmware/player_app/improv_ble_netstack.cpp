@@ -27,6 +27,7 @@ extern "C" {
 void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_ble_disconnect(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
 uint32_t ns_ble_conn_interval();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
@@ -233,6 +234,16 @@ bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t
 }
 
 bool improv_ble_central_connected() { return ns_ble_state() == 7; }
+
+// Gracefully tear down the current BLE link (peripheral-initiated HCI_Disconnect).
+// Called when a wss client appears so coex stops yielding airtime to the vestigial
+// post-provision link during the TLS handshake. No-op if not connected. The host
+// re-advertises on the resulting EV_DISCONN, so the device stays connectable.
+void improv_ble_request_disconnect() {
+  uint8_t buf[16];
+  uint32_t n = ns_ble_disconnect(buf, sizeof buf);
+  if (n) hci_send(buf, n);
+}
 
 // Coex phase inputs: the last connection-event anchor (ms) and the negotiated connection
 // interval (1.25 ms units, 0 if unknown). Used by the coex arbiter to yield the radio to
