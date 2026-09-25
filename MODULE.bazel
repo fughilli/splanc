@@ -421,7 +421,7 @@ git_override(
     # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
     # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "825d1554bbff27460b8a6a869b82448e4135c006",
+    commit = "085532e5a0b3f6bb21632106b0be576ed84c0cb3",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
