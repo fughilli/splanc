@@ -14,6 +14,7 @@ pub const H4_EVT: u8 = 0x04;
 
 // LE / control opcodes (OGF<<10 | OCF).
 const OP_RESET: u16 = 0x0C03;
+const OP_DISCONNECT: u16 = 0x0406; // Link Control: HCI_Disconnect (OGF 0x01, OCF 0x06)
 const OP_SET_EVENT_MASK: u16 = 0x0C01;
 const OP_LE_SET_ADV_PARAMS: u16 = 0x2006;
 const OP_LE_SET_ADV_DATA: u16 = 0x2008;
@@ -245,6 +246,26 @@ impl BleHost {
         match self.state {
             HostState::Connected(h) => Some(h),
             _ => None,
+        }
+    }
+
+    /// Build a peripheral-initiated HCI_Disconnect for the current link (reason
+    /// 0x13 = Remote User Terminated Connection) into `out`, or 0 bytes if not
+    /// connected. The controller sends LL_TERMINATE_IND to the central and fires
+    /// EV_DISCONN within ~1 connection interval — a GRACEFUL teardown, versus
+    /// passively waiting the ~6s supervision timeout. Used to drop the vestigial
+    /// post-provision link the moment a wss client appears, so coex stops yielding
+    /// airtime to a dead link during the TLS handshake. The LE Disconnection
+    /// Complete event drives the host back to advertising via on_event.
+    pub fn disconnect_cmd(&self, out: &mut Buf<64>) -> usize {
+        match self.state {
+            HostState::Connected(h) => {
+                let mut p = [0u8; 3];
+                p[0..2].copy_from_slice(&h.to_le_bytes());
+                p[2] = 0x13; // Remote User Terminated Connection
+                cmd(OP_DISCONNECT, &p, out)
+            }
+            _ => 0,
         }
     }
 }

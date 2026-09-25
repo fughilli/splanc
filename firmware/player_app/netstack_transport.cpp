@@ -842,6 +842,17 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
+// Edge tracker for "a wss client just appeared on :443". When it does, we gracefully
+// disconnect the VESTIGIAL post-provision BLE link (see netstack_loop): after the central
+// drops the provisioning link, the controller otherwise only fires EV_DISCONN on the ~6s
+// supervision timeout (netstack hci.rs), and until then coex keeps yielding ~28% of WiFi to
+// the now-dead link — the exact window the wss handshake/welcome runs in, so its packets land
+// in the BLE yield slots and get dropped (RST / welcome-timeout). A wss client only appears
+// AFTER provisioning (redirect + PROVISIONED went out over BLE), so the link is expendable:
+// tearing it down gracefully frees the radio for the handshake, reclaims BLE heap, and the
+// host re-advertises so the device stays connectable. We do NOT blanket-starve BLE — a fresh
+// central reconnecting still gets normal coex priority.
+bool g_wss_was_active = false;
 // WS reassembly buffer. Clients shard anything over CHUNK_BYTES (4096) into UploadChunk
 // windows, so a single inbound frame never exceeds ~4KB + protobuf overhead — 6KB is ample.
 // Kept small on purpose: on the C6 all internal SRAM is DMA-capable, and oversized BSS here
@@ -1174,6 +1185,10 @@ extern "C" void pm_go_to_sleep();
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  // Normal coex: yield the radio to BLE only around a LIVE connection's events. The
+  // vestigial post-provision link that used to steal airtime here is now torn down
+  // gracefully the moment a wss client appears (see netstack_loop), so there's no dead
+  // link to yield to — and a fresh central that reconnects still gets its slice.
   if (!improv_ble_central_connected()) {
     if (mode != 0) { pm_go_to_wake(); mode = 0; }
     return;
@@ -1592,6 +1607,16 @@ void netstack_loop() {
     // Server: handle_l3 already drove on_ip (SYN-ACK, ACKs); drain + echo any request.
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
+    // On the RISING edge of a wss client appearing (LISTEN -> SynRcvd=6 / Established=2),
+    // gracefully tear down the vestigial post-provision BLE link so coex stops yielding
+    // airtime to a dead link during the TLS handshake (the RST / welcome-timeout flake).
+    // Edge-triggered so we issue exactly one HCI_Disconnect per wss session; a no-op if the
+    // central already dropped. The host re-advertises on EV_DISCONN, so BLE stays connectable.
+    bool wss_active = (s == 2 || s == 6);
+    if (wss_active && !g_wss_was_active && improv_ble_central_connected()) {
+      improv_ble_request_disconnect();
+    }
+    g_wss_was_active = wss_active;
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
     // stress) can leave the single connection slot stuck mid-accept: the DOMINANT wedge is
