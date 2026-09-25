@@ -3,7 +3,7 @@ import json
 import subprocess
 from pathlib import Path
 
-def run_drc(cli,board,report,*,timeout=45,retries=1,env=None):
+def _run_cold(cli,board,report,*,timeout=45,retries=1,env=None):
     report=Path(report)
     command=[str(cli),'pcb','drc',str(board),'--format','json','--output',str(report)]
     log=report.with_suffix('.log')
@@ -20,3 +20,16 @@ def run_drc(cli,board,report,*,timeout=45,retries=1,env=None):
                 if report.exists():report.unlink()
                 stream.write('\nNative DRC attempt %d failed: %s\n'%(attempt+1,exc));stream.flush()
                 if attempt==retries:raise
+
+
+def run_drc(cli, board, report, *, timeout=45, retries=1, env=None,
+            service=None, final=False):
+    """Use the cold CLI by default; opt into a qualified private warm session.
+
+    Pass final=True for final acceptance, even when PNR_DRC_SERVICE is set.
+    Changed rules, unsupported reports, nonzero findings and host failures use
+    the original cold implementation above. A warm host never refills zones.
+    """
+    from .drc_warm.client import run_drc as evaluate
+    return evaluate(cli, board, report, timeout=timeout, retries=retries,
+                    env=env, service=service, final=final)

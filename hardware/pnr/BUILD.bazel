@@ -43,6 +43,15 @@ filegroup(
         "pnr/electrical_audit.py",
         "pnr/native_electrical.py",
         "pnr/native_drc.py",
+        "pnr/drc_warm/__init__.py",
+        "pnr/drc_warm/client.py",
+        "pnr/drc_warm/launch_host.py",
+        "pnr/drc_warm/host.py",
+        "pnr/drc_warm/model.py",
+        "pnr/drc_warm/report.py",
+        "pnr/drc_warm/dependencies.py",
+        "pnr/drc_warm/session.py",
+
         "pnr/fixed_copper.py",
         "pnr/paired_bootstrap.py",
         "pnr/placement_trials.py",
@@ -74,7 +83,7 @@ filegroup(
 # KiCad pcbnew flow and the schema tests use.
 py_library(
     name = "pnr",
-    srcs = glob(["pnr/*.py"]),  # top-level modules only, not pnr/place/
+    srcs = glob(["pnr/*.py", "pnr/drc_warm/*.py"]),  # no torch/native imports at package load
     imports = ["."],
     deps = [
         requirement("pyyaml"),  # constraints.py parses the sidecar YAML
@@ -813,4 +822,12 @@ py_test(
     srcs = ["tests/test_initial_pool.py"],
     main = "tests/test_initial_pool.py",
     deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail"],
+)
+
+py_test(
+    name = "warm_native_drc_test",
+    size = "small",
+    srcs = ["tests/test_warm_native_drc.py"],
+    main = "tests/test_warm_native_drc.py",
+    deps = [":pnr"],
 )
