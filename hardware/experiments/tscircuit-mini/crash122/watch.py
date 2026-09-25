@@ -18,7 +18,14 @@ pop='/Users/kevin/.cache/codex-runtimes/codex-primary-runtime/dependencies/nativ
 env=dict(os.environ,PYTHONPATH=str(freeze/'hardware/pnr'));env.pop('PNR_PROFILE_DIR',None)
 review=root/'reviews';review.mkdir(exist_ok=True)
 pdf=Path(cfg['pdf_directory']);pdf.mkdir(exist_ok=True)
-seen=set();failed=set();queued=set()
+state=json.loads((root/'review-status.json').read_text()) if (root/'review-status.json').exists() else {}
+seen=set(state.get('exported',[]));failed=set(state.get('failed',[]));queued=set()
+# Resume a completed export even if interrupted before status serialization.
+for folder in review.iterdir():
+    if not folder.is_dir() or folder.name in seen or folder.name in failed:continue
+    if (folder/'export-error.json').exists():failed.add(folder.name)
+    elif (folder/'via-contacts.log').exists() and (folder/'checkpoint.json').exists() and (pdf/folder.name/'review.json').exists():seen.add(folder.name)
+    else:raise RuntimeError(f'Incomplete observer folder requires explicit recovery: {folder}')
 anno=freeze/'hardware/splanc_dev/elec/src/splanc_mini.ato'
 fab=freeze/'hardware/splanc_dev/mini-plane-access-fab.json'
 footprints=sorted((freeze/'hardware/splanc_dev/elec/src/parts').rglob('*.kicad_mod'))
@@ -84,7 +91,19 @@ try:
             except ValueError:continue
             if name not in ('early-pairs','staged-signal') and data.get('termination')=='running':continue
             b=stage/'candidate.kicad_pcb' if name in ('early-pairs','staged-signal') else stage/'best/candidate.kicad_pcb'
-            if fresh(b,b.with_suffix('.kicad_pro')):tasks.append(('phase-'+name,'native',b))
+            if not fresh(b,b.with_suffix('.kicad_pro')):continue
+            if name=='staged-signal':
+                # result.json describes the grid search, before append/refill/native validation.
+                checks=stage/'checks.json';drc=stage/'candidate.drc.json'
+                if not fresh(checks,drc):continue
+                try:
+                    validated=json.loads(checks.read_text());native_report=json.loads(drc.read_text())
+                except (OSError,ValueError):continue
+                if 'accepted' not in validated or 'unconnected_items' not in native_report:continue
+                if min(checks.stat().st_mtime,drc.stat().st_mtime)<b.stat().st_mtime:continue
+            elif name!='early-pairs':
+                if data.get('best_sha256')!=hashlib.sha256(b.read_bytes()).hexdigest():continue
+            tasks.append(('phase-'+name,'native',b))
         finished=(root/'termination.json').exists()
         if finished:
             final=root/'build-artifacts/splanc_mini.fab.board.kicad_pcb'

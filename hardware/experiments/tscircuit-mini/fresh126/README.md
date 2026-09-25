@@ -1,0 +1,15 @@
+# Fresh source iteration 126
+
+The prior fresh123 run ended its 5400-second native budget after ten cycles at 51 native opens and zero violations; the source build correctly failed its completeness gate. It did not reach a full-electrical placement plateau. No worker crash was observed. Its source/runtime hashes and generated outputs were archived before this change. Protected fresh28 remains 48/0 and electrically unqualified.
+
+This iteration integrates the tested combined124 proposal: dense maze cost evaluation, physical-distance terminal escape reach for finer grids, opt-in `PNR_DETAIL_PITCH_MM`, a generic opposite-side body opportunity in the three-finalist initial placement shortlist, and bounded reverse power-branch search without borrowing another terminal's smaller current budget. Existing regional native-object lifetime and USB portal fixes are preserved.
+
+Enable `PNR_PACKED_MAZE=1`, `PNR_DENSE_MAZE_COST=1` and `PNR_DETAIL_PITCH_MM=.25` explicitly. Dense kernel microbenchmarks preserve paths and reduce that kernel's time; this is not a whole-pipeline speedup claim. On the same completed early-electrical checkpoint, auto signal handoff reached 122 opens in 72.73 seconds, versus 112 in 354.61 seconds for quarter-grid. Equal 600-second native refinement ended at 79 versus 71, both zero native violations and zero blocked pad entries. These finite checkpoint comparisons are not fresh-source success or a new protected best.
+
+The quarter-grid native ladder passes all 16 fixed-seed cases with zero native opens/zero findings and input/pad/width checks. Both representative PDFs (100 pages) and all 26 via clusters across 16 seeds were actually reviewed. Read output/crash122/combined124/native-regression-quarter and output/pdf/mini-combined124-quarter. Possible plated-hole reuse and a same-front DISCHARGE double-via case remain quality issues; no blanket via-removal approval follows.
+
+The completed-phase PDF observer now waits for staged-signal native append/refill checks and matching native best-board hashes. The viewer accepts missing phase display names without losing actual counts or board identity; HTTP and snapshot tests retain validation failures for missing substantive data. Old viewer pins and annotations stay with the old run.
+
+Additional isolated experiments are deliberately not integrated here: batch125's C12/C15 move lost original connectivity; the R1 move reached 51/0 after tested generic dangling-tail cleanup, but the production fresh-build entry point still lacks that incremental batch controller. Custom-land125 did not explain current failures because the affected native converter pads are already ordinary rectangles. Power-island aggregation cannot reduce current budgets for unannotated passives. Keep those negative results, source contracts, current arrays, USB/reference and final native gates intact.
+
+This remains an experimental build, not a manufacturable result. Actual four-layer stackup and current-path qualification are unresolved. Continue the full source-to-native pipeline, image/PDF/5mm review and further hypotheses until genuine closure; no publication, merge or manufacture.

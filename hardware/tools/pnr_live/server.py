@@ -3,11 +3,12 @@ import argparse,copy,json,os,re,subprocess,threading,time,uuid,sys
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
 from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
-ap=argparse.ArgumentParser();ap.add_argument('root',type=Path);ap.add_argument('--port',type=int,default=8766);ap.add_argument('--listen',action='append');ap.add_argument('--allow-origin',action='append',default=[]);a=ap.parse_args();root=a.root.resolve();root.mkdir(parents=True,exist_ok=True)
-repo=Path(__file__).resolve().parents[3];assets=Path(__file__).parent/'dist';lock=threading.RLock();state=dict(schema='pnr-live-state-v1',run=str(root.parent),revision=0,lanes={},events=[],search={},errors=[]);seen=set();cache={}
+ap=argparse.ArgumentParser();ap.add_argument('root',type=Path);ap.add_argument('--port',type=int,default=8766);ap.add_argument('--listen',action='append');ap.add_argument('--allow-origin',action='append',default=[]);ap.add_argument('--repo',type=Path,help='Repository for runtime imports and persistent preferences (isolated viewer deployment)');a=ap.parse_args();root=a.root.resolve();root.mkdir(parents=True,exist_ok=True)
+repo=(a.repo or Path(__file__).resolve().parents[3]).resolve();assets=Path(__file__).parent/'dist';lock=threading.RLock();state=dict(schema='pnr-live-state-v1',run=str(root.parent),revision=0,lanes={},events=[],search={},errors=[]);seen=set();cache={}
 sys.path.insert(0,str(repo/'hardware/pnr'))
 from pnr.runtime_controls import read as read_controls,write as write_controls,LIMITS
 from settings import seed as seed_settings,save as save_settings
+from event_schema import phase_frame
 preferences=repo/'output/pnr-settings.json'
 state['controls']=seed_settings(root/'control.json',preferences);state['active_controls']=None
 ki='/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3'
@@ -50,17 +51,19 @@ def ingest():
    f=event_dir/name
    if f.name in seen:continue
    try:
-    e=json.loads(f.read_text());geo=geometry(e) if 'board' in e else (from_graph(e['layout']) if 'layout' in e else None)
+    e=json.loads(f.read_text());frame=phase_frame(e) if e['kind']=='phase_complete' else None;geo=geometry(e) if 'board' in e else (from_graph(e['layout']) if 'layout' in e else None)
     with lock:
      lane=state['lanes'].setdefault(e['candidate'],dict(id=e['candidate'],draft={},costs={},frames=[]));lane.update(event_id=e['id'],time=e['time'],iteration=e['iteration'],kind=e['kind'])
      if e['data'].get('phase'):lane['phase']=e['data']['phase']
      if e['kind']=='controls_applied':state['active_controls']=e['data']
      if e['kind']=='worker_config_applied':lane['worker_config']=e['data']
-     if e['kind']=='phase_complete':lane['phase']=e['data']['name'];lane['opens']=e['data']['opens'];lane['violations']=e['data']['violations']
+     if frame:
+      lane['phase']=frame['name'];lane['opens']=frame['opens'];lane['violations']=frame['violations']
+      lane['phase_label_source']=frame['label_source']
      if geo:
       if lane.get('geometry') and e.get('board_sha256')!=lane.get('board_sha256'):lane['previous']=lane['geometry']
       lane['geometry']=geo;lane['board_sha256']=e.get('board_sha256');lane['geometry_event_id']=e['id'];lane['draft']={}
-     if e['kind']=='phase_complete':lane['frames'].append(dict(name=e['data']['name'],board_sha256=e['board_sha256'],event_id=e['id'],opens=e['data']['opens'],violations=e['data']['violations']))
+     if frame:lane['frames'].append(frame)
      if e['kind']=='route_result':lane['opens']=e['data'].get('opens');lane['last_route']=e['data'];lane['copper_changed_at']=time.time() if e['data'].get('accepted') else lane.get('copper_changed_at',0)
      if e['kind']=='candidate_queued':lane['moves']=e['data'].get('moves',[]);lane['cost']=e['data'].get('cost')
      if e['kind']=='route_start':lane['target']=e['data']['target']
@@ -148,5 +151,5 @@ class Handler(BaseHTTPRequestHandler):
 servers=[ThreadingHTTPServer((host,a.port),Handler) for host in (a.listen or ['127.0.0.1'])]
 threading.Thread(target=ingest,daemon=True).start()
 for server in servers[:-1]:threading.Thread(target=server.serve_forever,daemon=True).start()
-for server in servers:print(f'Live PnR: http://{server.server_address[0]}:{a.port}',flush=True)
+for server in servers:print(f'Live PnR: http://{server.server_address[0]}:{server.server_address[1]}',flush=True)
 servers[-1].serve_forever()

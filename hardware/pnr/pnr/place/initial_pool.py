@@ -212,6 +212,22 @@ def diverse_shortlist(candidates, count, cost_key, mandatory=(), refs=None):
         best = next((c for c in ordered if c not in chosen), None)
         if best is not None:
             chosen.append(best)
+    # Whole-board RMS diversity dilutes relocation of one high-pin-count part
+    # among many small passives. Preserve an explicit legal opposite-side basin
+    # when there is room after the baseline/incumbent and the best proxy choice.
+    # This reserves a bounded routing trial, never overrides hard legality or
+    # selects the final board without routing it.
+    def basins(candidate):
+        return {(a['ref'], a['host'], a['side'])
+                for a in candidate.get('record', {}).get('basin_anchors', [])}
+    covered = set().union(*(basins(c) for c in chosen))
+    for candidate in ordered:
+        if len(chosen) >= count:
+            break
+        categories = basins(candidate)
+        if candidate not in chosen and categories - covered:
+            chosen.append(candidate)
+            covered.update(categories)
     rank = {c['id']: i for i,c in enumerate(ordered)}
     while len(chosen) < min(count, len(candidates)):
         remaining = [c for c in ordered if c not in chosen]
@@ -403,6 +419,7 @@ def select_initial_placement(graph, constraints, rules, *, config=None, seed=0,
                   detailed_evaluations=0, fixed_refs=sorted(fixed),
                   movable_refs=sorted(movable_refs),
                   shortlisted_finalists=[c['id'] for c in finalists],
+                  shortlist_policy='baseline/incumbent, best estimated cost, unrepresented legal geometric basin, then RMS diversity',
                   placement_optimizer_iterations_per_start=iters,
                   minimum_finalist_pose_distance=min((pose_distance(a['graph'],b['graph'],movable_refs)
                       for i,a in enumerate(finalists) for b in finalists[i+1:]),default=0.),

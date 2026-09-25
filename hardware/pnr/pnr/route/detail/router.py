@@ -228,6 +228,32 @@ def _diag_unrouted(grid, net_access, unrouted, via_keepout):
     )
 
 
+def detail_pitch(explicit, track_width_mm, clearance_mm):
+    """Resolve one pitch for source screening and fixed-copper signal handoff.
+
+    The grid changes sampling only. Copper widths, clearance halos and native
+    validation remain unchanged. An explicit function/CLI value takes precedence.
+    """
+    value = explicit
+    if value is None:
+        configured = os.environ.get("PNR_DETAIL_PITCH_MM")
+        if configured is not None:
+            value = float(configured)
+    if value is None or value == 0:
+        value = round((track_width_mm + clearance_mm + 0.02) / 0.05) * 0.05
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("detail grid pitch must be positive and finite, or 0 for auto")
+    return value
+
+
+def escape_reach_cells(pitch: float, track_width_mm: float, clearance_mm: float) -> int:
+    """Preserve the nominal physical fanout search reach on finer routing grids."""
+    if pitch <= 0 or track_width_mm <= 0 or clearance_mm < 0:
+        raise ValueError("positive pitch/width and nonnegative clearance required")
+    nominal_pitch = round((track_width_mm + clearance_mm + 0.02) / 0.05) * 0.05
+    return max(4, math.ceil(4 * nominal_pitch / pitch - 1e-9))
+
+
 def route_board(
     graph: BoardGraph,
     constraints: CompiledConstraints,
@@ -257,11 +283,7 @@ def route_board(
     via_radius_mm = fab["via_diameter_mm"] / 2.0
     # Per-net track width from the net classes (type/amperage), default = fab width.
     net_width = _net_widths(rules, track_width_mm)
-    if pitch is None:
-        # Fine grid sized for the SIGNAL width (not the widest power trace — that
-        # would coarsen the whole board); wide nets reserve extra room via a halo.
-        floor = track_width_mm + clearance_mm
-        pitch = round((floor + 0.02) / 0.05) * 0.05
+    pitch = detail_pitch(pitch, track_width_mm, clearance_mm)
     # Every net reserves enough track halo for this pitch, including signals:
     # other-net centre must be ≥ width/2 + clearance + ½signal from this net's cells.
     net_halo = {
@@ -319,6 +341,7 @@ def route_board(
         via_keepout=via_keepout,
         allow_via_in_pad=escape_via_in_pad,
         allow_dogbone=escape_dogbone,
+        dogbone_reach=escape_reach_cells(grid.pitch, track_width_mm, clearance_mm),
         joint=os.environ.get("PNR_JOINT_ACCESS", "1") != "0",
         joint_max_options=int(os.environ.get("PNR_JOINT_ACCESS_OPTIONS", "16")),
         joint_max_states=int(os.environ.get("PNR_JOINT_ACCESS_STATES", "20000")),

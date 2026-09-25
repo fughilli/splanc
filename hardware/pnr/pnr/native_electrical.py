@@ -266,12 +266,12 @@ def qualified_tree_pads(b,net,layer,policy,rules,anchors,excluded=()):
     return result
 
 
-def power_plan(b,net,source,target,rules,oracle,bounds,pitch,*,prefer_tree=True,root_strategy=None):
+def power_plan(b,net,source,target,rules,oracle,bounds,pitch,*,prefer_tree=True,root_strategy=None,_source_only=False,_reverse_retry=True):
     import pcbnew as k
     p=net_policy(net,rules);aa=connected_items(b,source);zz=connected_items(b,target)
     trunk=dict(p)
     if root_strategy is None:root_strategy='existing' if prefer_tree else 'target'
-    for seed,group in ((source,aa),(target,zz)):
+    for seed,group in (((source,aa),) if _source_only else ((source,aa),(target,zz))):
         ps=[t for t in group if t.GetClass()=='PAD']
         refs={t.GetParentFootprint().GetReference() for t in ps}
         if len(refs)!=1:continue
@@ -501,8 +501,12 @@ def power_plan(b,net,source,target,rules,oracle,bounds,pitch,*,prefer_tree=True,
                             if rr.status=='routed':return with_neck(dict(status='routed',tracks=[(source_layer,a,center,outer)]+[(bridge_layer,x,y,width) for x,y in zip(rr.path,rr.path[1:])],banks=[(center,points,ls)],mode=p['mode'],policy=p))
     if prefer_tree and time.monotonic()<oracle.deadline:
         if root_strategy=='existing' and trunk.get('current_known'):
-            return power_plan(b,net,source,target,rules,oracle,bounds,pitch,prefer_tree=True,root_strategy='all')
-        if trunk_anchors:return power_plan(b,net,source,target,rules,oracle,bounds,pitch,prefer_tree=False)
+            return power_plan(b,net,source,target,rules,oracle,bounds,pitch,prefer_tree=True,root_strategy='all',_source_only=_source_only,_reverse_retry=_reverse_retry)
+        if trunk_anchors:return power_plan(b,net,source,target,rules,oracle,bounds,pitch,prefer_tree=False,_source_only=_source_only,_reverse_retry=_reverse_retry)
+    if _reverse_retry:
+        result=power_plan(b,net,target,source,rules,oracle,bounds,pitch,prefer_tree=True,_source_only=True,_reverse_retry=False)
+        result['reversed_branch_retry']=True
+        return result
     return dict(status='no_current_sized_channel',mode=p['mode'],policy=p,branch_counts=branch_counts,neck_count=len(necks))
 
 

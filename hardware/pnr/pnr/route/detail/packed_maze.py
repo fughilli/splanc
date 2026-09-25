@@ -66,10 +66,24 @@ def astar(grid, sources, targets, net, occ, history, via_cost, pres_fac, blocked
         la, i, j = decode(key)
         return grid.passable(la, i, j, net)
 
+    import os
+    dense_enabled = os.environ.get('PNR_DENSE_MAZE_COST') == '1'
+    dense_prices = None
+    price_calls = 0
+
     @lru_cache(maxsize=None)
     def cost(key, via=False):
+        nonlocal dense_prices, price_calls
         if unpriced:
             return 1.0
+        if dense_enabled:
+            price_calls += 1
+            if dense_prices is None and price_calls >= 256:
+                from .cost_field import prices
+                dense_prices = prices(nx, ny, nlayers, counts, historic, penalties,
+                                      track_halo, via_halo, pres_fac)
+            if dense_prices is not None:
+                return float(dense_prices[1][key % plane] if via else dense_prices[0][key])
         la, i, j = decode(key)
         radius = max(track_halo, via_halo) if via else track_halo
         layers = range(nlayers) if via else (la,)

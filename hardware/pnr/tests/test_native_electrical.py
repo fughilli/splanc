@@ -187,6 +187,24 @@ class NativeElectricalTest(unittest.TestCase):
             self.assertEqual(len(json.loads(report.read_text())['targets']),3)
 
 class PowerTreeTest(unittest.TestCase):
+ def test_blocked_leaf_retries_other_branch_without_borrowing_its_low_current(self):
+  b=board();a=pad(b,'BLOCKED','1','rail',(3,5),(.2,.2));target=pad(b,'CAP','1','rail',(10,10));root=pad(b,'ROOT','1','rail',(10,14))
+  for n,pos,size in [('L',(2.65,5),(.2,1.2)),('R',(3.35,5),(.2,1.2)),('U',(3,4.65),(1.2,.2)),('D',(3,5.35),(1.2,.2))]:pad(b,n,'1','other',pos,size)
+  trunk=add_track(b,'rail',k.F_Cu,(10,14),(15,14),1.5);b.BuildConnectivity();r=rules()
+  r['current_intents'].append(dict(ref='BLOCKED',pads=['1'],net='rail',scope='terminal',rms_current_a=.01,peak_current_a=.01))
+  before=partition(b)
+  failed=power_plan(b,'rail',a,target,r,Oracle(b,r),(1,1,19,19),.2,_reverse_retry=False)
+  self.assertEqual(failed['status'],'no_current_sized_channel')
+  plan=power_plan(b,'rail',a,target,r,Oracle(b,r),(1,1,19,19),.2)
+  self.assertEqual(plan['status'],'routed');self.assertTrue(plan['reversed_branch_retry'])
+  self.assertEqual(plan['policy']['rms_current_a'],5)
+  self.assertEqual(plan['policy']['peak_current_a'],16)
+  self.assertTrue(all(t[3]>=1.5 for t in plan['tracks']))
+  keep=[add_track(b,'rail',*t) for t in plan['tracks']];b.BuildConnectivity()
+  from pnr.via_coalesce import preserved
+  after=partition(b);self.assertTrue(preserved(before,after));self.assertTrue(all(snapshot(b,r).values()))
+  self.assertTrue(any(target.m_Uuid.AsString() in group and root.m_Uuid.AsString() in group and a.m_Uuid.AsString() not in group for group in after))
+
  def test_local_branch_joins_existing_full_current_tree(self):
   b=board();a=pad(b,'LOAD','1','rail',(3,5),(.4,.4));target=pad(b,'CAP','1','rail',(3,10));root=pad(b,'ROOT','1','rail',(10,5));keep=add_track(b,'rail',k.F_Cu,(10,5),(15,5),1.5);b.BuildConnectivity()
   r=rules();r['current_intents'].append(dict(ref='LOAD',pads=['1'],net='rail',scope='terminal',rms_current_a=.01,peak_current_a=.01))

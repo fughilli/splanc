@@ -37,6 +37,8 @@ def main():
  ap.add_argument('--seed',type=int,action='append');ap.add_argument('--rounds',type=int,default=4)
  ap.add_argument('--timeout',type=float,default=600)
  ap.add_argument('--python')
+ ap.add_argument('--dense-maze-cost',action='store_true')
+ ap.add_argument('--detail-pitch-mm',type=float,help='Explicit signal grid pitch for source and fixed-copper handoff; 0 keeps automatic pitch')
  ap.add_argument('--packed-maze',action='store_true',help='Validate the packed CPU maze kernel explicitly')
  ap.add_argument('--batched-wirelength',action='store_true',help='Validate CPU degree-bucket placement costs explicitly')
  ap.add_argument('--initial-pool',action='store_true',help='Compare a bounded set of legal global placements before round one')
@@ -60,6 +62,11 @@ def main():
  for key in list(env):
   if key.startswith('PNR_') and key not in ('PNR_LOCAL_PRESSURE','PNR_JOINT_ACCESS'):del env[key]
  if args.packed_maze:env['PNR_PACKED_MAZE']='1'
+ if args.dense_maze_cost:env['PNR_DENSE_MAZE_COST']='1'
+ if args.detail_pitch_mm is not None:
+  import math
+  if not math.isfinite(args.detail_pitch_mm) or args.detail_pitch_mm < 0:raise ValueError('Detail pitch must be finite and nonnegative')
+  env['PNR_DETAIL_PITCH_MM']=str(args.detail_pitch_mm)
  if args.batched_wirelength:env['PNR_BATCHED_WIRELENGTH']='1'
  if args.initial_pool:
   if not 2 <= args.initial_starts <= 128 or not 1 <= args.initial_finalists <= min(args.initial_starts,16):

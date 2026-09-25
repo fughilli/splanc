@@ -97,6 +97,28 @@ class InitialStartsTest(unittest.TestCase):
         self.assertEqual([c['id'] for c in selected],['0','1','3'])
         self.assertGreater(pose_distance(selected[0]['graph'],selected[2]['graph'],['A']),.4)
 
+    def test_shortlist_does_not_dilute_single_part_opposite_side_basin(self):
+        graph,_=fixture();candidates=[]
+        for name,cost,x,basin in [('baseline',100,7,False),('best',1,7.1,False),
+                                  ('global',2,18,False),('under-body',101,8,True)]:
+            g=copy.deepcopy(graph);g.component('A').pos=(x,5)
+            record={'basin_anchors':[{'ref':'A','host':'FIXED','side':'bottom'}]} if basin else {}
+            candidates.append(dict(id=name,graph=g,cost=cost,record=record))
+        selected=diverse_shortlist(candidates,3,'cost',mandatory=['baseline'],refs=['A','B'])
+        self.assertEqual([c['id'] for c in selected],['baseline','best','under-body'])
+        # No implicit expansion of the configured trial budget.
+        self.assertEqual([c['id'] for c in diverse_shortlist(candidates,2,'cost',mandatory=['baseline'])],['baseline','best'])
+
+    def test_shortlist_covers_each_basin_once_before_remaining_diversity(self):
+        graph,_=fixture();candidates=[]
+        for name,cost,host in [('baseline',100,None),('best',1,None),
+                              ('basin-low',2,'H'),('basin-high',3,'H'),('basin-other',4,'J')]:
+            record={'basin_anchors':[{'ref':'A','host':host,'side':'bottom'}]} if host else {}
+            candidates.append(dict(id=name,graph=copy.deepcopy(graph),cost=cost,record=record))
+        selected=diverse_shortlist(candidates,4,'cost',mandatory=['baseline'])
+        self.assertEqual([c['id'] for c in selected],['baseline','best','basin-low','basin-other'])
+        self.assertEqual(len({c['id'] for c in selected}),4)
+
     def test_opposite_body_basin_reserves_a_topological_alternative(self):
         host=Component('RADIO','module',(10,10),0,'top',(10,12),(10,12),
                        pads=[],smd_body=True)
