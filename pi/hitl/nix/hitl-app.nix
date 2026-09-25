@@ -439,6 +439,30 @@ in
     ipv6.method = "ignore";
   };
 
+  # Clear the provisioning-AP's ARP/neighbour ghosts. The shared-mode AP's
+  # neighbour table accumulates stale entries: randomized-MAC clients (phones, …)
+  # that briefly associate leave gratuitous-ARP entries mapping pool addresses to
+  # dead, locally-administered 02:xx MACs. A joining DUT's NetworkManager IPv4 ACD
+  # then sees those as duplicates and refuses every DHCP offer ("10.42.0.N already
+  # in use by 02:0c:6a:…") → the join fails at IP config. The DUT side disables ACD
+  # (improv_ble_provision.py ipv4.dad-timeout 0), but also flush the AP's dead
+  # neighbours periodically so the pool stays clean for every client. Active DUTs
+  # re-resolve immediately.
+  systemd.services.hitl-ap-arp-flush = {
+    description = "Flush provisioning-AP neighbour ghosts (randomized-MAC ARP pollution)";
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.iproute2}/bin/ip neigh flush dev ${apIface}";
+    };
+  };
+  systemd.timers.hitl-ap-arp-flush = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "3min";
+      OnUnitActiveSec = "5min";
+    };
+  };
+
   # Force NM's shared-mode dnsmasq to BROADCAST DHCP replies (default; see
   # apBroadcastDhcp). NM's shared (ipv4.method=shared) dnsmasq reads extra options
   # from this drop-in dir; with dhcp-broadcast the OFFER/ACK go out group-addressed
