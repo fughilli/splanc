@@ -31,7 +31,7 @@ def finalized_stats(profile, path):
  profile.clear()
  return pstats.Stats(str(path))
 
-def run(label,fn):
+def _profiled_run(label,fn):
  global active
  dest=os.environ.get('PNR_PROFILE_DIR')
  if not dest or active:return fn()
@@ -70,6 +70,31 @@ def run(label,fn):
    (root/(key+suffix)).unlink(missing_ok=True)
   from pnr.live import emit
   emit('profile_complete',data={k:v for k,v in result.items() if k not in ('hot_functions','spans','argv')})
+_native_roots = None
+
+def retain_native(*objects):
+ """Hold native owners/caches until this profile has finished reporting.
+
+ Native geometry wrappers can be captured by collected routing callbacks.
+ Releasing these while _lsprof snapshots/report frames still exist crashes
+ KiCad 10 Python 3.9. The lease ends normally after report completion and also
+ on exceptions; unprofiled calls retain nothing. This is per-process profiling.
+ """
+ if _native_roots is not None:
+  _native_roots.extend(objects)
+
+def run(label,fn):
+ global _native_roots
+ if not os.environ.get('PNR_PROFILE_DIR') or active:
+  return fn()
+ roots=[]
+ _native_roots=roots
+ try:
+  return _profiled_run(label,fn)
+ finally:
+  _native_roots=None
+  roots.clear()
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--label',required=True);ap.add_argument('--module',action='store_true');ap.add_argument('target');ap.add_argument('args',nargs=argparse.REMAINDER);a=ap.parse_args();sys.argv=[a.target,*a.args]
  run(a.label,lambda:runpy.run_module(a.target,run_name='__main__') if a.module else runpy.run_path(a.target,run_name='__main__'))

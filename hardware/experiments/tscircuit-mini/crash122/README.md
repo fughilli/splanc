@@ -47,3 +47,46 @@ The complete native ladder is rerun with explicit `--packed-maze` and
 Provenance records these options. Full source-to-final validation remains
 necessary; protected fresh28 stays the primary result until a better board
 passes all required gates.
+
+## Regional native geometry lifecycle (continuation123)
+
+The unmove fix did not cover regional routing. Fresh122 `keyhole_region.py`
+workers could save an accepted route and then crash during GC; the controller
+correctly rejected their exits. Exact saved COMP and two completed-routing
+fixtures are in `output/crash122/regional-crash`. Profiling-off controls passed,
+but disabling cProfile builtins, switching to statistical samples, initializing
+wx, retaining the board alone and clearing cached shapes before reporting all
+failed. Holding cached geometry until *after* profiler report completion, then
+releasing it normally, passed15 factor replays. The bounded profile lease passed
+36 fresh processes across3exactfixtures/12hashseeds, including24accepted native
+transactions. It preserves normal shutdown and full native acceptance gates.
+No upstream root memory-corruption cause is asserted.
+
+`retain_native` now retains regional board/shape-cache owners only for the
+duration of an active profiling call, then releases every lease after report
+frames return, including exceptional exits. Four contract tests verify nested
+calls, report-time lifetime, failure propagation and no unprofiled retention.
+Existing profile tests still pass. Raw factor matrices retain failed hypotheses.
+The installed LLDB itself bus-faulted during target creation; no machine
+permissions or debugger protections were changed.
+
+## Differential-pair portal resolution
+
+Bounded 0.1mm lead/run samples supplement the old coarser distance set. A narrow
+reference-window regression demonstrates the missing0.6mm portal; the original
+uncoupled-length cap still rejects insufficient access. Exact native USB test:
+266to260opens,0violations,0.28500019mm endpoint skew, postfill reference checks
+pass, prior connectivity/pad entries preserved. Normal paired_bootstrap
+controller accepts legal trial03 after175.890s; it rejects an illegal earlier
+pose. Independent cold DRC agrees and controller/fixture copper+poses match.
+All62actualPDFpages and8via-cluster images reviewed in
+`output/pdf/mini-crash122-usb-legal` and
+`output/crash122/pair-portal/legal-routes/pose-05/via-scan`.
+Back-layer trunk still needs physical stackup/impedance qualification.
+This is an early-stage gain, not a finished board.
+
+Fresh122 was deliberately interrupted at a saved58-open checkpoint to integrate
+these fixes; it did not reach plateau. Its651inputs verified unchanged and
+build diagnostics archived before editing. Source watcher/warm-host startup now
+requires completion/data timestamps from the current controller to avoid stale
+Bazel results. Protected fresh28 remains48opens/0violations.

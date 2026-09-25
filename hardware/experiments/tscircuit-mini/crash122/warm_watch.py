@@ -8,6 +8,11 @@ from pathlib import Path
 root=Path(sys.argv[1]).resolve()
 sys.path.insert(0,str(root/'source-freeze/hardware/pnr'))
 from pnr.live import emit
+while not (root/'controller-process.json').exists():time.sleep(.2)
+run_started=json.loads((root/'controller-process.json').read_text())['started']
+def fresh(*paths):
+    try:return all(p.exists() and p.stat().st_mtime>=run_started for p in paths)
+    except OSError:return False
 os.environ['PNR_LIVE_DIR']=str(root/'live')
 service=root/'drc-service'
 try:
@@ -16,7 +21,7 @@ try:
         if paths.exists():
             diag=Path(json.loads(paths.read_text())['diagnostics'])
             board=diag/'native-loop/baseline.kicad_pcb'
-            if board.exists() and board.with_suffix('.kicad_pro').exists() and (board.parent/'fp-lib-table').exists():
+            if fresh(board,board.with_suffix('.kicad_pro'),board.parent/'fp-lib-table'):
                 command=[sys.executable,str(root/'source-freeze/hardware/pnr/pnr/drc_warm/launch_host.py'),str(service),'--board',str(board)]
                 with (root/'warm-launch.log').open('w') as log:
                     result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=35)

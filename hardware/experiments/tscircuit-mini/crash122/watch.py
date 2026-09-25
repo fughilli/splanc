@@ -6,6 +6,11 @@ cfg=json.loads((root/'command.json').read_text());repo=Path(cfg['cwd']);label=cf
 freeze=root/'source-freeze';sys.path.insert(0,str(freeze/'hardware/pnr'))
 os.environ['PNR_LIVE_DIR']=str(root/'live');os.environ['PNR_LIVE_CANDIDATE']=label+'/source'
 from pnr.live import emit
+while not (root/'controller-process.json').exists():time.sleep(.2)
+run_started=json.loads((root/'controller-process.json').read_text())['started']
+def fresh(*paths):
+    try:return all(p.exists() and p.stat().st_mtime>=run_started for p in paths)
+    except OSError:return False
 ki='/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3'
 cli='/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli'
 doc='/Users/kevin/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3'
@@ -60,26 +65,26 @@ try:
         diag=Path(json.loads(paths.read_text())['diagnostics'])
         for placed in sorted(diag.glob('initial-pool/start-*/placed.json')):
             key=placed.parent.name
-            if key in queued:continue
+            if key in queued or not fresh(placed):continue
             try:layout=json.loads(placed.read_text())
             except (ValueError,OSError):continue
             emit('candidate_queued',candidate=label+'/source/initial-'+key,layout=layout,data=dict(phase='legal initial placement; awaiting screening',provisional=True))
             queued.add(key)
         tasks=[]
         for result in sorted(diag.glob('initial-pool/start-*/routing-result.json')):
-            tasks.append(('initial-'+result.parent.name,'grid',result.parent))
+            if fresh(result,result.parent/'placed.json',result.parent/'routes.json',diag/'source.kicad_pcb',diag/'graph.json'):tasks.append(('initial-'+result.parent.name,'grid',result.parent))
         for result in sorted(diag.glob('round-*/result.json')):
-            tasks.append(('source-'+result.parent.name,'grid',result.parent))
+            if fresh(result,result.parent/'placed.json',result.parent/'routes.json',diag/'source.kicad_pcb',diag/'graph.json'):tasks.append(('source-'+result.parent.name,'grid',result.parent))
         native=diag/'native-loop'
         for name in ['early-pairs','early-power','early-plane','early-power-refine','staged-signal']:
             stage=native/name
             ready=stage/('result.json' if name in ('early-pairs','staged-signal') else 'progress.json')
-            if not ready.exists():continue
+            if not fresh(ready):continue
             try:data=json.loads(ready.read_text())
             except ValueError:continue
             if name not in ('early-pairs','staged-signal') and data.get('termination')=='running':continue
             b=stage/'candidate.kicad_pcb' if name in ('early-pairs','staged-signal') else stage/'best/candidate.kicad_pcb'
-            if b.exists():tasks.append(('phase-'+name,'native',b))
+            if fresh(b,b.with_suffix('.kicad_pro')):tasks.append(('phase-'+name,'native',b))
         finished=(root/'termination.json').exists()
         if finished:
             final=root/'build-artifacts/splanc_mini.fab.board.kicad_pcb'

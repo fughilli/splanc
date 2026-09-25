@@ -52,4 +52,39 @@ class ProfileTests(unittest.TestCase):
                 self.assertTrue(Path(record['profile']).is_file())
                 self.assertFalse(profiling.active)
 
+import gc,os,tempfile,unittest,weakref
+from unittest.mock import patch
+from pnr import profile
+class Payload: pass
+class LeaseTests(unittest.TestCase):
+ def test_leases_survive_report_then_release(self):
+  refs=[];events=[]
+  def work():
+   x=Payload();refs.append(weakref.ref(x));profile.retain_native(x);return 73
+  def emit(*args,**kwargs):
+   gc.collect();self.assertIsNotNone(refs[0]());events.append('report')
+  with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'PNR_PROFILE_DIR':folder}),patch('pnr.live.emit',side_effect=emit):
+   self.assertEqual(profile.run('lease',work),73)
+  gc.collect();self.assertIsNone(refs[0]());self.assertIsNone(profile._native_roots);self.assertEqual(events,['report'])
+ def test_nested_calls_share_outer_lease(self):
+  refs=[]
+  def nested():
+   x=Payload();refs.append(weakref.ref(x));profile.retain_native(x)
+  def work():
+   profile.run('inner',nested);gc.collect();self.assertIsNotNone(refs[0]())
+  with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'PNR_PROFILE_DIR':folder}),patch('pnr.live.emit'):
+   profile.run('outer',work)
+  gc.collect();self.assertIsNone(refs[0]());self.assertIsNone(profile._native_roots)
+ def test_failure_releases_lease_and_preserves_exception(self):
+  refs=[]
+  def work():
+   x=Payload();refs.append(weakref.ref(x));profile.retain_native(x);raise ValueError('expected')
+  with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'PNR_PROFILE_DIR':folder}),patch('pnr.live.emit'):
+   with self.assertRaisesRegex(ValueError,'expected'):profile.run('lease-error',work)
+  gc.collect();self.assertIsNone(refs[0]());self.assertIsNone(profile._native_roots);self.assertFalse(profile.active)
+ def test_unprofiled_calls_do_not_retain(self):
+  x=Payload();ref=weakref.ref(x)
+  with patch.dict(os.environ,{},clear=True):profile.retain_native(x)
+  del x;gc.collect();self.assertIsNone(ref());self.assertIsNone(profile._native_roots)
+
 if __name__=='__main__':unittest.main()

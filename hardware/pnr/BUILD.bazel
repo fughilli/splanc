@@ -865,3 +865,11 @@ py_test(
     main = "tests/test_profile.py",
     deps = [":pnr"],
 )
+
+py_test(
+    name = "pair_portals_test",
+    size = "small",
+    srcs = ["tests/test_pair_portals.py"],
+    main = "tests/test_pair_portals.py",
+    deps = [":pnr", ":pnr_detail"],
+)

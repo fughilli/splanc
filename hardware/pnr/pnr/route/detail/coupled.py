@@ -127,7 +127,8 @@ def solve_pair(p,n,terminals,bounds,clear,envelope_clear,width,gap,skew,*,pitch=
     end=tuple((terminals[p][1][i]+terminals[n][1][i])/2 for i in (0,1))
     # Escape endpoints may not admit the wide envelope. Try cardinal leadouts,
     # but validate each individual pad-to-lane lead below, with bounded length.
-    options=lambda q:[q]+[(q[0]+dx*d,q[1]+dy*d) for d in (.25,.5,.75,1.,1.25,1.5) if d<=max_uncoupled for dx,dy in ((1,0),(0,1),(-1,0),(0,-1))]
+    lead_distances=sorted(set((.25,.5,.75,1.,1.25,1.5,1.75)) | {round(i*.1,10) for i in range(1,21) if i*.1<=max_uncoupled+1e-9})
+    options=lambda q:[q]+[(q[0]+dx*d,q[1]+dy*d) for d in lead_distances if d<=max_uncoupled for dx,dy in ((1,0),(0,1),(-1,0),(0,-1))]
     attempts=0
     fanout_debug=[]
     failures={}
@@ -144,7 +145,7 @@ def solve_pair(p,n,terminals,bounds,clear,envelope_clear,width,gap,skew,*,pitch=
         if len(headings)!=2:
             continue
         ds,de=headings
-        for head,tail in sorted(((x,y) for x in (.25,.5,.75,1.,1.25,1.5,1.75) for y in (.25,.5,.75,1.,1.25,1.5,1.75)),key=lambda xy:sum(xy)):
+        for head,tail in sorted(((x,y) for x in lead_distances for y in lead_distances),key=lambda xy:sum(xy)):
             a=tuple(start[i]+ds[i]*head for i in (0,1))
             z=tuple(end[i]-de[i]*tail for i in (0,1))
             candidates.append((a,z,sign,ds,de))

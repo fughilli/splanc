@@ -21,6 +21,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pnr"))
 import pcbnew
+from pnr.profile import retain_native
 from pnr.route.detail.regional import (
     Request,
     solve_region,
@@ -178,6 +179,7 @@ def main():
     elif not args.rules and any(policy(n)["name"] != "Default" or n not in allowed for n in args.net):
         ap.error("regional policy supports only reviewed Default-class signals")
     b = pcbnew.LoadBoard(str(args.board))
+    retain_native(b)
     b.BuildConnectivity()
     entry_rules = json.loads(args.rules.read_text()) if args.rules else None
     before_entries = {}
@@ -439,6 +441,7 @@ def main():
     )
     # Conservative static native copper oracle. Clearance includes project rules.
     obstacles = []
+    retain_native(obstacles)
     buckets = defaultdict(set)
 
     def add(shape, box, gap, n, identity, la, smd=False):
@@ -551,6 +554,7 @@ def main():
         or isinstance(t, pcbnew.PAD)
         and max(t.GetDrillSize().x, t.GetDrillSize().y) > 0
     ]
+    retain_native(drilled)
     via_zones = [z for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
     existing_vias = [t for t in remaining if isinstance(t, pcbnew.PCB_VIA)]
 

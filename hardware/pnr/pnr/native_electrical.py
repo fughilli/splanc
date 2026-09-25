@@ -668,7 +668,7 @@ def pair_bridge_ports(pair,terminals,rules,oracle,bounds,index):
     if distance<1e-8:return []
     axis=((a[0]-z[0])/distance,(a[1]-z[1])/distance)
     tangent=(-axis[1],axis[0]);mid=tuple((a[i]+z[i])/2 for i in (0,1));found=[]
-    for run in (.8,1.,1.2,1.5,1.75):
+    for run in sorted(set((.8,1.,1.2,1.5,1.75)) | {round(i*.1,10) for i in range(4,18)}):
         for sign in (-1,1):
             for spacing in sorted({via_spacing,max(via_spacing,distance)}):
                 for shift in (0,-.25,.25,-.5,.5):
