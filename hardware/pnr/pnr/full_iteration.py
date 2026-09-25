@@ -48,7 +48,7 @@ def main():
     run(['pnr.planes',board,'--rules',rules],'planes')
     capture(phases,'01-plane-access-fill',board,rules,a.cli)
     from pnr.native_loop import main as native
-    final=native([str(board),'--rules',str(rules),'--constraints',str(a.constraints.resolve()),'--out-dir',str(work/'native-loop'),'--kicad-python',a.python,'--kicad-cli',a.cli,'--electrical-fab',a.electrical_fab,'--early-pairs','--route-only','--cycles','12','--route-attempts','40','--placement-attempts','2','--search-seconds','90','--seconds',str(a.seconds),'--phase-dir',str(phases),*annotations])
+    final=native([str(board),'--repo',str(Path(__file__).resolve().parents[3]),'--rules',str(rules),'--constraints',str(a.constraints.resolve()),'--out-dir',str(work/'native-loop'),'--kicad-python',a.python,'--kicad-cli',a.cli,'--electrical-fab',a.electrical_fab,'--early-pairs','--early-pair-placement','--route-only','--cycles','12','--route-attempts','40','--placement-attempts','2','--search-seconds','90','--seconds',str(a.seconds),'--phase-dir',str(phases),*annotations])
     rules=work/'native-loop/policy/prepare.json'
     run(['pnr.via_coalesce',final,'--out',board,'--rules',rules,'--report',work/'coalesce.json','--work-dir',work/'coalesce','--kicad-cli',a.cli,*annotations],'coalesce')
     capture(phases,'08-coalescing',board,rules,a.cli)

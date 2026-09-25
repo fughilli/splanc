@@ -4,7 +4,7 @@ class ReferenceGuard:
         import pcbnew as k
         from pnr.electrical import net_policy
         from pnr.native_electrical import vec
-        self.rules=rules;self.rows=[]
+        self.rules=rules;self.rows=[];self.net_gaps={}
         pairs={p['name']:p for p in rules.get('diff_pairs',[])}
         present={t.GetNetname() for t in board.GetTracks()}
         for witness in rules.get('routed_pair_references',[]):
@@ -23,9 +23,16 @@ class ReferenceGuard:
         import pcbnew as k
         from pnr.electrical import net_policy
         from pnr.native_electrical import vec
-        gap=net_policy(net,self.rules)['clearance_mm']
+        if net not in self.net_gaps:
+            self.net_gaps[net]=net_policy(net,self.rules)['clearance_mm']
+        gap=self.net_gaps[net]
+        # Every corridor with the same clearance uses exactly the same native
+        # aperture. Reuse within this query only; position/diameter may change.
+        apertures={}
         for corridor,nets,clearance in self.rows:
             if net in nets:continue
-            aperture=k.SHAPE_CIRCLE(vec(point),round((diameter/2+max(gap,clearance)+.004)*1e6))
-            if corridor.Collide(aperture,0):return False
+            radius=round((diameter/2+max(gap,clearance)+.004)*1e6)
+            if radius not in apertures:
+                apertures[radius]=k.SHAPE_CIRCLE(vec(point),radius)
+            if corridor.Collide(apertures[radius],0):return False
         return True

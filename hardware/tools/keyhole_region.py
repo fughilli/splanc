@@ -556,7 +556,13 @@ def main():
     ]
     retain_native(drilled)
     via_zones = [z for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
-    existing_vias = [t for t in remaining if isinstance(t, pcbnew.PCB_VIA)]
+    # The board is immutable during search; resolve native metadata once.
+    existing_vias_by_net = defaultdict(list)
+    for t in remaining:
+        if isinstance(t, pcbnew.PCB_VIA):
+            existing_vias_by_net[t.GetNetname()].append((pt(t.GetPosition()), t))
+    net_codes = {pad.GetNetname(): pad.GetNetCode() for pad in pads}
+
 
     def make_via(p, code):
         via = pcbnew.PCB_VIA(b)
@@ -581,8 +587,8 @@ def main():
         reused = next(
             (
                 t
-                for t in existing_vias
-                if t.GetNetname() == r.net and math.dist(p, pt(t.GetPosition())) < 1e-8
+                for position, t in existing_vias_by_net.get(r.net, ())
+                if math.dist(p, position) < 1e-8
             ),
             None,
         )
@@ -590,7 +596,7 @@ def main():
             via_cache[key] = True
             return True
         if not reference_guard.via_clear(r.net,p,.6):return False
-        code = next(pad.GetNetCode() for pad in pads if pad.GetNetname() == r.net)
+        code = net_codes[r.net]
         via = make_via(p, code)
         for la in copper_layers:
             shape = via.GetEffectiveShape(la)
@@ -753,9 +759,8 @@ def main():
                 if a[2] != z[2]:
                     key = (r.net, a[0], a[1])
                     if key not in added_vias and not any(
-                        t.GetNetname() == r.net
-                        and math.dist(a[:2], pt(t.GetPosition())) < 1e-8
-                        for t in existing_vias
+                        math.dist(a[:2], position) < 1e-8
+                        for position, t in existing_vias_by_net.get(r.net, ())
                     ):
                         b.Add(make_via(a[:2], code))
                         added_vias.add(key)

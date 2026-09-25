@@ -465,6 +465,7 @@ def main(argv=None):
     ap.add_argument('board',type=Path);ap.add_argument('--rules',required=True,type=Path)
     ap.add_argument('--annotation-source',action='append',default=[],type=Path)
     ap.add_argument('--early-pairs',action='store_true')
+    ap.add_argument('--early-pair-placement',action='store_true',help='Allow source-legal pair-package rescue even when later refinement is route-only')
     ap.add_argument('--phase-dir',type=Path)
     ap.add_argument('--route-only',action='store_true')
     ap.add_argument('--only-mode',choices=['signal','power','plane','pair'])
@@ -497,6 +498,10 @@ def main(argv=None):
     env=dict(os.environ,PYTHONPATH=str(worker_root/'hardware/pnr'))
     from pnr.phase_budget import PhaseClock
     phase_clock=PhaseClock();started=phase_clock.started;events=[];rounds=[];history={};tried=set();seq=0;failure_history={};job_attempts={};job_budget_hints={};electrical_repair_attempts=set()
+    from pnr.plane_leaf_repair import RepairBudget
+    plane_leaf_budget=RepairBudget()
+    from pnr.power_detour_repair import DetourBudget
+    power_detour_budget=DetourBudget()
     current=a.out_dir/'baseline.kicad_pcb';copy_board(a.board.resolve(),current)
     def invoke(cmd,log):
         with Path(log).open('w') as f:
@@ -522,7 +527,7 @@ def main(argv=None):
         if not a.electrical_fab:raise ValueError('early pairs require source electrical policy')
         from pnr.paired_bootstrap import run as route_pairs
         from pnr.staged_signal import run as route_signals
-        paired=route_pairs(current,a.rules,a.constraints,a.out_dir/'early-pairs',a.kicad_python,a.kicad_cli,allow_placement=not a.route_only)
+        paired=route_pairs(current,a.rules,a.constraints,a.out_dir/'early-pairs',a.kicad_python,a.kicad_cli,allow_placement=(not a.route_only or a.early_pair_placement))
         phase('02-usb-pairs',paired)
         policy=read(a.rules);policy['routed_pair_references']=read(paired.parent/'paired-reference.json');save(a.rules,policy)
         # Complete high-priority electrical work before the ordinary maze can
@@ -707,6 +712,58 @@ def main(argv=None):
                             status=repair_outcome['status'],accepted=repair_outcome.get('accepted',False),folder=str(trial)))
                         if repair_outcome.get('accepted'):
                             rd=trial;outcome=repair_outcome;break
+            # Explicit opt-in experiment: restore an ordinary plane-return leaf
+            # atomically with a trapped signal, not an unchecked clearance waiver.
+            if (os.environ.get('PNR_PLANE_LEAF_REPAIR')=='1' and not placement_trial
+                    and target.get('mode','signal')=='signal' and not outcome.get('accepted')
+                    and a.seconds-(time.monotonic()-started)>100 and plane_leaf_budget.available):
+                from pnr.plane_leaf_repair import endpoint_has_no_escape
+                search_events=rd/'search-events.jsonl'
+                rows=[json.loads(line) for line in search_events.read_text().splitlines()] if search_events.exists() else []
+                for side in endpoint_has_no_escape(rows):
+                    if a.seconds-(time.monotonic()-started)<70:break
+                    end='source' if side==0 else 'target';ref=target[end].rsplit('.',1)[0]
+                    import hashlib
+                    leaf_board_hash=hashlib.sha256(trial_current.read_bytes()).hexdigest()
+                    if not plane_leaf_budget.reserve(leaf_board_hash,ref,target['net']):continue
+                    trial=folder/f'plane-leaf-{seq:03d}-{side}'
+                    spec=folder/f'plane-leaf-target-{seq:03d}-{side}.json';save(spec,target)
+                    rcmd=[a.kicad_python,'-m','pnr.plane_leaf_repair',str(trial_current),
+                        '--rules',str(a.rules.resolve()),'--target-json',str(spec),'--out-dir',str(trial),
+                        '--adapter',str(worker_root/'hardware/tools/keyhole_region.py'),'--kicad-cli',a.kicad_cli,
+                        '--focus',ref,'--seconds',str(min(40,a.seconds-(time.monotonic()-started)-30))]
+                    for source in a.annotation_source:rcmd+=['--annotation-source',str(source.resolve())]
+                    try:invoke(rcmd,trial.with_suffix('.log'));repair_outcome=read(trial/'result.json')
+                    except subprocess.CalledProcessError:repair_outcome=dict(status='worker_error',accepted=False)
+                    plane_leaf_budget.record(leaf_board_hash,ref,repair_outcome)
+                    events.append(dict(stage='plane_leaf_repair',target=target,focus=ref,
+                        status=repair_outcome['status'],accepted=repair_outcome.get('accepted',False),folder=str(trial),budget=plane_leaf_budget.summary()))
+                    if repair_outcome.get('accepted'):rd=trial;outcome=repair_outcome;break
+            if (os.environ.get('PNR_POWER_DETOUR_REPAIR')=='1' and not placement_trial
+                    and target.get('mode','signal')=='signal' and not outcome.get('accepted')
+                    and a.seconds-(time.monotonic()-started)>160 and power_detour_budget.available):
+                from pnr.plane_leaf_repair import endpoint_has_no_escape
+                search_events=rd/'search-events.jsonl'
+                rows=[json.loads(line) for line in search_events.read_text().splitlines()] if search_events.exists() else []
+                for side in endpoint_has_no_escape(rows):
+                    if a.seconds-(time.monotonic()-started)<100:break
+                    focus=target['source' if side==0 else 'target']
+                    import hashlib
+                    board_hash=hashlib.sha256(trial_current.read_bytes()).hexdigest()
+                    if not power_detour_budget.reserve(board_hash,focus,target['net']):continue
+                    trial=folder/f'power-detour-{seq:03d}-{side}'
+                    spec=folder/f'power-detour-target-{seq:03d}-{side}.json';save(spec,target)
+                    rcmd=[a.kicad_python,'-m','pnr.power_detour_repair',str(trial_current),
+                        '--rules',str(a.rules.resolve()),'--target-json',str(spec),'--out-dir',str(trial),
+                        '--adapter',str(worker_root/'hardware/tools/keyhole_region.py'),'--kicad-cli',a.kicad_cli,
+                        '--focus',focus,'--seconds',str(min(180,a.seconds-(time.monotonic()-started)-40))]
+                    for source in a.annotation_source:rcmd+=['--annotation-source',str(source.resolve())]
+                    try:invoke(rcmd,trial.with_suffix('.log'));repair_outcome=read(trial/'result.json')
+                    except subprocess.CalledProcessError:repair_outcome=dict(status='worker_error',accepted=False)
+                    power_detour_budget.record(repair_outcome)
+                    events.append(dict(stage='power_detour_repair',target=target,focus=focus,
+                        status=repair_outcome['status'],accepted=repair_outcome.get('accepted',False),folder=str(trial),budget=power_detour_budget.summary()))
+                    if repair_outcome.get('accepted'):rd=trial;outcome=repair_outcome;break
             if not placement_trial and not terminal_repair and target.get('mode','signal')=='signal':
                 hint=progress_budget_hint(outcome,search_seconds,a.search_seconds)
                 if hint:job_budget_hints[route_job_key(target)]=hint
