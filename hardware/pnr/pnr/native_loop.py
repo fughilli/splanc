@@ -135,7 +135,10 @@ def native_worker(a):
         for t in retained_wrappers:b.Remove(t)
         clones=[]
         for i in removed:
-            clone=old[i].Duplicate();clone.SetUuid(old[i].m_Uuid);b.Add(clone);clones.append(clone)
+            clone=old[i].Duplicate();clone.SetUuid(old[i].m_Uuid);b.Add(clone)
+            # Rebind Duplicate's source-board NETINFO_ITEM to the destination.
+            clone.SetNetCode(0 if old[i].GetNetCode()==0 else b.FindNet(old[i].GetNetname()).GetNetCode())
+            clones.append(clone)
         original=next(f for f in prior.GetFootprints() if f.GetReference()==spec['ref'])
         current=next(f for f in b.GetFootprints() if f.GetReference()==spec['ref'])
         current.SetPosition(original.GetPosition())

@@ -20,6 +20,7 @@ Pure stdlib (heapq) on the grid — no numpy in the hot path, no pcbnew. Determi
 
 from __future__ import annotations
 
+import os
 import heapq
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -121,6 +122,10 @@ def _astar(
     DRC-safe 45° steps (both corners free) to shorten diagonal runs. ``blocked``
     cells are hard-impassable; ``soft`` cells (committed other-net copper the rip-up
     pass may cross at a price) are passable but expensive. Returns the path or None."""
+    if os.environ.get('PNR_PACKED_MAZE') == '1':
+        from .packed_maze import astar
+        return astar(grid, sources, targets, net, occ, history, via_cost,
+                     pres_fac, blocked, soft, diagonal, drill_sites)
     if not targets:
         return None
     targets = {c for c in targets if grid.passable(c.layer, c.i, c.j, net)}
