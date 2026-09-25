@@ -506,10 +506,10 @@ def main(argv=None):
         cmd=[a.kicad_python,'-m','pnr.native_loop',str(board),'--worker',mode,'--rules',str(a.rules.resolve()),'--report',str(report)]
         for s in a.annotation_source:cmd+=['--annotation-source',str(s.resolve())]
         invoke(cmd+list(extra),folder/(mode+'.log'));return read(report)
-    def drc(board):
+    def drc(board, *, final=False):
         report=board.with_suffix('.drc.json')
         from pnr.native_drc import run_drc
-        return run_drc(a.kicad_cli,board,report,env=env)
+        return run_drc(a.kicad_cli,board,report,env=env,final=final)
     if a.electrical_fab:
         compiled=worker('prepare',current,a.out_dir/'policy',['--electrical-fab',str(a.electrical_fab.resolve())])
         a.rules=a.out_dir/'policy'/'prepare.json'
@@ -805,7 +805,7 @@ def main(argv=None):
         accepted=gate(before,after,checks,strict=False)
         events.append(dict(stage='coalesce_and_graph',accepted=accepted,folder=str(cleanup)))
         if accepted:current,before=out,after
-    result=a.out_dir/'best'/'candidate.kicad_pcb';copy_board(current,result);current=result;before=drc(current);record(reason)
+    result=a.out_dir/'best'/'candidate.kicad_pcb';copy_board(current,result);current=result;before=drc(current,final=True);record(reason)
     print(json.dumps(dict(best=str(current),opens=len(before['unconnected_items']),cycles=len(rounds),termination=reason)))
     phase('07-native-refinement',result,read(a.out_dir/'progress.json'))
     return result

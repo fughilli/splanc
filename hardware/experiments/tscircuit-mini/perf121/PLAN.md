@@ -14,3 +14,15 @@ Each agent owns its worktree and compact artifacts under output/perf121/{gpu,cpu
 Sustained scored benchmarks are coordinated to avoid contention; report background load and do not add parent wait time to child CPU. Opt-in implementations only enter the main tree after tests, import/hash verification and review of interactions. Combined native ladder and focused fixed-work comparisons precede any fresh full pipeline run. Unsupported GPU/local-DRC ideas remain documented rejections or future work, not claimed acceleration.
 
 Live dashboard port8774 links to individual experiments on8771/8772/8773. Progress phases and provisional geometry must remain distinguishable from accepted native results.
+
+
+## Completed bounded investigation
+
+The three worktree features are integrated locally. See [RESULTS.md](RESULTS.md)
+for measured timings, rejected approaches, correctness evidence and qualification
+limits. Production defaults remain unchanged. GPU endpoint scoring and native
+acceptance epochs remain experiments; CPU maze/placement and warm DRC are opt-ins.
+Before a fresh production run, complete native fixture qualification with the
+chosen flags, freeze all inputs, preserve final cold/native electrical gates and
+start the existing PDF/5 mm review workflow. Do not resume failed fresh119 or paused
+full116 by modifying their frozen runtimes.

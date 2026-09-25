@@ -43,6 +43,7 @@ filegroup(
         "pnr/electrical_audit.py",
         "pnr/native_electrical.py",
         "pnr/native_drc.py",
+        "pnr/route_epoch.py",
         "pnr/drc_warm/__init__.py",
         "pnr/drc_warm/client.py",
         "pnr/drc_warm/launch_host.py",
@@ -829,5 +830,30 @@ py_test(
     size = "small",
     srcs = ["tests/test_warm_native_drc.py"],
     main = "tests/test_warm_native_drc.py",
+    deps = [":pnr"],
+)
+
+# Opt-in acceleration contracts; final board qualification remains native.
+py_test(
+    name = "packed_maze_test",
+    size = "small",
+    srcs = ["tests/test_packed_maze.py"],
+    main = "tests/test_packed_maze.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_place"],
+)
+
+py_test(
+    name = "batched_cost_test",
+    size = "small",
+    srcs = ["tests/test_batched_cost.py"],
+    main = "tests/test_batched_cost.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "route_epoch_test",
+    size = "small",
+    srcs = ["tests/test_route_epoch.py"],
+    main = "tests/test_route_epoch.py",
     deps = [":pnr"],
 )
