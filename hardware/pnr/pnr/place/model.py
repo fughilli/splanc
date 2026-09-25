@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+import os
 import torch
 from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
@@ -178,6 +179,10 @@ def global_place(
     pin_off4_t = torch.tensor(pin_off4, dtype=torch.float32)  # (P, 4, 2)
     net_pin_idx = [[pin_key[p] for p in net.pins if p in pin_key] for net in graph.nets]
     net_pin_idx = [pins for pins in net_pin_idx if len(pins) >= 2]
+    batched_wl = None
+    if os.environ.get("PNR_BATCHED_WIRELENGTH") == "1":
+        from .batched_cost import BucketedWirelength
+        batched_wl = BucketedWirelength(net_pin_idx)
 
     # Plane nets (power/ground poured as copper planes): the pins on each, used to
     # (a) minimise each plane's pad-bounding-box AREA and (b) keep different power
@@ -242,15 +247,18 @@ def global_place(
         pin_x = pos[pin_comp_t, 0] + exp_off[:, 0]
         pin_y = pos[pin_comp_t, 1] + exp_off[:, 1]
 
-        wl = pos.new_zeros(())
-        for pins in net_pin_idx:
-            px, py = pin_x[pins], pin_y[pins]
-            wl = wl + gamma * (
-                torch.logsumexp(px / gamma, 0)
-                + torch.logsumexp(-px / gamma, 0)
-                + torch.logsumexp(py / gamma, 0)
-                + torch.logsumexp(-py / gamma, 0)
-            )
+        if batched_wl is not None:
+            wl = batched_wl(torch.stack((pin_x, pin_y), dim=-1), gamma)
+        else:
+            wl = pos.new_zeros(())
+            for pins in net_pin_idx:
+                px, py = pin_x[pins], pin_y[pins]
+                wl = wl + gamma * (
+                    torch.logsumexp(px / gamma, 0)
+                    + torch.logsumexp(-px / gamma, 0)
+                    + torch.logsumexp(py / gamma, 0)
+                    + torch.logsumexp(-py / gamma, 0)
+                )
 
         # Expected courtyard half-size (rotation-aware).
         exp_half = (p.unsqueeze(-1) * half4).sum(1)  # (n, 2)
