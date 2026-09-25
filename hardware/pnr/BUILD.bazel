@@ -857,3 +857,11 @@ py_test(
     main = "tests/test_route_epoch.py",
     deps = [":pnr"],
 )
+
+py_test(
+    name = "profile_test",
+    size = "small",
+    srcs = ["tests/test_profile.py"],
+    main = "tests/test_profile.py",
+    deps = [":pnr"],
+)

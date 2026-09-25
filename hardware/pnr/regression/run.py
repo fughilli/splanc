@@ -37,6 +37,8 @@ def main():
  ap.add_argument('--seed',type=int,action='append');ap.add_argument('--rounds',type=int,default=4)
  ap.add_argument('--timeout',type=float,default=600)
  ap.add_argument('--python')
+ ap.add_argument('--packed-maze',action='store_true',help='Validate the packed CPU maze kernel explicitly')
+ ap.add_argument('--batched-wirelength',action='store_true',help='Validate CPU degree-bucket placement costs explicitly')
  ap.add_argument('--initial-pool',action='store_true',help='Compare a bounded set of legal global placements before round one')
  ap.add_argument('--initial-starts',type=int,default=8)
  ap.add_argument('--initial-finalists',type=int,default=3)
@@ -57,6 +59,8 @@ def main():
  # Ambient experiment switches must not silently change the suite configuration.
  for key in list(env):
   if key.startswith('PNR_') and key not in ('PNR_LOCAL_PRESSURE','PNR_JOINT_ACCESS'):del env[key]
+ if args.packed_maze:env['PNR_PACKED_MAZE']='1'
+ if args.batched_wirelength:env['PNR_BATCHED_WIRELENGTH']='1'
  if args.initial_pool:
   if not 2 <= args.initial_starts <= 128 or not 1 <= args.initial_finalists <= min(args.initial_starts,16):
    raise ValueError('Invalid initial placement pool size/finalist budget')

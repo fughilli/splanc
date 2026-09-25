@@ -36,9 +36,17 @@ class NativeMoveTest(unittest.TestCase):
             for attempt in range(5):
                 target=d/('subprocess-%d.kicad_pcb'%attempt)
                 log=d/('subprocess-%d.json'%attempt)
-                completed=subprocess.run([sys.executable,'-m','pnr.native_loop',str(out),'--worker','unmove','--rules',str(rules),'--spec',str(spec),'--out',str(target),'--report',str(log)],capture_output=True,text=True,timeout=30,env=dict(os.environ,PYTHONHASHSEED='0'))
+                completed=subprocess.run([sys.executable,'-m','pnr.native_loop',str(out),'--worker','unmove','--rules',str(rules),'--spec',str(spec),'--out',str(target),'--report',str(log)],capture_output=True,text=True,timeout=30,env=dict(os.environ,PYTHONHASHSEED=str(attempt),PNR_PROFILE_DIR=str(d/('profiles-%d'%attempt))))
                 self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
                 self.assertEqual(json.loads(log.read_text())['restored_ref'],'A')
+                profiles=list((d/('profiles-%d'%attempt)).glob('*.json'))
+                self.assertEqual(len(profiles),1)
+                profile=json.loads(profiles[0].read_text())
+                self.assertIsNone(profile['error'])
+                self.assertTrue(profile['hot_functions'])
+                import pstats
+                self.assertTrue(pstats.Stats(profile['profile']).stats)
+
                 checked=k.LoadBoard(str(target))
                 self.assertEqual([t.m_Uuid.AsString() for t in checked.GetTracks()],[t.m_Uuid.AsString() for t in b.GetTracks()])
                 self.assertEqual([t.GetNetname() for t in checked.GetTracks()],['signal'])

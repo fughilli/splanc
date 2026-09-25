@@ -18,6 +18,19 @@ def span(name):
  finally:
   record=spans.setdefault(name,dict(calls=0,wall_seconds=0,cpu_seconds=0));record['calls']+=1;record['wall_seconds']+=time.perf_counter()-start;record['cpu_seconds']+=time.process_time()-cpu
 
+def finalized_stats(profile, path):
+ """Persist one snapshot, then release native entries before report processing.
+
+ KiCad 10's bundled Python 3.9 crashes in shutdown GC when _lsprof entries
+ survive report/provenance allocation after pcbnew workers. Reproduced with
+ fresh119 unmove; early clear preserves the exact saved board and profile.
+ Read the serialized snapshot rather than taking another live snapshot.
+ """
+ profile.disable()
+ profile.dump_stats(str(path))
+ profile.clear()
+ return pstats.Stats(str(path))
+
 def run(label,fn):
  global active
  dest=os.environ.get('PNR_PROFILE_DIR')
@@ -40,7 +53,7 @@ def run(label,fn):
   if not isinstance(ex,SystemExit) or ex.code not in (0,None):error=repr(ex)
   raise
  finally:
-  stopped.set();thread.join();profile.disable();active=False;wall=time.perf_counter()-start;process=time.process_time()-cpu;raw=root/(key+'.pstats');profile.dump_stats(str(raw));stats=pstats.Stats(profile);rows=[]
+  stopped.set();thread.join();profile.disable();active=False;wall=time.perf_counter()-start;process=time.process_time()-cpu;raw=root/(key+'.pstats');stats=finalized_stats(profile,raw);rows=[]
   for (path,line,name),(primitive,calls,self_time,cumulative,callers) in stats.stats.items():
    rows.append(dict(file=path,line=line,function=name,calls=calls,primitive_calls=primitive,self_seconds=self_time,cumulative_seconds=cumulative))
   rows.sort(key=lambda x:x['self_seconds'],reverse=True)

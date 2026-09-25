@@ -107,3 +107,7 @@ variables do not silently enable this mode in the runner.
 
 See [RESULTS-118.md](RESULTS-118.md) for the frozen ladder, native comparisons,
 actual PDF review evidence and remaining placement/route-quality findings.
+
+Performance opt-ins can be tested explicitly with `--packed-maze` and
+`--batched-wirelength`. They are recorded in provenance; ambient variables are
+still cleared, so a baseline invocation keeps its original algorithms.

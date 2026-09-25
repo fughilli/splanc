@@ -25,6 +25,19 @@ class GridBasicsTest(unittest.TestCase):
         self.assertAlmostEqual(cx, 0.25)
         self.assertAlmostEqual(cy, 0.25)
 
+    def test_edge_inset_uses_actual_outline_for_partial_final_cells(self):
+        for width,height in [(70,55),(55,70),(10,10),(9.97,5.03)]:
+            grid=RouteGrid(width,height,.35)
+            inset=.45
+            grid.block_edge_inset(inset)
+            for j in range(grid.ny):
+                for i in range(grid.nx):
+                    x,y=grid.center_of(i,j)
+                    safe=min(x,y,width-x,height-y)>=inset-1e-9
+                    for layer in range(grid.nlayers):
+                        self.assertEqual(grid.passable(layer,i,j,'N'),safe)
+                        self.assertEqual(grid.via_passable(layer,i,j,'N'),safe)
+
     def test_side_layer(self):
         g = RouteGrid(10, 10, 0.5)
         self.assertEqual(g.side_layer("top"), 0)

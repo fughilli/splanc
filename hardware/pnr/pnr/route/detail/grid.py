@@ -208,14 +208,17 @@ class RouteGrid:
         clearance from the board edge. Pad cells are left alone — a footprint placed
         at the edge (an overhanging edge connector) still needs its access, and its
         edge clearance is the footprint's concern, not the router's."""
-        n = max(0, int(np.ceil(inset / self.pitch - 0.5)))
-        if n == 0:
-            return
+        # The final cell can straddle the outline when size/pitch is not an
+        # integer. Mirroring a near-edge cell count from nx/ny under-reserves
+        # the far edge (fresh119: y=54.775 on a 55 mm board, 0.35 mm pitch).
+        # Compare physical centres to the actual outline on all four sides.
         border = [
             (i, j)
             for j in range(self.ny)
             for i in range(self.nx)
-            if i < n or j < n or i >= self.nx - n or j >= self.ny - n
+            if min((i + 0.5) * self.pitch, (j + 0.5) * self.pitch,
+                   self.width - (i + 0.5) * self.pitch,
+                   self.height - (j + 0.5) * self.pitch) < inset - 1e-9
         ]
         for la in range(self.nlayers):
             for i, j in border:
