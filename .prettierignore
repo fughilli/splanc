@@ -9,3 +9,9 @@ docs/user-guide/shots.json
 # Generated SKU→capability mirror of skus.bzl (byte-pinned by
 # //pi/hitl/internal/skus:skus_json_sync_test; go:embedded; not prettier-shaped).
 pi/hitl/internal/skus/skus.json
+
+# Machine-generated fx_bench dataset + run-id ledger, written by ingest_fx_bench.py
+# and committed by the fxbench-ingest cron. It's data, not source: the run-id array
+# in ingest_state.json is emitted one-id-per-line by json.dump, which prettier
+# re-packs to fit printWidth, so a fresh cron commit would perpetually re-fail lint.
+pi/hitl/observability/fxbench/data/

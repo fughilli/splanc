@@ -551,6 +551,10 @@ def main() -> int:
     with open(os.path.join(args.out, "goldens_line.json"), "w") as f:
         json.dump(golden_line, f, separators=(",", ":"))
 
+    # Written with json.dump (valid JSON: no trailing commas) + a trailing newline
+    # (prettier's default). The run-id array is still emitted one id per line, which
+    # prettier would re-pack to fit printWidth — so data/ is .prettierignore'd; the
+    # cron-committed ledger is generated data, not prettier-shaped source.
     with open(meta_path, "w") as f:
         json.dump(
             {
@@ -562,6 +566,7 @@ def main() -> int:
             f,
             indent=2,
         )
+        f.write("\n")
 
     if args.upload_release:
         upload_release_assets(
