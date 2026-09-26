@@ -62,7 +62,8 @@ pub mod datapath {
     /// `hal_mac_init`: take the MAC core out of power retention. `retention_mask`
     /// is `pm_get_tx_blocks_retention_mask()` on real hardware.
     ///
-    /// # Safety: MMIO; the MAC must be powered + clocked.
+    /// # Safety
+    /// MMIO; the MAC must be powered + clocked.
     pub unsafe fn mac_init(retention_mask: u32) {
         let clr = (retention_mask & 0x00ff_0000) | 0x1000;
         let v = mmio::read32(MAC_INIT_RETENTION) & !clr;
@@ -72,7 +73,8 @@ pub mod datapath {
     /// `mac_txrx_init`: configure the TX/RX datapath (EDCA queue params, HE timing
     /// fields, thresholds) and leave RX disabled (bit31 of `RX_CTRL` cleared).
     ///
-    /// # Safety: MMIO; call after [`mac_init`].
+    /// # Safety
+    /// MMIO; call after [`mac_init`].
     pub unsafe fn txrx_init() {
         // (addr, and-mask, or-value): reg = (reg & and) | or.
         const SEQ: &[(usize, u32, u32)] = &[
@@ -106,7 +108,8 @@ pub mod datapath {
     /// (re)pointing `RX_DSCR_BASE`, so the subsequent [`enable_rx`] is a real 0->1
     /// edge that makes the engine reload the descriptor base.
     ///
-    /// # Safety: MMIO.
+    /// # Safety
+    /// MMIO.
     pub unsafe fn disable_rx() {
         let v = mmio::read32(RX_CTRL) & !0x8800_0000;
         mmio::write32(RX_CTRL, v);
@@ -126,7 +129,8 @@ pub mod datapath {
     ///     steady-state `0x8800_0000`).
     ///   * `hal_mac_rx_enable`: `RX_CTRL |= 0x8000_0000` (bit31) — arm RX DMA.
     ///
-    /// # Safety: MMIO; call after [`txrx_init`] and ring install (base written).
+    /// # Safety
+    /// MMIO; call after [`txrx_init`] and ring install (base written).
     pub unsafe fn enable_rx() {
         // Request the reload and wait for the hardware ack (bit0 -> 0), bounded so
         // a wedged engine can never hang the caller.
@@ -182,7 +186,8 @@ pub mod datapath {
 
 /// MAC controller bring-up: clear power retention, then configure the datapath.
 ///
-/// # Safety: MMIO; the MAC must be powered + clocked.
+/// # Safety
+/// MMIO; the MAC must be powered + clocked.
 pub unsafe fn init(retention_mask: u32) {
     datapath::mac_init(retention_mask);
     datapath::txrx_init();
@@ -190,7 +195,8 @@ pub unsafe fn init(retention_mask: u32) {
 
 /// Read the TSF timer (`0x600A_D014` latch control + `0x600A_D020` counter).
 ///
-/// # Safety: MMIO; the MAC must be initialized.
+/// # Safety
+/// MMIO; the MAC must be initialized.
 pub unsafe fn tsf_now() -> u32 {
     const TSF_CTRL: usize = 0x600A_D014;
     const TSF_COUNT: usize = 0x600A_D020;

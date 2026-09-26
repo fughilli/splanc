@@ -371,6 +371,9 @@ mod tests {
     // ---- APA102 / SK9822 framing ----
 
     #[test]
+    // The `4 + <data> + 4` form documents start-frame + data + end-frame; the
+    // `+ 0` for the zero-LED case is intentional layout arithmetic.
+    #[allow(clippy::identity_op)]
     fn apa102_buffer_len_and_end_frame() {
         assert_eq!(apa102::buffer_len(0), 4 + 0 + 4);
         assert_eq!(apa102::buffer_len(1), 4 + 4 + 4);

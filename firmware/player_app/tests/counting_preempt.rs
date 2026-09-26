@@ -48,9 +48,11 @@ fn handle(frame: &[u8], now: f64) -> Option<SMsg> {
 fn counting_pattern(n: u32, order: Option<&str>) -> CMsg {
     let mut counting = pb::SetCountingPattern::default();
     for (i, rgb) in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]].iter().enumerate() {
-        let mut block = pb::ColorBlock::default();
-        block.r#start = i as i32 * n as i32;
-        block.r#count = n as i32;
+        let mut block = pb::ColorBlock {
+            r#start: i as i32 * n as i32,
+            r#count: n as i32,
+            ..Default::default()
+        };
         block.r#rgb.extend_from_slice(rgb).unwrap();
         counting.r#blocks.push(block).unwrap();
     }

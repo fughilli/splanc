@@ -135,6 +135,9 @@ fn chol_solve3(l: &Mat3, b: Vec3) -> Vec3 {
     let mut y = [0.0; 3];
     for i in 0..3 {
         let mut s = b[i];
+        // Triangular forward-substitution: `k` indexes both `l[i][k]` and `y[k]`
+        // over `0..i`, so an iterator rewrite would not be clearer.
+        #[allow(clippy::needless_range_loop)]
         for k in 0..i {
             s -= l[i][k] * y[k];
         }
@@ -187,6 +190,9 @@ pub fn lstsq_dense(a: &DenseMat, b: &[f64]) -> Vec<f64> {
     // Normal equations: G = A^T A, h = A^T b.
     let mut g = vec![0.0; n * n];
     let mut h = vec![0.0; n];
+    // `r` addresses a row-major slice `a.data[r*n..(r+1)*n]` and indexes `b[r]`;
+    // it is an arithmetic offset, not a walk of a single slice.
+    #[allow(clippy::needless_range_loop)]
     for r in 0..a.rows {
         let row = &a.data[r * n..(r + 1) * n];
         for i in 0..n {

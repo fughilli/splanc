@@ -15,12 +15,13 @@ use micropb::{MessageEncode, PbEncoder};
 use pb::ServerMessage_::Msg as SMsg;
 
 fn submit_map_frame(map_id: &str, n: usize) -> Vec<u8> {
-    let mut map = Box::new(pb::OutputMap::default());
-    map.r#map_id = map_id.parse().unwrap();
-    map.r#led_count = n as i32;
+    let mut map = Box::new(pb::OutputMap {
+        r#map_id: map_id.parse().unwrap(),
+        r#led_count: n as i32,
+        ..Default::default()
+    });
     for i in 0..n {
-        let mut led = pb::LedEntry::default();
-        led.r#id = i as i32;
+        let mut led = pb::LedEntry { r#id: i as i32, ..Default::default() };
         led.r#xyz.extend_from_slice(&[0.0, 0.0, 0.0]).unwrap();
         map.r#leds.push(led).unwrap();
     }

@@ -641,7 +641,7 @@ pub mod emu {
                 0x13 => {
                     // I-type ALU (addi sign-extends imm[11:0]; the shifts use shamt)
                     let a = x[rs1];
-                    let shamt = ((w >> 20) & 0x1f) as u32;
+                    let shamt = (w >> 20) & 0x1f;
                     let v = match f3 {
                         0x0 => a.wrapping_add((w as i32) >> 20), // addi
                         0x1 => ((a as u32) << shamt) as i32,     // slli
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn jit_matches_reference_over_random_blocks() {
         let mut rng = 0x1234_5678_9abc_def0u64;
-        let consts: Vec<i32> = (0..8).map(|i| (i as i32 - 3) * 37).collect();
+        let consts: Vec<i32> = (0..8).map(|i| (i - 3) * 37).collect();
         for _ in 0..4000 {
             // Build a random VALID straight-line block (tracks depth so ops never
             // underflow), starting from a small random stack.

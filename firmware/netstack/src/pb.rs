@@ -107,7 +107,7 @@ impl<'a> Iterator for PbReader<'a> {
 }
 
 /// Convenience: find the first field with `field_number == num` (zero-copy).
-pub fn field<'a>(buf: &'a [u8], num: u32) -> Option<PbValue<'a>> {
+pub fn field(buf: &[u8], num: u32) -> Option<PbValue<'_>> {
     PbReader::new(buf).find(|(f, _)| *f == num).map(|(_, v)| v)
 }
 
