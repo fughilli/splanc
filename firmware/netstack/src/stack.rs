@@ -160,14 +160,14 @@ impl<const RX: usize, const TX: usize, const AP_N: usize, const GATT_N: usize>
                         {
                             return Ingest::Refused;
                         }
-                        if out.len() > 0 {
+                        if !out.is_empty() {
                             self.queue_tx(out.as_slice(), Priority::Management)
                         } else {
                             Ingest::Consumed
                         }
                     }
                     Role::Ap => match self.ap.on_mgmt(fc, src, &mut out) {
-                        Ok(true) if out.len() > 0 => {
+                        Ok(true) if !out.is_empty() => {
                             self.queue_tx(out.as_slice(), Priority::Management)
                         }
                         Ok(_) => Ingest::Consumed,
@@ -315,13 +315,11 @@ mod tests {
 
     // Build a mgmt frame: FC subtype byte + 23 header bytes (addr2 = src at 10),
     // then an optional trailing body (fixed fields).
-    fn mgmt(fc: u8, src: Mac, body: &[u8]) -> alloc_vec {
+    fn mgmt(fc: u8, src: Mac, body: &[u8]) -> AllocVec {
         let mut f = [0u8; 128];
-        let mut n = 0;
         f[0] = fc;
-        n += 4; // fc(1)+flags(1)+dur(2)
-        // addr1 (da) 4..10 left zero
-        n = 10;
+        // fc(1)+flags(1)+dur(2) = 4, then addr1 (da) 4..10 left zero
+        let mut n = 10;
         f[n..n + 6].copy_from_slice(&src); // addr2 = src
         n += 6;
         n += 6; // addr3
@@ -330,15 +328,15 @@ mod tests {
             f[n + i] = *b;
         }
         n += body.len();
-        alloc_vec { buf: f, len: n }
+        AllocVec { buf: f, len: n }
     }
 
     // tiny fixed "vec" so tests need no std/alloc.
-    struct alloc_vec {
+    struct AllocVec {
         buf: [u8; 128],
         len: usize,
     }
-    impl alloc_vec {
+    impl AllocVec {
         fn s(&self) -> &[u8] {
             &self.buf[..self.len]
         }
@@ -375,9 +373,8 @@ mod tests {
         // exceed RECON_MAX), never writing out of bounds.
         let mut s: Stack<2, 2, 2, 2> = Stack::new(Role::Sta, STA, AP);
         let mut f = [0u8; 1600];
-        let mut n = 0;
         f[0] = subtype::BEACON;
-        n = 24; // mgmt header
+        let mut n = 24; // mgmt header
         // fixed params: timestamp(8) + interval(2) + caps(2)
         n += 12;
         // SSID

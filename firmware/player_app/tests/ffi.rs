@@ -78,8 +78,10 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(w.r#fw_version.as_str(), version, "welcome echoes the release version");
 
     // start_mapping 16 LEDs -> pattern timing + frame colors line up.
-    let mut opts = pb::StartMappingOptions::default();
-    opts.r#led_count = 16;
+    let opts = pb::StartMappingOptions {
+        r#led_count: 16,
+        ..Default::default()
+    };
     let mut start = pb::StartMapping::default();
     start.set_options(opts);
     let Some(SMsg::MappingStarted(started)) =
@@ -105,9 +107,11 @@ fn full_device_flow_through_the_c_abi() {
 
     // Counting pattern latches; the render hook paints the block.
     let mut counting = pb::SetCountingPattern::default();
-    let mut block = pb::ColorBlock::default();
-    block.r#start = 0;
-    block.r#count = 8;
+    let mut block = pb::ColorBlock {
+        r#start: 0,
+        r#count: 8,
+        ..Default::default()
+    };
     block.r#rgb.extend_from_slice(&[1.0, 0.0, 0.0]).unwrap();
     counting.r#blocks.push(block).unwrap();
     let Some(SMsg::CountingState(cs)) =
@@ -122,8 +126,10 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(rgb, [0, 0, 0], "past the block is off (the probe region)");
 
     // set_led_count persists per channel.
-    let mut slc = pb::SetLedCount::default();
-    slc.r#led_count = 300;
+    let slc = pb::SetLedCount {
+        r#led_count: 300,
+        ..Default::default()
+    };
     let Some(SMsg::LedCountState(_)) = handle(&encode(CMsg::SetLedCount(slc)), 2500.0) else {
         panic!("led_count_state expected");
     };
@@ -139,8 +145,10 @@ fn full_device_flow_through_the_c_abi() {
     map.r#map_id = "m-ffi".parse().unwrap();
     map.r#led_count = cap as i32;
     for i in 0..cap {
-        let mut led = pb::LedEntry::default();
-        led.r#id = i as i32;
+        let mut led = pb::LedEntry {
+            r#id: i as i32,
+            ..Default::default()
+        };
         led.r#xyz
             .extend_from_slice(&[i as f64 * 0.01, 0.0, -0.5])
             .unwrap();
@@ -174,8 +182,10 @@ fn full_device_flow_through_the_c_abi() {
 
     // Topology for the stored map: result_ready through the arena path.
     let mut topo = pb::SubmitTopology::default();
-    let mut t = pb::Topology::default();
-    t.r#map_id = "m-ffi".parse().unwrap();
+    let t = pb::Topology {
+        r#map_id: "m-ffi".parse().unwrap(),
+        ..Default::default()
+    };
     topo.set_topology(t);
     let Some(SMsg::ResultReady(_)) = handle(&encode(CMsg::SubmitTopology(topo)), 3500.0) else {
         panic!("topology result_ready expected");
@@ -188,9 +198,10 @@ fn full_device_flow_through_the_c_abi() {
     // any break), then used after the loop.
     let mut total: usize;
     loop {
-        let mut g = pb::GetStoredMap::default();
-        g.r#offset = assembled.len() as i32;
-        g.r#max_len = 40; // small chunk to exercise the windowed encoder
+        let g = pb::GetStoredMap {
+            r#offset: assembled.len() as i32,
+            r#max_len: 40, // small chunk to exercise the windowed encoder
+        };
         let Some(SMsg::StoredMapChunk(c)) = handle(&encode(CMsg::GetStoredMap(g)), 3600.0) else {
             panic!("stored_map_chunk expected");
         };
@@ -219,32 +230,37 @@ fn full_device_flow_through_the_c_abi() {
     // returns vec3(led.s, led.seg*0.1, led.branch) surfaces those terms straight
     // into the RGB the render loop would drive.
     {
-        let mut topo = pb::Topology::default();
-        topo.r#map_id = "m-ffi".parse().unwrap();
+        let mut topo = pb::Topology {
+            r#map_id: "m-ffi".parse().unwrap(),
+            ..Default::default()
+        };
         for id in 0..4 {
-            let mut bp = pb::BranchPoint::default();
-            bp.r#id = id;
+            let mut bp = pb::BranchPoint {
+                r#id,
+                ..Default::default()
+            };
             bp.r#xyz.extend_from_slice(&[0.0, 0.0, 0.0]).unwrap();
             topo.r#branch_points.push(bp).unwrap();
         }
         // seg ids 10/11/12 -> indices 0/1/2, all rooted at junction bp 0.
         for (sid, endb) in [(10, 1), (11, 2), (12, 3)] {
-            let mut s = pb::TopologySegment::default();
-            s.r#id = sid;
-            s.r#a = 0; // junction endpoint (degree 3)
-            s.r#b = endb; // terminal (degree 1)
-            s.r#length = 1.0;
+            let s = pb::TopologySegment {
+                r#id: sid,
+                r#a: 0,        // junction endpoint (degree 3)
+                r#b: endb,     // terminal (degree 1)
+                r#length: 1.0,
+                ..Default::default()
+            };
             topo.r#segments.push(s).unwrap();
         }
         // LED 0 near the junction (branch=true, s≈0.02, seg idx 0); LED 1 mid
         // seg 10 (branch=false, s=0.5, seg idx 0); LED 2 near the terminal end of
         // seg 11 (branch=false, s≈0.99, seg idx 1).
-        let assoc = |led_id, segment_id, foot: f64| {
-            let mut a = pb::LedAssociation::default();
-            a.r#led_id = led_id;
-            a.r#segment_id = segment_id;
-            a.r#foot_arclength = foot;
-            a
+        let assoc = |led_id, segment_id, foot: f64| pb::LedAssociation {
+            r#led_id,
+            r#segment_id,
+            r#foot_arclength: foot,
+            ..Default::default()
         };
         topo.r#associations.push(assoc(0, 10, 0.02)).unwrap();
         topo.r#associations.push(assoc(1, 10, 0.5)).unwrap();
@@ -312,13 +328,15 @@ fn full_device_flow_through_the_c_abi() {
             rgb
         };
         let set_tex = |flags: u32, data: &[u8]| {
-            let mut st = pb::SetTexture::default();
-            st.r#tex_index = 0;
-            st.r#format = 0; // RGB888
-            st.r#width = 2;
-            st.r#height = 2;
-            st.r#flags = flags;
-            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            let st = pb::SetTexture {
+                r#tex_index: 0,
+                r#format: 0, // RGB888
+                r#width: 2,
+                r#height: 2,
+                r#flags,
+                r#data: micropb::heapless::Vec::from_slice(data).unwrap(),
+                ..Default::default()
+            };
             // Fire-and-forget: no reply.
             assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
         };
@@ -339,13 +357,15 @@ fn full_device_flow_through_the_c_abi() {
         // Sub-byte grayscale formats decode into the vec3 sampler (g,g,g). Use
         // uniform frames so the sample is uv-independent.
         let set_tex_fmt = |format: u32, flags: u32, data: &[u8]| {
-            let mut st = pb::SetTexture::default();
-            st.r#tex_index = 0;
-            st.r#format = format;
-            st.r#width = 2;
-            st.r#height = 2;
-            st.r#flags = flags;
-            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            let st = pb::SetTexture {
+                r#tex_index: 0,
+                r#format,
+                r#width: 2,
+                r#height: 2,
+                r#flags,
+                r#data: micropb::heapless::Vec::from_slice(data).unwrap(),
+                ..Default::default()
+            };
             assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
         };
         // gray4 (5): 4 bits/texel, 2 texels/byte. 4 texels -> 2 bytes; 0xFF fills
@@ -396,13 +416,15 @@ fn full_device_flow_through_the_c_abi() {
             rgb
         };
         let set_tex_fmt = |format: u32, data: &[u8]| {
-            let mut st = pb::SetTexture::default();
-            st.r#tex_index = 0;
-            st.r#format = format;
-            st.r#width = 2;
-            st.r#height = 2;
-            st.r#flags = 0;
-            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            let st = pb::SetTexture {
+                r#tex_index: 0,
+                r#format,
+                r#width: 2,
+                r#height: 2,
+                r#flags: 0,
+                r#data: micropb::heapless::Vec::from_slice(data).unwrap(),
+                ..Default::default()
+            };
             assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
         };
         // rgb888 all-red -> (1,0,0), exact in Q1.6.
@@ -422,8 +444,10 @@ fn full_device_flow_through_the_c_abi() {
     // arena) — the phone re-uploads.
     let mut bad = Box::new(pb::OutputMap::default());
     bad.r#map_id = "m-bad".parse().unwrap();
-    let mut led = pb::LedEntry::default();
-    led.r#id = 1;
+    let led = pb::LedEntry {
+        r#id: 1,
+        ..Default::default()
+    };
     bad.r#leds.push(led).unwrap();
     let mut submit = pb::SubmitMap::default();
     submit.set_map(*bad);
@@ -444,9 +468,10 @@ fn full_device_flow_through_the_c_abi() {
     // -- perf monitoring: set_perf toggles the tier + interval, lm_perf_push
     // fills the ring, and get_perf_report rolls up the window (min/mean/max)
     // and drains the tail. Exercises the rollup off-device (the crux logic).
-    let mut sp = pb::SetPerf::default();
-    sp.r#mode = pb::SetPerf_::Mode::Full;
-    sp.r#interval_ms = 250;
+    let sp = pb::SetPerf {
+        r#mode: pb::SetPerf_::Mode::Full,
+        r#interval_ms: 250,
+    };
     // set_perf replies with an immediate (empty-window) PerfReport.
     let Some(SMsg::PerfReport(rep0)) = handle(&encode(CMsg::SetPerf(sp)), 6000.0) else {
         panic!("perf_report expected from set_perf");
@@ -496,8 +521,10 @@ fn full_device_flow_through_the_c_abi() {
     assert!(matches!(rep3.r#msg, Some(SMsg::PerfReport(_))));
 
     // OFF stops the stream; the builder then returns 0 (nothing to push).
-    let mut off = pb::SetPerf::default();
-    off.r#mode = pb::SetPerf_::Mode::Off;
+    let off = pb::SetPerf {
+        r#mode: pb::SetPerf_::Mode::Off,
+        ..Default::default()
+    };
     let _ = handle(&encode(CMsg::SetPerf(off)), 6500.0);
     assert_eq!(unsafe { lm_perf_mode() }, 0);
     let n_off = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };

@@ -194,6 +194,10 @@ impl PreintCache {
                     // rel = rot_t[i] · rot_t_k[i]^T.
                     let rel = mat_mul(&rot_t[i], &crate::linalg::transpose(&rot_t_k[i]));
                     let lg = so3_log(&rel);
+                    // `r` indexes six distinct arrays (lg, vel_k/vel, pos_k/pos and
+                    // the three Jacobians) at a shared row; an iterator rewrite would
+                    // only obscure the closed-form finite-difference.
+                    #[allow(clippy::needless_range_loop)]
                     for r in 0..3 {
                         jr[i][r][kdim] = lg[r] / JH;
                         jv[i][r][kdim] = (vel_k[i][r] - vel[i][r]) / JH;
@@ -252,6 +256,9 @@ impl Default for PreintCache {
 }
 
 /// Convenience for tests/seeding: world-frame relative-state check helper.
+// Fixed physical signature (r0, p0, v0, g, Δrot, Δvel, Δpos, dt); grouping into a
+// struct would only add indirection.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_delta(
     r0: &Mat3,
     p0: Vec3,
@@ -303,6 +310,8 @@ mod tests {
             .collect();
         let (d_rot, d_vel, d_pos, dt) = preintegrate(&samples, 0.0, 1.0, ZERO3, ZERO3);
         assert!((dt - 1.0).abs() < 1e-12);
+        // `r` indexes the diagonal `d_rot[r][r]`, not a single walkable slice.
+        #[allow(clippy::needless_range_loop)]
         for r in 0..3 {
             assert!((d_rot[r][r] - 1.0).abs() < 1e-12);
         }

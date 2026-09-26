@@ -59,8 +59,7 @@ fn full_phone_session() {
     assert_eq!(w.r#code_params.r#encoding.as_str(), "hue");
 
     // Clock sync (§7.3): t0 echoed, t1 = receive, t2 = send.
-    let mut ping = pb::TimeSyncPing::default();
-    ping.r#t0 = 123.5;
+    let ping = pb::TimeSyncPing { r#t0: 123.5 };
     let req = pb::ClientMessage { r#msg: Some(CMsg::TimeSyncPing(ping)) };
     let Some(SMsg::TimeSyncPong(pong)) = player.handle(req, 500, 501).and_then(|r| r.r#msg)
     else {
@@ -72,8 +71,7 @@ fn full_phone_session() {
 
     // start_mapping for the golden's geometry: 16 LEDs, symbols=2.
     let g = golden();
-    let mut opts = pb::StartMappingOptions::default();
-    opts.r#led_count = 16;
+    let opts = pb::StartMappingOptions { r#led_count: 16, ..Default::default() };
     let mut start = pb::StartMapping::default();
     start.set_options(opts);
     let Some(SMsg::MappingStarted(started)) = send(&mut player, CMsg::StartMapping(start), 1000.0)
@@ -115,9 +113,7 @@ fn full_phone_session() {
     // Counting handshake: latch a two-block pattern on channel 1...
     let mut counting = pb::SetCountingPattern::default();
     for (start, rgb) in [(0, [1.0, 0.0, 0.0]), (64, [0.0, 0.0, 1.0])] {
-        let mut b = pb::ColorBlock::default();
-        b.r#start = start;
-        b.r#count = 64;
+        let mut b = pb::ColorBlock { r#start, r#count: 64, ..Default::default() };
         b.r#rgb.extend_from_slice(&rgb).unwrap();
         counting.r#blocks.push(b).unwrap();
     }
@@ -147,8 +143,7 @@ fn full_phone_session() {
 
     // The detected count persists per channel; channel 0 becomes the new
     // default code-book size.
-    let mut slc = pb::SetLedCount::default();
-    slc.r#led_count = 300;
+    let slc = pb::SetLedCount { r#led_count: 300, ..Default::default() };
     let Some(SMsg::LedCountState(ls)) = send(&mut player, CMsg::SetLedCount(slc), 4000.0) else {
         panic!("set_led_count must produce led_count_state");
     };
@@ -184,15 +179,17 @@ fn full_phone_session() {
 
     // Phone-solved map upload, then its topology (order matters: topology
     // for an unknown map is refused).
-    let mut topo = pb::SubmitTopology::default();
-    let mut t = pb::Topology::default();
-    t.r#map_id = core::str::FromStr::from_str("m-77").unwrap();
-    topo.r#topology = t;
+    let t = pb::Topology {
+        r#map_id: core::str::FromStr::from_str("m-77").unwrap(),
+        ..Default::default()
+    };
+    let topo = pb::SubmitTopology { r#topology: t, ..Default::default() };
     expect_error(send(&mut player, CMsg::SubmitTopology(topo.clone()), 6000.0), "unknown_map");
-    let mut submit = pb::SubmitMap::default();
-    let mut map = pb::OutputMap::default();
-    map.r#map_id = core::str::FromStr::from_str("m-77").unwrap();
-    submit.r#map = map;
+    let map = pb::OutputMap {
+        r#map_id: core::str::FromStr::from_str("m-77").unwrap(),
+        ..Default::default()
+    };
+    let submit = pb::SubmitMap { r#map, ..Default::default() };
     let Some(SMsg::ResultReady(r)) = send(&mut player, CMsg::SubmitMap(submit), 6100.0) else {
         panic!("submit_map must produce result_ready");
     };
@@ -215,8 +212,10 @@ fn full_phone_session() {
     let mut params = pb::PlaybackParams::default();
     params.set_speed(0.5);
     params.set_agent_count(2);
-    let mut sp = pb::SetPlayback::default();
-    sp.r#effect = core::str::FromStr::from_str("pulse").unwrap();
+    let mut sp = pb::SetPlayback {
+        r#effect: core::str::FromStr::from_str("pulse").unwrap(),
+        ..Default::default()
+    };
     sp.set_params(params);
     let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(sp), 7100.0) else {
         panic!("set_playback pulse must produce playback_state");
@@ -225,20 +224,26 @@ fn full_phone_session() {
     assert_eq!(ps.r#effect.as_str(), "pulse");
     assert!(player.effect_config().is_some());
     // The topology-aware flood effect is also accepted.
-    let mut flood = pb::SetPlayback::default();
-    flood.r#effect = core::str::FromStr::from_str("flood").unwrap();
+    let flood = pb::SetPlayback {
+        r#effect: core::str::FromStr::from_str("flood").unwrap(),
+        ..Default::default()
+    };
     let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(flood), 7120.0) else {
         panic!("set_playback flood must produce playback_state");
     };
     assert!(ps.r#active);
     assert_eq!(ps.r#effect.as_str(), "flood");
     // An unknown effect is refused and leaves the effect running.
-    let mut bad = pb::SetPlayback::default();
-    bad.r#effect = core::str::FromStr::from_str("rainbow").unwrap();
+    let bad = pb::SetPlayback {
+        r#effect: core::str::FromStr::from_str("rainbow").unwrap(),
+        ..Default::default()
+    };
     expect_error(send(&mut player, CMsg::SetPlayback(bad), 7150.0), "unsupported_effect");
     // "off" clears it.
-    let mut off = pb::SetPlayback::default();
-    off.r#effect = core::str::FromStr::from_str("off").unwrap();
+    let off = pb::SetPlayback {
+        r#effect: core::str::FromStr::from_str("off").unwrap(),
+        ..Default::default()
+    };
     let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(off), 7200.0) else {
         panic!("set_playback off");
     };
@@ -274,8 +279,7 @@ fn frame_timing_drain() {
     assert_eq!(ft.r#dropped, 0);
 
     // Start a capture so the reply can report epoch/period/cycle context.
-    let mut opts = pb::StartMappingOptions::default();
-    opts.r#led_count = 16;
+    let mut opts = pb::StartMappingOptions { r#led_count: 16, ..Default::default() };
     opts.set_bit_period_ms(100.0);
     let mut start = pb::StartMapping::default();
     start.set_options(opts);
