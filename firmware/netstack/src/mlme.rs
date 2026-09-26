@@ -238,7 +238,7 @@ mod tests {
     fn ap_auth_then_assoc() {
         let mut ap: ApMlme<4> = ApMlme::new(AP);
         let mut out: Buf<256> = Buf::new();
-        assert!(ap.on_mgmt(subtype::ASSOC_REQ, STA, &mut out).unwrap() == false); // no auth yet
+        assert!(!ap.on_mgmt(subtype::ASSOC_REQ, STA, &mut out).unwrap()); // no auth yet
         assert!(ap.on_mgmt(subtype::AUTH, STA, &mut out).unwrap());
         assert_eq!(ap.station_count(), 1);
         assert!(ap.on_mgmt(subtype::ASSOC_REQ, STA, &mut out).unwrap());

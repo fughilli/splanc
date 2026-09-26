@@ -217,7 +217,7 @@ impl<const N: usize> GattDb<N> {
         // Negotiated MTU = min(client, server); never below the 23-byte minimum.
         if params.len() >= 2 {
             let client = u16::from_le_bytes([params[0], params[1]]);
-            self.mtu = client.min(ATT_MTU).max(23);
+            self.mtu = client.clamp(23, ATT_MTU);
         }
         out.extend(&[ATT_EXCHANGE_MTU_RSP])?;
         out.extend(&ATT_MTU.to_le_bytes())

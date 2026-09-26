@@ -9,6 +9,12 @@
 //! from the cross-language golden frames — the store decodes real phone
 //! bytes, not hand-rolled ones.
 
+// The fixtures build micropb-generated messages field-by-field: scalar fields
+// are assigned while repeated fields are populated in place via
+// `extend_from_slice(..)?`/`push(..)?`, so struct-literal init doesn't apply
+// uniformly. Reassign-after-default is the natural shape here.
+#![allow(clippy::field_reassign_with_default)]
+
 use base64::Engine;
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;

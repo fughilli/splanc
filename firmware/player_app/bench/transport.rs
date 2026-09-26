@@ -34,8 +34,10 @@ fn encode(msg: CMsg) -> Vec<u8> {
 }
 
 fn set_uniforms_frame(slot: u32, val: f32) -> Vec<u8> {
-    let mut uv = pb::UniformValue::default();
-    uv.r#slot = slot;
+    let mut uv = pb::UniformValue {
+        r#slot,
+        ..Default::default()
+    };
     uv.r#value.push(val).unwrap();
     let mut su = pb::SetUniforms::default();
     su.r#values.push(uv).unwrap();

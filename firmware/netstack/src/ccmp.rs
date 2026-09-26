@@ -62,6 +62,10 @@ fn gmul(mut a: u8, mut b: u8) -> u8 {
 /// suite) use the software cipher with pre-expanded round keys. The public API is
 /// identical either way, so CCMP / key-wrap code is backend-agnostic.
 pub struct Aes128 {
+    // Read only by the riscv32 hardware-AES backend (`hw_aes::block`); the
+    // software backend uses the expanded round keys in `rk` instead, so on
+    // host/test builds this field is stored but unread.
+    #[allow(dead_code)]
     key: [u8; 16],
     #[cfg(not(all(target_arch = "riscv32", not(test))))]
     rk: [[u8; 16]; 11],
@@ -88,6 +92,10 @@ impl Aes128 {
             for i in 0..4 {
                 rk[r][i] = prev[i] ^ t[i];
             }
+            // AES key schedule: `i` indexes the new round key while also reading
+            // `prev[i]` and the just-written `rk[r][i - 4]`; an iterator would
+            // obscure the fixed-offset recurrence.
+            #[allow(clippy::needless_range_loop)]
             for i in 4..16 {
                 rk[r][i] = prev[i] ^ rk[r][i - 4];
             }
@@ -303,10 +311,13 @@ pub fn aes_wrap(kek: &[u8; 16], plain: &[u8], out: &mut [u8]) -> usize {
     let aes = Aes128::new(kek);
     let mut a = [0xa6u8; 8];
     let mut r = [[0u8; 8]; 8];
-    for i in 0..n {
-        r[i].copy_from_slice(&plain[8 * i..8 * i + 8]);
+    for (i, ri) in r.iter_mut().enumerate().take(n) {
+        ri.copy_from_slice(&plain[8 * i..8 * i + 8]);
     }
     for j in 0..6 {
+        // `i` both indexes the block register `r[i]` and feeds the counter
+        // `n * j + i + 1`, so an iterator rewrite would obscure the RFC-3394 step.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             let mut blk = [0u8; 16];
             blk[..8].copy_from_slice(&a);
@@ -314,6 +325,8 @@ pub fn aes_wrap(kek: &[u8; 16], plain: &[u8], out: &mut [u8]) -> usize {
             aes.encrypt_block(&mut blk);
             a.copy_from_slice(&blk[..8]);
             let t = (n * j + i + 1) as u64;
+            // `k` selects both the byte of `a` and its big-endian shift of `t`.
+            #[allow(clippy::needless_range_loop)]
             for k in 0..8 {
                 a[k] ^= (t >> (8 * (7 - k))) as u8;
             }
@@ -345,14 +358,16 @@ impl KeyUnwrap for AesUnwrap {
         let mut a = [0u8; 8];
         a.copy_from_slice(&wrapped[..8]);
         let mut r = [[0u8; 8]; 32];
-        for i in 0..n {
-            r[i].copy_from_slice(&wrapped[8 * (i + 1)..8 * (i + 2)]);
+        for (i, ri) in r.iter_mut().enumerate().take(n) {
+            ri.copy_from_slice(&wrapped[8 * (i + 1)..8 * (i + 2)]);
         }
         for j in (0..6).rev() {
             for i in (0..n).rev() {
                 let t = (n * j + i + 1) as u64;
                 let mut blk = [0u8; 16];
                 blk[..8].copy_from_slice(&a);
+                // `k` selects both the byte of `blk` and its big-endian shift of `t`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..8 {
                     blk[k] ^= (t >> (8 * (7 - k))) as u8;
                 }
@@ -553,11 +568,11 @@ pub fn ccmp_decap(frame: &[u8], tk: &[u8; 16], out: &mut [u8]) -> Option<(usize,
     }
     let ch = &frame[hlen..hlen + 8];
     let pn = (ch[0] as u64)
-        | (ch[1] as u64) << 8
-        | (ch[4] as u64) << 16
-        | (ch[5] as u64) << 24
-        | (ch[6] as u64) << 32
-        | (ch[7] as u64) << 40;
+        | ((ch[1] as u64) << 8)
+        | ((ch[4] as u64) << 16)
+        | ((ch[5] as u64) << 24)
+        | ((ch[6] as u64) << 32)
+        | ((ch[7] as u64) << 40);
     let nonce = ccmp_nonce(&frame[10..16], pn);
     let (aad, alen) = ccmp_aad(frame);
     let clen = frame.len() - (hlen + 8);

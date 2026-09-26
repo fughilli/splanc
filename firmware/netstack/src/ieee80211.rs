@@ -73,7 +73,6 @@ pub fn reconstruct_mbssid<const N: usize>(
     let profile: &[u8] = IeReader::new(transmitted_ies)
         .find(|ie| ie.id == EID_MBSSID)
         .and_then(|mbssid| find_nontx_profile(mbssid.body))
-        .map(|p| &p[..])
         .unwrap_or(&[]);
 
     let profile_ie = |id: u8| -> Option<Ie<'_>> {

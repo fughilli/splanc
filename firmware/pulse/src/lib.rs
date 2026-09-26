@@ -194,8 +194,8 @@ impl Graph {
         n_nodes = n_nodes.min(MAX_NODES);
         let mut termini = [0u16; MAX_NODES];
         let mut n_termini = 0;
-        for nd in 0..n_nodes {
-            if nodes[nd].degree == 1 && n_termini < MAX_NODES {
+        for (nd, node) in nodes.iter().enumerate().take(n_nodes) {
+            if node.degree == 1 && n_termini < MAX_NODES {
                 termini[n_termini] = nd as u16;
                 n_termini += 1;
             }
@@ -463,8 +463,8 @@ impl Sim {
         for _ in 0..self.graph.n_nodes {
             let mut u = usize::MAX;
             let mut best = u32::MAX;
-            for v in 0..self.graph.n_nodes {
-                if !done[v] && self.node_dist[v] < best {
+            for (v, &settled) in done.iter().enumerate().take(self.graph.n_nodes) {
+                if !settled && self.node_dist[v] < best {
                     best = self.node_dist[v];
                     u = v;
                 }

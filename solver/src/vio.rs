@@ -182,6 +182,9 @@ fn known_rotation_linear_init(
     let pins: Vec<&(Vec3, usize, usize)> = pin_candidates.iter().step_by(stride).collect();
     let mut rhs = vec![0.0; row + pins.len()];
     for &(w0, j0, i0) in &pins {
+        // `cc` is a column offset added to `col_x(j0)`/`ci` as well as indexing
+        // `w0`; it is arithmetic, not a single-slice walk.
+        #[allow(clippy::needless_range_loop)]
         for cc in 0..3 {
             triplets.push((row, col_x(*j0) + cc, W_PIN * w0[cc]));
             if let Some(ci) = col_c(*i0) {
@@ -227,6 +230,9 @@ pub fn inertial_alignment(
         let rit_rows = rotations[i]; // use columns of R as rows of R^T
         let dc = sub(centers[i + 1], centers[i]);
         let rit_dc = mat_tvec(&rit_rows, dc);
+        // `r` is a matrix row: it transposes `rotations[i][c][r]` and indexes the
+        // preintegrated residuals — not a walk of one slice.
+        #[allow(clippy::needless_range_loop)]
         for r in 0..3 {
             // R_i^T (s·Δc − v_i·dt − ½·g·dt²) = Δp
             let mut row: Vec<(usize, f64)> = Vec::with_capacity(7);
@@ -239,6 +245,8 @@ pub fn inertial_alignment(
             rows.push(row);
             rhs.push(d_pos[r]);
         }
+        // `r` is a matrix row (transposes `rotations[i][c][r]`, indexes `d_vel`).
+        #[allow(clippy::needless_range_loop)]
         for r in 0..3 {
             // R_i^T (v_j − v_i − g·dt) = Δv
             let mut row: Vec<(usize, f64)> = Vec::with_capacity(9);
@@ -725,6 +733,9 @@ pub fn similarity_align(src: &[Vec3], dst: &[Vec3]) -> (f64, Mat3, Vec3) {
     for (s, d) in src.iter().zip(dst) {
         let sc = sub(*s, mu_s);
         let dc = sub(*d, mu_d);
+        // Outer product dc·scᵀ: `i` and `j` index the covariance matrix and the
+        // two centered vectors — a 2-D matrix build, not a single-slice walk.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..3 {
             for j in 0..3 {
                 cov[i][j] += dc[i] * sc[j] / n;

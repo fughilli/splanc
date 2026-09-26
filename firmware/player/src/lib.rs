@@ -359,14 +359,15 @@ impl Player {
         match msg {
             CMsg::Hello(_) => Some(self.welcome()),
             CMsg::TimeSyncPing(p) => {
-                let mut pong = pb::TimeSyncPong::default();
                 // t0 is the phone clock (fractional, epoch-scale ms) — echoed
                 // verbatim as f64; float32 could not hold it (this is the one
                 // place double is genuinely required). t1/t2 are the player's
                 // integer clock, widened only here at the wire boundary.
-                pong.r#t0 = p.r#t0;
-                pong.r#t1 = recv_ms as f64;
-                pong.r#t2 = send_ms as f64;
+                let pong = pb::TimeSyncPong {
+                    r#t0: p.r#t0,
+                    r#t1: recv_ms as f64,
+                    r#t2: send_ms as f64,
+                };
                 Some(reply(SMsg::TimeSyncPong(pong)))
             }
             CMsg::StartMapping(m) => Some(self.start_mapping(&m, send_ms)),
@@ -377,16 +378,18 @@ impl Player {
             CMsg::SetLedCount(m) => Some(self.set_led_count(&m)),
             CMsg::SubmitMap(m) => {
                 self.stored_map_id = Some(m.r#map.r#map_id.clone());
-                let mut r = pb::ResultReady::default();
-                r.r#map_id = m.r#map.r#map_id.clone();
+                let r = pb::ResultReady {
+                    r#map_id: m.r#map.r#map_id.clone(),
+                };
                 Some(reply(SMsg::ResultReady(r)))
             }
             CMsg::SubmitTopology(m) => {
                 if self.stored_map_id.as_ref() != Some(&m.r#topology.r#map_id) {
                     return Some(error("unknown_map", "no stored map for this topology"));
                 }
-                let mut r = pb::ResultReady::default();
-                r.r#map_id = m.r#topology.r#map_id.clone();
+                let r = pb::ResultReady {
+                    r#map_id: m.r#topology.r#map_id.clone(),
+                };
                 Some(reply(SMsg::ResultReady(r)))
             }
             CMsg::SetPlayback(m) => {
@@ -504,6 +507,9 @@ impl Player {
             .r#bit_period_ms()
             .copied()
             .unwrap_or(DEFAULT_BIT_PERIOD_MS);
+        // `!(x > 0.0)` rejects zero, negatives, AND NaN — a rewrite to
+        // `x <= 0.0` would silently accept a NaN from the wire.
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
@@ -519,8 +525,10 @@ impl Player {
             brightness_q8: brightness_to_q8(brightness),
         };
         self.active = Some(active);
-        let mut started = pb::MappingStarted::default();
-        started.r#pattern_clock_epoch = now_ms as f64;
+        let mut started = pb::MappingStarted {
+            r#pattern_clock_epoch: now_ms as f64,
+            ..Default::default()
+        };
         started.set_code_params(code_params_msg(&spec, active.bit_period_ms(), active.brightness()));
         reply(SMsg::MappingStarted(started))
     }
@@ -545,6 +553,9 @@ impl Player {
         let bit_period_ms = options
             .and_then(|o| o.r#bit_period_ms().copied())
             .unwrap_or(active.bit_period_ms());
+        // `!(x > 0.0)` rejects zero, negatives, AND NaN — a rewrite to
+        // `x <= 0.0` would silently accept a NaN from the wire.
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
@@ -576,9 +587,10 @@ impl Player {
         }
         self.active = None;
         // This player persists no detection/IMU log; the counts echo that.
-        let mut stopped = pb::MappingStopped::default();
-        stopped.r#detections = 0;
-        stopped.r#imu_samples = 0;
+        let stopped = pb::MappingStopped {
+            r#detections: 0,
+            r#imu_samples: 0,
+        };
         reply(SMsg::MappingStopped(stopped))
     }
 
@@ -657,9 +669,10 @@ impl Player {
         if channel == 0 && m.r#led_count >= 1 {
             self.default_led_count = m.r#led_count as u32;
         }
-        let mut state = pb::LedCountState::default();
-        state.r#led_count = m.r#led_count;
-        state.r#channel = channel;
+        let state = pb::LedCountState {
+            r#led_count: m.r#led_count,
+            r#channel,
+        };
         reply(SMsg::LedCountState(state))
     }
 
@@ -723,9 +736,10 @@ impl Player {
             let Some((seq, t_us)) = self.frame_log.pop() else {
                 break;
             };
-            let mut tick = pb::FrameTick::default();
-            tick.r#seq = seq;
-            tick.r#t_mono_us = t_us;
+            let tick = pb::FrameTick {
+                r#seq,
+                r#t_mono_us: t_us,
+            };
             // is_full() was just checked, so this push cannot fail.
             let _ = ft.r#ticks.push(tick);
         }
@@ -812,13 +826,15 @@ impl Player {
     }
 
     fn welcome(&self) -> pb::ServerMessage {
-        let mut w = pb::Welcome::default();
-        w.r#session_id = self.session_id.clone();
-        w.r#mac = self.mac.clone();
-        w.r#device_name = self.device_name.clone();
-        w.r#fw_git_commit = self.fw_git_commit.clone();
-        w.r#fw_git_dirty = self.fw_git_dirty;
-        w.r#fw_version = self.fw_version.clone();
+        let mut w = pb::Welcome {
+            r#session_id: self.session_id.clone(),
+            r#mac: self.mac.clone(),
+            r#device_name: self.device_name.clone(),
+            r#fw_git_commit: self.fw_git_commit.clone(),
+            r#fw_git_dirty: self.fw_git_dirty,
+            r#fw_version: self.fw_version.clone(),
+            ..Default::default()
+        };
         w.set_brightness(self.output_brightness as f64);
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
@@ -836,11 +852,12 @@ impl Player {
             if self.hw_gpio[ch] < 0 {
                 continue;
             }
-            let mut hc = pb::HardwareChannel::default();
-            hc.r#channel = ch as i32;
-            hc.r#gpio = self.hw_gpio[ch];
-            hc.r#led_type = s64(LED_TYPE_WS281X);
-            hc.r#color_order = s64(COLOR_ORDERS[self.hw_order[ch] as usize].0);
+            let hc = pb::HardwareChannel {
+                r#channel: ch as i32,
+                r#gpio: self.hw_gpio[ch],
+                r#led_type: s64(LED_TYPE_WS281X),
+                r#color_order: s64(COLOR_ORDERS[self.hw_order[ch] as usize].0),
+            };
             let _ = state.r#channels.push(hc);
         }
         if let Some(caps) = &self.board_caps {
@@ -1016,8 +1033,9 @@ impl Player {
     /// A map upload decoded into the arena: record it and ack result_ready.
     pub fn map_stored(&mut self, map_id: &str) -> pb::ServerMessage {
         self.stored_map_id = Some(s64(map_id));
-        let mut r = pb::ResultReady::default();
-        r.r#map_id = s64(map_id);
+        let r = pb::ResultReady {
+            r#map_id: s64(map_id),
+        };
         reply(SMsg::ResultReady(r))
     }
 
@@ -1027,8 +1045,9 @@ impl Player {
         if self.stored_map_id.as_deref() != Some(map_id) {
             return error("unknown_map", "no stored map for this topology");
         }
-        let mut r = pb::ResultReady::default();
-        r.r#map_id = s64(map_id);
+        let r = pb::ResultReady {
+            r#map_id: s64(map_id),
+        };
         reply(SMsg::ResultReady(r))
     }
 }
@@ -1067,15 +1086,17 @@ fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
 }
 
 pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
-    let mut cp = pb::CodeParams::default();
-    cp.r#led_count = spec.led_count as i32;
-    cp.r#bits = spec.bits as i32;
-    cp.r#encoding = s64("hue");
-    cp.r#bit_period_ms = bit_period_ms;
-    cp.r#sync_pattern = s64("on_off");
-    cp.r#cycle_frames = spec.cycle_frames as i32;
-    cp.r#fec = s64(if spec.secded { "secded" } else { "none" });
-    cp.r#symbols = spec.symbols as i32;
+    let mut cp = pb::CodeParams {
+        r#led_count: spec.led_count as i32,
+        r#bits: spec.bits as i32,
+        r#encoding: s64("hue"),
+        r#bit_period_ms,
+        r#sync_pattern: s64("on_off"),
+        r#cycle_frames: spec.cycle_frames as i32,
+        r#fec: s64(if spec.secded { "secded" } else { "none" }),
+        r#symbols: spec.symbols as i32,
+        ..Default::default()
+    };
     // Wire contract: unset means 1.0 — only a servoed-down level is echoed.
     if brightness < 1.0 {
         cp.set_brightness(brightness);
@@ -1088,12 +1109,13 @@ fn reply(msg: SMsg) -> pb::ServerMessage {
 }
 
 fn error(code: &str, message: &str) -> pb::ServerMessage {
-    let mut e = pb::Error::default();
-    e.r#code = s64(code);
-    e.r#message = {
-        let mut m = micropb::heapless::String::new();
-        let _ = m.push_str(message);
-        m
+    let e = pb::Error {
+        r#code: s64(code),
+        r#message: {
+            let mut m = micropb::heapless::String::new();
+            let _ = m.push_str(message);
+            m
+        },
     };
     reply(SMsg::Error(e))
 }

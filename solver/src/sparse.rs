@@ -219,7 +219,7 @@ pub fn lsmr(
         cbar = rhotemp / rhobar;
         sbar = thetanew / rhobar;
         zeta = cbar * zetabar;
-        zetabar = -sbar * zetabar;
+        zetabar *= -sbar;
 
         // Update h, hbar, x.
         let hbar_coeff = thetabar * rho / (rhoold * rhobarold);

@@ -279,7 +279,7 @@ fn consensus_filter(
             let inliers: Vec<usize> = (0..n)
                 .filter(|&i| reproj_err(&obs[i], x) <= inlier_px)
                 .collect();
-            if best.as_ref().map_or(true, |b| inliers.len() > b.len()) {
+            if best.as_ref().is_none_or(|b| inliers.len() > b.len()) {
                 best = Some(inliers);
             }
         }

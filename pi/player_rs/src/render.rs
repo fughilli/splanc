@@ -171,8 +171,7 @@ mod tests {
     }
 
     fn start_mapping(player: &mut Player, led_count: u32, epoch_ms: i64) {
-        let mut opts = pb::StartMappingOptions::default();
-        opts.r#led_count = led_count as i32;
+        let opts = pb::StartMappingOptions { r#led_count: led_count as i32, ..Default::default() };
         let mut start = pb::StartMapping::default();
         start.set_options(opts);
         let reply = send(player, CMsg::StartMapping(start), epoch_ms);

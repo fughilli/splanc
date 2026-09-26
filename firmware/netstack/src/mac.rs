@@ -41,7 +41,9 @@ impl Lldesc {
     const fn zero() -> Self {
         Lldesc { word0: 0, buf: 0, next: 0 }
     }
-    /// Length the DMA wrote into `word0[27:14]`.
+    /// Length the DMA wrote into `word0[27:14]`. Test-only accessor (the RX path
+    /// reads the field inline in [`RxRing::reap`]).
+    #[cfg(test)]
     fn dma_len(&self) -> usize {
         ((self.word0 >> DESC_LEN_SHIFT) & DESC_SIZE_MASK) as usize
     }
@@ -84,7 +86,8 @@ impl<const N: usize> RxRing<N> {
     /// `next` into a closed ring, and hand every descriptor to hardware (OWN set,
     /// `size` = buffer capacity). Grounded in the C6 RX descriptor format.
     ///
-    /// # Safety: `self` must be at a stable (`'static`) address — the descriptors
+    /// # Safety
+    /// `self` must be at a stable (`'static`) address — the descriptors
     /// store raw pointers into `self`.
     pub unsafe fn link(&mut self) {
         for i in 0..N {
@@ -99,7 +102,8 @@ impl<const N: usize> RxRing<N> {
     /// Link the ring, program its base into the MAC, and clear any pending RX
     /// interrupt.
     ///
-    /// # Safety: caller must ensure the MAC is initialized and the ring outlives
+    /// # Safety
+    /// Caller must ensure the MAC is initialized and the ring outlives
     /// the hardware's use of it (here it's `'static`).
     pub unsafe fn install(&mut self) {
         self.link();
@@ -109,7 +113,8 @@ impl<const N: usize> RxRing<N> {
 
     /// Diagnostic: volatile-read descriptor `i`'s word0 (OWN bit + filled length).
     ///
-    /// # Safety: reads descriptor memory the MAC may DMA into concurrently.
+    /// # Safety
+    /// Reads descriptor memory the MAC may DMA into concurrently.
     pub unsafe fn peek_word0(&self, i: usize) -> u32 {
         if i < N {
             core::ptr::read_volatile(&self.descs[i].word0)
@@ -120,7 +125,8 @@ impl<const N: usize> RxRing<N> {
 
     /// Read and acknowledge the MAC RX interrupt status.
     ///
-    /// # Safety: MMIO; MAC must be initialized.
+    /// # Safety
+    /// MMIO; MAC must be initialized.
     pub unsafe fn take_irq(&self) -> u32 {
         let s = mmio::read32(mac::INT_STATUS);
         if s != 0 {
@@ -137,7 +143,8 @@ impl<const N: usize> RxRing<N> {
     /// descriptor still marked HW-owned by us whose EOF bit is now set was just
     /// filled — mark it ready with its DMA length. Returns the number reaped.
     ///
-    /// # Safety: reads descriptor memory the MAC DMAs into concurrently (volatile).
+    /// # Safety
+    /// Reads descriptor memory the MAC DMAs into concurrently (volatile).
     pub unsafe fn reap(&mut self) -> usize {
         let mut n = 0;
         for i in 0..N {

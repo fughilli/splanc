@@ -2080,14 +2080,16 @@ impl Compiler {
                 }
             }
         }
-        if matches!(name, "atan2" | "pow") {
-            if args.len() == 2 && args[0] == args[1] && args[0].width() == 1 {
-                if let Some(frac) = args[0].fixed_frac() {
-                    if frac > 0 {
-                        let op = if name == "atan2" { ATAN2_FIX } else { POW_FIX };
-                        self.emit2(op, frac as u8);
-                        return Ok(args[0]);
-                    }
+        if matches!(name, "atan2" | "pow")
+            && args.len() == 2
+            && args[0] == args[1]
+            && args[0].width() == 1
+        {
+            if let Some(frac) = args[0].fixed_frac() {
+                if frac > 0 {
+                    let op = if name == "atan2" { ATAN2_FIX } else { POW_FIX };
+                    self.emit2(op, frac as u8);
+                    return Ok(args[0]);
                 }
             }
         }
@@ -2326,7 +2328,7 @@ impl Compiler {
                 self.need(args, 2)?;
                 // The id const was emitted as PushConst; we need it inline. For
                 // v1, require the last emitted for arg0 to be a small int const.
-                return self.err("use palette_lookup(int, float) — id must be a literal (v1: use palette0/1/2)");
+                self.err("use palette_lookup(int, float) — id must be a literal (v1: use palette0/1/2)")
             }
             "palette0" | "palette1" | "palette2" => {
                 self.arg1(args)?;
@@ -2656,13 +2658,13 @@ pub fn disassemble(fxb: &[u8]) -> String {
     let update_entry = u16::from_le_bytes([fxb[14], fxb[15]]);
     let shade_entry = u16::from_le_bytes([fxb[16], fxb[17]]);
 
-    let _ = write!(
+    let _ = writeln!(
         out,
-        "; FXB v{ver}  state={n_state}  uniform_slots={n_uniform_slots}  consts={n_consts}  code={code_len}B\n"
+        "; FXB v{ver}  state={n_state}  uniform_slots={n_uniform_slots}  consts={n_consts}  code={code_len}B"
     );
-    let _ = write!(
+    let _ = writeln!(
         out,
-        "; update_entry={}  shade_entry={}\n",
+        "; update_entry={}  shade_entry={}",
         entry_label(update_entry),
         entry_label(shade_entry)
     );
@@ -2679,7 +2681,7 @@ pub fn disassemble(fxb: &[u8]) -> String {
             let b = &fxb[consts_off + i * 4..consts_off + i * 4 + 4];
             let bits = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
             let f = f32::from_bits(bits);
-            let _ = write!(out, ";   [{i}] = {f} (i32 {})\n", bits as i32);
+            let _ = writeln!(out, ";   [{i}] = {f} (i32 {})", bits as i32);
         }
     }
     o += n_consts * 4;
@@ -2700,7 +2702,7 @@ pub fn disassemble(fxb: &[u8]) -> String {
             out.push_str("shade:\n");
         }
         let (text, len) = decode_op(code, pc);
-        let _ = write!(out, "{pc:>5}: {text}\n");
+        let _ = writeln!(out, "{pc:>5}: {text}");
         if len == 0 {
             break;
         }
@@ -2729,7 +2731,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
     // Signed branch targets are resolved to an absolute offset for readability.
     let rel_target = |operand_len: usize| {
         let next = pc + 1 + operand_len;
-        (next as isize + i16at(0) as isize) as isize
+        next as isize + i16at(0) as isize
     };
     let un_fn = |f: u8| match f {
         0 => "sin", 1 => "cos", 2 => "abs", 3 => "floor", 4 => "ceil", 5 => "fract",
@@ -2888,7 +2890,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         BR_CMP_I => {
             // op, kind(u8), i16 rel — target is relative to the byte after the rel.
             let next = pc + 4;
-            let tgt = (next as isize + i16::from_le_bytes([b(1), b(2)]) as isize) as isize;
+            let tgt = next as isize + i16::from_le_bytes([b(1), b(2)]) as isize;
             (format!("BR_CMP_I {} -> {tgt}", cmp_kind(b(0))), 4)
         }
         JIT_CALL => (format!("JIT_CALL block={}", u16at(0)), 3),

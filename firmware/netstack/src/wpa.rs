@@ -28,6 +28,10 @@ pub struct Ptk {
 pub trait KeyUnwrap {
     /// Unwrap `wrapped` (n+1 64-bit blocks) with `kek` into `out`; returns the
     /// plaintext length, or `Err` on integrity failure.
+    // A unit error is deliberate: an AES-unwrap integrity failure carries no
+    // recoverable detail, and a bespoke error enum would add no information in
+    // this no_std path.
+    #[allow(clippy::result_unit_err)]
     fn aes_unwrap(&self, kek: &[u8; 16], wrapped: &[u8], out: &mut [u8]) -> Result<usize, ()>;
 }
 
@@ -59,21 +63,21 @@ impl Sha1 {
     }
     fn process(&mut self) {
         let mut w = [0u32; 80];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([self.block[i * 4], self.block[i * 4 + 1], self.block[i * 4 + 2], self.block[i * 4 + 3]]);
+        for (i, wi) in w.iter_mut().take(16).enumerate() {
+            *wi = u32::from_be_bytes([self.block[i * 4], self.block[i * 4 + 1], self.block[i * 4 + 2], self.block[i * 4 + 3]]);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
         }
         let (mut a, mut b, mut c, mut d, mut e) = (self.h[0], self.h[1], self.h[2], self.h[3], self.h[4]);
-        for i in 0..80 {
+        for (i, &wi) in w.iter().enumerate() {
             let (f, k) = match i {
                 0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
                 20..=39 => (b ^ c ^ d, 0x6ED9EBA1),
                 40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
                 _ => (b ^ c ^ d, 0xCA62C1D6),
             };
-            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(w[i]);
+            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(wi);
             e = d;
             d = c;
             c = b.rotate_left(30);
@@ -301,8 +305,11 @@ pub const STA_RSN_IE: [u8; 22] = [
 /// Parsed EAPOL-Key frame (fields borrow the input; no copy).
 struct EapolKey<'a> {
     key_info: u16,
-    nonce: &'a [u8],    // 32
-    mic: &'a [u8],      // 16
+    nonce: &'a [u8], // 32
+    // Parsed for completeness (documents the descriptor layout), but the EAPOL
+    // Key MIC is not yet verified by this handshake — see the module note.
+    #[allow(dead_code)]
+    mic: &'a [u8], // 16
     key_data: &'a [u8], // encrypted GTK KDE (msg3) or empty
 }
 
