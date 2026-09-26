@@ -439,39 +439,50 @@ in
     ipv6.method = "ignore";
   };
 
-  # Clear the provisioning-AP's ARP/neighbour ghosts. The shared-mode AP's
-  # neighbour table accumulates stale entries: randomized-MAC clients (phones, …)
-  # that briefly associate leave gratuitous-ARP entries mapping pool addresses to
-  # dead, locally-administered 02:xx MACs. Two distinct failures both trace to this
-  # pollution, and BOTH are what made the concurrent CI netstack lane flaky-red:
-  #  1. A joining DUT's NetworkManager IPv4 ACD sees a ghost as a duplicate and refuses
-  #     every DHCP offer ("10.42.0.N already in use by 02:0c:6a:…") → join fails at IP
-  #     config. (The DUT side also disables ACD: improv_ble_provision.py dad-timeout 0.)
-  #  2. Worse under load: a ghost holding the pool address dnsmasq later leases to the
-  #     DUT leaves the AP's neighbour entry for the DUT's IP pointing at the DEAD 02:xx
-  #     MAC, so the AP MISROUTES the inbound wss/cert flight to nowhere → "ws never came
-  #     up / timed out during opening handshake" (the rotating hard-fail).
-  # The DUT announces itself (gratuitous ARP, netstack_transport.cpp:1551) but only every
-  # ~3s and only while idle, and the AP does not reliably adopt it under contention, so
-  # flush the AP's neighbours on a TIGHT cadence to keep the pool clean for every client;
-  # active DUTs re-resolve immediately. MEASURED: with the concurrent 2-rig CI suite
-  # (10 netstack tests, --local_test_jobs=10 --flaky_test_attempts=3), a 15s flush makes
-  # it pass 10/10 across repeated runs; #182-era 5min was far too loose (ghosts refill to
-  # ~30 entries within 15s here). A persistent loop, not a systemd timer: OnUnitActiveSec
-  # at this cadence collides with the default AccuracySec=1min and would fire ~1/min.
-  # arp_accept=1 additionally lets the AP adopt the DUT's own gratuitous-ARP announce.
+  # Keep the provisioning-AP's neighbour table CORRECT for every leased DUT. Root cause
+  # (proven by monitoring the AP's neigh+lease tables through a concurrent suite): the
+  # netstack DUT firmware picks a FRESH random locally-administered MAC every boot
+  # (02:0c:6a:xx:xx:xx — netstack_transport.cpp:1084, to dodge the AP's stale-4-way-SA →
+  # PMF SA-Query/status-30 on same-MAC re-assoc). Each boot/reflash (dozens per suite ×
+  # flaky retries) thus leaves a dead 02:0c:6a lease + neighbour entry. When dnsmasq later
+  # REUSES that pool IP for a new boot's new MAC, the AP's neighbour entry for the DUT's
+  # live IP still points at the PREVIOUS boot's DEAD MAC → the AP misroutes the inbound
+  # wss/cert flight to nowhere → "ws never came up / timed out during opening handshake"
+  # (the rotating hard-fail; observed in 733/437 per-second snapshots on rig-1/rig-2).
+  # (The sibling #190 failure — a joining DUT's NM IPv4 ACD seeing a ghost as a duplicate
+  # DHCP conflict — is the same pollution; the DUT side also disables ACD via dad-timeout 0.)
+  #
+  # A blind periodic `ip neigh flush` (the prior fix) only mitigated this on a cadence and
+  # churned ACTIVE DUTs' entries. Instead RECONCILE: every 2s, force neigh[ip] = the
+  # CURRENT lessee MAC for each active DHCP lease. Deterministic (a reused IP is corrected
+  # within 2s of the new lease), targeted (only ever SETS correct entries, never deletes a
+  # live DUT's), and drops the misroute-condition to ZERO (measured 733/437 → 0 across a
+  # concurrent suite, no active-DUT disruption). NB dnsmasq's own dhcp-script hook can't do
+  # this — NM runs dnsmasq with CAP_NET_RAW only (no CAP_NET_ADMIN), so `ip neigh` from the
+  # hook fails; this service runs as root. arp_accept=1 additionally lets the AP adopt the
+  # DUT's own gratuitous-ARP announce (netstack_transport.cpp:1551).
   boot.kernel.sysctl."net.ipv4.conf.${apIface}.arp_accept" = 1;
   systemd.services.hitl-ap-arp-flush = {
-    description = "Flush provisioning-AP neighbour ghosts (randomized-MAC ARP pollution)";
+    description = "Reconcile provisioning-AP neighbours to current DHCP lessees (kill stale-MAC misroute)";
     wantedBy = [ "multi-user.target" ];
     after = [ "NetworkManager.service" ];
     serviceConfig = {
       Restart = "always";
       RestartSec = "10s";
-      ExecStart = pkgs.writeShellScript "hitl-ap-arp-flush" ''
+      ExecStart = pkgs.writeShellScript "hitl-ap-neigh-sync" ''
+        leases=/var/lib/NetworkManager/dnsmasq-${apIface}.leases
         while true; do
-          ${pkgs.iproute2}/bin/ip neigh flush dev ${apIface} 2>/dev/null || true
-          sleep 15
+          if [ -f "$leases" ]; then
+            while read -r _exp mac ip _rest; do
+              case "$ip" in
+                10.42.0.*) [ -n "$mac" ] && ${pkgs.iproute2}/bin/ip neigh replace "$ip" \
+                  lladdr "$mac" dev ${apIface} nud reachable 2>/dev/null || true ;;
+              esac
+            done < "$leases"
+          fi
+          # reap only DEAD ghosts (FAILED); never touches a REACHABLE/STALE live entry.
+          ${pkgs.iproute2}/bin/ip neigh flush dev ${apIface} nud failed 2>/dev/null || true
+          sleep 2
         done
       '';
     };
