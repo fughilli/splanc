@@ -310,6 +310,22 @@ impl TcpConn {
         // A Listener latches its peer from the first SYN; every other state requires the
         // already-bound peer to match.
         if self.state != State::Listen && (ip[12..16] != self.dst || sport != self.dport) {
+            // A DIFFERENT peer while our single slot is busy. If it's a fresh SYN (a new
+            // client, or a client reconnecting on a new port because its prior socket
+            // lingers), fast-REJECT with RST|ACK (connection-refused semantics) so it
+            // retries immediately, instead of silently dropping it — which strands the
+            // client until its own connect timeout (~8s). Measured shedding of 24
+            // simultaneous handshakes: silent-drop gave {ok:3, rejected:0, timeout:21};
+            // the timeouts are the graceless failure. The slot still frees promptly (the
+            // hold ends, or the wedge-reclaim re-LISTENs), so a rejected client's next
+            // retry latches within ~1-2s. Other stray segments (an old peer's leftover
+            // data) stay silently dropped — RST-ing those could disturb an unrelated live
+            // connection on that host.
+            let f = tcp[13];
+            if f & SYN != 0 && f & ACK == 0 {
+                let s = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
+                return self.build_rst_to(&ip[12..16], sport, 0, Some(s.wrapping_add(1)), out);
+            }
             return 0;
         }
         let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
@@ -358,7 +374,25 @@ impl TcpConn {
                     self.state = State::SynRcvd;
                     return n;
                 }
-                0
+                // RFC 793: any non-SYN segment reaching a LISTEN socket MUST be reset. The
+                // load-bearing case: after we reclaim a wedged slot (ns_tcp_listen swaps the
+                // conn to a fresh LISTEN — the handshake/peer-gone reclaim gates in
+                // netstack_transport.cpp), the ABANDONED client still thinks it's Established
+                // and keeps retransmitting its ACK/handshake data. The old code returned 0
+                // here — silently dropping it — so that client got no signal and hung until
+                // its OWN connect/open timeout (~25s), which is the DOMINANT residual HITL
+                // flake ("timed out during opening handshake"; tls_churn, which abandons
+                // handshake losers, hit it hardest). RST it instead: the stale peer tears
+                // down and reconnects in sub-second, well inside the attempt. A legitimate
+                // new client only ever sends a SYN (handled above), so its retries are never
+                // reset. Per RFC: ACK present -> SEQ=SEG.ACK, bare RST; else RST|ACK with
+                // ACK=SEG.SEQ+SEG.LEN so the peer accepts it.
+                if flags & ACK != 0 {
+                    return self.build_rst_to(&ip[12..16], sport, ack, None, out);
+                }
+                let seg_len = payload.len() as u32
+                    + if flags & (SYN | FIN) != 0 { 1 } else { 0 };
+                self.build_rst_to(&ip[12..16], sport, 0, Some(seq.wrapping_add(seg_len)), out)
             }
             State::SynRcvd => {
                 // A retransmitted SYN (our SYN-ACK was lost) → resend the SYN-ACK.
@@ -483,6 +517,67 @@ impl TcpConn {
         let mut pseudo = [0u8; 12];
         pseudo[0..4].copy_from_slice(&self.src);
         pseudo[4..8].copy_from_slice(&self.dst);
+        pseudo[8] = 0;
+        pseudo[9] = 6;
+        pseudo[10..12].copy_from_slice(&(seg_len as u16).to_be_bytes());
+        let mut sum = 0u32;
+        let mut i = 0;
+        while i + 1 < pseudo.len() {
+            sum += ((pseudo[i] as u32) << 8) | pseudo[i + 1] as u32;
+            i += 2;
+        }
+        let tc = csum(&out[IP_HDR..IP_HDR + seg_len], sum);
+        out[IP_HDR + 16..IP_HDR + 18].copy_from_slice(&tc.to_be_bytes());
+        total
+    }
+
+    /// Build a bare RST addressed straight to `dst_ip:dport` (the source of an offending
+    /// segment), seq `seq`; if `ack` is `Some`, set ACK + the ack field (RST|ACK). Unlike
+    /// `build`, this does NOT read `self.dst`/`self.dport` — a fresh LISTEN socket hasn't
+    /// latched a peer — so it can reset a stale peer whose address isn't `self`'s. No
+    /// options, no payload.
+    fn build_rst_to(&mut self, dst_ip: &[u8], dport: u16, seq: u32, ack: Option<u32>,
+                    out: &mut [u8]) -> usize {
+        let seg_len = TCP_HDR;
+        let total = IP_HDR + seg_len;
+        out[0] = 0x45;
+        out[1] = 0;
+        out[2..4].copy_from_slice(&(total as u16).to_be_bytes());
+        out[4..6].copy_from_slice(&self.ip_id.to_be_bytes());
+        self.ip_id = self.ip_id.wrapping_add(1);
+        out[6] = 0x40; // DF
+        out[7] = 0;
+        out[8] = 64; // TTL
+        out[9] = 6; // TCP
+        out[10] = 0;
+        out[11] = 0;
+        out[12..16].copy_from_slice(&self.src);
+        out[16..20].copy_from_slice(&dst_ip[..4]);
+        let ipc = csum(&out[..IP_HDR], 0);
+        out[10..12].copy_from_slice(&ipc.to_be_bytes());
+        let t = &mut out[IP_HDR..IP_HDR + TCP_HDR];
+        t[0..2].copy_from_slice(&self.sport.to_be_bytes());
+        t[2..4].copy_from_slice(&dport.to_be_bytes());
+        t[4..8].copy_from_slice(&seq.to_be_bytes());
+        let flags = match ack {
+            Some(a) => {
+                t[8..12].copy_from_slice(&a.to_be_bytes());
+                RST | ACK
+            }
+            None => {
+                t[8..12].copy_from_slice(&0u32.to_be_bytes());
+                RST
+            }
+        };
+        t[12] = ((TCP_HDR / 4) as u8) << 4;
+        t[13] = flags;
+        t[14..16].copy_from_slice(&0u16.to_be_bytes()); // window 0 on a RST
+        t[16] = 0;
+        t[17] = 0;
+        t[18..20].copy_from_slice(&0u16.to_be_bytes());
+        let mut pseudo = [0u8; 12];
+        pseudo[0..4].copy_from_slice(&self.src);
+        pseudo[4..8].copy_from_slice(&dst_ip[..4]);
         pseudo[8] = 0;
         pseudo[9] = 6;
         pseudo[10..12].copy_from_slice(&(seg_len as u16).to_be_bytes());
@@ -681,6 +776,98 @@ mod tests {
             t2 = t2.wrapping_add(RTO_MAX_MS + 1);
         }
         assert_eq!(srv2.state, State::Established, "a live, ACKing peer is never dropped");
+    }
+
+    // A peer that still thinks it's connected — e.g. after the server reclaimed its wedged
+    // slot to a fresh LISTEN — keeps sending ACK/data. The listener must RST it (RFC 793)
+    // so it reconnects immediately instead of hanging until its own timeout. (Regression
+    // guard for the dominant "timed out during opening handshake" HITL flake.)
+    #[test]
+    fn listener_rsts_a_stale_peer() {
+        let cli_ip = [10, 0, 0, 1];
+        let srv_ip = [10, 0, 0, 2];
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        // Establish, then the client sends data.
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+
+        // Now the server RECLAIMS the slot to a fresh listener (what ns_tcp_listen does).
+        srv = TcpConn::listen(srv_ip, 443, 0x5000);
+        assert_eq!(srv.state, State::Listen);
+
+        // The unaware client retransmits its data (ACK set). A SYN would be latched, but
+        // this ACK segment must be RST — not silently dropped.
+        cli.enqueue(b"TLS ClientHello...");
+        let n = cli.pump_tx(1000, &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "listener must answer a stale ACK with a segment (RST), not drop it");
+        assert_eq!(srv.state, State::Listen, "an ACK must NOT advance a listener");
+        // The reply is a RST addressed back to the client.
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &cli_ip, "RST is addressed to the stale peer");
+        assert!(b[ihl + 13] & RST != 0, "reply carries the RST flag");
+
+        // The client accepts the RST and tears its dead connection down (so its ws layer
+        // sees the reset and reconnects with a fresh SYN).
+        let _ = cli.on_ip(&b[..r], &mut a);
+        assert_eq!(cli.state, State::Done, "client resets on the RST");
+
+        // A brand-new SYN (the reconnect) is still accepted cleanly — RST logic never
+        // touches a legitimate passive open.
+        let mut cli2 = TcpConn::new(cli_ip, srv_ip, 5001, 443, 7000);
+        let n = cli2.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0);
+        assert_eq!(srv.state, State::SynRcvd, "a fresh SYN latches normally");
+    }
+
+    // While the single slot is busy with one peer, a SYN from a DIFFERENT peer is
+    // fast-REJECTED (RST|ACK) so it retries immediately, not silently dropped (which
+    // strands it until its own timeout). The busy connection is untouched. (Graceful
+    // load-shedding for many-simultaneous-clients; validated against the 24-way churn.)
+    #[test]
+    fn busy_slot_rejects_a_new_syn() {
+        let a_ip = [10, 0, 0, 1];
+        let b_ip = [10, 0, 0, 3];
+        let srv_ip = [10, 0, 0, 2];
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        // Peer A establishes and holds the slot.
+        let mut cli_a = TcpConn::new(a_ip, srv_ip, 5000, 443, 1000);
+        let n = cli_a.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli_a.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        assert_eq!(srv.dst, a_ip);
+
+        // Peer B sends a SYN while the slot is busy → RST|ACK reject, slot unchanged.
+        let mut cli_b = TcpConn::new(b_ip, srv_ip, 6000, 443, 2000);
+        let n = cli_b.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "a new SYN at a busy slot must be rejected, not dropped");
+        assert_eq!(srv.state, State::Established, "the busy slot is untouched");
+        assert_eq!(srv.dst, a_ip, "the busy slot still belongs to peer A");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &b_ip, "reject is addressed to peer B");
+        assert!(b[ihl + 13] & RST != 0, "reject carries RST");
+        // Peer B accepts the reject and can retry (its stack resets).
+        let _ = cli_b.on_ip(&b[..r], &mut a);
+        assert_eq!(cli_b.state, State::Done);
+
+        // Peer A's own traffic still flows (the reject didn't disturb the live slot).
+        cli_a.enqueue(b"hello");
+        let n = cli_a.pump_tx(1000, &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.rx_data(), b"hello");
+        assert!(r > 0);
     }
 
     impl TcpConn {
