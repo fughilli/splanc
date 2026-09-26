@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // SPI -> streaming WS281x, top of the reusable core.
 //
 //   spi_slave (bytes) -> spi_ctrl (opcode framing) -> { csr, ws281x_stream }

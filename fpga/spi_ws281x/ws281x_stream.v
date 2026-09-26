@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Streaming, multi-port WS281x driver with per-port elastic FIFOs.
 //
 // SPI bytes arrive round-robin across the active ports (byte i -> port i mod
@@ -39,28 +40,31 @@ module port_fifo #(
   reg [AW-1:0] wptr = 0, rptr = 0;
   reg [AW:0]   cnt = 0;
 
+  // Widths: cnt is [AW:0] (AW+1 bits), wptr/rptr are [AW-1:0] (AW bits). Size the
+  // DEPTH comparison/wrap constants to the operand width so the compares don't
+  // silently widen to 32-bit int (values are unchanged; DEPTH <= 2**AW).
   assign count = cnt;
-  assign empty = (cnt == 0);
-  assign full  = (cnt == DEPTH);
+  assign empty = (cnt == {(AW + 1) {1'b0}});
+  assign full  = (cnt == (AW + 1)'(DEPTH));
 
-  wire do_wr = wr_en && (cnt != DEPTH);
-  wire do_rd = rd_en && (cnt != 0);
+  wire do_wr = wr_en && (cnt != (AW + 1)'(DEPTH));
+  wire do_rd = rd_en && (cnt != {(AW + 1) {1'b0}});
 
   always @(posedge clk) begin
     if (clr) begin
-      wptr <= 0;
-      rptr <= 0;
-      cnt  <= 0;
+      wptr <= {AW{1'b0}};
+      rptr <= {AW{1'b0}};
+      cnt  <= {(AW + 1) {1'b0}};
     end else begin
       if (do_wr) begin
         mem[wptr] <= wr_data;
-        wptr <= (wptr == DEPTH - 1) ? 0 : wptr + 1'b1;
+        wptr <= (wptr == AW'(DEPTH - 1)) ? {AW{1'b0}} : wptr + 1'b1;
       end
       if (do_rd) begin
         rd_data <= mem[rptr];
-        rptr <= (rptr == DEPTH - 1) ? 0 : rptr + 1'b1;
+        rptr <= (rptr == AW'(DEPTH - 1)) ? {AW{1'b0}} : rptr + 1'b1;
       end
-      cnt <= cnt + (do_wr ? 1'b1 : 1'b0) - (do_rd ? 1'b1 : 1'b0);
+      cnt <= cnt + {{AW{1'b0}}, do_wr} - {{AW{1'b0}}, do_rd};
     end
   end
 endmodule
@@ -117,7 +121,7 @@ module ws281x_stream #(
   // advances, data valid in the following S_LOAD cycle.
   wire rd_en = (state == S_POP);
   // Flush FIFOs + realign the demux at the end of a frame's reset latch.
-  wire flush = (state == S_RESET) && (cnt == RESET_TICKS - 1);
+  wire flush = (state == S_RESET) && (cnt == CNT_W'(RESET_TICKS - 1));
 
   wire [7:0]  fdout [0:MAX_PORTS-1];
   wire [AW:0] fcnt  [0:MAX_PORTS-1];
@@ -151,7 +155,7 @@ module ws281x_stream #(
     all_ne  = 1'b1;
     for (j = 0; j < MAX_PORTS; j = j + 1)
       if (j < num_ports) begin
-        if (fcnt[j] < PREFILL) all_pre = 1'b0;
+        if (fcnt[j] < (AW + 1)'(PREFILL)) all_pre = 1'b0;
         if (fempty[j]) all_ne = 1'b0;
       end
   end
@@ -193,8 +197,8 @@ module ws281x_stream #(
         end
         S_DRIVE: begin
           for (i = 0; i < MAX_PORTS; i = i + 1)
-            ws[i] <= active_mask[i] & (cnt < (cur[i][7] ? T1H : T0H));
-          if (cnt == PERIOD - 1) begin
+            ws[i] <= active_mask[i] & (cnt < CNT_W'(cur[i][7] ? T1H : T0H));
+          if (cnt == CNT_W'(PERIOD - 1)) begin
             cnt <= 0;
             if (bit_idx == 3'd7) begin
               if (all_ne) state <= S_POP;                 // seamless next byte
@@ -217,7 +221,7 @@ module ws281x_stream #(
         end
         S_RESET: begin
           ws <= {MAX_PORTS{1'b0}};
-          if (cnt == RESET_TICKS - 1) begin
+          if (cnt == CNT_W'(RESET_TICKS - 1)) begin
             wr_port <= 8'd0;
             cnt     <= 0;
             state   <= S_IDLE;

@@ -44,11 +44,11 @@ module spi_slave_tb;
     integer k;
     begin
       for (k = 7; k >= 0; k = k - 1) begin
-        mosi <= b[k];
+        mosi = b[k];
         repeat (2) @(posedge clk);
-        sck <= 1'b1;
+        sck = 1'b1;
         repeat (2) @(posedge clk);
-        sck <= 1'b0;
+        sck = 1'b0;
       end
     end
   endtask
@@ -59,7 +59,7 @@ module spi_slave_tb;
     test[2] = 8'hFF;
 
     repeat (5) @(posedge clk);
-    rst <= 0;
+    rst = 0;
     repeat (2) @(posedge clk);
 
     if (selected !== 1'b0) begin
@@ -67,7 +67,7 @@ module spi_slave_tb;
       errors = errors + 1;
     end
 
-    ss <= 1'b0;  // select
+    ss = 1'b0;  // select
     repeat (2) @(posedge clk);
     if (selected !== 1'b1) begin
       $error("selected should be high when ss low");
@@ -76,7 +76,7 @@ module spi_slave_tb;
 
     for (i = 0; i < 3; i = i + 1) spi_byte(test[i]);
     repeat (4) @(posedge clk);
-    ss <= 1'b1;
+    ss = 1'b1;
     repeat (4) @(posedge clk);
 
     if (ngot != 3) begin

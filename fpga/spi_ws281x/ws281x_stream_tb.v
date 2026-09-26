@@ -24,12 +24,13 @@ module ws281x_stream_tb;
   always #1 clk = ~clk;
 
   reg                  rst = 1;
-  reg  [          7:0] num_ports = NP;
+  reg  [          7:0] num_ports = 8'(NP);
   reg  [          7:0] led_type = 0;
   reg  [          7:0] stream_byte = 0;
   reg                  stream_valid = 0;
   reg                  stream_active = 0;
   wire [MAX_PORTS-1:0] ws;
+  wire                 frame_pulse;  // observed only; connected to avoid PINMISSING
 
   ws281x_stream #(
       .MAX_PORTS(MAX_PORTS),
@@ -48,7 +49,8 @@ module ws281x_stream_tb;
       .stream_byte(stream_byte),
       .stream_valid(stream_valid),
       .stream_active(stream_active),
-      .ws(ws)
+      .ws(ws),
+      .frame_pulse(frame_pulse)
   );
 
 `ifdef TRACE
@@ -100,10 +102,10 @@ module ws281x_stream_tb;
   // the whole frame lands in the FIFO far faster than the strip drains.
   task send_byte(input [7:0] b);
     begin
-      stream_byte  <= b;
-      stream_valid <= 1'b1;
+      stream_byte  = b;
+      stream_valid = 1'b1;
       @(posedge clk);
-      stream_valid <= 1'b0;
+      stream_valid = 1'b0;
       @(posedge clk);
     end
   endtask
@@ -115,13 +117,13 @@ module ws281x_stream_tb;
       acc[p]     = 0;
       was_high[p] = 0;
       hi_start[p] = 0;
-      for (k = 0; k < K; k = k + 1) frame[p][k] = (p[3:0] << 4) | k[3:0];
+      for (k = 0; k < K; k = k + 1) frame[p][k] = {p[3:0], k[3:0]};
     end
 
     repeat (5) @(posedge clk);
-    rst <= 0;
+    rst = 0;
     @(posedge clk);
-    stream_active <= 1'b1;
+    stream_active = 1'b1;
 
     // Dump the whole frame round-robin as fast as the bus allows.
     for (k = 0; k < K; k = k + 1)
@@ -131,7 +133,7 @@ module ws281x_stream_tb;
     // strip is only ~1 byte into emission, so the FSM must drain the still-full
     // FIFO AFTER stream_active drops (the real fast-SPI case). No byte may be lost.
     repeat (BYTE_CLK) @(posedge clk);
-    stream_active <= 1'b0;
+    stream_active = 1'b0;
     repeat (BYTE_CLK * (K + 4)) @(posedge clk);
 
     // ---- checks ----
