@@ -1,0 +1,736 @@
+{
+  "title": "fx_bench \u2014 drift over time",
+  "uid": "fxbench-drift",
+  "tags": ["hitl", "splanc", "fx_bench", "perf"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "effect",
+        "label": "Effect",
+        "type": "custom",
+        "query": "absf2M,absfM,add2M,addM,atan2f2M,atan2fM,ceilf2M,ceilfM,clamp32M,clamp3M,cos2M,cosM,cross32M,cross3M,distance32M,distance3M,div2M,divM,dot32M,dot3M,empty,expf2M,expfM,floorf2M,floorfM,fractf2M,fractfM,hash12M,hash1M,hash32M,hash3M,hsv2rgb2M,hsv2rgbM,lavalamp,length32M,length3M,logf2M,logfM,maxf2M,maxfM,minf2M,minfM,mix32M,mix3M,modf2M,modfM,mul2M,mulM,neg2M,negM,normalize32M,normalize3M,palette2M,paletteM,powf2M,powfM,signf2M,signfM,sin2M,sinM,smoothstep32M,smoothstep3M,sqrtf2M,sqrtfM,stepf2M,stepfM,sub2M,subM,sweep16,sweep256,tan2M,tanM",
+        "current": {
+          "text": "sweep16",
+          "value": "sweep16"
+        },
+        "options": [
+          {
+            "text": "absf2M",
+            "value": "absf2M",
+            "selected": false
+          },
+          {
+            "text": "absfM",
+            "value": "absfM",
+            "selected": false
+          },
+          {
+            "text": "add2M",
+            "value": "add2M",
+            "selected": false
+          },
+          {
+            "text": "addM",
+            "value": "addM",
+            "selected": false
+          },
+          {
+            "text": "atan2f2M",
+            "value": "atan2f2M",
+            "selected": false
+          },
+          {
+            "text": "atan2fM",
+            "value": "atan2fM",
+            "selected": false
+          },
+          {
+            "text": "ceilf2M",
+            "value": "ceilf2M",
+            "selected": false
+          },
+          {
+            "text": "ceilfM",
+            "value": "ceilfM",
+            "selected": false
+          },
+          {
+            "text": "clamp32M",
+            "value": "clamp32M",
+            "selected": false
+          },
+          {
+            "text": "clamp3M",
+            "value": "clamp3M",
+            "selected": false
+          },
+          {
+            "text": "cos2M",
+            "value": "cos2M",
+            "selected": false
+          },
+          {
+            "text": "cosM",
+            "value": "cosM",
+            "selected": false
+          },
+          {
+            "text": "cross32M",
+            "value": "cross32M",
+            "selected": false
+          },
+          {
+            "text": "cross3M",
+            "value": "cross3M",
+            "selected": false
+          },
+          {
+            "text": "distance32M",
+            "value": "distance32M",
+            "selected": false
+          },
+          {
+            "text": "distance3M",
+            "value": "distance3M",
+            "selected": false
+          },
+          {
+            "text": "div2M",
+            "value": "div2M",
+            "selected": false
+          },
+          {
+            "text": "divM",
+            "value": "divM",
+            "selected": false
+          },
+          {
+            "text": "dot32M",
+            "value": "dot32M",
+            "selected": false
+          },
+          {
+            "text": "dot3M",
+            "value": "dot3M",
+            "selected": false
+          },
+          {
+            "text": "empty",
+            "value": "empty",
+            "selected": false
+          },
+          {
+            "text": "expf2M",
+            "value": "expf2M",
+            "selected": false
+          },
+          {
+            "text": "expfM",
+            "value": "expfM",
+            "selected": false
+          },
+          {
+            "text": "floorf2M",
+            "value": "floorf2M",
+            "selected": false
+          },
+          {
+            "text": "floorfM",
+            "value": "floorfM",
+            "selected": false
+          },
+          {
+            "text": "fractf2M",
+            "value": "fractf2M",
+            "selected": false
+          },
+          {
+            "text": "fractfM",
+            "value": "fractfM",
+            "selected": false
+          },
+          {
+            "text": "hash12M",
+            "value": "hash12M",
+            "selected": false
+          },
+          {
+            "text": "hash1M",
+            "value": "hash1M",
+            "selected": false
+          },
+          {
+            "text": "hash32M",
+            "value": "hash32M",
+            "selected": false
+          },
+          {
+            "text": "hash3M",
+            "value": "hash3M",
+            "selected": false
+          },
+          {
+            "text": "hsv2rgb2M",
+            "value": "hsv2rgb2M",
+            "selected": false
+          },
+          {
+            "text": "hsv2rgbM",
+            "value": "hsv2rgbM",
+            "selected": false
+          },
+          {
+            "text": "lavalamp",
+            "value": "lavalamp",
+            "selected": false
+          },
+          {
+            "text": "length32M",
+            "value": "length32M",
+            "selected": false
+          },
+          {
+            "text": "length3M",
+            "value": "length3M",
+            "selected": false
+          },
+          {
+            "text": "logf2M",
+            "value": "logf2M",
+            "selected": false
+          },
+          {
+            "text": "logfM",
+            "value": "logfM",
+            "selected": false
+          },
+          {
+            "text": "maxf2M",
+            "value": "maxf2M",
+            "selected": false
+          },
+          {
+            "text": "maxfM",
+            "value": "maxfM",
+            "selected": false
+          },
+          {
+            "text": "minf2M",
+            "value": "minf2M",
+            "selected": false
+          },
+          {
+            "text": "minfM",
+            "value": "minfM",
+            "selected": false
+          },
+          {
+            "text": "mix32M",
+            "value": "mix32M",
+            "selected": false
+          },
+          {
+            "text": "mix3M",
+            "value": "mix3M",
+            "selected": false
+          },
+          {
+            "text": "modf2M",
+            "value": "modf2M",
+            "selected": false
+          },
+          {
+            "text": "modfM",
+            "value": "modfM",
+            "selected": false
+          },
+          {
+            "text": "mul2M",
+            "value": "mul2M",
+            "selected": false
+          },
+          {
+            "text": "mulM",
+            "value": "mulM",
+            "selected": false
+          },
+          {
+            "text": "neg2M",
+            "value": "neg2M",
+            "selected": false
+          },
+          {
+            "text": "negM",
+            "value": "negM",
+            "selected": false
+          },
+          {
+            "text": "normalize32M",
+            "value": "normalize32M",
+            "selected": false
+          },
+          {
+            "text": "normalize3M",
+            "value": "normalize3M",
+            "selected": false
+          },
+          {
+            "text": "palette2M",
+            "value": "palette2M",
+            "selected": false
+          },
+          {
+            "text": "paletteM",
+            "value": "paletteM",
+            "selected": false
+          },
+          {
+            "text": "powf2M",
+            "value": "powf2M",
+            "selected": false
+          },
+          {
+            "text": "powfM",
+            "value": "powfM",
+            "selected": false
+          },
+          {
+            "text": "signf2M",
+            "value": "signf2M",
+            "selected": false
+          },
+          {
+            "text": "signfM",
+            "value": "signfM",
+            "selected": false
+          },
+          {
+            "text": "sin2M",
+            "value": "sin2M",
+            "selected": false
+          },
+          {
+            "text": "sinM",
+            "value": "sinM",
+            "selected": false
+          },
+          {
+            "text": "smoothstep32M",
+            "value": "smoothstep32M",
+            "selected": false
+          },
+          {
+            "text": "smoothstep3M",
+            "value": "smoothstep3M",
+            "selected": false
+          },
+          {
+            "text": "sqrtf2M",
+            "value": "sqrtf2M",
+            "selected": false
+          },
+          {
+            "text": "sqrtfM",
+            "value": "sqrtfM",
+            "selected": false
+          },
+          {
+            "text": "stepf2M",
+            "value": "stepf2M",
+            "selected": false
+          },
+          {
+            "text": "stepfM",
+            "value": "stepfM",
+            "selected": false
+          },
+          {
+            "text": "sub2M",
+            "value": "sub2M",
+            "selected": false
+          },
+          {
+            "text": "subM",
+            "value": "subM",
+            "selected": false
+          },
+          {
+            "text": "sweep16",
+            "value": "sweep16",
+            "selected": true
+          },
+          {
+            "text": "sweep256",
+            "value": "sweep256",
+            "selected": false
+          },
+          {
+            "text": "tan2M",
+            "value": "tan2M",
+            "selected": false
+          },
+          {
+            "text": "tanM",
+            "value": "tanM",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "build",
+        "label": "Build",
+        "type": "custom",
+        "query": "jit,interp",
+        "current": {
+          "text": "jit",
+          "value": "jit"
+        },
+        "options": [
+          {
+            "text": "jit",
+            "value": "jit",
+            "selected": true
+          },
+          {
+            "text": "interp",
+            "value": "interp",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "metric",
+        "label": "Metric",
+        "type": "custom",
+        "query": "frame,show",
+        "current": {
+          "text": "frame",
+          "value": "frame"
+        },
+        "options": [
+          {
+            "text": "frame",
+            "value": "frame",
+            "selected": true
+          },
+          {
+            "text": "show",
+            "value": "show",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "branch",
+        "label": "Branch overlay (blank = main only)",
+        "type": "textbox",
+        "query": "main",
+        "current": {
+          "text": "main",
+          "value": "main"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Drift",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "$effect \u00b7 $metric cycles over commit time ($build) \u2014 per-branch series + golden band",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "showPoints": "always",
+            "pointSize": 6,
+            "lineWidth": 2,
+            "spanNulls": true,
+            "lineInterpolation": "stepAfter"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "main"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "golden"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [10, 10]
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "golden .margin"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dot"
+                }
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 6
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["min", "max", "lastNotNull"]
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and branch='main']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "cycles",
+              "text": "main",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and branch='$branch']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "cycles",
+              "text": "$branch",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/goldens_line.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[label='$effect' and build='$build']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "golden",
+              "text": "golden",
+              "type": "number"
+            },
+            {
+              "selector": "goldenLow",
+              "text": "golden \u2212margin",
+              "type": "number"
+            },
+            {
+              "selector": "goldenHigh",
+              "text": "golden +margin",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "$effect samples ($build, $metric) \u2014 every CI sample",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "string"
+            },
+            {
+              "selector": "branch",
+              "text": "branch",
+              "type": "string"
+            },
+            {
+              "selector": "short_sha",
+              "text": "sha",
+              "type": "string"
+            },
+            {
+              "selector": "cycles",
+              "text": "cycles",
+              "type": "number"
+            },
+            {
+              "selector": "leds",
+              "text": "leds",
+              "type": "number"
+            },
+            {
+              "selector": "conclusion",
+              "text": "ci",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ]
+    }
+  ]
+}

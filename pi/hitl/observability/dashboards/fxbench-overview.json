@@ -1,0 +1,158 @@
+{
+  "title": "fx_bench \u2014 overview",
+  "uid": "fxbench-overview",
+  "tags": ["hitl", "splanc", "fx_bench", "perf"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Goldens & margins",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Golden reference (frame cycles) + margin band per effect/build",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/goldens.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$",
+          "columns": [
+            {
+              "selector": "label",
+              "text": "effect",
+              "type": "string"
+            },
+            {
+              "selector": "build",
+              "text": "build",
+              "type": "string"
+            },
+            {
+              "selector": "goldenFrameCycles",
+              "text": "golden",
+              "type": "number"
+            },
+            {
+              "selector": "marginPct",
+              "text": "margin %",
+              "type": "number"
+            },
+            {
+              "selector": "goldenLow",
+              "text": "low",
+              "type": "number"
+            },
+            {
+              "selector": "goldenHigh",
+              "text": "high",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "All frame-cycle samples (filter/sort in the panel header)",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$[metric='frame']",
+          "columns": [
+            {
+              "selector": "label",
+              "text": "effect",
+              "type": "string"
+            },
+            {
+              "selector": "build",
+              "text": "build",
+              "type": "string"
+            },
+            {
+              "selector": "branch",
+              "text": "branch",
+              "type": "string"
+            },
+            {
+              "selector": "cycles",
+              "text": "cycles",
+              "type": "number"
+            },
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Raw CI logs cached by ingest_fx_bench.py (never commit — large, regenerable).
+cache/
+# The parsed dataset is multi-MB and grows every run, so it's served as GitHub
+# release assets (tag fxbench-data), not committed. Only ingest_state.json (a
+# small run-id ledger) is tracked, so the incremental ingest knows what it's seen.
+data/measurements.json
+data/measurements.jsonl
+data/goldens.json
+data/goldens_line.json
