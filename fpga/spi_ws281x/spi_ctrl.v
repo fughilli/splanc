@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // SPI transaction framing: decode the opcode byte after CS-low and route the
 // following bytes to either the CSR bank or the streaming pixel path.
 //

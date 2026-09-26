@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Tang Nano 9K top: 27 MHz crystal -> Gowin rPLL -> 54 MHz -> spi_ws281x.
 //
 // The rPLL is the plain Gowin primitive (synthesizable by yosys + apicula, no
@@ -92,7 +93,7 @@ module tangnano9k_top #(
       div_cnt <= 8'd0;
       phase   <= 4'd0;
     end else if (frame_pulse) begin
-      if (div_cnt == ANIM_DIV - 1) begin
+      if (div_cnt == 8'(ANIM_DIV - 1)) begin
         div_cnt <= 8'd0;
         phase   <= (phase == 4'd9) ? 4'd0 : phase + 4'd1;
       end else begin
@@ -100,7 +101,8 @@ module tangnano9k_top #(
       end
     end
   end
-  // phase 0..5 -> pos 0..5, phase 6..9 -> pos 4..1 (bounce)
-  wire [2:0] pos = (phase <= 4'd5) ? phase[2:0] : (4'd10 - phase);
+  // phase 0..5 -> pos 0..5, phase 6..9 -> pos 4..1 (bounce). The subtract yields
+  // 1..4 for phase 6..9 (fits 3 bits); size both arms to pos's width explicitly.
+  wire [2:0] pos = (phase <= 4'd5) ? phase[2:0] : 3'(4'd10 - phase);
   assign led = ~(6'b000001 << pos);  // active low: lit LED at `pos`
 endmodule
