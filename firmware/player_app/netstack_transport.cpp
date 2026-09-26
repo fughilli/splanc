@@ -78,6 +78,7 @@ void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive
 uint32_t ns_tcp_state();
 uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
 uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
+void ns_tcp_set_serving_live(uint32_t live); // arm graceful RST load-shedding (live WS session)
 // Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
 void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
@@ -1618,6 +1619,21 @@ void netstack_loop() {
     }
     g_wss_was_active = wss_active;
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
+    // Graceful load-shedding gate. Arm the tcp layer to fast-REJECT (RST|ACK) a SYN from a
+    // DIFFERENT peer ONLY while this slot is a live, established, actively-serving session —
+    // s==2 AND the WS/TLS session is up. Disarm otherwise (LISTEN, SynRcvd, pre-WS
+    // Established, closing). This is the load-bearing guard against the reverted #199/#204
+    // e2e regression: the SAME client reconnects on a fresh source port for the post-WS
+    // cert-trust-page GET right after its wss session closes, arriving during the
+    // close->re-LISTEN transition; if we rejected a busy-slot SYN unconditionally we'd reset
+    // that legitimate reconnect. We disarm the instant the session is no longer up (and
+    // explicitly before close_notify below), so the cert-GET reconnect is never rejected —
+    // it either latches a fresh LISTEN or, if the old slot is still closing, is silently
+    // dropped and retried (its previous behavior), never RST-refused.
+    {
+      bool live = (s == 2) && (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
+      ns_tcp_set_serving_live(live ? 1u : 0u);
+    }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
     // stress) can leave the single connection slot stuck mid-accept: the DOMINANT wedge is
     // SynRcvd (s==6) — the client that won the LISTEN race sent no final ACK (the host fired
@@ -1726,6 +1742,14 @@ void netstack_loop() {
           // stalled-wedge cases are already covered by the pre-WS and post-WS
           // progress-keyed reclaim gates above, so the fast inline path wasn't buying
           // robustness — only the regression. Close cleanly and re-listen on the FIN.
+          //
+          // Disarm load-shedding BEFORE we close: g_ws_up is still true here (the session was
+          // serving up to this instant), but we are now closing, so any SYN that arrives from
+          // a different source port during this close->re-LISTEN window is the SAME client's
+          // post-WS cert-trust-page reconnect and MUST NOT be RST-refused (the reverted e2e
+          // regression). Clearing it here — ahead of the scan-top update next loop — makes the
+          // no-reject guarantee hold across the whole transition, not just from the next scan.
+          ns_tcp_set_serving_live(0u);
           mbedtls_ssl_close_notify(&g_ssl);
         } else {
           // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
