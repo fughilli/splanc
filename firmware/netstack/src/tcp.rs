@@ -310,6 +310,22 @@ impl TcpConn {
         // A Listener latches its peer from the first SYN; every other state requires the
         // already-bound peer to match.
         if self.state != State::Listen && (ip[12..16] != self.dst || sport != self.dport) {
+            // A DIFFERENT peer while our single slot is busy. If it's a fresh SYN (a new
+            // client, or a client reconnecting on a new port because its prior socket
+            // lingers), fast-REJECT with RST|ACK (connection-refused semantics) so it
+            // retries immediately, instead of silently dropping it — which strands the
+            // client until its own connect timeout (~8s). Measured shedding of 24
+            // simultaneous handshakes: silent-drop gave {ok:3, rejected:0, timeout:21};
+            // the timeouts are the graceless failure. The slot still frees promptly (the
+            // hold ends, or the wedge-reclaim re-LISTENs), so a rejected client's next
+            // retry latches within ~1-2s. Other stray segments (an old peer's leftover
+            // data) stay silently dropped — RST-ing those could disturb an unrelated live
+            // connection on that host.
+            let f = tcp[13];
+            if f & SYN != 0 && f & ACK == 0 {
+                let s = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
+                return self.build_rst_to(&ip[12..16], sport, 0, Some(s.wrapping_add(1)), out);
+            }
             return 0;
         }
         let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
@@ -809,6 +825,49 @@ mod tests {
         let r = srv.on_ip(&a[..n], &mut b);
         assert!(r > 0);
         assert_eq!(srv.state, State::SynRcvd, "a fresh SYN latches normally");
+    }
+
+    // While the single slot is busy with one peer, a SYN from a DIFFERENT peer is
+    // fast-REJECTED (RST|ACK) so it retries immediately, not silently dropped (which
+    // strands it until its own timeout). The busy connection is untouched. (Graceful
+    // load-shedding for many-simultaneous-clients; validated against the 24-way churn.)
+    #[test]
+    fn busy_slot_rejects_a_new_syn() {
+        let a_ip = [10, 0, 0, 1];
+        let b_ip = [10, 0, 0, 3];
+        let srv_ip = [10, 0, 0, 2];
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        // Peer A establishes and holds the slot.
+        let mut cli_a = TcpConn::new(a_ip, srv_ip, 5000, 443, 1000);
+        let n = cli_a.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli_a.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        assert_eq!(srv.dst, a_ip);
+
+        // Peer B sends a SYN while the slot is busy → RST|ACK reject, slot unchanged.
+        let mut cli_b = TcpConn::new(b_ip, srv_ip, 6000, 443, 2000);
+        let n = cli_b.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "a new SYN at a busy slot must be rejected, not dropped");
+        assert_eq!(srv.state, State::Established, "the busy slot is untouched");
+        assert_eq!(srv.dst, a_ip, "the busy slot still belongs to peer A");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &b_ip, "reject is addressed to peer B");
+        assert!(b[ihl + 13] & RST != 0, "reject carries RST");
+        // Peer B accepts the reject and can retry (its stack resets).
+        let _ = cli_b.on_ip(&b[..r], &mut a);
+        assert_eq!(cli_b.state, State::Done);
+
+        // Peer A's own traffic still flows (the reject didn't disturb the live slot).
+        cli_a.enqueue(b"hello");
+        let n = cli_a.pump_tx(1000, &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.rx_data(), b"hello");
+        assert!(r > 0);
     }
 
     impl TcpConn {
