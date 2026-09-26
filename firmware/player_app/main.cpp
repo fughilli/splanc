@@ -36,6 +36,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>  // fsync — flush a persisted file to flash before rename
 #if defined(LM_NETSTACK)
 // The heapless-WiFi transport variant: our own MAC/WPA2/CCMP/DHCP/TCP/TLS/WS replaces vendor
 // WiFi + esp_https_server + the ws:81 listener + mDNS + the lwIP OSC socket. See main.cpp's
@@ -409,14 +410,44 @@ static void ws_drop(uint16_t close_code) {
 }
 #endif  // !LM_NETSTACK
 
+// Atomically persist `data` to `path`, power-loss safe: write the bytes to a
+// sibling temp file, flush them all the way to flash (fsync), then rename over
+// the destination. littlefs's rename is a single atomic metadata commit, so an
+// abrupt reset (HITL inter-test reset, coex/watchdog reboot, or a user yanking
+// power) can only ever leave EITHER the intact old file OR the intact new one —
+// never a half-written destination. Writing in place (the old behaviour) left a
+// truncated map.pb/play.pb/fx.pb after a mid-write reset, and interrupting the
+// dir-pair commit for that in-place write is what surfaced as the intermittent
+// "esp_littlefs ... Corrupted dir pair at {0x0, 0x1}" on the next mount. The
+// temp path is derived from the destination so writers to different keys never
+// collide (writes are serialized on this task anyway).
 static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
-  FILE *f = fopen(path, "wb");
-  if (f == nullptr) {
-    Log().printf("littlefs: open %s for write failed\n", path);
+  char tmp[64];
+  int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
+  if (pn < 0 || (size_t)pn >= sizeof tmp) {
+    Log().printf("littlefs: path too long for %s\n", path);
     return;
   }
-  fwrite(data, 1, len, f);
-  fclose(f);
+  FILE *f = fopen(tmp, "wb");
+  if (f == nullptr) {
+    Log().printf("littlefs: open %s for write failed\n", tmp);
+    return;
+  }
+  size_t w = fwrite(data, 1, len, f);
+  // Force the data + its metadata out to flash before we swap it in. Without
+  // this the rename can commit ahead of the file's own contents, so a reset in
+  // the window would leave the new name pointing at a short/empty file.
+  bool synced = (fflush(f) == 0) && (fsync(fileno(f)) == 0);
+  if (fclose(f) != 0 || w != len || !synced) {
+    Log().printf("littlefs: write %s failed (w=%u/%u sync=%d)\n", tmp,
+                 (unsigned)w, (unsigned)len, (int)synced);
+    remove(tmp);
+    return;
+  }
+  if (rename(tmp, path) != 0) {
+    Log().printf("littlefs: rename %s -> %s failed\n", tmp, path);
+    remove(tmp);
+  }
 }
 
 // -- color correction ---------------------------------------------------------
