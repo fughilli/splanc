@@ -442,24 +442,38 @@ in
   # Clear the provisioning-AP's ARP/neighbour ghosts. The shared-mode AP's
   # neighbour table accumulates stale entries: randomized-MAC clients (phones, …)
   # that briefly associate leave gratuitous-ARP entries mapping pool addresses to
-  # dead, locally-administered 02:xx MACs. A joining DUT's NetworkManager IPv4 ACD
-  # then sees those as duplicates and refuses every DHCP offer ("10.42.0.N already
-  # in use by 02:0c:6a:…") → the join fails at IP config. The DUT side disables ACD
-  # (improv_ble_provision.py ipv4.dad-timeout 0), but also flush the AP's dead
-  # neighbours periodically so the pool stays clean for every client. Active DUTs
-  # re-resolve immediately.
+  # dead, locally-administered 02:xx MACs. Two distinct failures both trace to this
+  # pollution, and BOTH are what made the concurrent CI netstack lane flaky-red:
+  #  1. A joining DUT's NetworkManager IPv4 ACD sees a ghost as a duplicate and refuses
+  #     every DHCP offer ("10.42.0.N already in use by 02:0c:6a:…") → join fails at IP
+  #     config. (The DUT side also disables ACD: improv_ble_provision.py dad-timeout 0.)
+  #  2. Worse under load: a ghost holding the pool address dnsmasq later leases to the
+  #     DUT leaves the AP's neighbour entry for the DUT's IP pointing at the DEAD 02:xx
+  #     MAC, so the AP MISROUTES the inbound wss/cert flight to nowhere → "ws never came
+  #     up / timed out during opening handshake" (the rotating hard-fail).
+  # The DUT announces itself (gratuitous ARP, netstack_transport.cpp:1551) but only every
+  # ~3s and only while idle, and the AP does not reliably adopt it under contention, so
+  # flush the AP's neighbours on a TIGHT cadence to keep the pool clean for every client;
+  # active DUTs re-resolve immediately. MEASURED: with the concurrent 2-rig CI suite
+  # (10 netstack tests, --local_test_jobs=10 --flaky_test_attempts=3), a 15s flush makes
+  # it pass 10/10 across repeated runs; #182-era 5min was far too loose (ghosts refill to
+  # ~30 entries within 15s here). A persistent loop, not a systemd timer: OnUnitActiveSec
+  # at this cadence collides with the default AccuracySec=1min and would fire ~1/min.
+  # arp_accept=1 additionally lets the AP adopt the DUT's own gratuitous-ARP announce.
+  boot.kernel.sysctl."net.ipv4.conf.${apIface}.arp_accept" = 1;
   systemd.services.hitl-ap-arp-flush = {
     description = "Flush provisioning-AP neighbour ghosts (randomized-MAC ARP pollution)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "NetworkManager.service" ];
     serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${pkgs.iproute2}/bin/ip neigh flush dev ${apIface}";
-    };
-  };
-  systemd.timers.hitl-ap-arp-flush = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnBootSec = "3min";
-      OnUnitActiveSec = "5min";
+      Restart = "always";
+      RestartSec = "10s";
+      ExecStart = pkgs.writeShellScript "hitl-ap-arp-flush" ''
+        while true; do
+          ${pkgs.iproute2}/bin/ip neigh flush dev ${apIface} 2>/dev/null || true
+          sleep 15
+        done
+      '';
     };
   };
 
