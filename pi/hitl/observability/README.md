@@ -10,6 +10,14 @@ run it (`alloy.nix`), the dashboards (`dashboards/*.json`), the CI-result push
 (`push-ci-metrics.sh`), and the workflow that syncs dashboards
 (`.github/workflows/grafana-dashboards.yaml`).
 
+**`fxbench/`** is a complementary layer: per-effect **firmware perf history** from
+the `fx_bench` benchmark, backfilled from the CI job logs and plotted so render-cost
+drift is visible over time and across branches (the `fxbench-*` dashboards). It
+serves its data to Grafana through the existing Infinity datasource (reading a
+`fxbench-data` GitHub release asset) — no write token needed — so it works with
+only the read/write-dashboards `grafana_local` token. See
+[`fxbench/README.md`](fxbench/README.md).
+
 ## Architecture
 
 ```text

@@ -1,0 +1,63 @@
+# fx_bench observability — ongoing ingest (FUG-117 follow-on).
+#
+# The HITL firmware perf benchmark (fx_bench) logs per-effect render timings on a
+# real ESP32-C6 on every hitl.yaml run. This scheduled job pulls the new runs'
+# job logs, parses every measurement, and refreshes the dataset that Grafana
+# Cloud's `grafanacloud-infinity` datasource reads — so the fx_bench dashboards
+# (pi/hitl/observability/dashboards/fxbench-*.json) stay current.
+#
+# The parsed dataset is multi-MB and grows every run, so it is stored as assets on
+# the `fxbench-data` GitHub release (not committed — the repo caps files at
+# 600 KB). Each run: seed history from the release, ingest new runs, re-upload the
+# refreshed assets, and commit only the small ingest_state.json run-id ledger.
+name: fx_bench ingest
+on:
+  schedule:
+    # Every 3 hours — HITL runs land a few times/day; keeps lag small without
+    # hammering the API. Backfill history already lives on the release.
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: 'run pages to scan (100 runs/page)'
+        default: '2'
+
+permissions:
+  contents: write # commit ingest_state.json + manage the fxbench-data release
+
+concurrency:
+  group: fxbench-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Ingest fx_bench measurements + refresh the release dataset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 pi/hitl/observability/fxbench/ingest_fx_bench.py \
+            --max-pages "${{ github.event.inputs.max_pages || '2' }}" \
+            --seed-from-release \
+            --upload-release
+      - name: Commit the refreshed run-id ledger
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pi/hitl/observability/fxbench/data/ingest_state.json
+          if git diff --cached --quiet; then
+            echo "no new fx_bench runs; nothing to commit."
+            exit 0
+          fi
+          n=$(python3 -c "import json;print(json.load(open('pi/hitl/observability/fxbench/data/ingest_state.json'))['total_samples'])")
+          git commit -m "pi/hitl/observability: refresh fx_bench dataset (${n} samples) [skip ci]"
+          git push origin main
