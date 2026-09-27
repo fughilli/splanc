@@ -464,9 +464,16 @@ def performance_overview_dashboard(labels):
 
     # 1. Overall performance index: mean(ln_ratio) grouped by commit/time = geomean
     #    in log space. Native group-by + mean (single frame ⇒ robust; nulls skipped).
+    #    NOTE: we select the needed fields straight off each filtered row (columns
+    #    below) rather than a JSONata `.{...}` object-constructor map. In a path
+    #    context `sequence.{...}` GROUPS the whole sequence into one object (values
+    #    become arrays), so Infinity's row parser saw a single all-null row and the
+    #    timeseries panel errored "time field with null values". A plain `$[predicate]`
+    #    keeps one object per row; `type:"timestamp"` then parses the ISO-8601-Z
+    #    `time` into a real Grafana time field (verified non-null via /api/ds/query).
     index_target = _target(
         MEAS_RECENT_URL,
-        f'$[{filt}].{{"time":time,"ln_ratio":ln_ratio}}',
+        f"$[{filt}]",
         [_col("time", "time", "timestamp"), _col("ln_ratio", "ln_ratio", "number")],
         refid="A",
     )
@@ -525,13 +532,24 @@ def performance_overview_dashboard(labels):
     # 2. Breadth of drift: per-commit counts of regressed / within ±5% / improved.
     #    Per-row 1/0 classification in JSONata, then native group-by SUM (= count).
     #    Broad columns = systematic; a lone regressed count = isolated.
+    #    This one DOES need derived per-row fields, so it uses `$map(seq, fn)` — which
+    #    returns an array of objects (one per row) — NOT a path-context `seq.{...}`
+    #    object constructor, which would group the whole sequence into a single object
+    #    (and yield the same all-null single-row frame the index panel used to hit).
+    #    The lambda body is an object literal, so it needs its OWN braces inside the
+    #    `function($r){ … }` body braces: `function($r){{"time":…}}`. (Built by plain
+    #    concatenation, not an f-string, so the doubled brace survives verbatim.)
+    breadth_map = (
+        "$map($[" + filt + "], function($r){"
+        '{"time":$r.time,'
+        '"regressed":$r.ratio>1.05?1:0,'
+        '"within":($r.ratio>=0.95 and $r.ratio<=1.05)?1:0,'
+        '"improved":$r.ratio<0.95?1:0}'
+        "})"
+    )
     breadth_target = _target(
         MEAS_RECENT_URL,
-        f"$[{filt}]."
-        '{"time":time,'
-        '"regressed":ratio>1.05?1:0,'
-        '"within":(ratio>=0.95 and ratio<=1.05)?1:0,'
-        '"improved":ratio<0.95?1:0}',
+        breadth_map,
         [
             _col("time", "time", "timestamp"),
             _col("regressed", "regressed", "number"),
@@ -617,7 +635,7 @@ def performance_overview_dashboard(labels):
     #    this distribution heatmap carries the same systematic-vs-isolated read.)
     heat_target = _target(
         MEAS_RECENT_URL,
-        f'$[{filt}].{{"time":time,"ln_ratio":ln_ratio}}',
+        f"$[{filt}]",
         [_col("time", "time", "timestamp"), _col("ln_ratio", "ln_ratio", "number")],
         refid="A",
     )
@@ -655,7 +673,7 @@ def performance_overview_dashboard(labels):
     # 4. Top movers: effects ranked by |mean ln_ratio| over the visible range.
     movers_target = _target(
         MEAS_RECENT_URL,
-        f'$[{filt}].{{"label":label,"ln_ratio":ln_ratio}}',
+        f"$[{filt}]",
         [_col("label", "label", "string"), _col("ln_ratio", "ln_ratio", "number")],
         refid="A",
     )

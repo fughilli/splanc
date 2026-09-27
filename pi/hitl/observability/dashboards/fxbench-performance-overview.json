@@ -560,7 +560,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'].{\"time\":time,\"ln_ratio\":ln_ratio}",
+          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch']",
           "columns": [
             {
               "selector": "time",
@@ -697,7 +697,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'].{\"time\":time,\"regressed\":ratio>1.05?1:0,\"within\":(ratio>=0.95 and ratio<=1.05)?1:0,\"improved\":ratio<0.95?1:0}",
+          "root_selector": "$map($[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'], function($r){{\"time\":$r.time,\"regressed\":$r.ratio>1.05?1:0,\"within\":($r.ratio>=0.95 and $r.ratio<=1.05)?1:0,\"improved\":$r.ratio<0.95?1:0}})",
           "columns": [
             {
               "selector": "time",
@@ -828,7 +828,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'].{\"time\":time,\"ln_ratio\":ln_ratio}",
+          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch']",
           "columns": [
             {
               "selector": "time",
@@ -922,7 +922,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'].{\"label\":label,\"ln_ratio\":ln_ratio}",
+          "root_selector": "$[ratio and label in [${subset:singlequote}] and chip='$chip' and build='$build' and metric='$metric' and branch='$branch']",
           "columns": [
             {
               "selector": "label",
