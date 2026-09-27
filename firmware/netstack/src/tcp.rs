@@ -29,6 +29,19 @@ pub enum State {
     Done,
 }
 
+/// Serial-number comparison (RFC 1793/793 modular sequence math): true when `a` is
+/// strictly after `b` on the wrapping 32-bit sequence circle. Used to compare TCP
+/// sequence numbers where either may have wrapped.
+#[inline]
+fn seq_gt(a: u32, b: u32) -> bool {
+    (a.wrapping_sub(b) as i32) > 0
+}
+/// `a` at or after `b` on the wrapping sequence circle.
+#[inline]
+fn seq_geq(a: u32, b: u32) -> bool {
+    (a.wrapping_sub(b) as i32) >= 0
+}
+
 /// One's-complement Internet checksum over `data` seeded with `sum`.
 fn csum(data: &[u8], mut sum: u32) -> u16 {
     let mut i = 0;
@@ -100,10 +113,46 @@ pub struct TcpConn {
     // reject a busy-slot SYN only while the slot is a live, established, actively-serving
     // session — never while it is closing, idle pre-WS, or transitioning back to LISTEN.
     serving_live: bool,
+    // RTT estimator (Jacobson/Karels, RFC 6298). The fixed 300 ms RTO was ~2 orders too
+    // large for the LAN RTT (~ms), so a single lost handshake/cert segment cost a full
+    // 300 ms–2 s stall before go-back-N recovered — and under the concurrent-DUT
+    // contention that flakes the wss opening handshake, that stall (compounded across a
+    // few losses) can push the FIRST connect past the client's ~25 s open_timeout, and
+    // can let the 4 s pre-WS wedge-reclaim in netstack_transport.cpp abandon a
+    // slow-but-alive handshake. Estimating the RTO from measured RTT (with a conservative
+    // floor so a contention RTT spike can't drive spurious retransmits) shrinks the
+    // common-case recovery toward ~1 RTT. Fixed-point ×8 for srtt / ×4 for rttvar per the
+    // RFC to keep the math integer-only. rtt_valid=false until the first clean sample.
+    srtt_8: u32,      // smoothed RTT × 8
+    rttvar_4: u32,    // RTT variation × 4
+    rtt_seq: u32,     // sequence whose ACK will time an RTT sample
+    rtt_at_ms: u32,   // clock when rtt_seq went on air (0 = no sample timing in progress)
+    rtt_valid: bool,  // Karn: only a NON-retransmitted segment yields a usable sample
+    // Fast-retransmit (RFC 5681) dup-ACK detector. Our receive side already re-ACKs its
+    // rcv_nxt on every inbound segment, so a peer that dropped one of our in-flight
+    // segments streams duplicate ACKs carrying the same ack number. On the 3rd duplicate
+    // we resend from the oldest unacked byte immediately instead of waiting out the RTO —
+    // cutting recovery from a whole RTO to ~1 RTT. Only fires with >1 segment in flight
+    // (the later segments elicit the dup-ACKs); the tiny handshake flight rarely triggers
+    // it, but the cert + streaming phase (led_capture / video_stream / fx_bench) does.
+    dup_ack: u32,     // consecutive duplicate ACKs carrying `dup_ack_seq`
+    dup_ack_seq: u32, // the ack number those duplicates repeat
 }
 
 const RTO_INITIAL_MS: u32 = 300;
 const RTO_MAX_MS: u32 = 2000;
+/// Floor for the RTT-estimated RTO. The measured LAN RTT is ~ms; without a floor the
+/// computed RTO (SRTT + 4·RTTVAR) would drop into the tens of ms and, under the
+/// concurrent-DUT airtime contention that this change targets, fire spurious go-back-N
+/// retransmits on packets merely delayed by contention (making the loss worse, not
+/// better). 120 ms is comfortably above a jittery contended LAN + tunnel RTT yet still
+/// ~2.5× faster than the old fixed 300 ms, so a genuinely lost segment recovers sooner
+/// without punishing a slow one. The RFC 6298 floor is 1 s for the internet; a controlled
+/// LAN can (and here must) be tighter.
+const RTO_MIN_MS: u32 = 120;
+/// Duplicate ACKs before fast-retransmit (RFC 5681 §3.2). Three tolerates the one/two
+/// dup-ACKs that mere reordering produces without retransmitting.
+const DUP_ACK_THRESH: u32 = 3;
 /// Give up on a connection after this many consecutive RTOs with no ACK — the peer is
 /// gone. With the backoff above that's ~12 s. A single-connection TLS server MUST do
 /// this: if a client times out mid-request and vanishes without a clean RST, the server
@@ -136,6 +185,8 @@ impl TcpConn {
             snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
+            srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
+            dup_ack: 0, dup_ack_seq: 0,
         }
     }
 
@@ -246,10 +297,44 @@ impl TcpConn {
         let len = self.build(PSH | ACK, seq, &seg[..n], out);
         self.sent += n;
         self.snd_nxt = self.snd_una.wrapping_add(self.sent as u32);
+        let end_seq = self.snd_una.wrapping_add(self.sent as u32);
         if self.tx_at_ms == 0 {
             self.tx_at_ms = now_ms.max(1); // arm the RTO on the first segment in flight
         }
+        // Arm ONE outstanding RTT sample (RFC 6298 §3): time the ACK of this segment's last
+        // byte, but only when we aren't already timing one AND this is genuinely NEW data —
+        // its end sequence advances past the high-water mark we've ever sampled to. That
+        // second guard is Karn's algorithm: a go-back-N retransmit (which rewinds `sent`
+        // and resends already-sent bytes) leaves `rtt_seq` at the old high-water, so a
+        // resent byte can't arm a sample whose ACK we couldn't attribute to the original
+        // vs the retransmission. New data beyond it resumes clean sampling.
+        if self.rtt_at_ms == 0 && seq_gt(end_seq, self.rtt_seq) {
+            self.rtt_seq = end_seq;
+            self.rtt_at_ms = now_ms.max(1);
+        }
         len
+    }
+
+    /// RFC 6298 §2 RTT filter, fed a fresh (non-retransmitted) sample in ms. Maintains
+    /// srtt/rttvar in fixed point (×8 / ×4) and recomputes `rto_ms` clamped to the LAN
+    /// floor..max window. Called only from the ACK path with a Karn-clean sample.
+    fn rtt_update(&mut self, r_ms: u32) {
+        let r = r_ms.max(1);
+        if !self.rtt_valid {
+            // First sample: SRTT = R, RTTVAR = R/2 (RFC 6298 §2.2).
+            self.srtt_8 = r * 8;
+            self.rttvar_4 = (r / 2) * 4;
+            self.rtt_valid = true;
+        } else {
+            // RTTVAR = 3/4·RTTVAR + 1/4·|SRTT − R|; SRTT = 7/8·SRTT + 1/8·R.
+            let srtt = self.srtt_8 / 8;
+            let err = srtt.abs_diff(r);
+            self.rttvar_4 = self.rttvar_4 - (self.rttvar_4 / 4) + err;
+            self.srtt_8 = self.srtt_8 - (self.srtt_8 / 8) + r;
+        }
+        // RTO = SRTT + max(G, 4·RTTVAR); G (clock granularity) folds into the floor below.
+        let rto = self.srtt_8 / 8 + self.rttvar_4; // (rttvar_4/4)*4 = rttvar_4
+        self.rto_ms = rto.clamp(RTO_MIN_MS, RTO_MAX_MS);
     }
 
     /// Emit a bare window-update ACK when the receive window has re-opened since our last
@@ -295,8 +380,15 @@ impl TcpConn {
             return 0;
         }
         // Otherwise go back N — rewind the window and resend from the oldest unacked byte.
-        // `pump_tx` re-arms the timer as the first resent segment goes out.
+        // `pump_tx` re-arms the RTO timer as the first resent segment goes out.
         self.rto_ms = (self.rto_ms.saturating_mul(2)).min(RTO_MAX_MS);
+        // Karn's algorithm: abandon any RTT sample in flight — its ACK could be for the
+        // original OR this retransmission, so it's unusable. `rtt_seq` stays at the old
+        // high-water so pump_tx won't re-arm on the resent (already-sent) bytes; a clean
+        // sample resumes only once NEW data advances past it.
+        self.rtt_at_ms = 0;
+        // A dup-ACK-driven partial-recovery counter is stale once we go back N.
+        self.dup_ack = 0;
         self.sent = 0;
         self.snd_nxt = self.snd_una;
         self.tx_at_ms = 0;
@@ -316,7 +408,9 @@ impl TcpConn {
 
     /// Process an inbound IPv4 datagram. Returns the length of any reply to send in
     /// `out` (an ACK, or nothing = 0). Updates state and buffers received data.
-    pub fn on_ip(&mut self, ip: &[u8], out: &mut [u8]) -> usize {
+    /// `now_ms` is the arrival time (the caller's millis()), used to time the RTT
+    /// sample and re-arm the RTO on a fast retransmit.
+    pub fn on_ip(&mut self, now_ms: u32, ip: &[u8], out: &mut [u8]) -> usize {
         if ip.len() < IP_HDR + TCP_HDR || ip[9] != 6 {
             return 0; // not TCP
         }
@@ -374,7 +468,7 @@ impl TcpConn {
         }
 
         // Process an ACK against the send window: free acknowledged bytes from snd_buf,
-        // advance snd_una, refresh the peer's advertised receive window, and reset the RTO
+        // advance snd_una, refresh the peer's advertised receive window, and re-arm the RTO
         // (a fresh timer for whatever remains in flight). SYN/FIN consume a sequence but
         // aren't in snd_buf; snd_len is 0 then, so no data bytes are removed.
         if flags & ACK != 0 {
@@ -387,10 +481,55 @@ impl TcpConn {
                     self.snd_len -= data_acked;
                     self.sent = self.sent.saturating_sub(data_acked);
                 }
+                // RTT sample (Karn-clean): if this ACK covers the byte we were timing, feed
+                // the estimator and let it own the RTO. rtt_seq only advances past new data
+                // (see pump_tx), and go-back-N invalidates the timing, so a sample here is
+                // always for an original (never-retransmitted) transmission.
+                if self.rtt_at_ms != 0 && seq_geq(ack, self.rtt_seq) {
+                    let r = now_ms.wrapping_sub(self.rtt_at_ms);
+                    // Drop an implausible sample: a real wss RTT is far under this ceiling,
+                    // so a huge value means a backwards/skewed clock (now_ms < rtt_at_ms
+                    // wrapping u32). Feeding it would poison the estimator and overflow the
+                    // fixed-point srtt (r*8). Discard it (keep the current estimate); the
+                    // next clean ACK re-samples.
+                    if r <= 60_000 {
+                        self.rtt_update(r);
+                    }
+                    self.rtt_at_ms = 0;
+                } else if !self.rtt_valid {
+                    self.rto_ms = RTO_INITIAL_MS; // no estimate yet — the fixed default
+                }
                 self.snd_una = ack;
-                self.rto_ms = RTO_INITIAL_MS;
                 self.rto_count = 0; // peer is alive — reset the dead-peer counter
                 self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
+                self.dup_ack = 0; // forward progress clears the dup-ACK run
+            } else if acked == 0
+                && payload.is_empty()
+                && flags & (SYN | FIN) == 0
+                && self.sent > 0
+            {
+                // A pure DUPLICATE ACK: same ack number, no new data, while we still have
+                // unacked data in flight. The peer emits one per out-of-order segment it
+                // receives past a gap, so a run of them means a segment of ours was
+                // dropped. On the DUP_ACK_THRESH'th, fast-retransmit (RFC 5681 §3.2) the
+                // oldest unacked byte NOW instead of waiting out the RTO — recovery in ~1
+                // RTT rather than RTO_MIN..RTO_MAX. Go-back-N: rewind `sent` and let
+                // pump_tx resend from snd_una; the RTO keeps running as the backstop. We do
+                // NOT alter the estimated rto_ms (a fast-retransmit isn't an RTO timeout).
+                if ack == self.dup_ack_seq {
+                    self.dup_ack += 1;
+                } else {
+                    self.dup_ack_seq = ack;
+                    self.dup_ack = 1;
+                }
+                if self.dup_ack == DUP_ACK_THRESH {
+                    self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
+                    self.rtt_at_ms = 0; // the resend is a retransmission — no RTT sample off it
+                    self.sent = 0;
+                    self.snd_nxt = self.snd_una;
+                    self.tx_at_ms = 0;
+                    return self.pump_tx(now_ms, out);
+                }
             }
             // Peer's advertised receive window (we send window-scale 0, so it's unscaled).
             self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
@@ -656,7 +795,7 @@ mod tests {
         assert!(n >= IP_HDR + TCP_HDR);
         // Feed a synthetic SYN-ACK back to A.
         let synack = b.synack_for(&buf[..n], &mut buf2);
-        let r = a.on_ip(&buf2[..synack], &mut buf);
+        let r = a.on_ip(1, &buf2[..synack], &mut buf);
         assert_eq!(a.state, State::Established);
         assert!(r >= IP_HDR + TCP_HDR); // A ACKs
     }
@@ -673,31 +812,31 @@ mod tests {
         let mut b = [0u8; 1600];
 
         let n = cli.connect(&mut a); // client SYN
-        let r = srv.on_ip(&a[..n], &mut b); // server latches peer + SYN-ACK
+        let r = srv.on_ip(1, &a[..n], &mut b); // server latches peer + SYN-ACK
         assert_eq!(srv.state, State::SynRcvd);
         assert_eq!(srv.dst, cli_ip);
         assert_eq!(srv.dport, 5000);
         assert!(r > 0);
-        let n = cli.on_ip(&b[..r], &mut a); // client -> Established, sends ACK
+        let n = cli.on_ip(1, &b[..r], &mut a); // client -> Established, sends ACK
         assert_eq!(cli.state, State::Established);
         assert!(n > 0);
-        let _ = srv.on_ip(&a[..n], &mut b); // server -> Established on the final ACK
+        let _ = srv.on_ip(1, &a[..n], &mut b); // server -> Established on the final ACK
         assert_eq!(srv.state, State::Established);
 
         // Client -> server data; server buffers + ACKs; client's send window drains on ACK.
         cli.enqueue(b"GET / HTTP/1.1");
         let n = cli.pump_tx(1000, &mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.rx_data(), b"GET / HTTP/1.1");
         assert!(r > 0);
-        let _ = cli.on_ip(&b[..r], &mut a);
+        let _ = cli.on_ip(1, &b[..r], &mut a);
         assert_eq!(cli.snd_len, 0);
 
         // Server -> client data (a TLS record flight would be several of these).
         srv.take_rx();
         srv.enqueue(b"HTTP/1.1 101\r\n\r\n");
         let n = srv.pump_tx(1000, &mut b);
-        let _ = cli.on_ip(&b[..n], &mut a);
+        let _ = cli.on_ip(1, &b[..n], &mut a);
         assert_eq!(cli.rx_data(), b"HTTP/1.1 101\r\n\r\n");
     }
 
@@ -711,9 +850,9 @@ mod tests {
         let mut srv = TcpConn::listen(srv_ip, 443, 9000);
         let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
         let n = cli.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
-        let n = cli.on_ip(&b[..r], &mut a);
-        let _ = srv.on_ip(&a[..n], &mut b); // both Established; peer_wnd learned from the handshake
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b); // both Established; peer_wnd learned from the handshake
         assert!(srv.peer_wnd >= 1500);
         // Pin a modest peer window so the cap below is exercised regardless of our own rx size
         // (the handshake learned peer_wnd from the client's advertised window = RX_BUF); a real
@@ -736,17 +875,17 @@ mod tests {
         // reopens; the server streams the rest. All 2000 bytes arrive, in order.
         let mut delivered = 0usize;
         // The first two segments (s1 in `b`, s2 in `a2`) went out before any ACK.
-        let r = cli.on_ip(&b[..s1], &mut a);
+        let r = cli.on_ip(1, &b[..s1], &mut a);
         delivered += cli.rx_len;
         cli.take_rx();
         if r > 0 {
-            let _ = srv.on_ip(&a[..r], &mut b);
+            let _ = srv.on_ip(1, &a[..r], &mut b);
         }
-        let r = cli.on_ip(&a2[..s2], &mut a);
+        let r = cli.on_ip(1, &a2[..s2], &mut a);
         delivered += cli.rx_len;
         cli.take_rx();
         if r > 0 {
-            let _ = srv.on_ip(&a[..r], &mut b);
+            let _ = srv.on_ip(1, &a[..r], &mut b);
         }
         for _ in 0..60 {
             if srv.snd_len == 0 {
@@ -754,17 +893,17 @@ mod tests {
             }
             let m = srv.pump_tx(1000, &mut b);
             if m > 0 {
-                let r = cli.on_ip(&b[..m], &mut a);
+                let r = cli.on_ip(1, &b[..m], &mut a);
                 delivered += cli.rx_len;
                 cli.take_rx();
                 if r > 0 {
-                    let _ = srv.on_ip(&a[..r], &mut b);
+                    let _ = srv.on_ip(1, &a[..r], &mut b);
                 }
             } else {
                 let mut w = [0u8; 80];
                 let wn = cli.window_ack(&mut w);
                 if wn > 0 {
-                    let _ = srv.on_ip(&w[..wn], &mut b);
+                    let _ = srv.on_ip(1, &w[..wn], &mut b);
                 }
             }
         }
@@ -783,9 +922,9 @@ mod tests {
         let mut srv = TcpConn::listen(srv_ip, 443, 9000);
         let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
         let n = cli.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
-        let n = cli.on_ip(&b[..r], &mut a);
-        let _ = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.state, State::Established);
 
         // Server replies, the client never ACKs (gone). Drive the RTO past the limit.
@@ -802,16 +941,16 @@ mod tests {
         let mut srv2 = TcpConn::listen(srv_ip, 443, 7000);
         let mut cli2 = TcpConn::new(cli_ip, srv_ip, 5001, 443, 2000);
         let n = cli2.connect(&mut a);
-        let r = srv2.on_ip(&a[..n], &mut b);
-        let n = cli2.on_ip(&b[..r], &mut a);
-        let _ = srv2.on_ip(&a[..n], &mut b);
+        let r = srv2.on_ip(1, &a[..n], &mut b);
+        let n = cli2.on_ip(1, &b[..r], &mut a);
+        let _ = srv2.on_ip(1, &a[..n], &mut b);
         let mut t2 = 1u32;
         for _ in 0..(MAX_RTO_RETRIES + 3) {
             srv2.enqueue(b"x");
             let m = srv2.pump_tx(t2, &mut b);
-            let r = cli2.on_ip(&b[..m], &mut a); // client ACKs each
+            let r = cli2.on_ip(1, &b[..m], &mut a); // client ACKs each
             if r > 0 {
-                let _ = srv2.on_ip(&a[..r], &mut b);
+                let _ = srv2.on_ip(1, &a[..r], &mut b);
             }
             t2 = t2.wrapping_add(RTO_MAX_MS + 1);
         }
@@ -833,9 +972,9 @@ mod tests {
         let mut b = [0u8; 1600];
         // Establish.
         let n = cli.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
-        let n = cli.on_ip(&b[..r], &mut a);
-        let _ = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.state, State::Established);
 
         // The server RECLAIMS the slot to a fresh listener (what ns_tcp_listen does). Note the
@@ -847,7 +986,7 @@ mod tests {
         // RST — not silently dropped.
         cli.enqueue(b"TLS ClientHello...");
         let n = cli.pump_tx(1000, &mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert!(r > 0, "listener must answer a stale ACK with a RST, not drop it");
         assert_eq!(srv.state, State::Listen, "an ACK must NOT advance a listener");
         let ihl = ((b[0] & 0x0f) as usize) * 4;
@@ -855,13 +994,13 @@ mod tests {
         assert!(b[ihl + 13] & RST != 0, "reply carries the RST flag");
 
         // The client tears down on the RST (so its ws layer reconnects with a fresh SYN).
-        let _ = cli.on_ip(&b[..r], &mut a);
+        let _ = cli.on_ip(1, &b[..r], &mut a);
         assert_eq!(cli.state, State::Done, "client resets on the RST");
 
         // A brand-new SYN (the reconnect) is still accepted cleanly.
         let mut cli2 = TcpConn::new(cli_ip, srv_ip, 5001, 443, 7000);
         let n = cli2.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert!(r > 0);
         assert_eq!(srv.state, State::SynRcvd, "a fresh SYN latches normally");
     }
@@ -882,9 +1021,9 @@ mod tests {
         // Peer A establishes and holds the slot.
         let mut cli_a = TcpConn::new(a_ip, srv_ip, 5000, 443, 1000);
         let n = cli_a.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
-        let n = cli_a.on_ip(&b[..r], &mut a);
-        let _ = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli_a.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.state, State::Established);
         assert_eq!(srv.dst, a_ip);
         // The app arms load-shedding once the WS session is up and serving.
@@ -893,7 +1032,7 @@ mod tests {
         // Peer B sends a SYN while the slot is a live session → RST|ACK reject, slot unchanged.
         let mut cli_b = TcpConn::new(b_ip, srv_ip, 6000, 443, 2000);
         let n = cli_b.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert!(r > 0, "a new SYN at a live busy slot must be rejected, not dropped");
         assert_eq!(srv.state, State::Established, "the busy slot is untouched");
         assert_eq!(srv.dst, a_ip, "the busy slot still belongs to peer A");
@@ -901,13 +1040,13 @@ mod tests {
         assert_eq!(&b[16..20], &b_ip, "reject is addressed to peer B");
         assert!(b[ihl + 13] & RST != 0, "reject carries RST");
         // Peer B tears down on the reject and can retry immediately.
-        let _ = cli_b.on_ip(&b[..r], &mut a);
+        let _ = cli_b.on_ip(1, &b[..r], &mut a);
         assert_eq!(cli_b.state, State::Done);
 
         // Peer A's own traffic still flows (the reject didn't disturb the live slot).
         cli_a.enqueue(b"hello");
         let n = cli_a.pump_tx(1000, &mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.rx_data(), b"hello");
         assert!(r > 0);
     }
@@ -930,9 +1069,9 @@ mod tests {
         let mut srv = TcpConn::listen(srv_ip, 443, 9000);
         let mut ws = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
         let n = ws.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
-        let n = ws.on_ip(&b[..r], &mut a);
-        let _ = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = ws.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.state, State::Established);
         srv.set_serving_live(true);
 
@@ -947,7 +1086,7 @@ mod tests {
         // SYN simply retransmits and latches once the slot re-LISTENs, exactly as before.
         let mut cert = TcpConn::new(cli_ip, srv_ip, 5001, 443, 4000);
         let n = cert.connect(&mut a);
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(r, 0, "a cert-GET reconnect during the closing window must NOT be reset");
         assert_eq!(cert.state, State::SynSent, "the reconnecting client is untouched (no RST)");
         assert_eq!(srv.state, State::Established, "the closing slot is undisturbed");
@@ -956,12 +1095,163 @@ mod tests {
         // SYN (retransmitted by the client) now latches cleanly and gets served.
         srv = TcpConn::listen(srv_ip, 443, 0x4000);
         let n = cert.connect(&mut a); // client retransmits its SYN
-        let r = srv.on_ip(&a[..n], &mut b);
+        let r = srv.on_ip(1, &a[..n], &mut b);
         assert!(r > 0, "the re-LISTENed slot answers the cert-GET SYN with a SYN-ACK");
         assert_eq!(srv.state, State::SynRcvd, "cert-GET reconnect latches on the fresh listener");
         let ihl = ((b[0] & 0x0f) as usize) * 4;
         assert!(b[ihl + 13] & SYN != 0 && b[ihl + 13] & ACK != 0, "it's a SYN-ACK, not a RST");
         assert!(b[ihl + 13] & RST == 0, "the cert-GET reconnect is never RST");
+    }
+    // Establish a client<->server pair (both Established) and return them, with the peer
+    // window pinned large so pump_tx can put several segments in flight.
+    fn established_pair() -> (TcpConn, TcpConn) {
+        let (cli_ip, srv_ip) = ([10, 0, 0, 1], [10, 0, 0, 2]);
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        assert_eq!(cli.state, State::Established);
+        srv.peer_wnd = 16384;
+        (cli, srv)
+    }
+
+    #[test]
+    fn fast_retransmit_on_three_dup_acks() {
+        // Prove a lost middle segment is fast-retransmitted on the 3rd duplicate ACK,
+        // WITHOUT waiting out the RTO — the whole point of RFC 5681 fast retransmit.
+        let (mut cli, mut srv) = established_pair();
+        let mut b = [0u8; 1600];
+        let mut a = [0u8; 1600];
+
+        // Server sends 4 distinct segments; the CLIENT never receives seg #1 (dropped), but
+        // does receive #2..#4 — each of which makes the client re-ACK its (unchanged)
+        // rcv_nxt. Those are duplicate ACKs from the server's point of view. Enqueue+pump
+        // per segment so each pump emits ONE bounded segment (all four fit in SND_BUF).
+        const SEG: usize = 500;
+        // seg1 (dropped): enqueue+pump but DON'T deliver to the client.
+        assert_eq!(srv.enqueue(&[0x11u8; SEG]), SEG);
+        let _lost = srv.pump_tx(100, &mut b);
+        let una_before = srv.snd_una;
+        // seg2..seg4: enqueue+pump + deliver to the client; collect the client's dup-ACKs.
+        let mut dup_acks: [[u8; 1600]; 3] = [[0; 1600]; 3];
+        let mut dup_len = [0usize; 3];
+        for (i, dup) in dup_acks.iter_mut().enumerate() {
+            assert_eq!(srv.enqueue(&[0x22u8 + i as u8; SEG]), SEG);
+            let s = srv.pump_tx(100, &mut b);
+            assert!(s > 0, "seg{} should go out", i + 2);
+            let r = cli.on_ip(1, &b[..s], &mut a); // out-of-order -> client re-ACKs rcv_nxt
+            assert!(r > 0, "client re-ACKs the out-of-order seg{}", i + 2);
+            dup[..r].copy_from_slice(&a[..r]);
+            dup_len[i] = r;
+        }
+        // Feed the 3 duplicate ACKs to the server. The first two must NOT retransmit; the
+        // third must fast-retransmit seg1 (from snd_una) immediately.
+        let r1 = srv.on_ip(1, &dup_acks[0][..dup_len[0]], &mut b);
+        assert_eq!(r1, 0, "1st dup-ACK: no retransmit yet");
+        assert_eq!(srv.dup_ack, 1);
+        let r2 = srv.on_ip(1, &dup_acks[1][..dup_len[1]], &mut b);
+        assert_eq!(r2, 0, "2nd dup-ACK: no retransmit yet");
+        assert_eq!(srv.dup_ack, 2);
+        let r3 = srv.on_ip(1, &dup_acks[2][..dup_len[2]], &mut b);
+        assert!(r3 > 0, "3rd dup-ACK: fast-retransmit fires (emits a segment)");
+        // The retransmit starts at the oldest unacked byte (snd_una unchanged, seg1).
+        assert_eq!(srv.snd_una, una_before, "snd_una unmoved (nothing was truly acked)");
+        // Deliver the fast-retransmitted seg1 to the client: now in-order, it accepts it
+        // (plus the buffered later segs are gone since our rx is in-order-only, but seg1
+        // fills the gap) and cumulatively ACKs forward.
+        let r = cli.on_ip(1, &b[..r3], &mut a);
+        assert!(r > 0);
+        let _ = srv.on_ip(1, &a[..r], &mut b);
+        assert!(srv.snd_una != una_before, "the recovered seg1 advances snd_una");
+    }
+
+    #[test]
+    fn rtt_estimator_tightens_rto_below_fixed_default() {
+        // A steady low-RTT link should drive the estimated RTO well under the old fixed
+        // 300 ms (down toward the LAN floor), so a lost segment recovers faster.
+        let (mut cli, mut srv) = established_pair();
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        // Ten round-trips at ~10 ms RTT each: enqueue a chunk, pump, deliver, ACK back with
+        // a +10 ms clock so the estimator sees a 10 ms sample.
+        let mut now = 1000u32;
+        for _ in 0..10 {
+            srv.enqueue(&[0x5a; 500]);
+            let s = srv.pump_tx(now, &mut b);
+            assert!(s > 0);
+            now = now.wrapping_add(10); // 10 ms later the ACK arrives
+            let r = cli.on_ip(now, &b[..s], &mut a);
+            cli.take_rx();
+            assert!(r > 0);
+            let _ = srv.on_ip(now, &a[..r], &mut b);
+        }
+        assert!(srv.rtt_valid, "estimator has samples");
+        assert!(
+            srv.rto_ms < RTO_INITIAL_MS,
+            "estimated RTO {} ms should be < the fixed {} ms default",
+            srv.rto_ms,
+            RTO_INITIAL_MS
+        );
+        assert!(
+            srv.rto_ms >= RTO_MIN_MS,
+            "estimated RTO {} ms must respect the LAN floor {} ms",
+            srv.rto_ms,
+            RTO_MIN_MS
+        );
+    }
+
+    #[test]
+    fn karn_no_rtt_sample_off_a_retransmit() {
+        // Karn's algorithm: an RTO retransmit must NOT feed the RTT estimator (the ACK is
+        // ambiguous). After a go-back-N resend, the ACK of the resent bytes leaves the
+        // estimator untouched; only genuinely new data resumes sampling.
+        let (mut cli, mut srv) = established_pair();
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        srv.enqueue(&[0x5a; 500]);
+        let s = srv.pump_tx(1000, &mut b); // seg goes out, RTT sample armed
+        assert!(s > 0);
+        assert_ne!(srv.rtt_at_ms, 0, "sample armed");
+        assert!(!srv.rtt_valid);
+        // No ACK; RTO fires -> go-back-N. Karn must drop the sample.
+        let _ = srv.tick(1000 + RTO_MAX_MS + 1, &mut b);
+        assert_eq!(srv.rtt_at_ms, 0, "Karn abandoned the in-flight sample on retransmit");
+        // Now the resent bytes get ACKed. Because rtt_seq stayed at the old high-water and
+        // the resend didn't re-arm, the estimator gets NO (bogus) sample from it.
+        let r = cli.on_ip(1, &b[..s], &mut a);
+        cli.take_rx();
+        let _ = srv.on_ip(1, &a[..r], &mut b);
+        assert!(!srv.rtt_valid, "no RTT sample was taken off the retransmitted segment");
+    }
+
+    #[test]
+    fn dead_peer_still_torn_down_with_estimated_rto() {
+        // The dead-peer teardown (MAX_RTO_RETRIES) must survive the RTT-estimated RTO: a
+        // silent peer is still declared dead and the slot freed, regardless of how low the
+        // estimator drove the RTO.
+        let (mut cli, mut srv) = established_pair();
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        // Warm the estimator with a few RTTs so rto_ms is small.
+        let mut now = 1000u32;
+        for _ in 0..4 {
+            srv.enqueue(&[1u8; 300]);
+            let s = srv.pump_tx(now, &mut b);
+            now = now.wrapping_add(8);
+            let r = cli.on_ip(now, &b[..s], &mut a);
+            cli.take_rx();
+            let _ = srv.on_ip(now, &a[..r], &mut b);
+        }
+        assert!(srv.rto_ms < RTO_INITIAL_MS);
+        // Now the peer vanishes mid-reply.
+        srv.enqueue(b"final reply");
+        let _ = srv.pump_tx(now, &mut b);
+        for _ in 0..(MAX_RTO_RETRIES + 3) {
+            now = now.wrapping_add(RTO_MAX_MS + 1);
+            let _ = srv.tick(now, &mut b);
+        }
+        assert_eq!(srv.state, State::Done, "silent peer still torn down");
     }
 
     impl TcpConn {

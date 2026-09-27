@@ -192,13 +192,14 @@ pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
 }
 
 /// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
+/// `now_ms` is the caller's millis() at arrival (RTT/RTO timing).
 #[no_mangle]
-pub extern "C" fn ns_tcp_on_ip(ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
         let Some(c) = TCP.as_mut() else { return 0 };
         let i = core::slice::from_raw_parts(ip, len as usize);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
-        c.on_ip(i, o) as u32
+        c.on_ip(now_ms, i, o) as u32
     }
 }
 

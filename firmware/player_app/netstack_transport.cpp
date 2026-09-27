@@ -67,7 +67,7 @@ int ppTxPkt(void *eb, int do_arm);
 void *ic_get_trc(uint32_t iface, uint32_t index);
 uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
                         uint32_t iss, uint8_t *out, uint32_t cap);
-uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_on_ip(uint32_t now_ms, const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer into the send window
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
@@ -699,7 +699,7 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
       static uint8_t reply[1600];  // static: handle_l3 is never re-entered (single thread)
-      uint32_t rl = ns_tcp_on_ip(ip, iplen, reply, sizeof(reply));
+      uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, reply, sizeof(reply));
       if (rl > 0) send_ip(reply, rl);
     }
     return;
