@@ -34,17 +34,17 @@
     "hitl-reserve": {
       "flake": false,
       "locked": {
-        "lastModified": 1790224287,
-        "narHash": "sha256-HCOcwkId1tU1a0AixZU2bWXY2LR4cwkXrvs/pCEEcfU=",
+        "lastModified": 1790532343,
+        "narHash": "sha256-CtJlbqOizvw6tFJJRyx/KkkSV2V9Gu6ql0Ap1mRK0BA=",
         "owner": "fughilli",
         "repo": "hitl-reserve",
-        "rev": "085532e5a0b3f6bb21632106b0be576ed84c0cb3",
+        "rev": "00598e21960e077efc76759bcc93f849665a3b75",
         "type": "github"
       },
       "original": {
         "owner": "fughilli",
         "repo": "hitl-reserve",
-        "rev": "085532e5a0b3f6bb21632106b0be576ed84c0cb3",
+        "rev": "00598e21960e077efc76759bcc93f849665a3b75",
         "type": "github"
       }
     },
