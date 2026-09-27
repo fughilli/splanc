@@ -311,7 +311,12 @@ def default_board_caps() -> dict | None:
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
-    res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
+    res = Reservation(
+        server=args.server or None,
+        owner=args.owner,
+        sku=args.sku or None,
+        device=args.device or None,
+    )
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
@@ -386,6 +391,12 @@ def main() -> int:
         "--device",
         default=os.environ.get("HITL_DEVICE"),
         help="pin a specific DUT by name (e.g. c6-003f08); default: any free DUT on the rig",
+    )
+    ap.add_argument(
+        "--sku",
+        default=os.environ.get("HITL_SKU"),
+        help="reserve only DUTs of this hardware type/SoC (e.g. esp32c6), so a c6 test "
+        "skips a same-rig esp32c3; default $HITL_SKU. Filters by unit type, not a cap.",
     )
     ap.add_argument(
         "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"
