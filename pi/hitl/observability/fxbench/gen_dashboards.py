@@ -407,7 +407,7 @@ def overview_dashboard(labels):
         ],
     )
     return {
-        "title": "fx_bench — overview",
+        "title": "fx_bench — golden reference",
         "uid": "fxbench-overview",
         "tags": ["hitl", "splanc", "fx_bench", "perf"],
         "timezone": "browser",
