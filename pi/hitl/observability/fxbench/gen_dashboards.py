@@ -10,7 +10,7 @@ by `.github/workflows/grafana-dashboards.yaml` (and by hand via
 
     python3 gen_dashboards.py
 
-Three dashboards:
+Four dashboards:
   * fxbench-drift        — frame/show cycles over commit time per effect; main is
                            the baseline series, a $branch textbox overlays that
                            branch as a second series; golden value + ±margin band
@@ -19,6 +19,13 @@ Three dashboards:
                            multi-modality across branches), effect + build filters.
   * fxbench-overview     — golden + margin table per effect/build and a sortable
                            table of every frame-cycle sample.
+  * fxbench-performance-overview — SYSTEMATIC drift aggregated across a client-side
+                           selectable subset of effects: an overall performance
+                           index (mean ln(measured/golden) per commit = geomean in
+                           log space), a breadth-of-drift bar (regressed/within/
+                           improved counts), a drift-distribution heatmap, and a
+                           top-movers table. Reads the bounded measurements-recent
+                           slice, never the unbounded full asset.
 
 Filtering is done server-side in the Infinity query via a JSONata `root_selector`
 predicate (`$[label='$effect' and build='$build' …]`) — Infinity's own `filters`
@@ -48,20 +55,54 @@ INFINITY = {"type": "yesoreyeram-infinity-datasource", "uid": "grafanacloud-infi
 # resolves to the latest. Infinity follows the release redirect to the blob store.
 BASE = "https://github.com/fughilli/splanc/releases/download/fxbench-data"
 MEAS_URL = f"{BASE}/measurements.json"
+# The bounded (trailing-window) slice the performance-overview dashboard reads —
+# same schema as measurements.json, but small and non-growing (see
+# ingest_fx_bench.RECENT_WINDOW_DAYS). The overview aggregates across effects
+# client-side, so it must never fetch the unbounded full asset.
+MEAS_RECENT_URL = f"{BASE}/measurements-recent.json"
 GOLDEN_URL = f"{BASE}/goldens.json"
 GOLDEN_LINE_URL = f"{BASE}/goldens_line.json"
 
 
+def _labels_from_committed_dashboard() -> list[str]:
+    """The effect option list already baked into a committed dashboard's `$effect`
+    custom var. `data/measurements.json` is a gitignored release asset (absent in a
+    fresh checkout), so without this a regen would collapse the 72-effect option
+    lists to the 4-effect fallback and clobber the committed dashboards. Reading the
+    labels back from a committed dashboard keeps `python3 gen_dashboards.py`
+    idempotent on a clean checkout, no 19.5 MB asset fetch needed."""
+    for name in ("fxbench-drift.json", "fxbench-distribution.json"):
+        path = os.path.join(DASH_DIR, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path) as f:
+                model = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for v in model.get("templating", {}).get("list", []):
+            if v.get("name") == "effect" and v.get("options"):
+                labels = [o["value"] for o in v["options"] if o.get("value")]
+                if labels:
+                    return labels
+    return []
+
+
 def _effect_labels() -> list[str]:
-    """Effect labels present in the committed dataset (for the $effect variable)."""
+    """Effect labels for the $effect / $subset variables. Prefer the freshly-ingested
+    dataset; fall back to the labels already committed in the dashboards (so a clean
+    checkout regen preserves the full effect list); then a small hardcoded default."""
     path = os.path.join(DATA_DIR, "measurements.json")
     labels: set[str] = set()
     if os.path.exists(path):
         with open(path) as f:
             for r in json.load(f):
                 labels.add(r["label"])
-    # A sensible default so the dashboard is non-empty even before first ingest.
-    return sorted(labels) or ["sweep16", "empty", "hash1M", "hash3M"]
+    if labels:
+        return sorted(labels)
+    # No local dataset (gitignored release asset): recover the committed list so we
+    # don't clobber it, else a sensible default so the dashboard is non-empty.
+    return _labels_from_committed_dashboard() or ["sweep16", "empty", "hash1M", "hash3M"]
 
 
 def _col(selector, text, typ):
@@ -121,13 +162,35 @@ def _var_metric():
     return _var_custom("metric", "Metric", ["frame", "show"], "frame")
 
 
-def _var_branch():
+def _var_branch(label="Branch overlay (blank = main only)"):
     return {
         "name": "branch",
-        "label": "Branch overlay (blank = main only)",
+        "label": label,
         "type": "textbox",
         "query": "main",
         "current": {"text": "main", "value": "main"},
+    }
+
+
+def _var_effect_subset(labels):
+    """Multi-select CUSTOM list of the effect labels (default = All), for the
+    performance-overview's client-side subset selection. Kept a custom list (not a
+    query var) so the dashboard stays publicly shareable. `includeAll` with NO
+    custom all-value means selecting All expands to every option — so the JSONata
+    predicate `label in [${subset:singlequote}]` matches everything with no special
+    case. Interpolated with `:singlequote` it renders `'a','b',…`, i.e. a JSONata
+    string array literal."""
+    return {
+        "name": "subset",
+        "label": "Effect subset",
+        "type": "custom",
+        "multi": True,
+        "includeAll": True,
+        "allValue": None,
+        "query": ",".join(labels),
+        "current": {"text": ["All"], "value": ["$__all"], "selected": True},
+        "options": [{"text": "All", "value": "$__all", "selected": True}]
+        + [{"text": o, "value": o, "selected": False} for o in labels],
     }
 
 
@@ -380,6 +443,309 @@ def overview_dashboard(labels):
     }
 
 
+def performance_overview_dashboard(labels):
+    """Systematic performance drift aggregated ACROSS microbenchmarks, over time,
+    with client-side subset selection. Reads the bounded `measurements-recent.json`
+    slice (never the unbounded full asset). The ingest enriches every row with
+    `ratio = measured/golden` and `ln_ratio = ln(ratio)`; since Grafana/JSONata have
+    no exp/log, the aggregate index is a plain MEAN of `ln_ratio` — the geomean in
+    log space (0 = at golden, +0.02 ≈ +2% slower). All filtering is a JSONata
+    per-row map/predicate (server-side in Infinity); all aggregation is a native
+    single-frame Grafana transform (group-by mean / sum, robust — no cross-frame
+    merge, no exp/log). Every predicate is guarded by a leading `ratio and …` so
+    rows with no golden (ratio/ln_ratio null) are skipped rather than erroring a
+    JSONata comparison; `ratio` is never 0, so the guard also protects `ln_ratio`
+    references (which can legitimately be 0, at golden)."""
+    # subset+chip+build+metric+branch filter, guarded so null-golden rows drop out.
+    filt = (
+        "ratio and label in [${subset:singlequote}] "
+        "and chip='$chip' and build='$build' and metric='$metric' and branch='$branch'"
+    )
+
+    # 1. Overall performance index: mean(ln_ratio) grouped by commit/time = geomean
+    #    in log space. Native group-by + mean (single frame ⇒ robust; nulls skipped).
+    index_target = _target(
+        MEAS_RECENT_URL,
+        f'$[{filt}].{{"time":time,"ln_ratio":ln_ratio}}',
+        [_col("time", "time", "timestamp"), _col("ln_ratio", "ln_ratio", "number")],
+        refid="A",
+    )
+    index_panel = {
+        "id": 1,
+        "type": "timeseries",
+        "title": "Overall performance index — mean ln(measured/golden) per commit "
+        "(0 = at golden; +0.02 ≈ +2% slower)",
+        "description": "Geomean of the selected effects' drift, in log space. A plain "
+        "mean of per-row ln_ratio (native group-by), since Grafana/JSONata have no "
+        "exp/log. Sustained departure from 0 = systematic drift across the subset.",
+        "datasource": INFINITY,
+        "gridPos": {"h": 9, "w": 24, "x": 0, "y": 1},
+        "fieldConfig": {
+            "defaults": {
+                "custom": {
+                    "drawStyle": "line",
+                    "showPoints": "always",
+                    "pointSize": 6,
+                    "lineWidth": 2,
+                    "spanNulls": True,
+                    "lineInterpolation": "stepAfter",
+                    "thresholdsStyle": {"mode": "line"},
+                },
+                "unit": "percentunit",
+                "custom.axisLabel": "log-drift index (≈ fractional slowdown)",
+                "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                        {"value": None, "color": "transparent"},
+                        {"value": 0, "color": "#808080"},
+                    ],
+                },
+                "color": {"mode": "fixed", "fixedColor": "blue"},
+            },
+            "overrides": [],
+        },
+        "options": {
+            "tooltip": {"mode": "single", "sort": "none"},
+            "legend": {"displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull"]},
+        },
+        "targets": [index_target],
+        "transformations": [
+            {
+                "id": "groupBy",
+                "options": {
+                    "fields": {
+                        "time": {"aggregations": [], "operation": "groupby"},
+                        "ln_ratio": {"aggregations": ["mean"], "operation": "aggregate"},
+                    }
+                },
+            }
+        ],
+    }
+
+    # 2. Breadth of drift: per-commit counts of regressed / within ±5% / improved.
+    #    Per-row 1/0 classification in JSONata, then native group-by SUM (= count).
+    #    Broad columns = systematic; a lone regressed count = isolated.
+    breadth_target = _target(
+        MEAS_RECENT_URL,
+        f"$[{filt}]."
+        '{"time":time,'
+        '"regressed":ratio>1.05?1:0,'
+        '"within":(ratio>=0.95 and ratio<=1.05)?1:0,'
+        '"improved":ratio<0.95?1:0}',
+        [
+            _col("time", "time", "timestamp"),
+            _col("regressed", "regressed", "number"),
+            _col("within", "within", "number"),
+            _col("improved", "improved", "number"),
+        ],
+        refid="A",
+    )
+    breadth_panel = {
+        "id": 2,
+        "type": "timeseries",
+        "title": "Breadth of drift per commit — effects regressed (>+5%) / within ±5% / improved (<−5%)",
+        "description": "How MANY of the selected effects moved, per commit. A tall "
+        "regressed band = broad/systematic drift; one or two = isolated.",
+        "datasource": INFINITY,
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 10},
+        "fieldConfig": {
+            "defaults": {
+                "custom": {
+                    "drawStyle": "bars",
+                    "fillOpacity": 80,
+                    "lineWidth": 1,
+                    "stacking": {"mode": "normal", "group": "A"},
+                },
+                "unit": "short",
+                "custom.axisLabel": "# effects",
+            },
+            "overrides": [
+                {
+                    "matcher": {"id": "byName", "options": "regressed >+5%"},
+                    "properties": [
+                        {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}
+                    ],
+                },
+                {
+                    "matcher": {"id": "byName", "options": "within ±5%"},
+                    "properties": [
+                        {"id": "color", "value": {"mode": "fixed", "fixedColor": "#808080"}}
+                    ],
+                },
+                {
+                    "matcher": {"id": "byName", "options": "improved <−5%"},
+                    "properties": [
+                        {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+                    ],
+                },
+            ],
+        },
+        "options": {
+            "tooltip": {"mode": "multi", "sort": "none"},
+            "legend": {"displayMode": "list", "placement": "bottom"},
+        },
+        "targets": [breadth_target],
+        "transformations": [
+            {
+                "id": "groupBy",
+                "options": {
+                    "fields": {
+                        "time": {"aggregations": [], "operation": "groupby"},
+                        "regressed": {"aggregations": ["sum"], "operation": "aggregate"},
+                        "within": {"aggregations": ["sum"], "operation": "aggregate"},
+                        "improved": {"aggregations": ["sum"], "operation": "aggregate"},
+                    }
+                },
+            },
+            {
+                "id": "organize",
+                "options": {
+                    "renameByName": {
+                        "regressed (sum)": "regressed >+5%",
+                        "within (sum)": "within ±5%",
+                        "improved (sum)": "improved <−5%",
+                    }
+                },
+            },
+        ],
+    }
+
+    # 3. Heatmap: distribution of per-row ln_ratio over time across the subset. A
+    #    whole band shifting off 0 = systematic drift (a "column" moving); a stray
+    #    hot/cold cell = isolated. (A literal effect-row × time matrix isn't cleanly
+    #    expressible in a publicly-shareable Grafana panel — see the PR notes — so
+    #    this distribution heatmap carries the same systematic-vs-isolated read.)
+    heat_target = _target(
+        MEAS_RECENT_URL,
+        f'$[{filt}].{{"time":time,"ln_ratio":ln_ratio}}',
+        [_col("time", "time", "timestamp"), _col("ln_ratio", "ln_ratio", "number")],
+        refid="A",
+    )
+    heat_panel = {
+        "id": 3,
+        "type": "heatmap",
+        "title": "Drift distribution over time — ln(measured/golden) across the selected effects",
+        "description": "Each column is a time bucket; color = how many of the selected "
+        "effects sit at that drift. The band shifting off 0 = systematic; stray cells "
+        "= isolated movers.",
+        "datasource": INFINITY,
+        "gridPos": {"h": 9, "w": 24, "x": 0, "y": 18},
+        "options": {
+            "calculate": True,
+            "calculation": {"yBuckets": {"mode": "count", "value": "30"}},
+            "color": {
+                "mode": "scheme",
+                "scheme": "RdYlGn",
+                "reverse": True,
+                "steps": 64,
+                "fill": "dark-orange",
+            },
+            "yAxis": {"unit": "percentunit", "decimals": 2},
+            "cellGap": 1,
+            "tooltip": {"show": True, "yHistogram": False},
+            "legend": {"show": True},
+        },
+        "fieldConfig": {
+            "defaults": {"custom": {"scaleDistribution": {"type": "linear"}}},
+            "overrides": [],
+        },
+        "targets": [heat_target],
+    }
+
+    # 4. Top movers: effects ranked by |mean ln_ratio| over the visible range.
+    movers_target = _target(
+        MEAS_RECENT_URL,
+        f'$[{filt}].{{"label":label,"ln_ratio":ln_ratio}}',
+        [_col("label", "label", "string"), _col("ln_ratio", "ln_ratio", "number")],
+        refid="A",
+    )
+    movers_panel = {
+        "id": 4,
+        "type": "table",
+        "title": "Top movers — effects by |mean ln(measured/golden)| over the range",
+        "description": "Per-effect mean drift (log space) and sample count, sorted by "
+        "absolute drift. The biggest individual contributors to the aggregate index.",
+        "datasource": INFINITY,
+        "gridPos": {"h": 12, "w": 24, "x": 0, "y": 27},
+        "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+                {
+                    "matcher": {"id": "byName", "options": "ln_ratio (mean)"},
+                    "properties": [
+                        {"id": "unit", "value": "percentunit"},
+                        {"id": "decimals", "value": 3},
+                    ],
+                },
+                {
+                    "matcher": {"id": "byName", "options": "abs drift"},
+                    "properties": [
+                        {"id": "unit", "value": "percentunit"},
+                        {"id": "decimals", "value": 3},
+                    ],
+                },
+            ],
+        },
+        "options": {
+            "showHeader": True,
+            "sortBy": [{"displayName": "abs drift", "desc": True}],
+        },
+        "targets": [movers_target],
+        "transformations": [
+            {
+                "id": "groupBy",
+                "options": {
+                    "fields": {
+                        "label": {"aggregations": [], "operation": "groupby"},
+                        "ln_ratio": {"aggregations": ["mean", "count"], "operation": "aggregate"},
+                    }
+                },
+            },
+            {
+                "id": "calculateField",
+                "options": {
+                    "mode": "unary",
+                    "unary": {"operation": "abs", "field": "ln_ratio (mean)"},
+                    "alias": "abs drift",
+                    "replaceFields": False,
+                },
+            },
+        ],
+    }
+
+    return {
+        "title": "fx_bench — performance overview",
+        "uid": "fxbench-performance-overview",
+        "tags": ["hitl", "splanc", "fx_bench", "perf"],
+        "timezone": "browser",
+        "schemaVersion": 39,
+        "editable": True,
+        "refresh": "",
+        "time": {"from": "now-180d", "to": "now"},
+        "templating": {
+            "list": [
+                _var_chip(),
+                _var_build(),
+                _var_metric(),
+                _var_effect_subset(labels),
+                _var_branch("Branch"),
+            ]
+        },
+        "panels": [
+            {
+                "id": 100,
+                "type": "row",
+                "title": "Aggregate drift across the selected effects",
+                "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+            },
+            index_panel,
+            breadth_panel,
+            heat_panel,
+            movers_panel,
+        ],
+    }
+
+
 def main():
     os.makedirs(DASH_DIR, exist_ok=True)
     labels = _effect_labels()
@@ -387,6 +753,7 @@ def main():
         "fxbench-drift.json": drift_dashboard(labels),
         "fxbench-distribution.json": distribution_dashboard(labels),
         "fxbench-overview.json": overview_dashboard(labels),
+        "fxbench-performance-overview.json": performance_overview_dashboard(labels),
     }
     for name, model in out.items():
         with open(os.path.join(DASH_DIR, name), "w") as f:

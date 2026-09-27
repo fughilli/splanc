@@ -16,7 +16,11 @@ over time and across branches, caught before it flakes.
 Storage/serving model (stdlib only, no write-scoped Grafana token needed): this
 script fetches the `hitl_tests` job log from the GitHub REST API, parses EVERY
 measurement, and writes measurements.jsonl (full history) + a compact
-measurements.json/goldens.json/goldens_line.json for Grafana. The parsed dataset
+measurements.json/goldens.json/goldens_line.json for Grafana. Each compact row is
+enriched with a per-row ratio/ln_ratio vs its golden (so the performance-overview
+dashboard can aggregate drift across effects client-side without an exp/log), and a
+bounded trailing-window slice measurements-recent.json is emitted for that overview
+so it never fetches the unbounded full asset. The parsed dataset
 is multi-MB and grows every run, so it is served as assets on the `fxbench-data`
 GitHub *release* (--upload-release), not committed to git; Grafana Cloud's existing
 `grafanacloud-infinity` datasource reads the fixed release download URLs. Only the
@@ -36,18 +40,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 REPO = "fughilli/splanc"
 API = "https://api.github.com"
 WORKFLOW = "hitl.yaml"
 JOB_NAME = "hitl_tests"
+
+# Rolling trailing window (in days) for the compact `measurements-recent.json`
+# slice the performance-overview dashboard reads. The full `measurements.json`
+# grows unbounded (~96K rows / ~19.5 MB and climbing); the overview aggregates
+# across effects client-side, so it reads only this bounded slice — never the full
+# asset — to keep per-panel fetches small. Bump this if you want a longer window.
+RECENT_WINDOW_DAYS = 180
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(HERE, "data")
@@ -344,6 +356,82 @@ def load_goldens_from_repo() -> list[dict]:
     return out
 
 
+# ---- per-row ratio enrichment + time-bounded slice ------------------------------
+#
+# The performance-overview dashboard aggregates drift ACROSS effects client-side
+# (pick a subset, take the geomean of measured/golden). Grafana/JSONata have no
+# exp/log, so we can't compute a geomean in the browser directly — instead we
+# enrich EACH row here with `ratio = measured/golden` and `ln_ratio = ln(ratio)`,
+# and the dashboard takes a plain mean of `ln_ratio` (the geomean, in log space:
+# 0 = at golden, +0.02 ≈ +2% slower). Enriching per-row (not pre-aggregating)
+# preserves arbitrary client-side subsetting. A row with no matching golden gets
+# ratio/ln_ratio = null and is skipped downstream by the dashboards' predicates.
+
+
+def _golden_index(goldens: list[dict]) -> dict[tuple[str, str, str, str], int]:
+    """{(label, build, chip, metric): golden_cycles>0} from load_goldens_from_repo()
+    rows, for both the `frame` and `show` metrics. Only positive goldens are
+    indexed (a missing/zero golden ⇒ no ratio for that row)."""
+    idx: dict[tuple[str, str, str, str], int] = {}
+    for g in goldens:
+        chip = g.get("chip") or g.get("soc") or "esp32c6"
+        for metric, key in (("frame", "goldenFrameCycles"), ("show", "goldenShowCycles")):
+            gv = int(g.get(key, 0) or 0)
+            if gv > 0:
+                idx[(g["label"], g["build"], chip, metric)] = gv
+    return idx
+
+
+def _ratio_fields(measured: int, golden: int | None) -> tuple[float | None, float | None]:
+    """(ratio, ln_ratio) for a measured value vs its golden, or (None, None) when no
+    positive golden / non-positive measurement exists (skipped, never crashes)."""
+    if not golden or golden <= 0 or measured is None or measured <= 0:
+        return None, None
+    ratio = measured / golden
+    return ratio, math.log(ratio)
+
+
+def build_infinity_rows(all_rows: list[dict], goldens: list[dict]) -> list[dict]:
+    """The compact Grafana array: two rows per sample (metric=frame|show), each
+    carrying the #209 `chip` field plus per-row `ratio`/`ln_ratio` vs the matching
+    (label, build, chip, metric) golden. Fields the dashboards don't select are
+    dropped (ts/run_id — `time` carries the timestamp) to keep the asset small."""
+    idx = _golden_index(goldens)
+    infinity: list[dict] = []
+    for x in all_rows:
+        base = {
+            "time": x["time"],
+            "branch": x["branch"],
+            "short_sha": x["short_sha"],
+            "label": x["label"],
+            "build": x["build"],
+            "chip": x["soc"],
+            "leds": x["leds"],
+            "conclusion": x["conclusion"],
+        }
+        for metric, cyc in (("frame", x["frame"]), ("show", x["show"])):
+            golden = idx.get((x["label"], x["build"], x["soc"], metric))
+            ratio, ln_ratio = _ratio_fields(cyc, golden)
+            infinity.append(
+                {**base, "metric": metric, "cycles": cyc, "ratio": ratio, "ln_ratio": ln_ratio}
+            )
+    return infinity
+
+
+def slice_recent(
+    infinity_rows: list[dict],
+    now: datetime | None = None,
+    window_days: int = RECENT_WINDOW_DAYS,
+) -> list[dict]:
+    """Rows within the trailing `window_days` of `now` (default: real now). Same
+    schema as the full array — the overview reads THIS bounded slice, not the
+    unbounded full asset."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff_ms = int((now - timedelta(days=window_days)).timestamp() * 1000)
+    return [r for r in infinity_rows if _iso_to_epoch_ms(r["time"]) >= cutoff_ms]
+
+
 # ---- release-asset storage ------------------------------------------------------
 #
 # The parsed dataset is multi-MB and grows every run, so it lives as GitHub release
@@ -528,26 +616,22 @@ def main() -> int:
     # `time` carries the timestamp) to keep the file, which Grafana fetches per panel
     # and is re-uploaded to the release each run, small. `chip` (the SoC) is emitted
     # so a future esp32c3 DUT lands in its own filterable series; it is esp32c6 for
-    # all current/backfilled data.
+    # all current/backfilled data. Each row also carries a per-row `ratio`/`ln_ratio`
+    # vs its golden (see build_infinity_rows) so the performance-overview dashboard
+    # can aggregate drift across effects client-side without an exp/log.
     # The full-fidelity history lives in measurements.jsonl.
-    infinity: list[dict] = []
-    for x in all_rows:
-        base = {
-            "time": x["time"],
-            "branch": x["branch"],
-            "short_sha": x["short_sha"],
-            "label": x["label"],
-            "build": x["build"],
-            "chip": x["soc"],
-            "leds": x["leds"],
-            "conclusion": x["conclusion"],
-        }
-        infinity.append({**base, "metric": "frame", "cycles": x["frame"]})
-        infinity.append({**base, "metric": "show", "cycles": x["show"]})
+    goldens = load_goldens_from_repo()
+    infinity = build_infinity_rows(all_rows, goldens)
     with open(os.path.join(args.out, "measurements.json"), "w") as f:
         json.dump(infinity, f, separators=(",", ":"))
 
-    goldens = load_goldens_from_repo()
+    # A time-bounded slice of the SAME schema (trailing RECENT_WINDOW_DAYS). The
+    # performance-overview dashboard reads THIS instead of the unbounded full asset,
+    # so its per-panel fetches stay small even as measurements.json grows for good.
+    recent = slice_recent(infinity)
+    with open(os.path.join(args.out, "measurements-recent.json"), "w") as f:
+        json.dump(recent, f, separators=(",", ":"))
+
     with open(os.path.join(args.out, "goldens.json"), "w") as f:
         json.dump(goldens, f, indent=2)
 
@@ -599,7 +683,13 @@ def main() -> int:
         upload_release_assets(
             token,
             args.out,
-            ["measurements.json", "measurements.jsonl", "goldens.json", "goldens_line.json"],
+            [
+                "measurements.json",
+                "measurements-recent.json",
+                "measurements.jsonl",
+                "goldens.json",
+                "goldens_line.json",
+            ],
         )
 
     _log(

@@ -4,6 +4,7 @@ cache/
 # release assets (tag fxbench-data), not committed. Only ingest_state.json (a
 # small run-id ledger) is tracked, so the incremental ingest knows what it's seen.
 data/measurements.json
+data/measurements-recent.json
 data/measurements.jsonl
 data/goldens.json
 data/goldens_line.json
