@@ -156,6 +156,12 @@ impl Aes128 {
 /// ECB. CCMP (AES-CTR keystream + CBC-MAC) and RFC-3394 key-wrap use the forward block
 /// (`MODE_ENC`); key-unwrap uses the inverse block (`MODE_DEC`). Register map + the
 /// mode/state encoding are from the IDF `soc/aes_reg.h` + `hal/aes_ll.h` for esp32c6.
+// TODO(esp32c3): SoC register map is C6-specific; not runtime-correct on c3 yet.
+// This module compiles for any riscv32 firmware target (incl. the build-only
+// esp32c3), but the AES accelerator base + PCR register offsets below are the
+// ESP32-C6's. The C3 has a different AES/PCR layout, so a c3 image built today
+// will NOT do correct hardware AES. Porting the register map is a separate
+// firmware effort — the c3 target is build-gating only for now.
 #[cfg(all(target_arch = "riscv32", not(test)))]
 pub mod hw_aes {
     const AES_BASE: usize = 0x6008_8000;

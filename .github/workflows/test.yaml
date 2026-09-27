@@ -138,6 +138,15 @@ jobs:
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
             //firmware/player_app:esp32c6_netstack_flashbundle
 
+      # esp32c3 is a BUILD-ONLY target (see //MODULE.bazel + firmware/netstack
+      # ccmp.rs): build-gate that the c3 flashbundle compiles + links on every PR
+      # so future c3 firmware work stays green. The image is NOT runtime-correct
+      # on real c3 silicon yet (netstack SoC register map is C6-specific).
+      - name: Build firmware flash bundle (esp32c3 netstack, build-only)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c3_netstack_flashbundle
+
       - name: Upload flash bundle artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -145,6 +154,15 @@ jobs:
           path: |
             bazel-bin/firmware/player_app/esp32c6_flashbundle.tar
             bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Upload esp32c3 flash bundle artifact (build-only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32c3-flashbundle
+          path: |
+            bazel-bin/firmware/player_app/esp32c3_netstack_flashbundle.tar
           retention-days: 3
           if-no-files-found: error
 
