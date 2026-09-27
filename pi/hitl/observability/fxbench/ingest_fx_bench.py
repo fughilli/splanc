@@ -59,6 +59,10 @@ _MEAS_RE = re.compile(
 )
 # `[jit] pinned ON|OFF for this run` — delimits the build of the block that follows.
 _JIT_RE = re.compile(r"\[jit\] pinned (?P<state>ON|OFF) for this run")
+# `[chip] <soc>` — emitted next to the `[jit]` pin; attributes the chip of the block
+# that follows. Legacy logs (pre-chip-dimension) carry no `[chip]` line and default
+# to esp32c6 so all existing/backfilled data stays esp32c6.
+_CHIP_RE = re.compile(r"\[chip\] (?P<soc>[a-z0-9]+)")
 # `[golden] .../device-bench-<soc>[-jit].json: checked N effect(s), default margin ±P%`
 _GOLDEN_RE = re.compile(
     r"device-bench-(?P<soc>[a-z0-9]+)(?P<jit>-jit)?\.json: checked (?P<n>\d+) effect"
@@ -226,6 +230,7 @@ def parse_log(text: str) -> tuple[list[dict], list[dict]]:
     measurements: list[dict] = []
     goldens: dict[tuple[str, str], dict] = {}
     cur_build = None  # "jit" | "interp"
+    cur_soc = "esp32c6"  # default: legacy logs (no `[chip]` line) are all esp32c6
     block_idx = 0
     seen_in_block = 0
     off_re = re.compile(
@@ -240,14 +245,22 @@ def parse_log(text: str) -> tuple[list[dict], list[dict]]:
             block_idx += 1
             seen_in_block = 0
             continue
+        mc = _CHIP_RE.search(line)
+        if mc:
+            cur_soc = mc.group("soc")
+            continue
         mg = _GOLDEN_RE.search(line)
         if mg:
             # Cross-check / correct the block's build from the golden filename.
             cur_build = "jit" if mg.group("jit") else "interp"
+            # And cross-check the chip from the golden filename (device-bench-<soc>);
+            # a `[chip]` line takes precedence, this is the fallback for older logs
+            # that carry the golden line but not yet the chip line.
+            cur_soc = mg.group("soc")
             continue
         mo = off_re.search(line)
         if mo:
-            soc = "esp32c6"
+            soc = cur_soc
             build = cur_build or "interp"
             goldens[(mo.group("label"), build)] = {
                 "label": mo.group("label"),
@@ -268,7 +281,7 @@ def parse_log(text: str) -> tuple[list[dict], list[dict]]:
                     "frame": int(mm.group("frame")),
                     "show": int(mm.group("show")),
                     "leds": int(mm.group("leds")),
-                    "soc": "esp32c6",
+                    "soc": cur_soc,
                 }
             )
             seen_in_block += 1
@@ -287,9 +300,14 @@ def load_goldens_from_repo() -> list[dict]:
     dashboards can overlay a reference line + margin band per effect/build."""
     root = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
     out: list[dict] = []
+    # esp32c6 is the shipped chip; esp32c3 goldens are read too IF present (they won't
+    # exist until the c3 DUT lands — the existence guard below keeps this a no-op until
+    # then). The `soc` on each row comes from the golden file's own `soc` field.
     for build, fname in (
         ("interp", "device-bench-esp32c6.json"),
         ("jit", "device-bench-esp32c6-jit.json"),
+        ("interp", "device-bench-esp32c3.json"),
+        ("jit", "device-bench-esp32c3-jit.json"),
     ):
         path = os.path.join(root, "web", "tests", "testdata", fname)
         if not os.path.exists(path):
@@ -305,11 +323,16 @@ def load_goldens_from_repo() -> list[dict]:
                 if gv <= 0:
                     continue
                 m = float(per_label.get(s["label"], default_m))
+                soc = g.get("soc", "esp32c6")
                 out.append(
                     {
                         "label": s["label"],
                         "build": build,
-                        "soc": g.get("soc", "esp32c6"),
+                        "soc": soc,
+                        # `chip` mirrors `soc` for the consumer-facing goldens.json /
+                        # goldens_line.json the dashboards filter on (`chip='$chip'`);
+                        # `soc` is kept for backward compat.
+                        "chip": soc,
                         "goldenFrameCycles": gv,
                         "goldenShowCycles": int(s.get("measuredShowCycles", 0)),
                         "ledCount": int(s.get("ledCount", 0)),
@@ -501,9 +524,11 @@ def main() -> int:
 
     # … and a compact single-array JSON for Grafana's Infinity datasource. Two rows
     # per sample (metric=frame|show) so one query covers both metrics. Only the
-    # fields the dashboards actually select are emitted (ts/run_id/soc are dropped —
-    # `time` carries the timestamp, soc is constant esp32c6) to keep the file, which
-    # Grafana fetches per panel and is re-uploaded to the release each run, small.
+    # fields the dashboards actually select are emitted (ts/run_id are dropped —
+    # `time` carries the timestamp) to keep the file, which Grafana fetches per panel
+    # and is re-uploaded to the release each run, small. `chip` (the SoC) is emitted
+    # so a future esp32c3 DUT lands in its own filterable series; it is esp32c6 for
+    # all current/backfilled data.
     # The full-fidelity history lives in measurements.jsonl.
     infinity: list[dict] = []
     for x in all_rows:
@@ -513,6 +538,7 @@ def main() -> int:
             "short_sha": x["short_sha"],
             "label": x["label"],
             "build": x["build"],
+            "chip": x["soc"],
             "leds": x["leds"],
             "conclusion": x["conclusion"],
         }
@@ -542,6 +568,7 @@ def main() -> int:
                     "time": t,
                     "label": g["label"],
                     "build": g["build"],
+                    "chip": g["soc"],
                     "golden": g["goldenFrameCycles"],
                     "goldenLow": g["goldenLow"],
                     "goldenHigh": g["goldenHigh"],

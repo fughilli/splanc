@@ -109,6 +109,14 @@ def _var_build():
     return _var_custom("build", "Build", ["jit", "interp"], "jit")
 
 
+def _var_chip():
+    # A CUSTOM list (not a query var) so the dashboards stay publicly shareable —
+    # Grafana rejects datasource/query template vars on a shared link. Defaults to
+    # esp32c6 (the shipped chip + all backfilled data); esp32c3 filters to the future
+    # c3 DUT's series, empty until that data arrives.
+    return _var_custom("chip", "Chip", ["esp32c6", "esp32c3"], "esp32c6")
+
+
 def _var_metric():
     return _var_custom("metric", "Metric", ["frame", "show"], "frame")
 
@@ -134,7 +142,7 @@ def drift_dashboard(labels):
     frame — which has no `branch` field — isn't dropped by a partition transform."""
     main = _target(
         MEAS_URL,
-        "$[label='$effect' and build='$build' and metric='$metric' and branch='main']",
+        "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip' and branch='main']",
         [
             # ISO string + type=timestamp yields a real Grafana *time* field; the
             # value column's text becomes the series name ("main").
@@ -145,7 +153,7 @@ def drift_dashboard(labels):
     )
     overlay = _target(
         MEAS_URL,
-        "$[label='$effect' and build='$build' and metric='$metric' and branch='$branch']",
+        "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip' and branch='$branch']",
         [
             _col("time", "time", "timestamp"),
             _col("cycles", "$branch", "number"),
@@ -154,7 +162,7 @@ def drift_dashboard(labels):
     )
     golden = _target(
         GOLDEN_LINE_URL,
-        "$[label='$effect' and build='$build']",
+        "$[label='$effect' and build='$build' and chip='$chip']",
         [
             _col("time", "time", "timestamp"),
             _col("golden", "golden", "number"),
@@ -226,7 +234,7 @@ def drift_dashboard(labels):
         "targets": [
             _target(
                 MEAS_URL,
-                "$[label='$effect' and build='$build' and metric='$metric']",
+                "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip']",
                 [
                     _col("time", "time", "string"),
                     _col("branch", "branch", "string"),
@@ -247,7 +255,9 @@ def drift_dashboard(labels):
         "editable": True,
         "refresh": "",
         "time": {"from": "now-90d", "to": "now"},
-        "templating": {"list": [_var_effect(labels), _var_build(), _var_metric(), _var_branch()]},
+        "templating": {
+            "list": [_var_effect(labels), _var_build(), _var_metric(), _var_chip(), _var_branch()]
+        },
         "panels": [
             {
                 "id": 100,
@@ -279,7 +289,7 @@ def distribution_dashboard(labels):
             "targets": [
                 _target(
                     MEAS_URL,
-                    f"$[label='$effect' and build='$build' and metric='{metric}']",
+                    f"$[label='$effect' and build='$build' and chip='$chip' and metric='{metric}']",
                     [_col("cycles", f"{metric} cycles", "number")],
                 )
             ],
@@ -294,7 +304,7 @@ def distribution_dashboard(labels):
         "editable": True,
         "refresh": "",
         "time": {"from": "now-90d", "to": "now"},
-        "templating": {"list": [_var_effect(labels), _var_build()]},
+        "templating": {"list": [_var_effect(labels), _var_build(), _var_chip()]},
         "panels": [
             {
                 "id": 100,
@@ -312,7 +322,7 @@ def overview_dashboard(labels):
     """Golden + margin table per effect/build, and every frame-cycle sample."""
     goldens = _target(
         GOLDEN_URL,
-        "$",
+        "$[chip='$chip']",
         [
             _col("label", "effect", "string"),
             _col("build", "build", "string"),
@@ -324,7 +334,7 @@ def overview_dashboard(labels):
     )
     samples = _target(
         MEAS_URL,
-        "$[metric='frame']",
+        "$[metric='frame' and chip='$chip']",
         [
             _col("label", "effect", "string"),
             _col("build", "build", "string"),
@@ -342,7 +352,7 @@ def overview_dashboard(labels):
         "editable": True,
         "refresh": "",
         "time": {"from": "now-90d", "to": "now"},
-        "templating": {"list": []},
+        "templating": {"list": [_var_chip()]},
         "panels": [
             {
                 "id": 100,

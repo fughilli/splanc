@@ -405,6 +405,28 @@
             "selected": false
           }
         ]
+      },
+      {
+        "name": "chip",
+        "label": "Chip",
+        "type": "custom",
+        "query": "esp32c6,esp32c3",
+        "current": {
+          "text": "esp32c6",
+          "value": "esp32c6"
+        },
+        "options": [
+          {
+            "text": "esp32c6",
+            "value": "esp32c6",
+            "selected": true
+          },
+          {
+            "text": "esp32c3",
+            "value": "esp32c3",
+            "selected": false
+          }
+        ]
       }
     ]
   },
@@ -463,7 +485,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build' and metric='frame']",
+          "root_selector": "$[label='$effect' and build='$build' and chip='$chip' and metric='frame']",
           "columns": [
             {
               "selector": "cycles",
@@ -518,7 +540,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build' and metric='show']",
+          "root_selector": "$[label='$effect' and build='$build' and chip='$chip' and metric='show']",
           "columns": [
             {
               "selector": "cycles",
