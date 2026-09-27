@@ -125,6 +125,13 @@ py_test(
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # Reserve only esp32c6-type DUTs: rig-3 now carries a correctly-labeled
+        # esp32c3 DUT alongside its c6s, and an unfiltered reservation would
+        # sometimes land on it (esptool: "This chip is ESP32-C3 not ESP32-C6").
+        # hitl_client.Reservation reads $HITL_SKU into unit_type, so this filters
+        # by the unit's `type` — which every real c6 DUT has (even old-daemon rigs
+        # that carry no chip:* cap), so it never de-matches rig-1/rig-2.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_e2e.py",
@@ -159,6 +166,8 @@ py_test(
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_led_capture.py",
@@ -219,6 +228,8 @@ py_test(
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_led_capture.py",
@@ -344,6 +355,8 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         "HITL_CHUNK_BYTES": "1024",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "fx_bench.py",
@@ -381,6 +394,8 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         "HITL_CHUNK_BYTES": "1024",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "fx_bench.py",
@@ -414,6 +429,8 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         "HITL_CHUNK_BYTES": "1024",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_map_upload.py",
@@ -445,6 +462,8 @@ py_test(
     ],
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_tls_churn.py",
@@ -482,6 +501,8 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         "HITL_CHUNK_BYTES": "1024",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
     },
     imports = ["."],
     main = "hitl_video_stream.py",
@@ -536,6 +557,11 @@ py_test(
         "//firmware/netstack:sta_client_flashbundle",
         "@hitl_reserve//cmd/hitl",
     ],
+    env = {
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        # These netstack examples exercise C6-specific SoC registers.
+        "HITL_SKU": "esp32c6",
+    },
     imports = ["."],
     main = "hitl_netstack_examples.py",
     tags = [
