@@ -270,30 +270,28 @@ cc_binary(
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
     # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
-    linkopts = ["-Wl,--allow-multiple-definition"] + select({
-        # esp32c3 is BUILD-ONLY. This is a TEMPORARY build-gating scaffold, NOT a
-        # real port. It masks exactly TWO unported C6-specific translation units
-        # whose externs the C3 ROM/SDK don't provide (different BLE controller +
-        # crypto HAL):
-        #   1. mbedtls's HW-ECC port  esp_ecc.c        -> ecc_hal_* / esp_crypto_ecc_*
-        #   2. the C6 NimBLE ctlr HCI improv_ble_netstack.cpp -> r_ble_hci_trans_* / r_os_mbuf_*
-        # So the c3 image LINKS (build-gate) though it is NOT runtime-correct on c3
-        # (same class as the ccmp.rs C6-register caveat). FOOTGUN: ignore-all also
-        # swallows genuinely-missing symbols in future c3 work.
-        # TODO(esp32c3) FAST-FOLLOW: when the real c3 SoC port lands, NARROW this to
-        # exactly those 2 TUs (per-chip #ifdef / stub the externs) or REMOVE it, so
-        # the c3 link is strict again. Do not extend ignore-all to more targets.
-        "@embedded//platforms:is_esp32c3": ["-Wl,--unresolved-symbols=ignore-all"],
-        "//conditions:default": [],
-    }),
+    # The c3 link is now STRICT (no --unresolved-symbols=ignore-all): the two
+    # formerly-unported C6 translation units are handled per-chip — the BLE HCI
+    # shim maps r_ble_hci_trans_*/r_os_mbuf_* to the C3 controller's un-prefixed
+    # libbt.a symbols (improv_ble_netstack.cpp, gated on LM_CHIP_ESP32C3), and the
+    # mbedtls HW-ECC port (esp_ecc.c) is dropped for the C3 (no HW ECC peripheral)
+    # in favour of the software ECP (@mbedtls_src//:mbedtls_src_esp32c3).
+    linkopts = ["-Wl,--allow-multiple-definition"],
     local_defines = [
         "LM_MAX_LEDS=%d" % MAX_LEDS,
         "LM_NETSTACK",
-    ],
-    # esp32c3 is a BUILD-ONLY target: this links for c3 so CI build-gates c3
-    # firmware work, but is NOT runtime-correct on c3 silicon yet — the netstack
-    # SoC register map (firmware/netstack ccmp.rs) is still C6-specific, and the
-    # vendor BLE/WiFi/prefs libs pulled in here are the C6-headers build.
+    ] + select({
+        # Selects the C3 controller HCI ABI (un-prefixed libbt.a symbols) in
+        # improv_ble_netstack.cpp; the C6 keeps the ROM r_-prefixed transport.
+        "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
+        "//conditions:default": [],
+    }),
+    # esp32c3 runtime bring-up: the image links strictly and boots on real c3
+    # silicon. The WiFi/netstack DATA PATH is not yet c3-correct — the heapless MAC
+    # driver and the CCMP HW-AES register map (firmware/netstack) are C6-coupled
+    # (ccmp.rs now routes c3 to a SOFTWARE AES so it is correct-but-unaccelerated,
+    # never touching C6 registers), and the vendor WiFi/mbedtls crypto pulled in
+    # here is still the C6-headers build. See the PR for the remaining c3 MAC work.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "@embedded//platforms:is_esp32c3": [],

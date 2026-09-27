@@ -41,10 +41,56 @@ void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
 void ns_ble_set_name(const uint8_t *name, uint32_t len);
 void ns_ble_set_addr(const uint8_t *mac);
 
-// Vendor controller low-level HCI transport (the NimBLE ble_hci_trans API — internal
-// r_-prefixed symbols, but a stable ABI). The controller owns only the radio link.
+// Vendor controller low-level HCI transport (the NimBLE ble_hci_trans API). The
+// controller owns only the radio link. The exact symbol names differ per SoC:
+//   ESP32-C6: the controller lives in ROM and exports the transport UNDER r_-prefixed
+//             names (r_ble_hci_trans_* / r_os_mbuf_*) from libble_app.a.
+//   ESP32-C3: the controller ships in libbt.a and exports the SAME NimBLE transport
+//             ABI UN-prefixed (ble_hci_trans_* / os_mbuf_*), and replaces the flat
+//             per-type buf_alloc/free with the newer ble_transport_alloc_cmd/free pool.
+// The state machine below is written against the r_-prefixed C6 names; for the C3 we
+// declare the un-prefixed controller symbols and present them under the r_ names via
+// thin inline shims, so the call sites are chip-agnostic. LM_CHIP_ESP32C3 is defined
+// by the BUILD for the esp32c3 firmware target.
 typedef int ble_hci_trans_rx_cmd_fn(uint8_t *cmd, void *arg);
 typedef int ble_hci_trans_rx_acl_fn(void *om, void *arg);
+#if defined(LM_CHIP_ESP32C3)
+// C3 controller (libbt.a): stock NimBLE transport ABI, un-prefixed.
+void ble_hci_trans_cfg_hs(ble_hci_trans_rx_cmd_fn *cmd_cb, void *cmd_arg,
+                          ble_hci_trans_rx_acl_fn *acl_cb, void *acl_arg);
+int ble_hci_trans_hs_cmd_tx(uint8_t *cmd);
+int ble_hci_trans_hs_acl_tx(void *om);
+void *ble_transport_alloc_cmd(void);  // returns a command flat-buffer from the pool
+void ble_transport_free(void *buf);   // MP_RUNTIME_ALLOC=0 -> single-arg free
+void *os_msys_get_pkthdr(uint16_t dlen, uint16_t user_hdr_len);
+int os_mbuf_append(void *om, const void *data, uint16_t len);
+int os_mbuf_copydata(const void *om, int off, int len, void *dst);
+void os_mbuf_free_chain(void *om);
+}  // extern "C"
+
+// r_-prefixed facade over the C3 transport so the code below stays chip-agnostic.
+static inline void r_ble_hci_trans_cfg_hs(ble_hci_trans_rx_cmd_fn *cmd_cb, void *cmd_arg,
+                                          ble_hci_trans_rx_acl_fn *acl_cb, void *acl_arg) {
+  ble_hci_trans_cfg_hs(cmd_cb, cmd_arg, acl_cb, acl_arg);
+}
+static inline int r_ble_hci_trans_hs_cmd_tx(uint8_t *cmd) { return ble_hci_trans_hs_cmd_tx(cmd); }
+static inline int r_ble_hci_trans_hs_acl_tx(void *om) { return ble_hci_trans_hs_acl_tx(om); }
+static inline uint8_t *r_ble_hci_trans_buf_alloc(int /*type*/) {
+  return static_cast<uint8_t *>(ble_transport_alloc_cmd());
+}
+static inline void r_ble_hci_trans_buf_free(uint8_t *buf) { ble_transport_free(buf); }
+static inline void *r_os_msys_get_pkthdr(uint16_t dlen, uint16_t user_hdr_len) {
+  return os_msys_get_pkthdr(dlen, user_hdr_len);
+}
+static inline int r_os_mbuf_append(void *om, const void *data, uint16_t len) {
+  return os_mbuf_append(om, data, len);
+}
+static inline int r_os_mbuf_copydata(const void *om, int off, int len, void *dst) {
+  return os_mbuf_copydata(om, off, len, dst);
+}
+static inline void r_os_mbuf_free_chain(void *om) { os_mbuf_free_chain(om); }
+#else
+// C6 ROM controller (libble_app.a): r_-prefixed native HCI transport.
 void r_ble_hci_trans_cfg_hs(ble_hci_trans_rx_cmd_fn *cmd_cb, void *cmd_arg,
                             ble_hci_trans_rx_acl_fn *acl_cb, void *acl_arg);
 int r_ble_hci_trans_hs_cmd_tx(uint8_t *cmd);
@@ -55,7 +101,8 @@ void *r_os_msys_get_pkthdr(uint16_t dlen, uint16_t user_hdr_len);
 int r_os_mbuf_append(void *om, const void *data, uint16_t len);
 int r_os_mbuf_copydata(const void *om, int off, int len, void *dst);
 void r_os_mbuf_free_chain(void *om);
-}
+}  // extern "C"
+#endif  // LM_CHIP_ESP32C3
 
 #define BLE_HCI_TRANS_BUF_CMD 3  // NimBLE ble_hci_trans buffer type: command
 
