@@ -58,26 +58,30 @@ fn gmul(mut a: u8, mut b: u8) -> u8 {
 }
 
 /// AES-128 block cipher. On the ESP32-C6 target the single-block primitive runs on
-/// the dedicated standalone AES accelerator ([`hw_aes`]); host builds (and the test
-/// suite) use the software cipher with pre-expanded round keys. The public API is
-/// identical either way, so CCMP / key-wrap code is backend-agnostic.
+/// the dedicated standalone AES accelerator ([`hw_aes`]); the ESP32-C3 (which has a
+/// different AES/PCR register map — see [`hw_aes`]) and host/test builds use the
+/// software cipher with pre-expanded round keys. The `hw_aes` path is gated on the
+/// RISC-V atomics extension (`target_feature = "a"`), present on the C6's rv32imac
+/// but not the C3's rv32imc, so the two firmware SKUs pick the right backend
+/// automatically. The public API is identical either way, so CCMP / key-wrap code is
+/// backend-agnostic.
 pub struct Aes128 {
-    // Read only by the riscv32 hardware-AES backend (`hw_aes::block`); the
-    // software backend uses the expanded round keys in `rk` instead, so on
-    // host/test builds this field is stored but unread.
+    // Read only by the C6 hardware-AES backend (`hw_aes::block`); the software
+    // backend (C3 + host/test) uses the expanded round keys in `rk` instead, so on
+    // those builds this field is stored but unread.
     #[allow(dead_code)]
     key: [u8; 16],
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     rk: [[u8; 16]; 11],
 }
 
 impl Aes128 {
-    #[cfg(all(target_arch = "riscv32", not(test)))]
+    #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
     pub fn new(key: &[u8; 16]) -> Self {
         Aes128 { key: *key } // HW engine takes the raw key; no round-key expansion needed
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     pub fn new(key: &[u8; 16]) -> Self {
         let mut rk = [[0u8; 16]; 11];
         rk[0].copy_from_slice(key);
@@ -104,26 +108,26 @@ impl Aes128 {
     }
 
     pub fn encrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_ENC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
         self.encrypt_block_sw(s);
     }
 
     pub fn decrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_DEC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
         self.decrypt_block_sw(s);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     fn encrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[0]);
         for r in 1..10 {
@@ -137,7 +141,7 @@ impl Aes128 {
         add_rk(s, &self.rk[10]);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     fn decrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[10]);
         for r in (1..10).rev() {
@@ -156,13 +160,16 @@ impl Aes128 {
 /// ECB. CCMP (AES-CTR keystream + CBC-MAC) and RFC-3394 key-wrap use the forward block
 /// (`MODE_ENC`); key-unwrap uses the inverse block (`MODE_DEC`). Register map + the
 /// mode/state encoding are from the IDF `soc/aes_reg.h` + `hal/aes_ll.h` for esp32c6.
-// TODO(esp32c3): SoC register map is C6-specific; not runtime-correct on c3 yet.
-// This module compiles for any riscv32 firmware target (incl. the build-only
-// esp32c3), but the AES accelerator base + PCR register offsets below are the
-// ESP32-C6's. The C3 has a different AES/PCR layout, so a c3 image built today
-// will NOT do correct hardware AES. Porting the register map is a separate
-// firmware effort — the c3 target is build-gating only for now.
-#[cfg(all(target_arch = "riscv32", not(test)))]
+// This module holds the ESP32-C6 AES accelerator register map (base + PCR clock/
+// reset regs). It is now gated on `target_feature = "a"` (the atomics extension in
+// the C6's rv32imac but NOT the C3's rv32imc), so it is compiled ONLY for the C6.
+// The ESP32-C3 has a different AES peripheral base (0x6003_A000) and clocks AES via
+// the SYSTEM/DPORT registers rather than a PCR block, so these C6 offsets are wrong
+// for it; the C3 therefore uses the software AES backend (see `Aes128`) — correct,
+// just not accelerated. A future c3 HW-AES port would add a parallel register map
+// here under `target_feature = "c"` && !"a" (or an explicit chip cfg) and re-enable
+// the accelerated path; until then the C3 never touches these registers.
+#[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
 pub mod hw_aes {
     const AES_BASE: usize = 0x6008_8000;
     const AES_KEY_0: usize = AES_BASE + 0x00; // KEY_0..3 (AES-128), stride 4

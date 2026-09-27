@@ -1119,6 +1119,22 @@ void netstack_setup() {
   esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
   delay(150);
+#if defined(LM_CHIP_ESP32C3)
+  // ESP32-C3 bring-up milestone: everything ABOVE is the chip-agnostic vendor WiFi
+  // controller init (esp_netif/esp_wifi_init/start/scan), which comes up fine on the
+  // C3. Everything BELOW is the heapless-MAC HIJACK — it pokes the ESP32-C6 WiFi MAC
+  // register map directly (firmware/netstack lmac.rs / regs.rs at 0x600A_xxxx) and
+  // drives reversed C6 libpp externs. The C3's WiFi MAC lives at a DIFFERENT base, so
+  // running the hijack here would write to the wrong (or unmapped) peripherals and
+  // fault at boot. That register port is the remaining, deliberately-out-of-scope c3
+  // netstack work (see the PR); until it lands, stop after the controller is up so the
+  // image boots cleanly on real c3 silicon. The BLE/Improv path and the render loop
+  // still run; only the WiFi DATA path is disabled on the C3.
+  Serial.printf("[netstack] esp32c3: heapless MAC hijack not yet ported (C6 WiFi MAC "
+                "register map @0x600A_xxxx); WiFi data path disabled on c3, controller "
+                "up, skipping hijack+TLS.\n");
+  return;
+#endif
   wreg(WIFI_MAC_INTR_MAP, 0); // detach vendor ISR
   ns_mac_rx_install();
   uint32_t *req = static_cast<uint32_t *>(malloc(24));

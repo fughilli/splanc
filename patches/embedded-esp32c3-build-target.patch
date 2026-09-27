@@ -735,7 +735,7 @@ index 51acb0b..4e2d9ad 100644
 +    ],
 +    # From-source mbedtls (alwayslink) satisfies the precompiled esp-tls /
 +    # esp_https_server callers; placed ahead of the prebuilt --start-group block.
-+    deps = [":core_c_esp32c3", ":core_cpp_esp32c3", ":sdk_hdrs_esp32c3", "@mbedtls_src//:mbedtls_src"],
++    deps = [":core_c_esp32c3", ":core_cpp_esp32c3", ":sdk_hdrs_esp32c3", "@mbedtls_src//:mbedtls_src_esp32c3"],
 +)
 +
 +

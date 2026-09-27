@@ -465,6 +465,11 @@ archive_override(
         # past the g++ -> cc1plus argv limit. Must precede the c3 patch.
         "//patches:embedded-mbedtls-private-sdk-hdrs.patch",
         "//patches:embedded-esp32c3-build-target.patch",
+        # esp32c3-mbedtls-sw-ecc: c3 runtime bring-up. Adds :mbedtls_src_esp32c3
+        # (drops the HW-ECC port the c3 has no accelerator for; software ECP
+        # instead) so the c3 image links strictly — no --unresolved-symbols=
+        # ignore-all. Must follow the build-target patch (patches its core_esp32c3).
+        "//patches:embedded-esp32c3-mbedtls-sw-ecc.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
