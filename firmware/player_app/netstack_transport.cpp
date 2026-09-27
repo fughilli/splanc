@@ -843,6 +843,13 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
+// True once ws_pump has begun writing a RESPONSE on the current slot — the WS 101 upgrade
+// OR the one-shot cert-trust-page GET. Distinguishes an actively-serving connection (which
+// must NOT be killed by the pre-WS 4s wedge gate while it finishes serving + closing) from
+// a genuinely silent pre-WS wedge (a tls_churn TLS-then-silent peer that never responded,
+// which the 4s gate must still reclaim). The post-WS 6s peer-gone gate covers a responding
+// connection instead. Cleared on every re-listen / reclaim (alongside g_ws_up).
+bool g_responding = false;
 // Edge tracker for "a wss client just appeared on :443". When it does, we gracefully
 // disconnect the VESTIGIAL post-provision BLE link (see netstack_loop): after the central
 // drops the provisioning link, the controller otherwise only fires EV_DISCONN on the ~6s
@@ -983,6 +990,7 @@ static bool ws_pump() {
                           "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                           "Content-Length: %u\r\nConnection: close\r\n\r\n",
                           (unsigned)(sizeof kCertPage - 1));
+        g_responding = true;  // serving a response now — exempt from the pre-WS 4s wedge gate
         tls_write_all((const uint8_t *)hdr, hn);
         tls_write_all((const uint8_t *)kCertPage, sizeof kCertPage - 1);
         return false;  // one-shot: close after serving so the ~28 KB TLS session frees
@@ -1319,6 +1327,7 @@ void netstack_loop() {
         mbedtls_ssl_session_reset(&g_ssl);
         g_tls_hs = false;
         g_ws_up = false;
+        g_responding = false;
         g_ws_rxlen = 0;
       }
       g_bio_tx = g_bio_rx = 0;
@@ -1650,7 +1659,13 @@ void netstack_loop() {
       static uint32_t hs_since = 0;
       static uint32_t last_prog = 0;
       bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
-      bool handshaking = (s == 6) || (s == 2 && !up);  // SynRcvd, or Established pre-WS
+      // SynRcvd, or Established pre-WS — BUT never a connection that's actively serving a
+      // response (g_responding: the one-shot cert-trust GET, which never sets g_ws_up). A
+      // served cert-GET waiting to close under contention would otherwise trip this 4s gate
+      // and get RST mid-close (the "cert-trust page GET ... Connection reset" e2e flake); it
+      // is instead covered by the post-WS 6s peer-gone gate below. A genuinely silent pre-WS
+      // wedge (tls_churn TLS-then-silent) never sets g_responding, so it's still reclaimed.
+      bool handshaking = (s == 6) || (s == 2 && !up && !g_responding);
       if (handshaking) {
         // Reclaim on a STALLED handshake, not wall-clock. Progress = TLS bytes moving in
         // EITHER direction (g_bio_rx + g_bio_tx): a live handshake alternates — the client
@@ -1668,7 +1683,7 @@ void netstack_loop() {
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
           hs_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
@@ -1691,7 +1706,10 @@ void netstack_loop() {
     {
       static uint32_t txstuck_since = 0;
       static uint32_t last_una = 0;
-      bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
+      // Cover a live WS session (g_ws_up) OR a responding cert-GET (g_responding): both can
+      // have unacked data whose ACKs must keep flowing, and a dead peer mid-serve must be
+      // reclaimed here (keyed on snd_una freeze) rather than by the pre-WS 4s gate above.
+      bool up = TLS_SERVER ? (PLAYER_MODE ? (g_ws_up || g_responding) : g_tls_hs) : true;
       // Only meaningful when we have UNACKED data outstanding (tx_room < SND_BUF=2048): a
       // live reader ACKs it, so snd_una advances — even on a SATURATING stream that keeps
       // the window pinned full (the old tx_room<512 test murdered healthy backlogged
@@ -1707,7 +1725,7 @@ void netstack_loop() {
           static uint32_t piss = 0x6000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, piss);
           piss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
           txstuck_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
@@ -1783,7 +1801,7 @@ void netstack_loop() {
       static uint32_t niss = 0x4000;
       ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
       niss += 0x1000;
-      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
       Serial.println("*** SERVER re-listening ***");
     }
   } else if (st == DONE && g_tcp_started) {
