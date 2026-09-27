@@ -429,6 +429,28 @@
         ]
       },
       {
+        "name": "chip",
+        "label": "Chip",
+        "type": "custom",
+        "query": "esp32c6,esp32c3",
+        "current": {
+          "text": "esp32c6",
+          "value": "esp32c6"
+        },
+        "options": [
+          {
+            "text": "esp32c6",
+            "value": "esp32c6",
+            "selected": true
+          },
+          {
+            "text": "esp32c3",
+            "value": "esp32c3",
+            "selected": false
+          }
+        ]
+      },
+      {
         "name": "branch",
         "label": "Branch overlay (blank = main only)",
         "type": "textbox",
@@ -578,7 +600,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and branch='main']",
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip' and branch='main']",
           "columns": [
             {
               "selector": "time",
@@ -608,7 +630,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and branch='$branch']",
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip' and branch='$branch']",
           "columns": [
             {
               "selector": "time",
@@ -638,7 +660,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build']",
+          "root_selector": "$[label='$effect' and build='$build' and chip='$chip']",
           "columns": [
             {
               "selector": "time",
@@ -695,7 +717,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[label='$effect' and build='$build' and metric='$metric']",
+          "root_selector": "$[label='$effect' and build='$build' and metric='$metric' and chip='$chip']",
           "columns": [
             {
               "selector": "time",

@@ -11,7 +11,30 @@
     "to": "now"
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "chip",
+        "label": "Chip",
+        "type": "custom",
+        "query": "esp32c6,esp32c3",
+        "current": {
+          "text": "esp32c6",
+          "value": "esp32c6"
+        },
+        "options": [
+          {
+            "text": "esp32c6",
+            "value": "esp32c6",
+            "selected": true
+          },
+          {
+            "text": "esp32c3",
+            "value": "esp32c3",
+            "selected": false
+          }
+        ]
+      }
+    ]
   },
   "panels": [
     {
@@ -55,7 +78,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$",
+          "root_selector": "$[chip='$chip']",
           "columns": [
             {
               "selector": "label",
@@ -122,7 +145,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[metric='frame']",
+          "root_selector": "$[metric='frame' and chip='$chip']",
           "columns": [
             {
               "selector": "label",
