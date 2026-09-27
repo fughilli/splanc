@@ -235,15 +235,27 @@ def cert_page_check(ws_url: str, insecure: bool) -> None:
     if insecure:  # self-signed device cert (and the localhost tunnel host won't match)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-    try:
-        with urllib.request.urlopen(page_url, context=ctx, timeout=15) as r:
-            status, ctype = r.status, r.headers.get("Content-Type", "")
-            body = r.read(4096).decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001 — any failure here IS the regression
-        raise E2EFailure(
-            f"cert-trust page GET {page_url} failed ({type(e).__name__}: {e}) — a plain "
-            "GET / must serve the trust page, not close empty (ERR_EMPTY_RESPONSE)"
-        )
+    # Retry the GET on transient network/timeout errors within a settle deadline,
+    # mirroring the ws-open path above. On a shared-bus rig (e.g. a Pi 3 whose one
+    # USB2 controller carries the AP dongle + NIC + every DUT serial) a heavy transfer
+    # can starve this single GET past its timeout even though the device is serving the
+    # page fine — that transient shouldn't red the run. A wrong status / empty body /
+    # missing postMessage IS the regression and still fails fast (checked below).
+    deadline = time.monotonic() + hitl_ws.CONNECT_SETTLE
+    while True:
+        try:
+            with urllib.request.urlopen(page_url, context=ctx, timeout=15) as r:
+                status, ctype = r.status, r.headers.get("Content-Type", "")
+                body = r.read(4096).decode("utf-8", "replace")
+            break
+        except OSError as e:  # URLError/HTTPError/TimeoutError/socket errors all subclass OSError
+            if time.monotonic() >= deadline:
+                raise E2EFailure(
+                    f"cert-trust page GET {page_url} failed ({type(e).__name__}: {e}) — a plain "
+                    "GET / must serve the trust page, not close empty (ERR_EMPTY_RESPONSE)"
+                )
+            print(f"[cert] GET not ready ({type(e).__name__}); retrying…", flush=True)
+            time.sleep(1.5)
     if status != 200 or "text/html" not in ctype:
         raise E2EFailure(
             f"cert-trust page GET {page_url}: expected 200 text/html, got {status} {ctype!r}"
