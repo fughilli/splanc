@@ -1,0 +1,34 @@
+Make @mbedtls_src's @arduino_esp32//:sdk_hdrs dependency PRIVATE
+(implementation_deps, not deps).
+
+mbedtls_src is built from source and its port .c files need the ESP-IDF SDK
+headers (esp_*, soc, hal, lwip, freertos) — but its CONSUMERS do not need those
+propagated: the player app / netstack already carry their own chip's full SDK
+include set via //libs/board:arduino_core (-> @arduino_esp32//:core[_esp32c3]).
+As `deps`, mbedtls re-propagated the esp32c6 SDK's ~315 `-I` dirs to every
+consumer; on the esp32c3 build that stacked ON TOP of the c3 SDK's ~315 dirs and
+overflowed the riscv32-esp-elf-g++ -> cc1plus exec ("posix_spawn: Argument list
+too long"). implementation_deps compiles mbedtls against sdk_hdrs without leaking
+those include dirs downstream, so each firmware build carries only its own chip's
+SDK include set. Stable in Bazel 7. ABI/behaviour unchanged (same sources, same
+compile flags); only the propagated compilation context shrinks.
+diff --git a/nix/mbedtls_src.BUILD b/nix/mbedtls_src.BUILD
+index c84e62a..5a03fe1 100644
+--- a/nix/mbedtls_src.BUILD
++++ b/nix/mbedtls_src.BUILD
+@@ -164,8 +164,13 @@ cc_library(
+     copts = _MBEDTLS_COPTS,
+     # Our symbols must satisfy the precompiled esp-tls/https_server callers.
+     alwayslink = True,
+-    # esp_* / soc / hal / lwip / freertos headers the port pulls in.
+-    deps = ["@arduino_esp32//:sdk_hdrs"],
++    # esp_* / soc / hal / lwip / freertos headers the port pulls in — PRIVATE so
++    # the (esp32c6) SDK's ~315 -I dirs are used to compile mbedtls's own sources
++    # but are NOT re-propagated to consumers. Consumers (the player app / netstack)
++    # already carry their own chip's SDK include set via //libs/board:arduino_core;
++    # propagating the c6 set on top overflowed the g++ -> cc1plus argv on the c3
++    # build (c6 + c3 include lists). implementation_deps keeps mbedtls chip-neutral.
++    implementation_deps = ["@arduino_esp32//:sdk_hdrs"],
+ )
+ 
+ # The 11 --wrap flags that route the ssl entrypoints through the dynamic-buffer

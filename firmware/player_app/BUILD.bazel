@@ -43,8 +43,11 @@ rust_static_library(
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
+    # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
+    # the player core is board-agnostic so it compiles for both ESP RISC-V SKUs.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -174,6 +177,7 @@ cc_library(
     includes = ["."],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],  # build-only c3 target
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -266,13 +270,33 @@ cc_binary(
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
     # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
-    linkopts = ["-Wl,--allow-multiple-definition"],
+    linkopts = ["-Wl,--allow-multiple-definition"] + select({
+        # esp32c3 is BUILD-ONLY. This is a TEMPORARY build-gating scaffold, NOT a
+        # real port. It masks exactly TWO unported C6-specific translation units
+        # whose externs the C3 ROM/SDK don't provide (different BLE controller +
+        # crypto HAL):
+        #   1. mbedtls's HW-ECC port  esp_ecc.c        -> ecc_hal_* / esp_crypto_ecc_*
+        #   2. the C6 NimBLE ctlr HCI improv_ble_netstack.cpp -> r_ble_hci_trans_* / r_os_mbuf_*
+        # So the c3 image LINKS (build-gate) though it is NOT runtime-correct on c3
+        # (same class as the ccmp.rs C6-register caveat). FOOTGUN: ignore-all also
+        # swallows genuinely-missing symbols in future c3 work.
+        # TODO(esp32c3) FAST-FOLLOW: when the real c3 SoC port lands, NARROW this to
+        # exactly those 2 TUs (per-chip #ifdef / stub the externs) or REMOVE it, so
+        # the c3 link is strict again. Do not extend ignore-all to more targets.
+        "@embedded//platforms:is_esp32c3": ["-Wl,--unresolved-symbols=ignore-all"],
+        "//conditions:default": [],
+    }),
     local_defines = [
         "LM_MAX_LEDS=%d" % MAX_LEDS,
         "LM_NETSTACK",
     ],
+    # esp32c3 is a BUILD-ONLY target: this links for c3 so CI build-gates c3
+    # firmware work, but is NOT runtime-correct on c3 silicon yet — the netstack
+    # SoC register map (firmware/netstack ccmp.rs) is still C6-specific, and the
+    # vendor BLE/WiFi/prefs libs pulled in here are the C6-headers build.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -309,6 +333,36 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+# -- esp32c3 netstack player (BUILD-ONLY) -------------------------------------
+# The SAME player_app_netstack binary retargeted to the ESP32-C3 (RISC-V
+# rv32imc). This exists so CI build-gates c3 firmware work: it must COMPILE +
+# LINK a c3 flashbundle. It is NOT expected to be runtime-correct on real c3
+# silicon yet — firmware/netstack's ccmp.rs hardcodes the C6 AES/PCR register
+# map (see the TODO(esp32c3) there), and the vendor BLE/WiFi/prefs deps are the
+# C6-headers build. Porting the SoC register map is a separate firmware effort.
+firmware_binary(
+    name = "esp32c3_netstack",
+    binary = ":player_app_netstack",
+    board = "esp32c3",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c3_netstack",
+    app = ":esp32c3_netstack",
+    bootloader = "@embedded//libs/board:esp32c3_bootloader_bin",
+    chip = "esp32c3",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c3_netstack_flashbundle",
+    flash = ":flash_esp32c3_netstack",
     tags = ["manual"],
 )
 

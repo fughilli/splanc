@@ -83,6 +83,7 @@ rust.toolchain(
     extra_target_triples = [
         "wasm32-unknown-unknown",  # phone solver
         "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "riscv32imc-unknown-none-elf",  # ESP32-C3 (rv32imc, no atomics; build-only)
         "thumbv8m.main-none-eabi",  # RP2350 (soft-float ABI; see firmware)
         "aarch64-unknown-linux-musl",  # static Pi player; see //pi/player_rs/musl
     ],
@@ -195,6 +196,7 @@ crate.from_specs(
         "x86_64-unknown-nixos-gnu",
         # Firmware targets (docs/esp32-led-mapping-plan.md Phase 0b).
         "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "riscv32imc-unknown-none-elf",  # ESP32-C3 (rv32imc, no atomics; build-only)
         "thumbv8m.main-none-eabi",  # RP2350
     ],
 )
@@ -441,18 +443,28 @@ archive_override(
     # generates a per-device EC key on-device instead of baking one shared key
     # into every firmware image. Additive-only patch (a new function in the
     # existing TU); fold it upstream and drop this on the next embedded bump.
-    # esp32-libs-c6-only: restrict the esp32-arduino-libs FOD to the esp32c6
-    # variant (upstream unpacks all ~8 chip variants, ~10 GB — overflowed the
-    # container overlay, the sole reason the C6 firmware couldn't build in
-    # container). We build C6 only. See the patch header.
+    # esp32-libs-c6-c3: restrict the esp32-arduino-libs FOD to the esp32c6 +
+    # esp32c3 variants (upstream unpacks all ~8 chip variants, ~10 GB — overflowed
+    # the container overlay, the sole reason the C6 firmware couldn't build in
+    # container). We build C6 (+ the build-only C3 target). See the patch header.
+    # esp32c3-build-target: add esp32c3 (RISC-V rv32imc) as a BUILD-ONLY firmware
+    # target — a c3 platform + cc_toolchain + the parallel esp32c3 section of the
+    # generated arduino_esp32 scaffold. Build-gates future c3 work; the image is
+    # NOT runtime-correct yet (netstack ccmp.rs is C6-register-specific).
     patches = [
         "//patches:embedded-fug90-gen-key.patch",
-        "//patches:embedded-esp32-libs-c6-only.patch",
+        "//patches:embedded-esp32-libs-c6-c3.patch",
         # Shrink the from-source mbedTLS TLS record buffer 8 KB -> 6 KB now that all
         # large control frames are chunked at the client — halves the per-connection
         # dynamic record alloc so the heapless-netstack player survives many TLS
         # reconnects on the C6's tight heap. ABI-safe (record buffer is off the struct).
         "//patches:embedded-mbedtls-record-6k.patch",
+        # Make mbedtls_src's SDK-headers dep private (implementation_deps) so the
+        # esp32c6 SDK's ~315 -I dirs compile mbedtls but don't propagate to
+        # consumers — else the esp32c3 build stacked c6+c3 include lists and blew
+        # past the g++ -> cc1plus argv limit. Must precede the c3 patch.
+        "//patches:embedded-mbedtls-private-sdk-hdrs.patch",
+        "//patches:embedded-esp32c3-build-target.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
