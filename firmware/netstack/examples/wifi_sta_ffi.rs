@@ -285,6 +285,22 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
+/// Arm/disarm graceful load-shedding for the single server slot. Pass `true` ONLY when the
+/// WS/TLS session is genuinely up and actively serving a client; pass `false` the instant the
+/// app begins closing / reclaiming / re-listening (before close_notify). Only while armed AND
+/// Established does a SYN from a DIFFERENT peer get fast-REJECTED (RST|ACK) instead of silently
+/// dropped, so excess concurrent clients retry in ~1-2s. Never reject while closing/idle/
+/// transitioning — that would reset the same client's post-WS cert-trust-page reconnect (the
+/// reverted #199/#204 e2e regression). A fresh `ns_tcp_listen` resets the flag to false.
+#[no_mangle]
+pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
+    unsafe {
+        if let Some(c) = TCP.as_mut() {
+            c.set_serving_live(live != 0);
+        }
+    }
+}
+
 /// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done 5=Listen 6=SynRcvd.
 #[no_mangle]
 pub extern "C" fn ns_tcp_state() -> u32 {

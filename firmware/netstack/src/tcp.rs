@@ -89,6 +89,17 @@ pub struct TcpConn {
     tx_at_ms: u32,   // clock when the RTO was armed (0 = nothing in flight / disarmed)
     rto_ms: u32,     // current retransmit timeout, doubled on each expiry (capped)
     rto_count: u32,  // consecutive RTO fires with no ACK — a dead-peer detector
+    // App-driven "this slot is an actively-serving live session" gate for graceful
+    // load-shedding. When true AND we're Established, a SYN from a DIFFERENT peer is
+    // fast-REJECTED (RST|ACK) so it retries in ~1-2s instead of hanging to its own connect
+    // timeout. The GUARD that keeps this safe: the app arms it ONLY once the WS/handshake is
+    // genuinely up and serving, and DISARMS it the instant it begins closing / reclaiming /
+    // re-listening (before close_notify). That window is exactly when the SAME client
+    // reconnects on a fresh source port for the post-WS cert-trust-page GET — rejecting that
+    // reconnect is the e2e regression that reverted the first two attempts (#199/#204). So we
+    // reject a busy-slot SYN only while the slot is a live, established, actively-serving
+    // session — never while it is closing, idle pre-WS, or transitioning back to LISTEN.
+    serving_live: bool,
 }
 
 const RTO_INITIAL_MS: u32 = 300;
@@ -124,7 +135,20 @@ impl TcpConn {
             window_closed: false,
             snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
+            serving_live: false,
         }
+    }
+
+    /// Arm/disarm graceful load-shedding for the single server slot. The app calls this with
+    /// `true` ONLY when the WS/TLS session is genuinely up and actively serving a client, and
+    /// with `false` the instant it begins closing / reclaiming / re-listening (i.e. before
+    /// `close_notify`). Only while armed AND Established does a SYN from a DIFFERENT peer get
+    /// fast-REJECTED (RST|ACK, connection-refused) instead of silently dropped. Never RST a
+    /// new SYN while the slot is closing/idle/transitioning — that would reset the SAME
+    /// client's legitimate post-WS cert-trust-page reconnect (the reverted #199/#204 e2e
+    /// regression). Cleared automatically on `listen()` so a reclaimed slot never sheds.
+    pub fn set_serving_live(&mut self, live: bool) {
+        self.serving_live = live;
     }
 
     /// Build the initial SYN into `out`; returns its length. Moves to SynSent.
@@ -310,6 +334,32 @@ impl TcpConn {
         // A Listener latches its peer from the first SYN; every other state requires the
         // already-bound peer to match.
         if self.state != State::Listen && (ip[12..16] != self.dst || sport != self.dport) {
+            // A DIFFERENT peer while the single slot is busy. Graceful load-shedding: if it's
+            // a fresh SYN (a new client, or the same client reconnecting on a new source
+            // port) AND we are an actively-serving live session, fast-REJECT with RST|ACK
+            // (connection-refused) so it retries in ~1-2s instead of stranding until its own
+            // connect timeout (~8s). Measured: silently dropping 24 concurrent handshakes
+            // gives {ok:3, rejected:0, timeout:21} — the timeouts are the graceless failure.
+            //
+            // GUARD (load-bearing — the reverted #199/#204 regression): reject ONLY while
+            // `serving_live` is armed, which the app does exclusively when the WS/TLS session
+            // is up and serving, and disarms the instant it begins closing / reclaiming /
+            // re-listening. That closing/transition window is precisely when the SAME client
+            // reconnects on a fresh source port for the post-WS cert-trust-page GET; rejecting
+            // that reconnect was the hard e2e failure. So we never RST a new SYN when the slot
+            // is closing (FinWait), idle pre-WS (Established but not yet serving), latching
+            // (SynRcvd), or transitioning to LISTEN — only when it is a live, established,
+            // actively-serving session. Non-SYN stray segments stay silently dropped here
+            // (RST-ing those could disturb an unrelated live connection on that host).
+            let f = tcp[13];
+            if self.state == State::Established
+                && self.serving_live
+                && f & SYN != 0
+                && f & ACK == 0
+            {
+                let s = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
+                return self.build_rst_to(&ip[12..16], sport, 0, Some(s.wrapping_add(1)), out);
+            }
             return 0;
         }
         let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
@@ -358,7 +408,25 @@ impl TcpConn {
                     self.state = State::SynRcvd;
                     return n;
                 }
-                0
+                // RFC 793: a non-SYN segment reaching a LISTEN socket MUST be reset. The
+                // load-bearing case: after we reclaim a wedged slot (ns_tcp_listen swaps the
+                // conn to a fresh LISTEN — the handshake/peer-gone reclaim gates in
+                // netstack_transport.cpp), the ABANDONED client still thinks it's Established
+                // and keeps retransmitting its ACK/handshake data. The old code returned 0
+                // here — silently dropping it — so that client got no signal and hung until
+                // its OWN connect/open timeout, the dominant residual "timed out during
+                // opening handshake" HITL flake (tls_churn, which abandons handshake losers,
+                // hit it hardest). RST it instead: the stale peer tears down and reconnects
+                // sub-second. A legitimate new client only ever sends a SYN (handled above),
+                // so its connects/retries are NEVER reset — this is why the LISTEN-state RST
+                // is safe even for the same-client post-WS reconnect (which arrives as a
+                // fresh SYN and latches normally). Per RFC: ACK present -> SEQ=SEG.ACK, bare
+                // RST; else RST|ACK with ACK=SEG.SEQ+SEG.LEN so the peer accepts it.
+                if flags & ACK != 0 {
+                    return self.build_rst_to(&ip[12..16], sport, ack, None, out);
+                }
+                let seg_len = payload.len() as u32 + if flags & (SYN | FIN) != 0 { 1 } else { 0 };
+                self.build_rst_to(&ip[12..16], sport, 0, Some(seq.wrapping_add(seg_len)), out)
             }
             State::SynRcvd => {
                 // A retransmitted SYN (our SYN-ACK was lost) → resend the SYN-ACK.
@@ -483,6 +551,73 @@ impl TcpConn {
         let mut pseudo = [0u8; 12];
         pseudo[0..4].copy_from_slice(&self.src);
         pseudo[4..8].copy_from_slice(&self.dst);
+        pseudo[8] = 0;
+        pseudo[9] = 6;
+        pseudo[10..12].copy_from_slice(&(seg_len as u16).to_be_bytes());
+        let mut sum = 0u32;
+        let mut i = 0;
+        while i + 1 < pseudo.len() {
+            sum += ((pseudo[i] as u32) << 8) | pseudo[i + 1] as u32;
+            i += 2;
+        }
+        let tc = csum(&out[IP_HDR..IP_HDR + seg_len], sum);
+        out[IP_HDR + 16..IP_HDR + 18].copy_from_slice(&tc.to_be_bytes());
+        total
+    }
+
+    /// Build a bare RST addressed straight to `dst_ip:dport` (the source of an offending
+    /// segment), sequence `seq`; if `ack` is `Some`, set ACK + the ack field (RST|ACK).
+    /// Unlike `build`, this does NOT read `self.dst`/`self.dport` — a fresh LISTEN socket
+    /// hasn't latched a peer, and a busy-slot reject targets a peer that isn't `self`'s — so
+    /// it addresses the reply back at the offending segment's source. No options, no payload.
+    fn build_rst_to(
+        &mut self,
+        dst_ip: &[u8],
+        dport: u16,
+        seq: u32,
+        ack: Option<u32>,
+        out: &mut [u8],
+    ) -> usize {
+        let seg_len = TCP_HDR;
+        let total = IP_HDR + seg_len;
+        out[0] = 0x45;
+        out[1] = 0;
+        out[2..4].copy_from_slice(&(total as u16).to_be_bytes());
+        out[4..6].copy_from_slice(&self.ip_id.to_be_bytes());
+        self.ip_id = self.ip_id.wrapping_add(1);
+        out[6] = 0x40; // DF
+        out[7] = 0;
+        out[8] = 64; // TTL
+        out[9] = 6; // TCP
+        out[10] = 0;
+        out[11] = 0;
+        out[12..16].copy_from_slice(&self.src);
+        out[16..20].copy_from_slice(&dst_ip[..4]);
+        let ipc = csum(&out[..IP_HDR], 0);
+        out[10..12].copy_from_slice(&ipc.to_be_bytes());
+        let t = &mut out[IP_HDR..IP_HDR + TCP_HDR];
+        t[0..2].copy_from_slice(&self.sport.to_be_bytes());
+        t[2..4].copy_from_slice(&dport.to_be_bytes());
+        t[4..8].copy_from_slice(&seq.to_be_bytes());
+        let flags = match ack {
+            Some(a) => {
+                t[8..12].copy_from_slice(&a.to_be_bytes());
+                RST | ACK
+            }
+            None => {
+                t[8..12].copy_from_slice(&0u32.to_be_bytes());
+                RST
+            }
+        };
+        t[12] = ((TCP_HDR / 4) as u8) << 4;
+        t[13] = flags;
+        t[14..16].copy_from_slice(&0u16.to_be_bytes()); // window 0 on a RST
+        t[16] = 0;
+        t[17] = 0;
+        t[18..20].copy_from_slice(&0u16.to_be_bytes());
+        let mut pseudo = [0u8; 12];
+        pseudo[0..4].copy_from_slice(&self.src);
+        pseudo[4..8].copy_from_slice(&dst_ip[..4]);
         pseudo[8] = 0;
         pseudo[9] = 6;
         pseudo[10..12].copy_from_slice(&(seg_len as u16).to_be_bytes());
@@ -681,6 +816,152 @@ mod tests {
             t2 = t2.wrapping_add(RTO_MAX_MS + 1);
         }
         assert_eq!(srv2.state, State::Established, "a live, ACKing peer is never dropped");
+    }
+
+    // A peer that still thinks it's connected — e.g. after the server reclaimed its wedged
+    // slot to a fresh LISTEN — keeps sending ACK/data. The listener must RST it (RFC 793) so
+    // it reconnects immediately instead of hanging until its own timeout, and a legitimate new
+    // SYN (the reconnect) still latches normally. (Regression guard for the dominant "timed
+    // out during opening handshake" HITL flake.)
+    #[test]
+    fn listener_rsts_a_stale_peer() {
+        let cli_ip = [10, 0, 0, 1];
+        let srv_ip = [10, 0, 0, 2];
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        // Establish.
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+
+        // The server RECLAIMS the slot to a fresh listener (what ns_tcp_listen does). Note the
+        // reclaim clears serving_live — a fresh LISTEN never sheds.
+        srv = TcpConn::listen(srv_ip, 443, 0x5000);
+        assert_eq!(srv.state, State::Listen);
+
+        // The unaware client retransmits data (ACK set). A SYN would latch; this ACK must be
+        // RST — not silently dropped.
+        cli.enqueue(b"TLS ClientHello...");
+        let n = cli.pump_tx(1000, &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "listener must answer a stale ACK with a RST, not drop it");
+        assert_eq!(srv.state, State::Listen, "an ACK must NOT advance a listener");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &cli_ip, "RST is addressed to the stale peer");
+        assert!(b[ihl + 13] & RST != 0, "reply carries the RST flag");
+
+        // The client tears down on the RST (so its ws layer reconnects with a fresh SYN).
+        let _ = cli.on_ip(&b[..r], &mut a);
+        assert_eq!(cli.state, State::Done, "client resets on the RST");
+
+        // A brand-new SYN (the reconnect) is still accepted cleanly.
+        let mut cli2 = TcpConn::new(cli_ip, srv_ip, 5001, 443, 7000);
+        let n = cli2.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0);
+        assert_eq!(srv.state, State::SynRcvd, "a fresh SYN latches normally");
+    }
+
+    // While the single slot is a LIVE, actively-serving session (serving_live armed by the
+    // app once the WS is up), a SYN from a DIFFERENT peer is fast-REJECTED (RST|ACK) so it
+    // retries in ~1-2s rather than hanging to its own timeout. The busy connection is
+    // untouched, and its own traffic keeps flowing. (Graceful load-shedding for
+    // many-simultaneous-clients; validated against the 24-way tls_churn.)
+    #[test]
+    fn busy_slot_rejects_a_new_syn_when_serving_live() {
+        let a_ip = [10, 0, 0, 1];
+        let b_ip = [10, 0, 0, 3];
+        let srv_ip = [10, 0, 0, 2];
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        // Peer A establishes and holds the slot.
+        let mut cli_a = TcpConn::new(a_ip, srv_ip, 5000, 443, 1000);
+        let n = cli_a.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli_a.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        assert_eq!(srv.dst, a_ip);
+        // The app arms load-shedding once the WS session is up and serving.
+        srv.set_serving_live(true);
+
+        // Peer B sends a SYN while the slot is a live session → RST|ACK reject, slot unchanged.
+        let mut cli_b = TcpConn::new(b_ip, srv_ip, 6000, 443, 2000);
+        let n = cli_b.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "a new SYN at a live busy slot must be rejected, not dropped");
+        assert_eq!(srv.state, State::Established, "the busy slot is untouched");
+        assert_eq!(srv.dst, a_ip, "the busy slot still belongs to peer A");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &b_ip, "reject is addressed to peer B");
+        assert!(b[ihl + 13] & RST != 0, "reject carries RST");
+        // Peer B tears down on the reject and can retry immediately.
+        let _ = cli_b.on_ip(&b[..r], &mut a);
+        assert_eq!(cli_b.state, State::Done);
+
+        // Peer A's own traffic still flows (the reject didn't disturb the live slot).
+        cli_a.enqueue(b"hello");
+        let n = cli_a.pump_tx(1000, &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.rx_data(), b"hello");
+        assert!(r > 0);
+    }
+
+    // THE regression guard for #199/#204: the SAME client's post-WS cert-trust-page GET
+    // reconnect (a fresh SYN on a NEW source port, arriving during the close->re-LISTEN
+    // transition) must NEVER be RST-refused. #199 RST'd a busy-slot SYN unconditionally and
+    // reset exactly this reconnect, hard-failing e2e_netstack ("a plain GET / must serve the
+    // trust page"). The guard: the app DISARMS serving_live the instant it begins closing
+    // (before close_notify) — so a busy-slot SYN during the closing window is silently
+    // dropped (its old, safe behavior), never reset; and once the slot re-LISTENs the SYN
+    // latches cleanly. This test drives both sub-cases.
+    #[test]
+    fn cert_get_reconnect_after_ws_is_not_reset() {
+        let cli_ip = [10, 0, 0, 1];
+        let srv_ip = [10, 0, 0, 2];
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        // Peer establishes a live WS session (serving_live armed).
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut ws = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let n = ws.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = ws.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        srv.set_serving_live(true);
+
+        // The WS session ends: the app begins closing and DISARMS serving_live BEFORE
+        // close_notify. The slot is still Established (FIN not yet exchanged) — this is the
+        // exact transition window where the cert-GET reconnect arrives.
+        srv.set_serving_live(false);
+
+        // Sub-case 1: the same client reconnects on a NEW source port (a fresh SYN) while the
+        // old slot is still Established+closing. It must NOT be RST-refused (that was the
+        // regression). With serving_live disarmed it is silently dropped (r==0) — the client's
+        // SYN simply retransmits and latches once the slot re-LISTENs, exactly as before.
+        let mut cert = TcpConn::new(cli_ip, srv_ip, 5001, 443, 4000);
+        let n = cert.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(r, 0, "a cert-GET reconnect during the closing window must NOT be reset");
+        assert_eq!(cert.state, State::SynSent, "the reconnecting client is untouched (no RST)");
+        assert_eq!(srv.state, State::Established, "the closing slot is undisturbed");
+
+        // Sub-case 2: the slot completes its close and re-LISTENs (ns_tcp_listen). The cert-GET
+        // SYN (retransmitted by the client) now latches cleanly and gets served.
+        srv = TcpConn::listen(srv_ip, 443, 0x4000);
+        let n = cert.connect(&mut a); // client retransmits its SYN
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert!(r > 0, "the re-LISTENed slot answers the cert-GET SYN with a SYN-ACK");
+        assert_eq!(srv.state, State::SynRcvd, "cert-GET reconnect latches on the fresh listener");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert!(b[ihl + 13] & SYN != 0 && b[ihl + 13] & ACK != 0, "it's a SYN-ACK, not a RST");
+        assert!(b[ihl + 13] & RST == 0, "the cert-GET reconnect is never RST");
     }
 
     impl TcpConn {
