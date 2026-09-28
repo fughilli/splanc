@@ -232,7 +232,7 @@ async function provisionWithDevice(
  */
 export function connectOverBle(onDone?: () => void): void {
   void (async () => {
-    const { requestBleDevice, bleSocketFactory, BLE_UPLOAD_CHUNK_BYTES } = await import(
+    const { requestBleDevice, bleSocketFactory, bleDeviceUrl, BLE_UPLOAD_CHUNK_BYTES } = await import(
       "../../net/bleTransport"
     );
     let device;
@@ -243,7 +243,9 @@ export function connectOverBle(onDone?: () => void): void {
       return;
     }
     const label = device.name || "Bluetooth device";
-    const url = `ble:${device.id ?? label}`;
+    // Stable key so a re-scan of the same device dedups instead of duplicating —
+    // device.id is not stable across sessions (see bleDeviceUrl).
+    const url = bleDeviceUrl(device);
     toast("Connecting over Bluetooth…");
     appState.connect(url, label, {
       socketFactory: bleSocketFactory(device),

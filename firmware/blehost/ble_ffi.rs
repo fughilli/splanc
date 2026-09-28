@@ -239,6 +239,24 @@ pub extern "C" fn ns_ble_poll_cmd(out: *mut u8, cap: u32) -> u32 {
     copy_out(b.as_slice(), out, cap)
 }
 
+/// Peripheral-initiated GRACEFUL disconnect of the current BLE link: writes an
+/// HCI_Disconnect (reason 0x13) for the firmware to feed the controller, or 0 if
+/// not connected. Called at wss-handshake start to tear down the VESTIGIAL
+/// post-provision link (the central already has the redirect + PROVISIONED over
+/// BLE) so coex stops yielding ~28% of WiFi airtime to a dead link during the TLS
+/// handshake. The controller fires EV_DISCONN within ~1 connection interval (vs the
+/// ~6s supervision timeout), which drives the host back to advertising (connectable)
+/// and frees the player-transport heap — see ns_ble_on_hci's disconnect branch.
+#[no_mangle]
+pub extern "C" fn ns_ble_disconnect(out: *mut u8, cap: u32) -> u32 {
+    let mut b: Buf<64> = Buf::new();
+    let n = unsafe { HOST.disconnect_cmd(&mut b) };
+    if n == 0 {
+        return 0;
+    }
+    copy_out(b.as_slice(), out, cap)
+}
+
 /// Wrap an ATT payload in L2CAP (CID 0x0004) + an HCI ACL for `handle` into `out`.
 fn wrap_att_acl(handle: u16, att: &[u8], out: *mut u8, cap: u32) -> u32 {
     let mut l2buf: Buf<{ GATT_RSP_MAX + 4 }> = Buf::new();

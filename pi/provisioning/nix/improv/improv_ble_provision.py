@@ -172,13 +172,42 @@ class ImprovServer:
             # first; nmcli auto-names the profile after the SSID. Ignore failure
             # (no such profile on a first-time join).
             await self._nmcli("connection", "delete", "id", ssid)
-            argv = [NMCLI, "--wait", str(JOIN_TIMEOUT_S), "device", "wifi", "connect", ssid]
+            # Create the profile EXPLICITLY (not `device wifi connect`) so we can turn
+            # OFF IPv4 ACD. The rig's NetworkManager shared-mode AP shares a small DHCP
+            # pool whose ARP table gets polluted by randomized-MAC clients, so NM's
+            # gratuitous-ARP duplicate-address detection rejects every DHCP offer
+            # ("address 10.42.0.N already in use by 02:0c:6a:…") and the join fails at
+            # IP config with dhcp4 error -99 — surfacing to Improv as UNABLE_TO_CONNECT
+            # even though association + the WPA2 4-way handshake already succeeded.
+            # dad-timeout 0 makes NM accept the lease instead of ARP-probing the pool.
+            add = [
+                NMCLI,
+                "connection",
+                "add",
+                "type",
+                "wifi",
+                "con-name",
+                ssid,
+                "ssid",
+                ssid,
+                "ipv4.dad-timeout",
+                "0",
+            ]
             if password:
-                argv += ["password", password]
+                add += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
             proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                *add, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            out, _ = await proc.communicate()
+            if proc.returncode != 0:
+                msg = (out or b"").decode("utf-8", "replace").strip()
+                log(f"profile create failed (rc={proc.returncode}): {msg}")
+                self.set_error(ERR_UNABLE_TO_CONNECT)
+                self.set_state(STATE_AUTHORIZED)
+                return
+            argv = [NMCLI, "--wait", str(JOIN_TIMEOUT_S), "connection", "up", ssid]
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
             out, _ = await proc.communicate()
             msg = (out or b"").decode("utf-8", "replace").strip()

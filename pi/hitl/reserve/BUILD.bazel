@@ -27,4 +27,5 @@ alias(
 exports_files([
     "catalog.json",
     "catalog-sdr.json",
+    "catalog-phone.json",  # amd-rig phone bench (//pi/hitl:hitl_sdr's second daemon)
 ])

@@ -34,7 +34,7 @@ use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
     decode_submit_map_streamed, decode_submit_topology_streamed, dump, envelope_arm,
-    parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredSegment, StoredTopoGeom,
+    parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredTopoGeom,
     Str64, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
@@ -236,11 +236,11 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
     let fxb = &mut *addr_of_mut!(FX_BYTES);
     let mut installed = 0usize;
     let mut used_words = 0usize;
-    for k in 0..n {
+    for p in plans.iter().take(n) {
         if installed >= MAX_JIT_BLOCKS {
             break;
         }
-        let p = plans[k];
+        let p = *p;
         // SAFETY: region_ptr+code_off is the compiled+synced segment for this block.
         let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(region_ptr.add(p.code_off as usize));
         blocks[installed] = JitBlock { func, end: p.end, net_delta: p.net_delta };
@@ -716,6 +716,10 @@ pub unsafe extern "C" fn lm_device_name(out: *mut u8, cap: usize) -> i32 {
 /// `set_color_correction`. The firmware polls this after each `lm_player_handle`
 /// (like `lm_device_name`) to notice a change and regenerate + re-persist the
 /// per-channel flash LUTs.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_color_correction_gen() -> u32 {
     player().color_correction_gen()
@@ -743,6 +747,10 @@ pub unsafe extern "C" fn lm_color_correction_params(out: *mut f32) -> i32 {
 /// Whether the latest color-correction update should be committed to flash
 /// (returns 1) or applied from RAM only (0, live preview). The firmware reads
 /// this alongside `lm_color_correction_params` when the generation changes.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_color_correction_commit() -> i32 {
     if player().color_correction_commit() {
@@ -755,6 +763,10 @@ pub unsafe extern "C" fn lm_color_correction_commit() -> i32 {
 /// Generation counter for the global output brightness, bumped on every
 /// `set_brightness`. The firmware polls this after each `lm_player_handle` (like
 /// `lm_color_correction_gen`) to notice a change and re-apply the scale.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_brightness_gen() -> u32 {
     player().output_brightness_gen()
@@ -763,6 +775,10 @@ pub unsafe extern "C" fn lm_brightness_gen() -> u32 {
 /// The active global output brightness as an 8-bit scale (0..=255, where 255 is
 /// unattenuated) — the form FastLED's `nscale8` wants. The firmware multiplies
 /// every rendered LED by this just before the strip write.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_brightness_u8() -> u8 {
     // Round 0.0..=1.0 to 0..=255; clamp defends against any out-of-range value
@@ -817,6 +833,10 @@ pub unsafe extern "C" fn lm_set_board_caps(data: *const u8, len: usize) {
 /// `set_hardware_config`. The firmware polls this after each `lm_player_handle`
 /// (like `lm_color_correction_gen`) to persist the config to NVS and re-apply it
 /// to the RMT driver.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_hw_config_gen() -> u32 {
     player().hw_config_gen()
@@ -824,6 +844,10 @@ pub unsafe extern "C" fn lm_hw_config_gen() -> u32 {
 
 /// Whether the latest `set_hardware_config` should be committed to flash
 /// (returns 1) or applied from RAM only (0) — the color-order test previews.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_hw_config_commit() -> i32 {
     player().hw_config_commit() as i32
@@ -831,6 +855,10 @@ pub unsafe extern "C" fn lm_hw_config_commit() -> i32 {
 
 /// The GPIO configured for hardware channel `channel`, or -1 if the channel is
 /// out of range or unseeded. The firmware persists this to NVS on a config change.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_hw_gpio(channel: u32) -> i32 {
     player().hw_gpio(channel as usize).unwrap_or(-1)
@@ -1100,11 +1128,13 @@ unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
     } else {
         0
     };
-    let mut m = pb::StoredMapChunk::default();
-    m.r#total_len = total as i32;
-    m.r#offset = offset as i32;
+    let mut m = pb::StoredMapChunk {
+        r#total_len: total as i32,
+        r#offset: offset as i32,
+        r#has_topology: geom.is_some(),
+        ..Default::default()
+    };
     let _ = m.r#data.extend_from_slice(&chunk[..n]);
-    m.r#has_topology = geom.is_some();
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::StoredMapChunk(m)) }
 }
 
@@ -1198,9 +1228,10 @@ pub unsafe extern "C" fn lm_encode_chunk_ack(
     if out.is_null() {
         return -1;
     }
-    let mut m = pb::ChunkAck::default();
-    m.r#upload_id = upload_id;
-    m.r#seq = seq;
+    let m = pb::ChunkAck {
+        r#upload_id,
+        r#seq,
+    };
     let reply = pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ChunkAck(m)) };
     encode_reply(&reply, out, out_cap)
 }
@@ -1734,6 +1765,9 @@ unsafe fn handle_set_texture(frame: &[u8]) {
             }
         } else {
             let ch = [r, g, b, 1.0];
+            // `k` drives both the channel value (`ch[k]`) and the byte offset
+            // (`ab + k * cb`) into the arena, so an iterator would obscure it.
+            #[allow(clippy::needless_range_loop)]
             for k in 0..chans {
                 let o = ab + k * cb;
                 ledmapper_fx_vm::comp_store_num(comp, ch[k], arena.get_unchecked_mut(o..o + cb));
@@ -1875,11 +1909,12 @@ unsafe fn handle_get_effect_uniforms(_frame: &[u8]) -> pb::ServerMessage {
         }
         if let Some(d) = prog.buf_desc(i) {
             if d.kind == 1 {
-                let mut t = pb::TexturePort::default();
-                t.r#index = i as u32;
-                t.r#width = d.w as u32;
-                t.r#height = d.h as u32;
-                t.r#elem = d.elem as u32;
+                let t = pb::TexturePort {
+                    r#index: i as u32,
+                    r#width: d.w as u32,
+                    r#height: d.h as u32,
+                    r#elem: d.elem as u32,
+                };
                 let _ = m.r#textures.push(t);
             }
         }
@@ -2001,46 +2036,49 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     }
     let w = perf_rollup(&window_buf[..wn]);
 
-    let mut r = pb::PerfReport::default();
-    // Identity.
     let id = core::str::from_utf8(&(*addr_of!(FX_ID))[..FX_ID_LEN]).unwrap_or("");
+    let mut r = pb::PerfReport {
+        // Identity.
+        r#fxb_hash: FX_HASH,
+        r#cpu_hz: PERF_CPU_HZ,
+        r#budget_cycles: PERF_BUDGET_CYCLES,
+        // Rolling window.
+        r#frame_cycles_min: w.frame_min,
+        r#frame_cycles_mean: w.frame_mean,
+        r#frame_cycles_max: w.frame_max,
+        r#update_cycles_mean: w.update_mean,
+        r#shade_cycles_mean: w.shade_mean,
+        r#show_cycles_mean: w.show_mean,
+        // Since-drain counters (reset on drain).
+        r#overruns: ring.overruns,
+        r#dropped_frames: ring.dropped_frames,
+        r#samples_dropped: ring.samples_dropped,
+        // Memory (heap is read on the C++ side and pushed via lm_perf_set_heap;
+        // the latest values ride here).
+        r#heap_free: PERF_HEAP_FREE,
+        r#heap_min_free: PERF_HEAP_MIN_FREE,
+        r#heap_largest_free: PERF_HEAP_LARGEST_FREE,
+        ..Default::default()
+    };
     let _ = r.r#effect_id.push_str(id);
-    r.r#fxb_hash = FX_HASH;
-    r.r#cpu_hz = PERF_CPU_HZ;
-    r.r#budget_cycles = PERF_BUDGET_CYCLES;
-    // Rolling window.
-    r.r#frame_cycles_min = w.frame_min;
-    r.r#frame_cycles_mean = w.frame_mean;
-    r.r#frame_cycles_max = w.frame_max;
-    r.r#update_cycles_mean = w.update_mean;
-    r.r#shade_cycles_mean = w.shade_mean;
-    r.r#show_cycles_mean = w.show_mean;
-    // Since-drain counters (reset on drain).
-    r.r#overruns = ring.overruns;
-    r.r#dropped_frames = ring.dropped_frames;
-    r.r#samples_dropped = ring.samples_dropped;
     ring.overruns = 0;
     ring.dropped_frames = 0;
     ring.samples_dropped = 0;
-    // Memory (heap is read on the C++ side and pushed via lm_perf_set_heap; the
-    // latest values ride here).
-    r.r#heap_free = PERF_HEAP_FREE;
-    r.r#heap_min_free = PERF_HEAP_MIN_FREE;
-    r.r#heap_largest_free = PERF_HEAP_LARGEST_FREE;
     // Raw tail: drain oldest-first until the ticks field is at capacity; any
     // remaining samples stay in the ring for the next poll (no loss).
     while r.r#ticks.len() < r.r#ticks.capacity() {
         let Some(s) = ring.pop() else { break };
-        let mut t = pb::PerfFrame::default();
-        t.r#seq = s.seq;
-        t.r#update_cycles = s.update_cycles;
-        t.r#shade_cycles = s.shade_cycles;
-        t.r#frame_cycles = s.frame_cycles;
-        t.r#show_cycles = s.show_cycles;
-        t.r#led_count = s.led_count;
-        t.r#instr_update = s.instr_update;
-        t.r#instr_shade = s.instr_shade;
-        t.r#stack_max = s.stack_max;
+        let t = pb::PerfFrame {
+            r#seq: s.seq,
+            r#update_cycles: s.update_cycles,
+            r#shade_cycles: s.shade_cycles,
+            r#frame_cycles: s.frame_cycles,
+            r#show_cycles: s.show_cycles,
+            r#led_count: s.led_count,
+            r#instr_update: s.instr_update,
+            r#instr_shade: s.instr_shade,
+            r#stack_max: s.stack_max,
+        };
         let _ = r.r#ticks.push(t);
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::PerfReport(r)) }
@@ -2076,6 +2114,11 @@ unsafe fn perf_set_effect_id(id: &str) {
 /// writes epoch_ms (i64), bit_period_us (u32), cycle_frames, led_count. False
 /// when no capture is active. Absolute frame index at player-clock ms `t` is
 /// `((t - epoch_ms) * 1000) / bit_period_us`.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_pattern_timing(
     epoch_ms: *mut i64,
@@ -2100,6 +2143,10 @@ pub unsafe extern "C" fn lm_pattern_timing(
 /// the LEDs at player monotonic clock `t_mono_us` (raw micros(), integer µs).
 /// Buffered for the phone to drain via get_frame_timing (stutter diagnosis).
 /// Cheap ring write — call it unconditionally right after the strip update.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
     player().record_frame_shown(seq, t_mono_us);
@@ -2107,6 +2154,11 @@ pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
 
 /// The color LED `led` shows in mapping cycle frame `frame_index`
 /// (caller reduces modulo cycle_frames). False when no capture is active.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut u8) -> bool {
     match player().pattern_color(led, frame_index) {
@@ -2123,6 +2175,10 @@ pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut 
 /// Whether a playback effect ("pulse"/"flood") is configured — the render loop
 /// drives the LEDs via lm_playback_step + lm_playback_color when so (and no
 /// capture/counting is running). LEDs stay black until a topology is uploaded.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_playback_active() -> bool {
     player().effect_config().is_some()
@@ -2132,6 +2188,10 @@ pub unsafe extern "C" fn lm_playback_active() -> bool {
 /// stale, then advance it by `dt_ms`. Returns whether a renderable sim exists
 /// (config active AND a topology is stored). Call once per render frame before
 /// the per-LED lm_playback_color sweep.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_playback_step(dt_ms: u32) -> bool {
     ensure_sim();
@@ -2194,6 +2254,11 @@ unsafe fn ensure_sim() {
 /// this LED's stored association (segment index, foot arclength, perpendicular
 /// offset). False when no sim is renderable or this LED has no association.
 /// Meters→mm uses f32 (hardware on the C6); the sim math itself is integer.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_playback_color(led: u32, rgb: *mut u8) -> bool {
     let Some(sim) = (*addr_of!(SIM)).as_ref() else {
@@ -2221,6 +2286,11 @@ pub unsafe extern "C" fn lm_playback_color(led: u32, rgb: *mut u8) -> bool {
 
 /// The color LED `led` shows under the latched counting pattern (blocks
 /// paint, everything else off). False when no counting pattern is latched.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_counting_color(led: u32, rgb: *mut u8) -> bool {
     match player().counting_color(led) {
@@ -2236,6 +2306,10 @@ pub unsafe extern "C" fn lm_counting_color(led: u32, rgb: *mut u8) -> bool {
 
 /// Highest LED the latched counting pattern lights + 1 (0 when none). The frame
 /// loop transmits exactly this many LEDs for the calibration pattern.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_counting_len() -> u32 {
     player().counting_len()
@@ -2246,6 +2320,11 @@ pub unsafe extern "C" fn lm_counting_len() -> u32 {
 /// OWN order — independent of the committed per-channel color order — so the
 /// color-order test drives the strip raw (identity) or through a previewed
 /// candidate without touching the persisted config. Identity when none latched.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_counting_color_order(perm: *mut u8) {
     let p = player().counting_color_order();
@@ -2255,6 +2334,10 @@ pub unsafe extern "C" fn lm_counting_color_order(perm: *mut u8) {
 }
 
 /// The persisted strip length for `channel` (set_led_count); -1 when unset.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {
     match player().led_count(channel as usize) {
@@ -2264,6 +2347,10 @@ pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {
 }
 
 /// Number of LEDs in the stored map; 0 when none stored.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_map_len() -> u32 {
     (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c)
@@ -2272,6 +2359,11 @@ pub unsafe extern "C" fn lm_map_len() -> u32 {
 /// The stored map entry at `index`: id + xyz (meters). The map is flash-backed —
 /// only positions are resident (FX_LED_POS); id == index (the render is
 /// index-based). False out of range.
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> bool {
     let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c);
@@ -2585,6 +2677,10 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 
 /// Clear the loaded effect (back to the built-in playback/idle). Frees nothing
 /// (the buffer is static) but marks no program loaded and not active.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_clear() {
     FX_LEN = 0;
@@ -2603,12 +2699,20 @@ pub unsafe extern "C" fn lm_fx_clear() {
 /// Enable/disable the on-device JIT (FUG-125). Takes effect on the NEXT
 /// `lm_fx_load`; the caller reloads the effect to rebuild (or tear down) the
 /// segments — the HITL A/B flips this and re-submits to measure JIT on vs off.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_set_jit_enabled(enabled: bool) {
     FX_JIT_ENABLED = enabled;
 }
 
 /// How many JIT segments the current effect installed (0 = pure interpretation).
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_jit_count() -> u32 {
     FX_JIT_N as u32
@@ -2617,6 +2721,11 @@ pub unsafe extern "C" fn lm_fx_jit_count() -> u32 {
 /// JIT bring-up diagnostics (FUG-125): `*plans` = blocks the planner found,
 /// `*words` = total RV32 words, `*alloc_ok` = 1 if the exec alloc succeeded.
 /// Lets a bench attribute a segments=0 outcome (no hot blocks vs no exec IRAM).
+///
+/// # Safety
+/// The pointer arguments must be null or point to writable/readable memory
+/// of the documented size, and the global player must have been initialized
+/// by [`lm_player_init`] and not be called reentrantly.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_jit_diag(plans: *mut u32, words: *mut u32, alloc_ok: *mut u32) {
     if !plans.is_null() {
@@ -2632,12 +2741,20 @@ pub unsafe extern "C" fn lm_fx_jit_diag(plans: *mut u32, words: *mut u32, alloc_
 
 /// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
 /// on this, taking priority over the built-in pulse/flood playback.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_active() -> bool {
     FX_ACTIVE && FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
 }
 
 /// Whether an effect is loaded at all (active or parked). Used by persistence.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_loaded() -> bool {
     FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
@@ -2645,6 +2762,10 @@ pub unsafe extern "C" fn lm_fx_loaded() -> bool {
 
 /// Mark the loaded effect active (true) or parked (false). No-op with nothing
 /// loaded.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_set_active(active: bool) {
     if FX_LEN > 0 && (*addr_of!(FX_VM)).is_some() {
@@ -2654,6 +2775,10 @@ pub unsafe extern "C" fn lm_fx_set_active(active: bool) {
 
 /// Set the max instruction count for one update()/shade() invocation (bounded
 /// execution, primary guard). 0 restores the default.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_set_budget(instructions: u32) {
     FX_BUDGET = if instructions == 0 {
@@ -2675,6 +2800,10 @@ pub extern "C" fn lm_fx_set_deadline(hit: bool) {
 
 /// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
 /// timeout. For the rate-limited `[fx]` diagnostic log in the render loop.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_last_update_outcome() -> u32 {
     FX_LAST_UPDATE_OUTCOME
@@ -2699,6 +2828,10 @@ pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize
 /// active effect's manifest (falling back to slot index for unknown names);
 /// `false` treats every address as a raw slot number. Exposed so the app / a
 /// bench can A-B the name-lookup cost and so slot-only can be forced.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_osc_set_by_name(by_name: bool) {
     OSC_BY_NAME = by_name;
@@ -2731,6 +2864,10 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
 /// the wall-time deadline flag first (a fresh frame gets the full budget).
 /// Returns false when no effect is loaded. A cancelled update (budget/timeout)
 /// still returns true — a partial state advance is harmless.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_count: u32) -> bool {
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
@@ -2921,6 +3058,10 @@ pub unsafe extern "C" fn lm_fx_manifest(out: *mut u8, cap: usize) -> i32 {
 /// Current perf tier (0 OFF, 1 BASIC, 2 FULL). The render loop reads this to
 /// decide whether to sample at all; loop() reads it to decide whether to push
 /// an unsolicited report.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_mode() -> u32 {
     PERF_MODE
@@ -2928,6 +3069,10 @@ pub unsafe extern "C" fn lm_perf_mode() -> u32 {
 
 /// The unsolicited-push interval in ms (0 = poll-only). main.cpp coalesces the
 /// push at this cadence, like the playback-save quiet timer.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_interval_ms() -> u32 {
     PERF_INTERVAL_MS
@@ -2936,14 +3081,24 @@ pub unsafe extern "C" fn lm_perf_interval_ms() -> u32 {
 /// The latched Tier-1 counters from the just-rendered frame (0 unless FULL):
 /// opcodes retired in update() / across the shade sweep, and the stack
 /// high-water. The render loop reads these into its PerfFrame push.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_instr_update() -> u32 {
     FX_INSTR_UPDATE
 }
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_instr_shade() -> u32 {
     FX_INSTR_SHADE
 }
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_stack_max() -> u32 {
     FX_STACK_MAX as u32
@@ -2954,6 +3109,10 @@ pub unsafe extern "C" fn lm_perf_stack_max() -> u32 {
 /// / _minimum; `largest_free` is heap_caps_get_largest_free_block (the biggest
 /// contiguous block, i.e. the real ceiling on a single allocation) — all read on
 /// the C++ side.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32, largest_free: u32) {
     PERF_HEAP_FREE = free;
@@ -2965,6 +3124,10 @@ pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32, largest_free
 /// counts) into the perf ring. `overran` marks a frame whose frame+show cycles
 /// exceeded the budget (counted since-drain). Cheap ring write — the render task
 /// calls it unconditionally once per frame while a perf mode is active.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_push(
     seq: u32,
@@ -2995,6 +3158,10 @@ pub unsafe extern "C" fn lm_perf_push(
 
 /// Record that the render task skipped a scheduled frame (fell behind). Counted
 /// since the last PerfReport drain (dropped_frames).
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_perf_note_dropped() {
     let ring = &mut *addr_of_mut!(PERF_RING);

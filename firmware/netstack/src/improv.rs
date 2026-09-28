@@ -529,7 +529,7 @@ mod tests {
             let mut off = 2;
             while off + elem <= s.len() {
                 let end = u16::from_le_bytes([s[off + 2], s[off + 3]]);
-                if elem == 20 && &s[off + 4..off + 20] == &IMPROV_SVC_UUID {
+                if elem == 20 && s[off + 4..off + 20] == IMPROV_SVC_UUID {
                     found_improv = true;
                 }
                 start = end + 1;
@@ -553,7 +553,7 @@ mod tests {
             let elem = s[1] as usize;
             let mut off = 2;
             while off + elem <= s.len() {
-                if elem >= 5 && &s[off + 5..off + elem] == &IMPROV_CHAR_RPC_RESULT[..elem - 5] {
+                if elem >= 5 && s[off + 5..off + elem] == IMPROV_CHAR_RPC_RESULT[..elem - 5] {
                     // the RPC-result char (…8004) that Bleak couldn't find
                 }
                 let h = u16::from_le_bytes([s[off], s[off + 1]]);

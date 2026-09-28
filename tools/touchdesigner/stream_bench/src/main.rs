@@ -194,10 +194,10 @@ fn run_sweep_cli(base: &BenchConfig) {
 }
 
 /// The `(point, result)` that maximizes `cmp` (`cmp(a, b) = Greater` means a wins).
-fn pick<'a>(
-    results: &'a [(SweepPoint, BenchResult)],
+fn pick(
+    results: &[(SweepPoint, BenchResult)],
     cmp: impl Fn(&BenchResult, &BenchResult) -> std::cmp::Ordering,
-) -> Option<(&'a SweepPoint, &'a BenchResult)> {
+) -> Option<(&SweepPoint, &BenchResult)> {
     results
         .iter()
         .max_by(|(_, a), (_, b)| cmp(a, b))

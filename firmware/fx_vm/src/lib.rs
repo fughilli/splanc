@@ -978,6 +978,9 @@ impl Vm {
     }
 
     /// The JIT table as a slice (empty when unset).
+    // Intentional accessor mirroring `set_jit`/`clear_jit`; the hot paths read
+    // `jit_blocks`/`jit_len` directly, so this convenience view is currently unused.
+    #[allow(dead_code)]
     fn jit_table(&self) -> &[JitBlock] {
         if self.jit_blocks.is_null() {
             &[]
@@ -1634,6 +1637,9 @@ fn run(
                     tmp[i] = *stack.get(base + ci).unwrap_or(&0.0);
                 }
                 pc += dst_n;
+                // Keep the scalar loop: this is a perf-golden hot path (fx_bench)
+                // and the manual copy compiles to a stable instruction sequence.
+                #[allow(clippy::manual_memcpy)]
                 for i in 0..dst_n {
                     stack[base + i] = tmp[i];
                 }
@@ -1721,6 +1727,8 @@ fn run(
                 let n = code[pc] as usize;
                 let mut out = [0.0f32; 3];
                 let base = sp.saturating_sub(n);
+                // Perf-golden hot path (fx_bench): keep the scalar copy.
+                #[allow(clippy::manual_memcpy)]
                 for i in 0..n.min(3) {
                     out[i] = stack[base + i];
                 }
@@ -1736,12 +1744,16 @@ fn run(
                 // stack: [.. a(an) b(bn)] -> [.. b(bn) a(an)]
                 let base = sp - an - bn;
                 let mut tmp = [0.0f32; 8];
+                // Perf-golden hot path (fx_bench): keep the scalar shuffle so the
+                // emitted code (and its cycle count) matches the benchmark golden.
+                #[allow(clippy::manual_memcpy)]
                 for i in 0..an {
                     tmp[i] = stack[base + i];
                 }
                 for i in 0..bn {
                     stack[base + i] = stack[base + an + i];
                 }
+                #[allow(clippy::manual_memcpy)]
                 for i in 0..an {
                     stack[base + bn + i] = tmp[i];
                 }
@@ -1867,6 +1879,8 @@ fn run(
                 let n = code[pc + 3] as usize;
                 let count = code[pc + 4] as usize;
                 pc += 5;
+                // Perf-golden hot path (fx_bench): keep the literal guard form.
+                #[allow(clippy::int_plus_one)]
                 if sp >= n + 1 {
                     let i = stack[sp - n - 1].to_bits() as i32;
                     let hi = count.saturating_sub(1) as i32;
@@ -1925,6 +1939,8 @@ fn run(
                     let elem = d.elem as usize;
                     let cb = comp_bytes(d.comp);
                     let count = if d.kind == 0 { lc } else { d.w as usize * d.h as usize };
+                    // Perf-golden hot path (fx_bench): keep the literal guard form.
+                    #[allow(clippy::int_plus_one)]
                     if sp >= elem + 1 {
                         let i = stack[sp - elem - 1].to_bits() as i32;
                         let idx = i.clamp(0, count.saturating_sub(1) as i32) as usize;
@@ -2147,13 +2163,18 @@ fn run(
                 pc += 1;
                 let x = popi!();
                 let one = 1i32 << frac;
-                pushi!(if x > 0 {
+                // Perf-golden hot path (fx_bench): keep the explicit if-chain so
+                // the emitted branch sequence matches the benchmark golden (a
+                // `match x.cmp(&0)` rewrite drifts one effect off its golden).
+                #[allow(clippy::comparison_chain)]
+                let signed = if x > 0 {
                     one
                 } else if x < 0 {
                     -one
                 } else {
                     0
-                });
+                };
+                pushi!(signed);
             }
             Op::StepI => {
                 let frac = code[pc] as u32;
@@ -2649,10 +2670,10 @@ pub fn cosf(x: f32) -> f32 {
 }
 fn expf(x: f32) -> f32 {
     // 2^(x/ln2) via bit manipulation + poly (adequate for decay curves).
-    let xln = x * 1.442695; // x / ln2
+    let xln = x * core::f32::consts::LOG2_E; // x / ln2
     let i = floorf(xln);
     let f = xln - i;
-    let poly = 1.0 + f * (0.6931472 + f * (0.2402265 + f * 0.0555041));
+    let poly = 1.0 + f * (core::f32::consts::LN_2 + f * (0.2402265 + f * 0.0555041));
     let bits = ((i as i32 + 127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
@@ -2664,7 +2685,7 @@ fn logf(x: f32) -> f32 {
     let e = ((bits >> 23) & 0xff) as i32 - 127;
     let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000); // [1,2)
     let p = -1.7417939 + m * (2.8212026 + m * (-1.4699568 + m * (0.4471623 - m * 0.0821854)));
-    (e as f32) * 0.6931472 + p
+    (e as f32) * core::f32::consts::LN_2 + p
 }
 fn powf(a: f32, b: f32) -> f32 {
     if a <= 0.0 {
@@ -2743,7 +2764,7 @@ fn atan2f(y: f32, x: f32) -> f32 {
     let ay = y.abs();
     let a = if ax >= ay { ay / ax } else { ax / ay };
     let s = a * a;
-    let mut r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
+    let mut r = ((-0.046496475 * s + 0.15931422) * s - 0.327_622_77) * s * a + a;
     if ay > ax {
         r = PI * 0.5 - r;
     }
@@ -3101,8 +3122,8 @@ fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
     let one = 1i64 << frac;
     let clamp01f = |x: i64| x.clamp(0, one);
     let t = clamp01f(t as i64);
-    let mul = |a: i64, k: i64| clamp01f(a * k >> frac); // a·k with clamp
-    let msub = |a: i64, k: i64, sub: i64| clamp01f((a * k >> frac) - sub);
+    let mul = |a: i64, k: i64| clamp01f((a * k) >> frac); // a·k with clamp
+    let msub = |a: i64, k: i64, sub: i64| clamp01f(((a * k) >> frac) - sub);
     match id {
         // fire: black -> red -> orange -> yellow -> white
         0 => (mul(t, 3 * one) as i32, msub(t, 3 * one, one) as i32, msub(t, 3 * one, 2 * one) as i32),

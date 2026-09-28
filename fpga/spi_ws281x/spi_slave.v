@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Byte-oriented SPI slave (mode 0: sample on rising SCK, MSB first).
 //
 // Ported/cleaned from ledsuit-fpga spi.v, trimmed to the write-only path we need

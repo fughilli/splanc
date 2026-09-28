@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(f.len(), 6 * 2 * 4);
         // col 0: (0/2)=0 even -> lit; same in both rows (vertical bar).
         assert_eq!(&f[0..4], &[255, 255, 255, 255]);
-        assert_eq!(&f[(6 + 0) * 4..(6 + 0) * 4 + 4], &[255, 255, 255, 255]);
+        assert_eq!(&f[6 * 4..6 * 4 + 4], &[255, 255, 255, 255]);
         // col 2: (2/2)=1 odd -> dark.
         assert_eq!(&f[2 * 4..2 * 4 + 4], &[0, 0, 0, 255]);
     }

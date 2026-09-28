@@ -1,0 +1,81 @@
+{
+  "comment": "amd-rig PHONE HITL bench catalog — read by a SECOND hitl-reserved instance on amd-rig (the phone daemon, //pi/hitl:hitl_sdr's hitl-phone-daemon.nix), separate from the SDR daemon (catalog-sdr.json). Unlike the SDR bench (one privileged, --net-host composite unit), this daemon runs the ISOLATED multi-DUT model (--raw-usb, per-unit sshd ports, bridge networking) so the two phone units run CONCURRENTLY without colliding on adb's fixed port 5037 / the emulator console ports (each reservation gets its own network namespace). Two independent units, each with its OWN C6 (user decision: two C6s/location). host/workspace + the unit sshd port range are passed as flags by hitl-phone-daemon.nix, not baked here.",
+  "workspace": "splanc",
+  "lease_seconds": 1800,
+  "ssh_port_base": 2300,
+
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "monitor", "jtag", "gdb", "improv", "wss-app", "led-strip"]
+    },
+    "android-dev": {
+      "kind": "usb",
+      "capabilities": ["adb", "real-ble", "web-bluetooth", "camera"]
+    },
+    "kvm": {
+      "kind": "device",
+      "capabilities": ["kvm"]
+    }
+  },
+
+  "components": [
+    {
+      "comment": "The real-phone unit's C6 DUT (read off the live rig 2026-09-20). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 (…FC:B0) and from c6-b. Flashed with the netstack player firmware it advertises Improv as \"Led Widget E2F5EF\" (identity MAC 58:E6:C5:11:FC:DA, BLE addr d1:fe:ff:c5:e6:58) — the real-BLE UI provisioner (android_ble_provision.py) matches the \"E2F5EF\" fragment to pick it out of the crowded lab airspace in the OS Bluetooth chooser. (Spare C6 …8C:FD:49:11:32:18 is unassigned — add a third unit or auto-discovery later.)",
+      "name": "c6-a",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:D8-if00:/dev/ttyACM0"
+      ],
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:D8" }
+    },
+    {
+      "comment": "The emulator unit's C6 DUT (second free board).",
+      "name": "c6-b",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:F9:83:C8-if00:/dev/ttyACM0"
+      ],
+      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:F9:83:C8" }
+    },
+    {
+      "comment": "The Android dev device: a Samsung SM-A115U (Galaxy A11, Android 10), adb serial R95N90G5WSB (04e8:6860). NOT a USB passthrough into the env — instead the env uses a HOST-side adb server over --net-host (127.0.0.1:5037, authorized by the persistent bench key at /var/lib/hitl-phone/adb/adbkey, tapped once 2026-09-20) and targets this serial. So this component carries no device node, just the env markers.",
+      "name": "android-dev",
+      "type": "android-dev",
+      "env": {
+        "HITL_ANDROID_SERIAL": "R95N90G5WSB",
+        "ADB_SERVER_SOCKET": "tcp:127.0.0.1:5037",
+        "HITL_PHONE_TARGET": "android-phone"
+      }
+    },
+    {
+      "comment": "KVM acceleration for the x86_64 Android emulator (amd-rig is x86_64, so the upstream nixpkgs emulator + an x86_64 system image run at native speed under /dev/kvm). Passed as a device into the emulator unit's env; the kvm group + udev give the agent uid access (hitl-phone-daemon.nix).",
+      "name": "kvm",
+      "type": "kvm",
+      "devices": ["/dev/kvm:/dev/kvm"]
+    }
+  ],
+
+  "units": [
+    {
+      "comment": "REAL-PHONE unit: the Android dev device + its C6. The client reserves it, ships the phone-HITL harness + web bundle into the env, and runs phone_e2e --phone-target android-phone there: it serves the app + driver WS locally, `adb reverse`s them + the forwarded C6 wss to the phone, opens Chrome at ?driver=…&ble=real, and the PHONE provisions the real C6 over its own radio (real Web Bluetooth) → maps/solves end to end. Not pin_only: a bare `--require-caps adb,real-ble` request should match it.",
+      "name": "android-phone",
+      "type": "android-phone",
+      "components": ["android-dev", "c6-a"],
+      "capabilities": ["adb", "real-ble", "web-bluetooth", "flash", "improv", "wss-app"],
+      "env": { "HITL_PHONE_TARGET": "android-phone" }
+    },
+    {
+      "comment": "EMULATOR unit: a C6 + KVM. The env boots the x86_64 Android emulator (baked in the image, withAndroid) and drives the app in it (10.0.2.2 host alias); BLE is the app-seam virtual mock or the Bumble peripheral (ble_peripheral.py), and the app connects the forwarded real-C6 wss for the map/solve. pin_only so a caps-only request never lands the emulator slot.",
+      "name": "android-emu",
+      "type": "android-emu",
+      "pin_only": true,
+      "components": ["c6-b", "kvm"],
+      "capabilities": ["android-emu", "kvm", "flash", "improv", "wss-app"],
+      "env": {
+        "HITL_PHONE_TARGET": "android-emu",
+        "ADB_SERVER_SOCKET": "tcp:127.0.0.1:5037"
+      }
+    }
+  ]
+}

@@ -50,7 +50,7 @@ import board_caps
 import hitl_ws
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
-from provision import dut_target, ensure_booted, provision_dut
+from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
@@ -151,8 +151,21 @@ async def _ws_checks(
             )
         if not isinstance(fw_dirty, bool):
             raise E2EFailure(f"welcome fwGitDirty not a bool: {fw_dirty!r}")
+        # …and the release version (nearest firmware-v* tag, "0.0.0-dev" on an
+        # untagged build). The app shows this on the device card as "Firmware
+        # version"; the firmware must always report a concrete, non-empty value
+        # (a blank one renders as "unknown"). Accept a semver-ish string with an
+        # optional -dev / -<n>-g<sha> suffix; reject empty/missing.
+        fw_version = welcome.get("fwVersion")
+        if not isinstance(fw_version, str) or not re.fullmatch(
+            r"\d+\.\d+\.\d+(-[0-9A-Za-z.\-]+)?", fw_version
+        ):
+            raise E2EFailure(
+                f"welcome fwVersion missing/malformed: {fw_version!r} "
+                "(expected a release version like '1.2.0' or '0.0.0-dev')"
+            )
         print(
-            f"[ws] BUILD INFO OK — fwGitCommit={fw_commit[:8]} dirty={fw_dirty}",
+            f"[ws] BUILD INFO OK — fwGitCommit={fw_commit[:8]} dirty={fw_dirty} version={fw_version}",
             flush=True,
         )
 
@@ -222,15 +235,27 @@ def cert_page_check(ws_url: str, insecure: bool) -> None:
     if insecure:  # self-signed device cert (and the localhost tunnel host won't match)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-    try:
-        with urllib.request.urlopen(page_url, context=ctx, timeout=15) as r:
-            status, ctype = r.status, r.headers.get("Content-Type", "")
-            body = r.read(4096).decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001 — any failure here IS the regression
-        raise E2EFailure(
-            f"cert-trust page GET {page_url} failed ({type(e).__name__}: {e}) — a plain "
-            "GET / must serve the trust page, not close empty (ERR_EMPTY_RESPONSE)"
-        )
+    # Retry the GET on transient network/timeout errors within a settle deadline,
+    # mirroring the ws-open path above. On a shared-bus rig (e.g. a Pi 3 whose one
+    # USB2 controller carries the AP dongle + NIC + every DUT serial) a heavy transfer
+    # can starve this single GET past its timeout even though the device is serving the
+    # page fine — that transient shouldn't red the run. A wrong status / empty body /
+    # missing postMessage IS the regression and still fails fast (checked below).
+    deadline = time.monotonic() + hitl_ws.CONNECT_SETTLE
+    while True:
+        try:
+            with urllib.request.urlopen(page_url, context=ctx, timeout=15) as r:
+                status, ctype = r.status, r.headers.get("Content-Type", "")
+                body = r.read(4096).decode("utf-8", "replace")
+            break
+        except OSError as e:  # URLError/HTTPError/TimeoutError/socket errors all subclass OSError
+            if time.monotonic() >= deadline:
+                raise E2EFailure(
+                    f"cert-trust page GET {page_url} failed ({type(e).__name__}: {e}) — a plain "
+                    "GET / must serve the trust page, not close empty (ERR_EMPTY_RESPONSE)"
+                )
+            print(f"[cert] GET not ready ({type(e).__name__}); retrying…", flush=True)
+            time.sleep(1.5)
     if status != 200 or "text/html" not in ctype:
         raise E2EFailure(
             f"cert-trust page GET {page_url}: expected 200 text/html, got {status} {ctype!r}"
@@ -298,16 +323,23 @@ def default_board_caps() -> dict | None:
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
-    res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
+    res = Reservation(
+        server=args.server or None,
+        owner=args.owner,
+        sku=args.sku or None,
+        device=args.device or None,
+    )
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
         # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
-        if not args.wifi_ssid and not args.skip_improv:
+        # Both provisioning paths (BLE Improv + wired serial) need the creds.
+        want_provision = not args.skip_improv or args.wire_provision
+        if not args.wifi_ssid and want_provision:
             creds = res.wifi()
             if creds:
                 args.wifi_ssid, args.wifi_pass = creds
-                print(f"[improv] provisioning onto the rig AP {args.wifi_ssid!r}", flush=True)
+                print(f"[provision] onto the rig AP {args.wifi_ssid!r}", flush=True)
         if not args.skip_flash:
             bundle = args.bundle or default_bundle()
             if not bundle:
@@ -315,7 +347,15 @@ def run(args: argparse.Namespace) -> int:
             flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
-        if not args.skip_improv:
+        # --wire-provision drives creds over the DUT's serial console (no BLE); otherwise
+        # provision over BLE Improv unless --skip-improv (device already on the network).
+        if args.wire_provision:
+            if not args.wifi_ssid:
+                raise E2EFailure(
+                    "--wifi-ssid (or $HITL_WIFI_SSID) is required with --wire-provision"
+                )
+            redirect = wire_provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+        elif not args.skip_improv:
             if not args.wifi_ssid:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
@@ -365,6 +405,12 @@ def main() -> int:
         help="pin a specific DUT by name (e.g. c6-003f08); default: any free DUT on the rig",
     )
     ap.add_argument(
+        "--sku",
+        default=os.environ.get("HITL_SKU"),
+        help="reserve only DUTs of this hardware type/SoC (e.g. esp32c6), so a c6 test "
+        "skips a same-rig esp32c3; default $HITL_SKU. Filters by unit type, not a cap.",
+    )
+    ap.add_argument(
         "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"
     )
     ap.add_argument(
@@ -399,6 +445,11 @@ def main() -> int:
     )
     ap.add_argument("--skip-flash", action="store_true")
     ap.add_argument("--skip-improv", action="store_true")
+    ap.add_argument(
+        "--wire-provision",
+        action="store_true",
+        help="provision WiFi over the DUT's serial console (PROV command) instead of BLE Improv",
+    )
     ap.add_argument("--skip-ws", action="store_true")
     return run(ap.parse_args())
 

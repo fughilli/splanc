@@ -219,8 +219,8 @@ unsafe fn copy_cstr(dst: *mut c_char, cap: usize, s: &str) {
     }
     let bytes = s.as_bytes();
     let n = bytes.len().min(cap - 1);
-    for i in 0..n {
-        *dst.add(i) = bytes[i] as c_char;
+    for (i, &b) in bytes.iter().take(n).enumerate() {
+        *dst.add(i) = b as c_char;
     }
     *dst.add(n) = 0;
 }

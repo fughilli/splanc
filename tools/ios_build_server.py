@@ -197,14 +197,40 @@ _IOS_BUILD_SH = (
 # install + launch need it), which keeps this robust over a flaky Wi-Fi link;
 # `-allowProvisioningUpdates` lets automatic signing register/refresh the
 # provisioning profile — the same signing `cap run` already set up over USB.
+# Headless signing (bench): when a reservation injects a DEDICATED signing keychain
+# (HITL_SIGN_KEYCHAIN = its path, HITL_SIGN_KEYCHAIN_PASS = its own password — never
+# the user's login password), unlock it and put it on the user search list so
+# xcodebuild finds the Apple Development identity without a GUI login session or an
+# interactive prompt. Optional HITL_SIGN_TEAM pins DEVELOPMENT_TEAM for automatic
+# signing on a multi-team account. All three are unset for local GUI dev, where this
+# whole preamble is a no-op and xcodebuild uses the interactive login keychain.
+# NOTE: _fill() does literal-token replace (not str.format), so shell `${VAR}` here
+# is safe — only the exact `{scheme}`/`{configuration}` placeholders are substituted.
 _DEVICE_BUILD_SH = (
     "set -e; "
+    'if [ -n "$HITL_SIGN_KEYCHAIN" ] && [ -n "$HITL_SIGN_KEYCHAIN_PASS" ]; then '
+    '  echo "[device-build] unlocking signing keychain $HITL_SIGN_KEYCHAIN"; '
+    '  security unlock-keychain -p "$HITL_SIGN_KEYCHAIN_PASS" "$HITL_SIGN_KEYCHAIN"; '
+    '  security list-keychains -d user -s "$HITL_SIGN_KEYCHAIN" '
+    '    "$HOME/Library/Keychains/login.keychain-db"; '
+    "fi; "
+    'TEAM_ARG=""; '
+    'if [ -n "$HITL_SIGN_TEAM" ]; then TEAM_ARG="DEVELOPMENT_TEAM=$HITL_SIGN_TEAM"; fi; '
+    # App Store Connect API key (paid account): lets -allowProvisioningUpdates
+    # create/renew the provisioning profile FULLY HEADLESS — a bench build has no
+    # interactive Apple ID session. All three vars must be set to take effect.
+    'ASC_ARGS=""; '
+    'if [ -n "$HITL_ASC_KEY_PATH" ] && [ -n "$HITL_ASC_KEY_ID" ] && [ -n "$HITL_ASC_ISSUER_ID" ]; then '
+    '  ASC_ARGS="-authenticationKeyPath $HITL_ASC_KEY_PATH '
+    '-authenticationKeyID $HITL_ASC_KEY_ID -authenticationKeyIssuerID $HITL_ASC_ISSUER_ID"; '
+    '  echo "[device-build] using ASC API key $HITL_ASC_KEY_ID for headless provisioning"; '
+    "fi; "
     'if [ -e App.xcworkspace ]; then C="-workspace App.xcworkspace"; '
     'else C="-project App.xcodeproj"; fi; '
-    'echo "[device-build] xcodebuild $C -scheme {scheme} -configuration {configuration} -sdk iphoneos"; '
+    'echo "[device-build] xcodebuild $C -scheme {scheme} -configuration {configuration} -sdk iphoneos $TEAM_ARG"; '
     "xcodebuild $C -scheme {scheme} -configuration {configuration} "
     '-sdk iphoneos -destination "generic/platform=iOS" '
-    "-derivedDataPath build -allowProvisioningUpdates build"
+    "-derivedDataPath build -allowProvisioningUpdates $ASC_ARGS $TEAM_ARG build"
 )
 
 

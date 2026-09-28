@@ -43,8 +43,11 @@ rust_static_library(
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
+    # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
+    # the player core is board-agnostic so it compiles for both ESP RISC-V SKUs.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -174,6 +177,7 @@ cc_library(
     includes = ["."],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],  # build-only c3 target
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -266,13 +270,31 @@ cc_binary(
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
     # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
+    # The c3 link is now STRICT (no --unresolved-symbols=ignore-all): the two
+    # formerly-unported C6 translation units are handled per-chip — the BLE HCI
+    # shim maps r_ble_hci_trans_*/r_os_mbuf_* to the C3 controller's un-prefixed
+    # libbt.a symbols (improv_ble_netstack.cpp, gated on LM_CHIP_ESP32C3), and the
+    # mbedtls HW-ECC port (esp_ecc.c) is dropped for the C3 (no HW ECC peripheral)
+    # in favour of the software ECP (@mbedtls_src//:mbedtls_src_esp32c3).
     linkopts = ["-Wl,--allow-multiple-definition"],
     local_defines = [
         "LM_MAX_LEDS=%d" % MAX_LEDS,
         "LM_NETSTACK",
-    ],
+    ] + select({
+        # Selects the C3 controller HCI ABI (un-prefixed libbt.a symbols) in
+        # improv_ble_netstack.cpp; the C6 keeps the ROM r_-prefixed transport.
+        "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
+        "//conditions:default": [],
+    }),
+    # esp32c3 runtime bring-up: the image links strictly and boots on real c3
+    # silicon. The WiFi/netstack DATA PATH is not yet c3-correct — the heapless MAC
+    # driver and the CCMP HW-AES register map (firmware/netstack) are C6-coupled
+    # (ccmp.rs now routes c3 to a SOFTWARE AES so it is correct-but-unaccelerated,
+    # never touching C6 registers), and the vendor WiFi/mbedtls crypto pulled in
+    # here is still the C6-headers build. See the PR for the remaining c3 MAC work.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -309,6 +331,36 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+# -- esp32c3 netstack player (BUILD-ONLY) -------------------------------------
+# The SAME player_app_netstack binary retargeted to the ESP32-C3 (RISC-V
+# rv32imc). This exists so CI build-gates c3 firmware work: it must COMPILE +
+# LINK a c3 flashbundle. It is NOT expected to be runtime-correct on real c3
+# silicon yet — firmware/netstack's ccmp.rs hardcodes the C6 AES/PCR register
+# map (see the TODO(esp32c3) there), and the vendor BLE/WiFi/prefs deps are the
+# C6-headers build. Porting the SoC register map is a separate firmware effort.
+firmware_binary(
+    name = "esp32c3_netstack",
+    binary = ":player_app_netstack",
+    board = "esp32c3",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c3_netstack",
+    app = ":esp32c3_netstack",
+    bootloader = "@embedded//libs/board:esp32c3_bootloader_bin",
+    chip = "esp32c3",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c3_netstack_flashbundle",
+    flash = ":flash_esp32c3_netstack",
     tags = ["manual"],
 )
 

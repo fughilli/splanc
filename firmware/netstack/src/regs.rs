@@ -12,14 +12,16 @@
 
 /// Raw volatile MMIO. Safe wrappers live in the peripheral modules.
 pub mod mmio {
-    /// # Safety: `addr` must be a valid peripheral register address.
+    /// # Safety
+    /// `addr` must be a valid peripheral register address.
     #[cfg(not(test))]
     #[inline(always)]
     pub unsafe fn read32(addr: usize) -> u32 {
         core::ptr::read_volatile(addr as *const u32)
     }
 
-    /// # Safety: `addr` must be a valid peripheral register address.
+    /// # Safety
+    /// `addr` must be a valid peripheral register address.
     #[cfg(not(test))]
     #[inline(always)]
     pub unsafe fn write32(addr: usize, val: u32) {
@@ -33,16 +35,18 @@ pub mod mmio {
     #[cfg(test)]
     thread_local! {
         static REGS: std::cell::RefCell<std::collections::BTreeMap<usize, u32>> =
-            std::cell::RefCell::new(std::collections::BTreeMap::new());
+            const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     }
 
-    /// # Safety: test stub — no real hardware access.
+    /// # Safety
+    /// Test stub — no real hardware access.
     #[cfg(test)]
     pub unsafe fn read32(addr: usize) -> u32 {
         REGS.with(|r| *r.borrow().get(&addr).unwrap_or(&0))
     }
 
-    /// # Safety: test stub — no real hardware access.
+    /// # Safety
+    /// Test stub — no real hardware access.
     #[cfg(test)]
     pub unsafe fn write32(addr: usize, val: u32) {
         REGS.with(|r| {
@@ -215,7 +219,7 @@ pub mod i2c_rf {
         unsafe {
             mmio::write32(MASK, !mask);
             let cmd = CMD_BASE + (block as usize) * 4;
-            mmio::write32(cmd, (reg as u32) << 8 | host_id as u32 | READ);
+            mmio::write32(cmd, ((reg as u32) << 8) | host_id as u32 | READ);
             while mmio::read32(cmd) & BUSY != 0 {}
             ((mmio::read32(cmd) >> 16) & 0xff) as u8
         }

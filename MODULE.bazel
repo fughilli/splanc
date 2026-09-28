@@ -83,6 +83,7 @@ rust.toolchain(
     extra_target_triples = [
         "wasm32-unknown-unknown",  # phone solver
         "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "riscv32imc-unknown-none-elf",  # ESP32-C3 (rv32imc, no atomics; build-only)
         "thumbv8m.main-none-eabi",  # RP2350 (soft-float ABI; see firmware)
         "aarch64-unknown-linux-musl",  # static Pi player; see //pi/player_rs/musl
     ],
@@ -195,6 +196,7 @@ crate.from_specs(
         "x86_64-unknown-nixos-gnu",
         # Firmware targets (docs/esp32-led-mapping-plan.md Phase 0b).
         "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "riscv32imc-unknown-none-elf",  # ESP32-C3 (rv32imc, no atomics; build-only)
         "thumbv8m.main-none-eabi",  # RP2350
     ],
 )
@@ -372,7 +374,18 @@ git_override(
     # sub-board granularity to check. amd-rig's SMBIOS is unprogrammed ("Default
     # string" throughout), so placeholder DMI values are filtered rather than
     # reported as a name.
-    commit = "773117cc05e0292a54cbb3da8b308885c2d62f65",  # x86 hardware guard via DMI (PR #18 merged)
+    # PR #22–#26 (all squash-merged to main): the deploy learns to work WITH a binary
+    # cache. #22 passes --accept-flake-config so the consumer flake's nixConfig
+    # substituters are honored non-interactively. #23 adds `nix copy
+    # --substitute-on-destination` so a board pulls closure paths from its own
+    # substituters instead of over the deployer's uplink. #24 adds a `--tailscale-ssh`
+    # deploy mode (tailnet identity, no baked key). #25 adds the
+    # `attic_cache`/`attic_endpoint` sbc_application attrs — a best-effort post-build
+    # push of the realised closure to an Attic cache (tokenless login; keeps the cache
+    # warm even on a fully-cached build). #26 adds a `secret_tool` seam to fetch the
+    # deploy key / tailscale authkey on demand. //pi/hitl:BUILD wires #25 to the
+    # tag:attic cache node; the rest are latent until opted into.
+    commit = "23c03bdcefa0cd4b90ea1ec611456984d91a389a",  # attic cache push + deploy cache-awareness (PR #22–#26)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
@@ -410,7 +423,7 @@ git_override(
     # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
     # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "825d1554bbff27460b8a6a869b82448e4135c006",
+    commit = "00598e21960e077efc76759bcc93f849665a3b75",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
@@ -430,18 +443,33 @@ archive_override(
     # generates a per-device EC key on-device instead of baking one shared key
     # into every firmware image. Additive-only patch (a new function in the
     # existing TU); fold it upstream and drop this on the next embedded bump.
-    # esp32-libs-c6-only: restrict the esp32-arduino-libs FOD to the esp32c6
-    # variant (upstream unpacks all ~8 chip variants, ~10 GB — overflowed the
-    # container overlay, the sole reason the C6 firmware couldn't build in
-    # container). We build C6 only. See the patch header.
+    # esp32-libs-c6-c3: restrict the esp32-arduino-libs FOD to the esp32c6 +
+    # esp32c3 variants (upstream unpacks all ~8 chip variants, ~10 GB — overflowed
+    # the container overlay, the sole reason the C6 firmware couldn't build in
+    # container). We build C6 (+ the build-only C3 target). See the patch header.
+    # esp32c3-build-target: add esp32c3 (RISC-V rv32imc) as a BUILD-ONLY firmware
+    # target — a c3 platform + cc_toolchain + the parallel esp32c3 section of the
+    # generated arduino_esp32 scaffold. Build-gates future c3 work; the image is
+    # NOT runtime-correct yet (netstack ccmp.rs is C6-register-specific).
     patches = [
         "//patches:embedded-fug90-gen-key.patch",
-        "//patches:embedded-esp32-libs-c6-only.patch",
+        "//patches:embedded-esp32-libs-c6-c3.patch",
         # Shrink the from-source mbedTLS TLS record buffer 8 KB -> 6 KB now that all
         # large control frames are chunked at the client — halves the per-connection
         # dynamic record alloc so the heapless-netstack player survives many TLS
         # reconnects on the C6's tight heap. ABI-safe (record buffer is off the struct).
         "//patches:embedded-mbedtls-record-6k.patch",
+        # Make mbedtls_src's SDK-headers dep private (implementation_deps) so the
+        # esp32c6 SDK's ~315 -I dirs compile mbedtls but don't propagate to
+        # consumers — else the esp32c3 build stacked c6+c3 include lists and blew
+        # past the g++ -> cc1plus argv limit. Must precede the c3 patch.
+        "//patches:embedded-mbedtls-private-sdk-hdrs.patch",
+        "//patches:embedded-esp32c3-build-target.patch",
+        # esp32c3-mbedtls-sw-ecc: c3 runtime bring-up. Adds :mbedtls_src_esp32c3
+        # (drops the HW-ECC port the c3 has no accelerator for; software ECP
+        # instead) so the c3 image links strictly — no --unresolved-symbols=
+        # ignore-all. Must follow the build-target patch (patches its core_esp32c3).
+        "//patches:embedded-esp32c3-mbedtls-sw-ecc.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
@@ -492,6 +520,49 @@ filegroup(
     repo = "@nixpkgs",
 )
 use_repo(nix_pkg, "minify")
+
+# Android platform-tools (adb, fastboot) for the phone-in-the-loop HITL station's
+# Android lane (//pi/hitl/phone) — from the pinned nixpkgs so the station needs no
+# ad-hoc Android SDK install. adb is cross-platform: it builds + runs on the aarch64
+# container AND the x86_64 station. (The emulator itself is x86_64-Linux-only — Google
+# ships no aarch64 Linux emulator — so it lives in a separate, platform-guarded target;
+# see //pi/hitl/phone:BUILD.)
+nix_pkg.attr(
+    name = "android_tools",
+    attr = "android-tools",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(name = "adb", srcs = ["bin/adb"])
+
+filegroup(name = "fastboot", srcs = ["bin/fastboot"])
+
+filegroup(name = "bin", srcs = glob(["bin/*"]))
+""",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "android_tools")
+
+# Android emulator + a Google-APIs system image (the phone HITL station's Android lane,
+# //pi/hitl/phone:android_emulator). x86_64-linux ONLY — Google ships no aarch64-linux
+# emulator — so the consuming Bazel target is target_compatible_with x86_64-linux and an
+# aarch64 build skips it. nix_pkg is LAZY (realized only when a target that uses it is
+# built), so this costs the aarch64 container nothing. See pi/hitl/phone/nix/android-emulator.nix.
+nix_pkg.file(
+    name = "android_emulator",
+    attr = "sdk",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sdk",
+    srcs = glob(["libexec/android-sdk/**"], allow_empty = True),
+)
+""",
+    file = "//pi/hitl/phone/nix:android-emulator.nix",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "android_emulator")
 
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.

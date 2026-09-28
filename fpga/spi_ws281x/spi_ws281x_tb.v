@@ -25,6 +25,7 @@ module spi_ws281x_tb;
   reg               rst = 1;
   reg               ss = 1, sck = 0, mosi = 0;
   wire [MAX_PORTS-1:0] ws;
+  wire                 frame_pulse;  // observed only; connected to avoid PINMISSING
 
   spi_ws281x #(
       .MAX_PORTS(MAX_PORTS),
@@ -39,7 +40,8 @@ module spi_ws281x_tb;
       .ss(ss),
       .sck(sck),
       .mosi(mosi),
-      .ws(ws)
+      .ws(ws),
+      .frame_pulse(frame_pulse)
   );
 
 `ifdef TRACE
@@ -85,11 +87,11 @@ module spi_ws281x_tb;
     integer k;
     begin
       for (k = 7; k >= 0; k = k - 1) begin
-        mosi <= b[k];
+        mosi = b[k];
         repeat (2) @(posedge clk);
-        sck <= 1'b1;
+        sck = 1'b1;
         repeat (2) @(posedge clk);
-        sck <= 1'b0;
+        sck = 1'b0;
       end
     end
   endtask
@@ -104,25 +106,25 @@ module spi_ws281x_tb;
       acc[p]     = 0;
       was_high[p] = 0;
       hi_start[p] = 0;
-      for (k = 0; k < K; k = k + 1) frame[p][k] = (p[3:0] << 4) | k[3:0];
+      for (k = 0; k < K; k = k + 1) frame[p][k] = {p[3:0], k[3:0]};
     end
 
     repeat (5) @(posedge clk);
-    rst <= 0;
+    rst = 0;
     repeat (4) @(posedge clk);
 
     // --- transaction 1: write num_ports CSR ---
-    ss <= 1'b0;
+    ss = 1'b0;
     repeat (2) @(posedge clk);
     spi_byte(OP_WRITE_CSR);
     spi_byte(8'h00);  // CSR addr 0 = num_ports
     spi_byte(NP[7:0]);
     repeat (2) @(posedge clk);
-    ss <= 1'b1;
+    ss = 1'b1;
     repeat (4) @(posedge clk);
 
     // --- transaction 2: stream K paced rounds ---
-    ss <= 1'b0;
+    ss = 1'b0;
     repeat (2) @(posedge clk);
     spi_byte(OP_STREAM);
     for (k = 0; k < K; k = k + 1) begin
@@ -130,7 +132,7 @@ module spi_ws281x_tb;
       repeat (BYTE_CLK - NP * SPI_BYTE_CLK) @(posedge clk);
     end
     repeat (2) @(posedge clk);
-    ss <= 1'b1;  // end of frame -> latch
+    ss = 1'b1;  // end of frame -> latch
 
     repeat (BYTE_CLK * 2) @(posedge clk);
 
