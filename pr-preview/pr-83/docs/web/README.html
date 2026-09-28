@@ -365,7 +365,45 @@ drives the production tracker/decoder, asserting ≥98 % id coverage, zero
 mis-ids, tolerance to 60 ms camera latency (via the decoder’s sync-delimiter
 alignment) and to dropped frames + pixel noise. Cross-language goldens pin the
 Gray-code plan to the M1 driver and the projection math to the M3 solver.</p>
-<p>Dev loop (hot reload, proxies <code class="docutils literal notranslate"><span class="pre">/ws</span></code> + <code class="docutils literal notranslate"><span class="pre">/maps</span></code> to a local M2):</p>
+<p>Dev loop — one bazel command for a live-reloading server <strong>with TLS</strong> (WebXR /
+getUserMedia / DeviceMotion / WSS all need a secure context):</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//web:dev<span class="w">                    </span><span class="c1"># https://localhost:8443, hot reload</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//web:dev<span class="w"> </span>--<span class="w"> </span>--no-tls<span class="w">        </span><span class="c1"># http://localhost:8080 (wall/dev)</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//web:dev<span class="w"> </span>--<span class="w"> </span>--port<span class="w"> </span><span class="m">9443</span><span class="w"> </span>--backend-port<span class="w"> </span><span class="m">9080</span>
+</pre></div>
+</div>
+<p>This is <strong>fully hermetic</strong> — it needs no host Node or pnpm, and doesn’t touch a
+developer’s global pnpm store. Everything comes from Bazel:</p>
+<ul class="simple">
+<li><p><strong>Vite</strong> runs via <code class="docutils literal notranslate"><span class="pre">//web:dev_server</span></code>, a <code class="docutils literal notranslate"><span class="pre">js_run_devserver</span></code> on Bazel’s node
+toolchain + the Bazel-linked <code class="docutils literal notranslate"><span class="pre">//web:node_modules</span></code> (materialized from the
+repository cache — <code class="docutils literal notranslate"><span class="pre">jsqr</span></code> and every other import included). No <code class="docutils literal notranslate"><span class="pre">pnpm</span> <span class="pre">install</span></code>.</p></li>
+<li><p><strong>The M2 backend</strong> is <code class="docutils literal notranslate"><span class="pre">//pi/server:serve</span></code>, a <code class="docutils literal notranslate"><span class="pre">rules_python</span></code> py_binary with a
+hermetic interpreter — serving the §7 WebSocket, <code class="docutils literal notranslate"><span class="pre">/maps</span></code>, and the wasm dirs
+Vite proxies to.</p></li>
+<li><p><strong>ibazel</strong> is <code class="docutils literal notranslate"><span class="pre">//third_party/ibazel</span></code> — the standalone <code class="docutils literal notranslate"><span class="pre">bazel-watcher</span></code> binary
+fetched by Bazel (pinned by sha256, per platform), <em>not</em> the <code class="docutils literal notranslate"><span class="pre">&#64;bazel/ibazel</span></code>
+npm package, so the watch layer is Node-free too.</p></li>
+</ul>
+<p>The only host tools involved are <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code> (the build tool) and <code class="docutils literal notranslate"><span class="pre">openssl</span></code> (the
+self-signed cert, shared with <code class="docutils literal notranslate"><span class="pre">//web:serve</span></code> via <code class="docutils literal notranslate"><span class="pre">.ledmapper/ssl</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">//web:dev</span></code> (<code class="docutils literal notranslate"><span class="pre">dev_watch.sh</span></code>) is the top-level driver: it makes the cert, starts
+the hermetic M2 backend, and execs the hermetic <code class="docutils literal notranslate"><span class="pre">ibazel</span></code> on <code class="docutils literal notranslate"><span class="pre">//web:dev_server</span></code>.
+ibazel watches the devserver’s inputs and, via <code class="docutils literal notranslate"><span class="pre">js_run_devserver</span></code>’s notify
+integration, re-syncs changed sources into the run tree so Vite HMR applies them
+— live reload, sandbox-correct. TLS, port, and the backend URL are passed to
+Vite through <code class="docutils literal notranslate"><span class="pre">LEDMAPPER_*</span></code> env (see <code class="docutils literal notranslate"><span class="pre">vite.config.ts</span></code>). It nests a <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code>
+invocation on purpose: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:dev</span></code> is the single entry point.</p>
+<p>Run the server directly (one-shot, no watch — still hermetic) with
+<code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:dev_server</span></code>; you just don’t get the ibazel-driven reload.</p>
+<blockquote>
+<div><p>Note: <code class="docutils literal notranslate"><span class="pre">src/**</span></code> edits hot-reload through ibazel’s file-sync into the run tree.
+The wasm bundles are served by the backend from a snapshot taken at launch, so
+a change to a Rust/C++ effect or the Python server needs a restart (Ctrl-C +
+re-run) — the app/UI loop itself is fully live.</p>
+</div></blockquote>
+<p>The older two-terminal loop still works if you prefer driving Vite yourself off
+a local <code class="docutils literal notranslate"><span class="pre">pnpm</span> <span class="pre">install</span></code> (plain http, no TLS, needs host Node/pnpm):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/server:serve<span class="w"> </span>--<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--session-dir<span class="w"> </span>/tmp/lm/s<span class="w"> </span>--maps-dir<span class="w"> </span>/tmp/lm/m
 pnpm<span class="w"> </span>--dir<span class="w"> </span>web<span class="w"> </span>dev<span class="w">        </span><span class="c1"># http://localhost:5173</span>
 </pre></div>

@@ -166,6 +166,44 @@ ops × 30 fps ≈ 230k ops/s ≈ low-single-digit % CPU even in soft-float. `int
 carries both, so a script chooses its precision/speed tradeoff without any VM
 change.
 
+### Complete native datatype ISA (FUG-122)
+
+The goal: it is possible to run an entire `update()`/`shade()` — **inputs, math,
+colour and output** — without a single soft-float op. Three additions make that
+reachable:
+
+- **Every opcode has a strictly-integer/fixed twin.** The vector, transcendental
+  and colour ops that were float-only now have counterparts operating on the raw
+  scaled-integer slot word: `SqrtFix`, `Dot/Length/Distance/Normalize/Cross/
+  Scale/Smoothstep/ClampV/MixV` (fixed), `Atan2Fix/LogFix/TanFix/PowFix`,
+  `Hsv2RgbFix/PaletteFix`, `HashFix/Hash3Fix`. A carried `frac` operand (0 = int,
+  6/14/16 = the fixed formats) lets one opcode serve every width. An exhaustive
+  opcode-coverage test (`fx_vm/tests/vm.rs`) fails to compile if a new opcode is
+  added without classifying its fixed path.
+- **Float-free inputs — fixed context, VM-side.** `LoadCtxFix id comp frac`
+  pushes one scalar context component already in Q16.16 fixed/int, so no float
+  op runs inside the VM for `led.pos`/`uv`/`s`/`dist`/`time`. `Frame`/`Led` carry
+  both the `f32` and `*_fix` mirrors. The compiler sets a `.fxb` flag
+  (`FLAG_USES_CTXFIX`) when it emits `LoadCtxFix`; the host builds the fixed
+  mirrors **only for those programs** (all-float effects pay zero hot-path
+  overhead and the resident cache is unchanged). The mirrors are derived from the
+  per-frame map fetch — a small footprint on the FPU-less core, and a natural
+  place to fold in a precomputed per-map fixed-position table later if profiling
+  wants it.
+- **Float-free output.** `RetRgb8` (int 0..255 channels) and `RetRgbFix frac`
+  (Q1.frac channels in [0,1]) emit the 8-bit colour directly, skipping the
+  `clamp01()*255` soft-float epilogue.
+
+**Compiler.** Vectors stay float in v1; the fixed path is expressed by **scalar
+decomposition** plus fixed **colour assembly**, which is exactly where the
+soft-float cost sits on an FPU-less core. The compiler: lowers a cast of a scalar
+context component (`fixed16(led.pos.x)`) to a single `LoadCtxFix`; folds literal
+casts (`fixed16(1.0)`) to a fixed const at compile time; routes `hsv2rgb`/
+`palette`/`rgb`/`rgb8` on fixed/int args to the fixed colour ops; and returns them
+via `RetRgbFix`/`RetRgb8`. Float effects compile byte-identically. Fixed-vector
+*algebra* opcodes exist in the ISA (with tests) but the front-end does not emit
+them yet — a follow-up if element-typed vectors are added.
+
 ## File format (`.fxb`)
 
 A flat, mmap-friendly container so the VM executes **directly from the flash
@@ -248,3 +286,115 @@ As a few examples:
 - 2D video mapping: stream bitmap frames from client, sample bitmap in uv space like `texture()`
 
 The effects runtime should have a dedicated arena allocator for any data structures needed so as to prevent the firmware from locking up because of heap exhaustion.
+
+## Bytecode optimizer + superinstructions (FUG-125)
+
+The compiler front-end (`fx_compiler/src/lib.rs`) is a single-pass emitter. Rather
+than rewrite it around an SSA IR, the optimizer (`fx_compiler/src/opt.rs`) runs
+over the **emitted `.fxb` code section** just before serialization: it decodes the
+flat byte stream into a linear instruction list where every branch/call/entry
+target is a **stable instruction id** (not a byte offset), applies a fixed point
+of passes, then re-encodes and recomputes the relative branches. Because targets
+are ids, a pass can delete/splice/reorder instructions with no offset math; if a
+pass ever leaves a dangling target or an out-of-`i16` branch, `encode` bails and
+the *original* bytes ship — correctness is absolute, optimization best-effort.
+
+Passes (the issue's "local and scalar" list):
+
+- **Constant folding** — `PushConst a; PushConst b; <scalar binop>` and
+  `PushConst a; <unop>` collapse to one `PushConst`. Every fold reproduces the
+  VM's exact arithmetic (wrapping ints, `>>frac` fixed, IEEE `f32`, guarded
+  divide-by-zero), so a folded constant equals what the interpreter would compute.
+- **Algebraic simplification / strength reduction** — `x*1`, `x/1`, `x-0`,
+  `vec*1`, and `-(-x)` involutions, on both float and int/Q16.16 twins. Float
+  `x+0.0` is deliberately *excluded* (it flushes `-0.0`→`+0.0`, not a true identity).
+- **Dead local elimination** — a single-assignment/single-use temp
+  (`StoreLocal s; LoadLocal s` whose slot is touched nowhere else) drops both ops,
+  leaving the value on the stack. Disabled in the presence of dynamic-index local
+  ops (`*LocalIdx`), which could alias any slot.
+- **Constant-condition branch folding + dead-code elimination** — a known
+  `PushConst c; BrFalse` becomes an unconditional `Jmp` or vanishes, and a CFG
+  reachability walk from both entries removes the orphaned code.
+
+**Superinstructions.** Guided by the dynamic profiler (`tools/fx_profile`, which
+ranks the hottest adjacent opcode pairs across the corpus), three fused opcodes
+were added to the VM ISA (appended after `FillLocal`, so every existing
+discriminant is stable) and emitted by an optimizer fusion pass:
+
+- `TeeLocal s,n` — `StoreLocal; LoadLocal` (the temp-reload idiom).
+- `IncLocalI s,c` — `LoadLocal; PushConst; AddI; StoreLocal` (the `i = i + k`
+  counter/index idiom).
+- `BrCmpI k,rel` — `CmpI; BrFalse` (the integer loop-condition tail).
+
+Each is a byte-for-byte fusion of the sequence it replaces, trading two-to-four
+dispatches for one on the FPU-less core.
+
+**Correctness + hill-climb loop.** `fx_compiler/tests/optimizer.rs` is both the
+safety net and the simulator the issue asks for: it compiles every corpus program
+with and without `-O`, runs BOTH through the real fx_vm (`update()` once +
+`shade()` across an LED raster over several frames), and asserts **bit-identical**
+RGB. It then hill-climbs the fx_vm retired-op counter (a direct proxy for device
+dispatch cost, priced by the golden per-opcode profile) and fails on any
+regression. Corpus-wide retired-op reduction is ~15%, up to ~36% on
+constant-heavy programs and ~15% on the loop-dominated agentic effect.
+
+## On-device JIT (FUG-125)
+
+The ESP32-C6 core is RISC-V RV32IMC, so a hot straight-line block of the cheap
+integer/fixed opcodes (loop counters, index math, Q16.16 multiplies) can be
+lowered to a **short position-independent code (PIC) segment** that runs natively,
+skipping the interpreter's per-opcode fetch/decode/dispatch/budget overhead.
+`firmware/fx_jit` is that JIT:
+
+- **`rv32`** encodes the small RV32IM instruction set the translator emits (pinned
+  by unit tests to known ISA words).
+- **`compile(&[Ir]) -> Segment`** lowers a supported straight-line block. The
+  segment is PIC — it touches memory only through three base registers (operand
+  stack `a0`, locals `a1`, const pool `a2`) and returns via `ret`, so it can be
+  copied into an executable IRAM window and called as a C function. The operand
+  stack is modelled exactly like the interpreter; compile-time depth may go
+  negative (consuming operands already on the stack), reported via
+  `Segment::min_depth` so the VM gates on the live `sp`, with `net_delta` advancing
+  `sp` after the call.
+- Correctness is established entirely on the host: `emu` is a minimal RV32IM
+  interpreter that executes the emitted segment, `reference` re-runs the block with
+  `fx_vm`'s exact integer semantics, and a differential test runs thousands of
+  random blocks over random state through both and asserts identical results.
+  Unjitable blocks (bad `frac`, out-of-range offsets) are rejected, never
+  miscompiled.
+
+`fx_jit` is `no_std` (the firmware links only the no-alloc `compile_into` /
+`plan_blocks_into` path; the `Vec`-based API is behind an `alloc` feature).
+
+**On-device integration (wired + validated).** At effect load the firmware
+(`ffi.rs::fx_build_jit`) scans the resident bytecode with `plan_blocks_into`,
+compiles each hot block into one executable region, patches `Op::JitCall` over the
+block's first bytes, and installs a `JitBlock` table on the VM; `JitCall` dispatch
+calls the native segment against the live stack/locals/consts and resumes
+interpreting at the block end. The interpreter runs everything else and is the
+always-on fallback (JIT disabled, or the region full).
+
+The executable memory is a **bounded W^X carve-out**. The arduino-esp32 C6 build
+ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
+than weaken memory protection globally, the firmware makes one small static buffer
+read+write+execute via a spare RISC-V **PMP** entry: entries 3/4 are free and
+unlocked and, being lower-index than the SRAM data-region entries (PMP is
+lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
+range — W^X stays enforced everywhere else.
+
+Validated on a real ESP32-C6 over HITL with a fixed-point-heavy `shade()`: the
+native JIT renders **bit-identically** to the interpreter and cuts per-LED
+`shade()` cost by ~**2.1×** (≈10077 → 4723 cycles). The boot self-bench
+`:esp32c6_fxjitbench` reproduces the A/B (`lm_fx_set_jit_enabled` toggles it on one
+firmware).
+
+**Shipped off by default.** This device is heap-critically-tight (mbedtls needs
+~28 KB for a TLS session), so the JIT's static footprint is kept to ~3.4 KB (the
+segments compile straight into the 2 KB exec region — no scratch copy — plus a
+small bounded planning scratch), and `FX_JIT_ENABLED` defaults **false**: the
+interpreter is the shipped path (it is also what the golden cost model the app +
+`fx_bench` validate against measures), and the PMP carve-out is armed only when the
+JIT is explicitly enabled via `lm_fx_set_jit_enabled`. An earlier revision that
+enabled it by default with ~15 KB of scratch starved the WiFi/TLS heap and broke
+provisioning — the small-footprint, opt-in design keeps the default firmware's RAM
+profile ~unchanged from baseline.
