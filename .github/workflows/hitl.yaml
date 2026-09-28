@@ -44,13 +44,13 @@ on:
         description: 'Target a specific rig base URL (else pick a free one from HITL_SERVERS)'
         required: false
         default: ''
-  # Twice-daily run on main (09:00 + 21:00 UTC) to keep the fx_bench perf-drift
-  # dashboards + the Loki CI-metrics warm with fresh samples, and to catch flakes
-  # that only surface between merges (the netstack suite is flake-sensitive under
-  # real-RF/parallel-load conditions). The fxbench-ingest cron picks these runs'
-  # logs up into the dashboards; push-ci-metrics reports each run's pass/fail.
-  schedule:
-    - cron: '0 9,21 * * *'
+  # NOTE: the periodic "warm the perf-drift dashboards + catch between-merge flakes"
+  # run is NO LONGER a GitHub `schedule:` cron — GitHub drops/heavily delays
+  # scheduled runs on this repo (last seen 2.7-5.6h late, then skipped entirely). It
+  # is driven every 6h (4x/day) by a launchd job on the always-on Mac
+  # (pi/hitl/nix/hitl-darwin.nix `hitl-schedule-dispatch`) that POSTs a
+  # workflow_dispatch here. fxbench-ingest still picks these runs' logs up into the
+  # dashboards; push-ci-metrics reports each run's pass/fail.
 # Run HITL in parallel across PRs (FUG-102). The fleet opens many PRs at once,
 # and there are enough runners + Actions minutes to service them, so don't gate
 # HITL runs against each other at the CI layer. Bench contention is resolved a
@@ -66,19 +66,19 @@ on:
 # its own in-flight run (the abandoned reservation's lease expires and managerd
 # reclaims the rig) rather than spending a bench slot on a stale commit.
 concurrency:
-  # Scheduled (warm-the-dashboards) runs get their own group so they never cancel —
-  # or get canceled by — an authoritative push/PR run on the same ref.
-  group: hitl-tests-${{ github.event_name == 'schedule' && 'scheduled' || github.event.pull_request.number || github.ref }}
+  # Periodic/manual dispatch runs (the Mac 6h cron drives these now) get their own
+  # group so they never cancel — or get canceled by — an authoritative push/PR run
+  # on the same ref.
+  group: hitl-tests-${{ github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   hitl_tests:
     # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
-    # push (post-merge on main), schedule (twice-daily warm run), and
-    # workflow_dispatch only fire on this repo, so they're always allowed; PRs
-    # are gated to same-repo head.
+    # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
+    # manual runs) only fire on this repo, so they're always allowed; PRs are gated
+    # to same-repo head.
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
