@@ -288,6 +288,14 @@ pub struct Player {
     /// hook. The firmware polls `output_brightness_gen` to notice a change.
     output_brightness: f32,
     output_brightness_gen: u32,
+    /// Global FX crossfade (FUG-110): `crossfade` is the blend position 0.0 (all
+    /// deck A) .. 1.0 (all deck B); `crossfade_mode` selects the blend colour
+    /// space (0 = linear RGB, 1 = linear HSV). RUNTIME-ONLY like brightness (a
+    /// reboot returns to 0.0 / RGB). Set by `set_crossfade`; the firmware polls
+    /// `crossfade_gen` to notice a change and feed it to the fx blend.
+    crossfade: f32,
+    crossfade_mode: u32,
+    crossfade_gen: u32,
     /// Per-channel hardware output config (GPIO + wire color order), configurable
     /// from the Hardware Setup page via `set_hardware_config` and reported by
     /// `hardware_config_state`. `hw_gpio[ch] < 0` means "not yet seeded" — the
@@ -335,6 +343,9 @@ impl Player {
             color_correction_commit: true,
             output_brightness: 1.0,
             output_brightness_gen: 0,
+            crossfade: 0.0,
+            crossfade_mode: 0,
+            crossfade_gen: 0,
             hw_gpio: [-1; HW_CHANNELS],
             hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
             hw_config_gen: 0,
@@ -452,6 +463,15 @@ impl Player {
             CMsg::SetBrightness(m) => {
                 self.output_brightness = (m.r#brightness as f32).clamp(0.0, 1.0);
                 self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
+                Some(self.welcome())
+            }
+            // Global FX crossfade (FUG-110): store the clamped position + mode and
+            // bump the gen. The firmware polls the gen (like brightness) to feed
+            // the fx blend. Runtime-only, so nothing is persisted.
+            CMsg::SetCrossfade(m) => {
+                self.crossfade = (m.r#position as f32).clamp(0.0, 1.0);
+                self.crossfade_mode = m.r#mode;
+                self.crossfade_gen = self.crossfade_gen.wrapping_add(1);
                 Some(self.welcome())
             }
             // Hardware wiring config: GPIO / LED type / wire color order per
@@ -825,6 +845,23 @@ impl Player {
         self.output_brightness
     }
 
+    /// Generation counter bumped on every `set_crossfade`; the firmware polls it
+    /// (like brightness) to notice a change to the global FX crossfade.
+    pub fn crossfade_gen(&self) -> u32 {
+        self.crossfade_gen
+    }
+
+    /// The active FX crossfade position in 0.0..=1.0 (0.0 = all deck A, 1.0 =
+    /// all deck B).
+    pub fn crossfade(&self) -> f32 {
+        self.crossfade
+    }
+
+    /// The active FX crossfade mode (0 = linear RGB, 1 = linear HSV).
+    pub fn crossfade_mode(&self) -> u32 {
+        self.crossfade_mode
+    }
+
     fn welcome(&self) -> pb::ServerMessage {
         let mut w = pb::Welcome {
             r#session_id: self.session_id.clone(),
@@ -836,6 +873,8 @@ impl Player {
             ..Default::default()
         };
         w.set_brightness(self.output_brightness as f64);
+        w.set_crossfade(self.crossfade as f64);
+        w.set_crossfade_mode(self.crossfade_mode);
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
         // NO solver_bench_ms: chooseSolvePlacement(phone, null) == "phone".

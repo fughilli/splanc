@@ -45,12 +45,16 @@ interface MidiConfig {
   semantics: SemanticControl[];
   /** effectId -> bindings. */
   bindings: Record<string, UniformBinding[]>;
+  /** Show-Mode action id -> the physical control bound to it (FUG-110). Unlike
+   * uniform bindings these map straight to a fixed set of transport actions
+   * (crossfade, play/pause, cue, list navigation) rather than to a semantic. */
+  showBindings: Record<string, MidiControlId>;
 }
 
 const STORAGE_KEY = "ledmapper.midi";
 
 function emptyConfig(): MidiConfig {
-  return { semantics: [], bindings: {} };
+  return { semantics: [], bindings: {}, showBindings: {} };
 }
 
 function read(): MidiConfig {
@@ -61,6 +65,8 @@ function read(): MidiConfig {
     return {
       semantics: Array.isArray(parsed.semantics) ? parsed.semantics : [],
       bindings: parsed.bindings && typeof parsed.bindings === "object" ? parsed.bindings : {},
+      showBindings:
+        parsed.showBindings && typeof parsed.showBindings === "object" ? parsed.showBindings : {},
     };
   } catch {
     return emptyConfig();
@@ -211,6 +217,51 @@ class MidiStore {
     cfg.bindings[effectId] = bindings.slice();
     write(cfg);
     this.emit();
+  }
+
+  // -- Show-Mode action bindings (FUG-110) --------------------------------
+
+  /** All Show-Mode action bindings (action id -> physical control). */
+  showBindings(): Record<string, MidiControlId> {
+    return read().showBindings;
+  }
+
+  /** The control bound to a Show-Mode action, if any. */
+  showBindingFor(action: string): MidiControlId | undefined {
+    return read().showBindings[action];
+  }
+
+  /** The Show-Mode action a physical control drives (reverse lookup by key),
+   * so the router can dispatch a live event. */
+  showActionForControl(key: string): string | undefined {
+    const b = read().showBindings;
+    for (const action of Object.keys(b)) {
+      if (controlKey(b[action]!) === key) return action;
+    }
+    return undefined;
+  }
+
+  /** Bind a physical control to a Show-Mode action. A control already bound to
+   * another action is moved (one control drives one action). */
+  setShowBinding(action: string, control: MidiControlId): void {
+    const cfg = read();
+    const key = controlKey(control);
+    for (const a of Object.keys(cfg.showBindings)) {
+      if (controlKey(cfg.showBindings[a]!) === key) delete cfg.showBindings[a];
+    }
+    cfg.showBindings[action] = control;
+    write(cfg);
+    this.emit();
+  }
+
+  /** Remove a Show-Mode action binding. */
+  clearShowBinding(action: string): void {
+    const cfg = read();
+    if (action in cfg.showBindings) {
+      delete cfg.showBindings[action];
+      write(cfg);
+      this.emit();
+    }
   }
 
   /**
