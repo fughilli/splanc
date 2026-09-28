@@ -4,11 +4,14 @@
 
 <p align="center">
   <a href="https://github.com/fughilli/splanc/actions/workflows/test.yaml"><img
-    src="https://github.com/fughilli/splanc/actions/workflows/test.yaml/badge.svg"
+    src="https://github.com/fughilli/splanc/actions/workflows/test.yaml/badge.svg?branch=main&event=push"
     alt="Test" /></a>
   <a href="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml"><img
-    src="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml/badge.svg"
+    src="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml/badge.svg?branch=main&event=push"
     alt="HITL tests" /></a>
+  <a href="https://splanc.grafana.net/public-dashboards/0ce888d9584940a6845438d376555b51"><img
+    src="https://img.shields.io/badge/HITL%20status-Grafana-f46800?logo=grafana&logoColor=white"
+    alt="HITL status" /></a>
   <a href="https://ledmapper.pages.dev"><img
     src="https://img.shields.io/badge/live%20app-ledmapper.pages.dev-084de7"
     alt="Live app" /></a>
@@ -87,6 +90,8 @@ The app is a PWA — nothing to install:
 
 ## Learn more
 
+- **Using the app:** [`docs/user-guide.md`](./docs/user-guide.md) — a walkthrough of
+  every feature (also an interactive tutorial in the app, from Settings ▸ Help)
 - **Contributing & building from source:** [`DEVELOPERS.md`](./DEVELOPERS.md)
 - **Design & architecture:** [`led-mapper-design.md`](./led-mapper-design.md) —
   the durable spec — plus [`docs/`](./docs)
