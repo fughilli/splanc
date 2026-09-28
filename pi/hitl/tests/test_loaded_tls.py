@@ -61,36 +61,38 @@ def test_texture_frame_fits_boundary():
 
 
 def test_scan_serial_clean_is_empty():
+    # Netstack log lines the scan must NOT flag: a normal handshake err that is not
+    # -0x7f00 (a shed/client-abort, not an OOM) is benign.
     clean = "\n".join(
         [
-            "[wss] TLS player on :443 (heap=120000)",
-            "[wss] re-issuing cert with SAN IP:192.168.4.2 (heap=98000); restarting TLS",
-            "I (1234) esp-tls: handshake ok",
-            "Dynamic Impl: alloc(8866 bytes) ok",  # benign alloc trace, not a failure
+            "[wss] TLS player on :443",
+            "[wss] re-issuing cert with SAN IP:192.168.4.2; restarting TLS",
+            "*** TLS handshake err -0x7280 ***",  # peer close / not an alloc failure
+            "[heap] free=118000 max=90000",  # a heap stat line, not the failed-alloc hook
         ]
     )
     assert scan_serial_for_oom(clean) == []
 
 
-def test_scan_serial_flags_session_create_failure():
-    serial = "E (5000) esp-tls: esp_tls_create_server_session failed, 0x7f00"
+def test_scan_serial_flags_heap_alloc_failure():
+    serial = "[heap] alloc FAILED: 28672 B caps=0x1c00 in tls_setup  (free=12000 max=9000)"
     hits = scan_serial_for_oom(serial)
     assert len(hits) == 1
-    assert "esp_tls_create_server_session failed" in hits[0]
+    assert "alloc FAILED" in hits[0]
 
 
-def test_scan_serial_flags_mbedtls_alloc_failure():
-    serial = "E (5001) mbedtls: Dynamic Impl: alloc(8866 bytes) failed"
+def test_scan_serial_flags_handshake_alloc_error():
+    serial = "*** TLS handshake err -0x7f00 ***"
     hits = scan_serial_for_oom(serial)
     assert len(hits) == 1
-    assert "alloc(8866 bytes) failed" in hits[0]
+    assert "-0x7f00" in hits[0]
 
 
 def test_scan_serial_is_case_insensitive_and_counts_each_line():
     serial = "\n".join(
         [
-            "esp_tls_create_server_session FAILED",
-            "DYNAMIC IMPL: ALLOC(8866 bytes) FAILED",
+            "[HEAP] ALLOC FAILED: 28672 B",
+            "*** tls handshake err -0X7F00 ***",
             "unrelated line",
         ]
     )
@@ -98,9 +100,10 @@ def test_scan_serial_is_case_insensitive_and_counts_each_line():
 
 
 def test_reexports_load_fixtures():
-    # The gate loads the device via the shared sibling fixtures.
-    m = synth_output_map(768, "__fug133")
+    # The gate loads the device via the shared sibling fixtures. 512 = LM_MAX_LEDS
+    # (led_caps.bzl), the worst case the driver defaults to.
+    m = synth_output_map(512, "__fug133")
     assert m["type"] == "submit_map"
-    assert m["map"]["led_count"] == 768
+    assert m["map"]["led_count"] == 512
     src = bars_effect_src(40, 40)
     assert "texture" in src and "40, 40" in src

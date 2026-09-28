@@ -1,49 +1,64 @@
-"""On-hardware wss:443 / cert-page TLS gate under worst-case load (FUG-133).
+"""On-hardware wss:443 handshake gate under worst-case heap load (FUG-133).
 
-The field failure PR #114 chased: the HTTPS certificate-trust page timed out
-(ERR_CONNECTION_CLOSED) and wss:443 handshakes failed — because mbedTLS could not
-allocate its ~28 KB session on a heap starved by a resident map + effect
-("esp_tls_create_server_session failed, 0x7f00" / "Dynamic Impl: alloc(...)
-failed"). :rename_wss exercises the wss re-issue path but only on a CLEAN device,
-so it never reproduces the OOM-during-handshake that actually broke.
+The field failure PR #114 chased: on a heap already loaded with a resident map +
+a texture-sampling effect + a streamed texture keyframe, a fresh wss:443 handshake
+could not allocate its mbedTLS session ("esp_tls_create_server_session failed,
+0x7f00" / "Dynamic Impl: alloc(...) failed") — the HTTPS cert-trust page timed out
+(ERR_CONNECTION_CLOSED) and wss handshakes failed until reboot. :rename_wss and
+:tls_churn exercise the wss re-issue / connection-churn paths but only on a CLEAN
+device, so neither reproduces the OOM-during-handshake-on-a-LOADED-heap that
+actually broke.
 
-This driver reproduces it directly. It reserves/flashes/provisions like the
-sibling drivers, then:
+This driver reproduces that precondition directly. It reserves/flashes/provisions
+like the sibling netstack drivers, then:
 
-  1. LOADs the device to its worst case over wss: a FULL map (kMaxLeds LEDs), a
+  1. LOADs the device to its field worst case over wss — a FULL kMaxLeds map, a
      texture-sampling effect (activated), and a resident texture keyframe streamed
-     in — then drops that socket so its own TLS session frees while the
+     in — then DROPS that socket so its own TLS session frees while the
      map/effect/texture stay resident in device RAM.
-  2. GATEs: opens a FRESH wss:443 session and completes hello/welcome (assert),
-     keeps it OPEN so it holds one of the device's two mbedTLS slots, and THEN
-     does an HTTPS GET / on the landing/cert page and asserts 200 — forcing a
-     SECOND concurrent ~28 KB session on the now-loaded heap, the exact path that
-     OOM'd.
-  3. Asserts the captured serial shows NO esp_tls_create_server_session /
-     mbedTLS-alloc failure across the window.
+  2. On the loaded heap, runs `--rounds` SEQUENTIAL rounds, each: a FRESH wss:443
+     handshake + hello/welcome (this is the exact #114 alloc), then a SEQUENTIAL
+     cert-page HTTPS GET / (the netstack TLS server is SINGLE-connection — it
+     RST-sheds concurrent SYNs, so a *concurrent* second session is untestable;
+     the load, not concurrency, is what starves the heap), then a recovery probe.
+  3. GATEs on RECOVERY, reusing tls_churn_core's verdict: the run PASSes iff a
+     clean handshake works again after the final round within --recover-window
+     (the anti-wedge gate — the #114 bug is a TLS endpoint that never serves again
+     until reboot). Shedding a transient handshake that recovers is graceful, not
+     the bug. If serial is captured, the mbedTLS-alloc OOM scan is INFORMATIONAL
+     (a shed-line count in the RESULT context); RECOVERY is the gate, and a
+     crash/reboot marker on serial fails a run that otherwise PASSed.
 
-Like the other on-hardware drivers this is `bazel run`, never `bazel test`.
+Why recovery and not a strict single-shot "handshake + GET==200" assert: that
+first cut (this PR's original form) red-lined the genuine wedge because a
+transient shed-then-recover on a heap-tight board is graceful degradation, not the
+regression (the FUG-136 lesson — see tls_churn_core). NOTE: on UNFIXED firmware
+this gate can legitimately go red on the lane (the wedge reproducing) — that's the
+point, not a test defect.
 
-    bazel run //pi/hitl/harness:loaded_tls
-    # or, against an already-reachable board (skips reserve/flash/provision +
-    # the serial assertion — no rig to read the console):
-    bazel run //pi/hitl/harness:loaded_tls -- --device-ws wss://<ip>/ws
+Like the other on-hardware drivers this is `bazel run`, never `bazel test`:
+
+    bazel run //pi/hitl/harness:loaded_tls_netstack
+    # or, against an already-reachable board (skips reserve/flash/provision):
+    bazel run //pi/hitl/harness:loaded_tls_netstack -- --device-ws wss://<ip>/ws
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import os
 import ssl
 import subprocess
-import sys
 import tempfile
 import threading
 import time
+from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlparse
 
+import hitl_ws
 from loaded_tls_core import (
     bars_effect_src,
     rgb565_gradient_frame,
@@ -54,14 +69,18 @@ from loaded_tls_core import (
     texture_frame_fits,
 )
 from map_upload_core import window_plan
+from tls_churn_core import FAIL, Round, classify, result_line, run_status, tally, verdict
 
 
 def _log(msg: str) -> None:
-    print(msg, file=sys.stderr, flush=True)
+    print(msg, flush=True)
 
 
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
-_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+
+# Crash/reboot markers on serial (a wedge that took the whole chip, not just the
+# TLS endpoint). Mirrors the set tls_churn / rename_wss grep for.
+_CRASH_MARKERS = ("PANIC", "Guru Meditation", "abort()", "Backtrace:", "rst:0x", "assert failed")
 
 
 def _rlocation(rloc: str) -> str | None:
@@ -79,7 +98,12 @@ def default_fx_compile() -> str:
 
 
 def default_flashbundle() -> str | None:
-    return _rlocation(_BUNDLE_RUNFILE)
+    # HITL_BUNDLE_RUNFILE lets the loaded_tls_netstack target point at the netstack
+    # firmware bundle in its runfiles without a code change (mirrors tls_churn).
+    runfile = os.environ.get(
+        "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar"
+    )
+    return _rlocation(runfile)
 
 
 def compile_fx_src(fx_compile: str, src: str) -> bytes:
@@ -102,10 +126,20 @@ def compile_fx_src(fx_compile: str, src: str) -> bytes:
                 pass
 
 
-# -- WebSocket plumbing (mirrors the sibling drivers) -------------------------
+# -- WebSocket / TLS plumbing (mirrors the sibling netstack drivers) -----------
 
 
-async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 15.0) -> dict[str, Any]:
+def _ssl_ctx(insecure: bool) -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    if insecure:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+async def _rpc(
+    sock, flat: dict[str, Any], expect: str, timeout: float = hitl_ws.RPC_TIMEOUT
+) -> dict[str, Any]:
     from server import proto_wire
 
     await sock.send(proto_wire.encode_client(flat))
@@ -119,27 +153,24 @@ async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 15.0) -
         # ignore unsolicited frames until the awaited reply arrives.
 
 
-def _ssl_ctx(insecure: bool) -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    if insecure:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    return ctx
-
-
-async def _connect_once(ws_url: str, insecure: bool):
+async def _connect_once(ws_url: str, insecure: bool, open_timeout: float = hitl_ws.OPEN_TIMEOUT):
     """One wss connect + hello/welcome. Returns (sock, welcome) or raises."""
     import websockets
 
     ctx = _ssl_ctx(insecure) if ws_url.startswith("wss:") else None
-    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ctx, open_timeout=8)
-    welcome = await _rpc(
-        sock, {"type": "hello", "client": "hitl_loaded_tls", "app_version": "1"}, "welcome"
-    )
+    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ctx, open_timeout=open_timeout)
+    try:
+        welcome = await _rpc(
+            sock, {"type": "hello", "client": "hitl_loaded_tls", "app_version": "1"}, "welcome"
+        )
+    except BaseException:
+        await sock.close()
+        raise
     return sock, welcome
 
 
 async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
+    """Retry connect+hello until it works or the settle deadline passes."""
     import websockets
 
     while True:
@@ -152,12 +183,67 @@ async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
             await asyncio.sleep(1.5)
 
 
+async def _cert_get(host: str, port: int, insecure: bool, timeout: float) -> int | None:
+    """GET the TLS cert page `/` over a raw TLS stream (needs no extra deps).
+
+    Returns the HTTP status (200 when served), or None if the request never
+    completed. Under the netstack single-connection server this runs AFTER the
+    round's wss session has closed (sequential), so it opens the one slot itself.
+    """
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=_ssl_ctx(insecure), server_hostname=None),
+            timeout=timeout,
+        )
+        req = f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        writer.write(req.encode())
+        await asyncio.wait_for(writer.drain(), timeout=timeout)
+        status_line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        parts = status_line.split()
+        if len(parts) >= 2 and parts[0].startswith(b"HTTP/"):
+            return int(parts[1])
+        return None
+    except BaseException:  # noqa: BLE001 — a shed/lost request is expected, report as None
+        return None
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+
+async def _recover(ws_url: str, insecure: bool, window_s: float) -> tuple[bool, float | None]:
+    """After a round, keep trying a clean handshake until one works or the window
+    expires. On the LOADED heap this recovery handshake IS the #114 alloc — a
+    device that can never re-handshake on the loaded heap fails here (the wedge).
+    Returns (recovered, seconds_to_recovery)."""
+    t0 = time.monotonic()
+    deadline = t0 + window_s
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            sock, _ = await _connect_once(ws_url, insecure)
+            await sock.close()
+            return True, time.monotonic() - t0
+        except BaseException as e:  # noqa: BLE001
+            if attempt <= 3 or attempt % 5 == 0:
+                _log(f"[recover] attempt {attempt} not yet: {type(e).__name__}: {e}")
+            await asyncio.sleep(1.0)
+    return False, None
+
+
+# -- LOAD the device to its worst-case resident state --------------------------
+
+
 async def _submit_map_sharded(sock, map_flat: dict[str, Any], label: str = "map") -> None:
     """Stream a big submit_map in UploadChunk windows (mirrors hitl_map_upload) —
     a full kMaxLeds map is ~46 KB, far past the single-frame path. Frames that
-    already fit one window take the ordinary single-frame path."""
-    import base64
-
+    already fit one window take the ordinary single-frame path. window_plan reads
+    HITL_CHUNK_BYTES at import; the netstack target pins it to 1024 (a 4096-byte
+    TLS record overflows the netstack record buffer -> mbedtls alloc failure)."""
     from server import proto_wire
 
     frame = proto_wire.encode_client(map_flat)
@@ -184,8 +270,6 @@ async def _load_device(sock, args, fxb: bytes) -> None:
     keyframe. Raises SystemExit if the effect doesn't declare the texture (a real
     failure — the device would drop our frame and the gate would test an unloaded
     board)."""
-    import base64
-
     from server import proto_wire
 
     # (1) A full map + strip length, so the effect renders over the whole strip.
@@ -259,74 +343,133 @@ async def _load_with_retry(ws_url: str, insecure: bool, args, fxb: bytes, settle
     raise SystemExit(f"FAIL: device load never completed after retries: {last}")
 
 
-def _blocking_https_get(url: str, insecure: bool, timeout: float = 15.0) -> tuple[int, int]:
-    """GET `url` over TLS and return (status, body_len). Blocking (http.client),
-    so the caller runs it in a thread while the wss socket stays open."""
-    import http.client
+# -- The gate: sequential handshake + cert GET on the loaded heap --------------
 
-    u = urlparse(url)
-    conn = http.client.HTTPSConnection(
-        u.hostname, u.port or 443, timeout=timeout, context=_ssl_ctx(insecure)
-    )
+
+async def _loaded_round(
+    idx: int,
+    ws_url: str,
+    host: str,
+    port: int,
+    insecure: bool,
+    open_timeout: float,
+    recover_window: float,
+) -> Round:
+    """One SEQUENTIAL probe of the loaded heap: a fresh wss:443 handshake+welcome
+    (the #114 alloc), then — after it closes — a cert-page GET /, then a recovery
+    handshake. Netstack is single-connection, so these are strictly sequential (no
+    concurrent second session). Reuses tls_churn_core's Round so the PASS/FAIL is
+    the unit-tested recovery verdict."""
+    _log(f"[round {idx}] fresh wss:443 handshake on the loaded heap at :{port}…")
     try:
-        conn.request("GET", u.path or "/")
-        resp = conn.getresponse()
-        body = resp.read()
-        return resp.status, len(body)
-    finally:
-        conn.close()
+        sock, welcome = await _connect_once(ws_url, insecure, open_timeout)
+        await sock.close()
+        hs = "ok"
+        _log(f"[round {idx}] handshake OK under load; welcome name={welcome.get('deviceName')!r}")
+    except BaseException as e:  # noqa: BLE001 — bucket every failure kind
+        hs = classify(e)
+        _log(f"[round {idx}] handshake did not complete under load: {type(e).__name__}: {e}")
 
+    # Sequential (not concurrent) cert-page GET, after the wss session has closed.
+    cert_status = await _cert_get(host, port, insecure, open_timeout * 2)
+    _log(f"[round {idx}] sequential cert-page GET / -> {cert_status}")
 
-async def _gate(ws_url: str, https_url: str, insecure: bool) -> dict[str, Any]:
-    """The gate itself: a FRESH wss:443 handshake (hello/welcome) that stays OPEN
-    while an HTTPS GET / forces a SECOND concurrent TLS session on the loaded heap.
-    Returns the welcome, the HTTP status, and whether both legs succeeded."""
-    result: dict[str, Any] = {"wss_ok": False, "http_status": None, "http_len": None}
-    sock, welcome = await _connect_once(ws_url, insecure)
-    result["wss_ok"] = True
-    result["welcome_name"] = welcome.get("deviceName")
-    _log(
-        f"[gate] fresh wss:443 handshake OK under load; welcome name={welcome.get('deviceName')!r}"
+    recovered, recover_s = await _recover(ws_url, insecure, recover_window)
+    if recovered:
+        _log(f"[round {idx}] wss RECOVERED {recover_s:.1f}s after the round")
+    else:
+        _log(
+            f"[round {idx}] wss did NOT recover within {recover_window:g}s on the loaded heap — WEDGE"
+        )
+    return Round(
+        index=idx,
+        outcomes=tally([hs]),
+        cert_status=cert_status,
+        recovered=recovered,
+        recover_s=recover_s,
     )
-    try:
-        # wss session stays open (holds one of the 2 mbedTLS slots); the GET forces
-        # the second. Run the blocking GET in a thread so the socket isn't touched.
-        status, blen = await asyncio.to_thread(_blocking_https_get, https_url, insecure)
-        result["http_status"] = status
-        result["http_len"] = blen
-        _log(f"[gate] concurrent HTTPS GET / -> {status} ({blen} B) while wss held open")
-    finally:
+
+
+async def _drive(
+    ws_url: str, insecure: bool, args, fxb: bytes, crashed: bool = False
+) -> dict[str, Any]:
+    parsed = urlparse(ws_url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+
+    # (0) Baseline: a clean handshake must work on the UNLOADED device before we
+    # pile on load, or the run proves nothing about OOM-under-load (vs. a device we
+    # simply could not reach). No baseline => SKIP (exit 0), never FAIL.
+    _log(f"[baseline] connect {ws_url} (settle up to {args.settle:g}s)")
+    t0 = time.monotonic()
+    baseline_ok = False
+    deadline = t0 + args.settle
+    while time.monotonic() < deadline:
         try:
+            sock, welcome = await _connect_once(ws_url, insecure)
             await sock.close()
-        except OSError:
-            pass
-    result["gate_ok"] = bool(result["wss_ok"]) and result["http_status"] == 200
-    return result
+            baseline_ok = True
+            _log(
+                f"[baseline] welcome after {time.monotonic() - t0:.1f}s: "
+                f"name={welcome.get('deviceName')!r}"
+            )
+            break
+        except BaseException as e:  # noqa: BLE001
+            _log(f"[baseline] not up yet ({type(e).__name__}); retrying…")
+            await asyncio.sleep(1.5)
 
+    round_results: list[Round] = []
+    load_error: str | None = None
+    if baseline_ok:
+        # LOAD the heap over its own connection, then drop it (its TLS session
+        # frees; the map/effect/texture stay resident), settle, then probe the
+        # loaded heap where the #114 alloc has to be found.
+        try:
+            _log(f"[load] loading device to worst case (settle up to {args.settle:g}s)")
+            await _load_with_retry(ws_url, insecure, args, fxb, args.settle)
+            await asyncio.sleep(1.5)  # let the load-connection's TLS session reclaim
+            for i in range(1, args.rounds + 1):
+                round_results.append(
+                    await _loaded_round(
+                        i, ws_url, host, port, insecure, args.open_timeout, args.recover_window
+                    )
+                )
+        except SystemExit as e:
+            load_error = str(e)
+            _log(f"[load] {load_error}")
+    else:
+        _log(f"[baseline] never came up in {args.settle:g}s — SKIP (cannot load/test on this run)")
 
-async def _drive(ws_url: str, https_url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
-    # LOAD over its own connection, then drop it (its TLS session frees; the
-    # map/effect/texture stay resident), settle, then run the gate on the loaded
-    # heap where the second concurrent session has to be found.
-    _log(f"[ws] loading device at {ws_url} (settle up to {args.settle:g}s)")
-    await _load_with_retry(ws_url, insecure, args, fxb, args.settle)
-    await asyncio.sleep(1.5)  # let the load-connection's ~28 KB session reclaim
-    return await _gate(ws_url, https_url, insecure)
-
-
-def _https_url_from_ws(ws_url: str) -> str:
-    """wss://host[:port]/ws -> https://host[:port]/ (the landing/cert page)."""
-    u = urlparse(ws_url)
-    scheme = "https" if u.scheme == "wss" else "http"
-    netloc = u.netloc
-    return f"{scheme}://{netloc}/"
+    status = run_status(baseline_ok, round_results, crashed)
+    v = verdict(baseline_ok, round_results, crashed)
+    reasons = list(v.reasons)
+    # A reachable device that never completed the LOAD (after retries) can't be
+    # tested on the loaded heap; with a good baseline that's a genuine FAIL (the
+    # map-upload/effect path wedged), not a SKIP.
+    if baseline_ok and load_error and not round_results:
+        status = FAIL
+        reasons = [f"device LOAD never completed on a reachable board: {load_error}", *reasons]
+    line = result_line(baseline_ok, round_results, crashed, status)
+    _log(line)
+    if status == FAIL:
+        for reason in reasons:
+            _log(f"[FAIL] {reason}")
+    return {
+        "baseline_ok": baseline_ok,
+        "rounds": [asdict(r) for r in round_results],
+        "crashed": crashed,
+        "status": status,
+        "reasons": reasons if status == FAIL else [],
+        "result_line": line,
+        "load_error": load_error,
+        "ok": status != FAIL,  # PASS and SKIP both exit 0; only FAIL exits non-zero
+    }
 
 
 def _monitor_thread(res, seconds: float, out: dict[str, Any]) -> threading.Thread:
-    """Capture the DUT serial console for `seconds` in the background so the
-    firmware's `[wss]`/heap/esp-tls lines flow while we load + gate (mirrors
-    rename_wss). Attaching resets the C6 once — we accept that, then let it
-    re-join from NVS before driving."""
+    """Capture the DUT serial console in the background for the whole run so a
+    crash/reboot (or the informational mbedTLS-alloc lines) are visible. Attaching
+    the USB-CDC resets the C6 once (drops the STA), so this is opt-in (--monitor)."""
 
     def _run():
         try:
@@ -342,61 +485,56 @@ def _monitor_thread(res, seconds: float, out: dict[str, Any]) -> threading.Threa
     return t
 
 
-def _report(result: dict[str, Any], oom_hits: list[str] | None) -> bool:
-    """Print the verdict and return True on PASS. PASS = a fresh wss handshake
-    completed, GET / returned 200, and (when serial was captured) no OOM line
-    appeared during the window."""
-    gate_ok = bool(result.get("gate_ok"))
-    if not result.get("wss_ok"):
-        _log("FAIL: fresh wss:443 handshake did not complete under load")
-    elif result.get("http_status") != 200:
-        _log(f"FAIL: cert-page HTTPS GET / returned {result.get('http_status')}, expected 200")
-    if oom_hits:
-        _log(f"FAIL: {len(oom_hits)} mbedTLS-OOM line(s) on serial during the window:")
-        for line in oom_hits:
-            _log(f"  {line}")
-    ok = gate_ok and not oom_hits
-    if ok:
-        note = "no OOM on serial" if oom_hits is not None else "serial not captured"
-        _log(
-            f"PASS: under a full map + effect + resident texture, a fresh wss:443 handshake "
-            f"completed and cert-page GET / returned 200 ({note})"
-        )
-    return ok
-
-
 def _dump_serial(serial: str) -> None:
-    _log("=== SERIAL (wss / heap / esp-tls / cert lines) ===")
+    _log("=== SERIAL (wss / heap / esp-tls / cert / crash lines) ===")
     for line in serial.splitlines():
         if any(
             k in line
             for k in (
                 "[wss]",
+                "[heap]",
                 "heap",
-                "esp_tls",
-                "Dynamic Impl",
+                "alloc FAILED",
+                "TLS handshake err",
                 "0x7",
-                "httpd_ssl",
                 "cert",
-                "PANIC",
-                "abort",
-                "rst:",
+                *_CRASH_MARKERS,
             )
         ):
             _log("  " + line)
 
 
-def run_on_hardware(args) -> bool:
+def _fold_serial(result: dict[str, Any], serial: str) -> None:
+    """Fold the captured serial into the result: crash markers gate a PASS -> FAIL;
+    the mbedTLS-alloc OOM scan is INFORMATIONAL (a shed-line count), never a gate."""
+    crashed = any(m in serial for m in _CRASH_MARKERS)
+    oom_hits = scan_serial_for_oom(serial)
+    _dump_serial(serial)
+    _log(f"[monitor] crash marker during run: {crashed}; mbedTLS-alloc OOM lines: {len(oom_hits)}")
+    for ln in oom_hits[:8]:
+        _log(f"  [oom] {ln}")
+    # Only a run that actually PASSed flips to FAIL on a crash — a crash on a SKIP
+    # (no baseline, nothing asserted) stays environmental, not a wedge.
+    if crashed and result.get("status") == "pass":
+        result["ok"] = False
+        result["status"] = FAIL
+        result["reasons"] = [*result.get("reasons", []), "crash/reboot marker on serial during run"]
+        result["result_line"] = result.get("result_line", "").replace(
+            "verdict=PASS", "verdict=FAIL"
+        )
+        _log("[FAIL] crash/reboot marker seen on serial during the loaded run")
+
+
+def run_on_hardware(args) -> int:
     fxb = compile_fx_src(args.fx_compile, bars_effect_src(args.tex_width, args.tex_height))
     _log(f"[fx] compiled {args.tex_width}x{args.tex_height} texture effect ({len(fxb)} B .fxb)")
 
-    # An explicit --device-ws reachable from here skips the rig (and the serial
-    # assertion — there's no rig console to read).
+    # An explicit --device-ws reachable from here skips the rig (and serial).
     if args.device_ws:
-        https_url = _https_url_from_ws(args.device_ws)
-        _log(f"[direct] wss={args.device_ws} https={https_url} (no serial capture)")
-        result = asyncio.run(_drive(args.device_ws, https_url, args.insecure, args, fxb))
-        return _report(result, None)
+        _log(f"[direct] wss={args.device_ws} (no serial capture)")
+        result = asyncio.run(_drive(args.device_ws, args.insecure, args, fxb))
+        _log(f"[result] {result['result_line']}")
+        return 0 if result["ok"] else 1
 
     from hitl_client import Reservation
     from provision import dut_target, provision_dut
@@ -426,55 +564,45 @@ def run_on_hardware(args) -> bool:
         host, port = dut_target(redirect, "wss")
         _log(f"[dut] {host}:{port}")
 
-        # The board tends to drop its STA right after Improv (BLE coexistence). A
-        # clean reboot re-joins from stored NVS creds with BLE only advertising,
-        # which holds far better. Reset, then wait until the rig can reach the DUT.
-        _log("[reset] rebooting DUT for a clean NVS-join (stable STA)…")
-        res.ssh("hitl-monitor --reset --seconds 3", capture=True, timeout=30)
-        iters = max(1, int(args.rejoin_wait // 5))
-        poll = (
-            f"for i in $(seq 1 {iters}); do "
-            f'if timeout 2 bash -c "cat </dev/null >/dev/tcp/{host}/80" 2>/dev/null; '
-            f'then echo "REACHABLE after $((i*5))s"; exit 0; fi; sleep 3; done; echo UNREACHABLE'
-        )
-        _log(f"[rejoin] polling rig -> {host}:80 for up to ~{iters * 5}s…")
-        rp = res.ssh(poll, capture=True, timeout=iters * 5 + 40)
-        _log("[rejoin] " + (rp.stdout or "").strip())
-        if "UNREACHABLE" in (rp.stdout or ""):
-            _log("[rejoin] DUT never came back on the network — cannot run the gate this run.")
-            return False
-
-        # Serial capture is REQUIRED here (step 3 asserts on it). Opening USB-CDC
-        # resets the C6 once (rst:0x15) which drops the join; we start the monitor,
-        # let it re-join during the settle window, then load + gate over the tunnel
-        # while it captures the whole time.
+        # The heapless netstack keeps its WiFi creds in RAM (no NVS), so a reboot
+        # would DROP them and the DUT would need re-provisioning to rejoin — it is
+        # already the stable LISTENing STA right after Improv, so we test the
+        # just-provisioned link directly (mirrors tls_churn --skip-nvs-reboot).
+        # Opening the USB-CDC serial resets the chip (drops the just-joined WiFi),
+        # so the monitor is OFF by default and the OOM scan is informational; the
+        # network path alone gates on the wss handshake recovery.
         mon_out: dict[str, Any] = {}
-        mon_seconds = args.settle + 90
-        mon = _monitor_thread(res, mon_seconds, mon_out)
-        time.sleep(3)  # let the (resetting) monitor attach + the board re-join
+        mon = None
+        if args.monitor:
+            mon_seconds = args.settle + args.rounds * (args.recover_window + 15) + 60
+            mon = _monitor_thread(res, mon_seconds, mon_out)
+            time.sleep(3)  # let the (resetting) monitor attach + the board re-join
 
-        result: dict[str, Any] = {}
+        result: dict[str, Any] = {
+            "ok": True,
+            "status": "skip",
+            "result_line": "RESULT verdict=SKIP (driver did not complete a run)",
+        }
         try:
             with res.forward(host, port) as local_port:
                 ws_url = f"wss://localhost:{local_port}/ws"
-                https_url = f"https://localhost:{local_port}/"
-                result = asyncio.run(_drive(ws_url, https_url, True, args, fxb))
+                result = asyncio.run(_drive(ws_url, True, args, fxb))
         finally:
-            mon.join(timeout=mon_seconds + 30)
-            serial = mon_out.get("serial", "") or ""
-            if mon_out.get("serial_error"):
-                _log(f"[monitor] error: {mon_out['serial_error']}")
-            _dump_serial(serial)
-            oom_hits = scan_serial_for_oom(serial)
-            _log(f"[result] {result}")
-        return _report(result, oom_hits)
+            if mon is not None:
+                mon.join(timeout=30)
+                serial = mon_out.get("serial", "") or ""
+                if mon_out.get("serial_error"):
+                    _log(f"[monitor] error: {mon_out['serial_error']}")
+                _fold_serial(result, serial)
+            _log(f"[result] {result['result_line']}")
+        return 0 if result.get("ok") else 1
     finally:
         res.release()
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="HITL wss:443 / cert-page TLS-under-load gate (FUG-133)"
+        description="HITL wss:443 handshake gate under worst-case heap load (FUG-133)"
     )
     ap.add_argument(
         "--device-ws",
@@ -493,8 +621,9 @@ def main() -> None:
     ap.add_argument(
         "--led-count",
         type=int,
-        default=768,
-        help="LEDs in the resident map + strip length (768 = kMaxLeds, the worst case)",
+        default=512,
+        help="LEDs in the resident map + strip length (512 = LM_MAX_LEDS/kMaxLeds, the "
+        "worst case; a larger count exceeds the firmware cap and the LOAD is rejected)",
     )
     ap.add_argument("--effect-id", dest="effect_id", default="__fug133")
     ap.add_argument("--tex-index", type=int, default=0)
@@ -503,23 +632,41 @@ def main() -> None:
     ap.add_argument("--fx-compile", default=default_fx_compile())
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
+    ap.add_argument("--rounds", type=int, default=3, help="sequential loaded-heap probe rounds")
     ap.add_argument(
-        "--settle", type=float, default=90.0, help="seconds to wait for wss to first come up"
+        "--open-timeout",
+        type=float,
+        default=hitl_ws.OPEN_TIMEOUT,
+        help="per-handshake client open timeout (driver->tailnet->rig->ssh -L->DUT jitter "
+        "wants the shared hitl_ws tolerance, not a tight 8s)",
+    )
+    ap.add_argument(
+        "--recover-window",
+        type=float,
+        default=40.0,
+        help="seconds to wait for a clean handshake to recover after a round; recovery "
+        "after the FINAL round on the loaded heap is the anti-wedge gate",
+    )
+    ap.add_argument(
+        "--settle",
+        type=float,
+        default=hitl_ws.CONNECT_SETTLE,
+        help="seconds to wait for wss to first come up",
     )
     ap.add_argument(
         "--ws-verify",
         action="store_true",
         help="verify the DUT's TLS cert (default: accept the self-signed cert)",
     )
+    ap.add_argument(
+        "--monitor",
+        action="store_true",
+        help="capture serial (resets the C6 once on attach); enables the crash gate + "
+        "the informational mbedTLS-alloc OOM scan",
+    )
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
     ap.add_argument("--monitor-seconds", type=float, default=8.0)
-    ap.add_argument(
-        "--rejoin-wait",
-        type=float,
-        default=90.0,
-        help="seconds to wait for the DUT to rejoin after the reboot",
-    )
     args = ap.parse_args()
     args.insecure = not args.ws_verify
 
@@ -534,8 +681,7 @@ def main() -> None:
             f"--tex {args.tex_width}x{args.tex_height} RGB565 frame exceeds the 8 KB FX_TEX_PREV cap"
         )
 
-    ok = run_on_hardware(args)
-    sys.exit(0 if ok else 1)
+    raise SystemExit(run_on_hardware(args))
 
 
 if __name__ == "__main__":

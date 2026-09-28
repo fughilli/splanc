@@ -32,14 +32,18 @@ from video_bench_core import bars_effect_src  # noqa: F401  (re-exported)
 # copies our bytes straight in (handle_set_texture in firmware/player_app/ffi.rs).
 TEX_FORMAT_RGB565 = 1
 
-# The two device-log signatures the gate must NEVER see during the window — both
-# are how an mbedTLS session allocation failed on a heap starved by the resident
-# map+effect (the PR #114 symptom). esp-tls logs the first when it can't create
-# the ~28 KB server session (-0x7f00); mbedTLS's dynamic-buffer impl logs the
-# second ("Dynamic Impl: alloc(NNNN bytes) failed") when a record-buffer alloc
-# fails outright. Matched case-insensitively as substrings.
-_OOM_SESSION = "esp_tls_create_server_session failed"
-_OOM_ALLOC = "dynamic impl: alloc"
+# The two device-log signatures that mean an mbedTLS allocation failed on a heap
+# starved by the resident map+effect+texture (the PR #114 symptom) — as the
+# NETSTACK firmware actually prints them (the old vendor `esp_tls_create_server_session`
+# / esp-tls httpd is deleted; see firmware/player_app/BUILD.bazel). The heap
+# failed-alloc hook logs "[heap] alloc FAILED: N B …" (main.cpp on_heap_alloc_failed),
+# and a handshake that couldn't set up its session logs "*** TLS handshake err
+# -0x7f00 ***" (netstack_transport.cpp; -0x7F00 == MBEDTLS_ERR_SSL_ALLOC_FAILED).
+# Matched case-insensitively as substrings. This scan is INFORMATIONAL (a shed-line
+# count for the reviewer) — the gate is wss-handshake RECOVERY, not this scan (the
+# FUG-136 lesson; see tls_churn_core / hitl_loaded_tls).
+_OOM_HEAP = "[heap] alloc failed"
+_OOM_HANDSHAKE = "tls handshake err -0x7f00"
 
 
 def rgb565_gradient_frame(width: int, height: int) -> bytes:
@@ -94,15 +98,13 @@ def texture_frame_fits(width: int, height: int, bytes_per_texel: int = 2) -> boo
 
 
 def scan_serial_for_oom(serial: str) -> list[str]:
-    """Return the serial lines that indicate an mbedTLS session OOM during the
-    window (empty == the gate held). Matches esp-tls's session-create failure and
-    mbedTLS's dynamic-buffer alloc failure; the alloc line is only counted when it
-    also says 'failed', so a benign 'alloc(...)' trace can't trip a false red."""
+    """Return the serial lines that indicate an mbedTLS/heap OOM during the window
+    (empty == none seen). Matches the netstack heap failed-alloc hook and the
+    -0x7F00 (MBEDTLS_ERR_SSL_ALLOC_FAILED) handshake error. INFORMATIONAL only —
+    the caller reports the count; it never gates the verdict (recovery does)."""
     hits: list[str] = []
     for raw in serial.splitlines():
         low = raw.lower()
-        if _OOM_SESSION in low:
-            hits.append(raw.strip())
-        elif _OOM_ALLOC in low and "failed" in low:
+        if _OOM_HEAP in low or _OOM_HANDSHAKE in low:
             hits.append(raw.strip())
     return hits
