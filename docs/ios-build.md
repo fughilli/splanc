@@ -90,24 +90,71 @@ stream back live. The iPhone must be awake + unlocked during install.
 Everything streams the underlying tool's output live (`curl -N`), and a non-zero
 exit stops a chain.
 
+### Ship to TestFlight in one command
+
+Same client/server split, one more Bazel target — it builds the app, archives an
+App-Store-signed build, exports the `.ipa`, and uploads it to App Store Connect /
+TestFlight:
+
+```sh
+bazel run //tools:ios_testflight                    # build → archive → export → upload
+bazel run //tools:ios_testflight -- --build-number 231
+```
+
+On the **Mac** (or a macOS CI runner) it starts the build server as a sidecar and
+tears it down after; **from the container** it drives a server running on the Mac,
+exactly like `ios_deploy`. It runs the `testflight-prebuilt` chain (`cap-sync →
+tf-build-number → tf-signing-prep → tf-archive → tf-export → tf-upload`).
+
+**Credentials** are read from the **build server's environment** — never passed in
+the request, so no secret is ever in a URL or the streamed log. Set them where the
+server runs (your shell/launchd on the Mac; the GitHub Actions `env:` in CI). They
+are the **same names** the TestFlight job in
+[`.github/workflows/macos.yaml`](../.github/workflows/macos.yaml) uses, so one set
+of secrets serves both the local target and the CI action:
+
+| Env var                           | What                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `APP_STORE_CONNECT_KEY_ID`        | App Store Connect API key — Key ID                                                                              |
+| `APP_STORE_CONNECT_ISSUER_ID`     | …its Issuer ID                                                                                                  |
+| `APP_STORE_CONNECT_KEY_P8_BASE64` | base64 of the `AuthKey_<KeyID>.p8` (or `…_PATH`, or leave it in `~/.private_keys/`)                             |
+| `APPLE_TEAM_ID`                   | 10-char Developer Team ID (else `SPLANC_IOS_TEAM` / the `ios-config` default)                                   |
+| `APPLE_DIST_CERT_P12_BASE64`      | base64 "Apple Distribution" `.p12` — **optional**, only where the keychain has no dist cert (a fresh CI runner) |
+| `APPLE_DIST_CERT_PASSWORD`        | …the `.p12` export password                                                                                     |
+| `IOS_BUILD_NUMBER`                | `CFBundleVersion` for the upload (unique + increasing per build); default = epoch seconds                       |
+
+A dev Mac that already ships device builds has a distribution cert in its login
+keychain, so the two `APPLE_DIST_CERT_*` vars are only needed on a clean machine.
+One-time Apple-side setup (membership, register the `dev.splanc.app` App ID, create
+the App Store Connect app record, mint the API key) is described in the workflow
+header. The container/`iosctl` path uses the same tasks via the `testflight` chain
+(with `web-build`): `tools/iosctl run testflight`.
+
 ### The tasks (`/tasks`)
 
-| Task          | Runs                                                        |
-| ------------- | ----------------------------------------------------------- |
-| `install`     | `pnpm install` — pull the Capacitor deps                    |
-| `web-build`   | `pnpm --dir web build` → `web/dist` (the WKWebView payload) |
-| `cap-add-ios` | `cap add ios` — **one-time**, generates `web/ios/App`       |
-| `ios-config`  | apply `web/ios-config/apply.sh` (Info.plist usage strings)  |
-| `cap-sync`    | `cap sync ios` — copy `web/dist` + install plugin pods      |
-| `pod-install` | `pod install` in `web/ios/App`                              |
-| `ios-build`   | `xcodebuild build` for the simulator                        |
-| `ios-run`     | `cap run ios` — build + launch on a simulator/device        |
-| `open-xcode`  | `cap open ios` — open in Xcode                              |
-| `list-sims`   | list bootable simulators                                    |
+| Task              | Runs                                                              |
+| ----------------- | ----------------------------------------------------------------- |
+| `install`         | `pnpm install` — pull the Capacitor deps                          |
+| `web-build`       | `pnpm --dir web build` → `web/dist` (the WKWebView payload)       |
+| `cap-add-ios`     | `cap add ios` — **one-time**, generates `web/ios/App`             |
+| `ios-config`      | apply `web/ios-config/apply.sh` (Info.plist usage strings)        |
+| `cap-sync`        | `cap sync ios` — copy `web/dist` + install plugin pods            |
+| `pod-install`     | `pod install` in `web/ios/App`                                    |
+| `ios-build`       | `xcodebuild build` for the simulator                              |
+| `ios-run`         | `cap run ios` — build + launch on a simulator/device              |
+| `open-xcode`      | `cap open ios` — open in Xcode                                    |
+| `list-sims`       | list bootable simulators                                          |
+| `tf-build-number` | stamp `CFBundleVersion` (`$IOS_BUILD_NUMBER`, else epoch)         |
+| `tf-signing-prep` | place the ASC API key (+ optional dist `.p12`) for signing/upload |
+| `tf-archive`      | `xcodebuild archive` — App-Store-signed (automatic signing)       |
+| `tf-export`       | `xcodebuild -exportArchive` → `build/export/*.ipa`                |
+| `tf-upload`       | `xcrun altool --upload-app` → App Store Connect / TestFlight      |
 
 Chains: `bootstrap` = install → web-build → cap-add-ios → ios-config → cap-sync →
 pod-install; `rebuild` = web-build → cap-sync → ios-build; `launch` = web-build →
-cap-sync → ios-run.
+cap-sync → ios-run; `testflight` = web-build → cap-sync → tf-build-number →
+tf-signing-prep → tf-archive → tf-export → tf-upload (`testflight-prebuilt` drops
+`web-build`, for `bazel run //tools:ios_testflight`).
 
 Params: `--sim NAME`, `--configuration Debug|Release`, `--scheme App`.
 
@@ -135,4 +182,5 @@ a lazy dynamic import that only fires inside the native wrapper
   self-signed-cert accept; drops in behind `SocketFactory` in `net/client.ts`.
 - **OTA firmware update** (§4.3 / firmware track) — the only "program the device
   from an iPhone" path, since USB flashing is impossible on iOS (§3.1).
-- **Android wrapper + CI lane + TestFlight/App Store distribution** (§4.5).
+- **Android wrapper** (§4.5). _(TestFlight distribution is built — `bazel run
+//tools:ios_testflight` and the `testflight` job in `.github/workflows/macos.yaml`.)_
