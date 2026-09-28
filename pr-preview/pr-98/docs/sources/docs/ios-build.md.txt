@@ -60,6 +60,33 @@ tools/iosctl open                   # open the project in Xcode on the host
 tools/iosctl run cap-sync,ios-build      # run specific task(s), in order
 ```
 
+### Deploy to a paired iPhone in one command
+
+When you just want the app compiled and running on your phone, skip `iosctl` and
+use the single Bazel target (it auto-detects the paired device):
+
+```sh
+bazel run //tools:ios_deploy              # compile → install → launch
+bazel run //tools:ios_deploy -- --log     # …and stream the device console (Ctrl-C to detach)
+```
+
+**On the Mac this is fully self-contained** — if no build server is running, it
+starts `tools/ios_build_server.py` as a **sidecar**, drives it, and shuts it down
+when it's done. You don't need the separate "leave the server running" step above.
+
+**From the container** it stays a thin client and talks to the build server on
+`host.docker.internal:8099` (start `bazel run //tools:ios_build_server` on the
+Mac first, as usual) — the container never starts a sidecar, since it has no
+Xcode toolchain.
+
+Which path it takes is auto-detected; override with `--sidecar auto|always|never`.
+Setting `$IOS_BUILD_SERVER` points it at a specific running server and skips the
+sidecar. With no `--target`, it picks the single connected/Wi-Fi-paired iPhone
+(`xcrun xctrace list devices`); pass `--target <UDID>` or set `$IOS_DEPLOY_TARGET`
+when more than one device is attached. `--log` swaps the final launch for a
+console-attached relaunch so the app's stdout/stderr + forwarded JS console
+stream back live. The iPhone must be awake + unlocked during install.
+
 Everything streams the underlying tool's output live (`curl -N`), and a non-zero
 exit stops a chain.
 
