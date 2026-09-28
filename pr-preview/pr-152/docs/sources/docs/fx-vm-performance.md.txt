@@ -22,7 +22,7 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 | SoC     | Device        | MHz | Fit | Held-out | RMS  | Max   | Tolerance | Verdict |
 | ------- | ------------- | --- | --- | -------- | ---- | ----- | --------- | ------- |
 | esp32c6 | esp32c6       | 160 | 65  | 7        | 7.8% | 15.8% | 13%       | PASS    |
-| esp32c6 | esp32c6 (JIT) | 160 | 65  | 7        | 7.3% | 16.8% | 13%       | PASS    |
+| esp32c6 | esp32c6 (JIT) | 160 | 65  | 7        | 7.3% | 16.7% | 13%       | PASS    |
 
 ## esp32c6 — esp32c6
 
@@ -256,8 +256,8 @@ off.
 | CPU clock          | 160 MHz (160,000,000 Hz)                    |
 | Programs           | 65 fit + 7 held-out                         |
 | Regression margins | default 10%, sweep16 15%                    |
-| Fit residual       | ±82.9%                                      |
-| Held-out accuracy  | RMS 7.3% · mean 5.1% · max 16.8% · R² 0.994 |
+| Fit residual       | ±72.9%                                      |
+| Held-out accuracy  | RMS 7.3% · mean 5.1% · max 16.7% · R² 0.994 |
 | Verdict            | PASS (RMS 7.3% vs 13% tolerance)            |
 
 ### Fixed overheads
@@ -266,10 +266,10 @@ Per-phase framing costs the fit isolates from the per-opcode slopes.
 
 | Overhead     | Cycles   | ns        |
 | ------------ | -------- | --------- |
-| update_fixed | 380501.0 | 2378131.1 |
-| shade_fixed  | 2227.9   | 13924.7   |
-| show_fixed   | 51913.0  | 324456.0  |
-| show_per_led | 1954.4   | 12214.8   |
+| update_fixed | 384015.8 | 2400098.5 |
+| shade_fixed  | 2206.7   | 13792.1   |
+| show_fixed   | 54925.0  | 343281.2  |
+| show_per_led | 1931.6   | 12072.4   |
 
 ### Fitted per-opcode cost
 
@@ -279,40 +279,40 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
-| BinMath:pow   | 1917.60 | 11984.98 | yes    |
-| Hsv2Rgb       | 1387.78 | 8673.66  | yes    |
-| UnMath:tan    | 1348.02 | 8425.09  | yes    |
-| BinMath:atan2 | 1145.36 | 7158.51  | yes    |
-| Cross         | 988.32  | 6176.99  | yes    |
-| UnMath:exp    | 899.23  | 5620.16  | yes    |
-| UnMath:log    | 841.73  | 5260.80  | yes    |
-| Smoothstep    | 800.09  | 5000.55  | yes    |
-| UnMath:sqrt   | 723.80  | 4523.72  | yes    |
-| BinMath:mod   | 697.81  | 4361.29  | yes    |
-| UnMath:cos    | 686.99  | 4293.66  | yes    |
-| Palette       | 644.13  | 4025.80  | yes    |
-| UnMath:sin    | 615.43  | 3846.45  | yes    |
-| Normalize     | 559.53  | 3497.08  | yes    |
-| Distance      | 524.19  | 3276.16  | yes    |
-| UnMath:ceil   | 452.68  | 2829.28  | yes    |
-| Div           | 449.94  | 2812.12  | yes    |
-| Mix           | 408.43  | 2552.72  | yes    |
-| Length        | 387.22  | 2420.14  | yes    |
-| UnMath:fract  | 378.65  | 2366.57  | yes    |
-| Hash3         | 366.82  | 2292.63  | yes    |
-| Clamp         | 327.68  | 2048.03  | yes    |
-| Mul           | 307.83  | 1923.96  | yes    |
-| Sub           | 306.16  | 1913.49  | yes    |
-| Add           | 303.79  | 1898.70  | yes    |
-| UnMath:floor  | 297.10  | 1856.86  | yes    |
-| BinMath:min   | 286.78  | 1792.39  | yes    |
-| BinMath:max   | 286.39  | 1789.96  | yes    |
-| BinMath:step  | 264.62  | 1653.87  | yes    |
-| Dot           | 242.32  | 1514.50  | yes    |
-| Hash1         | 220.34  | 1377.11  | yes    |
-| UnMath:sign   | 173.59  | 1084.93  | yes    |
-| UnMath:abs    | 150.94  | 943.40   | yes    |
-| Neg           | 143.90  | 899.38   | yes    |
+| BinMath:pow   | 1917.50 | 11984.36 | yes    |
+| Hsv2Rgb       | 1387.70 | 8673.14  | yes    |
+| UnMath:tan    | 1347.92 | 8424.47  | yes    |
+| BinMath:atan2 | 1145.26 | 7157.89  | yes    |
+| Cross         | 988.22  | 6176.37  | yes    |
+| UnMath:exp    | 899.18  | 5619.87  | yes    |
+| UnMath:log    | 841.75  | 5260.93  | yes    |
+| Smoothstep    | 800.05  | 5000.34  | yes    |
+| UnMath:sqrt   | 723.70  | 4523.10  | yes    |
+| BinMath:mod   | 697.71  | 4360.67  | yes    |
+| UnMath:cos    | 686.89  | 4293.04  | yes    |
+| Palette       | 644.03  | 4025.18  | yes    |
+| UnMath:sin    | 615.33  | 3845.83  | yes    |
+| Normalize     | 559.50  | 3496.87  | yes    |
+| Distance      | 524.15  | 3275.95  | yes    |
+| UnMath:ceil   | 452.59  | 2828.66  | yes    |
+| Div           | 449.84  | 2811.50  | yes    |
+| Mix           | 408.41  | 2552.54  | yes    |
+| Length        | 387.19  | 2419.94  | yes    |
+| UnMath:fract  | 378.55  | 2365.95  | yes    |
+| Hash3         | 366.72  | 2292.01  | yes    |
+| Clamp         | 327.63  | 2047.69  | yes    |
+| Mul           | 307.71  | 1923.22  | yes    |
+| Sub           | 306.06  | 1912.87  | yes    |
+| Add           | 303.67  | 1897.95  | yes    |
+| UnMath:floor  | 297.00  | 1856.24  | yes    |
+| BinMath:min   | 286.68  | 1791.77  | yes    |
+| BinMath:max   | 286.29  | 1789.34  | yes    |
+| BinMath:step  | 264.52  | 1653.25  | yes    |
+| Dot           | 242.29  | 1514.33  | yes    |
+| Hash1         | 220.24  | 1376.48  | yes    |
+| UnMath:sign   | 173.49  | 1084.31  | yes    |
+| UnMath:abs    | 150.84  | 942.78   | yes    |
+| Neg           | 143.73  | 898.34   | yes    |
 | BinMath       | 130.00  | 812.50   |        |
 | UnMath        | 120.00  | 750.00   |        |
 | DivFix        | 24.00   | 150.00   |        |
@@ -368,17 +368,17 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 
 | Program  | LEDs | Measured (ms) | Predicted (ms) | Error  | Measured cyc | Predicted cyc |
 | -------- | ---- | ------------- | -------------- | ------ | ------------ | ------------- |
-| clamp32M | 128  | 59.78         | 59.46          | -0.5%  | 9.56M        | 9.51M         |
+| clamp32M | 128  | 59.78         | 59.45          | -0.5%  | 9.56M        | 9.51M         |
 | dot3M    | 128  | 25.39         | 27.20          | +7.1%  | 4.06M        | 4.35M         |
-| expf2M   | 128  | 67.91         | 70.11          | +3.2%  | 10.87M       | 11.22M        |
+| expf2M   | 128  | 67.91         | 70.10          | +3.2%  | 10.87M       | 11.22M        |
 | hsv2rgbM | 128  | 45.29         | 44.04          | -2.8%  | 7.25M        | 7.05M         |
-| lavalamp | 200  | 20.71         | 21.76          | +5.0%  | 3.31M        | 3.48M         |
+| lavalamp | 200  | 20.71         | 21.74          | +5.0%  | 3.31M        | 3.48M         |
 | mix3M    | 128  | 40.05         | 40.08          | +0.1%  | 6.41M        | 6.41M         |
-| neg2M    | 128  | 13.33         | 15.57          | +16.8% | 2.13M        | 2.49M         |
+| neg2M    | 128  | 13.33         | 15.57          | +16.7% | 2.13M        | 2.49M         |
 
-Held-out **RMS 7.3%**, mean 5.1%, max 16.8% against the **13%** tolerance — **PASS**.
+Held-out **RMS 7.3%**, mean 5.1%, max 16.7% against the **13%** tolerance — **PASS**.
 
-Outliers (|error| > 10%): `neg2M` +16.8%. The linear sum-of-op-costs model over-predicts the
+Outliers (|error| > 10%): `neg2M` +16.7%. The linear sum-of-op-costs model over-predicts the
 cheapest real effects.
 
 ### Raw measured costs
@@ -390,7 +390,7 @@ LED transmit path, excluded from the gate as transmit-bound noise).
 | Program       | Set      | LEDs | Frame cycles | Show cycles |
 | ------------- | -------- | ---- | ------------ | ----------- |
 | empty         | fit      | 128  | 300,321      | 283,160     |
-| sweep16       | fit      | 16   | 40,320       | 57,485      |
+| sweep16       | fit      | 16   | 45,687       | 63,359      |
 | sweep256      | fit      | 256  | 621,625      | 529,694     |
 | hash1M        | fit      | 128  | 2,001,217    | 291,854     |
 | hash3M        | fit      | 128  | 2,324,747    | 289,290     |
