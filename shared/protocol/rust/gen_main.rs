@@ -44,9 +44,16 @@ fn main() -> std::io::Result<()> {
     g.configure(".ledmapper.v1.Error.message", Config::new().max_bytes(128));
 
     // Stored-map dump chunk: the player streams its map+topology back to the
-    // phone a slice at a time; the payload must hold a control-frame-sized
-    // chunk (the phone caps its request to this). 1 KiB fits the reply cap.
-    g.configure(".ledmapper.v1.StoredMapChunk.data", Config::new().max_bytes(1024));
+    // phone a slice at a time; the payload holds a control-frame-sized chunk (the
+    // phone caps its request to this). On HOST the generated encoder builds it, so
+    // it needs the full 1 KiB. On FIRMWARE the player encodes this reply ZERO-COPY
+    // straight to the output (ffi.rs handle_get_stored_map) and never materializes
+    // the struct, so the inline buffer is dead weight that would size every
+    // ServerMessage temporary to ~1 KiB — shrink it to a stub.
+    g.configure(
+        ".ledmapper.v1.StoredMapChunk.data",
+        Config::new().max_bytes(if firmware { 8 } else { 1024 }),
+    );
 
     // Sharded upload window. On firmware the player NEVER decodes UploadChunk
     // through the generated bindings — the transport intercepts the arm and
@@ -119,11 +126,15 @@ fn main() -> std::io::Result<()> {
         Config::new().max_len(if firmware { 24 } else { 128 }),
     );
 
-    // Counting + playback control: REAL firmware traffic — full size in
-    // both profiles.
+    // Counting pattern: on HOST the generated decoder is driven by the session
+    // test / conformance, so keep 32 blocks. On FIRMWARE the player decodes this
+    // arm ZERO-COPY (ffi.rs handle_set_counting_pattern) into pre-reduced blocks
+    // and never touches the generated struct, whose Vec<ColorBlock, 32> (each an
+    // inline Vec<f64, 4>) is the ~1.5 KiB arm that sizes every ClientMessage —
+    // shrink it to a stub so ClientMessage collapses to a control-frame size.
     g.configure(
         ".ledmapper.v1.SetCountingPattern.blocks",
-        Config::new().max_len(32),
+        Config::new().max_len(if firmware { 1 } else { 32 }),
     );
     g.configure(".ledmapper.v1.PlaybackParams.palette", Config::new().max_len(16));
 
