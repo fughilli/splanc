@@ -43,6 +43,13 @@ let
   # file sshd reads for daemonUser) + <stateDir>/res/<id>/ per reservation.
   stateDir = "/var/lib/hitl";
 
+  # Token file for the periodic pipeline trigger (launchd job below). Holds a GitHub
+  # PAT with actions:write on fughilli/splanc (a fine-grained PAT, or a classic
+  # repo-scoped token). Placed OUT-OF-BAND (never in the world-readable nix store):
+  #   sudo install -m600 -o root /path/to/token /var/lib/hitl/github-dispatch.token
+  # The job no-ops if it's absent/empty, so a Mac without the token still deploys.
+  dispatchTokenFile = "${stateDir}/github-dispatch.token";
+
   # The iOS catalog (two units: ios-phone + ios-sim, each with its own C6).
   catalog = ../reserve/catalog-mac.json;
 
@@ -87,6 +94,38 @@ in
         # devicectl/simctl/esptool live here once the toolbox + Xcode CLT are set up.
         PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/run/current-system/sw/bin";
       };
+    };
+  };
+
+  #### Periodic HITL pipeline trigger (launchd) ##############################
+  # GitHub's own `schedule:` cron drops/heavily delays scheduled runs on this repo
+  # (a well-known Actions limitation), so we drive the HITL monitor from this
+  # always-on Mac instead: every 6h, POST a workflow_dispatch to hitl.yaml on main
+  # (4 runs/day). Token from a root-only file outside the nix store (see
+  # dispatchTokenFile); the job no-ops if it's missing so a token-less Mac still
+  # deploys cleanly. Replaces the removed `schedule:` block in hitl.yaml.
+  launchd.daemons.hitl-schedule-dispatch = {
+    serviceConfig = {
+      ProgramArguments = [
+        "/bin/sh"
+        "-c"
+        ''
+          tok=$(cat ${dispatchTokenFile} 2>/dev/null) || exit 0
+          [ -n "$tok" ] || exit 0
+          exec ${pkgs.curl}/bin/curl -sS -X POST \
+            -H "Authorization: token $tok" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/fughilli/splanc/actions/workflows/hitl.yaml/dispatches \
+            -d '{"ref":"main"}'
+        ''
+      ];
+      # Every 6 hours (4x/day). RunAtLoad=false so a `darwin-rebuild switch` doesn't
+      # fire an extra run; the first fires ~6h after load.
+      StartInterval = 21600;
+      RunAtLoad = false;
+      UserName = "root";
+      StandardOutPath = "/var/log/hitl-schedule-dispatch.log";
+      StandardErrorPath = "/var/log/hitl-schedule-dispatch.err.log";
     };
   };
 
