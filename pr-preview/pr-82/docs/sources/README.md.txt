@@ -4,10 +4,10 @@
 
 <p align="center">
   <a href="https://github.com/fughilli/splanc/actions/workflows/test.yaml"><img
-    src="https://github.com/fughilli/splanc/actions/workflows/test.yaml/badge.svg"
+    src="https://github.com/fughilli/splanc/actions/workflows/test.yaml/badge.svg?branch=main&event=push"
     alt="Test" /></a>
   <a href="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml"><img
-    src="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml/badge.svg"
+    src="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml/badge.svg?branch=main&event=push"
     alt="HITL tests" /></a>
   <a href="https://splanc.grafana.net/public-dashboards/0ce888d9584940a6845438d376555b51"><img
     src="https://img.shields.io/badge/HITL%20status-Grafana-f46800?logo=grafana&logoColor=white"
