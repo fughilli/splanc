@@ -1,3 +1,4 @@
+`timescale 1ns / 1ps
 // Control/status register bank, written over SPI (see spi_ctrl.v).
 //
 // Byte-addressed. Currently:

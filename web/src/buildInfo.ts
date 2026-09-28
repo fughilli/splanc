@@ -43,3 +43,36 @@ export function buildLabel(commit: string, dirty: boolean): string {
   const short = commit.slice(0, 8);
   return dirty ? `${short} (dirty)` : short;
 }
+
+/** The firmware-build fields the device card renders (FUG-126), computed once so
+ * the "Firmware version" + "Firmware build" rows can't drift from each other or
+ * from what a test asserts. Empty/absent inputs (older firmware, or a device
+ * never yet connected) collapse to the "unknown (connect once)" placeholder the
+ * sheet shows before a `welcome` has populated the record. */
+export interface FirmwareCardFields {
+  /** Release version, or the placeholder when the device hasn't reported one. */
+  version: string;
+  /** Short build label ("a1b2c3d4 (dirty)"), or the placeholder when unknown. */
+  build: string;
+  /** GitHub commit link for the build, or null when unknown (render as text). */
+  buildUrl: string | null;
+  /** Full commit hash for the link tooltip; "" when unknown. */
+  commit: string;
+}
+
+const FW_UNKNOWN = "unknown (connect once)";
+
+export function firmwareCardFields(dev: {
+  fwVersion?: string;
+  fwGitCommit?: string;
+  fwGitDirty?: boolean;
+}): FirmwareCardFields {
+  const commit = dev.fwGitCommit ?? "";
+  const known = commit.length > 0;
+  return {
+    version: dev.fwVersion || FW_UNKNOWN,
+    build: known ? buildLabel(commit, dev.fwGitDirty ?? false) : FW_UNKNOWN,
+    buildUrl: known ? commitUrl(commit) : null,
+    commit,
+  };
+}

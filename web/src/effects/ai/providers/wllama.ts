@@ -99,6 +99,7 @@ import {
   formatToolInstructions,
   messagesToWllama,
   parseToolCalls,
+  recoverSetScriptFromProse,
 } from "./wllamaProtocol";
 export { wllamaModelSupportsTools, formatToolInstructions, messagesToWllama, parseToolCalls };
 
@@ -383,7 +384,12 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
       try {
         resp = await engine.createChatCompletion({
           messages: wllamaMessages,
-          n_predict: opts.maxTokens ?? 2048,
+          // Bound generation: a real effect program (+ the JSON tool-call envelope)
+          // is well under 1024 tokens, and on a phone CPU every extra token costs
+          // ~0.3–0.5s. A former 2048 default meant a model that rambled instead of
+          // finishing burned minutes PER repair round (a failing turn once ran ~50
+          // min on-device). 1024 keeps ample headroom while capping the worst case.
+          n_predict: opts.maxTokens ?? 1024,
           stream: true,
           onData,
           // Disable chain-of-thought on reasoning models (Qwen3 et al.): for
@@ -413,6 +419,16 @@ export function makeWllamaProvider(cfg: WllamaConfig): AiProvider {
         return { content: [{ type: "text", text: full }], stop_reason: "end_turn" };
       }
       const { calls, text } = parseToolCalls(full);
+      // Prose-recovery fallback: small models routinely NARRATE a program (in a
+      // ``` block or bare) instead of emitting the set_script tool call, so the
+      // edit would otherwise be dropped and the user just sees code in the chat.
+      // When there's no set_script call but the reply contains a real program,
+      // synthesize the call so the effect still applies. (Measured essential in
+      // tools/model_eval — eff% >> native tool% for every sub-3B model.)
+      if (!calls.some((c) => c.name === "set_script")) {
+        const recovered = recoverSetScriptFromProse(full);
+        if (recovered) calls.push(recovered);
+      }
       const content: ContentBlock[] = [];
       if (text) content.push({ type: "text", text });
       for (const [i, call] of calls.entries()) {

@@ -28,7 +28,7 @@ class MemStorage {
 const mem = new MemStorage();
 (globalThis as { localStorage?: unknown }).localStorage = mem;
 
-import { deviceStore } from "../src/store/deviceStore";
+import { deviceStore, deviceDisambiguator } from "../src/store/deviceStore";
 
 beforeEach(() => {
   mem.clear();
@@ -105,4 +105,32 @@ test("records without a MAC yet are not merged (identity unknown)", () => {
   const ip = deviceStore.upsert("wss://192.168.68.54");
   deviceStore.applyWelcome(ip.id, { mac: "" }); // no identity learned
   assert.equal(deviceStore.list().length, 2);
+});
+
+test("a BLE device.id churn is reconciled by the welcome MAC (no lasting duplicate)", () => {
+  // The real reconnect scenario: connectOverBle keys on device.id (bleDeviceUrl).
+  // On platforms where device.id changes across sessions, a re-scan makes a second
+  // ble: record — but the SAME physical device reports the same welcome MAC, so the
+  // authoritative MAC-merge collapses the two into one. Distinct MACs never merge,
+  // and a rename can't split them (the MAC, not the name, is the identity).
+  const first = deviceStore.upsert("ble:session-A"); // first scan
+  deviceStore.applyWelcome(first.id, { mac: "58:E6:C5:11:FC:DA", deviceName: "Kitchen" });
+  const second = deviceStore.upsert("ble:session-B"); // reconnect, device.id churned
+  deviceStore.applyWelcome(second.id, { mac: "58:E6:C5:11:FC:DA", deviceName: "Kitchen" });
+  assert.equal(deviceStore.list().length, 1); // collapsed onto the fresh record
+});
+
+test("two BLE devices sharing a display name stay distinct (keyed on identity, not name)", () => {
+  const a = deviceStore.upsert("ble:dev-1", "Kitchen");
+  deviceStore.applyWelcome(a.id, { mac: "AA:AA:AA:AA:AA:AA", deviceName: "Kitchen" });
+  const b = deviceStore.upsert("ble:dev-2", "Kitchen");
+  deviceStore.applyWelcome(b.id, { mac: "BB:BB:BB:BB:BB:BB", deviceName: "Kitchen" });
+  assert.equal(deviceStore.list().length, 2); // same name, different MAC -> two entries
+  // …and the drawer can tell them apart by the stable MAC suffix (not the name).
+  assert.equal(deviceDisambiguator({ bleMac: "58:E6:C5:11:FC:DA" }), "11FCDA");
+  assert.notEqual(
+    deviceDisambiguator({ bleMac: "AA:AA:AA:AA:AA:AA" }),
+    deviceDisambiguator({ bleMac: "BB:BB:BB:BB:BB:BB" }),
+  );
+  assert.equal(deviceDisambiguator({ bleMac: "" }), ""); // unknown until connected
 });

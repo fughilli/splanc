@@ -13,8 +13,11 @@ load("//tools:flash_bundle.bzl", "flash_bundle")
 
 package(default_visibility = ["//visibility:public"])
 
+# Both ESP RISC-V SKUs: the C6 (rv32imac) and the build-only C3 (rv32imc), so
+# CI build-gates c3 firmware work. Named _C6 for history; covers c3 too now.
 _C6 = select({
     "@embedded//platforms:is_esp32c6": [],
+    "@embedded//platforms:is_esp32c3": [],
     "//conditions:default": ["@platforms//:incompatible"],
 })
 

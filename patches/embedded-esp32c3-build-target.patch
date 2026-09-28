@@ -1,0 +1,949 @@
+Add esp32c3 (RISC-V rv32imc) as a BUILD-ONLY firmware target to the @embedded
+(firmware) module: a new board platform + cc_toolchain, the c3 branch of the
+board/pins/arduino-core selects, and a parallel esp32c3 section of the
+generated @arduino_esp32 scaffold (mirrors the C6 recipe with the arch dropped
+to rv32imc — no atomics — and the ESP32C3_DEV board defines).
+
+Scope is build-gating only: the image is NOT expected to be runtime-correct on
+real c3 silicon yet (e.g. firmware/netstack's ccmp.rs hardcodes the C6 AES/PCR
+register map). The c3 SDK is staged by the companion
+embedded-esp32-libs-c6-c3.patch (extends the FOD to unzip esp32c3/ too).
+
+Edits:
+ - rules/firmware.bzl: esp32c3 -> //platforms:esp32c3 in _BOARD_PLATFORM +
+   the `board` attr allowlist (the esptool chip name IS "esp32c3").
+ - platforms/BUILD.bazel: esp32c3_board constraint_value, esp32c3 platform
+   (riscv32 + os:none + esp32c3_board), is_esp32c3 config_setting.
+ - toolchains/cc/esp32c3/BUILD.bazel (new): cc_toolchain gated to
+   //platforms:esp32c3_board, base arch -march=rv32imc_zicsr_zifencei
+   -mabi=ilp32 (mirrors esp32c6).
+ - MODULE.bazel: register //toolchains/cc/esp32c3:cc_toolchain; add the
+   riscv32imc-unknown-none-elf Rust triple.
+ - libs/board/BUILD.bazel: is_esp32c3 branches (core_esp32c3, esp32c3.cpp) +
+   esp32c3_bootloader_bin genrule.
+ - libs/board/esp32c3.cpp (new): board LED support (mirrors esp32c6.cpp).
+ - libs/pins/BUILD.bazel: is_esp32c3 LED_DATA_PIN (GPIO8, C3-DevKitC-1).
+ - nix/arduino_esp32.BUILD: parallel esp32c3 chip-specific targets
+   (sdk_*_esp32c3, core_esp32c3 with from-source mbedtls + ssl wraps) AND
+   esp32c3 variants of the bundled Arduino libraries (network/fs/wifi/hash/ble/
+   preferences/webserver_esp32c3) built against sdk_hdrs_esp32c3 — so a c3 image
+   carries ONE (c3) IDF include set, not c6+c3 (which overflowed g++ -> cc1plus argv).
+ - libs/vendor/BUILD.bazel: the wifi/webserver/ble/preferences aliases select
+   the per-chip variant (is_esp32c3 -> *_esp32c3).
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 05739cc..1fb1773 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -228,6 +228,7 @@ rust.toolchain(
+         # arguments"). eabi maps to the same constraints (cpu:armv8-m, os:none).
+         "thumbv8m.main-none-eabi",
+         "riscv32imac-unknown-none-elf",  # ESP32-C6
++        "riscv32imc-unknown-none-elf",  # ESP32-C3 (rv32imc, no atomics)
+     ],
+ )
+ use_repo(rust, "rust_toolchains")
+@@ -239,5 +240,6 @@ register_toolchains(
+     "//toolchains/bindgen:bindgen_toolchain",
+     "//toolchains/cc/rp2350_arm:cc_toolchain",
+     "//toolchains/cc/esp32c6:cc_toolchain",
++    "//toolchains/cc/esp32c3:cc_toolchain",
+     "//toolchains/cc/esp32:cc_toolchain",
+ )
+diff --git a/libs/board/BUILD.bazel b/libs/board/BUILD.bazel
+index 28ff2e8..a8f64f5 100644
+--- a/libs/board/BUILD.bazel
++++ b/libs/board/BUILD.bazel
+@@ -9,6 +9,7 @@ cc_library(
+     deps = select({
+         "//platforms:is_rp2350": ["@arduino_pico//:core"],
+         "//platforms:is_esp32c6": ["@arduino_esp32//:core"],
++        "//platforms:is_esp32c3": ["@arduino_esp32//:core_esp32c3"],
+         "//platforms:is_esp32": ["@arduino_esp32//:core_esp32"],
+     }),
+ )
+@@ -20,6 +21,7 @@ cc_library(
+     srcs = select({
+         "//platforms:is_rp2350": ["rp2350.cpp"],
+         "//platforms:is_esp32c6": ["esp32c6.cpp"],
++        "//platforms:is_esp32c3": ["esp32c3.cpp"],
+         "//platforms:is_esp32": ["esp32.cpp"],
+     }),
+     hdrs = ["board.h"],
+@@ -44,6 +46,19 @@ genrule(
+     tools = ["@esptool//:bin", "@esptool//:all"],
+ )
+ 
++# ESP32-C3 second-stage bootloader as a flashable .bin. Same QIO-built/DIO-header
++# arrangement as the C6 (both RISC-V ESP parts); the C3 ROM also boots in DIO and
++# the bootloader upgrades to quad I/O itself. Build-only c3 target.
++genrule(
++    name = "esp32c3_bootloader_bin",
++    srcs = ["@arduino_esp32//:bootloader_elf_esp32c3"],
++    outs = ["esp32c3_bootloader.bin"],
++    cmd = ("$(execpath @esptool//:bin) --chip esp32c3 elf2image " +
++           "--flash_mode dio --flash_freq 80m --flash_size 4MB " +
++           "-o $@ $(location @arduino_esp32//:bootloader_elf_esp32c3)"),
++    tools = ["@esptool//:bin", "@esptool//:all"],
++)
++
+ # Classic ESP32 (WROOM) second-stage bootloader. Same QIO-built/DIO-header
+ # arrangement as the C6; this chip's ROM loads it from 0x1000, not 0x0.
+ genrule(
+diff --git a/libs/board/esp32c3.cpp b/libs/board/esp32c3.cpp
+new file mode 100644
+index 0000000..c21f422
+--- /dev/null
++++ b/libs/board/esp32c3.cpp
+@@ -0,0 +1,13 @@
++// ESP32-C3 board support: drive LED_BUILTIN via the Arduino API (arduino-esp32).
++// Mirrors esp32c6.cpp — the Arduino LED_BUILTIN abstraction is board-agnostic.
++#include <Arduino.h>
++
++#include "libs/board/board.h"
++
++extern "C" void board_setup(void) {
++  pinMode(LED_BUILTIN, OUTPUT);
++}
++
++extern "C" void board_set_led(bool on) {
++  digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
++}
+diff --git a/libs/pins/BUILD.bazel b/libs/pins/BUILD.bazel
+index a570097..8434ec2 100644
+--- a/libs/pins/BUILD.bazel
++++ b/libs/pins/BUILD.bazel
+@@ -3,6 +3,7 @@
+ #
+ # Pins are placeholders — change them to match your wiring:
+ #   RP2350 (Pico 2): GPIO 2      ESP32-C6: GPIO 8      ESP32 (WROOM): GPIO 4
++#   ESP32-C3-DevKitC-1: GPIO 8 (matches the C6 devkit's on-board WS2812)
+ package(default_visibility = ["//visibility:public"])
+ 
+ cc_library(
+@@ -11,6 +12,9 @@ cc_library(
+     defines = select({
+         "//platforms:is_rp2350": ["LED_DATA_PIN=2"],
+         "//platforms:is_esp32c6": ["LED_DATA_PIN=8"],
++        # ESP32-C3-DevKitC-1 on-board WS2812 is GPIO8. TODO(esp32c3): confirm
++        # against the final c3 wiring — build-only target for now.
++        "//platforms:is_esp32c3": ["LED_DATA_PIN=8"],
+         "//platforms:is_esp32": ["LED_DATA_PIN=4"],
+     }),
+ )
+diff --git a/libs/vendor/BUILD.bazel b/libs/vendor/BUILD.bazel
+index c3e0f26..f1cbd06 100644
+--- a/libs/vendor/BUILD.bazel
++++ b/libs/vendor/BUILD.bazel
+@@ -10,14 +10,24 @@ alias(
+     actual = "@fastled//:fastled",
+ )
+ 
++# wifi/webserver/ble/preferences select the per-chip Arduino-library variant so a
++# build carries only its own chip's IDF include set (the c3 variant is built
++# against sdk_hdrs_esp32c3). Without this a c3 image pulled BOTH the c6 and c3
++# include lists and overflowed the g++ -> cc1plus argv. Build-only c3 target.
+ alias(
+     name = "wifi",
+-    actual = "@arduino_esp32//:wifi",
++    actual = select({
++        "//platforms:is_esp32c3": "@arduino_esp32//:wifi_esp32c3",
++        "//conditions:default": "@arduino_esp32//:wifi",
++    }),
+ )
+ 
+ alias(
+     name = "webserver",
+-    actual = "@arduino_esp32//:webserver",
++    actual = select({
++        "//platforms:is_esp32c3": "@arduino_esp32//:webserver_esp32c3",
++        "//conditions:default": "@arduino_esp32//:webserver",
++    }),
+ )
+ 
+ alias(
+@@ -27,12 +37,18 @@ alias(
+ 
+ alias(
+     name = "ble",
+-    actual = "@arduino_esp32//:ble",
++    actual = select({
++        "//platforms:is_esp32c3": "@arduino_esp32//:ble_esp32c3",
++        "//conditions:default": "@arduino_esp32//:ble",
++    }),
+ )
+ 
+ alias(
+     name = "preferences",
+-    actual = "@arduino_esp32//:preferences",
++    actual = select({
++        "//platforms:is_esp32c3": "@arduino_esp32//:preferences_esp32c3",
++        "//conditions:default": "@arduino_esp32//:preferences",
++    }),
+ )
+ 
+ alias(
+diff --git a/nix/arduino_esp32.BUILD b/nix/arduino_esp32.BUILD
+index 51acb0b..4e2d9ad 100644
+--- a/nix/arduino_esp32.BUILD
++++ b/nix/arduino_esp32.BUILD
+@@ -1,5 +1,6 @@
+ # GENERATED scaffold for @arduino_esp32 (merged core + per-chip SDKs: esp32c6
+-# RISC-V and classic esp32 Xtensa — the esp32 section is at the bottom).
++# RISC-V, classic esp32 Xtensa, and esp32c3 RISC-V build-only — the esp32 section
++# is in the middle, the esp32c3 section at the bottom).
+ # Compile: includes/defines as native attrs (propagate to the app); per-language
+ # std flags. Link: -L dirs computed at build time + the shipped ld_* response
+ # files, in a --start-group with the SDK archives.
+@@ -1119,3 +1120,619 @@ cc_library(
+     ],
+     deps = [":core_c_esp32", ":core_cpp_esp32", ":sdk_hdrs_esp32"],
+ )
++
++
++# ===========================================================================
++# ESP32-C3 (RISC-V rv32imc — NO atomics) — parallel chip-specific targets to
++# the esp32c6 ones above, against sdk/esp32c3/. BUILD-ONLY target: mirrors the
++# C6 recipe (include list, from-source mbedtls + ssl wraps, copts) with the
++# arch dropped to rv32imc and the ESP32C3_DEV board defines. The include list
++# is inherited verbatim from the C6 (non-existent -I dirs are harmless no-ops);
++# the shared partition/gen_esp32part/boot_app0 + Arduino-library (wifi/ble/...)
++# targets are NOT re-declared — they are chip-independent / stay C6-built.
++# TODO(esp32c3): audit the include list + memory-type dir against the real C3
++# SDK once c3 is a runtime target.
++# ===========================================================================
++
++genrule(
++    name = "sdk_link_dirs_esp32c3",
++    srcs = [
++        "sdk/esp32c3/lib/libriscv.a",
++        "sdk/esp32c3/ld/memory.ld",
++        "sdk/esp32c3/qio_qspi/libspi_flash.a",
++    ],
++    outs = ["sdk_link_dirs_esp32c3.rsp"],
++    cmd = ("echo \"-L$$(dirname $(location sdk/esp32c3/lib/libriscv.a))\" > $@ && " +
++           "echo \"-L$$(dirname $(location sdk/esp32c3/ld/memory.ld))\" >> $@ && " +
++           "echo \"-L$$(dirname $(location sdk/esp32c3/qio_qspi/libspi_flash.a))\" >> $@"),
++)
++
++filegroup(name = "sdk_libs_esp32c3", srcs = glob(
++    [
++        "sdk/esp32c3/lib/*.a",
++        "sdk/esp32c3/qio_qspi/*.a",
++        "sdk/esp32c3/ld/*.a",  # libphy.a, libbtbb.a live alongside the ld scripts
++    ],
++    # mbedtls is built FROM SOURCE (@mbedtls_src, with dynamic buffers) and linked
++    # into :core_esp32c3 instead — drop the prebuilt archives so our symbols win.
++    exclude = [
++        "sdk/esp32c3/lib/libmbedtls.a",
++        "sdk/esp32c3/lib/libmbedtls_2.a",
++        "sdk/esp32c3/lib/libmbedcrypto.a",
++        "sdk/esp32c3/lib/libmbedx509.a",
++    ],
++))
++filegroup(name = "sdk_ld_esp32c3", srcs = glob(["sdk/esp32c3/ld/*.ld"]))
++filegroup(name = "ld_flags_esp32c3", srcs = ["sdk/esp32c3/flags/ld_flags"])
++filegroup(name = "ld_scripts_esp32c3", srcs = ["sdk/esp32c3/flags/ld_scripts"])
++
++
++# dropped those .a's from :sdk_libs_esp32c3 (mbedtls is built from source in
++# @mbedtls_src, linked via :core_esp32c3's deps). Strip those 4 -l tokens so ld doesn't
++# fail with "cannot find -lmbedtls"; the from-source lib satisfies the refs.
++genrule(
++    name = "ld_libs_no_mbedtls_esp32c3",
++    srcs = ["sdk/esp32c3/flags/ld_libs"],
++    outs = ["ld_libs_esp32c3.filtered"],
++    cmd = ("sed -E 's/-lmbedtls_2( |$$)/ /g; s/-lmbedtls( |$$)/ /g; " +
++           "s/-lmbedcrypto( |$$)/ /g; s/-lmbedx509( |$$)/ /g' $< > $@"),
++)
++
++filegroup(name = "ld_libs_esp32c3", srcs = [":ld_libs_esp32c3.filtered"])
++
++# Prebuilt pieces needed to assemble a bootable flash image (see esptool_flash).
++filegroup(name = "bootloader_elf_esp32c3", srcs = ["sdk/esp32c3/bin/bootloader_qio_80m.elf"])
++
++cc_library(
++    name = "sdk_hdrs_esp32c3",
++    hdrs = glob(
++        ["sdk/esp32c3/include/**/*.h", "sdk/esp32c3/qio_qspi/include/**/*.h",
++         "cores/esp32/**/*.h", "variants/esp32c3/**/*.h", "sdk/esp32c3/include/**/*.hpp",
++         "libraries/SPI/**/*.h"],
++        allow_empty = True,
++    ),
++    includes = [
++        "sdk/esp32c3/include/newlib/platform_include",
++        "sdk/esp32c3/include/freertos/config/include",
++        "sdk/esp32c3/include/freertos/config/include/freertos",
++        "sdk/esp32c3/include/freertos/config/riscv/include",
++        "sdk/esp32c3/include/freertos/FreeRTOS-Kernel/include",
++        "sdk/esp32c3/include/freertos/FreeRTOS-Kernel/portable/riscv/include",
++        "sdk/esp32c3/include/freertos/FreeRTOS-Kernel/portable/riscv/include/freertos",
++        "sdk/esp32c3/include/freertos/esp_additions/include",
++        "sdk/esp32c3/include/esp_hw_support/include",
++        "sdk/esp32c3/include/esp_hw_support/include/soc",
++        "sdk/esp32c3/include/esp_hw_support/include/soc/esp32c3",
++        "sdk/esp32c3/include/esp_hw_support/dma/include",
++        "sdk/esp32c3/include/esp_hw_support/ldo/include",
++        "sdk/esp32c3/include/esp_hw_support/debug_probe/include",
++        "sdk/esp32c3/include/esp_hw_support/mspi_timing_tuning/include",
++        "sdk/esp32c3/include/esp_hw_support/mspi_timing_tuning/tuning_scheme_impl/include",
++        "sdk/esp32c3/include/esp_hw_support/power_supply/include",
++        "sdk/esp32c3/include/esp_hw_support/port/esp32c3",
++        "sdk/esp32c3/include/esp_hw_support/port/esp32c3/include",
++        "sdk/esp32c3/include/heap/include",
++        "sdk/esp32c3/include/heap/tlsf",
++        "sdk/esp32c3/include/log/include",
++        "sdk/esp32c3/include/soc/include",
++        "sdk/esp32c3/include/soc/esp32c3",
++        "sdk/esp32c3/include/soc/esp32c3/include",
++        "sdk/esp32c3/include/soc/esp32c3/register",
++        "sdk/esp32c3/include/hal/platform_port/include",
++        "sdk/esp32c3/include/hal/esp32c3/include",
++        "sdk/esp32c3/include/hal/include",
++        "sdk/esp32c3/include/esp_rom/include",
++        "sdk/esp32c3/include/esp_rom/esp32c3/include",
++        "sdk/esp32c3/include/esp_rom/esp32c3/include/esp32c3",
++        "sdk/esp32c3/include/esp_rom/esp32c3",
++        "sdk/esp32c3/include/esp_common/include",
++        "sdk/esp32c3/include/esp_system/include",
++        "sdk/esp32c3/include/esp_system/port/soc",
++        "sdk/esp32c3/include/esp_system/port/include/riscv",
++        "sdk/esp32c3/include/esp_system/port/include/private",
++        "sdk/esp32c3/include/riscv/include",
++        "sdk/esp32c3/include/esp_timer/include",
++        "sdk/esp32c3/include/lwip/include",
++        "sdk/esp32c3/include/lwip/include/apps",
++        "sdk/esp32c3/include/lwip/include/apps/sntp",
++        "sdk/esp32c3/include/lwip/lwip/src/include",
++        "sdk/esp32c3/include/lwip/port/include",
++        "sdk/esp32c3/include/lwip/port/freertos/include",
++        "sdk/esp32c3/include/lwip/port/esp32xx/include",
++        "sdk/esp32c3/include/lwip/port/esp32xx/include/arch",
++        "sdk/esp32c3/include/lwip/port/esp32xx/include/sys",
++        "sdk/esp32c3/include/espressif__esp-tflite-micro",
++        "sdk/esp32c3/include/espressif__esp-tflite-micro/third_party/gemmlowp",
++        "sdk/esp32c3/include/espressif__esp-tflite-micro/third_party/flatbuffers/include",
++        "sdk/esp32c3/include/espressif__esp-tflite-micro/third_party/ruy",
++        "sdk/esp32c3/include/espressif__esp-tflite-micro/third_party/kissfft",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/app/ember_coupling",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/include",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/lib",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/lib/dnssd",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/platform/OpenThread",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/third_party/jsoncpp/repo/include",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/third_party/nlfaultinjection/include",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/third_party/nlassert/repo/include",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/third_party/nlio/repo/include",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/zzz_generated/app-common",
++        "sdk/esp32c3/include/esp-idf/espressif__esp_matter",
++        "sdk/esp32c3/include/esp_matter/zap_common",
++        "sdk/esp32c3/include/esp_matter",
++        "sdk/esp32c3/include/esp_matter/utils",
++        "sdk/esp32c3/include/esp_matter_bridge",
++        "sdk/esp32c3/include/esp_matter_console",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/platform/ESP32",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/platform/ESP32/bluedroid",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/platform/ESP32/nimble",
++        "sdk/esp32c3/include/espressif__esp_matter/connectedhomeip/connectedhomeip/src/platform/ESP32/route_hook",
++        "sdk/esp32c3/include/esp_eth/include",
++        "sdk/esp32c3/include/esp_event/include",
++        "sdk/esp32c3/include/esp_driver_spi/include",
++        "sdk/esp32c3/include/esp_pm/include",
++        "sdk/esp32c3/include/bt/include/esp32c3/include",
++        "sdk/esp32c3/include/bt/common/osi/include",
++        "sdk/esp32c3/include/bt/common/api/include/api",
++        "sdk/esp32c3/include/bt/common/btc/profile/esp/blufi/include",
++        "sdk/esp32c3/include/bt/common/btc/profile/esp/include",
++        "sdk/esp32c3/include/bt/common/hci_log/include",
++        "sdk/esp32c3/include/bt/common/ble_log/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/common/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/core",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/core/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/core/storage",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/btc/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/models/common/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/models/client/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/models/server/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/api/core/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/api/models/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/api",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/lib/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/api/core/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/api/models/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/btc/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/include",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/dfu",
++        "sdk/esp32c3/include/bt/esp_ble_mesh/v1.1/mbt",
++        "sdk/esp32c3/include/bt/common/tinycrypt/include",
++        "sdk/esp32c3/include/bt/common/tinycrypt/port",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/ans/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/bas/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/dis/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/gap/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/gatt/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/hr/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/htp/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/ias/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/ipss/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/lls/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/prox/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/cts/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/tps/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/hid/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/sps/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/cte/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/util/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/store/ram/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/store/config/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/host/services/ras/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/porting/nimble/include",
++        "sdk/esp32c3/include/bt/host/nimble/port/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/nimble/transport/include",
++        "sdk/esp32c3/include/bt/porting/include",
++        "sdk/esp32c3/include/bt/host/nimble/nimble/porting/npl/freertos/include",
++        "sdk/esp32c3/include/bt/host/nimble/esp-hci/include",
++        "sdk/esp32c3/include/esp_wifi/include",
++        "sdk/esp32c3/include/esp_wifi/include/local",
++        "sdk/esp32c3/include/esp_wifi/wifi_apps/include",
++        "sdk/esp32c3/include/esp_wifi/wifi_apps/nan_app/include",
++        "sdk/esp32c3/include/esp_phy/include",
++        "sdk/esp32c3/include/esp_phy/esp32c3/include",
++        "sdk/esp32c3/include/esp_netif/include",
++        "sdk/esp32c3/include/mbedtls/port/include",
++        "sdk/esp32c3/include/mbedtls/mbedtls/include",
++        "sdk/esp32c3/include/mbedtls/mbedtls/library",
++        "sdk/esp32c3/include/mbedtls/esp_crt_bundle/include",
++        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/everest/include",
++        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/p256-m",
++        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/p256-m/p256-m",
++        "sdk/esp32c3/include/fatfs/diskio",
++        "sdk/esp32c3/include/fatfs/src",
++        "sdk/esp32c3/include/fatfs/vfs",
++        "sdk/esp32c3/include/wear_levelling/include",
++        "sdk/esp32c3/include/esp_partition/include",
++        "sdk/esp32c3/include/sdmmc/include",
++        "sdk/esp32c3/include/esp_driver_sdmmc/include",
++        "sdk/esp32c3/include/esp_driver_gpio/include",
++        "sdk/esp32c3/include/esp_driver_sdspi/include",
++        "sdk/esp32c3/include/app_update/include",
++        "sdk/esp32c3/include/bootloader_support/include",
++        "sdk/esp32c3/include/bootloader_support/bootloader_flash/include",
++        "sdk/esp32c3/include/esp_app_format/include",
++        "sdk/esp32c3/include/esp_bootloader_format/include",
++        "sdk/esp32c3/include/console",
++        "sdk/esp32c3/include/vfs/include",
++        "sdk/esp32c3/include/esp_vfs_console/include",
++        "sdk/esp32c3/include/openthread/include",
++        "sdk/esp32c3/include/openthread/openthread/include",
++        "sdk/esp32c3/include/esp_driver_uart/include",
++        "sdk/esp32c3/include/driver/deprecated",
++        "sdk/esp32c3/include/driver/i2c/include",
++        "sdk/esp32c3/include/driver/touch_sensor/include",
++        "sdk/esp32c3/include/driver/twai/include",
++        "sdk/esp32c3/include/esp_ringbuf/include",
++        "sdk/esp32c3/include/esp_driver_pcnt/include",
++        "sdk/esp32c3/include/esp_driver_gptimer/include",
++        "sdk/esp32c3/include/esp_driver_mcpwm/include",
++        "sdk/esp32c3/include/esp_driver_ana_cmpr/include",
++        "sdk/esp32c3/include/esp_driver_i2s/include",
++        "sdk/esp32c3/include/esp_driver_sdio/include",
++        "sdk/esp32c3/include/esp_driver_dac/include",
++        "sdk/esp32c3/include/esp_driver_rmt/include",
++        "sdk/esp32c3/include/esp_driver_tsens/include",
++        "sdk/esp32c3/include/esp_driver_sdm/include",
++        "sdk/esp32c3/include/esp_driver_i2c/include",
++        "sdk/esp32c3/include/esp_driver_ledc/include",
++        "sdk/esp32c3/include/esp_driver_parlio/include",
++        "sdk/esp32c3/include/esp_driver_usb_serial_jtag/include",
++        "sdk/esp32c3/include/esp_driver_twai/include",
++        "sdk/esp32c3/include/nvs_flash/include",
++        "sdk/esp32c3/include/spi_flash/include",
++        "sdk/esp32c3/include/espressif__esp_secure_cert_mgr/include",
++        "sdk/esp32c3/include/espressif__json_parser/include",
++        "sdk/esp32c3/include/espressif__jsmn/include",
++        "sdk/esp32c3/include/spiffs/include",
++        "sdk/esp32c3/include/esp_http_client/include",
++        "sdk/esp32c3/include/espressif__json_generator/include",
++        "sdk/esp32c3/include/json/cJSON",
++        "sdk/esp32c3/include/espressif__mdns/include",
++        "sdk/esp32c3/include/espressif__esp_delta_ota/include",
++        "sdk/esp32c3/include/espressif__esp_encrypted_img/include",
++        "sdk/esp32c3/include/espressif__esp_insights/include",
++        "sdk/esp32c3/include/espressif__esp_diagnostics/include",
++        "sdk/esp32c3/include/efuse/include",
++        "sdk/esp32c3/include/efuse/esp32c3/include",
++        "sdk/esp32c3/include/esp_mm/include",
++        "sdk/esp32c3/include/esp_security/include",
++        "sdk/esp32c3/include/pthread/include",
++        "sdk/esp32c3/include/esp_psram/include",
++        "sdk/esp32c3/include/app_trace/include",
++        "sdk/esp32c3/include/wpa_supplicant/include",
++        "sdk/esp32c3/include/wpa_supplicant/port/include",
++        "sdk/esp32c3/include/wpa_supplicant/esp_supplicant/include",
++        "sdk/esp32c3/include/esp_coex/include",
++        "sdk/esp32c3/include/esp_gdbstub/include",
++        "sdk/esp32c3/include/unity/include",
++        "sdk/esp32c3/include/unity/unity/src",
++        "sdk/esp32c3/include/cmock/CMock/src",
++        "sdk/esp32c3/include/esp_driver_bitscrambler/include",
++        "sdk/esp32c3/include/http_parser",
++        "sdk/esp32c3/include/esp-tls",
++        "sdk/esp32c3/include/esp-tls/esp-tls-crypto",
++        "sdk/esp32c3/include/esp_adc/include",
++        "sdk/esp32c3/include/esp_adc/interface",
++        "sdk/esp32c3/include/esp_adc/esp32c3/include",
++        "sdk/esp32c3/include/esp_adc/deprecated/include",
++        "sdk/esp32c3/include/esp_driver_isp/include",
++        "sdk/esp32c3/include/esp_driver_cam/include",
++        "sdk/esp32c3/include/esp_driver_cam/interface",
++        "sdk/esp32c3/include/esp_driver_jpeg/include",
++        "sdk/esp32c3/include/esp_driver_ppa/include",
++        "sdk/esp32c3/include/esp_hal_ieee802154/include",
++        "sdk/esp32c3/include/esp_hid/include",
++        "sdk/esp32c3/include/tcp_transport/include",
++        "sdk/esp32c3/include/esp_http_server/include",
++        "sdk/esp32c3/include/esp_https_ota/include",
++        "sdk/esp32c3/include/esp_https_server/include",
++        "sdk/esp32c3/include/esp_lcd/include",
++        "sdk/esp32c3/include/esp_lcd/interface",
++        "sdk/esp32c3/include/protobuf-c/protobuf-c",
++        "sdk/esp32c3/include/protocomm/include/common",
++        "sdk/esp32c3/include/protocomm/include/security",
++        "sdk/esp32c3/include/protocomm/include/transports",
++        "sdk/esp32c3/include/protocomm/include/crypto/srp6a",
++        "sdk/esp32c3/include/protocomm/proto-c",
++        "sdk/esp32c3/include/esp_local_ctrl/include",
++        "sdk/esp32c3/include/espcoredump/include",
++        "sdk/esp32c3/include/espcoredump/include/port/riscv",
++        "sdk/esp32c3/include/idf_test/include",
++        "sdk/esp32c3/include/idf_test/include/esp32c3",
++        "sdk/esp32c3/include/ieee802154/include",
++        "sdk/esp32c3/include/mqtt/esp-mqtt/include",
++        "sdk/esp32c3/include/nvs_sec_provider/include",
++        "sdk/esp32c3/include/rt/include",
++        "sdk/esp32c3/include/wifi_provisioning/include",
++        "sdk/esp32c3/include/espressif__esp-nn/include",
++        "sdk/esp32c3/include/espressif__esp-nn/src/common",
++        "sdk/esp32c3/include/espressif__rmaker_common/include",
++        "sdk/esp32c3/include/espressif__cbor/tinycbor/src",
++        "sdk/esp32c3/include/espressif__esp_diag_data_store/src/rtc_store",
++        "sdk/esp32c3/include/espressif__esp_diag_data_store/include",
++        "sdk/esp32c3/include/espressif__esp-serial-flasher/include",
++        "sdk/esp32c3/include/espressif__esp-serial-flasher/port",
++        "sdk/esp32c3/include/espressif__esp_rcp_update/include",
++        "sdk/esp32c3/include/chmorgan__esp-libhelix-mp3/libhelix-mp3/pub",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_transports",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_controller/common/include",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_objects/common",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_ports/common",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_ports/serial",
++        "sdk/esp32c3/include/espressif__esp-modbus/modbus/mb_ports/tcp",
++        "sdk/esp32c3/include/espressif__esp-zboss-lib/include",
++        "sdk/esp32c3/include/espressif__esp-zigbee-lib/include",
++        "sdk/esp32c3/include/espressif__esp-zigbee-lib/include/radio_spinel",
++        "sdk/esp32c3/include/espressif__libsodium/port_include",
++        "sdk/esp32c3/include/espressif__libsodium/libsodium/src/libsodium/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/dotprod/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/support/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/support/mem/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/hann/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/blackman/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/blackman_harris/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/blackman_nuttall/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/nuttall/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/windows/flat_top/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/iir/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/fir/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/add/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/sub/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/mul/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/addc/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/mulc/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/math/sqrt/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/mul/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/add/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/addc/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/mulc/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/sub/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/fft/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/dct/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/conv/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/common/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/matrix/mul/test/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/kalman/ekf/include",
++        "sdk/esp32c3/include/espressif__esp-dsp/modules/kalman/ekf_imu13states/include",
++        "sdk/esp32c3/include/espressif__esp_modem/include",
++        "sdk/esp32c3/include/espressif__esp_modem/command/include",
++        "sdk/esp32c3/include/espressif__esp_schedule/include",
++        "sdk/esp32c3/include/espressif__network_provisioning/include",
++        "sdk/esp32c3/include/espressif__esp_rainmaker/include",
++        "sdk/esp32c3/include/espressif__qrcode/include",
++        "sdk/esp32c3/include/joltwallet__littlefs/include",
++        "sdk/esp32c3/include/fb_gfx/include",
++        "sdk/esp32c3/qio_qspi/include",
++        "cores/esp32",
++        "variants/esp32c3",
++        "libraries/SPI/src",  # FastLED's ESP32 SPI shim includes <SPI.h>
++    ],
++    defines = [
++        "ESP32_ARDUINO_LIB_BUILDER",
++        "ESP_PLATFORM",
++        "MB_MDNS_IS_INCLUDED",
++        "MD5_ENABLED=1",
++        "OPENTHREAD_FTD=1",
++        "SERIAL_FLASHER_BOOT_HOLD_TIME_MS=50",
++        "SERIAL_FLASHER_RESET_HOLD_TIME_MS=100",
++        "SOC_MMU_PAGE_SIZE=CONFIG_MMU_PAGE_SIZE",
++        "SOC_XTAL_FREQ_MHZ=CONFIG_XTAL_FREQ",
++        "UNITY_INCLUDE_CONFIG_H",
++        "_GLIBCXX_HAVE_POSIX_SEMAPHORE",
++        "_GLIBCXX_USE_POSIX_SEMAPHORE",
++        "_GNU_SOURCE",
++        "_POSIX_READER_WRITER_LOCKS",
++        "TF_LITE_STATIC_MEMORY",
++        "CHIP_CONFIG_SOFTWARE_VERSION_NUMBER=0",
++        "CHIP_DNSSD_DEFAULT_PLATFORM=true",
++        "CHIP_DNSSD_DEFAULT_NONE=false",
++        "CHIP_DNSSD_DEFAULT_MINIMAL=false",
++        "F_CPU=160000000L",
++        "ARDUINO=10812",
++        "ARDUINO_ESP32C3_DEV",
++        "ARDUINO_ARCH_ESP32",
++        "ARDUINO_PARTITION_default",
++        'ARDUINO_BOARD=\\"ESP32C3_DEV\\"',
++        'ARDUINO_VARIANT=\\"esp32c3\\"',
++        # From platform.txt build.extra_flags — ESP32=ESP32 is what libraries
++        # (e.g. FastLED) key off for platform detection.
++        "ESP32=ESP32",
++        "CORE_DEBUG_LEVEL=0",
++        "ARDUINO_USB_MODE=1",
++        "ARDUINO_USB_CDC_ON_BOOT=1",
++    ],
++)
++
++_C_COPTS_ESP32C3 = [
++        "-march=rv32imc_zicsr_zifencei",
++        "-ffunction-sections",
++        "-fdata-sections",
++        "-Wno-error=unused-function",
++        "-Wno-error=unused-variable",
++        "-Wno-error=unused-but-set-variable",
++        "-Wno-error=deprecated-declarations",
++        "-Wno-error=extra",
++        "-Wno-unused-parameter",
++        "-Wno-sign-compare",
++        "-Wno-enum-conversion",
++        "-gdwarf-4",
++        "-ggdb",
++        "-freorder-blocks",
++        "-Wwrite-strings",
++        "-fstack-protector",
++        "-fstrict-volatile-bitfields",
++        "-fno-jump-tables",
++        "-fno-tree-switch-conversion",
++        "-Wno-old-style-declaration",
++        "-DCHIP_HAVE_CONFIG_H",
++        "-Wno-strict-prototypes",
++        "-std=gnu17",
++        "-w",
++    ]
++
++_CXX_COPTS_ESP32C3 = [
++        "-march=rv32imc_zicsr_zifencei",
++        "-fno-rtti",
++        "-ffunction-sections",
++        "-fdata-sections",
++        "-Wno-error=unused-function",
++        "-Wno-error=unused-variable",
++        "-Wno-error=unused-but-set-variable",
++        "-Wno-error=deprecated-declarations",
++        "-Wno-error=extra",
++        "-Wno-unused-parameter",
++        "-Wno-sign-compare",
++        "-Wno-enum-conversion",
++        "-gdwarf-4",
++        "-ggdb",
++        "-freorder-blocks",
++        "-Wwrite-strings",
++        "-fstack-protector",
++        "-fstrict-volatile-bitfields",
++        "-fno-jump-tables",
++        "-fno-tree-switch-conversion",
++        "-fexceptions",
++        "-fuse-cxa-atexit",
++        "-DCHIP_HAVE_CONFIG_H",
++        "-std=gnu++2b",
++        "-w",
++    ]
++
++cc_library(
++    name = "core_c_esp32c3",
++    srcs = glob(["cores/esp32/**/*.c", "variants/esp32c3/**/*.c"], allow_empty = True),
++    copts = _C_COPTS_ESP32C3,
++    # Force all core objects in: the core HAL (.c) and Arduino API (.cpp) call
++    # each other, so split archives would drop objects to the wrong link order.
++    alwayslink = True,
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "core_cpp_esp32c3",
++    srcs = glob(["cores/esp32/**/*.cpp", "variants/esp32c3/**/*.cpp", "libraries/SPI/**/*.cpp"], allow_empty = True),
++    copts = _CXX_COPTS_ESP32C3,
++    alwayslink = True,
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++
++cc_library(
++    name = "core_esp32c3",
++    additional_linker_inputs = [
++        ":sdk_link_dirs_esp32c3", ":sdk_libs_esp32c3", ":sdk_ld_esp32c3",
++        ":ld_flags_esp32c3", ":ld_scripts_esp32c3", ":ld_libs_esp32c3",
++    ],
++    linkopts = [
++        "@$(location :sdk_link_dirs_esp32c3)",
++        "@$(location :ld_flags_esp32c3)",
++        "@$(location :ld_scripts_esp32c3)",
++        "-Wl,--wrap=esp_panic_handler",
++        "-Wl,--wrap=esp_bt_mem_release",
++        "-Wl,--wrap=esp_bt_controller_mem_release",
++        # Dynamic-buffer wraps — route the ssl entrypoints through the
++        # port/dynamic/*.c shims in @mbedtls_src (__real_* resolve from our
++        # from-source mbedtls). Keep in sync with mbedtls_src.BUILD.
++        "-Wl,--wrap=mbedtls_ssl_write_client_hello",
++        "-Wl,--wrap=mbedtls_ssl_handshake_client_step",
++        "-Wl,--wrap=mbedtls_ssl_tls13_handshake_client_step",
++        "-Wl,--wrap=mbedtls_ssl_handshake_server_step",
++        "-Wl,--wrap=mbedtls_ssl_read",
++        "-Wl,--wrap=mbedtls_ssl_write",
++        "-Wl,--wrap=mbedtls_ssl_session_reset",
++        "-Wl,--wrap=mbedtls_ssl_free",
++        "-Wl,--wrap=mbedtls_ssl_setup",
++        "-Wl,--wrap=mbedtls_ssl_send_alert_message",
++        "-Wl,--wrap=mbedtls_ssl_close_notify",
++        "-Wl,--start-group",
++        "@$(location :ld_libs_esp32c3)",
++        "-Wl,--end-group",
++        "-Wl,-EL",
++    ],
++    # From-source mbedtls (alwayslink) satisfies the precompiled esp-tls /
++    # esp_https_server callers; placed ahead of the prebuilt --start-group block.
++    deps = [":core_c_esp32c3", ":core_cpp_esp32c3", ":sdk_hdrs_esp32c3", "@mbedtls_src//:mbedtls_src_esp32c3"],
++)
++
++
++# --- esp32c3 variants of the bundled Arduino libraries (build-only) --------
++# Parallel to the c6 network/fs/wifi/hash/ble/preferences/webserver libs, but
++# built against sdk_hdrs_esp32c3 so a c3 image carries ONE (c3) IDF include set
++# instead of c6+c3 (which overflowed the g++->cc1plus argv). Same board-agnostic
++# library sources; only the SDK header/define carrier differs.
++
++cc_library(
++    name = "network_esp32c3",
++    srcs = glob(["libraries/Network/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/Network/src/**/*.h"], allow_empty = True),
++    includes = ["libraries/Network/src"],
++    copts = _CXX_COPTS_ESP32C3,
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "fs_esp32c3",
++    srcs = glob(["libraries/FS/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/FS/src/**/*.h"], allow_empty = True),
++    includes = ["libraries/FS/src"],
++    copts = _CXX_COPTS_ESP32C3,
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "wifi_esp32c3",
++    srcs = glob(["libraries/WiFi/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/WiFi/src/**/*.h"], allow_empty = True),
++    includes = ["libraries/WiFi/src"],
++    copts = _CXX_COPTS_ESP32C3,
++    deps = [
++        ":network_esp32c3",
++        ":sdk_hdrs_esp32c3",
++    ],
++)
++
++cc_library(
++    name = "hash_esp32c3",
++    srcs = glob(["libraries/Hash/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/Hash/src/**/*.h"], allow_empty = True),
++    includes = ["libraries/Hash/src"],
++    copts = _CXX_COPTS_ESP32C3,
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "ble_esp32c3",
++    srcs = glob(["libraries/BLE/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/BLE/src/**/*.h"], allow_empty = True),
++    copts = _CXX_COPTS_ESP32C3,
++    includes = ["libraries/BLE/src"],
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "preferences_esp32c3",
++    srcs = glob(["libraries/Preferences/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/Preferences/src/**/*.h"], allow_empty = True),
++    copts = _CXX_COPTS_ESP32C3,
++    includes = ["libraries/Preferences/src"],
++    deps = [":sdk_hdrs_esp32c3"],
++)
++
++cc_library(
++    name = "webserver_esp32c3",
++    srcs = glob(["libraries/WebServer/src/**/*.cpp"], allow_empty = True),
++    hdrs = glob(["libraries/WebServer/src/**/*.h"], allow_empty = True),
++    includes = ["libraries/WebServer/src"],
++    copts = _CXX_COPTS_ESP32C3,
++    deps = [
++        ":fs_esp32c3",
++        ":hash_esp32c3",
++        ":network_esp32c3",
++        ":sdk_hdrs_esp32c3",
++    ],
++)
+diff --git a/platforms/BUILD.bazel b/platforms/BUILD.bazel
+index ca49d16..2eec266 100644
+--- a/platforms/BUILD.bazel
++++ b/platforms/BUILD.bazel
+@@ -22,6 +22,11 @@ constraint_value(
+     constraint_setting = ":board",
+ )
+ 
++constraint_value(
++    name = "esp32c3_board",
++    constraint_setting = ":board",
++)
++
+ constraint_value(
+     name = "esp32_board",
+     constraint_setting = ":board",
+@@ -49,6 +54,18 @@ platform(
+     ],
+ )
+ 
++# ESP32-C3 (RISC-V rv32imc — NO atomics, unlike the C6's rv32imac). Build-only
++# target: the firmware compiles for it so CI build-gates c3 work, but the
++# netstack SoC register map is still C6-specific (see firmware/netstack ccmp.rs).
++platform(
++    name = "esp32c3",
++    constraint_values = [
++        "@platforms//cpu:riscv32",
++        "@platforms//os:none",
++        ":esp32c3_board",
++    ],
++)
++
+ # Classic ESP32 / ESP32-WROOM (Xtensa LX6, dual core). @platforms//cpu has no
+ # xtensa value, so the board constraint alone discriminates; that's fine because
+ # no other registered toolchain matches os:none + esp32_board. (No Rust triple
+@@ -73,6 +90,11 @@ config_setting(
+     constraint_values = [":esp32c6_board"],
+ )
+ 
++config_setting(
++    name = "is_esp32c3",
++    constraint_values = [":esp32c3_board"],
++)
++
+ config_setting(
+     name = "is_esp32",
+     constraint_values = [":esp32_board"],
+diff --git a/rules/firmware.bzl b/rules/firmware.bzl
+index 3e7ef10..4ac699f 100644
+--- a/rules/firmware.bzl
++++ b/rules/firmware.bzl
+@@ -25,6 +25,7 @@ The retargeted ELF is available via the `elf` output group.
+ _BOARD_PLATFORM = {
+     "rp2350": Label("//platforms:rp2350"),
+     "esp32c6": Label("//platforms:esp32c6"),
++    "esp32c3": Label("//platforms:esp32c3"),
+     "esp32": Label("//platforms:esp32"),
+ }
+ 
+@@ -101,7 +102,7 @@ firmware_binary = rule(
+         ),
+         "board": attr.string(
+             mandatory = True,
+-            values = ["rp2350", "esp32c6", "esp32"],
++            values = ["rp2350", "esp32c6", "esp32c3", "esp32"],
+             doc = "Which board to build for (drives the transition + packager).",
+         ),
+         "opt_mode": attr.string(
+diff --git a/toolchains/cc/esp32c3/BUILD.bazel b/toolchains/cc/esp32c3/BUILD.bazel
+new file mode 100644
+index 0000000..0b7f330
+--- /dev/null
++++ b/toolchains/cc/esp32c3/BUILD.bazel
+@@ -0,0 +1,58 @@
++# ESP32-C3 (RISC-V rv32imc — NO atomics) cc_toolchain: reusable config rule + the
++# Nix Espressif riscv32-esp-elf GCC (@riscv_gcc), gated to //platforms:esp32c3.
++#
++# Mirrors the esp32c6 toolchain, but the C3 core is rv32imC (no 'a'/atomics
++# extension), so the base -march differs. Most compile/link detail (defines,
++# includes, ld scripts, libs) comes from the esp32-arduino-libs `flags/*`
++# response files in nix/arduino_esp32.BUILD; here we set only the arch flags so
++# the right multilib is selected. Build-only target (see //platforms:esp32c3).
++load("//toolchains/cc:cc_toolchain_config.bzl", "cc_toolchain_config")
++
++package(default_visibility = ["//visibility:public"])
++
++_ARCH_FLAGS = [
++    "-march=rv32imc_zicsr_zifencei",
++    "-mabi=ilp32",
++]
++
++cc_toolchain_config(
++    name = "config",
++    toolchain_identifier = "esp32c3-riscv32-esp-elf",
++    target_cpu = "riscv32",
++    target_system_name = "riscv32-esp-elf",
++    gcc = "@riscv_gcc//:gcc",
++    gpp = "@riscv_gcc//:g++",
++    ar = "@riscv_gcc//:ar",
++    strip = "@riscv_gcc//:strip",
++    compile_flags = _ARCH_FLAGS + [
++        "-ffunction-sections",
++        "-fdata-sections",
++        "-no-canonical-prefixes",
++    ],
++    link_flags = _ARCH_FLAGS + [
++        "-no-canonical-prefixes",
++    ],
++)
++
++cc_toolchain(
++    name = "esp32c3_cc",
++    all_files = "@riscv_gcc//:all",
++    ar_files = "@riscv_gcc//:all",
++    compiler_files = "@riscv_gcc//:all",
++    dwp_files = "@riscv_gcc//:all",
++    linker_files = "@riscv_gcc//:all",
++    objcopy_files = "@riscv_gcc//:all",
++    strip_files = "@riscv_gcc//:all",
++    toolchain_config = ":config",
++)
++
++toolchain(
++    name = "cc_toolchain",
++    target_compatible_with = [
++        "@platforms//cpu:riscv32",
++        "@platforms//os:none",
++        "//platforms:esp32c3_board",
++    ],
++    toolchain = ":esp32c3_cc",
++    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
++)

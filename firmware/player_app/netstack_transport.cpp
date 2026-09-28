@@ -67,7 +67,7 @@ int ppTxPkt(void *eb, int do_arm);
 void *ic_get_trc(uint32_t iface, uint32_t index);
 uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
                         uint32_t iss, uint8_t *out, uint32_t cap);
-uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_on_ip(uint32_t now_ms, const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer into the send window
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
@@ -76,6 +76,9 @@ uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK aft
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_state();
+uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
+uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
+void ns_tcp_set_serving_live(uint32_t live); // arm graceful RST load-shedding (live WS session)
 // Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
 void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
@@ -112,23 +115,28 @@ void IRAM_ATTR sink(void *, wifi_promiscuous_pkt_type_t) {}
 
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
-const char *SSID = "hitl-rig-3";
-const char *PASS = "hitl-rig-3-provision";
-// Default to rig-3's AP; a WiFi scan (scan_and_latch_ap) overwrites these once the
-// provisioned SSID is known, so the netstack joins ANY rig's AP, not just this baked one.
+// No WiFi credentials are baked into the image: they arrive at runtime, over either BLE
+// Improv or the wired serial console (the "PROV <ssid> <pass>" command in netstack_loop).
+// A WiFi scan (scan_latch_ap) fills the real BSSID/channel once the provisioned SSID is
+// known — these are just pre-scan placeholders (a Pi-OUI BSSID), overwritten before auth.
 uint8_t g_bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 uint8_t g_chan = 6;
 uint8_t OUR_MAC[6];
-// Active WiFi credentials for the WPA2 PMK. Default to the baked rig AP so a no-BLE
-// (--skip-improv) run still associates; BLE Improv overwrites these from the provisioner
-// (same AP here). We only START associating once these are "committed" — see g_creds_ready.
+// Active WiFi credentials for the WPA2 PMK, committed at runtime from BLE Improv OR the
+// wired serial "PROV" command — never baked into the image. We only START associating
+// once these are "committed" — see g_creds_ready.
 char g_ssid[33];
 char g_pass[65];
-bool g_creds_ready = false;  // creds committed (from BLE, or the baked fallback)
+bool g_creds_ready = false;  // creds committed (from BLE Improv or wired serial provisioning)
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
+// Lease lifetime (option 51) + when it was (re)acquired, for T1 renewal. A commercial
+// AP hands short leases and DROPS a client whose lease lapses without renewing — the
+// heapless netstack acquired the lease once and never renewed, so it went unreachable
+// a lease-time after provisioning (the CoolerKids "works briefly, then dead" symptom).
+uint32_t g_lease_secs = 0, g_lease_ms = 0, g_last_renew_ms = 0;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
@@ -606,6 +614,37 @@ void handle_arp(const uint8_t *pt, int pl) {
   tx_l2(hdr, payload, 8 + 28, nullptr);
 }
 
+// Announce our IP<->MAC to the whole BSS (gratuitous ARP, RFC 5227): SPA=TPA=our IP,
+// broadcast. Our ARP *responder* only helps a peer whose request reaches us AND whose
+// reply gets back — on a plain AP (no proxy-ARP, unlike a commercial router that answers
+// from DHCP snooping) that round-trip is unreliable for a from-scratch stack, so a peer
+// (e.g. the phone joining the AP AFTER the C6 leased) can't resolve us and gets
+// ERR_ADDRESS_UNREACHABLE. A proactive announcement uses only our working TX path. The
+// CALLER gates this to the pre-connection window (no active wss) — a broadcast frame
+// interleaved with an ESTABLISHED wss dropped the peer's session (the improv_e2e wss
+// wedge), so we announce only until a client is connected, never during a live session.
+void send_gratuitous_arp() {
+  if (!g_leased) return;
+  uint8_t payload[8 + 28];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06};
+  memcpy(payload, llc, 8);
+  uint8_t *r = payload + 8;
+  r[0] = 0x00; r[1] = 0x01;      // htype: Ethernet
+  r[2] = 0x08; r[3] = 0x00;      // ptype: IPv4
+  r[4] = 6; r[5] = 4;            // hlen, plen
+  r[6] = 0x00; r[7] = 0x01;      // oper: request (announcement)
+  memcpy(r + 8, OUR_MAC, 6);     // sha = our MAC
+  memcpy(r + 14, g_offer_ip, 4); // spa = our IP
+  memset(r + 18, 0, 6);          // tha = 0
+  memcpy(r + 24, g_offer_ip, 4); // tpa = our IP (gratuitous)
+  const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  uint8_t hdr[24]; // ToDS + Protected; a3 = broadcast so the AP floods it to the BSS
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
+  hdr[22] = 0; hdr[23] = 0;
+  tx_l2(hdr, payload, 8 + 28, "gratuitous ARP");
+}
+
 void handle_l3(const uint8_t *pt, int pl) {
   // EAPOL-Key (ethertype 0x888E) over the established, encrypted link: the AP's periodic
   // GROUP-KEY REKEY (message 1). If we ignore it, the authenticator times out the Group
@@ -660,7 +699,7 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
       static uint8_t reply[1600];  // static: handle_l3 is never re-entered (single thread)
-      uint32_t rl = ns_tcp_on_ip(ip, iplen, reply, sizeof(reply));
+      uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, reply, sizeof(reply));
       if (rl > 0) send_ip(reply, rl);
     }
     return;
@@ -681,6 +720,8 @@ void handle_l3(const uint8_t *pt, int pl) {
       while (o + 1 < end && *o != 255) {
         if (*o == 53) mt = o[2];
         else if (*o == 54) memcpy(g_server_id, o + 2, 4);
+        else if (*o == 51 && o[1] == 4) // lease time (seconds), for T1 renewal
+          g_lease_secs = ((uint32_t)o[2] << 24) | (o[3] << 16) | (o[4] << 8) | o[5];
         o += 2 + o[1];
       }
       Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt, dh[16], dh[17], dh[18], dh[19]);
@@ -690,10 +731,16 @@ void handle_l3(const uint8_t *pt, int pl) {
         Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
       } else if (mt == 5) {
+        bool first = !g_leased;
         g_leased = true;
+        g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4);
-        Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
-                      (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        if (first)
+          Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                        (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
+        else
+          Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
+                        dh[19], (unsigned)g_lease_secs);
       }
     }
   }
@@ -796,6 +843,24 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
+// True once ws_pump has begun writing a RESPONSE on the current slot — the WS 101 upgrade
+// OR the one-shot cert-trust-page GET. Distinguishes an actively-serving connection (which
+// must NOT be killed by the pre-WS 4s wedge gate while it finishes serving + closing) from
+// a genuinely silent pre-WS wedge (a tls_churn TLS-then-silent peer that never responded,
+// which the 4s gate must still reclaim). The post-WS 6s peer-gone gate covers a responding
+// connection instead. Cleared on every re-listen / reclaim (alongside g_ws_up).
+bool g_responding = false;
+// Edge tracker for "a wss client just appeared on :443". When it does, we gracefully
+// disconnect the VESTIGIAL post-provision BLE link (see netstack_loop): after the central
+// drops the provisioning link, the controller otherwise only fires EV_DISCONN on the ~6s
+// supervision timeout (netstack hci.rs), and until then coex keeps yielding ~28% of WiFi to
+// the now-dead link — the exact window the wss handshake/welcome runs in, so its packets land
+// in the BLE yield slots and get dropped (RST / welcome-timeout). A wss client only appears
+// AFTER provisioning (redirect + PROVISIONED went out over BLE), so the link is expendable:
+// tearing it down gracefully frees the radio for the handshake, reclaims BLE heap, and the
+// host re-advertises so the device stays connectable. We do NOT blanket-starve BLE — a fresh
+// central reconnecting still gets normal coex priority.
+bool g_wss_was_active = false;
 // WS reassembly buffer. Clients shard anything over CHUNK_BYTES (4096) into UploadChunk
 // windows, so a single inbound frame never exceeds ~4KB + protobuf overhead — 6KB is ample.
 // Kept small on purpose: on the C6 all internal SRAM is DMA-capable, and oversized BSS here
@@ -925,6 +990,7 @@ static bool ws_pump() {
                           "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                           "Content-Length: %u\r\nConnection: close\r\n\r\n",
                           (unsigned)(sizeof kCertPage - 1));
+        g_responding = true;  // serving a response now — exempt from the pre-WS 4s wedge gate
         tls_write_all((const uint8_t *)hdr, hn);
         tls_write_all((const uint8_t *)kCertPage, sizeof kCertPage - 1);
         return false;  // one-shot: close after serving so the ~28 KB TLS session frees
@@ -1053,6 +1119,22 @@ void netstack_setup() {
   esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
   delay(150);
+#if defined(LM_CHIP_ESP32C3)
+  // ESP32-C3 bring-up milestone: everything ABOVE is the chip-agnostic vendor WiFi
+  // controller init (esp_netif/esp_wifi_init/start/scan), which comes up fine on the
+  // C3. Everything BELOW is the heapless-MAC HIJACK — it pokes the ESP32-C6 WiFi MAC
+  // register map directly (firmware/netstack lmac.rs / regs.rs at 0x600A_xxxx) and
+  // drives reversed C6 libpp externs. The C3's WiFi MAC lives at a DIFFERENT base, so
+  // running the hijack here would write to the wrong (or unmapped) peripherals and
+  // fault at boot. That register port is the remaining, deliberately-out-of-scope c3
+  // netstack work (see the PR); until it lands, stop after the controller is up so the
+  // image boots cleanly on real c3 silicon. The BLE/Improv path and the render loop
+  // still run; only the WiFi DATA path is disabled on the C3.
+  Serial.printf("[netstack] esp32c3: heapless MAC hijack not yet ported (C6 WiFi MAC "
+                "register map @0x600A_xxxx); WiFi data path disabled on c3, controller "
+                "up, skipping hijack+TLS.\n");
+  return;
+#endif
   wreg(WIFI_MAC_INTR_MAP, 0); // detach vendor ISR
   ns_mac_rx_install();
   uint32_t *req = static_cast<uint32_t *>(malloc(24));
@@ -1064,8 +1146,21 @@ void netstack_setup() {
   mac_own_bssid();            // own-MAC + g_bssid: hardware auto-ACK
   ns_mac_rx_install();        // re-own the RX ring
   esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
+  // Promiscuous / all-frames RX. REQUIRED for protected UNICAST on some APs: with the HW
+  // crypto engine off (HW_DECRYPT=false, the SW-CCMP round-trip path), the "real STA accept
+  // policy" filter drops individually-addressed protected frames while passing group ones —
+  // invisible on the Pi 5 rigs but FATAL on a Pi 3's onboard AP (brcmfmac), where the DUT
+  // associated + leased (broadcast DHCP) yet never saw a single unicast frame, so it never
+  // answered a TCP SYN (tcpdump: SYN storm, zero SYN-ACK). All-frames RX delivers the
+  // unicast RAW to our ring; the software address filter below (A1==our MAC / group, from
+  // our BSSID) still scopes it, and the SW CCMP path decrypts it (with the ccmp_nonce TID
+  // fix so QoS Data validates). auto-ACK stays keyed on the own-MAC register set above, so
+  // association survives. The `sink` no-op keeps the vendor from double-delivering. Verified
+  // on both a Pi 3 AP (recovers the SYN) and a Pi 5 AP (no regression).
+  esp_wifi_set_promiscuous_rx_cb(&sink);
+  esp_wifi_set_promiscuous(true);
 
-  // Sanity: continuous RX into our ring, no promiscuous.
+  // Sanity: continuous all-frames RX into our ring (promiscuous on; see above).
   uint8_t rx[400];
   uint32_t beacons = 0;
   for (int i = 0; i < 400; i++) {
@@ -1073,7 +1168,7 @@ void netstack_setup() {
     if (n && rx[0] == 0x80) beacons++;
     delay(3);
   }
-  Serial.printf("[netstack] RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n",
+  Serial.printf("[netstack] RX sanity (STA vif, promiscuous all-frames, SW CCMP): beacons=%u\n",
                 beacons);
   tls_init();
 }
@@ -1128,6 +1223,10 @@ extern "C" void pm_go_to_sleep();
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  // Normal coex: yield the radio to BLE only around a LIVE connection's events. The
+  // vestigial post-provision link that used to steal airtime here is now torn down
+  // gracefully the moment a wss client appears (see netstack_loop), so there's no dead
+  // link to yield to — and a fresh central that reconnects still gets its slice.
   if (!improv_ble_central_connected()) {
     if (mode != 0) { pm_go_to_wake(); mode = 0; }
     return;
@@ -1257,6 +1356,7 @@ void netstack_loop() {
         mbedtls_ssl_session_reset(&g_ssl);
         g_tls_hs = false;
         g_ws_up = false;
+        g_responding = false;
         g_ws_rxlen = 0;
       }
       g_bio_tx = g_bio_rx = 0;
@@ -1334,22 +1434,48 @@ void netstack_loop() {
   }
   } // end RX drain loop
 
-  // Commit WiFi credentials before associating — the proper Improv flow: on BLE provisioning
-  // associate with the creds the provisioner writes; with no BLE central (e.g. --skip-improv)
-  // fall back to the baked rig creds after a short grace so the transport still comes up.
+  // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
+  //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
+  //  (2) wired serial — the rig writes "PROV <ssid> <pass>\n" to the DUT's USB-serial console
+  //      (see just below), the no-BLE HITL path that replaced the old baked rig creds.
   // (Association coexists fine with an active BLE link — the earlier "join timeout" was NOT
   //  coex but blocking Serial.printf wedging loopTask when the port wasn't drained; see
   //  Serial.setTxTimeoutMs(0) in setup. Either association order works now.)
   //
-  // CRITICAL: once a central has EVER connected, suppress the baked fallback entirely. A
-  // connected central means a harness is actively provisioning us over BLE; the baked SSID
-  // is only this rig's default and on a shared bench (multiple rigs in radio range) it names
-  // a DIFFERENT rig's AP. Falling back mid-provisioning (e.g. between failed Improv attempts,
-  // when no central is momentarily connected) would latch+associate to the wrong rig's AP and
-  // lease an IP on that rig's subnet — unreachable from this rig's host (the wss ConnectionReset
-  // on rig-2). --skip-improv runs never connect a central, so the fallback still fires for them.
-  static bool g_ble_central_ever = false;
-  if (improv_ble_central_connected()) g_ble_central_ever = true;
+  // Wired provisioning: read the DUT's USB-serial console for a "PROV <ssid> <pass>" line and
+  // commit exactly like the BLE take path (re-latch the scan cache, restart the join from AUTH,
+  // derive the PMK off the hot path). Reads are non-blocking and independent of the async log
+  // drain task's writes, so this can't stall the render loop. Unmatched input is ignored.
+  if (PLAYER_MODE) {
+    static char pbuf[128];
+    static uint8_t plen = 0;
+    while (Serial.available() > 0) {
+      int c = Serial.read();
+      if (c < 0) break;
+      if (c == '\n' || c == '\r') {
+        pbuf[plen] = '\0';
+        char *sp;
+        if (plen > 5 && strncmp(pbuf, "PROV ", 5) == 0 &&
+            (sp = strchr(pbuf + 5, ' ')) != nullptr) {
+          *sp = '\0';
+          strncpy(g_ssid, pbuf + 5, sizeof g_ssid - 1);
+          strncpy(g_pass, sp + 1, sizeof g_pass - 1);
+          g_creds_ready = true;
+          g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
+          st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
+          ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
+                       strlen(g_pass));
+          Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
+                        (unsigned long)millis(), g_ssid);
+        }
+        plen = 0;
+      } else if (plen < sizeof(pbuf) - 1) {
+        pbuf[plen++] = (char)c;
+      } else {
+        plen = 0;  // oversized line — drop it
+      }
+    }
+  }
   // Log BLE link-state transitions (e.g. 7->6 = central dropped). A drop while leased==0 means the
   // link died mid-join before we could send the Improv redirect — the failure the PMK-off-the-hot-
   // path + coex duty-cycle defend against; low-noise telemetry (fires only on change, not per loop).
@@ -1362,20 +1488,6 @@ void netstack_loop() {
                     improv_ble_central_connected(), g_leased ? 1 : 0);
       diag_last_state = st_now;
     }
-  }
-  // Grace must outlast BLE provisioning: from boot a central has to scan+connect+subscribe+RPC,
-  // which routinely takes >15s — an 8s grace fired mid-provisioning and latched the baked
-  // (wrong-rig) SSID before the real creds arrived. 45s comfortably clears a successful
-  // provision (real creds set g_creds_ready via path 2 the instant they arrive, so provisioning
-  // is NOT delayed by this); the ever-connected guard suppresses it entirely once a central
-  // shows up. Only genuinely central-less --skip-improv runs wait out the full grace.
-  static const uint32_t kBakedFallbackMs = 45000;
-  if (PLAYER_MODE && !g_creds_ready && !g_ble_central_ever && millis() > kBakedFallbackMs) {
-    strncpy(g_ssid, SSID, sizeof g_ssid - 1);
-    strncpy(g_pass, PASS, sizeof g_pass - 1);
-    g_creds_ready = true;
-    ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
-    Serial.printf("[assoc] no BLE central — associating with baked creds ssid=%s\n", g_ssid);
   }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
@@ -1468,6 +1580,43 @@ void netstack_loop() {
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");
   }
+  // DHCP T1 renewal: once leased, renew at half the lease so a short-lease commercial AP
+  // never lets our binding lapse — otherwise the AP reclaims the IP and we go silently
+  // unreachable a lease-time after provisioning (the CoolerKids drop). Reuse the broadcast
+  // REQUEST (a3=bcast reaches the server); dnsmasq/home routers re-ACK a REQUEST for the
+  // IP we already hold, which refreshes g_lease_ms via the mt==5 handler.
+  if (st == DONE && g_leased && g_lease_secs > 0) {
+    uint32_t age = (millis() - g_lease_ms) / 1000;
+    // Renew at T1 — but ONLY while no wss is up: send_dhcp broadcasts (a3=bcast), and a
+    // broadcast frame interleaved with a LIVE wss drops the peer's session (same reason
+    // the gratuitous ARP is gated). The rig/home lease is long vs a session, so deferring
+    // the renewal until the wss is idle is safe.
+    if (age >= g_lease_secs / 2 && !g_ws_up && millis() - g_last_renew_ms > 5000) {
+      g_last_renew_ms = millis();
+      Serial.printf("[dhcp] T1 renew (age=%us/%us)\n", (unsigned)age, (unsigned)g_lease_secs);
+      send_dhcp(3, g_offer_ip, g_server_id, "RENEW");
+    }
+    if (age >= g_lease_secs) { // expired with no ACK — fall back to a fresh DORA
+      Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
+      g_leased = false;
+      g_have_offer = false;
+    }
+  }
+  // Gratuitous-ARP announce, ONLY while no wss client is connected. A peer that joins
+  // the AP after us (the phone joining amd-rig-ap after the C6 leased) can't resolve us
+  // via our unreliable responder round-trip on a plain AP, so re-announce every ~3s so it
+  // learns us before it connects. Gated on !g_ws_up: a broadcast frame interleaved with a
+  // LIVE wss dropped the session (the improv_e2e wedge), so once a client is up we go
+  // quiet and never perturb it.
+  {
+    uint32_t ts = ns_tcp_state();
+    bool idle = (ts != 2 && ts != 6) && !g_ws_up;  // no client Established/SynRcvd, no wss
+    static uint32_t garp_ms = 0;
+    if (st == DONE && g_leased && idle && millis() - garp_ms > 3000) {
+      garp_ms = millis();
+      send_gratuitous_arp();
+    }
+  }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo
   // server (10.42.0.1:7777) and exchange data over the heapless stack.
   if (st == DONE && g_leased && !g_tcp_started && millis() - t > 700) {
@@ -1497,33 +1646,80 @@ void netstack_loop() {
     // Server: handle_l3 already drove on_ip (SYN-ACK, ACKs); drain + echo any request.
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
+    // On the RISING edge of a wss client appearing (LISTEN -> SynRcvd=6 / Established=2),
+    // gracefully tear down the vestigial post-provision BLE link so coex stops yielding
+    // airtime to a dead link during the TLS handshake (the RST / welcome-timeout flake).
+    // Edge-triggered so we issue exactly one HCI_Disconnect per wss session; a no-op if the
+    // central already dropped. The host re-advertises on EV_DISCONN, so BLE stays connectable.
+    bool wss_active = (s == 2 || s == 6);
+    if (wss_active && !g_wss_was_active && improv_ble_central_connected()) {
+      improv_ble_request_disconnect();
+    }
+    g_wss_was_active = wss_active;
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
-    // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
-    // stress) can leave the single connection slot stuck ESTABLISHED with the client gone
-    // mid-TLS-handshake (or pre-WS): the s==4/0 re-listen below never fires (the peer sent no
-    // FIN), so every later client is rejected — a persistent wss wedge. The write-stall guard
-    // (tls_write_all) only covers a stalled reply, not the accept/handshake phase. So bound
-    // the not-yet-serving stretch: once ESTABLISHED-but-not-up exceeds a few seconds (a real
-    // handshake+WS completes in <3s), force a fresh listener — ns_tcp_listen swaps the conn to
-    // a clean LISTEN state — abandoning the dead peer and freeing the slot for the next client.
+    // Graceful load-shedding gate. Arm the tcp layer to fast-REJECT (RST|ACK) a SYN from a
+    // DIFFERENT peer ONLY while this slot is a live, established, actively-serving session —
+    // s==2 AND the WS/TLS session is up. Disarm otherwise (LISTEN, SynRcvd, pre-WS
+    // Established, closing). This is the load-bearing guard against the reverted #199/#204
+    // e2e regression: the SAME client reconnects on a fresh source port for the post-WS
+    // cert-trust-page GET right after its wss session closes, arriving during the
+    // close->re-LISTEN transition; if we rejected a busy-slot SYN unconditionally we'd reset
+    // that legitimate reconnect. We disarm the instant the session is no longer up (and
+    // explicitly before close_notify below), so the cert-GET reconnect is never rejected —
+    // it either latches a fresh LISTEN or, if the old slot is still closing, is silently
+    // dropped and retried (its previous behavior), never RST-refused.
     {
-      static uint32_t est_since = 0;
+      bool live = (s == 2) && (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
+      ns_tcp_set_serving_live(live ? 1u : 0u);
+    }
+    // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
+    // stress) can leave the single connection slot stuck mid-accept: the DOMINANT wedge is
+    // SynRcvd (s==6) — the client that won the LISTEN race sent no final ACK (the host fired
+    // several handshakes and abandoned the losers), so the slot sits in SynRcvd forever. The
+    // Rust dead-peer RTO only arms when sent>0 (SynRcvd has nothing queued), and a mismatched
+    // second SYN is dropped at the peer-match gate, so EVERY later client times out. The
+    // less-common wedge is ESTABLISHED-but-not-up (the peer vanished mid-TLS/pre-WS). Neither
+    // is covered by the s==4/0 re-listen below (no FIN) nor the tls_write_all stall guard
+    // (that's the reply phase). So bound the not-yet-serving stretch — SynRcvd OR pre-WS
+    // Established — and once it exceeds ~3s (a real handshake+WS completes in <3s on the LAN),
+    // force a fresh listener (ns_tcp_listen swaps the conn to a clean LISTEN), abandoning the
+    // dead peer and freeing the slot. This is the tls_churn anti-wedge gate.
+    {
+      static uint32_t hs_since = 0;
+      static uint32_t last_prog = 0;
       bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
-      if (s == 2 && !up) {
-        if (est_since == 0) est_since = millis() == 0 ? 1 : millis();
-        else if (millis() - est_since > 8000) {
-          Serial.println("*** SERVER half-open handshake wedge — reclaiming (re-listen) ***");
+      // SynRcvd, or Established pre-WS — BUT never a connection that's actively serving a
+      // response (g_responding: the one-shot cert-trust GET, which never sets g_ws_up). A
+      // served cert-GET waiting to close under contention would otherwise trip this 4s gate
+      // and get RST mid-close (the "cert-trust page GET ... Connection reset" e2e flake); it
+      // is instead covered by the post-WS 6s peer-gone gate below. A genuinely silent pre-WS
+      // wedge (tls_churn TLS-then-silent) never sets g_responding, so it's still reclaimed.
+      bool handshaking = (s == 6) || (s == 2 && !up && !g_responding);
+      if (handshaking) {
+        // Reclaim on a STALLED handshake, not wall-clock. Progress = TLS bytes moving in
+        // EITHER direction (g_bio_rx + g_bio_tx): a live handshake alternates — the client
+        // sends ClientHello/Finished (bio_rx), the server sends its cert flight (bio_tx) —
+        // so keying on rcv-only would murder the slot while the SERVER is talking and the
+        // client is legitimately quiet. In SynRcvd no TLS has started so both are 0/const
+        // and the timer runs on wall-clock (a true no-final-ACK wedge). Reset on any TLS
+        // progress; fire only when nothing has flowed either way for 4s.
+        uint32_t prog = (uint32_t)g_bio_rx + (uint32_t)g_bio_tx + ns_tcp_rcv_nxt();
+        if (hs_since == 0 || prog != last_prog) {
+          hs_since = millis() == 0 ? 1 : millis();
+          last_prog = prog;
+        } else if (millis() - hs_since > 4000) {
+          Serial.println("*** SERVER handshake wedge (peer silent pre-WS) — reclaiming ***");
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
-          est_since = 0;
+          hs_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
           s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
         }
       } else {
-        est_since = 0;
+        hs_since = 0;
       }
     }
     // Post-WS peer-gone reclaim. The block above only catches a wedge BEFORE the WS is up.
@@ -1538,22 +1734,34 @@ void netstack_loop() {
     // simply reconnects, in exchange for never staying permanently unreachable.
     {
       static uint32_t txstuck_since = 0;
-      bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
-      if (s == 2 && up && ns_tcp_tx_room() < 512) {
-        if (txstuck_since == 0) txstuck_since = millis() == 0 ? 1 : millis();
-        else if (millis() - txstuck_since > 6000) {
-          Serial.println("*** SERVER post-WS peer-gone wedge (tx window pinned) — reclaiming (re-listen) ***");
+      static uint32_t last_una = 0;
+      // Cover a live WS session (g_ws_up) OR a responding cert-GET (g_responding): both can
+      // have unacked data whose ACKs must keep flowing, and a dead peer mid-serve must be
+      // reclaimed here (keyed on snd_una freeze) rather than by the pre-WS 4s gate above.
+      bool up = TLS_SERVER ? (PLAYER_MODE ? (g_ws_up || g_responding) : g_tls_hs) : true;
+      // Only meaningful when we have UNACKED data outstanding (tx_room < SND_BUF=2048): a
+      // live reader ACKs it, so snd_una advances — even on a SATURATING stream that keeps
+      // the window pinned full (the old tx_room<512 test murdered healthy backlogged
+      // streams: led_capture/fx_bench). Key on snd_una FROZEN, not on window occupancy.
+      // Idle (nothing outstanding) → skip; only a peer that stopped ACKing for 6s is gone.
+      if (s == 2 && up && ns_tcp_tx_room() < 2048) {
+        uint32_t una = ns_tcp_snd_una();
+        if (txstuck_since == 0 || una != last_una) {
+          txstuck_since = millis() == 0 ? 1 : millis();
+          last_una = una;
+        } else if (millis() - txstuck_since > 6000) {
+          Serial.println("*** SERVER post-WS peer-gone (no ACK 6s) — reclaiming ***");
           static uint32_t piss = 0x6000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, piss);
           piss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
           txstuck_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
           s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
         }
       } else {
-        txstuck_since = 0;  // window draining (or not up) — peer is alive
+        txstuck_since = 0;  // idle (nothing unacked) or not up — peer is fine
       }
     }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
@@ -1571,13 +1779,33 @@ void netstack_loop() {
           g_bio_tx = g_bio_rx = 0;
         }
       } else if (PLAYER_MODE) {
-        if (!ws_pump()) { mbedtls_ssl_close_notify(&g_ssl); }
-        // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened a
-        // window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
-        // resumes (prevents a zero-window deadlock on large client->device transfers).
-        uint8_t wack[80];
-        uint32_t wn = ns_tcp_window_ack(wack, sizeof wack);
-        if (wn > 0) send_ip(wack, wn);
+        if (!ws_pump()) {
+          // Peer torn/ungraceful, OR a one-shot GET / (the cert-trust page) that ws_pump
+          // served and asked to close. Send close_notify and let the clean FIN drive the
+          // s==4/0 re-listen path below. An earlier revision re-listened INLINE here for
+          // faster recovery, but that abandoned the connection before close_notify was
+          // transmitted — which broke the cert-trust GET that immediately follows a WS
+          // session (e2e_netstack): the next GET / went unanswered (read timeout). The
+          // stalled-wedge cases are already covered by the pre-WS and post-WS
+          // progress-keyed reclaim gates above, so the fast inline path wasn't buying
+          // robustness — only the regression. Close cleanly and re-listen on the FIN.
+          //
+          // Disarm load-shedding BEFORE we close: g_ws_up is still true here (the session was
+          // serving up to this instant), but we are now closing, so any SYN that arrives from
+          // a different source port during this close->re-LISTEN window is the SAME client's
+          // post-WS cert-trust-page reconnect and MUST NOT be RST-refused (the reverted e2e
+          // regression). Clearing it here — ahead of the scan-top update next loop — makes the
+          // no-reject guarantee hold across the whole transition, not just from the next scan.
+          ns_tcp_set_serving_live(0u);
+          mbedtls_ssl_close_notify(&g_ssl);
+        } else {
+          // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
+          // a window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
+          // resumes (prevents a zero-window deadlock on large client->device transfers).
+          uint8_t wack[80];
+          uint32_t wn = ns_tcp_window_ack(wack, sizeof wack);
+          if (wn > 0) send_ip(wack, wn);
+        }
       } else {
         uint8_t rb[600];
         int r = mbedtls_ssl_read(&g_ssl, rb, sizeof(rb));
@@ -1602,7 +1830,7 @@ void netstack_loop() {
       static uint32_t niss = 0x4000;
       ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
       niss += 0x1000;
-      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
       Serial.println("*** SERVER re-listening ***");
     }
   } else if (st == DONE && g_tcp_started) {

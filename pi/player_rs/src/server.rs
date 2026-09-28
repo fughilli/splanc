@@ -157,7 +157,7 @@ async fn handle_conn(
             Message::Binary(data) => {
                 let now = now_ms(epoch);
                 match handle_frame(&player, &data, now, now_ms(epoch)) {
-                    Ok(Some(reply)) => ws.send(Message::Binary(reply.into())).await?,
+                    Ok(Some(reply)) => ws.send(Message::Binary(reply)).await?,
                     Ok(None) => {} // fire-and-forget arm (detections, imu, …)
                     Err(e) => eprintln!("player_rs: frame rejected ({e})"),
                 }
@@ -290,7 +290,7 @@ mod tests {
         };
         let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 512>::new());
         hello.encode(&mut enc).unwrap();
-        ws.send(Message::Binary(enc.into_writer().to_vec().into()))
+        ws.send(Message::Binary(enc.into_writer().to_vec()))
             .await
             .unwrap();
 

@@ -192,13 +192,14 @@ pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
 }
 
 /// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
+/// `now_ms` is the caller's millis() at arrival (RTT/RTO timing).
 #[no_mangle]
-pub extern "C" fn ns_tcp_on_ip(ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
         let Some(c) = TCP.as_mut() else { return 0 };
         let i = core::slice::from_raw_parts(ip, len as usize);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
-        c.on_ip(i, o) as u32
+        c.on_ip(now_ms, i, o) as u32
     }
 }
 
@@ -220,6 +221,21 @@ pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_tx_room() -> u32 {
     unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
+}
+
+/// Oldest unacked send sequence — advances on every peer ACK. The forward-progress
+/// signal the reclaim watchdogs need so they fire only on a truly silent peer, never on
+/// a healthy saturating stream (window full but snd_una climbing).
+#[no_mangle]
+pub extern "C" fn ns_tcp_snd_una() -> u32 {
+    unsafe { TCP.as_ref().map(|c| c.snd_una()).unwrap_or(0) }
+}
+
+/// Next expected receive sequence — advances when the peer sends us data. Lets the pre-WS
+/// watchdog distinguish a live-but-slow handshake from a stalled one.
+#[no_mangle]
+pub extern "C" fn ns_tcp_rcv_nxt() -> u32 {
+    unsafe { TCP.as_ref().map(|c| c.rcv_nxt()).unwrap_or(0) }
 }
 
 /// Emit the next in-flight segment into `out` if the peer's window allows; returns its
@@ -267,6 +283,22 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
         core::ptr::copy_nonoverlapping(d.as_ptr(), out, n);
         c.take_rx_n(n);
         n as u32
+    }
+}
+
+/// Arm/disarm graceful load-shedding for the single server slot. Pass `true` ONLY when the
+/// WS/TLS session is genuinely up and actively serving a client; pass `false` the instant the
+/// app begins closing / reclaiming / re-listening (before close_notify). Only while armed AND
+/// Established does a SYN from a DIFFERENT peer get fast-REJECTED (RST|ACK) instead of silently
+/// dropped, so excess concurrent clients retry in ~1-2s. Never reject while closing/idle/
+/// transitioning — that would reset the same client's post-WS cert-trust-page reconnect (the
+/// reverted #199/#204 e2e regression). A fresh `ns_tcp_listen` resets the flag to false.
+#[no_mangle]
+pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
+    unsafe {
+        if let Some(c) = TCP.as_mut() {
+            c.set_serving_live(live != 0);
+        }
     }
 }
 

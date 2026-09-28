@@ -99,7 +99,20 @@ let
   # below; nix `let` bindings are order-independent.)
   apIface = if useApDongle then "ap0" else "wlan0";
   apConn = "hitl-ap";
-  apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
+  # Fixed 2.4 GHz channel (the C6 is 2.4-only), assigned PER RIG from the three
+  # non-overlapping 2.4 GHz channels (1/6/11). rig-1 and rig-2 run the netstack
+  # suite CONCURRENTLY (--max-concurrent 2), so a shared channel made their APs
+  # co-channel and their DUTs contend for airtime — which timed out the
+  # RF-sensitive wss opening handshake and flaked fx_bench_jit/led_capture_jit.
+  # WiFi APs don't channel-hop (that's BLE/FHSS) and hostapd ACS only picks once at
+  # boot (two rigs can collide), so pin distinct channels statically: rig-1→1,
+  # rig-2→11 (max separation), everything else (rig-3 Pi 3, one-off boxes)→6.
+  # amd-rig's provisioning AP is already pinned to ch1 in hitl-amd-ap.nix; it
+  # doesn't run the netstack suite, so its overlap with rig-1 is benign.
+  apChannel =
+    if config.networking.hostName == "hitl-rig-1" then 1
+    else if config.networking.hostName == "hitl-rig-2" then 11
+    else 6;
   # Canonical naming (README "Rig naming"): the AP SSID IS the system hostname, so
   # a box is addressed identically everywhere (hostname = tailscale name = SSID).
   apSsid = config.networking.hostName;
@@ -296,6 +309,18 @@ in
   hardware.bluetooth.enable = true;
   hardware.bluetooth.powerOnBoot = true;
 
+  # Disable btusb USB autosuspend. The RTL8851BU BT half (rtl8851bu-bt.nix) wedges LE
+  # scanning if it autosuspends near a scan: the per-rig BLE-adapter mutex idles the
+  # dongle past its 2s autosuspend delay between provisions, and the resume/scan-disable
+  # race on this Realtek controller leaves BlueZ discovery stuck FINDING — so every LE
+  # scan returns empty and Improv provisioning fails "no Improv device found in scan"
+  # across all DUTs until a manual `systemctl restart bluetooth` (root cause of the
+  # fleet-wide netstack-lane wedge seen 2026-09-28). The udev power/control=on rule
+  # below is belt-and-suspenders (usbcore can suspend independently of the module
+  # param). Harmless — only keeps a mains-powered controller awake; effective at next
+  # module load / reboot.
+  boot.extraModprobeConfig = "options btusb enable_autosuspend=0";
+
   # Let the container's non-root agent open the C6's raw USB (libusb: openocd/gdb
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
@@ -315,6 +340,10 @@ in
     # every rig so a dongle plugged into any bench is used automatically (BT half);
     # the rule only matches the dongle's VID:PID, so it's inert without one.
     ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
+    # Pin the combo dongle awake (see boot.extraModprobeConfig above): USB autosuspend
+    # on the RTL8851BU BT half wedges LE scanning. usbcore can suspend the device
+    # independently of btusb's enable_autosuspend param, so also hold power/control=on.
+    ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="b851", TEST=="power/control", ATTR{power/control}="on"
   '';
 
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
@@ -424,6 +453,55 @@ in
     };
     ipv4.method = "shared";
     ipv6.method = "ignore";
+  };
+
+  # Keep the provisioning-AP's neighbour table CORRECT for every leased DUT. Root cause
+  # (proven by monitoring the AP's neigh+lease tables through a concurrent suite): the
+  # netstack DUT firmware picks a FRESH random locally-administered MAC every boot
+  # (02:0c:6a:xx:xx:xx — netstack_transport.cpp:1084, to dodge the AP's stale-4-way-SA →
+  # PMF SA-Query/status-30 on same-MAC re-assoc). Each boot/reflash (dozens per suite ×
+  # flaky retries) thus leaves a dead 02:0c:6a lease + neighbour entry. When dnsmasq later
+  # REUSES that pool IP for a new boot's new MAC, the AP's neighbour entry for the DUT's
+  # live IP still points at the PREVIOUS boot's DEAD MAC → the AP misroutes the inbound
+  # wss/cert flight to nowhere → "ws never came up / timed out during opening handshake"
+  # (the rotating hard-fail; observed in 733/437 per-second snapshots on rig-1/rig-2).
+  # (The sibling #190 failure — a joining DUT's NM IPv4 ACD seeing a ghost as a duplicate
+  # DHCP conflict — is the same pollution; the DUT side also disables ACD via dad-timeout 0.)
+  #
+  # A blind periodic `ip neigh flush` (the prior fix) only mitigated this on a cadence and
+  # churned ACTIVE DUTs' entries. Instead RECONCILE: every 2s, force neigh[ip] = the
+  # CURRENT lessee MAC for each active DHCP lease. Deterministic (a reused IP is corrected
+  # within 2s of the new lease), targeted (only ever SETS correct entries, never deletes a
+  # live DUT's), and drops the misroute-condition to ZERO (measured 733/437 → 0 across a
+  # concurrent suite, no active-DUT disruption). NB dnsmasq's own dhcp-script hook can't do
+  # this — NM runs dnsmasq with CAP_NET_RAW only (no CAP_NET_ADMIN), so `ip neigh` from the
+  # hook fails; this service runs as root. arp_accept=1 additionally lets the AP adopt the
+  # DUT's own gratuitous-ARP announce (netstack_transport.cpp:1551).
+  boot.kernel.sysctl."net.ipv4.conf.${apIface}.arp_accept" = 1;
+  systemd.services.hitl-ap-arp-flush = {
+    description = "Reconcile provisioning-AP neighbours to current DHCP lessees (kill stale-MAC misroute)";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "NetworkManager.service" ];
+    serviceConfig = {
+      Restart = "always";
+      RestartSec = "10s";
+      ExecStart = pkgs.writeShellScript "hitl-ap-neigh-sync" ''
+        leases=/var/lib/NetworkManager/dnsmasq-${apIface}.leases
+        while true; do
+          if [ -f "$leases" ]; then
+            while read -r _exp mac ip _rest; do
+              case "$ip" in
+                10.42.0.*) [ -n "$mac" ] && ${pkgs.iproute2}/bin/ip neigh replace "$ip" \
+                  lladdr "$mac" dev ${apIface} nud reachable 2>/dev/null || true ;;
+              esac
+            done < "$leases"
+          fi
+          # reap only DEAD ghosts (FAILED); never touches a REACHABLE/STALE live entry.
+          ${pkgs.iproute2}/bin/ip neigh flush dev ${apIface} nud failed 2>/dev/null || true
+          sleep 2
+        done
+      '';
+    };
   };
 
   # Force NM's shared-mode dnsmasq to BROADCAST DHCP replies (default; see

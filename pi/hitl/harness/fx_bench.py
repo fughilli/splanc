@@ -314,6 +314,10 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
                 proto_wire.encode_client({"type": "set_jit", "enabled": bool(args.jit)})
             )
             _log(f"[jit] pinned {'ON' if args.jit else 'OFF'} for this run")
+            # Emit the chip (SoC) for this run symmetrically with the JIT pin so the
+            # ingest can attribute the chip per measurement block, the same way it
+            # attributes the build. Legacy logs without this line default to esp32c6.
+            _log(f"[chip] {args.soc}")
             return sock
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= settle_deadline:

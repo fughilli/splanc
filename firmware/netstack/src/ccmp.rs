@@ -58,22 +58,30 @@ fn gmul(mut a: u8, mut b: u8) -> u8 {
 }
 
 /// AES-128 block cipher. On the ESP32-C6 target the single-block primitive runs on
-/// the dedicated standalone AES accelerator ([`hw_aes`]); host builds (and the test
-/// suite) use the software cipher with pre-expanded round keys. The public API is
-/// identical either way, so CCMP / key-wrap code is backend-agnostic.
+/// the dedicated standalone AES accelerator ([`hw_aes`]); the ESP32-C3 (which has a
+/// different AES/PCR register map — see [`hw_aes`]) and host/test builds use the
+/// software cipher with pre-expanded round keys. The `hw_aes` path is gated on the
+/// RISC-V atomics extension (`target_feature = "a"`), present on the C6's rv32imac
+/// but not the C3's rv32imc, so the two firmware SKUs pick the right backend
+/// automatically. The public API is identical either way, so CCMP / key-wrap code is
+/// backend-agnostic.
 pub struct Aes128 {
+    // Read only by the C6 hardware-AES backend (`hw_aes::block`); the software
+    // backend (C3 + host/test) uses the expanded round keys in `rk` instead, so on
+    // those builds this field is stored but unread.
+    #[allow(dead_code)]
     key: [u8; 16],
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     rk: [[u8; 16]; 11],
 }
 
 impl Aes128 {
-    #[cfg(all(target_arch = "riscv32", not(test)))]
+    #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
     pub fn new(key: &[u8; 16]) -> Self {
         Aes128 { key: *key } // HW engine takes the raw key; no round-key expansion needed
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     pub fn new(key: &[u8; 16]) -> Self {
         let mut rk = [[0u8; 16]; 11];
         rk[0].copy_from_slice(key);
@@ -88,6 +96,10 @@ impl Aes128 {
             for i in 0..4 {
                 rk[r][i] = prev[i] ^ t[i];
             }
+            // AES key schedule: `i` indexes the new round key while also reading
+            // `prev[i]` and the just-written `rk[r][i - 4]`; an iterator would
+            // obscure the fixed-offset recurrence.
+            #[allow(clippy::needless_range_loop)]
             for i in 4..16 {
                 rk[r][i] = prev[i] ^ rk[r][i - 4];
             }
@@ -96,26 +108,26 @@ impl Aes128 {
     }
 
     pub fn encrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_ENC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
         self.encrypt_block_sw(s);
     }
 
     pub fn decrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_DEC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
         self.decrypt_block_sw(s);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     fn encrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[0]);
         for r in 1..10 {
@@ -129,7 +141,7 @@ impl Aes128 {
         add_rk(s, &self.rk[10]);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
     fn decrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[10]);
         for r in (1..10).rev() {
@@ -148,7 +160,16 @@ impl Aes128 {
 /// ECB. CCMP (AES-CTR keystream + CBC-MAC) and RFC-3394 key-wrap use the forward block
 /// (`MODE_ENC`); key-unwrap uses the inverse block (`MODE_DEC`). Register map + the
 /// mode/state encoding are from the IDF `soc/aes_reg.h` + `hal/aes_ll.h` for esp32c6.
-#[cfg(all(target_arch = "riscv32", not(test)))]
+// This module holds the ESP32-C6 AES accelerator register map (base + PCR clock/
+// reset regs). It is now gated on `target_feature = "a"` (the atomics extension in
+// the C6's rv32imac but NOT the C3's rv32imc), so it is compiled ONLY for the C6.
+// The ESP32-C3 has a different AES peripheral base (0x6003_A000) and clocks AES via
+// the SYSTEM/DPORT registers rather than a PCR block, so these C6 offsets are wrong
+// for it; the C3 therefore uses the software AES backend (see `Aes128`) — correct,
+// just not accelerated. A future c3 HW-AES port would add a parallel register map
+// here under `target_feature = "c"` && !"a" (or an explicit chip cfg) and re-enable
+// the accelerated path; until then the C3 never touches these registers.
+#[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
 pub mod hw_aes {
     const AES_BASE: usize = 0x6008_8000;
     const AES_KEY_0: usize = AES_BASE + 0x00; // KEY_0..3 (AES-128), stride 4
@@ -303,10 +324,13 @@ pub fn aes_wrap(kek: &[u8; 16], plain: &[u8], out: &mut [u8]) -> usize {
     let aes = Aes128::new(kek);
     let mut a = [0xa6u8; 8];
     let mut r = [[0u8; 8]; 8];
-    for i in 0..n {
-        r[i].copy_from_slice(&plain[8 * i..8 * i + 8]);
+    for (i, ri) in r.iter_mut().enumerate().take(n) {
+        ri.copy_from_slice(&plain[8 * i..8 * i + 8]);
     }
     for j in 0..6 {
+        // `i` both indexes the block register `r[i]` and feeds the counter
+        // `n * j + i + 1`, so an iterator rewrite would obscure the RFC-3394 step.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             let mut blk = [0u8; 16];
             blk[..8].copy_from_slice(&a);
@@ -314,6 +338,8 @@ pub fn aes_wrap(kek: &[u8; 16], plain: &[u8], out: &mut [u8]) -> usize {
             aes.encrypt_block(&mut blk);
             a.copy_from_slice(&blk[..8]);
             let t = (n * j + i + 1) as u64;
+            // `k` selects both the byte of `a` and its big-endian shift of `t`.
+            #[allow(clippy::needless_range_loop)]
             for k in 0..8 {
                 a[k] ^= (t >> (8 * (7 - k))) as u8;
             }
@@ -345,14 +371,16 @@ impl KeyUnwrap for AesUnwrap {
         let mut a = [0u8; 8];
         a.copy_from_slice(&wrapped[..8]);
         let mut r = [[0u8; 8]; 32];
-        for i in 0..n {
-            r[i].copy_from_slice(&wrapped[8 * (i + 1)..8 * (i + 2)]);
+        for (i, ri) in r.iter_mut().enumerate().take(n) {
+            ri.copy_from_slice(&wrapped[8 * (i + 1)..8 * (i + 2)]);
         }
         for j in (0..6).rev() {
             for i in (0..n).rev() {
                 let t = (n * j + i + 1) as u64;
                 let mut blk = [0u8; 16];
                 blk[..8].copy_from_slice(&a);
+                // `k` selects both the byte of `blk` and its big-endian shift of `t`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..8 {
                     blk[k] ^= (t >> (8 * (7 - k))) as u8;
                 }
@@ -491,10 +519,18 @@ fn mac_hdr_len(hdr: &[u8]) -> usize {
     }
 }
 
-fn ccmp_nonce(a2: &[u8], pn: u64) -> [u8; 13] {
+// `hdr` is the full MAC header (so we can read the QoS Control field). Per §12.5.3.2 the
+// nonce priority octet carries the TID (QoS Control bits 0-3) for a QoS Data frame — the
+// AAD (ccmp_aad) already keeps that TID, so hardcoding 0 here made the nonce inconsistent
+// with the AAD and failed the MIC for any QoS frame with a non-zero TID.
+fn ccmp_nonce(hdr: &[u8], pn: u64) -> [u8; 13] {
     let mut n = [0u8; 13];
-    n[0] = 0; // priority/mgmt flags (non-QoS data)
-    n[1..7].copy_from_slice(&a2[..6]);
+    n[0] = if hdr[0] & 0x80 != 0 && hdr.len() >= 26 {
+        hdr[24] & 0x0f
+    } else {
+        0
+    };
+    n[1..7].copy_from_slice(&hdr[10..16]); // A2 (transmitter address)
     for i in 0..6 {
         n[7 + i] = (pn >> (8 * (5 - i))) as u8; // PN, 48-bit big-endian
     }
@@ -534,7 +570,7 @@ pub fn ccmp_encap(hdr: &[u8], tk: &[u8; 16], pn: u64, keyid: u8, payload: &[u8],
     if hdr.len() < hlen {
         return 0;
     }
-    let nonce = ccmp_nonce(&hdr[10..16], pn);
+    let nonce = ccmp_nonce(hdr, pn);
     let (aad, alen) = ccmp_aad(hdr);
     out[..hlen].copy_from_slice(&hdr[..hlen]);
     out[hlen..hlen + 8].copy_from_slice(&ccmp_hdr(pn, keyid));
@@ -553,12 +589,12 @@ pub fn ccmp_decap(frame: &[u8], tk: &[u8; 16], out: &mut [u8]) -> Option<(usize,
     }
     let ch = &frame[hlen..hlen + 8];
     let pn = (ch[0] as u64)
-        | (ch[1] as u64) << 8
-        | (ch[4] as u64) << 16
-        | (ch[5] as u64) << 24
-        | (ch[6] as u64) << 32
-        | (ch[7] as u64) << 40;
-    let nonce = ccmp_nonce(&frame[10..16], pn);
+        | ((ch[1] as u64) << 8)
+        | ((ch[4] as u64) << 16)
+        | ((ch[5] as u64) << 24)
+        | ((ch[6] as u64) << 32)
+        | ((ch[7] as u64) << 40);
+    let nonce = ccmp_nonce(frame, pn);
     let (aad, alen) = ccmp_aad(frame);
     let clen = frame.len() - (hlen + 8);
     let body = hlen + 8;
@@ -653,5 +689,84 @@ mod tests {
         let mut tampered = enc;
         tampered[40] ^= 0x01;
         assert!(ccmp_decap(&tampered[..n], &tk, &mut dec).is_none());
+    }
+
+    // Regression for the CCMP nonce/AAD TID mismatch: a QoS Data frame carries its TID in
+    // both the AAD *and* the nonce priority octet (§12.5.3.2). The old ccmp_nonce hardcoded
+    // 0, so any QoS frame with a non-zero TID computed a nonce inconsistent with the AAD and
+    // failed the MIC on decap — silently dropping protected QoS unicast on real WMM APs. This
+    // asserts a non-zero-TID QoS frame round-trips, and that a TID-0 QoS frame still does
+    // (the DUT's own TX path emits TID 0, so that must stay byte-identical).
+    fn qos_hdr(tid: u8) -> [u8; 26] {
+        let mut hdr = [0u8; 26];
+        hdr[0] = 0x88; // QoS Data (subtype bit 7 set -> 26-byte header w/ QoS Control)
+        hdr[1] = 0x01; // toDS
+        hdr[4..10].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]); // A1
+        hdr[10..16].copy_from_slice(&[0x02, 0x00, 0x53, 0x45, 0x43, 0x01]); // A2
+        hdr[16..22].copy_from_slice(&[0x02, 0x00, 0x53, 0x45, 0x43, 0xa0]); // A3
+        hdr[24] = tid & 0x0f; // QoS Control: TID in bits 0-3
+        hdr[25] = 0x00;
+        hdr
+    }
+
+    fn assert_qos_roundtrips(tid: u8) {
+        let hdr = qos_hdr(tid);
+        let tk = [0x33u8; 16];
+        let pn = 0x0000_0102_0304u64;
+        let payload = b"\xaa\xaa\x03\x00\x00\x00\x08\x00 a QoS unicast IP packet";
+        let mut enc = [0u8; 160];
+        let n = ccmp_encap(&hdr, &tk, pn, 0, payload, &mut enc);
+        assert!(n > 0, "encap failed for TID {tid}");
+        // 26-byte QoS header is preserved in clear; ciphertext differs from plaintext.
+        assert_eq!(&enc[..26], &hdr[..]);
+        assert_ne!(&enc[34..34 + payload.len()], &payload[..]);
+        // decap must verify the MIC and recover the exact plaintext + PN.
+        let mut dec = [0u8; 160];
+        let (plen, got_pn) = ccmp_decap(&enc[..n], &tk, &mut dec)
+            .unwrap_or_else(|| panic!("QoS TID {tid} MIC verification failed on decap"));
+        assert_eq!((&dec[..plen], got_pn), (&payload[..], pn));
+    }
+
+    #[test]
+    fn ccmp_qos_nonzero_tid_roundtrip() {
+        assert_qos_roundtrips(6);
+    }
+
+    #[test]
+    fn ccmp_qos_tid0_roundtrip() {
+        // TID 0 must still round-trip: guards the DUT's own TX path (qhdr[24]=0x00).
+        assert_qos_roundtrips(0);
+    }
+
+    // The airtight guard. A pure encap→decap round-trip in one process can't catch this bug:
+    // it uses the same (buggy) nonce on both sides, so a symmetric error still validates. The
+    // real failure is interop — the AP builds the MIC with the correct TID nonce, the DUT
+    // verifies with a zero nonce, MIC mismatch, silent drop. So assert the *nonce itself* is
+    // correct: for a QoS Data frame the priority octet MUST equal the TID and MUST match the
+    // AAD's TID octet. On the pre-fix code (n[0] hardcoded 0) the TID=6 case below FAILS.
+    #[test]
+    fn ccmp_nonce_priority_octet_carries_qos_tid() {
+        // QoS Data frame, TID 6.
+        let hdr6 = qos_hdr(6);
+        let pn = 0x0000_0102_0304u64;
+        let nonce6 = ccmp_nonce(&hdr6, pn);
+        assert_eq!(nonce6[0], 6, "QoS nonce priority octet must carry the TID");
+        // Must be consistent with the AAD, which already keeps the TID (§12.5.3.2/.3.3).
+        let (aad6, _) = ccmp_aad(&hdr6);
+        assert_eq!(nonce6[0], aad6[22], "nonce TID must match AAD TID");
+        // A2 (transmitter addr) is copied from hdr[10..16].
+        assert_eq!(&nonce6[1..7], &hdr6[10..16]);
+        // PN is 48-bit big-endian.
+        assert_eq!(&nonce6[7..13], &[0x00, 0x00, 0x01, 0x02, 0x03, 0x04]);
+
+        // TID 0 QoS frame -> priority octet 0 (guards the DUT's own TX path).
+        let nonce0 = ccmp_nonce(&qos_hdr(0), pn);
+        assert_eq!(nonce0[0], 0);
+
+        // Non-QoS Data frame (24-byte header, QoS bit clear) -> priority octet 0.
+        let mut nonqos = [0u8; 24];
+        nonqos[0] = 0x08; // Data, no QoS
+        nonqos[10..16].copy_from_slice(&[0x02, 0x00, 0x53, 0x45, 0x43, 0x01]);
+        assert_eq!(ccmp_nonce(&nonqos, pn)[0], 0);
     }
 }

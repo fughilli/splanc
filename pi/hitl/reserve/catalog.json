@@ -6,7 +6,11 @@
   "resource_types": {
     "esp32c6": {
       "kind": "usb",
-      "capabilities": ["flash", "jtag", "improv", "wss-app", "led-strip"]
+      "capabilities": ["flash", "jtag", "improv", "wss-app", "led-strip", "chip:esp32c6"]
+    },
+    "esp32c3": {
+      "kind": "usb",
+      "capabilities": ["flash", "jtag", "improv", "wss-app", "led-strip", "chip:esp32c3"]
     },
     "led-mapper-pi": {
       "kind": "network",
@@ -28,11 +32,14 @@
   ],
 
   "discovery": {
-    "comment": "Auto-discover attached ESP32-C6 player boards by their built-in USB-JTAG by-id symlinks (one reservable unit per board, sticky ports, live hot-plug), and ingest runtime-seeded units (a network DUT Pi) from seeded_file. USB ports 2222-2229; seeded ports 2230-2233 (dedicated range above the USB pool). Each discovered unit unions in the analyzer tap cap from the broker's channel map.",
+    "comment": "Auto-discover attached ESP32-C6 player boards by their built-in USB-JTAG by-id symlinks (one reservable unit per board, sticky ports, live hot-plug), and ingest runtime-seeded units (a network DUT Pi) from seeded_file. USB ports 2222-2229; seeded ports 2230-2233 (dedicated range above the USB pool). Each discovered unit unions in the analyzer tap cap from the broker's channel map. chip_overrides pins boards a bare USB scan can't disambiguate: the ESP32-C3 and ESP32-C6 share the native USB-JTAG PID (303a:1001), so a C3 would default to esp32c6/c6-; each override keys a board's MAC (its USB serial, matched case-/separator-insensitively) to the right type + name_prefix. rig-3's third DUT (/dev/ttyACM2, MAC AC:27:6E:7F:18:60) is an ESP32-C3.",
     "enabled": true,
     "glob": "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00",
     "type": "esp32c6",
     "name_prefix": "c6-",
+    "chip_overrides": {
+      "AC:27:6E:7F:18:60": { "type": "esp32c3", "name_prefix": "c3-" }
+    },
     "ssh_port_base": 2222,
     "max": 8,
     "seeded_file": "/var/lib/hitl/seeded-units.json",

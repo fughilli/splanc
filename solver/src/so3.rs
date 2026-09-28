@@ -78,6 +78,9 @@ mod tests {
     }
 
     #[test]
+    // `3.14` is a deliberate near-π rotation-vector component (exercises the
+    // so3_log singularity), not a use of the π constant — keep the literal value.
+    #[allow(clippy::approx_constant)]
     fn exp_log_roundtrip() {
         for r in [
             [0.1, -0.2, 0.3],

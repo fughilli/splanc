@@ -1,0 +1,48 @@
+{
+  "comment": "Mac mini iOS HITL bench catalog — read by hitl-reserved --runner darwin on the Mac (nix/hitl-darwin.nix). Unlike the Linux benches there is NO container: the darwin runner grants each reservation a scoped SSH login into the shared daemon user, and the iPhone (devicectl/usbmux) and the C6 (esptool over /dev/cu.usbmodem*) are reached host-native from that session. So components carry NO 'devices' mounts (nothing to bind into a container); hardware is selected by env markers (a serial port, a UDID) instead. This host currently has ONE iPhone + ONE C6, so it offers a single real-iPhone unit (ios-phone); the ios-sim/second-C6 unit is dropped until a second C6 is attached. The port/serial/UDID below were filled against the live Mac (C6 MAC 8c:fd:49:12:56:e8 via esptool flash_id; iPhone UDID 00008110-000E5CE10251A01E). host/workspace + the unit sshd-port range are passed as flags by hitl-darwin.nix, not baked here.",
+  "workspace": "splanc",
+  "lease_seconds": 1800,
+  "ssh_port_base": 2400,
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "monitor", "improv", "wss-app", "led-strip"]
+    },
+    "ios-dev": {
+      "kind": "usb",
+      "capabilities": ["ios-device", "real-ble", "web-bluetooth", "camera"]
+    }
+  },
+  "components": [
+    {
+      "comment": "The real-iPhone unit's C6 DUT, reached host-native by esptool over its USB-serial port (macOS names it /dev/cu.usbmodem<N>). No 'devices' mount — the darwin runner has no container. HITL_ESP_PORT pins the port the toolbox targets; HITL_ADAPTER_SERIAL selects the board's USB-JTAG for any openocd/gdb use. macOS assigns the /dev/cu.usbmodem<N> number dynamically, so it can renumber across replug/reset — if flashing can't open the port, re-probe `ls /dev/cu.usbmodem*` and update HITL_ESP_PORT.",
+      "name": "c6-c",
+      "type": "esp32c6",
+      "env": {
+        "HITL_ESP_PORT": "/dev/cu.usbmodem21101",
+        "HITL_ADAPTER_SERIAL": "8C:FD:49:12:56:E8"
+      }
+    },
+    {
+      "comment": "The iOS dev device: a real iPhone reached host-native via CoreDevice (devicectl) + usbmux — NOT a USB passthrough (the darwin runner has no container). Carries no device node, just the env markers: HITL_IOS_UDID selects this exact iPhone for devicectl build/install/launch (tools/ios_build_server.py); HITL_PHONE_TARGET routes phone_e2e to the iOS-device lane.",
+      "name": "ios-dev",
+      "type": "ios-dev",
+      "env": {
+        "HITL_IOS_UDID": "00008110-000E5CE10251A01E",
+        "HITL_PHONE_TARGET": "ios-phone"
+      }
+    }
+  ],
+  "units": [
+    {
+      "comment": "REAL-iPHONE unit: the iPhone + its C6. The client reserves it (scoped SSH into the Mac daemon user), ships the phone-HITL harness + web bundle, and runs phone_e2e --phone-target ios-phone: builds/installs the Capacitor app on the real iPhone via devicectl (ios_build_server), opens it at ?driver=…&ble=real, and the PHONE provisions the real C6 over CoreBluetooth (Capacitor Improv plugin) → maps/solves end to end. Not pin_only: a bare `--require-caps ios-device,real-ble` request should match it.",
+      "name": "ios-phone",
+      "type": "ios-phone",
+      "components": ["ios-dev", "c6-c"],
+      "capabilities": ["ios-device", "real-ble", "web-bluetooth", "flash", "improv", "wss-app"],
+      "env": {
+        "HITL_PHONE_TARGET": "ios-phone"
+      }
+    }
+  ]
+}

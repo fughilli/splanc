@@ -19,8 +19,7 @@ pub fn start_mapping(
     brightness: f64,
     epoch_ms: i64,
 ) -> Option<i64> {
-    let mut opts = pb::StartMappingOptions::default();
-    opts.r#led_count = led_count as i32;
+    let mut opts = pb::StartMappingOptions { r#led_count: led_count as i32, ..Default::default() };
     opts.set_bit_period_ms(bit_period_ms);
     opts.set_brightness(brightness);
 

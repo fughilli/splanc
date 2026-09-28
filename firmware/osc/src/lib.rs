@@ -68,7 +68,7 @@ pub struct OscMessage<'a> {
     n_args: usize,
 }
 
-impl<'a> OscMessage<'a> {
+impl OscMessage<'_> {
     /// The decoded arguments (up to [`MAX_ARGS`]).
     pub fn args(&self) -> &[OscArg] {
         &self.args[..self.n_args]
@@ -503,7 +503,7 @@ fn apply_message(
     }
 }
 
-impl<'a> OscMessage<'a> {
+impl OscMessage<'_> {
     /// The count of numeric args, clamped to `[1, 4]` — the assumed width of a
     /// slot-index write when no manifest gives one.
     fn numeric_width(&self) -> u8 {

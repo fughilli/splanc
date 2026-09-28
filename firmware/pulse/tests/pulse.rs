@@ -165,7 +165,7 @@ fn flood_lights_a_moving_band_and_restarts() {
     // the front is at 400) — check that SOME interior LED near the front lights
     // and a far one (arrival ≫ front) is dark.
     let front = sim.flood_front_mm();
-    assert!(front >= 350 && front <= 450, "front≈400: {front}");
+    assert!((350..=450).contains(&front), "front≈400: {front}");
     // The LED at the source (arrival 0) is behind by ~400 > decay 200 → dark.
     // Somewhere near the wavefront is lit.
     let mut lit = 0;

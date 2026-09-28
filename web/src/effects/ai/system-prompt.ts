@@ -188,16 +188,42 @@ STATE & DATA:
 
 PERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in \`int\`/\`fixed\`/\`fixed16\`/\`fixed8\` (native, no soft-float); \`sin\`/\`cos\`/\`exp\` on a \`fixed\` arg are LUT-based (angle in TURNS, 1.0 = full circle). Hoist anything not per-LED into update(). Narrow buffer/texture storage with \`: fixed8\`/\`: fixed16\` to save RAM.
 
-EXAMPLE — a moving band along the trunk:
-uniform float speed : 0.0 .. 5.0 = 1.0;
-uniform float width : 0.02 .. 0.5 = 0.12;
-uniform vec3 tint : color = 0.2, 0.6, 1.0;
+EXAMPLE 1 — rotating pinwheel (angle around the map center from led.uv):
+uniform float speed : 0.0 .. 5.0 = 0.5;
 void update() {}
 vec3 shade(Led led) {
-  float phase = fract(led.s - time * speed);
-  float band = smoothstep(width, 0.0, abs(phase - 0.5));
-  return tint * band;
+  float ang = atan2(led.uv.y - 0.5, led.uv.x - 0.5) / 6.2832;
+  float hue = fract(ang * 4.0 + time * speed);
+  return hsv2rgb(hue, 1.0, 1.0);
 }
+
+EXAMPLE 2 — whole-map breathing glow (time oscillation via state):
+uniform float rate : 0.1 .. 3.0 = 0.6;
+uniform vec3 base : color = 1.0, 0.2, 0.1;
+state float glow;
+void update() { glow = 0.5 + 0.5 * sin(time * rate * 6.2832); }
+vec3 shade(Led led) { return base * glow; }
+
+EXAMPLE 3 — bright head moving along the strip with a fading tail (led.s):
+uniform float speed : 0.0 .. 3.0 = 0.7;
+void update() {}
+vec3 shade(Led led) {
+  float behind = fract(time * speed - led.s);
+  return vec3(1.0, 0.8, 0.4) * exp(-8.0 * behind);
+}
+
+These are PATTERNS, not answers: adapt the math to the actual request — never return an example unchanged, and never reference a variable an example declared unless YOU declare it too.
+
+COMMON MISTAKES — each of these is a COMPILE ERROR, never do them:
+- NO preprocessor: no #define / #include. Inline the number or declare a uniform.
+- Every identifier must be DECLARED before use. Names like width, tint, phase do not exist unless you declare them (a 'uniform' at the top, or a local 'float x = 0.0;').
+- 'led' exists ONLY inside shade(Led led). Never use led.* in update(). update() takes no arguments and returns nothing.
+- Per-LED color logic goes in shade(), and shade() must return the final color. Do not return vec3(0.0, 0.0, 0.0) from shade() while doing the "real" work elsewhere.
+- 'state' is a top-level declaration: 'state float glow;'. There is no 'state.x', no 'state a = {...}', and no state declared inside a function. Locals in update() are invisible to shade() — pass values through a state variable.
+- Never index trail[...] or img[...] unless you declared 'buffer vec3 trail;' or 'texture vec3 img(64, 64);' at the top.
+- NO ++, --, +=, -=, no ternary ?:, no while, no const, no plain global variables, and locals need an initializer. Write 'i = i + 1;', 'x = x + 1.0;', 'float x = 0.0;', and use if/else.
+- hsv2rgb hue is 0..1, NOT degrees: a full rainbow is hsv2rgb(fract(t), 1.0, 1.0).
+- The set_script "source" is RAW program text starting with a declaration — no markdown fences, no leading '|' or other decoration, and newlines inside the JSON string escaped as \\n.
 
 REPAIR: given a previous script + compiler diagnostics, fix every error; change as little else as possible.`;
 

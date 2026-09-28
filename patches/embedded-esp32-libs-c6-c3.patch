@@ -1,0 +1,69 @@
+Restrict the esp32-arduino-libs FOD to the esp32c6 + esp32c3 variants only.
+Upstream ships a single zip with EVERY chip variant (esp32, s2/s3, c3/c5/c6/h2,
+p4); fetchzip unpacks all of it (~10 GB), which overflows a small container
+overlay and was the sole reason the C6 firmware couldn't build in-container. We
+build esp32c6 and esp32c3 ONLY, so fetch the raw zip (fetchurl; hash is the
+raw-zip sha256, not the unpacked NAR) and selectively `unzip
+'esp32-arduino-libs/esp32c6/*' 'esp32-arduino-libs/esp32c3/*'` (~2-3 GB peak).
+arduino_esp32_drv.nix stages BOTH RISC-V SDKs at sdk/<chip>. esp32c3 is a
+BUILD-ONLY target (see //MODULE.bazel + the c3 firmware BUILD note); the classic
+Xtensa esp32 copy is intentionally not staged. Applied to the pinned embedded
+archive via archive_override(patches=...) in //MODULE.bazel. Revert (or
+parameterize upstream) if the set of built boards changes again.
+
+diff --git a/nix/arduino_esp32_drv.nix b/nix/arduino_esp32_drv.nix
+index 52135b0..fb39889 100644
+--- a/nix/arduino_esp32_drv.nix
++++ b/nix/arduino_esp32_drv.nix
+@@ -1,7 +1,8 @@
+ # arduino-esp32 core + the per-chip prebuilt SDKs (esp32-arduino-libs) merged
+ # into ONE tree so a single Bazel repo owns both — avoids cross-repo include/-L
+ # pain (the core sources and the SDK headers/libs/ld must resolve together).
+-# The SDKs land at sdk/<chip>/ (esp32c6 RISC-V, esp32 Xtensa LX6). Bazel
++# The SDKs land at sdk/<chip>/ (esp32c6 + esp32c3, both RISC-V — this fork of the
++# libs FOD extracts esp32c6 and esp32c3; see esp32_arduino_libs.nix). Bazel
+ # package markers are stripped (same as arduino-pico).
+ pkgs:
+ let
+@@ -17,7 +18,7 @@ pkgs.runCommand "arduino-esp32-3.3.10" { } ''
+   cp -r --no-preserve=mode,ownership ${core} $out
+   mkdir -p $out/sdk
+   cp -r --no-preserve=mode,ownership ${libs}/esp32-arduino-libs/esp32c6 $out/sdk/esp32c6
+-  cp -r --no-preserve=mode,ownership ${libs}/esp32-arduino-libs/esp32 $out/sdk/esp32
++  cp -r --no-preserve=mode,ownership ${libs}/esp32-arduino-libs/esp32c3 $out/sdk/esp32c3
+   find $out \( \
+       -name BUILD -o -name BUILD.bazel \
+       -o -name WORKSPACE -o -name WORKSPACE.bazel \
+diff --git a/nix/esp32_arduino_libs.nix b/nix/esp32_arduino_libs.nix
+index d940357..9d35c26 100644
+--- a/nix/esp32_arduino_libs.nix
++++ b/nix/esp32_arduino_libs.nix
+@@ -4,11 +4,21 @@
+ # cpp_flags,ld_flags,ld_scripts,ld_libs}, and a frozen sdkconfig. Treated
+ # read-only (a custom sdkconfig would require the full IDF build).
+ #
+-# TODO(build): replace fakeHash; confirm stripRoot (whether the zip has a single
+-# top-level dir) after the first fetch.
++# The upstream zip carries EVERY chip variant (esp32, s2/s3, c3/c5/c6/h2, p4);
++# unpacked in full it is ~10 GB, which overflows a small container overlay. We
++# build esp32c6 + esp32c3 ONLY, so fetch the raw zip and selectively unzip just
++# the `esp32-arduino-libs/esp32c6/` and `.../esp32c3/` subtrees (~2-3 GB).
++# `hash` is therefore the RAW ZIP's sha256 (fetchurl), NOT the unpacked-NAR hash
++# that fetchzip used. esp32c3 is the build-only c3 target (RISC-V rv32imc); see
++# //MODULE.bazel and the c3 firmware BUILD note.
+ pkgs:
+-pkgs.fetchzip {
+-  url = "https://github.com/espressif/esp32-arduino-lib-builder/releases/download/idf-release_v5.5/esp32-arduino-libs-idf-release_v5.5-73550728-v6.zip";
+-  hash = "sha256-XQ19/tVQboqvTOKKi7c657pwBSGAdRA6nfQdeXQAujQ=";
+-  stripRoot = false;
+-}
++let
++  zip = pkgs.fetchurl {
++    url = "https://github.com/espressif/esp32-arduino-lib-builder/releases/download/idf-release_v5.5/esp32-arduino-libs-idf-release_v5.5-73550728-v6.zip";
++    hash = "sha256-bZI7vxfxbQlK3GtQNpe/kMzjBoVjUO6BXgh9VYL303o=";
++  };
++in
++pkgs.runCommand "esp32-arduino-libs-c6-c3" { nativeBuildInputs = [ pkgs.unzip ]; } ''
++  mkdir -p $out
++  unzip -q ${zip} 'esp32-arduino-libs/esp32c6/*' 'esp32-arduino-libs/esp32c3/*' -d $out
++''

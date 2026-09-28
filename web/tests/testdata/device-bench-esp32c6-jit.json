@@ -15,8 +15,8 @@
       "label": "sweep16",
       "fxbBase64": "RlhCMQEAAAACAAEAEAD//wAAW10AAAAABgMXAwEAAAAAAAAAIQMhAw==",
       "ledCount": 16,
-      "measuredFrameCycles": 40320,
-      "measuredShowCycles": 57485
+      "measuredFrameCycles": 45687,
+      "measuredShowCycles": 63359
     },
     {
       "label": "sweep256",

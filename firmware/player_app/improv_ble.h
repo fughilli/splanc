@@ -38,6 +38,10 @@ bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t
 // has taken the provisioning result and disconnected.
 bool improv_ble_central_connected();
 
+// Gracefully disconnect the current BLE link (peripheral-initiated). No-op if not
+// connected; the host re-advertises afterward so the device stays connectable.
+void improv_ble_request_disconnect();
+
 // Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
 // Exposed for diagnostics (distinguish link-drop vs notification-loss).
 extern "C" uint32_t ns_ble_state();

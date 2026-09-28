@@ -257,7 +257,8 @@ impl<const N: usize> TxRing<N> {
     /// Global TX bring-up: set the TX rate/duration config words and assert the
     /// global TXQ enable.
     ///
-    /// # Safety: MMIO; the MAC must be initialized and clocked.
+    /// # Safety
+    /// MMIO; the MAC must be initialized and clocked.
     pub unsafe fn init_tx() {
         // TX config words: keep the low 16 bits, set the rate/duration field.
         mmio::write32(mac::TX_CONF0, mmio::read32(mac::TX_CONF0) & 0xffff | 0x0500_0000);
@@ -276,7 +277,8 @@ impl<const N: usize> TxRing<N> {
     /// [`set_rate`] for `queue` BEFORE calling `arm`, since the PLCP0 write with
     /// `0xC000_0000` arms the DMA immediately.
     ///
-    /// # Safety: MMIO; `self` must be `'static` (the descriptor stores a raw
+    /// # Safety
+    /// MMIO; `self` must be `'static` (the descriptor stores a raw
     /// pointer into `self` and the hardware DMAs the frame buffer), and the MAC +
     /// PHY must be initialized.
     pub unsafe fn arm(&mut self, idx: usize) {
@@ -307,7 +309,8 @@ impl<const N: usize> TxRing<N> {
     /// the remaining words are the length-independent legacy-OFDM rate template.
     /// Must be called before [`arm`] for the same queue.
     ///
-    /// # Safety: MMIO; the MAC + PHY must be initialized.
+    /// # Safety
+    /// MMIO; the MAC + PHY must be initialized.
     pub unsafe fn set_rate(&self, idx: usize) {
         if idx >= N {
             return;
@@ -343,7 +346,8 @@ impl<const N: usize> TxRing<N> {
     /// the completion-clear register). Returns `true` if a completion was
     /// serviced.
     ///
-    /// # Safety: MMIO; MAC must be initialized.
+    /// # Safety
+    /// MMIO; MAC must be initialized.
     pub unsafe fn service_completions(&mut self) -> bool {
         let mut serviced = false;
         for queue in 0..HW_TXQ_COUNT {

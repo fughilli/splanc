@@ -196,7 +196,13 @@ class Reservation:
         if require:
             caps.append(_REQUIRE_ALIASES.get(require, require))
         self.require_caps = caps
-        self.sku = sku  # -> unit_type (an explicit hardware-class target)
+        # sku -> unit_type (an explicit hardware-class target, e.g. "esp32c6"). Like
+        # $HITL_SERVER/$HITL_OWNER above, default it from $HITL_SKU so a target can pin
+        # the SoC uniformly via `env` (a c6 netstack test sets HITL_SKU=esp32c6 to skip
+        # a same-rig esp32c3 DUT); an explicit arg still wins. This filters by the unit's
+        # `type` (see _unit_serves), NOT a capability, so it keeps matching the old-daemon
+        # c6 DUTs (which are type esp32c6 but carry no chip:* cap).
+        self.sku = sku or os.environ.get("HITL_SKU") or None
         self.device = device  # -> unit (pin by exact name)
         self.id: str | None = None
         self.host: str | None = None
