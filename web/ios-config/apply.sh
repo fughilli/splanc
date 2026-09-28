@@ -91,6 +91,16 @@ set_str() {
 
 echo "patching $plist"
 
+# --- Export compliance. Splanc's only cryptography is standard, OS-provided
+# TLS/HTTPS (the wss:// control channel) + the system Bluetooth stack — no
+# proprietary encryption — so it qualifies for the export exemption. Declaring
+# ITSAppUsesNonExemptEncryption = false records that in the build, which stops
+# App Store Connect from prompting for encryption info on every upload. (bool,
+# not string, so set it directly rather than via set_str.)
+"$pb" -c "Set :ITSAppUsesNonExemptEncryption false" "$plist" 2>/dev/null \
+  || "$pb" -c "Add :ITSAppUsesNonExemptEncryption bool false" "$plist"
+echo "export compliance: ITSAppUsesNonExemptEncryption = false"
+
 # --- Permission usage strings (App Store review REQUIRES these to be present
 # and specific; a generic string is a common rejection reason). ----------------
 # Camera: the mapping capture pipeline (getUserMedia → WebGL2 detector → solver).

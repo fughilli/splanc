@@ -214,6 +214,7 @@ jobs:
               --loading_phase_threads=1 \
               --disk_cache="$HOME/.cache/bazel-disk" \
               --test_output=all \
+              --jobs="$n" \
               --local_test_jobs="$n" \
               --flaky_test_attempts=3 \
               --test_env=HITL_SERVERS \
