@@ -36,15 +36,31 @@ set the Pi's real address and per-rig `--host`/`--workspace` at deploy.
 
 `amd-rig` is an x86_64 mini-PC (deployed by `//pi/hitl:hitl_sdr`, an `amd64-generic`
 board variant of the same flake — see the `pi/hitl/BUILD.bazel` header). It offers
-**one composite reservable unit**, `c6-sdr` (type `esp32c6+hackrf`): an ESP32-C6
-wired next to a HackRF One, handed out **together as a single atomic reservation**
-for reverse-engineering the ESP32's lower-layer WiFi/BT stacks. The reservation
-environment carries the ESP32 toolbox **and** an SDR toolbox (`hackrf_info`/
-`hackrf_transfer`/`hackrf_sweep` + GNU Radio with gr-osmosdr, plus `gnuradio-python`
-for flowgraphs — see `nix/container.nix` `withSdr`). Reserve it with `--type
-esp32c6+hackrf` (or `--unit c6-sdr`); the daemon runs the environment privileged
-(single-unit bench) so it reaches both the C6's tty/USB-JTAG and the tty-less
-HackRF's raw USB.
+**one composite reservable unit**, `c6-sdr` (type `esp32c6+hackrf`): **two**
+ESP32-C6s wired next to a HackRF One, handed out **together as a single atomic
+reservation** for reverse-engineering the ESP32's lower-layer WiFi/BT stacks (two
+C6s enable TX/RX-between-DUTs experiments; the HackRF is the on-air oracle). The
+reservation environment carries the ESP32 toolbox **and** an SDR toolbox
+(`hackrf_info`/`hackrf_transfer`/`hackrf_sweep` + GNU Radio with gr-osmosdr, plus
+`gnuradio-python` for flowgraphs — see `nix/container.nix` `withSdr`). Reserve it
+with `--type esp32c6+hackrf` (or `--unit c6-sdr`); the daemon runs the environment
+privileged (single-unit bench) so it reaches both C6s' ttys/USB-JTAGs and the
+tty-less HackRF's raw USB.
+
+**Addressing the two C6s in-container.** The daemon injects each DUT's port and
+USB-JTAG serial as env: `HITL_TTY`/`HITL_ADAPTER_SERIAL` for DUT 0 and
+`HITL_TTY_1`/`HITL_ADAPTER_SERIAL_1` for DUT 1. The toolbox commands
+(`hitl-monitor`, `hitl-flash`, `hitl-jtag`, `hitl-gdb`) take a `--dut N` selector
+(default `0`, so single-DUT habits are unchanged) that resolves the right
+tty/adapter; `hitl-devices` prints the DUT→tty/serial map. Example:
+
+```bash
+hitl-devices                                  # list both C6s
+hitl-flash --dut 0 bundle-a.tar.gz            # flash DUT 0
+hitl-flash --dut 1 bundle-b.tar.gz            # flash DUT 1
+hitl-monitor --dut 1 --seconds 5              # read DUT 1's console
+hitl-jtag --dut 1                             # openocd against DUT 1's USB-JTAG
+```
 
 ## Concept mapping (pi/hitl → hitl-reserve)
 
