@@ -256,7 +256,7 @@ off.
 | CPU clock          | 160 MHz (160,000,000 Hz)                    |
 | Programs           | 65 fit + 7 held-out                         |
 | Regression margins | default 10%, sweep16 15%                    |
-| Fit residual       | ±70.2%                                      |
+| Fit residual       | ±72.9%                                      |
 | Held-out accuracy  | RMS 7.3% · mean 5.1% · max 16.7% · R² 0.994 |
 | Verdict            | PASS (RMS 7.3% vs 13% tolerance)            |
 
@@ -266,10 +266,10 @@ Per-phase framing costs the fit isolates from the per-opcode slopes.
 
 | Overhead     | Cycles   | ns        |
 | ------------ | -------- | --------- |
-| update_fixed | 385176.2 | 2407351.4 |
-| shade_fixed  | 2199.7   | 13748.4   |
-| show_fixed   | 51316.6  | 320728.8  |
-| show_per_led | 1958.9   | 12243.0   |
+| update_fixed | 384015.8 | 2400098.5 |
+| shade_fixed  | 2206.7   | 13792.1   |
+| show_fixed   | 54925.0  | 343281.2  |
+| show_per_led | 1931.6   | 12072.4   |
 
 ### Fitted per-opcode cost
 
@@ -279,40 +279,40 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
-| BinMath:pow   | 1917.46 | 11984.15 | yes    |
-| Hsv2Rgb       | 1387.67 | 8672.97  | yes    |
-| UnMath:tan    | 1347.88 | 8424.27  | yes    |
-| BinMath:atan2 | 1145.23 | 7157.69  | yes    |
-| Cross         | 988.19  | 6176.17  | yes    |
-| UnMath:exp    | 899.16  | 5619.77  | yes    |
-| UnMath:log    | 841.75  | 5260.97  | yes    |
-| Smoothstep    | 800.04  | 5000.27  | yes    |
-| UnMath:sqrt   | 723.66  | 4522.89  | yes    |
-| BinMath:mod   | 697.67  | 4360.47  | yes    |
-| UnMath:cos    | 686.85  | 4292.83  | yes    |
-| Palette       | 644.00  | 4024.98  | yes    |
-| UnMath:sin    | 615.30  | 3845.62  | yes    |
-| Normalize     | 559.49  | 3496.80  | yes    |
-| Distance      | 524.14  | 3275.88  | yes    |
-| UnMath:ceil   | 452.55  | 2828.45  | yes    |
-| Div           | 449.81  | 2811.29  | yes    |
-| Mix           | 408.40  | 2552.49  | yes    |
-| Length        | 387.18  | 2419.87  | yes    |
-| UnMath:fract  | 378.52  | 2365.74  | yes    |
-| Hash3         | 366.69  | 2291.81  | yes    |
-| Clamp         | 327.61  | 2047.57  | yes    |
-| Mul           | 307.68  | 1922.97  | yes    |
-| Sub           | 306.03  | 1912.66  | yes    |
-| Add           | 303.63  | 1897.70  | yes    |
-| UnMath:floor  | 296.96  | 1856.03  | yes    |
-| BinMath:min   | 286.65  | 1791.56  | yes    |
-| BinMath:max   | 286.26  | 1789.14  | yes    |
-| BinMath:step  | 264.49  | 1653.04  | yes    |
-| Dot           | 242.28  | 1514.27  | yes    |
-| Hash1         | 220.20  | 1376.28  | yes    |
-| UnMath:sign   | 173.46  | 1084.10  | yes    |
-| UnMath:abs    | 150.81  | 942.58   | yes    |
-| Neg           | 143.68  | 898.00   | yes    |
+| BinMath:pow   | 1917.50 | 11984.36 | yes    |
+| Hsv2Rgb       | 1387.70 | 8673.14  | yes    |
+| UnMath:tan    | 1347.92 | 8424.47  | yes    |
+| BinMath:atan2 | 1145.26 | 7157.89  | yes    |
+| Cross         | 988.22  | 6176.37  | yes    |
+| UnMath:exp    | 899.18  | 5619.87  | yes    |
+| UnMath:log    | 841.75  | 5260.93  | yes    |
+| Smoothstep    | 800.05  | 5000.34  | yes    |
+| UnMath:sqrt   | 723.70  | 4523.10  | yes    |
+| BinMath:mod   | 697.71  | 4360.67  | yes    |
+| UnMath:cos    | 686.89  | 4293.04  | yes    |
+| Palette       | 644.03  | 4025.18  | yes    |
+| UnMath:sin    | 615.33  | 3845.83  | yes    |
+| Normalize     | 559.50  | 3496.87  | yes    |
+| Distance      | 524.15  | 3275.95  | yes    |
+| UnMath:ceil   | 452.59  | 2828.66  | yes    |
+| Div           | 449.84  | 2811.50  | yes    |
+| Mix           | 408.41  | 2552.54  | yes    |
+| Length        | 387.19  | 2419.94  | yes    |
+| UnMath:fract  | 378.55  | 2365.95  | yes    |
+| Hash3         | 366.72  | 2292.01  | yes    |
+| Clamp         | 327.63  | 2047.69  | yes    |
+| Mul           | 307.71  | 1923.22  | yes    |
+| Sub           | 306.06  | 1912.87  | yes    |
+| Add           | 303.67  | 1897.95  | yes    |
+| UnMath:floor  | 297.00  | 1856.24  | yes    |
+| BinMath:min   | 286.68  | 1791.77  | yes    |
+| BinMath:max   | 286.29  | 1789.34  | yes    |
+| BinMath:step  | 264.52  | 1653.25  | yes    |
+| Dot           | 242.29  | 1514.33  | yes    |
+| Hash1         | 220.24  | 1376.48  | yes    |
+| UnMath:sign   | 173.49  | 1084.31  | yes    |
+| UnMath:abs    | 150.84  | 942.78   | yes    |
+| Neg           | 143.73  | 898.34   | yes    |
 | BinMath       | 130.00  | 812.50   |        |
 | UnMath        | 120.00  | 750.00   |        |
 | DivFix        | 24.00   | 150.00   |        |
@@ -372,9 +372,9 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 | dot3M    | 128  | 25.39         | 27.20          | +7.1%  | 4.06M        | 4.35M         |
 | expf2M   | 128  | 67.91         | 70.10          | +3.2%  | 10.87M       | 11.22M        |
 | hsv2rgbM | 128  | 45.29         | 44.04          | -2.8%  | 7.25M        | 7.05M         |
-| lavalamp | 200  | 20.71         | 21.75          | +5.0%  | 3.31M        | 3.48M         |
+| lavalamp | 200  | 20.71         | 21.74          | +5.0%  | 3.31M        | 3.48M         |
 | mix3M    | 128  | 40.05         | 40.08          | +0.1%  | 6.41M        | 6.41M         |
-| neg2M    | 128  | 13.33         | 15.56          | +16.7% | 2.13M        | 2.49M         |
+| neg2M    | 128  | 13.33         | 15.57          | +16.7% | 2.13M        | 2.49M         |
 
 Held-out **RMS 7.3%**, mean 5.1%, max 16.7% against the **13%** tolerance — **PASS**.
 
@@ -390,7 +390,7 @@ LED transmit path, excluded from the gate as transmit-bound noise).
 | Program       | Set      | LEDs | Frame cycles | Show cycles |
 | ------------- | -------- | ---- | ------------ | ----------- |
 | empty         | fit      | 128  | 300,321      | 283,160     |
-| sweep16       | fit      | 16   | 47,459       | 56,322      |
+| sweep16       | fit      | 16   | 45,687       | 63,359      |
 | sweep256      | fit      | 256  | 621,625      | 529,694     |
 | hash1M        | fit      | 128  | 2,001,217    | 291,854     |
 | hash3M        | fit      | 128  | 2,324,747    | 289,290     |
