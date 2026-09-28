@@ -503,7 +503,15 @@ class Reservation:
         unreachable (the connect hangs to the timeout). Any open port proves the DUT
         is on this rig's LAN — we don't require the player socket specifically, so
         this never races the WebSocket server's boot.
+
+        `forward()` prepends the exact port it is about to tunnel to, so a network
+        DUT that serves only on a non-default port is probed on that port too: the
+        led-mapper-pi's player is wss:8443 and it never listens on 80/81/443, so
+        the ESP32-only default set would false-flag it as "unreachable / foreign
+        AP" on every subnet. The forwarded port is the one that actually matters —
+        if the rig can open it, the tunnel works.
         """
+        ports = tuple(dict.fromkeys(ports))  # de-dup (the forwarded port may be 443)
         portlist = " ".join(str(p) for p in ports)
         # POSIX sh (no `seq`); /dev/tcp is a bash feature, so the connect is bash -c.
         probe = (
@@ -535,7 +543,7 @@ class Reservation:
         in this harness target a just-provisioned DUT), turning a stray-board
         association into a clear error rather than a downstream socket timeout.
         """
-        self.assert_reachable(remote_host)
+        self.assert_reachable(remote_host, ports=(remote_port, 80, 81, 443))
         local_port = _free_local_port()
         # ExitOnForwardFailure so ssh dies (rather than sitting with no tunnel) if the
         # local bind fails — otherwise the caller would burn its retry budget dialing a
