@@ -92,6 +92,64 @@ def _adapter_kwargs() -> dict:
     return {"adapter": adp} if adp else {}
 
 
+async def _reset_adapter() -> bool:
+    """Power-cycle the BLE adapter over BlueZ dbus to clear a wedged controller.
+
+    A stale BLE connection handle can leave LE scanning silently returning nothing
+    (kernel logs "ACL packet for unknown connection handle N") — seen fleet-wide as a
+    persistent "no Improv device found in scan" that left the whole netstack HITL lane
+    red until a manual `systemctl restart bluetooth`. The reservation container is
+    unprivileged (no CAP_NET_ADMIN for `hciconfig`/hci down-up), but it drives the host
+    bluetoothd over dbus, and toggling Adapter1.Powered off->on makes BlueZ issue an HCI
+    reset + re-init on the controller, which clears the stale handles.
+
+    Best-effort: returns True if the off->on cycle completed, False on any error (the
+    caller then reports the empty scan exactly as before). Uses a hand-built
+    Properties.Set message (no Introspect call) to stay inside the container's org.bluez
+    dbus policy (Properties + ObjectManager only — see nix/hitl-app.nix).
+    """
+    adp = _adapter_kwargs().get("adapter") or "hci0"
+    path = f"/org/bluez/{adp}"
+    try:
+        from dbus_fast import BusType, Message, MessageType, Variant
+        from dbus_fast.aio import MessageBus
+    except ImportError:  # older bleak shipped dbus_next under a different name
+        try:
+            from dbus_next import BusType, Message, MessageType, Variant
+            from dbus_next.aio import MessageBus
+        except ImportError as e:
+            log(f"[improv] adapter reset unavailable (no dbus lib: {e})")
+            return False
+    bus = None
+    try:
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        for val in (False, True):
+            reply = await bus.call(
+                Message(
+                    destination="org.bluez",
+                    path=path,
+                    interface="org.freedesktop.DBus.Properties",
+                    member="Set",
+                    signature="ssv",
+                    body=["org.bluez.Adapter1", "Powered", Variant("b", val)],
+                )
+            )
+            if reply.message_type != MessageType.METHOD_RETURN:
+                log(f"[improv] adapter {path} Powered={val} rejected: {reply.body}")
+                return False
+            await asyncio.sleep(1.5)
+        return True
+    except Exception as e:  # noqa: BLE001 — recovery is best-effort; never mask the scan result
+        log(f"[improv] adapter power-cycle failed ({type(e).__name__}: {e})")
+        return False
+    finally:
+        if bus is not None:
+            try:
+                bus.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def looks_like_player(name: str) -> bool:
     n = (name or "").lower()
     return "led widget" in n or "ledmapper" in n or "widget" in n
@@ -303,7 +361,16 @@ async def provision(
         with _adapter_lock():
             dev, nm = await find(address, name_filter, scan_seconds)
             if dev is None:
-                return {"ok": False, "error": "no Improv device found in scan"}
+                # An empty scan can mean the controller wedged (a stale connection
+                # handle blocks LE scanning). We hold the rig's adapter lock here, so
+                # it's safe to reset: power-cycle the adapter and re-scan ONCE before
+                # giving up — self-heals the wedge that otherwise reds the whole netstack
+                # lane until a manual `systemctl restart bluetooth`.
+                if await _reset_adapter():
+                    log("[improv] scan empty — power-cycled the BLE adapter, re-scanning…")
+                    dev, nm = await find(address, name_filter, scan_seconds)
+                if dev is None:
+                    return {"ok": False, "error": "no Improv device found in scan"}
             device = {"name": nm, "address": dev.address}
             log(f"[improv] provisioning {nm} ({dev.address}) ssid={ssid!r}")
             client = await _connect(dev, connect_tries, connect_timeout)
