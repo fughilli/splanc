@@ -309,6 +309,18 @@ in
   hardware.bluetooth.enable = true;
   hardware.bluetooth.powerOnBoot = true;
 
+  # Disable btusb USB autosuspend. The RTL8851BU BT half (rtl8851bu-bt.nix) wedges LE
+  # scanning if it autosuspends near a scan: the per-rig BLE-adapter mutex idles the
+  # dongle past its 2s autosuspend delay between provisions, and the resume/scan-disable
+  # race on this Realtek controller leaves BlueZ discovery stuck FINDING — so every LE
+  # scan returns empty and Improv provisioning fails "no Improv device found in scan"
+  # across all DUTs until a manual `systemctl restart bluetooth` (root cause of the
+  # fleet-wide netstack-lane wedge seen 2026-09-28). The udev power/control=on rule
+  # below is belt-and-suspenders (usbcore can suspend independently of the module
+  # param). Harmless — only keeps a mains-powered controller awake; effective at next
+  # module load / reboot.
+  boot.extraModprobeConfig = "options btusb enable_autosuspend=0";
+
   # Let the container's non-root agent open the C6's raw USB (libusb: openocd/gdb
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
@@ -328,6 +340,10 @@ in
     # every rig so a dongle plugged into any bench is used automatically (BT half);
     # the rule only matches the dongle's VID:PID, so it's inert without one.
     ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
+    # Pin the combo dongle awake (see boot.extraModprobeConfig above): USB autosuspend
+    # on the RTL8851BU BT half wedges LE scanning. usbcore can suspend the device
+    # independently of btusb's enable_autosuspend param, so also hold power/control=on.
+    ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="b851", TEST=="power/control", ATTR{power/control}="on"
   '';
 
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
