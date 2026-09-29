@@ -354,8 +354,17 @@ in
       /usr/bin/dscl . -create /Users/${daemonUser} UserShell /bin/bash || true
       /usr/bin/dscl . -create /Users/${daemonUser} NFSHomeDirectory /Users/${daemonUser} || true
       /usr/bin/dscl . -create /Users/${daemonUser} IsHidden 1 || true
-      /usr/bin/dscl . -passwd /Users/${daemonUser} "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" \
-        || /usr/bin/dscl . -create /Users/${daemonUser} Password '*' || true
+    fi
+    # Ensure a usable auth record even for a PRE-EXISTING PARTIAL account — e.g. one a
+    # hung sysadminctl left with UID/home/shell but NO AuthenticationAuthority (seen on
+    # the live Mac). macOS rejects EVERY login for such an account, pubkey included, so
+    # the reserved-session ssh fails even though the user "exists". Setting a random
+    # (unused) password materializes ShadowHashData + AuthenticationAuthority; only when
+    # it's missing, so it doesn't churn the record on every switch. Password login stays
+    # disabled in practice (we always authenticate by the runner-managed key).
+    if ! /usr/bin/dscl . -read /Users/${daemonUser} AuthenticationAuthority >/dev/null 2>&1; then
+      echo "[hitl-darwin] materializing auth record for '${daemonUser}' (dscl -passwd)" >&2
+      /usr/bin/dscl . -passwd /Users/${daemonUser} "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" || true
     fi
     /bin/mkdir -p /Users/${daemonUser}/.ssh
     /usr/sbin/chown -R ${daemonUser}:staff /Users/${daemonUser} 2>/dev/null || true
