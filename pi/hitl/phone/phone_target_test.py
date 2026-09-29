@@ -79,23 +79,34 @@ class CommandPlanTests(unittest.TestCase):
         rev_i = next(i for i, c in enumerate(joined) if "reverse" in c)
         self.assertLess(pin_i, rev_i)  # unlock happens before the reverses
 
-    def test_ios_sim_launches_then_openurl_loopback(self) -> None:
+    def test_ios_sim_serverurl_via_run_endpoint_loopback(self) -> None:
         t = IosSimulatorTarget()
         plan = t.command_plan(PORTS)
         self.assertEqual(t.host_alias, "127.0.0.1")
-        openurl = plan[-1]
-        self.assertEqual(openurl[:4], ["xcrun", "simctl", "openurl", "booted"])
-        self.assertIn("http://127.0.0.1:8000/?driver=ws://127.0.0.1:9000/", openurl[-1])
+        run = " ".join(plan[-1])
+        # The real server's single /run?task= endpoint, not per-task routes.
+        self.assertIn("/run?", run)
+        self.assertIn("task=cap-sync%2Cios-run", run)
+        self.assertIn("target=booted", run)
+        # server.url carries the station app URL (loopback) with ?driver=; url-encoded.
+        self.assertIn("server_url=", run)
+        self.assertIn("127.0.0.1%3A8000", run)
+        self.assertIn("driver%3D", run)
 
     def test_ios_device_build_install_launch(self) -> None:
         t = IosDeviceTarget(udid="00008110-DEADBEEF")
         plan = t.command_plan(PORTS)
-        joined = [" ".join(c) for c in plan]
-        self.assertTrue(any("/device-build" in c for c in joined))
-        self.assertTrue(any("/device-install" in c and "00008110-DEADBEEF" in c for c in joined))
-        launch = joined[-1]
-        self.assertIn("/device-launch", launch)
-        self.assertIn("ble%3Dreal", launch)  # url-encoded &ble=real in the query
+        # One chained /run: cap-sync (bakes server.url) -> build -> install -> launch.
+        self.assertEqual(len(plan), 1)
+        run = " ".join(plan[0])
+        self.assertIn("/run?", run)
+        self.assertIn("task=cap-sync%2Cdevice-build%2Cdevice-install%2Cdevice-launch", run)
+        self.assertIn("target=00008110-DEADBEEF", run)
+        self.assertIn("bundle=dev.splanc.app", run)
+        # The app URL (with &ble=real) is threaded as server_url, NOT a launch url=.
+        self.assertIn("server_url=", run)
+        self.assertNotIn("url%3D&", run)
+        self.assertIn("ble%3Dreal", run)  # url-encoded &ble=real inside server_url
 
     def test_ios_device_dials_station_ip_when_set(self) -> None:
         os.environ["HITL_STATION_IP"] = "100.64.0.9"

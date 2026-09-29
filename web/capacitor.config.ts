@@ -15,10 +15,23 @@
  */
 import type { CapacitorConfig } from "@capacitor/cli";
 
+// Phone-in-the-loop HITL driver seam. A native WKWebView loads the BUNDLED web/dist
+// at capacitor://localhost/ with no query string, so the app-driver seam
+// (`?driver=…&ble=real`, web/src/ui/app/main.ts) can't be reached the way the
+// browser/emulator lanes reach it. When the HITL station bakes CAP_SERVER_URL (via
+// tools/ios_build_server.py's `server_url` param on cap-sync), point Capacitor's
+// `server.url` at the station-served app URL — which carries that query — so the
+// WKWebView loads it over the LAN and enters driver mode. Native BLE still bridges
+// through the Capacitor Improv plugin. Unset for a normal build → loads the bundle.
+const capServerUrl = process.env.CAP_SERVER_URL;
+
 const config: CapacitorConfig = {
   appId: "dev.splanc.app",
   appName: "Splanc",
   webDir: "dist",
+  ...(capServerUrl
+    ? { server: { url: capServerUrl, cleartext: true } }
+    : {}),
   ios: {
     // Let the WebGL/`<video>` content draw under the status bar / home indicator;
     // the web app already handles safe-area insets (viewport-fit=cover in

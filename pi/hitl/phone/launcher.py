@@ -21,10 +21,23 @@ import threading
 import time
 
 
-def serve_dir(directory: str, port: int = 0) -> tuple[str, socketserver.TCPServer]:
-    """Serve `directory` over HTTP on a background thread. Returns (base_url, server)."""
+def serve_dir(
+    directory: str, port: int = 0, bind: str = "0.0.0.0"
+) -> tuple[str, socketserver.TCPServer]:
+    """Serve `directory` over HTTP on a background thread. Returns (base_url, server).
+
+    Binds all interfaces by default so an OFF-BOX device (a real iPhone/Android on
+    the LAN/tailnet) can fetch the app — a loopback bind is only reachable by the
+    browser lane on the station itself. The returned base_url still uses 127.0.0.1
+    (the station's own reference); a device target rebuilds the URL from its own
+    reachable host_alias (HITL_STATION_IP). SO_REUSEADDR avoids a TIME_WAIT bind
+    failure across back-to-back runs on a pinned port."""
+
+    class _Server(socketserver.TCPServer):
+        allow_reuse_address = True
+
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=directory)
-    httpd = socketserver.TCPServer(("127.0.0.1", port), handler)
+    httpd = _Server((bind, port), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return f"http://127.0.0.1:{httpd.server_address[1]}/", httpd
 
