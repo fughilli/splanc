@@ -150,9 +150,12 @@ STATION_IP_EXPR = " || ".join(f"ipconfig getifaddr {i} 2>/dev/null" for i in ("e
 
 
 def discover_c6_cmd(serial_env: str = "$HITL_ADAPTER_SERIAL") -> str:
-    """Command to resolve the reserved C6's serial port in-session (for flashing)."""
+    """Command to resolve the reserved C6's serial port in-session (for flashing).
+
+    Uses the nix pyEnv python (which has pyserial); the reserved session's bare
+    `python3` is the system one on macOS and lacks it."""
     return (
-        f"python3 {REMOTE_ROOT}/serial_discovery.py "
+        f"/run/current-system/sw/bin/python3 {REMOTE_ROOT}/serial_discovery.py "
         f'--serial {serial_env} --fallback "$HITL_ESP_PORT"'
     )
 
