@@ -101,6 +101,19 @@ echo "patching $plist"
   || "$pb" -c "Add :ITSAppUsesNonExemptEncryption bool false" "$plist"
 echo "export compliance: ITSAppUsesNonExemptEncryption = false"
 
+# --- App Transport Security: allow local networking. Splanc talks to devices on
+# the LAN — the device's own control plane, and (under the phone-HITL driver seam)
+# the station's plain-HTTP app + ws:// driver channel. ATS blocks cleartext to raw
+# IPs by default; NSAllowsLocalNetworking lifts that for LOCAL hosts ONLY (not the
+# public internet), which is App-Store-acceptable and narrower than
+# NSAllowsArbitraryLoads. It does NOT bypass TLS validation — a self-signed wss to
+# the device still needs the native cert bridge (design §4.3). Nested dict, so
+# ensure the parent exists first, then set the bool (idempotent).
+"$pb" -c "Add :NSAppTransportSecurity dict" "$plist" 2>/dev/null || true
+"$pb" -c "Set :NSAppTransportSecurity:NSAllowsLocalNetworking true" "$plist" 2>/dev/null \
+  || "$pb" -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$plist"
+echo "ATS: NSAllowsLocalNetworking = true (LAN device + HITL station reachability)"
+
 # --- Permission usage strings (App Store review REQUIRES these to be present
 # and specific; a generic string is a common rejection reason). ----------------
 # Camera: the mapping capture pipeline (getUserMedia → WebGL2 detector → solver).

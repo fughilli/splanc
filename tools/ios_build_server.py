@@ -34,6 +34,10 @@ Endpoints (GET or POST):
                        &configuration=Debug   xcodebuild configuration
                        &scheme=App            xcodebuild scheme
                        &bundle=dev.splanc.app app id (device-launch / device-log)
+                       &server_url=<http url> phone-HITL: baked as Capacitor
+                                              server.url via CAP_SERVER_URL (cap
+                                              sync), so the WKWebView loads the
+                                              station app (with ?driver=/&ble=real)
 
 Named tasks:
 
@@ -609,6 +613,14 @@ _PARAM_DEFAULT = {
     "bundle": "dev.splanc.app",
 }
 
+# `server_url` is NOT an argv placeholder — it never touches a command line. It is
+# passed through to the task env as CAP_SERVER_URL, which capacitor.config.ts reads
+# so `cap sync` bakes `server.url` into the native app (the phone-HITL driver seam:
+# the WKWebView then loads that station URL, with its ?driver=/&ble=real query,
+# instead of the bundle). Validated to a plain http(s) URL shape (defence in depth;
+# it only ever becomes an environment value, never a shell token).
+_SERVER_URL_RE = re.compile(r"^https?://[^\s'\"]{1,300}$")
+
 
 def _params(q: dict) -> dict:
     out = dict(_PARAM_DEFAULT)
@@ -808,6 +820,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         params = _params(q)  # validates; raises ValueError → 400
+        # Optional per-run env: server_url → CAP_SERVER_URL for `cap sync` (the
+        # phone-HITL driver seam; see _SERVER_URL_RE). Env only, never argv.
+        env_over: dict[str, str] = {}
+        server_url = q.get("server_url", [None])[0]
+        if server_url is not None:
+            if not _SERVER_URL_RE.match(server_url):
+                raise ValueError(f"invalid server_url: {server_url!r}")
+            env_over["CAP_SERVER_URL"] = server_url
         # Device builds default to Release, simulator builds stay Debug.
         # Swift compiled -Onone is 10-100x slower, and the native capture path's
         # per-pixel reduction runs 30x/s on real hardware — a Debug device build
@@ -829,17 +849,22 @@ class Handler(BaseHTTPRequestHandler):
         self._write(
             f"[ios-build] workspace={CFG['workspace']}\n[ios-build] plan: {' → '.join(seq)}\n\n"
         )
+        if env_over.get("CAP_SERVER_URL"):
+            self._write(
+                f"[ios-build] CAP_SERVER_URL={env_over['CAP_SERVER_URL']} "
+                "(cap sync bakes this as Capacitor server.url)\n\n"
+            )
         for name in seq:
             if name == "doctor":
                 self._write(doctor_report() + "\n")
                 continue
-            rc = self._run_one(name, tasks[name], params)
+            rc = self._run_one(name, tasks[name], params, env_over)
             if rc != 0:
                 self._write(f"\n[ios-build] task {name!r} failed (exit {rc}); stopping.\n")
                 return
         self._write("\n[ios-build] all tasks OK.\n")
 
-    def _run_one(self, name: str, task: dict, params: dict) -> int:
+    def _run_one(self, name: str, task: dict, params: dict, env_over: dict | None = None) -> int:
         cwd = str(Path(CFG["workspace"]) / task.get("cwd", "."))
         if task.get("needs_ios") and not _ios_project_exists():
             self._write(
@@ -857,7 +882,7 @@ class Handler(BaseHTTPRequestHandler):
                 # and the tool takes its default instead of hanging forever.
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=child_env(),
+                env={**child_env(), **(env_over or {})},
                 bufsize=1,
                 text=True,
             )
