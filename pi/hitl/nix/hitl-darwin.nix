@@ -236,8 +236,13 @@ in
         PathState."${iosBuildWorkspace}/tools/ios_build_server.py" = true;
       };
       UserName = iosBuildUser;
-      StandardOutPath = "/var/log/ios-build-server.log";
-      StandardErrorPath = "/var/log/ios-build-server.err.log";
+      # Logs MUST go to a path the service user can create: /var/log is 0755 root:wheel,
+      # so a UserName=${toString iosBuildUser} LaunchDaemon can't open a StandardOut/
+      # ErrorPath there — launchd then fails to set up the job and it never spawns
+      # ("spawn scheduled", active count 0, and — the tell — NO log file at all). Use
+      # the user's own Library/Logs (writable by them).
+      StandardOutPath = "/Users/${toString iosBuildUser}/Library/Logs/ios-build-server.log";
+      StandardErrorPath = "/Users/${toString iosBuildUser}/Library/Logs/ios-build-server.err.log";
       EnvironmentVariables = {
         # HERMETIC: nix tools (node/pnpm/cocoapods/git/bazelisk/jq) by absolute store
         # path first, so a missing /run/current-system/sw/bin on the launchd env can't
