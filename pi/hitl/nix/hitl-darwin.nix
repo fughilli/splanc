@@ -215,14 +215,22 @@ in
   # reserved harness runs on THIS Mac, so it reaches the server on loopback (no LAN
   # exposure of the build endpoint).
   #
-  # EXTERNAL-VOLUME ROBUSTNESS: iosBuildWorkspace can live on an external volume
-  # (e.g. /Volumes/MacMiniExt/...), which may mount late at boot or be detached. A
-  # plain KeepAlive=true would crash-loop while the exec path is missing. Instead
-  # gate KeepAlive on PathState of the server script: launchd runs the job ONLY while
-  # that path exists — it starts the service when the volume mounts and stops it when
-  # the volume goes away, no crash loop. (Ensure the volume auto-mounts at boot; the
-  # PathState guard covers a late/absent mount.)
-  launchd.daemons.ios-build-server = lib.mkIf iosBuildEnabled {
+  # IT MUST BE A LaunchAgent, NOT a system LaunchDaemon: code-signing (xcodebuild
+  # automatic signing / -allowProvisioningUpdates) and devicectl only work from the
+  # operator's LOGIN (Aqua) GUI session. Verified live on the Mac: the exact
+  # device-build command signs in an interactive session ("BUILD SUCCEEDED") but a
+  # system LaunchDaemon (Background session) fails "No signing certificate … with a
+  # private key" for the same command/keychain/env — the Background session can't
+  # resolve the developer's signing identity. A launchd.user.agent runs in the logged-in
+  # user's gui domain, so signing + devicectl behave as they do interactively. (The
+  # agent is loaded by `activate-user` run AS the user; the reservation-driven deploy
+  # runs `<sys>/activate` as root and `<sys>/activate-user` as the operator.) Requires
+  # the operator to stay logged in — fine for a dedicated always-on bench Mac.
+  #
+  # KeepAlive gates on PathState of the server script, so if iosBuildWorkspace is on an
+  # external volume that mounts late/detaches, launchd starts/stops the agent with the
+  # volume instead of crash-looping. (An internal workspace path avoids that entirely.)
+  launchd.user.agents.ios-build-server = lib.mkIf iosBuildEnabled {
     serviceConfig = {
       ProgramArguments = [
         "/bin/sh"
@@ -242,12 +250,8 @@ in
         # Run only while the workspace (hence its external volume) is present.
         PathState."${iosBuildWorkspace}/tools/ios_build_server.py" = true;
       };
-      UserName = iosBuildUser;
-      # Logs MUST go to a path the service user can create: /var/log is 0755 root:wheel,
-      # so a UserName=${toString iosBuildUser} LaunchDaemon can't open a StandardOut/
-      # ErrorPath there — launchd then fails to set up the job and it never spawns
-      # ("spawn scheduled", active count 0, and — the tell — NO log file at all). Use
-      # the user's own Library/Logs (writable by them).
+      # No UserName: a LaunchAgent already runs as the logged-in user (iosBuildUser).
+      # Logs go to that user's own Library/Logs (writable by them; /var/log is not).
       StandardOutPath = "/Users/${toString iosBuildUser}/Library/Logs/ios-build-server.log";
       StandardErrorPath = "/Users/${toString iosBuildUser}/Library/Logs/ios-build-server.err.log";
       EnvironmentVariables = {
