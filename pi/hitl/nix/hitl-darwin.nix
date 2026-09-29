@@ -230,6 +230,9 @@ in
   # KeepAlive gates on PathState of the server script, so if iosBuildWorkspace is on an
   # external volume that mounts late/detaches, launchd starts/stops the agent with the
   # volume instead of crash-looping. (An internal workspace path avoids that entirely.)
+  # nix-darwin requires a primary user to manage user-level launchd agents.
+  system.primaryUser = lib.mkIf iosBuildEnabled iosBuildUser;
+
   launchd.user.agents.ios-build-server = lib.mkIf iosBuildEnabled {
     serviceConfig = {
       ProgramArguments = [
