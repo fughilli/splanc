@@ -98,11 +98,17 @@ let
   iosBuildPath =
     "${lib.makeBinPath iosBuildTools}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
   # Signing + App Store Connect secrets for the build server, sourced at launch from a
-  # root-only file OUTSIDE the nix store (never world-readable): HITL_SIGN_KEYCHAIN,
+  # file OUTSIDE the nix store (never world-readable): HITL_SIGN_KEYCHAIN,
   # HITL_SIGN_KEYCHAIN_PASS, HITL_SIGN_TEAM, and the HITL_ASC_* trio for a paid team.
-  #   sudo install -m600 -o ${toString iosBuildUser} /path/to/ios-build.env ${stateDir}/ios-build.env
-  # The service no-ops those if the file is absent (an unsigned/simulator-only Mac).
-  iosBuildEnvFile = "${stateDir}/ios-build.env";
+  # It MUST live where the BUILD USER can read it — the build server runs as
+  # ${toString iosBuildUser}, so a root:0600 file in the 0700-root state dir is
+  # unreadable and the `. ios-build.env` sources nothing (seen live: the device build
+  # then found "No Accounts"/no signing cert). Put it in the build user's own config:
+  #   install -m600 /path/to/ios-build.env /Users/${toString iosBuildUser}/.config/hitl/ios-build.env
+  # (owned by ${toString iosBuildUser}). The service no-ops if it's absent (a
+  # simulator-only Mac). Alongside the keychain pass + ASC key that setup-ios-signing.sh
+  # already writes under ~/.config/hitl.
+  iosBuildEnvFile = "/Users/${toString iosBuildUser}/.config/hitl/ios-build.env";
 
   # The shared user each reservation SSHes into (the darwin runner scopes access by
   # rewriting this user's authorized_keys per reservation). NOT an admin user.
