@@ -227,6 +227,14 @@ _DEVICE_BUILD_SH = (
     '  security unlock-keychain -p "$HITL_SIGN_KEYCHAIN_PASS" "$HITL_SIGN_KEYCHAIN"; '
     '  security list-keychains -d user -s "$HITL_SIGN_KEYCHAIN" '
     '    "$HOME/Library/Keychains/login.keychain-db"; '
+    # Grant apple codesigning tools non-interactive access to the signing key. Without
+    # this the key is usable in an interactive login session but NOT from a headless
+    # launchd context — codesign/xcodebuild then report "No signing certificate … with
+    # a private key" (the cert is visible but the key access is ACL-gated). Seen live:
+    # a direct build in the operator session signed fine, the launchd build server did
+    # not, until this partition-list grant.
+    "  security set-key-partition-list -S apple-tool:,apple: -s "
+    '    -k "$HITL_SIGN_KEYCHAIN_PASS" "$HITL_SIGN_KEYCHAIN" >/dev/null 2>&1 || true; '
     "fi; "
     'TEAM_ARG=""; '
     'if [ -n "$HITL_SIGN_TEAM" ]; then TEAM_ARG="DEVELOPMENT_TEAM=$HITL_SIGN_TEAM"; fi; '
