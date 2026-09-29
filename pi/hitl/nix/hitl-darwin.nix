@@ -22,7 +22,7 @@
 #       hitlSrc = hitl-reserve;
 #       # attach a real iPhone -> stand up the launchd ios-build-server:
 #       iosBuildUser = "kevin";                 # owns the checkout + Xcode sign-in
-#       iosBuildWorkspace = "/Users/kevin/splanc";
+#       iosBuildWorkspace = "/Users/kevin/splanc-iosbench";  # DEDICATED, see below
 #     }) ];
 #   };
 #
@@ -36,9 +36,16 @@
 # no service can automate):
 #   * Install Xcode + Command Line Tools (xcodebuild/simctl/devicectl/usbmux), accept
 #     the license; sign into Xcode once for device provisioning.
-#   * A splanc checkout at iosBuildWorkspace with the Capacitor iOS project generated
-#     (`cap add ios` — regenerated, gitignored) and the signing keychain set up; drop
-#     the signing secrets in ${stateDir}/ios-build.env (see iosBuildEnvFile below).
+#   * A DEDICATED splanc checkout at iosBuildWorkspace with the Capacitor iOS project
+#     generated (`cap add ios` — regenerated, gitignored) and the signing keychain set
+#     up; drop the signing secrets in ${stateDir}/ios-build.env (see iosBuildEnvFile).
+#     It MUST NOT be the operator's day-to-day checkout: the container's /workspace is
+#     a bind-mount of that checkout, so agents' `git checkout` flip its branch live —
+#     the build server would randomly build another agent's branch. Use a separate
+#     clone pinned to a stable ref (this branch pre-merge, `main` after), kept only for
+#     the bench. (The app CONTENT the iPhone loads is served from the tar the reserved
+#     session ships, not this checkout's web/dist, so its web/dist staleness is moot —
+#     this checkout supplies only the native iOS project + config + plugins + signing.)
 #   * Plug in the iPhone, enable Developer Mode, keep it unlocked (Auto-Lock=Never),
 #     and accept the one-time "trust this computer" + "allow local network" prompts.
 #   * `tailscale up` and authorize the node (the daemon advertises on the tailnet).
@@ -279,16 +286,47 @@ in
   # local GUI dev run leaves all three unset and uses the interactive login keychain.
 
   #### The scoped reservation user ############################################
-  # A non-admin login user. On macOS, nix-darwin can declare the user but a fresh
-  # account still needs `sysadminctl`/dscl to fully materialize on first switch —
-  # see reserve/README.md. UID in the standing-services range; no password (key-only
-  # via the managed authorized_keys).
+  # A non-admin login user. UID in the standing-services range; no usable password
+  # (key-only via the managed authorized_keys). Declared here for reference; the
+  # ACTUAL macOS account is created by the activation script below — nix-darwin
+  # declares users.users but does NOT create a fresh account unless it's in
+  # users.knownUsers, and even then it doesn't set up the account's OpenDirectory
+  # auth authority + home the way `sysadminctl` does. On a fresh Mac this record is
+  # simply absent (`dscl . -read /Users/hitl` -> eDSRecordNotFound), and the reserved
+  # session's pubkey SSH can never authenticate a user that doesn't exist. (Verified
+  # on the live Mac: the daemon/HTTP works, but every reserved-session ssh was denied
+  # because this account had never materialized.)
   users.users.${daemonUser} = {
     uid = 555;
     home = "/Users/${daemonUser}";
     shell = pkgs.bashInteractive;
     description = "HITL reservation session user (key-scoped per reservation)";
   };
+
+  # Materialize the reservation account on `darwin-rebuild switch`, idempotently.
+  # sysadminctl creates a fully-functional (auth-authority-bearing) standard account
+  # so pubkey SSH works; a random unused password keeps it key-only in practice (we
+  # never password-login it). Hidden from the login window; home + ~/.ssh (0700) set
+  # up for the `~/.ssh/environment` signing-secret seam. No-op if the record exists.
+  system.activationScripts.postActivation.text = lib.mkAfter ''
+    if ! /usr/bin/dscl . -read /Users/${daemonUser} >/dev/null 2>&1; then
+      echo "[hitl-darwin] creating reservation user '${daemonUser}' (uid 555, key-only)" >&2
+      # Stable system shell (NOT a nix-store bash: its path would be GC'd out from
+      # under the account, breaking the ssh `sh -c` the reservation runs).
+      /usr/sbin/sysadminctl -addUser ${daemonUser} \
+        -UID 555 \
+        -fullName "HITL reservation session user" \
+        -shell /bin/bash \
+        -home /Users/${daemonUser} \
+        -password "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" 2>&1 || \
+        echo "[hitl-darwin] sysadminctl -addUser ${daemonUser} failed" >&2
+      /usr/bin/dscl . -create /Users/${daemonUser} IsHidden 1 || true
+      /usr/bin/dscl . -create /Users/${daemonUser} PrimaryGroupID 20 || true
+    fi
+    /bin/mkdir -p /Users/${daemonUser}/.ssh
+    /usr/sbin/chown -R ${daemonUser}:staff /Users/${daemonUser} 2>/dev/null || true
+    /bin/chmod 700 /Users/${daemonUser} /Users/${daemonUser}/.ssh 2>/dev/null || true
+  '';
 
   #### The reservation toolbox ################################################
   # Available to the daemon + each reservation login. Xcode itself + its CLT are
