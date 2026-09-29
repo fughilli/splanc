@@ -197,6 +197,14 @@ in
   # iosBuildWorkspace, else this service is omitted. Binds 127.0.0.1 only — the
   # reserved harness runs on THIS Mac, so it reaches the server on loopback (no LAN
   # exposure of the build endpoint).
+  #
+  # EXTERNAL-VOLUME ROBUSTNESS: iosBuildWorkspace can live on an external volume
+  # (e.g. /Volumes/MacMiniExt/...), which may mount late at boot or be detached. A
+  # plain KeepAlive=true would crash-loop while the exec path is missing. Instead
+  # gate KeepAlive on PathState of the server script: launchd runs the job ONLY while
+  # that path exists — it starts the service when the volume mounts and stops it when
+  # the volume goes away, no crash loop. (Ensure the volume auto-mounts at boot; the
+  # PathState guard covers a late/absent mount.)
   launchd.daemons.ios-build-server = lib.mkIf iosBuildEnabled {
     serviceConfig = {
       ProgramArguments = [
@@ -213,7 +221,10 @@ in
         ''
       ];
       RunAtLoad = true;
-      KeepAlive = true;
+      KeepAlive = {
+        # Run only while the workspace (hence its external volume) is present.
+        PathState."${iosBuildWorkspace}/tools/ios_build_server.py" = true;
+      };
       UserName = iosBuildUser;
       StandardOutPath = "/var/log/ios-build-server.log";
       StandardErrorPath = "/var/log/ios-build-server.err.log";
