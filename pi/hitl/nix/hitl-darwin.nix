@@ -375,6 +375,12 @@ in
     /bin/mkdir -p /Users/${daemonUser}/.ssh
     /usr/sbin/chown -R ${daemonUser}:staff /Users/${daemonUser} 2>/dev/null || true
     /bin/chmod 700 /Users/${daemonUser} /Users/${daemonUser}/.ssh 2>/dev/null || true
+    # macOS Remote Login (sshd) is gated by the `com.apple.access_ssh` SACL group,
+    # which nests admin — so a NON-admin service account like this one is rejected at
+    # login even with a valid key + auth record (verified on the live Mac: reserved
+    # ssh failed purely because the account wasn't in this group). Add it explicitly
+    # so reservations can ssh in without making the account an admin. Idempotent.
+    /usr/sbin/dseditgroup -o edit -a ${daemonUser} -t user com.apple.access_ssh 2>/dev/null || true
   '';
 
   #### The reservation toolbox ################################################
