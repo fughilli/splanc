@@ -451,6 +451,122 @@ class Reservation:
         wrapped = f"python3 -c {shlex.quote(py)} {b64}"
         return self.ssh(wrapped, capture=capture, timeout=timeout)
 
+    # Well-known container path of the per-rig "AP-exclusive bandwidth" lock dir — the
+    # airtime twin of the flash/BLE-adapter locks. Every DUT on a rig shares ONE AP on
+    # ONE 2.4 GHz channel with no airtime-fairness lever, so under concurrent multi-DUT
+    # load a sibling's throughput starves the channel and breaks cross-DUT isolation.
+    # A bandwidth-heavy test holds this flock across ONLY its throughput body, so those
+    # bodies take turns on the air while every other phase (setup, idle control, decode)
+    # still runs in parallel. The daemon bind-mounts the dir (a host-shared dir) into
+    # every reservation container, making the flock a host-wide mutex across the rig's
+    # containers; where the mount is absent (a rig not yet redeployed) the lock is a
+    # no-op and traffic runs unserialized, exactly as today.
+    #
+    # Unlike ssh_serialized (which flocks for the duration of ONE remote command), the
+    # bench traffic is driven from THIS process over an ssh `-L` tunnel, so the lock has
+    # to be held on the rig across a local Python block. ap_lock() does that with a
+    # long-lived ssh running a tiny in-container holder that flocks the dir and then
+    # blocks until we release it (or its heartbeat lapses).
+    AP_LOCK_DIR = "/run/hitl/ap-lock"
+
+    @contextmanager
+    def ap_lock(self, reason: str = "", heartbeat: float = 10.0, lock_dir: str | None = None):
+        """Hold the per-rig AP-exclusive bandwidth flock across the enclosed block.
+
+        Spawns a long-lived ssh into the reservation container running a holder that
+        flocks `lock_dir/ap.lock` (LOCK_EX) — blocking until a sibling releases it —
+        and then idles until we tell it to let go. We feed it a heartbeat line every
+        `heartbeat`s over the ssh stdin; the holder releases (exits, closing its fd) on
+        a clean EOF at context exit OR if it misses ~3 heartbeats. That heartbeat is the
+        unconditional guard: if THIS process is killed the heartbeat thread stops with
+        it, so the holder times out and flock auto-releases — a crashed/killed test can
+        never strand the rig's airtime. Best-effort: no lock dir (rig not yet
+        redeployed) ⇒ the holder prints UNSERIALIZED and we run the body unserialized.
+
+        LOCK ORDER: benches take ONLY this lock, and always AFTER provisioning has
+        released the BLE-adapter lock, so the global order (adapter before AP) holds and
+        the two locks can't deadlock — see hitl_improv._ap_lock.
+        """
+        lock_dir = lock_dir or self.AP_LOCK_DIR
+        hb_timeout = max(heartbeat * 3.0, 5.0)  # holder releases if it misses ~3 beats
+        py = _ap_holder_script(lock_dir, hb_timeout)
+        argv = self._ssh_base() + [
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=3",
+            f"{self.user}@{self.host}",
+            f"python3 -c {shlex.quote(py)}",
+        ]
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
+        )
+        hb_stop = threading.Event()
+        hb_thread: threading.Thread | None = None
+        try:
+            t0 = time.monotonic()
+            held = False
+            while True:
+                line = proc.stdout.readline() if proc.stdout else ""
+                if line == "":  # holder exited before a status ⇒ best-effort proceed
+                    print(
+                        f"[ap-lock] holder exited before acquiring (rc={proc.poll()}); "
+                        "proceeding unserialized",
+                        flush=True,
+                    )
+                    break
+                tok = line.strip()
+                if tok == "UNSERIALIZED":
+                    print(
+                        "[ap-lock] rig has no AP lock dir (pre-redeploy); "
+                        "proceeding unserialized",
+                        flush=True,
+                    )
+                    break
+                if tok == "WAIT":
+                    print(f"[ap-lock] waiting for rig AP-exclusive lock ({reason})…", flush=True)
+                    continue
+                if tok == "HELD":
+                    held = True
+                    print(
+                        f"[ap-lock] AP lock held ({reason}; waited "
+                        f"{time.monotonic() - t0:.1f}s)",
+                        flush=True,
+                    )
+                    break
+                # any other line is holder noise; keep reading for the status token
+            if held:
+
+                def _beat() -> None:
+                    while not hb_stop.wait(heartbeat):
+                        try:
+                            proc.stdin.write("beat\n")
+                            proc.stdin.flush()
+                        except (BrokenPipeError, ValueError, OSError):
+                            return  # holder gone; the reaper/EOF path releases it
+
+                hb_thread = threading.Thread(target=_beat, daemon=True)
+                hb_thread.start()
+            yield
+        finally:
+            hb_stop.set()
+            # Clean release: close stdin ⇒ holder sees EOF ⇒ exits ⇒ flock released.
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if hb_thread is not None:
+                hb_thread.join(timeout=2)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.terminate()  # backstop; SIGHUP to the holder also frees the flock
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
     def scp_to(self, locals_: list[str], remote_dir: str) -> None:
         argv = [
             "scp",
@@ -574,6 +690,34 @@ class Reservation:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def _ap_holder_script(lock_dir: str, hb_timeout: float) -> str:
+    """The in-container AP-lock holder that Reservation.ap_lock runs over ssh.
+
+    No lock dir ⇒ print UNSERIALIZED and exit (best-effort: a rig not yet redeployed
+    runs unserialized). Otherwise flock `lock_dir/ap.lock` (LOCK_EX) — announcing WAIT
+    before the blocking acquire so the caller knows the link is up, HELD once acquired
+    — then hold until stdin EOF (clean release at context exit) OR a heartbeat gap of
+    `hb_timeout`s (the caller died and its heartbeat thread stopped). The fd closes on
+    exit either way, so flock auto-releases and a crashed/killed test can't strand the
+    rig's airtime. Kept as a builder so it can be unit-tested offline (the container
+    has python3 but no flock(1), so the lock has to be taken in python)."""
+    return (
+        "import fcntl,os,select,sys\n"
+        f"d = {lock_dir!r}\n"
+        f"hb = {hb_timeout!r}\n"
+        "if not os.path.isdir(d):\n"
+        "    sys.stdout.write('UNSERIALIZED\\n'); sys.stdout.flush(); sys.exit(0)\n"
+        "fd = os.open(d + '/ap.lock', os.O_CREAT | os.O_RDWR, 0o666)\n"
+        "sys.stdout.write('WAIT\\n'); sys.stdout.flush()\n"
+        "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "sys.stdout.write('HELD\\n'); sys.stdout.flush()\n"
+        "while True:\n"
+        "    r, _, _ = select.select([sys.stdin], [], [], hb)\n"
+        "    if not r or not sys.stdin.readline():\n"
+        "        break\n"  # heartbeat gap (caller gone) or EOF (clean release)
+    )
 
 
 def _free_local_port() -> int:

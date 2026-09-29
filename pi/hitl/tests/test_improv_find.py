@@ -88,6 +88,19 @@ def _install_bleak_stub():
 
 _SCANNER = _install_bleak_stub()
 hitl_improv = importlib.import_module("hitl_improv")
+# hitl_improv binds bleak's names at its FIRST import, which may have happened in another
+# test module under a different stub. Re-point them (and the transport-error tuple built
+# from BleakError) at THIS file's functional stub so these tests are import-order-
+# independent — otherwise a module that imports hitl_improv first would poison them.
+hitl_improv.BleakScanner = _SCANNER
+hitl_improv.BleakClient = _StubClient
+hitl_improv.BleakError = sys.modules["bleak.exc"].BleakError
+hitl_improv._TRANSPORT_ERRORS = (
+    hitl_improv.BleakError,
+    asyncio.TimeoutError,
+    OSError,
+    EOFError,
+)
 
 
 class _Dev:
@@ -111,7 +124,11 @@ def _sighting(name):
 
 def _run(coro):
     _SCANNER.calls = 0
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run (not get_event_loop().run_until_complete): the latter relies on an
+    # implicit current loop, which is deprecated and order-fragile — another test file
+    # that runs asyncio.run first leaves the main-thread loop unset and this then raises
+    # "no current event loop". asyncio.run makes each call self-contained.
+    return asyncio.run(coro)
 
 
 async def _no_sleep(*_a, **_k):  # keep the retry backoff from making tests slow

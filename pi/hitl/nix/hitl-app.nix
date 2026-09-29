@@ -552,10 +552,23 @@ in
   # (see the --mount /run/hitl-provision below). /run is tmpfs, so a tmpfiles rule
   # recreates it each boot; world-writable because a non-root container agent user
   # creates the lock file inside it. It only ever holds a zero-byte lock file.
-  systemd.tmpfiles.rules = [ "d /run/hitl-provision 0777 root root -" ]
-    # The flash/USB-serial lock dir exists only on a serialize-flash rig; its mere
-    # presence in the container is what arms hitl_client.ssh_serialized's flock.
-    ++ lib.optional serializeFlash "d /run/hitl-flash 0777 root root -";
+  systemd.tmpfiles.rules = [
+    "d /run/hitl-provision 0777 root root -"
+    # Per-rig AP-EXCLUSIVE bandwidth lock dir (the airtime twin of the BLE-adapter and
+    # flash locks). Every DUT on a rig shares ONE AP on ONE 2.4 GHz channel with no
+    # airtime-fairness lever, so under concurrent multi-DUT load a sibling's throughput
+    # starves the channel — breaking cross-DUT isolation (provision-phase DHCP-OFFER
+    # timeouts, throughput/TLS-latency starvation). A bandwidth-heavy test / a provision
+    # join window holds an flock across this dir (hitl_client.ap_lock / hitl_improv's
+    # _ap_lock) to take the air exclusively for just that phase. Always-on (the single-
+    # AP/single-channel contention is fleet-wide); harmless where unused since the
+    # harness self-gates on the mount's presence. Same tmpfs/world-writable rationale
+    # as /run/hitl-provision above.
+    "d /run/hitl-ap-lock 0777 root root -"
+  ]
+  # The flash/USB-serial lock dir exists only on a serialize-flash rig; its mere
+  # presence in the container is what arms hitl_client.ssh_serialized's flock.
+  ++ lib.optional serializeFlash "d /run/hitl-flash 0777 root root -";
 
   # Hardware watchdog. A wedged rig (a Pi 3 locked up by a USB-bus stall under
   # concurrent DUT load — the very thing SBC_SERIALIZE_FLASH prevents — or any
@@ -650,6 +663,14 @@ in
           # provision. --mount skips it if the dir is absent, so a rig not yet
           # redeployed just provisions unserialized.
           "--mount /run/hitl-provision:/run/hitl/provision-lock"
+          # Per-rig AP-exclusive bandwidth lock (see the tmpfiles rule above). Bind-
+          # mount the host-shared dir into every container so a bandwidth-heavy test
+          # (hitl_client.ap_lock) or a provision join window (hitl_improv._ap_lock)
+          # holds an flock across it — a host-wide airtime mutex, since the bind mount
+          # shares the inode. Only the airtime-critical phase is held; every other step
+          # stays concurrent. Always-on; --mount skips it if the dir is absent, so a rig
+          # not yet redeployed simply runs unserialized (best-effort), as before.
+          "--mount /run/hitl-ap-lock:/run/hitl/ap-lock"
         ]
         # Flash/USB-serial serialization lock, mounted ONLY on a serialize-flash rig
         # (SBC_SERIALIZE_FLASH=1, e.g. the Pi 3 whose single USB bus can't run two
