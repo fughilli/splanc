@@ -76,9 +76,10 @@ let
   # Python for the reserved iOS session's harness. The container ships phone_e2e +
   # its data (web/dist, solver, firmware bundle, journeys) into the reservation and
   # runs it with THIS python3 (on the session PATH): its driver_server needs
-  # `websockets`; everything else the iOS lane uses is stdlib. (Real BLE runs on the
-  # phone via the Capacitor plugin, so no bleak is needed here.)
-  pyEnv = pkgs.python3.withPackages (ps: with ps; [ websockets ]);
+  # `websockets`, and serial_discovery needs `pyserial` to enumerate the C6's port for
+  # flashing (connect/config journeys). Everything else the iOS lane uses is stdlib.
+  # (Real BLE runs on the phone via the Capacitor plugin, so no bleak is needed here.)
+  pyEnv = pkgs.python3.withPackages (ps: with ps; [ websockets pyserial ]);
 
   # The iOS build/install/launch server (tools/ios_build_server.py) runs as a launchd
   # SERVICE, not a hand-started process — the reserved session drives it over
