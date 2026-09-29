@@ -72,6 +72,8 @@ class RemoteCmdTests(unittest.TestCase):
         # Runs from the shipped root, resolves the Mac's own LAN IP, points at the
         # loopback build server, and passes the shipped app dirs via env.
         self.assertIn(f"cd {ir.REMOTE_ROOT}", cmd)
+        # nix pyEnv python (with websockets) must win over the system /usr/bin/python3.
+        self.assertIn("PATH=/run/current-system/sw/bin:$PATH", cmd)
         self.assertIn('HITL_STATION_IP="$(ipconfig getifaddr en0', cmd)
         self.assertIn("IOS_BUILD_SERVER=http://127.0.0.1:8099", cmd)
         self.assertIn(f"HITL_WEB_DIST={ir.REMOTE_ROOT}/web/dist", cmd)

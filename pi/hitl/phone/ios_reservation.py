@@ -113,8 +113,12 @@ def remote_run_cmd(
     - HITL_WEB_DIST / HITL_SOLVER_WEB point phone_e2e at the shipped artifacts so it
       needs no bazel/runfiles on the Mac.
     - HITL_IOS_UDID rides in from the reservation env (not set here).
+    - PATH is prepended with the nix system profile bin so `python3` resolves to the
+      nix-darwin pyEnv (which has websockets, needed by driver_server) rather than the
+      system /usr/bin/python3 that the reserved session's PATH lists first.
     """
     env = [
+        "PATH=/run/current-system/sw/bin:$PATH",
         f'HITL_STATION_IP="$({station_ip_expr})"',
         f"IOS_BUILD_SERVER=http://127.0.0.1:{build_port}",
         f"HITL_WEB_DIST={REMOTE_ROOT}/web/dist",
