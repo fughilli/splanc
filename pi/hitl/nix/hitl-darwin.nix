@@ -18,15 +18,46 @@
 # Usage in flake.nix (see the handoff notes in reserve/README.md):
 #   darwinConfigurations.mac-mini = darwin.lib.darwinSystem {
 #     system = "aarch64-darwin";
-#     modules = [ (import ./nix/hitl-darwin.nix { hitlSrc = hitl-reserve; }) ];
+#     modules = [ (import ./nix/hitl-darwin.nix {
+#       hitlSrc = hitl-reserve;
+#       # attach a real iPhone -> stand up the launchd ios-build-server:
+#       iosBuildUser = "kevin";                 # owns the checkout + Xcode sign-in
+#       iosBuildWorkspace = "/Users/kevin/splanc";
+#     }) ];
 #   };
 #
-# Manual, one-time, ON THE MAC (not managed here — hardware/Apple-account state):
-#   * Install the Xcode Command Line Tools (xcodebuild/simctl/devicectl/usbmux)
-#     and accept the license; sign into Xcode for a device-provisioning profile.
-#   * Fill the PLACEHOLDER iPhone UDID + C6 serial ports in reserve/catalog-mac.json.
+# The recurring test flow is RESERVATION-DRIVEN and hands-off: a container/CI runner
+# reserves the `ios-phone` unit over the tailnet, the darwin runner grants a scoped
+# SSH session, and the harness (shipped in) runs phone_e2e on the Mac — serving the
+# app + driver WS the iPhone connects back to, driving the launchd ios-build-server
+# on loopback, and running the journeys. No human runs bazel/build commands on the Mac.
+#
+# Genuinely one-time, ON THE MAC (hardware / Apple-account / iOS-security state that
+# no service can automate):
+#   * Install Xcode + Command Line Tools (xcodebuild/simctl/devicectl/usbmux), accept
+#     the license; sign into Xcode once for device provisioning.
+#   * A splanc checkout at iosBuildWorkspace with the Capacitor iOS project generated
+#     (`cap add ios` — regenerated, gitignored) and the signing keychain set up; drop
+#     the signing secrets in ${stateDir}/ios-build.env (see iosBuildEnvFile below).
+#   * Plug in the iPhone, enable Developer Mode, keep it unlocked (Auto-Lock=Never),
+#     and accept the one-time "trust this computer" + "allow local network" prompts.
 #   * `tailscale up` and authorize the node (the daemon advertises on the tailnet).
-{ hitlSrc }:
+# The catalog's iPhone UDID / C6 serial are the reserved unit's env markers; the C6
+# serial PORT is discovered dynamically at flash time (pi/hitl/harness/serial_discovery.py),
+# never hardcoded.
+# iOS-build service parameters (all optional): a host that attaches a real iPhone
+# sets `iosBuildUser` (the account that owns the repo checkout + Xcode sign-in, e.g.
+# the operator's login) and `iosBuildWorkspace` (an absolute path to a splanc
+# checkout on the Mac) to stand up the launchd `ios-build-server` below. Left null,
+# the service isn't added (a Mac without an iPhone still deploys). Signing secrets
+# are NOT passed here — they live in a root/-user-owned env file outside the nix
+# store (see iosBuildEnvFile).
+{ hitlSrc
+, iosBuildUser ? null
+, iosBuildWorkspace ? null
+, iosBuildPort ? 8099
+, iosDeveloperDir ? "/Applications/Xcode.app/Contents/Developer"
+}:
 { config, pkgs, lib, ... }:
 
 let
@@ -34,6 +65,27 @@ let
   # derivation the Linux rigs use — it carries the darwin runner). Kept in lockstep
   # with the @hitl_reserve git_override in //MODULE.bazel + the input in flake.nix.
   hitl = pkgs.callPackage ./packages.nix { src = hitlSrc; };
+
+  # Python for the reserved iOS session's harness. The container ships phone_e2e +
+  # its data (web/dist, solver, firmware bundle, journeys) into the reservation and
+  # runs it with THIS python3 (on the session PATH): its driver_server needs
+  # `websockets`; everything else the iOS lane uses is stdlib. (Real BLE runs on the
+  # phone via the Capacitor plugin, so no bleak is needed here.)
+  pyEnv = pkgs.python3.withPackages (ps: with ps; [ websockets ]);
+
+  # The iOS build/install/launch server (tools/ios_build_server.py) runs as a launchd
+  # SERVICE, not a hand-started process — the reserved session drives it over
+  # loopback (IOS_BUILD_SERVER=http://127.0.0.1:<port>) to cap-sync/build/sign/install/
+  # launch the Capacitor app on the real iPhone. It runs as `iosBuildUser` (needs that
+  # account's Xcode + the signing keychain) against `iosBuildWorkspace` (a splanc
+  # checkout on the Mac). Only added when both are set.
+  iosBuildEnabled = iosBuildUser != null && iosBuildWorkspace != null;
+  # Signing + App Store Connect secrets for the build server, sourced at launch from a
+  # root-only file OUTSIDE the nix store (never world-readable): HITL_SIGN_KEYCHAIN,
+  # HITL_SIGN_KEYCHAIN_PASS, HITL_SIGN_TEAM, and the HITL_ASC_* trio for a paid team.
+  #   sudo install -m600 -o ${toString iosBuildUser} /path/to/ios-build.env ${stateDir}/ios-build.env
+  # The service no-ops those if the file is absent (an unsigned/simulator-only Mac).
+  iosBuildEnvFile = "${stateDir}/ios-build.env";
 
   # The shared user each reservation SSHes into (the darwin runner scopes access by
   # rewriting this user's authorized_keys per reservation). NOT an admin user.
@@ -129,6 +181,47 @@ in
     };
   };
 
+  #### iOS build/install/launch server (launchd) #############################
+  # A flake-provided SERVICE (not a hand-started terminal process) so the
+  # reservation-driven iOS journey run is hands-off: the reserved session drives it
+  # over loopback to cap-sync → sign → device-build → install → launch the Capacitor
+  # app on the real iPhone. Runs as the operator account (Xcode + signing keychain)
+  # against a splanc checkout on the Mac; both are set by the host via iosBuildUser /
+  # iosBuildWorkspace, else this service is omitted. Binds 127.0.0.1 only — the
+  # reserved harness runs on THIS Mac, so it reaches the server on loopback (no LAN
+  # exposure of the build endpoint).
+  launchd.daemons.ios-build-server = lib.mkIf iosBuildEnabled {
+    serviceConfig = {
+      ProgramArguments = [
+        "/bin/sh"
+        "-c"
+        ''
+          set -a
+          [ -f ${iosBuildEnvFile} ] && . ${iosBuildEnvFile}
+          set +a
+          export DEVELOPER_DIR=${iosDeveloperDir}
+          exec ${pyEnv}/bin/python3 ${iosBuildWorkspace}/tools/ios_build_server.py \
+            --host 127.0.0.1 --port ${toString iosBuildPort} \
+            --workspace ${iosBuildWorkspace}
+        ''
+      ];
+      RunAtLoad = true;
+      KeepAlive = true;
+      UserName = iosBuildUser;
+      StandardOutPath = "/var/log/ios-build-server.log";
+      StandardErrorPath = "/var/log/ios-build-server.err.log";
+      EnvironmentVariables = {
+        # node/pnpm/cocoapods from nix (/run/current-system/sw/bin); bazelisk from
+        # Homebrew/local; xcodebuild/devicectl from Xcode (via DEVELOPER_DIR + /usr/bin).
+        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/run/current-system/sw/bin";
+        HOME = "/Users/${toString iosBuildUser}";
+        LANG = "en_US.UTF-8";
+        # Silence the Capacitor CLI first-run telemetry prompt in the non-TTY service.
+        CAP_DISABLE_TELEMETRY = "true";
+      };
+    };
+  };
+
   #### sshd: scope the reservation user #######################################
   # A drop-in (macOS Ventura+ `Include /etc/ssh/sshd_config.d/*` is on by default)
   # that points sshd at the runner's managed key file for daemonUser and enables
@@ -204,7 +297,7 @@ in
   environment.systemPackages = with pkgs; [
     hitl # the `hitl` CLI, for local debugging on the Mac
     esptool # flash/monitor each C6 host-native
-    python3 # the phone-HITL harness + tools/ios_build_server.py
+    pyEnv # python3 (+ websockets) for the reserved session's phone_e2e harness
     nodejs
     pnpm # build the web bundle the app wraps (Capacitor)
     cocoapods # iOS pod install for the Capacitor app
