@@ -363,7 +363,13 @@ in
     # it's missing, so it doesn't churn the record on every switch. Password login stays
     # disabled in practice (we always authenticate by the runner-managed key).
     if ! /usr/bin/dscl . -read /Users/${daemonUser} AuthenticationAuthority >/dev/null 2>&1; then
-      echo "[hitl-darwin] materializing auth record for '${daemonUser}' (dscl -passwd)" >&2
+      echo "[hitl-darwin] materializing auth record for '${daemonUser}' (ShadowHash)" >&2
+      # `dscl -passwd` alone populates ShadowHashData (a password) but does NOT create
+      # the AuthenticationAuthority POINTER, and macOS then authenticates nothing for
+      # the account — pubkey ssh included (verified on the live Mac: a working account
+      # has `;ShadowHash;HASHLIST:…`, ours had no key at all). Create the pointer first,
+      # then set the password so the hashes live under it.
+      /usr/bin/dscl . -create /Users/${daemonUser} AuthenticationAuthority ";ShadowHash;" || true
       /usr/bin/dscl . -passwd /Users/${daemonUser} "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" || true
     fi
     /bin/mkdir -p /Users/${daemonUser}/.ssh
