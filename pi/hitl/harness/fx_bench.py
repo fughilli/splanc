@@ -56,6 +56,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from typing import Any
 
 import hitl_ws
@@ -383,12 +384,18 @@ class RigLink(DutLink):
     def _flash(self) -> None:
         args, res = self.args, self.res
         _log(f"[flash] {os.path.basename(args.bundle)} → {res.host}")
-        res.scp_to([args.bundle], "/tmp/")
+        # Copy to a UNIQUE remote filename, never the fixed /tmp/<basename>. A prior flash
+        # (this reservation's, or a neighbour's under concurrent --jobs) can leave that path
+        # present and perm-locked, so scp'ing over it fails "dest open … Permission denied"
+        # and every cold recovery re-bring-up dies deterministically — the mid-sweep
+        # "board unreachable — bundle incomplete" flake. A fresh name always opens clean.
+        remote = f"/tmp/fxbench-reflash-{uuid.uuid4().hex}.tar"
+        res.scp_to([args.bundle], remote)
         # --erase-fs boots the DUT into a clean first-provision state (empty NVS, no
         # auto-join short-circuit, no persisted effect) — the reliably-provisionable
         # path, and the one that breaks a crash-looping persisted effect on recover.
         res.ssh(
-            f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs "
+            f"hitl-flash {remote} --erase-fs "
             f"--monitor --monitor-seconds {args.monitor_seconds:g}",
             capture=True,
             timeout=args.monitor_seconds + 120,
