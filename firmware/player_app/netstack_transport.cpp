@@ -143,6 +143,13 @@ bool g_hwkey = false;
 uint32_t g_rekey_serviced = 0; // count of AP group-key rekeys we ACKed (see handle_l3)
 void *g_trc = nullptr; // default TRC (ic_get_trc(0,0)) for the ppTxPkt HW-encrypt bridge
 bool g_tcp_started = false, g_tcp_requested = false;
+// Set by the DHCP handler when our IP changes under a live listener; consumed at the bind
+// site to clear the stale TLS/WS session on the re-arm (see the drift-fork note at both sites).
+bool g_relisten_new_ip = false;
+// The IP the TCP listener is currently bound to (frozen at the ns_tcp_listen bind site). The
+// drift-fork check compares the committed lease IP against THIS, not g_offer_ip (which the
+// OFFER handler advances to the new IP before the ACK).
+uint8_t g_listen_ip[4] = {0};
 // De-risk the WSS server path: after the lease, LISTEN on :4433 and echo, instead of the
 // outbound TCP-client test. Validates the inbound TCP path (SYN->SYN-ACK->data->ACK) on
 // silicon before layering mbedtls TLS on top.
@@ -734,7 +741,25 @@ void handle_l3(const uint8_t *pt, int pl) {
         bool first = !g_leased;
         g_leased = true;
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
-        memcpy(g_offer_ip, dh + 16, 4);
+        memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
+        // Drift fork: the TCP listener binds our IP exactly ONCE (g_tcp_started one-shot at
+        // the bind site) and freezes it in g_listen_ip. Any mid-session IP change — a
+        // lease-lapse re-DISCOVER (see "lease EXPIRED — re-DISCOVER"), or a T1/T2 renewal
+        // that returns a DIFFERENT address — leaves the listener bound to the OLD IP, so
+        // inbound SYNs to our current, ARP-defended IP get silently dropped by the tcp.rs
+        // dst-IP gate forever (nothing re-arms a stuck LISTEN). The deauth path already
+        // resets g_tcp_started for exactly this "re-listen on the fresh binding" reason;
+        // re-DISCOVER/renewal needs the identical reset. Compare the committed lease IP to
+        // g_listen_ip (what we actually bound) — NOT g_offer_ip, which the OFFER handler
+        // above already advanced to the new IP before this ACK. Guarded so a same-IP renewal
+        // never churns the listener or drops a live wss.
+        if (g_tcp_started && memcmp(g_offer_ip, g_listen_ip, 4) != 0) {
+          Serial.printf("[dhcp] IP changed %u.%u.%u.%u -> %u.%u.%u.%u — re-arming TCP listener\n",
+                        g_listen_ip[0], g_listen_ip[1], g_listen_ip[2], g_listen_ip[3],
+                        g_offer_ip[0], g_offer_ip[1], g_offer_ip[2], g_offer_ip[3]);
+          g_tcp_started = false;    // bind site rebinds ns_tcp_listen on the NEW g_offer_ip
+          g_relisten_new_ip = true; // and clears the stale TLS/WS session (globals not in scope here)
+        }
         if (first)
           Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
                         (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
@@ -1638,6 +1663,17 @@ void netstack_loop() {
     if (TCP_SERVER) {
       ns_tcp_listen(g_offer_ip, SERVER_PORT, 0x3000);
       g_tcp_started = true;
+      memcpy(g_listen_ip, g_offer_ip, 4); // remember the bound IP for the drift-fork check
+      // If this bind is a re-arm forced by a mid-session IP change, drop any stale TLS/WS
+      // session that was bound to the OLD IP (mirror the reclaim/deauth clean-relisten reset)
+      // so a fresh client on the new IP is never matched against a dead session. A long-lived
+      // wss defers DHCP renewal (renewal is gated on !g_ws_up), so an IP change with g_ws_up
+      // still set is a realistic case, not just an edge one.
+      if (g_relisten_new_ip) {
+        if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+        g_bio_tx = g_bio_rx = 0;
+        g_relisten_new_ip = false;
+      }
       Serial.printf("*** TCP LISTEN on %u.%u.%u.%u:%u — heapless server ***\n",
                     g_offer_ip[0], g_offer_ip[1], g_offer_ip[2], g_offer_ip[3], SERVER_PORT);
     } else {
