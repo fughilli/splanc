@@ -272,6 +272,19 @@ in
   environment.etc."ssh/sshd_config.d/60-hitl.conf".text = ''
     PermitUserEnvironment yes
     Match User ${daemonUser}
+      # macOS sshd reads AuthorizedKeysFile AS THE TARGET USER, but the darwin runner
+      # writes the managed key file root:0600 inside a 0700 root state dir — so the
+      # hitl user cannot open its OWN authorized_keys (verified on the live Mac:
+      # "Could not open user 'hitl' authorized keys '…': Permission denied"), and every
+      # reserved-session ssh was rejected. Read it via a command that runs AS ROOT
+      # instead (AuthorizedKeysCommandUser root), which needs no world-readable perms
+      # and isn't subject to the AuthorizedKeysFile StrictModes/uid read. This also
+      # overrides nix-darwin's global AuthorizedKeysCommand (a per-user file we don't
+      # populate) for this user. /bin/cat is root-owned + not writable, as required.
+      AuthorizedKeysCommand /bin/cat ${stateDir}/authorized_keys
+      AuthorizedKeysCommandUser root
+      # Kept as documentation / a fallback for an sshd that reads keys as root; on this
+      # macOS it fails the uid read and the command above is what actually authenticates.
       AuthorizedKeysFile ${stateDir}/authorized_keys
       # No agent/X11/port-forward for a reservation login; it's a hardware session.
       AllowAgentForwarding no
