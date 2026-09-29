@@ -87,6 +87,16 @@ let
   # account's Xcode + the signing keychain) against `iosBuildWorkspace` (a splanc
   # checkout on the Mac). Only added when both are set.
   iosBuildEnabled = iosBuildUser != null && iosBuildWorkspace != null;
+  # HERMETIC tool PATH for the build server: reference the nix tools by their absolute
+  # store bin dirs (prepended) so `pnpm`/`node`/`pod`/`git`/`bazelisk`/`jq` always
+  # resolve — never rely on /run/current-system/sw/bin being on the launchd env (it
+  # wasn't: bootstrap hit `pnpm: command not found`). bazelisk is only needed here for
+  # the one-time web-build (it reads .bazelversion and fetches the right bazel), so it
+  # lives in this service PATH rather than systemPackages. Xcode's xcodebuild/devicectl/
+  # xcrun/simctl come from /usr/bin (+ DEVELOPER_DIR), kept after the store paths.
+  iosBuildTools = with pkgs; [ pyEnv nodejs pnpm cocoapods git bazelisk jq coreutils ];
+  iosBuildPath =
+    "${lib.makeBinPath iosBuildTools}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
   # Signing + App Store Connect secrets for the build server, sourced at launch from a
   # root-only file OUTSIDE the nix store (never world-readable): HITL_SIGN_KEYCHAIN,
   # HITL_SIGN_KEYCHAIN_PASS, HITL_SIGN_TEAM, and the HITL_ASC_* trio for a paid team.
@@ -229,9 +239,10 @@ in
       StandardOutPath = "/var/log/ios-build-server.log";
       StandardErrorPath = "/var/log/ios-build-server.err.log";
       EnvironmentVariables = {
-        # node/pnpm/cocoapods from nix (/run/current-system/sw/bin); bazelisk from
-        # Homebrew/local; xcodebuild/devicectl from Xcode (via DEVELOPER_DIR + /usr/bin).
-        PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/run/current-system/sw/bin";
+        # HERMETIC: nix tools (node/pnpm/cocoapods/git/bazelisk/jq) by absolute store
+        # path first, so a missing /run/current-system/sw/bin on the launchd env can't
+        # cause `command not found`; then Homebrew + /usr/bin for xcodebuild/devicectl.
+        PATH = iosBuildPath;
         HOME = "/Users/${toString iosBuildUser}";
         LANG = "en_US.UTF-8";
         # Silence the Capacitor CLI first-run telemetry prompt in the non-TTY service.
@@ -314,25 +325,32 @@ in
     description = "HITL reservation session user (key-scoped per reservation)";
   };
 
-  # Materialize the reservation account on `darwin-rebuild switch`, idempotently.
-  # sysadminctl creates a fully-functional (auth-authority-bearing) standard account
-  # so pubkey SSH works; a random unused password keeps it key-only in practice (we
-  # never password-login it). Hidden from the login window; home + ~/.ssh (0700) set
-  # up for the `~/.ssh/environment` signing-secret seam. No-op if the record exists.
+  # Materialize the reservation account on `darwin-rebuild switch`, idempotently and
+  # WITHOUT BLOCKING. We create the record with plain `dscl`, NOT `sysadminctl
+  # -addUser`: on a FileVault Mac, sysadminctl's secure-token/FDE enrollment blocks
+  # on a GUI authorization dialog when run non-interactively (from the launchd/
+  # activation context) — it hung the first switch until the operator clicked an
+  # invisible prompt, and would hang a headless/CI activation forever. (macOS ships
+  # no `timeout` to bound it, so we avoid the blocking call entirely.) `dscl` writes
+  # the local directory record directly with no FDE dance, and `dscl -passwd` (run as
+  # root, no old password needed) gives it a proper auth record so pubkey SSH works
+  # (the random password is never used — password login stays disabled). Guarded on
+  # UniqueID so a partial record isn't mistaken for a complete one. Every step is
+  # `|| true` so activation can never be aborted by it.
   system.activationScripts.postActivation.text = lib.mkAfter ''
-    if ! /usr/bin/dscl . -read /Users/${daemonUser} >/dev/null 2>&1; then
-      echo "[hitl-darwin] creating reservation user '${daemonUser}' (uid 555, key-only)" >&2
-      # Stable system shell (NOT a nix-store bash: its path would be GC'd out from
-      # under the account, breaking the ssh `sh -c` the reservation runs).
-      /usr/sbin/sysadminctl -addUser ${daemonUser} \
-        -UID 555 \
-        -fullName "HITL reservation session user" \
-        -shell /bin/bash \
-        -home /Users/${daemonUser} \
-        -password "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" 2>&1 || \
-        echo "[hitl-darwin] sysadminctl -addUser ${daemonUser} failed" >&2
-      /usr/bin/dscl . -create /Users/${daemonUser} IsHidden 1 || true
+    if ! /usr/bin/dscl . -read /Users/${daemonUser} UniqueID >/dev/null 2>&1; then
+      echo "[hitl-darwin] creating reservation user '${daemonUser}' (uid 555, key-only, dscl)" >&2
+      /usr/bin/dscl . -create /Users/${daemonUser} || true
+      /usr/bin/dscl . -create /Users/${daemonUser} RealName "HITL reservation session user" || true
+      /usr/bin/dscl . -create /Users/${daemonUser} UniqueID 555 || true
       /usr/bin/dscl . -create /Users/${daemonUser} PrimaryGroupID 20 || true
+      # Stable system shell (NOT a nix-store bash whose path would be GC'd out from
+      # under the account, breaking the ssh `sh -c` the reservation runs).
+      /usr/bin/dscl . -create /Users/${daemonUser} UserShell /bin/bash || true
+      /usr/bin/dscl . -create /Users/${daemonUser} NFSHomeDirectory /Users/${daemonUser} || true
+      /usr/bin/dscl . -create /Users/${daemonUser} IsHidden 1 || true
+      /usr/bin/dscl . -passwd /Users/${daemonUser} "$(/usr/bin/head -c 32 /dev/urandom | /usr/bin/base64)" \
+        || /usr/bin/dscl . -create /Users/${daemonUser} Password '*' || true
     fi
     /bin/mkdir -p /Users/${daemonUser}/.ssh
     /usr/sbin/chown -R ${daemonUser}:staff /Users/${daemonUser} 2>/dev/null || true

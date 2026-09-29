@@ -988,7 +988,20 @@ def main() -> int:
     if dotenv:
         _log(f"loaded credentials/.env: {', '.join(dotenv)}")
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    # Fail LOUDLY on a port conflict rather than silently yielding it. A stale
+    # ios_build_server (e.g. a hand-started one from another checkout) squatting the
+    # port would otherwise keep answering with the WRONG workspace/PATH while the
+    # real (launchd) server crash-loops — a confusing failure. Name it explicitly.
+    try:
+        httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as e:
+        _log(
+            f"FATAL: cannot bind {args.host}:{args.port} ({e}). "
+            f"Another process is likely holding the port — check "
+            f"`lsof -nP -iTCP:{args.port} -sTCP:LISTEN` and kill the stale server, "
+            f"then restart this one."
+        )
+        return 1
     lan = _lan_ip()
     _log(f"ios-build-server on {args.host}:{args.port}  (workspace {CFG['workspace']})")
     _log("  from the container:  tools/iosctl doctor")
