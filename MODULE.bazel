@@ -253,7 +253,7 @@ archive_override(
 bazel_dep(name = "atopile_rules", version = "0.1.0")
 git_override(
     module_name = "atopile_rules",
-    commit = "16a7e0749ac542ca48fcaa4eb7133d60cf94f827",  # main
+    commit = "aaef3bafff27794bef281af896b6bffbb752f822",  # main
     patch_strip = 1,
     patches = [
         "//patches:rules_atopile-composable-dep.patch",

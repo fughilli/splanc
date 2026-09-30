@@ -20,7 +20,7 @@
 # Requires: nix + git on PATH (nix is already a repo system requirement).
 set -euo pipefail
 
-RA_COMMIT="16a7e0749ac542ca48fcaa4eb7133d60cf94f827"
+RA_COMMIT="aaef3bafff27794bef281af896b6bffbb752f822"
 RA_REMOTE="https://github.com/fughilli/rules_atopile.git"
 # Under `bazel run` the script executes from runfiles, so prefer Bazel's
 # workspace pointer; fall back to the script's own location for a direct run.
