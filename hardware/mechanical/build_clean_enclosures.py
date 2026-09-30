@@ -9,6 +9,7 @@ from logo import embossed_logo
 from generate_enclosures import board_shape,populated
 HERE=Path(__file__).resolve().parent
 SPEC=json.loads((HERE/'enclosure-spec.json').read_text())
+REFERENCE=HERE/'assets/frozen-r9'
 
 def box(x,y,z,w,d,h,r=0):
  q=cq.Workplane('XY').box(w,d,h,centered=False)
@@ -18,6 +19,34 @@ def cyl(x,y,z,r,h):return cq.Workplane('XY',origin=(x,y,z)).circle(r).extrude(h)
 def ring(x,y,z,w,d,h,t,r=0):return box(x,y,z,w,d,h,r).cut(box(x+t,y+t,z-.1,w-2*t,d-2*t,h+.2,max(0,r-t)))
 def loft_xy(x,y,z,w,h,zt,wt,ht):return cq.Workplane('XY',origin=(x,y,z)).rect(w,h).workplane(offset=zt-z).rect(wt,ht).loft()
 def funnel(x,y,z,w,h,depth,wo,ho,north=False):return cq.Workplane('XZ',origin=(x,y,z)).rect(wo,ho).workplane(offset=depth if north else -depth).rect(w,h).loft()
+def port_plane(origin,normal,u,offset=0):
+ return cq.Plane(origin=tuple(origin[i]+normal[i]*offset for i in range(3)),xDir=u,normal=normal)
+def port_profile(origin,normal,u,offset,width,height,radius=None):
+ plane=port_plane(origin,normal,u,offset)
+ if radius is None:return cq.Workplane(plane).slot2D(width,height).val()
+ wire=cq.Workplane(plane).rect(width,height).val()
+ return wire.fillet2D(radius,wire.Vertices())
+def port_loft(origin,normal,u,sections,capsule=False):
+ wires=[port_profile(origin,normal,u,t,w,h,None if capsule else min(SPEC['usb_c']['well_corner_radius_mm'],h/3)) for t,w,h in sections]
+ return cq.Workplane(obj=cq.Solid.makeLoft(wires,True))
+def usb_c_features(origin,normal,u,outer_distance,add_support=False):
+ """Shell-conformal throat plus an outward-opening cable well, in port-local mm.
+ t=0 is the real connector shell's mating face; positive t points outside.
+ The sole thin web sits just behind the mating face, so it cannot obstruct the plug overmold.
+ """
+ d=SPEC['usb_c'];back=d['web_back_mm'];front=back+d['web_thickness_mm'];wi,hi=d['well_inner_mm'];wo,ho=d['well_outer_mm']
+ sw=d['shell_width_mm']+2*d['radial_clearance_mm'];sh=d['shell_height_mm']+2*d['radial_clearance_mm']
+ draft=2*d['web_thickness_mm']*math.tan(math.radians(d['opening_draft_deg']))
+ throat=port_loft(origin,normal,u,[(back-.05,sw,sh),(front+.01,sw+draft,sh+draft)],True)
+ backrelief=port_loft(origin,normal,u,[(-5,wi,hi),(back,wi,hi)])
+ well=port_loft(origin,normal,u,[(front,wi,hi),(outer_distance,wo,ho),(outer_distance+15,wo,ho)])
+ cut=throat.union(backrelief).union(well)
+ support=port_loft(origin,normal,u,[(back,wi+3.2,hi+3.2),(outer_distance,wo+4,ho+4)]) if add_support else None
+ # End sealant before the mouth, rather than bridging the air in the well.
+ setback=SPEC['seam_seal']['connector_end_setback_mm']
+ stop=port_loft(origin,normal,u,[(-5,wo+2*setback,ho+2*setback),(outer_distance+1,wo+2*setback,ho+2*setback)])
+ return cut,support,stop
+
 def path(points,y,t,width,draft=0):
  pieces=[]
  for x,z in points:pieces.append(cq.Workplane('XZ',origin=(x,y,z)).circle(width/2).extrude(t,taper=draft))
@@ -67,7 +96,7 @@ class Build:
   tongue=tongue.cut(box(-5,-5,0,w+10,6.3,30))
   ledge=ring(-1.1,-1.1,split,w+2.2,h+2.2,.8,.95,1).cut(box(-5,-5,0,w+10,6.3,30))
   l=l.union(ledge).union(tongue)
-  board=json.loads((HERE/'assets/mini-board-reference.json').read_text()) if p=='mini' else json.loads((HERE.parent/'splanc/interface.json').read_text())['boards']['splanc']
+  board=json.loads((HERE/'assets/mini-board-reference.json').read_text()) if p=='mini' else json.loads((REFERENCE/'splanc/interface.json').read_text())['boards']['splanc']
   for j,m in enumerate(board['mounts'],1):
    x,y=m['x'],m['y'];b=b.union(cyl(x,y,floor_z,3,5.8-floor_z)).cut(cyl(x,y,bottom+.9,1.05,5.8))
    l=l.union(cyl(x,y,9.1,3,top-9.1)).cut(cyl(x,y,5.8,1.4,top)).cut(cyl(x,y,top-1.8,2.5,2))
@@ -78,8 +107,10 @@ class Build:
   bowlcut=loft_xy(x,y,14,10,21,top+.5,14,28)
   l=l.union(bowl).intersect(outer).cut(bowlcut)
   for x,y in ports:l=l.cut(box(x-4.4,y-4.7,11.5,8.8,9.4,top))
-  usb=funnel(d['usb_x'],-3.3,9.25,11,6.5,4.3,16,10)
-  b=b.cut(usb);l=l.cut(usb)
+  usb,usb_support,usb_seal_stop=usb_c_features((d['usb_x'],-1.45,9.13),(0,-1,0),(1,0,0),1.75,True)
+  b=b.union(usb_support.intersect(separator)).cut(usb)
+  l=l.union(usb_support.cut(separator)).cut(usb)
+  b=b.intersect(outer);l=l.intersect(outer)
   for j,(x,y) in enumerate(d['lightpipes'],1):
    l=l.cut(cyl(x,y,7.8,1.1,top))
    self.emit(p,f'lightpipe-{j}',cyl(x,y,8.1,.9,top-8.1),'lightpipe')
@@ -107,7 +138,12 @@ class Build:
   gland=ring(-2.9,-2.9,split-.2,w+5.8,h+5.8,.4,.8,2.7).cut(box(lo-1,-3.3,0,hi-lo+2,1.4,30))
   points=[(lo-1,split),(lo,split),(lo,15.5),(hi,15.5),(hi,split),(hi+1,split)]
   gland=gland.union(path(points,-2.1,.8,.4))
-  b=b.cut(gland);l=l.cut(gland);self.emit(p,'seam-gasket',gland,'seal',note='Assembled compressed seal volume; uncompressed cross-section and sealing qualification pending')
+  # Clip the actual dispensed bead to supported shell material, with dry ends
+  # before connector mouths. A continuous O-ring cannot bridge these openings.
+  gland=gland.cut(usb_seal_stop).intersect(b.union(l))
+  assert gland.cut(b.union(l)).val().Volume()<1e-5
+  self.reports.setdefault(p,{})['sealant_segments']=len(gland.val().Solids())
+  b=b.cut(gland);l=l.cut(gland);self.emit(p,'seam-sealant',gland,'seal',note='Interrupted dispensed bead in gland; no continuous O-ring; connector sealing is a separate operation')
   logo=embossed_logo(d['logo_width'],w/2,h/2,top-.7,.7);l=l.cut(logo)
   self.emit(p,'logo-white-inlay',logo,'logo_white')
   self.finish(p,b,l,top,[w+6.4,h+6.4,top-bottom])
@@ -117,7 +153,7 @@ class Build:
   shell=outer.cut(box(wall,wall,floor,w-2*wall,h-2*wall,top-floor-wall,2))
   b=shell.intersect(box(-1,-1,-1,w+2,h+2,split+1));l=shell.intersect(box(-1,-1,split,w+2,h+2,top-split+1))
   l=l.union(ring(2.7,2.7,split,w-5.4,h-5.4,.8,1.3,2)).union(ring(3.1,3.1,split-1.8,w-6.2,h-6.2,2,.9,2))
-  interface=json.loads((HERE.parent/'splanc_max/interface.json').read_text());power=interface['boards']['power'];lv=interface['boards']['lv']
+  interface=json.loads((REFERENCE/'splanc_max/interface.json').read_text());power=interface['boards']['power'];lv=interface['boards']['lv']
   def pi(q):return q.rotate((0,0,0),(0,0,1),90).translate(tuple(d['pi_origin']))
   mounts=[(7+m['x'],7+m['y']) for m in power['mounts']]+[(285-m['y'],28+m['x']) for m in lv['mounts']]
   for x,y in mounts:b=b.union(cyl(x,y,floor,3.6,8-floor)).cut(cyl(x,y,1.4,1.25,8))
@@ -136,8 +172,8 @@ class Build:
   # Pi access whitelist: Ethernet and power. USB-A and HDMI never get cutters.
   x=d['ethernet_center_x'];b=b.cut(funnel(x,h+.1,17.5,19,18,20.1,25,24,True))
   b=b.cut(box(x-11,d['ethernet_inner_y'],-1,22,h-d['ethernet_inner_y']+2,14,2))
-  powercut=cq.Workplane('YZ',origin=(w+.1,d['power_center_y'],10.5)).rect(16,10).workplane(offset=-10).rect(11,6.5).loft()
-  b=b.cut(powercut)
+  powercut,power_support,power_seal_stop=usb_c_features((286.2,d['power_center_y'],11.016),(1,0,0),(0,1,0),w-286.2,True)
+  b=b.union(power_support).cut(powercut)
   # Roof cooling slots are split around a solid logo field by construction.
   for x in range(25,203,8):
    for y,length in [(35,17),(82,17)]:l=l.cut(box(x,y,top-3.4,3,length,4,1))
@@ -152,7 +188,10 @@ class Build:
   self.emit(p,'usb-jumper-pcb-envelope',pi(box(98,29.1-bw/2,-3.4,1.6,bw,bh)),'pcb')
   for name,z,width,height in [('A',3.6,12,4.5),('C',d['hat_z']-6,8.4,2.8)]:self.emit(p,'usb-male-'+name+'-envelope',pi(box(83,29.1-width/2,z-height/2,15,width,height)),'nickel')
   gland=ring(1,1,split-.2,w-2,h-2,.4,.8,4)
-  b=b.cut(gland);l=l.cut(gland);self.emit(p,'seam-gasket',gland,'seal',note='Assembled compressed volume; vented enclosure is not waterproof')
+  gland=gland.cut(power_seal_stop).intersect(b.union(l))
+  assert gland.cut(b.union(l)).val().Volume()<1e-5
+  self.reports.setdefault(p,{})['sealant_segments']=len(gland.val().Solids())
+  b=b.cut(gland);l=l.cut(gland);self.emit(p,'seam-sealant',gland,'seal',note='Dispensed bead in supported gland; vented enclosure is not waterproof')
   self.finish(p,b,l,top,d['outside'])
  def finish(self,p,b,l,top,dimensions):
   for n,q in [('base',b),('lid',l)]:
@@ -160,7 +199,7 @@ class Build:
    self.emit(p,n,q,'shell_'+n)
   overlap=b.intersect(l).val().Volume();assert overlap<1e-5,(p,'shell overlap',overlap)
   self.emit(p,'lid-print',l.rotate((0,0,0),(1,0,0),180).translate((0,0,top)),'shell_lid')
-  self.reports[p]={'outside_mm':dimensions,'base_lid_overlap_mm3':overlap,'base_solids':1,'lid_solids':1,'source':'enclosure-spec.json; no imported enclosure solids'}
+  self.reports[p]={**self.reports.get(p,{}),'outside_mm':dimensions,'base_lid_overlap_mm3':overlap,'base_solids':1,'lid_solids':1,'source':'enclosure-spec.json; no imported enclosure solids'}
   print(p,self.reports[p],flush=True)
  def variant(self,source,target):
   # A shared-shell variant reuses this build's parametric parts, never old solids.
@@ -175,9 +214,9 @@ class Build:
  def save(self):
   (self.out/'scene.json').write_text(json.dumps({'revision':SPEC['revision'],'dimensions':{p:r['outside_mm'] for p,r in self.reports.items()},'items':self.items}))
   (self.out/'validation.json').write_text(json.dumps(self.reports,indent=2))
-  (self.out/'design.json').write_text(json.dumps({'revision':SPEC['revision'],'spec':SPEC,'qualification':'mechanical prototype; mating, supplier tolerances, fatigue, thermal and production tooling require qualification'},indent=2))
+  (self.out/'design.json').write_text(json.dumps({'revision':SPEC['revision'],'spec':SPEC,'reference_inputs':json.loads((REFERENCE/'manifest.json').read_text()),'qualification':'mechanical prototype; mating, supplier tolerances, fatigue, thermal and production tooling require qualification'},indent=2))
 
 if __name__=='__main__':
- ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=Path('output/compact-handheld-r9'));args=ap.parse_args();b=Build(args.out)
+ ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=Path('output/usb-conformal-r10'));args=ap.parse_args();b=Build(args.out)
  for p in ('mini','splanc'):b.handheld(p)
  b.max();b.variant('mini','mini-weather');b.variant('splanc','splanc-weather');b.save()

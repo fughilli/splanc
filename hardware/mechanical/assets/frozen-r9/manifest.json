@@ -1,0 +1,9 @@
+{
+  "commit": "3576fd292",
+  "purpose": "Mechanical r9 input contracts. Do not reload current electrical designs when rebuilding enclosure studies.",
+  "files": {
+    "splanc/interface.json": "caf072624063a852453e0e2babffd9e5b59a94f5146a81c7df6a7c7929ee6023",
+    "splanc_max/interface.json": "d3b023a5e4c001ecb60d6949463ec6735a847cc62548a0ccc7c648183f8ff4bf",
+    "splanc_max/design.json": "ec3587cb426c0359e4e531b3bea1e75dd8050ecc63c7c67cdffe29da0747e0bc"
+  }
+}

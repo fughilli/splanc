@@ -5,18 +5,19 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import cadquery as cq
 from generate_enclosures import box
 R=Path('output/mechanical-viewer');R.mkdir(exist_ok=True)
-ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/compact-handheld-r9'));args=ap.parse_args();S=args.source
+ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/usb-conformal-r10'));args=ap.parse_args();S=args.source
 data=json.loads((S/'scene.json').read_text())
+saved_design=json.loads((S/'design.json').read_text()) if (S/'design.json').exists() else {}
 q=cq.importers.importStep('hardware/splanc_dev/elec/src/parts/E_Switch_TL3340AF160QG/SW-SMD_E-SWITCH_TL3340.step')
 reports={}
 for product in ('mini','splanc','max','splanc-weather'):
  items=[i for i in data['items'] if i['product']==product]
  if product in ('mini','splanc','splanc-weather'):
-  poses=[('SW2',34,3.5),('SW1',42,3.5),('SW3',51,3.5),('SW4',59,3.5)] if product=='mini' else [(b['ref'],*b['position']) for b in json.load(open('hardware/splanc/interface.json'))['boards']['splanc']['buttons']]
+  poses=[('SW2',34,3.5),('SW1',42,3.5),('SW3',51,3.5),('SW4',59,3.5)] if product=='mini' else [(b['ref'],*b['position']) for b in json.load(open('hardware/mechanical/assets/frozen-r9/splanc/interface.json'))['boards']['splanc']['buttons']]
   for button_index,(name,x,y) in enumerate(sorted(poses,key=lambda p:p[1])):
    # Raw STEP seating plane is Z=-1.65. Seat it on PCB top Z7.4.
    for idx,solid in enumerate(q.val().Solids()[:5]):
-    dz=-1.6 if data.get('revision')=='compact-handheld-r9' else 0
+    dz=saved_design.get('spec',{}).get('handheld',{}).get('assembly_z_shift_mm',0)
     placed=solid.translate((x,y,9.05+dz))
     if idx==0 and any(i.get('motion')=='rigid' for i in data['items']):
      region=cq.Workplane('XZ',origin=(x,1.69,9.1+dz)).circle(1.02).extrude(-.66)

@@ -1,9 +1,10 @@
 """Independent geometry checks for the fresh parametric family build."""
 from pathlib import Path
-import json,gzip,tempfile
+import json,gzip,tempfile,argparse
 import cadquery as cq
-from build_clean_enclosures import box,cyl,SPEC,HERE
-R=Path('output/compact-handheld-r9');report={}
+from build_clean_enclosures import box,cyl,HERE,REFERENCE
+ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/usb-conformal-r10'));R=ap.parse_args().source;report={}
+SPEC=json.loads((R/'design.json').read_text())['spec']
 def read(p,n):return cq.importers.importStep(str(R/p/(n+'.step')))
 def vol(q):return q.val().Volume()
 def expect_clear(results,n,a,b):
@@ -19,7 +20,7 @@ for p in ('mini','splanc','max'):
    f.write(gzip.decompress((HERE/'assets/pi5-visible-ports.step.gz').read_bytes()));f.flush();pi=cq.importers.importStep(f.name).rotate((0,0,0),(0,0,1),90).translate((285,28,8))
   expect_clear(checks,'Pi versus shell',pi,shell)
   for name in ('lv-pcb-envelope','active-cooler-envelope','usb-jumper-pcb-envelope','usb-male-A-envelope','usb-male-C-envelope'):expect_clear(checks,name,read(p,name),shell)
-  interface=json.loads((HERE.parent/'splanc_max/interface.json').read_text());design=json.loads((HERE.parent/'splanc_max/design.json').read_text())
+  interface=json.loads((REFERENCE/'splanc_max/interface.json').read_text());design=json.loads((REFERENCE/'splanc_max/design.json').read_text())
   power=interface['boards']['power'];components={c['ref']:c for c in design['boards']['power']['components']}
   header=cq.importers.importStep(str(HERE/'assets/max-connectors/degson-2edgrc-3-header-normalized.step'))
   for connector in power['connectors']:
@@ -37,7 +38,7 @@ for p in ('mini','splanc','max'):
   # Positive material probes: excluded Pi ports must have continuous exterior walls.
   for x in (238,255.9):assert vol(box(x-4,132,10,8,1,8).cut(b))<1e-5,('USB cover',x)
   for y in (53.8,67.2):assert vol(box(290,y-4,9,1,8,7).cut(b))<1e-5,('HDMI cover',y)
-  expect_clear(checks,'power plug approach',box(282,34,8,12,10,5),shell)
+  # Detailed stepped USB-C cable insertion is checked in check_usb_c.py.
   assert abs(l.val().BoundingBox().zmax-43)<1e-5
  else:
   d=SPEC['handheld'][p];dz=SPEC['handheld'].get('assembly_z_shift_mm',0)

@@ -1,5 +1,5 @@
 {
-  "revision": "compact-handheld-r9",
+  "revision": "usb-conformal-r10",
   "units": "mm",
   "edge_chamfer": 0.5,
   "handheld": {
@@ -159,5 +159,34 @@
       "USB-C power"
     ],
     "logo_width": 82
+  },
+  "usb_c": {
+    "shell_width_mm": 8.94,
+    "shell_height_mm": 3.16,
+    "radial_clearance_mm": 0.3,
+    "web_thickness_mm": 0.8,
+    "web_back_mm": -0.9,
+    "well_inner_mm": [
+      18,
+      10
+    ],
+    "well_outer_mm": [
+      20,
+      12
+    ],
+    "well_corner_radius_mm": 2,
+    "opening_draft_deg": 1,
+    "cable_overmold_test_mm": [
+      16,
+      8
+    ],
+    "cable_overmold_corner_radius_mm": 1.5,
+    "cable_overmold_front_mm": 0.1,
+    "qualification": "Prototype envelope, not a universal cable or waterproof qualification. Shell clearance is nominal; cable mouldings vary."
+  },
+  "seam_seal": {
+    "method": "dispensed sealant in interrupted gland",
+    "connector_end_setback_mm": 0.8,
+    "qualification": "No unsupported seal spans across openings. Separate connector-to-case sealant and ingress testing required; MAX remains vented."
   }
 }

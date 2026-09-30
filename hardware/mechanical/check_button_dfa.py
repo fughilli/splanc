@@ -5,7 +5,9 @@ from generate_enclosures import box
 R=Path('output/button-dfa-r5');results={}
 ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=R);ap.add_argument('--products',nargs='+',default=['mini','splanc','mini-weather','splanc-weather']);args=ap.parse_args();R=args.source
 spec_path=Path('hardware/mechanical/enclosure-spec.json');spec=json.loads(spec_path.read_text())
-shift=-spec['handheld'].get('assembly_z_shift_mm',0) if R.name=='compact-handheld-r9' else 0
+saved_design=R/'design.json'
+if saved_design.exists():spec=json.loads(saved_design.read_text())['spec']
+shift=-spec['handheld'].get('assembly_z_shift_mm',0) if saved_design.exists() else 0
 def read_part(p,name):
  q=cq.importers.importStep(str(p/name))
  return q if 'print' in name else q.translate((0,0,shift))
