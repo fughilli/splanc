@@ -376,6 +376,63 @@ stream back live. The iPhone must be awake + unlocked during install.</p>
 <p>Everything streams the underlying tool’s output live (<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-N</span></code>), and a non-zero
 exit stops a chain.</p>
 </section>
+<section id="ship-to-testflight-in-one-command">
+<h3>Ship to TestFlight in one command<a class="headerlink" href="#ship-to-testflight-in-one-command" title="Link to this heading">¶</a></h3>
+<p>Same client/server split, one more Bazel target — it builds the app, archives an
+App-Store-signed build, exports the <code class="docutils literal notranslate"><span class="pre">.ipa</span></code>, and uploads it to App Store Connect /
+TestFlight:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//tools:ios_testflight<span class="w">                    </span><span class="c1"># build → archive → export → upload</span>
+bazel<span class="w"> </span>run<span class="w"> </span>//tools:ios_testflight<span class="w"> </span>--<span class="w"> </span>--build-number<span class="w"> </span><span class="m">231</span>
+</pre></div>
+</div>
+<p>On the <strong>Mac</strong> (or a macOS CI runner) it starts the build server as a sidecar and
+tears it down after; <strong>from the container</strong> it drives a server running on the Mac,
+exactly like <code class="docutils literal notranslate"><span class="pre">ios_deploy</span></code>. It runs the <code class="docutils literal notranslate"><span class="pre">testflight-prebuilt</span></code> chain (<code class="docutils literal notranslate"><span class="pre">cap-sync</span> <span class="pre">→</span> <span class="pre">tf-build-number</span> <span class="pre">→</span> <span class="pre">tf-signing-prep</span> <span class="pre">→</span> <span class="pre">tf-archive</span> <span class="pre">→</span> <span class="pre">tf-export</span> <span class="pre">→</span> <span class="pre">tf-upload</span></code>).</p>
+<p><strong>Credentials</strong> are read from the <strong>build server’s environment</strong> — never passed in
+the request, so no secret is ever in a URL or the streamed log. Set them where the
+server runs (your shell/launchd on the Mac; the GitHub Actions <code class="docutils literal notranslate"><span class="pre">env:</span></code> in CI). They
+are the <strong>same names</strong> the TestFlight job in
+<a class="reference internal" href="#../.github/workflows/macos.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/macos.yaml</span></code></span></a> uses, so one set
+of secrets serves both the local target and the CI action:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Env var</p></th>
+<th class="head"><p>What</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">APP_STORE_CONNECT_KEY_ID</span></code></p></td>
+<td><p>App Store Connect API key — Key ID</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">APP_STORE_CONNECT_ISSUER_ID</span></code></p></td>
+<td><p>…its Issuer ID</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">APP_STORE_CONNECT_KEY_P8_BASE64</span></code></p></td>
+<td><p>base64 of the <code class="docutils literal notranslate"><span class="pre">AuthKey_&lt;KeyID&gt;.p8</span></code> (or <code class="docutils literal notranslate"><span class="pre">…_PATH</span></code>, or leave it in <code class="docutils literal notranslate"><span class="pre">~/.private_keys/</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">APPLE_TEAM_ID</span></code></p></td>
+<td><p>10-char Developer Team ID (else <code class="docutils literal notranslate"><span class="pre">SPLANC_IOS_TEAM</span></code> / the <code class="docutils literal notranslate"><span class="pre">ios-config</span></code> default)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_P12_BASE64</span></code></p></td>
+<td><p>base64 “Apple Distribution” <code class="docutils literal notranslate"><span class="pre">.p12</span></code> — <strong>optional</strong>, only where the keychain has no dist cert (a fresh CI runner)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_PASSWORD</span></code></p></td>
+<td><p>…the <code class="docutils literal notranslate"><span class="pre">.p12</span></code> export password</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IOS_BUILD_NUMBER</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CFBundleVersion</span></code> for the upload (unique + increasing per build); default = epoch seconds</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A dev Mac that already ships device builds has a distribution cert in its login
+keychain, so the two <code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_*</span></code> vars are only needed on a clean machine.
+One-time Apple-side setup (membership, register the <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> App ID, create
+the App Store Connect app record, mint the API key) is described in the workflow
+header. The container/<code class="docutils literal notranslate"><span class="pre">iosctl</span></code> path uses the same tasks via the <code class="docutils literal notranslate"><span class="pre">testflight</span></code> chain
+(with <code class="docutils literal notranslate"><span class="pre">web-build</span></code>): <code class="docutils literal notranslate"><span class="pre">tools/iosctl</span> <span class="pre">run</span> <span class="pre">testflight</span></code>.</p>
+</section>
 <section id="the-tasks-tasks">
 <h3>The tasks (<code class="docutils literal notranslate"><span class="pre">/tasks</span></code>)<a class="headerlink" href="#the-tasks-tasks" title="Link to this heading">¶</a></h3>
 <div class="table-wrapper colwidths-auto docutils container">
@@ -416,12 +473,29 @@ exit stops a chain.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">list-sims</span></code></p></td>
 <td><p>list bootable simulators</p></td>
 </tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tf-build-number</span></code></p></td>
+<td><p>stamp <code class="docutils literal notranslate"><span class="pre">CFBundleVersion</span></code> (<code class="docutils literal notranslate"><span class="pre">$IOS_BUILD_NUMBER</span></code>, else epoch)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tf-signing-prep</span></code></p></td>
+<td><p>place the ASC API key (+ optional dist <code class="docutils literal notranslate"><span class="pre">.p12</span></code>) for signing/upload</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tf-archive</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xcodebuild</span> <span class="pre">archive</span></code> — App-Store-signed (automatic signing)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tf-export</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xcodebuild</span> <span class="pre">-exportArchive</span></code> → <code class="docutils literal notranslate"><span class="pre">build/export/*.ipa</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tf-upload</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xcrun</span> <span class="pre">altool</span> <span class="pre">--upload-app</span></code> → App Store Connect / TestFlight</p></td>
+</tr>
 </tbody>
 </table>
 </div>
 <p>Chains: <code class="docutils literal notranslate"><span class="pre">bootstrap</span></code> = install → web-build → cap-add-ios → ios-config → cap-sync →
 pod-install; <code class="docutils literal notranslate"><span class="pre">rebuild</span></code> = web-build → cap-sync → ios-build; <code class="docutils literal notranslate"><span class="pre">launch</span></code> = web-build →
-cap-sync → ios-run.</p>
+cap-sync → ios-run; <code class="docutils literal notranslate"><span class="pre">testflight</span></code> = web-build → cap-sync → tf-build-number →
+tf-signing-prep → tf-archive → tf-export → tf-upload (<code class="docutils literal notranslate"><span class="pre">testflight-prebuilt</span></code> drops
+<code class="docutils literal notranslate"><span class="pre">web-build</span></code>, for <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//tools:ios_testflight</span></code>).</p>
 <p>Params: <code class="docutils literal notranslate"><span class="pre">--sim</span> <span class="pre">NAME</span></code>, <code class="docutils literal notranslate"><span class="pre">--configuration</span> <span class="pre">Debug|Release</span></code>, <code class="docutils literal notranslate"><span class="pre">--scheme</span> <span class="pre">App</span></code>.</p>
 </section>
 </section>
@@ -452,7 +526,7 @@ a lazy dynamic import that only fires inside the native wrapper
 self-signed-cert accept; drops in behind <code class="docutils literal notranslate"><span class="pre">SocketFactory</span></code> in <code class="docutils literal notranslate"><span class="pre">net/client.ts</span></code>.</p></li>
 <li><p><strong>OTA firmware update</strong> (§4.3 / firmware track) — the only “program the device
 from an iPhone” path, since USB flashing is impossible on iOS (§3.1).</p></li>
-<li><p><strong>Android wrapper + CI lane + TestFlight/App Store distribution</strong> (§4.5).</p></li>
+<li><p><strong>Android wrapper</strong> (§4.5). <em>(TestFlight distribution is built — <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//tools:ios_testflight</span></code> and the <code class="docutils literal notranslate"><span class="pre">testflight</span></code> job in <code class="docutils literal notranslate"><span class="pre">.github/workflows/macos.yaml</span></code>.)</em></p></li>
 </ul>
 </section>
 </section>
@@ -499,6 +573,7 @@ from an iPhone” path, since USB flashing is impossible on iOS (§3.1).</p></li
 <li><a class="reference internal" href="#one-time-host-setup">One-time host setup</a></li>
 <li><a class="reference internal" href="#driving-it-from-the-container">Driving it from the container</a><ul>
 <li><a class="reference internal" href="#deploy-to-a-paired-iphone-in-one-command">Deploy to a paired iPhone in one command</a></li>
+<li><a class="reference internal" href="#ship-to-testflight-in-one-command">Ship to TestFlight in one command</a></li>
 <li><a class="reference internal" href="#the-tasks-tasks">The tasks (<code class="docutils literal notranslate"><span class="pre">/tasks</span></code>)</a></li>
 </ul>
 </li>

@@ -300,18 +300,19 @@
           <section id="requirements-driven-development">
 <h1>Requirements-driven development<a class="headerlink" href="#requirements-driven-development" title="Link to this heading">¶</a></h1>
 <p>This repo practises <strong>requirements-driven development (RDD)</strong>: every requirement
-is written down in a machine-readable model, every module documents the
-requirements it implements, every test declares the requirements it verifies,
-and a CI action aggregates the test results into a report that shows, for the
-whole listing, whether each user need is <strong>validated</strong> and each requirement
-<strong>verified</strong>.</p>
-<p>This closes the loop end to end — a requirement with no verifying test, a test
-referencing a requirement that no longer exists, or a risk with no working
-mitigation all surface automatically (FUG-89).</p>
-<section id="the-entity-model">
-<h2>The entity model<a class="headerlink" href="#the-entity-model" title="Link to this heading">¶</a></h2>
-<p>The source of truth is <a class="reference internal" href="#../requirements/requirements.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">requirements/requirements.yaml</span></code></span></a>,
-validated against <a class="reference internal" href="#../requirements/schema.json"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">requirements/schema.json</span></code></span></a>.</p>
+is written down in a machine-readable model, modules annotate the requirements
+they implement, tests declare the requirements they verify, and CI aggregates
+the test results into a report that shows, for the whole model, whether each
+user need is <strong>validated</strong>, each requirement <strong>verified</strong> and each risk
+<strong>controlled</strong> (FUG-88, FUG-89).</p>
+<p>The tooling is <a class="reference external" href="https://github.com/Studio-Fug/rules_requirements">rules_requirements</a>
+(<a class="reference external" href="https://studio-fug.github.io/rules_requirements/">documentation</a>), a
+standalone Bazel ruleset extracted from this repo. This page covers how splanc
+uses it; the rules_requirements docs cover the model, verdicts and tools in
+depth.</p>
+<section id="the-model">
+<h2>The model<a class="headerlink" href="#the-model" title="Link to this heading">¶</a></h2>
+<p>The source of truth is <a class="reference internal" href="#../requirements/requirements.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">requirements/requirements.yaml</span></code></span></a>:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -327,340 +328,121 @@ validated against <a class="reference internal" href="#../requirements/schema.js
 <td><p>What a user must be able to do.</p></td>
 <td><p><strong>Validated?</strong> (rolls up its PRs)</p></td>
 </tr>
-<tr class="row-odd"><td><p>Product requirement (direct)</p></td>
+<tr class="row-odd"><td><p>Product requirement</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">PR-</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">satisfies</span></code> one or more user needs.</p></td>
-<td><p><strong>Verified?</strong> (its tests pass)</p></td>
+<td><p>A verifiable requirement; <code class="docutils literal notranslate"><span class="pre">satisfies</span></code> user needs.</p></td>
+<td><p><strong>Verified?</strong> (its tests, at its rigor)</p></td>
 </tr>
 <tr class="row-even"><td><p>Risk</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">RISK-</span></code></p></td>
-<td><p>A hazard or failure mode.</p></td>
-<td><p><strong>Mitigated?</strong> (rolls up its derived PRs)</p></td>
+<td><p>A failure mode, with <code class="docutils literal notranslate"><span class="pre">severity</span></code>, <code class="docutils literal notranslate"><span class="pre">likelihood</span></code>, <code class="docutils literal notranslate"><span class="pre">residual</span></code>.</p></td>
+<td><p><strong>Mitigated?</strong> (rolls up mitigations)</p></td>
 </tr>
-<tr class="row-odd"><td><p>Product requirement (derived)</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">PR-</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">mitigates</span></code> one or more risks (and may also satisfy needs).</p></td>
-<td><p><strong>Verified?</strong></p></td>
+<tr class="row-odd"><td><p>Mitigation</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MIT-</span></code></p></td>
+<td><p>A risk control measure: <code class="docutils literal notranslate"><span class="pre">mitigates</span></code> risks, <code class="docutils literal notranslate"><span class="pre">implemented_by</span></code> PRs.</p></td>
+<td><p><strong>Verified?</strong> (rolls up its PRs)</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>The traces are bidirectional and validated: a derived PR’s <code class="docutils literal notranslate"><span class="pre">mitigates</span></code> must name
-the risk, and the risk’s <code class="docutils literal notranslate"><span class="pre">mitigated_by</span></code> must name the derived PR. A direct PR
-must satisfy at least one user need; a derived PR must mitigate at least one
-risk; every user need must be satisfied by at least one PR. Broken or dangling
-traces fail <a class="reference internal" href="#../requirements/validate_test.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">//requirements:requirements_valid_test</span></code></span></a>.</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">product_requirements</span><span class="p">:</span>
+<p>FUG-88 stated each risk’s mitigation as prose; each is captured as a
+mitigation <code class="docutils literal notranslate"><span class="pre">MIT-n</span></code> (for <code class="docutils literal notranslate"><span class="pre">RISK-n</span></code>) implemented by a <code class="docutils literal notranslate"><span class="pre">category:</span> <span class="pre">risk-control</span></code>
+product requirement (PR-26..37) that tests verify like any other PR. The
+<code class="docutils literal notranslate"><span class="pre">config:</span></code> section keeps splanc’s <code class="docutils literal notranslate"><span class="pre">PR-</span></code> prefix for requirements.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">requirements</span><span class="p">:</span>
 <span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PR-34</span>
 <span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Pin the wire schema with cross-language conformance tests</span>
-<span class="w">    </span><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">derived</span>
+<span class="w">    </span><span class="nt">category</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">risk-control</span>
 <span class="w">    </span><span class="nt">satisfies</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">UN-3</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">UN-4</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">UN-6</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">UN-7</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">modules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">shared/protocol</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">pi/server</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">pi/reconstruction</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">web</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">solver</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">verified_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&#39;//web:proto_test&#39;</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># coarse, per-target traceability</span>
+<span class="nt">mitigations</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MIT-9</span>
+<span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Pin the wire schema with cross-language conformance tests</span>
 <span class="w">    </span><span class="nt">mitigates</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">RISK-9</span><span class="p p-Indicator">]</span>
-<span class="w">    </span><span class="nt">modules</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">shared/protocol</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">pi/server</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">web</span><span class="p p-Indicator">]</span>
-<span class="w">    </span><span class="nt">verified_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&#39;//web:proto_test&#39;</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># coarse, per-target traceability (see below)</span>
-<span class="nt">risks</span><span class="p">:</span>
-<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RISK-9</span>
-<span class="w">    </span><span class="nt">title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Binary schema or protocol drift across components</span>
-<span class="w">    </span><span class="nt">severity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">high</span>
-<span class="w">    </span><span class="nt">mitigated_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">PR-34</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">implemented_by</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">PR-34</span><span class="p p-Indicator">]</span>
 </pre></div>
 </div>
-<blockquote>
-<div><p>The model content is the FUG-88 “Draft requirements and risk assessment for
-Splanc” baseline (UN-1..8, PR-1..25, RISK-1..12), translated verbatim. The
-per-risk mitigations FUG-88 states as prose are captured here as derived PRs
-(PR-26..37).</p>
-</div></blockquote>
+<p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//requirements:model_test</span></code> fails on any malformed entity, bad id,
+dangling reference, orphaned requirement, unsatisfied need or uncontrolled
+risk.</p>
 </section>
-<section id="documenting-a-module">
-<h2>Documenting a module<a class="headerlink" href="#documenting-a-module" title="Link to this heading">¶</a></h2>
-<p>Each module’s <code class="docutils literal notranslate"><span class="pre">BUILD.bazel</span></code> docstring carries a line naming the PRs it
-implements:</p>
+<section id="annotating-code-and-tests">
+<h2>Annotating code and tests<a class="headerlink" href="#annotating-code-and-tests" title="Link to this heading">¶</a></h2>
+<p>Each module’s <code class="docutils literal notranslate"><span class="pre">BUILD.bazel</span></code> docstring names the PRs it implements with an
+<code class="docutils literal notranslate"><span class="pre">&#64;rr(...)</span></code> annotation:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="sd">&quot;&quot;&quot;pi/led_driver — SK9822/APA102 Gray-code pattern driver.</span>
 
-<span class="sd">Requirements (PRs implemented here; see requirements/requirements.yaml): PR-11</span>
+<span class="sd">@rr(PR-11): implemented in this package (see requirements/requirements.yaml)</span>
 <span class="sd">&quot;&quot;&quot;</span>
 </pre></div>
 </div>
-<p>Python modules in the traceability toolkit also use an inline <code class="docutils literal notranslate"><span class="pre">Requirements:</span> <span class="pre">PR-…</span></code>
-line in their docstring. Any file with such a line (source, test, or <code class="docutils literal notranslate"><span class="pre">BUILD</span></code>) is
-scanned by <code class="docutils literal notranslate"><span class="pre">//requirements:check_annotations</span></code>, which fails if a referenced id is
-not defined in the model.</p>
-</section>
-<section id="annotating-a-test">
-<h2>Annotating a test<a class="headerlink" href="#annotating-a-test" title="Link to this heading">¶</a></h2>
-<p>Tests declare the requirements they verify with the <code class="docutils literal notranslate"><span class="pre">&#64;requirements</span></code> marker. For
-a whole test module, use a module-level <code class="docutils literal notranslate"><span class="pre">pytestmark</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
-
-<span class="c1"># Traceability: PR(s) this suite verifies.</span>
-<span class="n">pytestmark</span> <span class="o">=</span> <span class="n">pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">requirements</span><span class="p">(</span><span class="s2">&quot;PR-13&quot;</span><span class="p">,</span> <span class="s2">&quot;PR-29&quot;</span><span class="p">)</span>
+<p>Python tests declare what they verify with a marker (module-wide via
+<code class="docutils literal notranslate"><span class="pre">pytestmark</span></code>, or per test), optionally with the rigor they provide:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pytestmark</span> <span class="o">=</span> <span class="n">pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">requirements</span><span class="p">(</span><span class="s2">&quot;PR-13&quot;</span><span class="p">,</span> <span class="s2">&quot;PR-29&quot;</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="s2">&quot;hitl&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>Per-test is also fine:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">requirements</span><span class="p">(</span><span class="s2">&quot;PR-25&quot;</span><span class="p">)</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">test_junit_tag_extraction</span><span class="p">():</span>
-    <span class="o">...</span>
-</pre></div>
-</div>
-<p>The <a class="reference internal" href="#../tools/traceability/traceability/pytest_requirements.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">traceability.pytest_requirements</span></code></span></a>
-plugin turns each marker into a jUnit tag on that test case:</p>
-<div class="highlight-xml notranslate"><div class="highlight"><pre><span></span><span class="nt">&lt;testcase</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;test_junit_tag_extraction&quot;</span><span class="w"> </span><span class="err">...</span><span class="nt">&gt;</span>
-<span class="w">  </span><span class="nt">&lt;properties&gt;</span>
-<span class="w">    </span><span class="nt">&lt;property</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;requirement&quot;</span><span class="w"> </span><span class="na">value=</span><span class="s">&quot;PR-25&quot;</span><span class="nt">/&gt;</span>
-<span class="w">  </span><span class="nt">&lt;/properties&gt;</span>
-<span class="nt">&lt;/testcase&gt;</span>
-</pre></div>
-</div>
-<p>Python suites route their <code class="docutils literal notranslate"><span class="pre">pytest_main.py</span></code> through the shared runner
-(<a class="reference internal" href="#../tools/traceability/traceability/pytest_runner.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">traceability.pytest_runner</span></code></span></a>),
-which registers the plugin and writes jUnit to <code class="docutils literal notranslate"><span class="pre">$XML_OUTPUT_FILE</span></code> — the file
-Bazel captures under <code class="docutils literal notranslate"><span class="pre">bazel-testlogs/&lt;pkg&gt;/&lt;name&gt;/test.xml</span></code>. So every
-traceability-enabled <code class="docutils literal notranslate"><span class="pre">py_test</span></code> carries its tags into CI with no extra flags:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">traceability.pytest_runner</span><span class="w"> </span><span class="kn">import</span> <span class="n">main</span>
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-    <span class="k">raise</span> <span class="ne">SystemExit</span><span class="p">(</span><span class="n">main</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
-</pre></div>
-</div>
-<p>Add <code class="docutils literal notranslate"><span class="pre">//tools/traceability</span></code> to the <code class="docutils literal notranslate"><span class="pre">py_test</span></code>’s <code class="docutils literal notranslate"><span class="pre">deps</span></code> for the import to resolve.</p>
+<p><code class="docutils literal notranslate"><span class="pre">&#64;pytest.mark.rr(...)</span></code> is the same marker under its rules_requirements name.
+Each package’s <code class="docutils literal notranslate"><span class="pre">tests/pytest_main.py</span></code> delegates to
+<code class="docutils literal notranslate"><span class="pre">rules_requirements.hooks.pytest_runner</span></code>, which writes JUnit to
+<code class="docutils literal notranslate"><span class="pre">$XML_OUTPUT_FILE</span></code> with one <code class="docutils literal notranslate"><span class="pre">&lt;property</span> <span class="pre">name=&quot;requirement&quot;&gt;</span></code> per id; add
+<code class="docutils literal notranslate"><span class="pre">&#64;rules_requirements//python</span></code> to the <code class="docutils literal notranslate"><span class="pre">py_test</span></code>’s <code class="docutils literal notranslate"><span class="pre">deps</span></code>.</p>
+<p>The on-hardware harness (<a class="reference internal" href="#../pi/hitl/harness/hitl_e2e.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/hitl_e2e.py</span></code></span></a>)
+records each phase with <code class="docutils literal notranslate"><span class="pre">rules_requirements.hooks.junit_writer.JUnitWriter</span></code>
+(level <code class="docutils literal notranslate"><span class="pre">hitl</span></code>), stamping the firmware build id / DUT git SHA / board so stale
+evidence is detectable.</p>
+<p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//requirements:check_annotations</span></code> scans the tree and fails on any
+annotation naming an id that does not exist.</p>
 </section>
-<section id="verification-method-demanded-rigor">
-<h2>Verification method (demanded rigor)<a class="headerlink" href="#verification-method-demanded-rigor" title="Link to this heading">¶</a></h2>
-<p>A passing test is not automatically enough. Each PR declares the <strong>rigor its
-verification demands</strong> via a <code class="docutils literal notranslate"><span class="pre">method</span></code>, drawn from an ordered scale (lowest →
-highest) plus one non-ordered value:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>analysis  &lt;  simulation  &lt;  sil  &lt;  hil  &lt;  hitl        inspection (unordered)
-</pre></div>
-</div>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">analysis</span></code> — hand/derivation/static argument. <code class="docutils literal notranslate"><span class="pre">simulation</span></code> — host unit/sim
-test. <code class="docutils literal notranslate"><span class="pre">sil</span></code> — software-in-the-loop (e.g. cross-language conformance).
-<code class="docutils literal notranslate"><span class="pre">hil</span></code> — hardware-in-the-loop component test. <code class="docutils literal notranslate"><span class="pre">hitl</span></code> — full hardware-in-the-loop
-system run. <code class="docutils literal notranslate"><span class="pre">inspection</span></code> — manual/visual sign-off (incomparable: met only by
-inspection evidence).</p></li>
-</ul>
-<p>Evidence carries the rigor it <strong>provides</strong>. Per-testcase, that’s a <code class="docutils literal notranslate"><span class="pre">level=</span></code> on
-the marker; for whole targets, a <code class="docutils literal notranslate"><span class="pre">{target,</span> <span class="pre">level}</span></code> mapping in <code class="docutils literal notranslate"><span class="pre">verified_by</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pytestmark</span> <span class="o">=</span> <span class="n">pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">requirements</span><span class="p">(</span><span class="s2">&quot;PR-29&quot;</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="s2">&quot;hitl&quot;</span><span class="p">)</span>  <span class="c1"># this suite runs on hardware</span>
-</pre></div>
-</div>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">PR-13</span>
-<span class="w">  </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hitl</span><span class="w"> </span><span class="c1"># demanded rigor</span>
-<span class="w">  </span><span class="nt">verified_by</span><span class="p">:</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&#39;//web:improv_provision_test&#39;</span><span class="w"> </span><span class="c1"># bare string -&gt; provides simulation</span>
-<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> target</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;//pi/hitl/tests:e2e_test&#39;</span><span class="p p-Indicator">,</span><span class="nt"> level</span><span class="p">:</span><span class="w"> </span><span class="nv">hitl</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># provides hitl</span>
-</pre></div>
-</div>
-<p>The aggregator compares the two, per PR:</p>
-<ul class="simple">
-<li><p><strong>GREEN (<code class="docutils literal notranslate"><span class="pre">VERIFIED</span></code>)</strong> — a passing artifact provides rigor <strong>≥</strong> the demand.</p></li>
-<li><p><strong>AMBER (<code class="docutils literal notranslate"><span class="pre">UNDER-VERIFIED</span></code>)</strong> — there is passing evidence, but the best rigor
-provided is <strong>below</strong> the demand (e.g. a <code class="docutils literal notranslate"><span class="pre">hitl</span></code> PR covered only by a <code class="docutils literal notranslate"><span class="pre">simulation</span></code>
-test). The row shows <em>demanded vs best-provided</em>.</p></li>
-<li><p><strong>RED (<code class="docutils literal notranslate"><span class="pre">FAILED</span></code>) / <code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code></strong> — a test failed / no passing evidence at all.</p></li>
-</ul>
-<p>Migration defaults keep this additive: a PR with no <code class="docutils literal notranslate"><span class="pre">method</span></code> demands <code class="docutils literal notranslate"><span class="pre">simulation</span></code>
-and untagged evidence provides <code class="docutils literal notranslate"><span class="pre">simulation</span></code>, so nothing mass-fails. Only the
-hardware-implicated PRs (modules touching <code class="docutils literal notranslate"><span class="pre">firmware</span></code>/<code class="docutils literal notranslate"><span class="pre">pi/hitl</span></code>, and derived PRs
-mitigating hardware/stability risks) are annotated with their true <code class="docutils literal notranslate"><span class="pre">hil</span></code>/<code class="docutils literal notranslate"><span class="pre">hitl</span></code>
-demand — which is why several of those now read AMBER: real verification debt made
-visible, not a regression. The HITL <code class="docutils literal notranslate"><span class="pre">JUnitWriter</span></code> stamps its phases <code class="docutils literal notranslate"><span class="pre">level:</span> <span class="pre">hitl</span></code>
-by default.</p>
-</section>
-<section id="cost-pyramid-policy">
-<h2>Cost-pyramid policy<a class="headerlink" href="#cost-pyramid-policy" title="Link to this heading">¶</a></h2>
-<p>Physical test cycles are the scarce, expensive oracle. Cheap verification
-(analysis, host simulation) should be <strong>exhausted before</strong> an expensive rung is
-accepted as the <em>sole</em> evidence — both to avoid waste and to catch cases where a
-physical result was never sanity-checked cheaply. The aggregator enforces this:</p>
-<blockquote>
-<div><p>Every PR that demands <code class="docutils literal notranslate"><span class="pre">hil</span></code> or <code class="docutils literal notranslate"><span class="pre">hitl</span></code> and has passing evidence must also carry
-at least one passing artifact at <code class="docutils literal notranslate"><span class="pre">analysis</span></code>/<code class="docutils literal notranslate"><span class="pre">simulation</span></code> level.</p>
-</div></blockquote>
-<p>A PR whose only passing evidence is the expensive rung is a <strong>policy violation</strong>,
-listed in a banner at the top of the report and on stderr. Severity is
-configurable via <code class="docutils literal notranslate"><span class="pre">--pyramid-policy</span> <span class="pre">{off,warn,error}</span></code> (default <code class="docutils literal notranslate"><span class="pre">warn</span></code>; <code class="docutils literal notranslate"><span class="pre">error</span></code>
-fails the aggregate step). An <code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code> PR is not a violation — it simply has
-no evidence yet.</p>
-</section>
-<section id="evidence-freshness-staleness">
-<h2>Evidence freshness (staleness)<a class="headerlink" href="#evidence-freshness-staleness" title="Link to this heading">¶</a></h2>
-<p>“Was ever green” and “is green for what’s on the bench now” are different claims.
-A <code class="docutils literal notranslate"><span class="pre">verified_by</span></code> HITL result from three firmware builds ago still reads green as
-long as the target name is unchanged — so on-hardware evidence records the
-<strong>identity of the artifact it exercised</strong> and the aggregator checks it against
-the current build.</p>
-<p>The HITL <code class="docutils literal notranslate"><span class="pre">JUnitWriter</span></code> stamps each case with <code class="docutils literal notranslate"><span class="pre">artifact.&lt;key&gt;</span></code> property tags
-(firmware build id, board revision, DUT image git SHA). The aggregate step is
-told the current identity with repeatable <code class="docutils literal notranslate"><span class="pre">--current-build</span> <span class="pre">KEY=VALUE</span></code>:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//tools/traceability:aggregate<span class="w"> </span>--<span class="w"> </span>aggregate<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--current-build<span class="w"> </span><span class="nv">dut_git_sha</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$GIT_COMMIT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--current-build<span class="w"> </span><span class="nv">firmware_build_id</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$FW_ID</span><span class="s2">&quot;</span><span class="w"> </span>...
-</pre></div>
-</div>
-<p>Evidence whose recorded identity differs from the current build (on any shared
-key) is <strong>STALE</strong>. A PR whose <em>only</em> passing evidence is stale renders AMBER with
-a <code class="docutils literal notranslate"><span class="pre">STALE</span></code> badge, not GREEN; fresh evidence, if any, wins. Evidence with no
-identity, or when no <code class="docutils literal notranslate"><span class="pre">--current-build</span></code> is given, is never stale — so software
-suites are unaffected.</p>
-</section>
-<section id="risks-severity-likelihood-residual">
-<h2>Risks: severity, likelihood, residual<a class="headerlink" href="#risks-severity-likelihood-residual" title="Link to this heading">¶</a></h2>
-<p>Mitigation is not elimination. A risk carries <code class="docutils literal notranslate"><span class="pre">severity</span></code> (<code class="docutils literal notranslate"><span class="pre">low</span></code>/<code class="docutils literal notranslate"><span class="pre">medium</span></code>/<code class="docutils literal notranslate"><span class="pre">high</span></code>/
-<code class="docutils literal notranslate"><span class="pre">critical</span></code>), an optional ordinal <code class="docutils literal notranslate"><span class="pre">likelihood</span></code>
-(<code class="docutils literal notranslate"><span class="pre">rare</span></code>/<code class="docutils literal notranslate"><span class="pre">unlikely</span></code>/<code class="docutils literal notranslate"><span class="pre">possible</span></code>/<code class="docutils literal notranslate"><span class="pre">likely</span></code>/<code class="docutils literal notranslate"><span class="pre">certain</span></code>), and an optional <code class="docutils literal notranslate"><span class="pre">residual</span></code>
-note describing what remains after mitigation. The report shows likelihood and
-residual on each risk row, and — crucially — hoists any <strong>high/critical-severity
-risk whose mitigating derived PR(s) are not GREEN</strong> into a red banner at the top,
-distinct from ordinary <code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code> rows. A high risk mitigated only by an
-under-verified PR is a headline, not a checkmark.</p>
-</section>
-<section id="module-rollups">
-<h2>Module rollups<a class="headerlink" href="#module-rollups" title="Link to this heading">¶</a></h2>
-<p>The model is a tree, not a flat list: a subassembly’s verification state derives
-from its parts. The report includes a <strong>per-module</strong> section where each module’s
-status is the AND of the PRs that list it in <code class="docutils literal notranslate"><span class="pre">modules</span></code> — <code class="docutils literal notranslate"><span class="pre">web</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware</span></code>,
-<code class="docutils literal notranslate"><span class="pre">pi/hitl</span></code>, etc. each show a single rolled-up state (VERIFIED only if every one of
-its PRs is; FAILED if any failed; PARTIAL otherwise). No model restructuring —
-it’s derived from the existing <code class="docutils literal notranslate"><span class="pre">modules</span></code> fields.</p>
-</section>
-<section id="the-work-queue-closing-the-authoring-loop">
-<h2>The work queue (closing the authoring loop)<a class="headerlink" href="#the-work-queue-closing-the-authoring-loop" title="Link to this heading">¶</a></h2>
-<p>The report is also a machine-readable queue so its gaps feed back as typed work.
-With <code class="docutils literal notranslate"><span class="pre">--queue-out</span></code>, the aggregator writes <code class="docutils literal notranslate"><span class="pre">traceability-queue.json</span></code>: one entry per
-<code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code> / <code class="docutils literal notranslate"><span class="pre">UNDER-VERIFIED</span></code> / <code class="docutils literal notranslate"><span class="pre">STALE</span></code> PR, with the demanded method, best
-provided level, and a <strong>route</strong> derived from the demanded method:</p>
-<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;queue&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;pr&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PR-2&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;gap&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;unverified&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;demanded_method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;simulation&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;provided_level&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;route&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;autonomous&quot;</span>
-<span class="w">    </span><span class="p">},</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;pr&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;PR-13&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;gap&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;under-verified&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;demanded_method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;hitl&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;provided_level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;simulation&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;route&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;human-gate&quot;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
-<span class="p">}</span>
-</pre></div>
-</div>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">route:</span> <span class="pre">autonomous</span></code> — demanded ≤ <code class="docutils literal notranslate"><span class="pre">sil</span></code>; an agent may write the missing
-sim/unit/SIL test itself.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">route:</span> <span class="pre">human-gate</span></code> — demanded ≥ <code class="docutils literal notranslate"><span class="pre">hil</span></code> (or <code class="docutils literal notranslate"><span class="pre">inspection</span></code>); the work needs a
-bench/DUT or a human. The agent must <strong>not</strong> synthesise or claim this evidence —
-it may only prepare the harness and open the gate. This encodes the ODD
-boundary: autonomous where cheap verification is trustworthy, a hard checkpoint
-where it isn’t.</p></li>
-</ul>
-</section>
-<section id="two-traceability-mechanisms">
-<h2>Two traceability mechanisms<a class="headerlink" href="#two-traceability-mechanisms" title="Link to this heading">¶</a></h2>
-<p>Verification evidence for a PR is the union of:</p>
-<ol class="arabic simple">
-<li><p><strong>Per-testcase tags</strong> (preferred) — the <code class="docutils literal notranslate"><span class="pre">&lt;property</span> <span class="pre">name=&quot;requirement&quot;&gt;</span></code> tags
-above, giving test-case-level traceability. Used by all Python suites,
-including HITL.</p></li>
-<li><p><strong>Per-target <code class="docutils literal notranslate"><span class="pre">verified_by</span></code></strong> — a PR may list Bazel test <em>target</em> labels in
-<code class="docutils literal notranslate"><span class="pre">verified_by</span></code>. Every <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code> writes a <code class="docutils literal notranslate"><span class="pre">bazel-testlogs/&lt;pkg&gt;/&lt;name&gt;/test.xml</span></code>
-whose path maps back to its target, so the <em>whole target’s</em> pass/fail
-contributes to those PRs. This is how C++, Rust, Go and TypeScript suites
-trace today, without per-case tags.</p></li>
-</ol>
-<section id="extending-per-case-tags-to-other-languages">
-<h3>Extending per-case tags to other languages<a class="headerlink" href="#extending-per-case-tags-to-other-languages" title="Link to this heading">¶</a></h3>
-<p>The mechanism is language-agnostic: a test runner writes jUnit to
-<code class="docutils literal notranslate"><span class="pre">$XML_OUTPUT_FILE</span></code> with a <code class="docutils literal notranslate"><span class="pre">&lt;property</span> <span class="pre">name=&quot;requirement&quot;</span> <span class="pre">value=&quot;PR-…&quot;/&gt;</span></code> inside
-each <code class="docutils literal notranslate"><span class="pre">&lt;testcase&gt;</span></code>’s <code class="docutils literal notranslate"><span class="pre">&lt;properties&gt;</span></code>. To upgrade a suite from coarse to per-case
-traceability, have its runner (or a small jUnit post-processor) emit those tags —
-e.g. Go via <code class="docutils literal notranslate"><span class="pre">go</span> <span class="pre">test</span> <span class="pre">-json</span></code> → a jUnit converter that injects properties from a
-<code class="docutils literal notranslate"><span class="pre">//</span> <span class="pre">requirements:</span> <span class="pre">PR-…</span></code> comment; TS/<code class="docutils literal notranslate"><span class="pre">node:test</span></code> via a reporter that reads a
-<code class="docutils literal notranslate"><span class="pre">requirements</span></code> annotation. The aggregator already reads the tags; nothing else
-changes.</p>
-</section>
+<section id="verification-rigor-staleness-cost-pyramid-work-queue">
+<h2>Verification rigor, staleness, cost pyramid, work queue<a class="headerlink" href="#verification-rigor-staleness-cost-pyramid-work-queue" title="Link to this heading">¶</a></h2>
+<p>A passing test is not automatically enough: each PR’s <code class="docutils literal notranslate"><span class="pre">method</span></code> names the rigor
+its verification demands (<code class="docutils literal notranslate"><span class="pre">analysis</span> <span class="pre">&lt;</span> <span class="pre">simulation</span> <span class="pre">&lt;</span> <span class="pre">sil</span> <span class="pre">&lt;</span> <span class="pre">hil</span> <span class="pre">&lt;</span> <span class="pre">hitl</span></code>, plus
+<code class="docutils literal notranslate"><span class="pre">inspection</span></code>; default <code class="docutils literal notranslate"><span class="pre">simulation</span></code>) and evidence carries the rigor it provides.
+Hardware PRs covered only by simulation read <strong>UNDER-VERIFIED</strong> — real
+verification debt made visible. Evidence recorded against a different
+<code class="docutils literal notranslate"><span class="pre">--current-build</span></code> identity is <strong>STALE</strong>; a <code class="docutils literal notranslate"><span class="pre">hil</span></code>/<code class="docutils literal notranslate"><span class="pre">hitl</span></code> PR whose only evidence is
+physical violates the <strong>cost pyramid</strong>; and every gap lands in a machine-readable
+<strong>work queue</strong> routed <code class="docutils literal notranslate"><span class="pre">autonomous</span></code> (≤ <code class="docutils literal notranslate"><span class="pre">sil</span></code>: an agent can close it) or
+<code class="docutils literal notranslate"><span class="pre">human-gate</span></code> (needs a bench or a person). See
+<a class="reference external" href="https://studio-fug.github.io/rules_requirements/concepts.html">Concepts</a> in the
+rules_requirements docs for the exact semantics.</p>
+<p>Two traceability mechanisms feed each PR’s evidence: per-testcase properties
+(preferred; all Python suites, including HITL) and per-target <code class="docutils literal notranslate"><span class="pre">verified_by</span></code>
+labels (a whole Bazel test target’s pass/fail — how the C++, Rust, Go and
+TypeScript suites trace today; googletest and Rust can move to per-case tags
+with <code class="docutils literal notranslate"><span class="pre">RR_VERIFIES(...)</span></code> / <code class="docutils literal notranslate"><span class="pre">rr::verifies!(...)</span></code>).</p>
 </section>
 <section id="the-report">
 <h2>The report<a class="headerlink" href="#the-report" title="Link to this heading">¶</a></h2>
-<p>The final workflow action aggregates every jUnit XML into a single HTML report:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//tools/traceability:aggregate<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--requirements<span class="w"> </span>requirements/requirements.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--junit<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>readlink<span class="w"> </span>-f<span class="w"> </span>bazel-testlogs<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--out<span class="w"> </span>traceability-report.html
+<p>CI’s <code class="docutils literal notranslate"><span class="pre">traceability-report</span></code> job in <a class="reference internal" href="#../.github/workflows/test.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/test.yaml</span></code></span></a>
+runs the suites, then:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>@rules_requirements//python:rr<span class="w"> </span>--<span class="w"> </span>report<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--model<span class="w"> </span>requirements<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--evidence<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>readlink<span class="w"> </span>-f<span class="w"> </span>bazel-testlogs<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--current-build<span class="w"> </span><span class="nv">dut_git_sha</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$GITHUB_SHA</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--scan<span class="w"> </span>--root<span class="w"> </span>.<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--queue-out<span class="w"> </span>traceability-queue.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--json<span class="w"> </span>traceability-report.json<span class="w"> </span>--md<span class="w"> </span>traceability-report.md<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--html<span class="w"> </span>traceability-report.html
 </pre></div>
 </div>
-<p>In CI this is the <code class="docutils literal notranslate"><span class="pre">traceability-report</span></code> job in
-<a class="reference internal" href="#../.github/workflows/test.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/test.yaml</span></code></span></a>: it runs the
-suites, aggregates their jUnit, and uploads <code class="docutils literal notranslate"><span class="pre">traceability-report.html</span></code> as an
-artifact. The report lists all user needs, product requirements and risks with a
-status badge each:</p>
-<div class="table-wrapper colwidths-auto docutils container">
-<table class="docutils align-default">
-<thead>
-<tr class="row-odd"><th class="head"><p>Status</p></th>
-<th class="head"><p>Applies to</p></th>
-<th class="head"><p>Meaning</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">VERIFIED</span></code></p></td>
-<td><p>PR</p></td>
-<td><p>passing evidence provides rigor ≥ demanded</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">UNDER-VERIFIED</span></code></p></td>
-<td><p>PR</p></td>
-<td><p>passing, but best provided rigor &lt; demanded</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">STALE</span></code></p></td>
-<td><p>PR</p></td>
-<td><p>only passing evidence is against an out-of-date build</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">FAILED</span></code></p></td>
-<td><p>PR / UN / RISK</p></td>
-<td><p>a referencing/rolled-up test failed or errored</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code></p></td>
-<td><p>PR</p></td>
-<td><p>no passing test references it</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">VALIDATED</span></code></p></td>
-<td><p>UN</p></td>
-<td><p>all satisfying PRs verified</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PARTIAL</span></code></p></td>
-<td><p>UN / RISK</p></td>
-<td><p>some rolled-up PRs verified or only under-verified</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">MITIGATED</span></code></p></td>
-<td><p>RISK</p></td>
-<td><p>all mitigating derived PRs verified</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">OPEN</span></code></p></td>
-<td><p>RISK</p></td>
-<td><p>no mitigating PR verified</p></td>
-</tr>
-</tbody>
-</table>
-</div>
+<p>The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
+as the <code class="docutils literal notranslate"><span class="pre">traceability-report</span></code> artifact.</p>
 </section>
 <section id="recipes">
 <h2>Recipes<a class="headerlink" href="#recipes" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>Add a requirement:</strong> add a <code class="docutils literal notranslate"><span class="pre">PR-…</span></code> entry (with <code class="docutils literal notranslate"><span class="pre">satisfies</span></code>, and <code class="docutils literal notranslate"><span class="pre">modules</span></code>);
-document it in the implementing module’s <code class="docutils literal notranslate"><span class="pre">BUILD</span></code>; annotate its tests. Run
-<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//requirements:requirements_valid_test</span></code> and
+<li><p><strong>Add a requirement:</strong> add a <code class="docutils literal notranslate"><span class="pre">PR-…</span></code> entry (with <code class="docutils literal notranslate"><span class="pre">satisfies</span></code> and <code class="docutils literal notranslate"><span class="pre">modules</span></code>),
+add it to the implementing module’s <code class="docutils literal notranslate"><span class="pre">&#64;rr(...)</span></code> line, and mark its tests. Run
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//requirements:model_test</span></code> and
 <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//requirements:check_annotations</span></code>.</p></li>
-<li><p><strong>Add a risk + mitigation:</strong> add the <code class="docutils literal notranslate"><span class="pre">RISK-…</span></code> with <code class="docutils literal notranslate"><span class="pre">mitigated_by:</span> <span class="pre">[PR-…]</span></code> and
-a <code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">derived</span></code> PR whose <code class="docutils literal notranslate"><span class="pre">mitigates</span></code> names the risk back; annotate the tests
-that verify the mitigation.</p></li>
-<li><p><strong>Find gaps:</strong> open the report — <code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code> PRs and <code class="docutils literal notranslate"><span class="pre">OPEN</span></code> risks are the
-work list.</p></li>
+<li><p><strong>Add a risk + mitigation:</strong> add the <code class="docutils literal notranslate"><span class="pre">RISK-…</span></code>, a <code class="docutils literal notranslate"><span class="pre">MIT-…</span></code> that <code class="docutils literal notranslate"><span class="pre">mitigates</span></code> it
+and is <code class="docutils literal notranslate"><span class="pre">implemented_by</span></code> a <code class="docutils literal notranslate"><span class="pre">category:</span> <span class="pre">risk-control</span></code> PR, and mark the tests that
+verify that PR.</p></li>
+<li><p><strong>Find gaps:</strong> open the report (or <code class="docutils literal notranslate"><span class="pre">traceability-queue.json</span></code>) —
+<code class="docutils literal notranslate"><span class="pre">UNVERIFIED</span></code>/<code class="docutils literal notranslate"><span class="pre">UNDER-VERIFIED</span></code> PRs and <code class="docutils literal notranslate"><span class="pre">OPEN</span></code> risks are the work list.</p></li>
 </ul>
 </section>
 </section>
@@ -703,19 +485,9 @@ work list.</p></li>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Requirements-driven development</a><ul>
-<li><a class="reference internal" href="#the-entity-model">The entity model</a></li>
-<li><a class="reference internal" href="#documenting-a-module">Documenting a module</a></li>
-<li><a class="reference internal" href="#annotating-a-test">Annotating a test</a></li>
-<li><a class="reference internal" href="#verification-method-demanded-rigor">Verification method (demanded rigor)</a></li>
-<li><a class="reference internal" href="#cost-pyramid-policy">Cost-pyramid policy</a></li>
-<li><a class="reference internal" href="#evidence-freshness-staleness">Evidence freshness (staleness)</a></li>
-<li><a class="reference internal" href="#risks-severity-likelihood-residual">Risks: severity, likelihood, residual</a></li>
-<li><a class="reference internal" href="#module-rollups">Module rollups</a></li>
-<li><a class="reference internal" href="#the-work-queue-closing-the-authoring-loop">The work queue (closing the authoring loop)</a></li>
-<li><a class="reference internal" href="#two-traceability-mechanisms">Two traceability mechanisms</a><ul>
-<li><a class="reference internal" href="#extending-per-case-tags-to-other-languages">Extending per-case tags to other languages</a></li>
-</ul>
-</li>
+<li><a class="reference internal" href="#the-model">The model</a></li>
+<li><a class="reference internal" href="#annotating-code-and-tests">Annotating code and tests</a></li>
+<li><a class="reference internal" href="#verification-rigor-staleness-cost-pyramid-work-queue">Verification rigor, staleness, cost pyramid, work queue</a></li>
 <li><a class="reference internal" href="#the-report">The report</a></li>
 <li><a class="reference internal" href="#recipes">Recipes</a></li>
 </ul>
