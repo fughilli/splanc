@@ -155,8 +155,14 @@ def remote_run_cmd(
     return f"set -e; cd {REMOTE_ROOT}; " + " ".join(env) + " " + quoted
 
 
-# The LAN-IP probe: first non-empty of the common Wi-Fi/Ethernet services.
-STATION_IP_EXPR = " || ".join(f"ipconfig getifaddr {i} 2>/dev/null" for i in ("en0", "en1", "en2"))
+# The station-IP probe: the iPhone must reach the station at an address ON ITS OWN
+# Internet Sharing subnet, so try the bridge (bridge100 = 192.168.2.1) FIRST. That
+# keeps phone->station intra-subnet, which is required once the NAT-isolation pf rules
+# drop bench->off-subnet traffic (see pi/hitl/nix/hitl-darwin.nix). bridge100 only
+# exists while Internet Sharing is up; otherwise fall through to the wired/Wi-Fi IPs.
+STATION_IP_EXPR = " || ".join(
+    f"ipconfig getifaddr {i} 2>/dev/null" for i in ("bridge100", "en0", "en1", "en2")
+)
 
 
 def discover_c6_cmd(serial_env: str = "$HITL_ADAPTER_SERIAL") -> str:
@@ -287,10 +293,15 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--wifi-ssid",
         default="",
-        help="AP SSID the phone provisions the C6 onto over BLE (connect+); e.g. the "
-        "Mac's Internet Sharing AP",
+        help="AP SSID the phone provisions the C6 onto over BLE (connect+). OPTIONAL and "
+        "discouraged: prefer the host-managed reservation env (HITL_WIFI_SSID/"
+        "HITL_WIFI_PASS via ~/.ssh/environment on the Mac) so no cred rides the CLI",
     )
-    ap.add_argument("--wifi-pass", default="", help="AP password for --wifi-ssid")
+    ap.add_argument(
+        "--wifi-pass",
+        default="",
+        help="AP password for --wifi-ssid (else HITL_WIFI_PASS in the reservation env)",
+    )
     ap.add_argument(
         "--build-port", type=int, default=8099, help="loopback ios-build-server port on the Mac"
     )

@@ -64,6 +64,18 @@
 , iosBuildWorkspace ? null
 , iosBuildPort ? 8099
 , iosDeveloperDir ? "/Applications/Xcode.app/Contents/Developer"
+  # NAT-isolation for the iOS bench's Internet Sharing AP. The DUT+phone subnet
+  # (iosApSubnet on iosApBridgeIf) may talk only among itself; traffic to any
+  # off-subnet net — the home LAN and the tailnet especially (iosApBlockedNets) — is
+  # dropped so a provisioned DUT or the phone can't pivot off the bench.
+, iosApBridgeIf ? "bridge100"
+, iosApSubnet ? "192.168.2.0/24"
+, iosApBlockedNets ? [ "192.168.68.0/24" "100.64.0.0/10" ]
+  # When true (default), drop ALL off-subnet unicast from the bench (internet egress
+  # included) — the strict "only intra-subnet" posture. DHCP/mDNS/broadcast that the
+  # bench itself needs are always passed first, so this stays safe. Set false to keep
+  # only the explicit iosApBlockedNets drops and let clients reach the internet.
+, iosApIntraSubnetOnly ? true
 }:
 { config, pkgs, lib, ... }:
 
@@ -110,6 +122,43 @@ let
   # simulator-only Mac). Alongside the keychain pass + ASC key that setup-ios-signing.sh
   # already writes under ~/.config/hitl.
   iosBuildEnvFile = "/Users/${toString iosBuildUser}/.config/hitl/ios-build.env";
+
+  # NAT-isolation pf rules for the iOS bench's Internet Sharing AP (see the iosAp*
+  # args). Filter rules (all `in on <bridge>`, `quick` = first match wins), ordered:
+  #   1. bench<->bench unicast (station at the bridge IP + C6<->phone),
+  #   2. DHCP (broadcast) + mDNS/multicast + limited broadcast — the bench's own
+  #      lease + discovery, which a blanket off-subnet block would otherwise kill,
+  #   3. explicit drops for the named sensitive nets (home LAN + tailnet), then
+  #   4. (strict) drop everything else off-subnet — allow ONLY intra-subnet.
+  iosApNamedBlocks = lib.concatMapStringsSep "\n    "
+    (net: "block drop in quick on ${iosApBridgeIf} from ${iosApSubnet} to ${net}")
+    iosApBlockedNets;
+  iosApCatchAll =
+    lib.optionalString iosApIntraSubnetOnly
+      "block drop in quick on ${iosApBridgeIf} from ${iosApSubnet} to ! ${iosApSubnet}";
+  iosApAnchorBody = pkgs.writeText "hitl-isolation.pf" ''
+    # Managed by pi/hitl/nix/hitl-darwin.nix — do not edit by hand.
+    pass  in quick on ${iosApBridgeIf} from ${iosApSubnet} to ${iosApSubnet}
+    pass  in quick on ${iosApBridgeIf} proto udp from any to any port 67
+    pass  in quick on ${iosApBridgeIf} from ${iosApSubnet} to 224.0.0.0/4
+    pass  in quick on ${iosApBridgeIf} from ${iosApSubnet} to 255.255.255.255
+    ${iosApNamedBlocks}
+    ${iosApCatchAll}
+  '';
+  # A com.apple/* sub-anchor is evaluated by the stock /etc/pf.conf's `anchor
+  # "com.apple/*"` line, so no system pf.conf edit is needed. Internet Sharing flushes
+  # pf when it toggles, so the launchd job below re-applies at load + on a short
+  # interval (idempotent). No-ops unless the bridge is up (sharing off => untouched).
+  iosApAnchorName = "com.apple/hitl-isolation";
+  iosApReapply = pkgs.writeShellScript "hitl-pf-isolation" ''
+    set -eu
+    /sbin/ifconfig ${iosApBridgeIf} >/dev/null 2>&1 || exit 0
+    /sbin/pfctl -a '${iosApAnchorName}' -f ${iosApAnchorBody} 2>/dev/null || exit 0
+    # Internet Sharing normally enables pf; enable defensively ONLY if disabled
+    # (never unconditionally — pfctl -e bumps an enable refcount every call).
+    /sbin/pfctl -s info 2>/dev/null | grep -q 'Status: Enabled' \
+      || /sbin/pfctl -e 2>/dev/null || true
+  '';
 
   # The shared user each reservation SSHes into (the darwin runner scopes access by
   # rewriting this user's authorized_keys per reservation). NOT an admin user.
@@ -170,6 +219,23 @@ in
         # devicectl/simctl/esptool live here once the toolbox + Xcode CLT are set up.
         PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/run/current-system/sw/bin";
       };
+    };
+  };
+
+  #### iOS bench AP NAT-isolation (launchd) ##################################
+  # Applies the pf isolation anchor for the Internet Sharing AP so a provisioned DUT
+  # or the phone can't pivot off the bench subnet onto the home LAN or tailnet. Runs
+  # as root (pfctl); RunAtLoad + StartInterval re-applies after Internet Sharing
+  # flushes pf on toggle. Short-lived script (exits each run), so no KeepAlive.
+  # Only on a build-enabled bench Mac. See the iosAp* rules in the let block above.
+  launchd.daemons.hitl-pf-isolation = lib.mkIf iosBuildEnabled {
+    serviceConfig = {
+      ProgramArguments = [ "${iosApReapply}" ];
+      RunAtLoad = true;
+      StartInterval = 60;
+      UserName = "root";
+      StandardOutPath = "/var/log/hitl-pf-isolation.log";
+      StandardErrorPath = "/var/log/hitl-pf-isolation.err.log";
     };
   };
 
@@ -338,6 +404,24 @@ in
   # locked to the user's Aqua login), e.g. ${stateDir}/hitl-signing.keychain-db
   # owned by ${daemonUser}. ios_build_server unlocks + search-lists it per build; a
   # local GUI dev run leaves all three unset and uses the interactive login keychain.
+
+  #### iOS-bench provisioning AP creds (Internet Sharing) #####################
+  # The iOS bench provisions the DUT onto the Mac's own Internet Sharing AP so the
+  # iPhone and the C6 share one subnet and can reach each other (there is no rig AP).
+  # The AP SSID/password are NOT secrets on the signing tier, but they must stay OUT
+  # of the repo and off the container CLI — so phone_e2e reads them from the SAME
+  # reservation-session env seam, with NO hard-coded fallback SSID (a missing cred
+  # fails loudly instead of joining a stray network):
+  #
+  #   /Users/${daemonUser}/.ssh/environment   (mode 0600, owned by ${daemonUser})
+  #     HITL_WIFI_SSID=<Internet Sharing network name>
+  #     HITL_WIFI_PASS=<Internet Sharing password>
+  #
+  # The operator keeps the plaintext in a single non-repo file they own
+  # (~kevin/.config/hitl/wifi.env, mode 0600) and appends the two lines above to the
+  # daemon user's .ssh/environment; the connect/mapping/config journeys then need no
+  # --wifi-ssid/--wifi-pass on the container side. (An alternative injection point is
+  # the reservation runner's per-key `environment=` in the managed authorized_keys.)
 
   #### The scoped reservation user ############################################
   # A non-admin login user. UID in the standing-services range; no usable password
