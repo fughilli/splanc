@@ -2,7 +2,8 @@
  * M8 — screen-space mapping for detection feedback overlays.
  *
  * (The GL point renderer that drew blobs into the WebXR layer left with the
- * M6 WebXR removal; the DOM label overlay is the surviving consumer.)
+ * M6 WebXR removal; the DOM label overlay and the registered projection
+ * overlay — FUG-112 — are the surviving consumers.)
  */
 
 /**
