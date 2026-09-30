@@ -17,7 +17,14 @@
  */
 
 import { requestBleDevice, bleSocketFactory } from "../net/bleTransport";
-import { provisionViaBle, requestImprovDevice, wsUrlFromRedirect } from "../net/improv";
+import { improvDeviceById, scanImprovNative } from "../net/capacitorImprov";
+import {
+  provisionViaBle,
+  requestImprovDevice,
+  wsUrlFromRedirect,
+  type ImprovDevice,
+} from "../net/improv";
+import { isNativePlatform } from "../net/native";
 import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
@@ -25,6 +32,31 @@ import type { Router } from "../ui/app/router";
 import { driverCapture, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
+
+/** Headless native Improv pick for the HITL driver (no UI chooser): scan the
+ * Capacitor BLE plugin for a short window and return the strongest-RSSI device,
+ * which on the bench is the DUT right next to the phone. Adapts to the shared
+ * `provisionViaBle` seam. Used only on iOS/native, where there is no Web Bluetooth. */
+async function pickImprovDeviceHeadless(
+  onStatus?: (s: string) => void,
+  windowMs = 5000,
+): Promise<ImprovDevice> {
+  onStatus?.("scanning for the device over Bluetooth…");
+  const hits = new Map<string, { name: string; rssi: number }>();
+  const scan = await scanImprovNative((h) => {
+    hits.set(h.deviceId, { name: h.name, rssi: h.rssi ?? -999 });
+  });
+  try {
+    await new Promise((r) => setTimeout(r, windowMs));
+  } finally {
+    await scan.stop();
+  }
+  const top = [...hits.entries()].sort((a, b) => b[1].rssi - a[1].rssi)[0];
+  if (!top) throw new Error("no Improv device found over BLE");
+  const [deviceId, best] = top;
+  onStatus?.(`selected ${best.name} (rssi ${best.rssi})`);
+  return improvDeviceById(deviceId, best.name);
+}
 
 interface Incoming {
   id?: string;
@@ -79,7 +111,13 @@ async function handle(msg: Incoming): Promise<unknown> {
       return { connecting: true };
 
     case "provisionBle": {
-      const dev = await requestImprovDevice();
+      // iOS (native) has no Web Bluetooth: provision over the Capacitor BLE plugin,
+      // headlessly (no UI chooser) — scan for Improv and take the strongest-signal
+      // device, which on the bench is the DUT inches from the phone. The browser/
+      // emulator lane keeps the Web Bluetooth path.
+      const dev = isNativePlatform()
+        ? await pickImprovDeviceHeadless((s) => emit("status", { where: "provision", message: s }))
+        : await requestImprovDevice();
       const urls = await provisionViaBle(
         dev,
         String(p.ssid ?? ""),
