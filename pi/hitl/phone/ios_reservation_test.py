@@ -97,6 +97,30 @@ class RemoteCmdTests(unittest.TestCase):
         self.assertIn("--device-ws wss://192.0.2.5:8443/ws", cmd)
         self.assertIn("--journeys connect,config", cmd)
 
+    def test_remote_run_cmd_forwards_wifi_creds(self) -> None:
+        cmd = ir.remote_run_cmd(
+            ir.STATION_IP_EXPR,
+            journeys="connect",
+            ble_mode="real",
+            build_port=8099,
+            ready_timeout=120.0,
+            wifi_ssid="MacBench",
+            wifi_pass="s3cret-pass",
+        )
+        self.assertIn("--wifi-ssid MacBench", cmd)
+        self.assertIn("--wifi-pass", cmd)
+        self.assertIn("s3cret-pass", cmd)
+
+    def test_flash_c6_cmd(self) -> None:
+        cmd = ir.flash_c6_cmd("/dev/cu.usbmodem21101")
+        self.assertIn("esptool.py --chip esp32c6", cmd)
+        self.assertIn("--port /dev/cu.usbmodem21101", cmd)
+        self.assertIn("write_flash", cmd)
+        # the four fixed images at their offsets
+        self.assertIn("0x0 x/esp32c6_bootloader.bin", cmd)
+        self.assertIn("0x10000 x/esp32c6_netstack.bin", cmd)
+        self.assertIn("tar xf esp32c6_netstack_flashbundle.tar", cmd)
+
     def test_discover_c6_cmd_uses_adapter_serial_and_fallback(self) -> None:
         cmd = ir.discover_c6_cmd()
         self.assertIn("serial_discovery.py", cmd)
