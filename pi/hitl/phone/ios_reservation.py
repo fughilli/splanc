@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import sys
 import tarfile
@@ -69,6 +70,8 @@ def payload_manifest() -> list[tuple[str, str]]:
         ("pi/hitl/phone/journeys", "journeys"),
         # Dynamic C6 serial-port discovery (run in-session for flashing).
         ("pi/hitl/harness/serial_discovery.py", "serial_discovery.py"),
+        # Optional wired serial capture (watch the C6 during a phone BLE provision).
+        ("pi/hitl/phone/ios_serial_diag.py", "ios_serial_diag.py"),
         # The built web app + solver deployment the station serves, and the firmware
         # bundle for flashing the C6 (connect+ journeys).
         ("web/dist", "web/dist"),
@@ -109,6 +112,7 @@ def remote_run_cmd(
     device_ws: str = "",
     wifi_ssid: str = "",
     wifi_pass: str = "",
+    improv_name: str = "",
     extra: str = "",
 ) -> str:
     """The shell command run in the reserved Mac session to launch phone_e2e.
@@ -149,6 +153,8 @@ def remote_run_cmd(
         args += ["--wifi-ssid", wifi_ssid]
     if wifi_pass:
         args += ["--wifi-pass", wifi_pass]
+    if improv_name:
+        args += ["--improv-name", improv_name]
     if extra:
         args += shlex.split(extra)
     quoted = " ".join(shlex.quote(a) if a not in env else a for a in args)
@@ -163,6 +169,26 @@ def remote_run_cmd(
 STATION_IP_EXPR = " || ".join(
     f"ipconfig getifaddr {i} 2>/dev/null" for i in ("bridge100", "en0", "en1", "en2")
 )
+
+
+def resolve_improv_name(res) -> str:
+    """Read the reserved C6's advertised BLE (Improv) name from its serial console.
+
+    iOS/CoreBluetooth never exposes a peripheral's MAC — only an opaque per-app UUID —
+    so on a bench with several Improv C6s in range the ONLY way to make the phone
+    provision the RESERVED board (not a stray) is to pin the pick to its advertised
+    name. The netstack prints it at boot (`[ble] advertising "<name>" as <mac>`); a
+    short monitor-only capture greps it out. Returns "" if it can't be read."""
+    cmd = (
+        "export PATH=/run/current-system/sw/bin:$PATH; "
+        f"python3 {REMOTE_ROOT}/ios_serial_diag.py --monitor-only "
+        f'--serial "$HITL_ADAPTER_SERIAL" --fallback "$HITL_ESP_PORT" '
+        "--warmup 1 --seconds 6"
+    )
+    r = res.ssh(cmd, capture=True, timeout=40)
+    out = (r.stdout or "") + (r.stderr or "")
+    m = re.search(r'advertising "([^"]+)"', out)
+    return m.group(1) if m else ""
 
 
 def discover_c6_cmd(serial_env: str = "$HITL_ADAPTER_SERIAL") -> str:
@@ -256,6 +282,36 @@ def _run(args: argparse.Namespace) -> int:
                 print((fc.stderr or "")[-1500:], flush=True)
                 raise SystemExit(f"C6 flash failed (rc {fc.returncode})")
 
+        # 3a. Resolve the reserved C6's advertised Improv name so the phone pins its BLE
+        #     pick to OUR board (not a stray C6 on the shared bench). Real-BLE journeys
+        #     only; smoke provisions virtually and needs no pin.
+        improv_name = args.improv_name
+        if not improv_name and args.ble_mode == "real" and args.journeys != "smoke":
+            improv_name = resolve_improv_name(res)
+            print(f"[ios-res] reserved C6 Improv name: {improv_name!r}", flush=True)
+            if not improv_name:
+                print(
+                    "[ios-res] WARN: could not read the C6's Improv name; the phone will "
+                    "fall back to strongest-RSSI (stray-board risk on a shared bench)",
+                    flush=True,
+                )
+
+        # 3b. Optionally start a background serial monitor so we can watch what the C6
+        #     does on its console DURING the phone's BLE provision (BLE/WiFi coex
+        #     diagnosis: does it associate then get knocked off, or never associate?).
+        #     It holds the USB-serial port + captures to a file we fetch after the run.
+        monitor_log = REMOTE_ROOT + "/serial_monitor.log"
+        if args.serial_monitor > 0:
+            mon = (
+                "export PATH=/run/current-system/sw/bin:$PATH; "
+                f"( nohup python3 {REMOTE_ROOT}/ios_serial_diag.py --monitor-only "
+                f'--serial "$HITL_ADAPTER_SERIAL" --fallback "$HITL_ESP_PORT" '
+                f"--warmup 2 --seconds {args.serial_monitor:g} "
+                f"> {monitor_log} 2>&1 < /dev/null & ) ; echo monitor-started"
+            )
+            r = res.ssh(mon, capture=True, timeout=30)
+            print(f"[ios-res] serial monitor: {(r.stdout or '').strip()}", flush=True)
+
         # 4. Run phone_e2e on the Mac (streams output back to the container).
         cmd = remote_run_cmd(
             STATION_IP_EXPR,
@@ -266,9 +322,17 @@ def _run(args: argparse.Namespace) -> int:
             device_ws=args.device_ws,
             wifi_ssid=args.wifi_ssid,
             wifi_pass=args.wifi_pass,
+            improv_name=improv_name,
         )
         print(f"[ios-res] running on the Mac:\n  {cmd}", flush=True)
         cp = res.ssh(cmd, capture=False, timeout=args.timeout)
+
+        # 4b. Retrieve the concurrent serial capture (if any) for the coex diagnosis.
+        if args.serial_monitor > 0:
+            log = res.ssh(f"cat {monitor_log} 2>/dev/null", capture=True, timeout=30)
+            print("[ios-res] ===== C6 serial during BLE provision =====", flush=True)
+            sys.stdout.write(log.stdout or "")
+            print("[ios-res] ===== end serial capture =====", flush=True)
         return cp.returncode
     finally:
         res.release()
@@ -303,9 +367,24 @@ def main(argv=None) -> int:
         help="AP password for --wifi-ssid (else HITL_WIFI_PASS in the reservation env)",
     )
     ap.add_argument(
+        "--improv-name",
+        default="",
+        help="pin the phone's Improv pick to this advertised BLE name (else auto-read "
+        "from the reserved C6's serial for real-BLE journeys)",
+    )
+    ap.add_argument(
         "--build-port", type=int, default=8099, help="loopback ios-build-server port on the Mac"
     )
     ap.add_argument("--ready-timeout", type=float, default=120.0)
+    ap.add_argument(
+        "--serial-monitor",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="capture the C6 serial console (via ios_serial_diag --monitor-only) in the "
+        "background for SECONDS during the run — watch the DUT during a phone BLE provision "
+        "(BLE/WiFi coex diagnosis). 0 = off.",
+    )
     ap.add_argument("--timeout", type=float, default=1800.0, help="overall remote run timeout")
     args = ap.parse_args(argv)
     return _run(args)

@@ -114,6 +114,27 @@ class RemoteCmdTests(unittest.TestCase):
         self.assertIn("--wifi-pass", cmd)
         self.assertIn("s3cret-pass", cmd)
 
+    def test_remote_run_cmd_pins_improv_name(self) -> None:
+        cmd = ir.remote_run_cmd(
+            ir.STATION_IP_EXPR,
+            journeys="connect",
+            ble_mode="real",
+            build_port=8099,
+            ready_timeout=120.0,
+            improv_name="Led Widget ED4555",
+        )
+        self.assertIn("--improv-name", cmd)
+        self.assertIn("Led Widget ED4555", cmd)
+        # No pin -> the flag is omitted (strongest-RSSI pick).
+        nopin = ir.remote_run_cmd(
+            ir.STATION_IP_EXPR,
+            journeys="connect",
+            ble_mode="real",
+            build_port=8099,
+            ready_timeout=120.0,
+        )
+        self.assertNotIn("--improv-name", nopin)
+
     def test_flash_c6_cmd(self) -> None:
         cmd = ir.flash_c6_cmd("/dev/cu.usbmodem21101")
         self.assertIn("esptool.py --chip esp32c6", cmd)

@@ -71,6 +71,7 @@ py_binary(
         # ship it (+ the built app, solver, and C6 firmware bundle) into runfiles so
         # the payload stager can tar them for the Mac.
         "phone_e2e.py",
+        "ios_serial_diag.py",  # optional: capture C6 serial during a phone BLE provision
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//solver:solver_web",
         "//web:dist",

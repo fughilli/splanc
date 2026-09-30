@@ -168,6 +168,10 @@ async def run(args: argparse.Namespace, target) -> int:
                 "ssid": args.wifi_ssid,
                 "password": args.wifi_pass,
                 "led_count": args.led_count,
+                # PIN the phone's Improv pick to the reserved board's advertised name
+                # (iOS exposes no BLE MAC), so a real-BLE provision can't grab a stray
+                # C6 on a multi-DUT bench. Empty -> strongest-RSSI (single-device lanes).
+                "improv_name": args.improv_name,
             }
             wanted = args.journeys.split(",") if args.journeys else ["connect", "config"]
             for name in wanted:
@@ -227,6 +231,12 @@ def main() -> int:
     # No silent fallback SSID: a missing cred must surface, not join a stray network.
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
+    ap.add_argument(
+        "--improv-name",
+        default=os.environ.get("HITL_IMPROV_NAME", ""),
+        help="pin the phone's Improv pick to this advertised BLE name (the reserved "
+        "board's name; iOS has no MAC to pin on). Empty = strongest-RSSI.",
+    )
     ap.add_argument(
         "--journeys",
         default="",
