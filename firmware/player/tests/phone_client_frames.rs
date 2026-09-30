@@ -86,7 +86,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetUniforms(_)
         | CMsg::GetEffectUniforms(_)
         | CMsg::SetPerf(_)
-        | CMsg::GetPerfReport(_) => is_err("unsupported"),
+        | CMsg::GetPerfReport(_)
+        | CMsg::SetFps(_) => is_err("unsupported"),
         // Rename, color correction, and output brightness all reply welcome.
         CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
@@ -134,6 +135,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetJit(_) => "set_jit",
         CMsg::SetHardwareConfig(_) => "set_hardware_config",
         CMsg::GetHardwareConfig(_) => "get_hardware_config",
+        CMsg::SetFps(_) => "set_fps",
     }
 }
 
