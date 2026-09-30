@@ -84,12 +84,21 @@
             (import ./nix/hitl-phone-daemon.nix { hitlSrc = hitl-reserve; })
             ./nix/hitl-amd-ap.nix
             ./nix/attic-substituter.nix
-            ./observability/alloy.nix
+            # amd-rig runs TWO reservation daemons, so Alloy must scrape both: the
+            # SDR bench on :8087 (the base alloy.alloy) AND the phone bench on :8088
+            # (hitl-phone-daemon.nix) — otherwise the phone-bench DUTs push nothing.
+            (import ./observability/alloy.nix {
+              extraScrapeJobs = [
+                { name = "hitl_managerd_phone"; job = "hitl-managerd-phone"; address = "127.0.0.1:8088"; }
+              ];
+            })
           ]
           else [
             (import ./nix/hitl-app.nix { hitlSrc = hitl-reserve; })
             ./nix/attic-substituter.nix
-            ./observability/alloy.nix
+            # The Pi rigs run one daemon on :8087 — the default (empty) extra list
+            # yields the alloy.alloy config verbatim.
+            (import ./observability/alloy.nix { })
           ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };

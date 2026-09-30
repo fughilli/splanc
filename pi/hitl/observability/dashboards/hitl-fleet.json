@@ -1,0 +1,171 @@
+{
+  "title": "HITL Fleet Inventory",
+  "uid": "hitl-fleet",
+  "tags": ["hitl", "splanc", "fleet", "inventory"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "30s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Fleet inventory — catalog metadata (every host & DUT, always visible)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Fleet inventory (host → DUT → board / capabilities / serial)",
+      "description": "Every HITL host and DUT with its catalog metadata, aggregated from pi/hitl/reserve/catalog*.json by gen_inventory.py. Static, so hosts appear even when offline or not yet pushing metrics (e.g. the Mac). 'discovered' rows are auto-discovered DUT CLASSES on the Pi rigs (the exact boards show in the live-status table below). 'identifier' is the USB-JTAG MAC / adb serial / iPhone UDID / port.",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      },
+      "gridPos": { "h": 18, "w": 24, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "capabilities" },
+            "properties": [{ "id": "custom.width", "value": 360 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "identifier" },
+            "properties": [{ "id": "custom.width", "value": 220 }]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "host", "desc": false }]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://raw.githubusercontent.com/fughilli/splanc/main/pi/hitl/observability/fleet/fleet-inventory.json",
+          "url_options": { "method": "GET", "data": "" },
+          "root_selector": "$",
+          "columns": [
+            { "selector": "host", "text": "host", "type": "string" },
+            { "selector": "board", "text": "board", "type": "string" },
+            { "selector": "unit", "text": "unit", "type": "string" },
+            { "selector": "dut", "text": "dut", "type": "string" },
+            { "selector": "type", "text": "type", "type": "string" },
+            { "selector": "kind", "text": "kind", "type": "string" },
+            { "selector": "capabilities", "text": "capabilities", "type": "string" },
+            { "selector": "identifier", "text": "identifier", "type": "string" },
+            { "selector": "discovered", "text": "discovered", "type": "string" },
+            { "selector": "pin_only", "text": "pin_only", "type": "string" },
+            { "selector": "source", "text": "source", "type": "string" }
+          ],
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Live DUT status (from Prometheus metrics)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Live per-DUT free/busy",
+      "description": "Live occupancy from the reservation daemons (hitl_dut_busy / hitl_unit_busy). Shows the ACTUAL discovered DUT names on the Pi rigs and free/busy for every reporting host. A host absent here isn't pushing metrics yet (see the inventory table above for its catalog DUTs).",
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+      "gridPos": { "h": 14, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "filterable": true },
+          "mappings": [
+            {
+              "type": "value",
+              "options": { "0": { "text": "free", "color": "green", "index": 0 } }
+            },
+            { "type": "value", "options": { "1": { "text": "busy", "color": "red", "index": 1 } } }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "custom.width", "value": 90 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Time" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "__name__" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "instance" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "job" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "host" },
+            "properties": [{ "id": "custom.hidden", "value": true }]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "rig", "desc": false }] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "label_replace(hitl_dut_busy or hitl_unit_busy, \"rig\", \"$1\", \"host\", \"(.+?)([.]local)?\")",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": { "Value": "status", "device": "dut", "unit": "dut" },
+            "indexByName": { "rig": 0, "device": 1, "unit": 1, "Value": 2 }
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "text",
+      "title": "About this dashboard",
+      "gridPos": { "h": 14, "w": 12, "x": 12, "y": 20 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Two data sources, one fleet\n\n**Inventory table (top)** — rich metadata (board, capabilities, serial/UDID) aggregated from the reservation catalogs (`pi/hitl/reserve/catalog*.json`) by `pi/hitl/observability/fleet/gen_inventory.py` and served to the **Infinity** datasource from the committed `fleet-inventory.json`. It is static, so **every host shows even when offline** or not yet pushing metrics (the Mac's observability lands after PR #227). Regenerate with `gen_inventory.py` whenever a catalog changes; CI's `fleet-inventory` workflow enforces it.\n\n**Live status (left)** — real free/busy from the daemons' `/metrics` (Prometheus). It carries no board metadata, but names the **actual auto-discovered** DUTs on the Pi rigs and the live occupancy for every reporting host.\n\n`discovered = true` rows are DUT **classes** (the Pi rigs auto-discover their boards at runtime); the concrete boards appear on the left once the rig reports. `amd-rig` runs two daemons (SDR `:8087` + phone `:8088`) — both are scraped."
+      }
+    }
+  ]
+}
