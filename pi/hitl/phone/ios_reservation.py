@@ -107,6 +107,8 @@ def remote_run_cmd(
     build_port: int,
     ready_timeout: float,
     device_ws: str = "",
+    wifi_ssid: str = "",
+    wifi_pass: str = "",
     extra: str = "",
 ) -> str:
     """The shell command run in the reserved Mac session to launch phone_e2e.
@@ -143,6 +145,10 @@ def remote_run_cmd(
         args += ["--ble-mode", ble_mode]
     if device_ws:
         args += ["--device-ws", device_ws]
+    if wifi_ssid:
+        args += ["--wifi-ssid", wifi_ssid]
+    if wifi_pass:
+        args += ["--wifi-pass", wifi_pass]
     if extra:
         args += shlex.split(extra)
     quoted = " ".join(shlex.quote(a) if a not in env else a for a in args)
@@ -161,6 +167,32 @@ def discover_c6_cmd(serial_env: str = "$HITL_ADAPTER_SERIAL") -> str:
     return (
         f"/run/current-system/sw/bin/python3 {REMOTE_ROOT}/serial_discovery.py "
         f'--serial {serial_env} --fallback "$HITL_ESP_PORT"'
+    )
+
+
+# The shipped netstack flashbundle's fixed image layout (firmware/player_app
+# flash.json): bootloader / partitions / boot_app0 / app.
+_C6_IMAGES = [
+    ("0x0", "esp32c6_bootloader.bin"),
+    ("0x8000", "partitions_huge_app.bin"),
+    ("0xe000", "boot_app0.bin"),
+    ("0x10000", "esp32c6_netstack.bin"),
+]
+
+
+def flash_c6_cmd(port: str) -> str:
+    """Extract the shipped netstack flashbundle and flash the C6 at `port` with
+    esptool, then hard-reset into the app. Host-native (no container / hitl-flash on
+    the Mac), so we drive esptool directly against the discovered port."""
+    fb = f"{REMOTE_ROOT}/firmware"
+    imgs = " ".join(f"{off} x/{f}" for off, f in _C6_IMAGES)
+    return (
+        "set -e; export PATH=/run/current-system/sw/bin:$PATH; "
+        f"cd {fb}; rm -rf x; mkdir x; "
+        "tar xf esp32c6_netstack_flashbundle.tar -C x; "
+        f"esptool.py --chip esp32c6 --port {shlex.quote(port)} --baud 460800 "
+        "--before default_reset --after hard_reset write_flash "
+        f"--flash_mode keep --flash_freq keep --flash_size keep {imgs}"
     )
 
 
@@ -206,7 +238,19 @@ def _run(args: argparse.Namespace) -> int:
                 flush=True,
             )
 
-        # 3. Run phone_e2e on the Mac (streams output back to the container).
+        # 3. Optionally flash the C6 with the netstack firmware (connect+ journeys need
+        #    a booted, Improv-advertising DUT the phone provisions over BLE).
+        if args.flash_c6:
+            if not port:
+                raise SystemExit("--flash-c6: C6 serial port not resolved")
+            print(f"[ios-res] flashing C6 netstack firmware on {port} …", flush=True)
+            fc = res.ssh(flash_c6_cmd(port), capture=True, timeout=300)
+            print((fc.stdout or "")[-1500:], flush=True)
+            if fc.returncode != 0:
+                print((fc.stderr or "")[-1500:], flush=True)
+                raise SystemExit(f"C6 flash failed (rc {fc.returncode})")
+
+        # 4. Run phone_e2e on the Mac (streams output back to the container).
         cmd = remote_run_cmd(
             STATION_IP_EXPR,
             journeys=args.journeys,
@@ -214,6 +258,8 @@ def _run(args: argparse.Namespace) -> int:
             build_port=args.build_port,
             ready_timeout=args.ready_timeout,
             device_ws=args.device_ws,
+            wifi_ssid=args.wifi_ssid,
+            wifi_pass=args.wifi_pass,
         )
         print(f"[ios-res] running on the Mac:\n  {cmd}", flush=True)
         cp = res.ssh(cmd, capture=False, timeout=args.timeout)
@@ -233,6 +279,18 @@ def main(argv=None) -> int:
     ap.add_argument("--journeys", default="smoke", help="comma list (default: smoke)")
     ap.add_argument("--ble-mode", default="", choices=["", "virtual", "real"])
     ap.add_argument("--device-ws", default="", help="C6 wss URL for connect+ journeys")
+    ap.add_argument(
+        "--flash-c6",
+        action="store_true",
+        help="flash the reserved C6 with the netstack firmware before the run (connect+)",
+    )
+    ap.add_argument(
+        "--wifi-ssid",
+        default="",
+        help="AP SSID the phone provisions the C6 onto over BLE (connect+); e.g. the "
+        "Mac's Internet Sharing AP",
+    )
+    ap.add_argument("--wifi-pass", default="", help="AP password for --wifi-ssid")
     ap.add_argument(
         "--build-port", type=int, default=8099, help="loopback ios-build-server port on the Mac"
     )
