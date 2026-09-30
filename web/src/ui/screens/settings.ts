@@ -128,7 +128,7 @@ export function SettingsScreen(router: Router): Screen {
     } else if (tab === "debugging") {
       panels = [debugServerGroup(), chatLogsDebugGroup()];
     } else {
-      panels = [captureGroup(), helpGroup(), developerGroup(), captureResetRow()];
+      panels = [captureGroup(), diffuseGroup(), helpGroup(), developerGroup(), captureResetRow()];
     }
     body.replaceChildren(tabBar(), ...panels);
   }
@@ -226,6 +226,84 @@ export function SettingsScreen(router: Router): Screen {
         }).el,
       ),
       hint,
+    );
+    return g;
+  }
+
+  // -- Diffuse capture (strided-blink engine params) -----------------------
+  // App-global capture-engine knobs for diffuse/strided mapping (design:
+  // diffuse_capture). The mode is toggled inline on the capture screen; the
+  // per-device STRIDE lives on Hardware Setup. These tune the detector and are
+  // reused on every re-map. The capture URL params (?anchor=, ?lcgain=,
+  // ?threshold=, ?downscale=, ?flipv=) still override per run.
+  function diffuseGroup(): HTMLElement {
+    const g = group("Diffuse capture");
+    const hint = document.createElement("div");
+    hint.className = "settings-row-hint settings-full";
+    hint.textContent =
+      "For fixtures behind a diffuser. Enable the mode with the toggle on the " +
+      "capture screen, and set the per-device stride on Hardware Setup. These " +
+      "knobs tune the detector — leave them at defaults unless you're mapping a " +
+      "diffused fixture. The threshold applies only in diffuse mode.";
+    const p = prefs.getDiffuseParams();
+    g.append(
+      hint,
+      fullRow(
+        Slider({
+          label: "Anchor density",
+          min: 3,
+          max: 16,
+          step: 1,
+          value: p.anchorDensity,
+          format: (v) => String(Math.round(v)),
+          onChange: (v) => prefs.setDiffuseParams({ anchorDensity: Math.round(v) }),
+        }).el,
+      ),
+      fullRow(
+        Slider({
+          label: "Local-contrast gain",
+          min: 0,
+          max: 4,
+          step: 0.1,
+          value: p.lcGain,
+          format: (v) => v.toFixed(1),
+          onChange: (v) => prefs.setDiffuseParams({ lcGain: v }),
+        }).el,
+      ),
+      fullRow(
+        Slider({
+          label: "Detection threshold (diffuse)",
+          min: 0.02,
+          max: 1,
+          step: 0.02,
+          value: p.threshold,
+          format: (v) => v.toFixed(2),
+          onChange: (v) => prefs.setDiffuseParams({ threshold: v }),
+        }).el,
+      ),
+      fullRow(
+        Slider({
+          label: "Downscale",
+          min: 1,
+          max: 8,
+          step: 1,
+          value: p.downscale,
+          format: (v) => `${Math.round(v)}×`,
+          onChange: (v) => prefs.setDiffuseParams({ downscale: Math.round(v) }),
+        }).el,
+      ),
+      row(
+        "Flip vertical",
+        "Mirror the detection vertically (rare — only if the map comes out upside-down).",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          p.flipV ? "on" : "off",
+          (v) => prefs.setDiffuseParams({ flipV: v === "on" }),
+        ),
+      ),
     );
     return g;
   }
@@ -595,8 +673,9 @@ export function SettingsScreen(router: Router): Screen {
   }
 
   function captureResetRow(): HTMLElement {
-    return resetRow("Reset capture settings to their defaults?", () => {
+    return resetRow("Reset capture settings (incl. diffuse params) to their defaults?", () => {
       prefs.setManualExposureCeilingMs(DEFAULT_MANUAL_EXPOSURE_CEILING_MS);
+      prefs.resetDiffuseParams();
       rerender();
       toast("Capture settings reset");
     });

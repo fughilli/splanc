@@ -23,7 +23,14 @@
 import { Button, Card, confirmDialog, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { appState } from "../app/state";
-import { deviceStore } from "../../store/deviceStore";
+import {
+  deviceStore,
+  clampCaptureStride,
+  DEFAULT_CAPTURE_STRIDE,
+  MIN_CAPTURE_STRIDE,
+  MAX_CAPTURE_STRIDE,
+} from "../../store/deviceStore";
+import { RequestTimeoutError } from "../../net/client";
 import {
   COLOR_ORDERS,
   type BoardCapabilitiesFlat,
@@ -216,6 +223,14 @@ export function HardwareSetupScreen(_router: Router): Screen {
   // The board's reported capabilities (pin catalog + LED modes), captured from
   // hardware_config_state; null until hydrated or on firmware that reports none.
   let boardCaps: BoardCapabilitiesFlat | null = null;
+  // Outcome of the last get_hardware_config round-trip, so the empty-state note
+  // can tell apart (a) not connected, (b) the firmware answered but reports no
+  // channels, and (c) the firmware never answered — the tell-tale of firmware too
+  // old for the hw-config protocol (pre-#102) or a mis-flashed image. Matching
+  // c6/c3 firmware always reports >= 1 channel, so "no reply" is never a genuine
+  // zero-channel device here (see the re-investigation in the PR).
+  type ConfigState = "loading" | "ok" | "empty" | "no-reply" | "disconnected";
+  let configState: ConfigState = "disconnected";
   // Which channel's color-order test is currently painting the strip (null = none).
   let activeTest: number | null = null;
   // While a test is active: the order the user tapped and is now confirming (the
@@ -272,14 +287,28 @@ export function HardwareSetupScreen(_router: Router): Screen {
   /** Pull the device's current per-channel config into `channels` + repaint. */
   async function hydrate(): Promise<void> {
     const c = appState.client;
-    if (!c?.isConnected) return;
+    if (!c?.isConnected) {
+      configState = "disconnected";
+      render();
+      return;
+    }
+    configState = "loading";
+    render();
     try {
       const st = await c.getHardwareConfig();
       channels = st.channels.map((x) => ({ ...x }));
       boardCaps = st.board ?? null;
+      configState = channels.length > 0 ? "ok" : "empty";
       render();
-    } catch {
-      /* leave the empty-state note up */
+    } catch (err) {
+      // The firmware didn't answer get_hardware_config. A RequestTimeoutError
+      // (it never replied) is the classic signature of firmware too old to know
+      // the request (pre-#102) or a mis-flashed image; any other rejection while
+      // still connected is treated the same. If we simply lost the link, fall
+      // back to the connect prompt.
+      channels = [];
+      configState = c.isConnected || err instanceof RequestTimeoutError ? "no-reply" : "disconnected";
+      render();
     }
   }
 
@@ -392,16 +421,103 @@ export function HardwareSetupScreen(_router: Router): Screen {
   // -- rendering ------------------------------------------------------------
 
   function render(): void {
-    if (channels.length === 0) {
-      const note = document.createElement("div");
-      note.className = "hw-hint";
-      note.textContent = appState.client?.isConnected
-        ? "This device's firmware doesn't report hardware config. Update it to configure GPIO and color order."
-        : "Connect a device to configure its LED GPIO, type, and color order.";
-      body.replaceChildren(note);
-      return;
+    const parts: HTMLElement[] = [];
+    if (channels.length === 0) parts.push(emptyNote());
+    else parts.push(...channels.map(channelCard));
+    // The per-device stride is local (persisted with the device), so surface it
+    // whenever a device is selected — even if its firmware didn't report channels.
+    const sg = strideGroup();
+    if (sg) parts.push(sg);
+    body.replaceChildren(...parts);
+  }
+
+  /** The empty-state note, worded by why there are no channels. Matching c6/c3
+   * firmware always reports >= 1 channel (it seeds two from NVS at boot), so a
+   * connected device with no channels means either the firmware never answered
+   * (too old for the protocol / mis-flashed) or it answered with an empty set. */
+  function emptyNote(): HTMLElement {
+    const note = document.createElement("div");
+    note.className = "hw-hint";
+    if (configState === "loading") {
+      note.textContent = "Reading hardware config…";
+      return note;
     }
-    body.replaceChildren(...channels.map(channelCard));
+    if (configState === "no-reply") {
+      note.textContent =
+        "This device didn't report a hardware config. " +
+        firmwareOutdatedPhrase() +
+        " Update it to configure GPIO and color order.";
+      const build = firmwareBuildLine();
+      if (build) {
+        const small = document.createElement("div");
+        small.className = "hw-row-hint";
+        small.textContent = build;
+        note.append(small);
+      }
+      return note;
+    }
+    if (configState === "empty") {
+      note.textContent =
+        "This device reports no configurable LED channels. " +
+        "There's nothing to set up here for this device.";
+      return note;
+    }
+    note.textContent = "Connect a device to configure its LED GPIO, type, and color order.";
+    return note;
+  }
+
+  /** Version-aware clause: the welcome carries the firmware build, so say plainly
+   * that it looks out of date (and, when the build info is absent, that the
+   * firmware predates it — an even older build). */
+  function firmwareOutdatedPhrase(): string {
+    const w = appState.client?.welcome;
+    if (w && !w.fwVersion && !w.fwGitCommit) {
+      return "Its firmware predates hardware-config support (it reports no build info) — it's out of date.";
+    }
+    return "Its firmware is likely out of date for the hardware-config protocol.";
+  }
+
+  /** "Firmware: <version> (<short-commit>)" from the welcome, or "" if unknown. */
+  function firmwareBuildLine(): string {
+    const w = appState.client?.welcome;
+    if (!w) return "";
+    const ver = w.fwVersion || "";
+    const commit = w.fwGitCommit ? w.fwGitCommit.slice(0, 7) + (w.fwGitDirty ? "-dirty" : "") : "";
+    if (ver && commit) return `Firmware: ${ver} (${commit})`;
+    if (ver) return `Firmware: ${ver}`;
+    if (commit) return `Firmware: ${commit}`;
+    return "";
+  }
+
+  /** Per-device diffuse-capture stride (Hardware Setup owns it — it tracks this
+   * fixture's LED pitch/diffuser). Persisted on the device record and reused on
+   * every re-map. Shown whenever a device is selected. */
+  function strideGroup(): HTMLElement | null {
+    if (!deviceId) return null;
+    const g = group("Diffuse capture");
+    const current = deviceStore.getCaptureStride(deviceId) ?? DEFAULT_CAPTURE_STRIDE;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "hw-select";
+    input.min = String(MIN_CAPTURE_STRIDE);
+    input.max = String(MAX_CAPTURE_STRIDE);
+    input.step = "1";
+    input.value = String(current);
+    input.addEventListener("change", () => {
+      const v = clampCaptureStride(input.value) ?? DEFAULT_CAPTURE_STRIDE;
+      deviceStore.setCaptureStride(deviceId, v);
+      input.value = String(v);
+      toast(`Diffuse stride set to ${v}`);
+    });
+    g.append(
+      row(
+        "Stride length",
+        "For diffused fixtures: light every Nth LED per capture phase so adjacent " +
+          "spots don't bleed together. Saved on this device and reused when you re-map.",
+        input,
+      ),
+    );
+    return g;
   }
 
   function channelCard(cfg: HardwareChannel): HTMLElement {
