@@ -430,6 +430,12 @@ runs the suites, then:</p>
 </div>
 <p>The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
 as the <code class="docutils literal notranslate"><span class="pre">traceability-report</span></code> artifact.</p>
+<p>HITL tests only run where the rigs are reachable, so the HITL workflow
+(<a class="reference internal" href="#../.github/workflows/hitl.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/hitl.yaml</span></code></span></a>) publishes its
+own <code class="docutils literal notranslate"><span class="pre">hitl-traceability-report</span></code> from the on-hardware run: each harness phase is a
+case tagged with the PRs it verifies at level <code class="docutils literal notranslate"><span class="pre">hitl</span></code> and stamped with the
+firmware bundle and DUT commit (<code class="docutils literal notranslate"><span class="pre">GITHUB_SHA</span></code>), and only each test’s final
+attempt counts (a <code class="docutils literal notranslate"><span class="pre">--flaky_test_attempts</span></code> retry that passed is what gated).</p>
 </section>
 <section id="recipes">
 <h2>Recipes<a class="headerlink" href="#recipes" title="Link to this heading">¶</a></h2>

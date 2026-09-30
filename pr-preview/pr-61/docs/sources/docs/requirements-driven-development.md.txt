@@ -120,6 +120,13 @@ bazel run @rules_requirements//python:rr -- report \
 The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
 as the `traceability-report` artifact.
 
+HITL tests only run where the rigs are reachable, so the HITL workflow
+([`.github/workflows/hitl.yaml`](../.github/workflows/hitl.yaml)) publishes its
+own `hitl-traceability-report` from the on-hardware run: each harness phase is a
+case tagged with the PRs it verifies at level `hitl` and stamped with the
+firmware bundle and DUT commit (`GITHUB_SHA`), and only each test's final
+attempt counts (a `--flaky_test_attempts` retry that passed is what gated).
+
 ## Recipes
 
 - **Add a requirement:** add a `PR-…` entry (with `satisfies` and `modules`),
