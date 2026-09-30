@@ -49,6 +49,7 @@ import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
+import { deviceStore, DEFAULT_CAPTURE_STRIDE } from "../../store/deviceStore";
 import { mapStore } from "../../store/mapStore";
 import { recenterToCentroid } from "../../geom/mapTransform";
 import { appState } from "../app/state";
@@ -62,22 +63,57 @@ function numParam(name: string, dflt: number): number {
   return Number.isFinite(n) ? n : dflt;
 }
 
-// URL-param power-user overrides (unchanged from main.ts; no longer primary UI).
-const forcedThreshold = qs.get("threshold") !== null;
 // Diffuse-capture mode (design: diffuse_capture): the fixture is behind a
 // diffuser, so blink LEDs on a spatial STRIDE (only a sparse, non-overlapping
 // subset per epoch; the phone rotates the phase to cover all LEDs) AND run the
 // detector's local-contrast prefilter with a LOW threshold (local adaptive
 // detection) to recover the diffuser-dimmed, low-derivative spots.
-const diffuse = qs.get("diffuse") === "1";
-const strideSpacing = Math.max(1, Math.floor(numParam("stride", 4)));
-const anchorDensity = Math.max(3, Math.floor(numParam("anchor", 3)));
-const detectorOpts = {
-  threshold: numParam("threshold", diffuse ? 0.18 : 0.6),
-  downscale: numParam("downscale", 2),
-  flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : false,
-  ...(diffuse ? { localContrast: { gain: numParam("lcgain", 1.0) } } : {}),
-};
+//
+// The mode and its knobs are now PERSISTED settings, not just URL params: the
+// diffuse toggle + capture-engine params live in Behavior Settings (app-global)
+// and the stride lives on the device (per-fixture), so re-mapping never requires
+// re-typing them. The URL power-user params remain as per-run overrides on top.
+interface CaptureEngineConfig {
+  diffuse: boolean;
+  /** Threshold was pinned on the URL -> keep the servo from moving it. */
+  forcedThreshold: boolean;
+  strideSpacing: number;
+  anchorDensity: number;
+  detectorOpts: {
+    threshold: number;
+    downscale: number;
+    flipV: boolean;
+    localContrast?: { gain: number };
+  };
+}
+
+/** Resolve the effective capture-engine config for a run: persisted settings
+ * (per-device stride from the active device; the rest from Behavior Settings)
+ * with the URL params overriding on top. Recomputed per capture so a settings
+ * change takes effect on the next map without a reload. */
+function resolveCaptureConfig(): CaptureEngineConfig {
+  const bp = prefs.getDiffuseParams();
+  // Diffuse mode: ?diffuse=1 forces it on; otherwise the persisted toggle.
+  const diffuse = qs.get("diffuse") === "1" || prefs.getDiffuseEnabled();
+  const forcedThreshold = qs.get("threshold") !== null;
+  // Stride is per-device (Hardware Setup); URL ?stride= overrides, else default.
+  const activeId = deviceStore.activeId();
+  const deviceStride = activeId ? deviceStore.getCaptureStride(activeId) : undefined;
+  const strideSpacing = Math.max(
+    1,
+    Math.floor(numParam("stride", deviceStride ?? DEFAULT_CAPTURE_STRIDE)),
+  );
+  const anchorDensity = Math.max(3, Math.floor(numParam("anchor", bp.anchorDensity)));
+  const detectorOpts = {
+    // Non-diffuse capture keeps its 0.6 default + servo; the persisted diffuse
+    // threshold only steers diffuse mode.
+    threshold: numParam("threshold", diffuse ? bp.threshold : 0.6),
+    downscale: numParam("downscale", bp.downscale),
+    flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : bp.flipV,
+    ...(diffuse ? { localContrast: { gain: numParam("lcgain", bp.lcGain) } } : {}),
+  };
+  return { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts };
+}
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
@@ -124,6 +160,12 @@ function restorePageBackground(): void {
 export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--capture";
+
+  // Effective capture-engine config for this run: persisted settings (per-device
+  // stride + app-global diffuse params) with URL params overriding. The inline
+  // diffuse toggle below re-reads this if the user flips it before starting.
+  let { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
+    resolveCaptureConfig();
 
   // The New-map dialog passes the chosen strip length in the hash query
   // (#/capture?leds=N); it wins over the location.search power-user override,
@@ -232,7 +274,31 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     variant: "quiet",
     onClick: () => setManualMode(!manualMode),
   });
-  advBody.append(modeBtn, brightSlider.el, expSlider.el, hudStats);
+
+  // Inline diffuse/strided-capture toggle (design: diffuse_capture). Flipping it
+  // persists to Behavior Settings so re-mapping a diffused fixture never needs
+  // the ?diffuse=1 URL param again; the stride comes from the device's Hardware
+  // Setup, the other engine params from Behavior Settings. A ?diffuse=1 URL param
+  // still force-enables it regardless of this toggle. Saved immediately; a flip
+  // before the map starts applies to this run too, otherwise to the next map.
+  let mappingStarted = false;
+  const diffuseLabel = (): string => `Diffuse capture: ${prefs.getDiffuseEnabled() ? "On" : "Off"}`;
+  const diffuseBtn = Button({
+    label: diffuseLabel(),
+    variant: "quiet",
+    onClick: () => {
+      const on = !prefs.getDiffuseEnabled();
+      prefs.setDiffuseEnabled(on);
+      // Re-resolve so a pre-map flip takes effect on this run as well.
+      ({ diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
+        resolveCaptureConfig());
+      const span = diffuseBtn.querySelector("span");
+      if (span) span.textContent = diffuseLabel();
+      toast(mappingStarted ? `Diffuse capture ${on ? "on" : "off"} — applies on the next map` : `Diffuse capture ${on ? "on" : "off"}`);
+    },
+  });
+
+  advBody.append(diffuseBtn, modeBtn, brightSlider.el, expSlider.el, hudStats);
   brightSlider.input.addEventListener("change", () => {
     if (manualMode) manualHooks?.applyBrightness(parseInt(brightSlider.input.value, 10) / 100);
   });
@@ -440,6 +506,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       await c.syncClock(4);
       const started = await c.startMapping(ledCount, config);
+      mappingStarted = true;
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       if (initialExposure !== null) {
