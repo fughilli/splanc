@@ -232,7 +232,11 @@ def run_rig(args) -> dict[str, Any]:
         host, port = dut_target(redirect, args.ws_scheme)
         with res.forward(host, port) as local_port:
             ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-            return asyncio.run(measure(ws_url, args))
+            # Hold the per-rig AP-exclusive lock across the set_uniforms blast (the
+            # airtime-heavy body) so a sibling DUT's traffic can't starve the bandwidth
+            # we're measuring. Best-effort: a rig without the lock dir runs unserialized.
+            with res.ap_lock("uniform blast"):
+                return asyncio.run(measure(ws_url, args))
     finally:
         res.release()
 

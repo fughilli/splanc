@@ -491,20 +491,27 @@ def run_on_hardware(args) -> bool:
                 # container -> device local, the SAME path a phone streams camera video over.
                 with res.forward(host, port) as local_port:
                     asyncio.run(_setup_effect(f"wss://localhost:{local_port}/ws", args, fxb))
-                ok = _stream_rigside(res, host, port, args) and ok
+                # The effect setup above is low-rate control; hold the per-rig
+                # AP-exclusive lock only across the high-rate FLOOD so a sibling DUT's
+                # traffic can't starve the stream we're measuring. Best-effort: a rig
+                # without the lock dir runs unserialized.
+                with res.ap_lock(f"wss video stream → device:{port}"):
+                    ok = _stream_rigside(res, host, port, args) and ok
             else:
                 with res.forward(host, port) as local_port:
                     _log(f"[transport] ws:{port} (plaintext)")
-                    ok = (
-                        _drive(
-                            f"ws://localhost:{local_port}/ws",
-                            f"127.0.0.1:{local_port}",
-                            "localhost",
-                            args,
-                            fxb,
+                    # Airtime-heavy flood; hold the per-rig AP-exclusive lock across it.
+                    with res.ap_lock(f"ws video stream :{port}"):
+                        ok = (
+                            _drive(
+                                f"ws://localhost:{local_port}/ws",
+                                f"127.0.0.1:{local_port}",
+                                "localhost",
+                                args,
+                                fxb,
+                            )
+                            and ok
                         )
-                        and ok
-                    )
         return ok
     finally:
         res.release()

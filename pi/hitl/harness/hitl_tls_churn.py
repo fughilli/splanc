@@ -392,18 +392,24 @@ def run_on_hardware(args) -> int:
         try:
             with res.forward(host, port) as local_port:
                 ws_url = f"wss://localhost:{local_port}/ws"
-                result = asyncio.run(
-                    _drive(
-                        ws_url,
-                        True,
-                        args.rounds,
-                        args.handshakes,
-                        args.hold,
-                        args.open_timeout,
-                        args.recover_window,
-                        args.settle,
+                # Hold the per-rig AP-exclusive lock across the churn drive: the
+                # concurrent-handshake burst + the recovery-handshake probe are both
+                # RF/airtime-sensitive (a sibling DUT's traffic climbs handshake latency
+                # and can starve the recovery handshake the gate asserts on). Best-effort:
+                # a rig without the lock dir runs unserialized, as today.
+                with res.ap_lock("tls churn"):
+                    result = asyncio.run(
+                        _drive(
+                            ws_url,
+                            True,
+                            args.rounds,
+                            args.handshakes,
+                            args.hold,
+                            args.open_timeout,
+                            args.recover_window,
+                            args.settle,
+                        )
                     )
-                )
         finally:
             if mon is not None:
                 mon.join(timeout=30)

@@ -202,6 +202,61 @@ def _adapter_lock():
             os.close(fd)
 
 
+# Per-rig AP-EXCLUSIVE bandwidth mutex. Every DUT on a rig associates to ONE AP on ONE
+# 2.4 GHz radio/channel (the C6 is 2.4-only; rig-1/rig-2 host the AP on the onboard
+# brcmfmac FullMAC radio, which has NO airtime-fairness lever). Under concurrent
+# multi-DUT load a sibling DUT's traffic starves the channel, breaking cross-DUT
+# isolation. The DHCP-join at the tail of provisioning is one casualty: the DUT
+# completes the WPA 4-way then sends DHCP DISCOVERs, but the AP's DHCP OFFER goes out
+# as a broadcast/group frame that is never 802.11-ACKed, so it is dropped FIRST under a
+# sibling's airtime and the join times out. This lock lets a DUT claim the AP's airtime
+# exclusively across ONLY that window; everything else stays concurrent.
+#
+# LOCK ORDER (deadlock-freedom): the global order is BLE-adapter BEFORE AP-exclusive.
+# Provisioning takes the adapter lock for the whole provision (above) and nests THIS
+# lock inside it around just the join window; the bandwidth benches take the AP lock
+# alone, AFTER provisioning has released both. Nothing ever takes the adapter lock
+# while holding the AP lock, so the two can never deadlock. Same best-effort contract
+# as the adapter lock: no lock dir (rig not yet redeployed) ⇒ unserialized. flock
+# auto-releases on fd-close/process-exit, so a crashed/killed provisioner can't strand
+# it. The lock dir is a host-shared bind mount (hitl-app.nix), making the flock a
+# host-wide mutex across the rig's reservation containers.
+_AP_LOCK_PATH = os.environ.get("HITL_AP_LOCK", "/run/hitl/ap-lock/ap.lock")
+
+
+@contextlib.asynccontextmanager
+async def _ap_lock(reason: str = ""):
+    """Hold the per-rig AP-exclusive bandwidth mutex for the enclosed join window.
+
+    Acquired in a thread executor so the asyncio event loop keeps servicing the
+    already-open BLE link (BlueZ keepalives) while we wait for a sibling test to
+    release the airtime — otherwise a long wait could idle-drop the link. Best-effort:
+    no lock dir ⇒ yields immediately, unserialized.
+    """
+    d = os.path.dirname(_AP_LOCK_PATH)
+    fd = None
+    if os.path.isdir(d):
+        try:
+            fd = os.open(_AP_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+        except OSError as e:
+            log(f"[improv] AP lock unavailable ({e}); proceeding unserialized")
+    if fd is None:
+        yield
+        return
+    t0 = time.monotonic()
+    log(f"[improv] acquiring rig AP-exclusive lock ({reason})…")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: fcntl.flock(fd, fcntl.LOCK_EX))
+    log(f"[improv] AP lock held (waited {time.monotonic() - t0:.1f}s)")
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 async def find(address: str | None, name_filter: str, scan_seconds: float, name_wait: float = 8.0):
     """Scan for the Improv DUT, preferring a fully-advertised (named) device.
 
@@ -385,17 +440,26 @@ async def provision(
                 log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
             rpc = build_wifi_rpc(ssid, password)
             log(f"[improv] -> RPC_CMD {rpc.hex()}")
-            await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
-            log("[improv] write ack; awaiting join…")
-            try:
-                await asyncio.wait_for(done.wait(), timeout)
-            except asyncio.TimeoutError:
-                if state["state"] != STATE_PROVISIONED:
-                    return {
-                        "ok": False,
-                        "error": "timed out waiting for the player to join",
-                        "device": device,
-                    }
+            # Hold the per-rig AP-exclusive lock across ONLY the DHCP-join window: the
+            # RPC write triggers the DUT to bring up Wi-Fi and DHCP-DISCOVER, and its
+            # AP's DHCP OFFER — a broadcast/group frame that is never 802.11-ACKed — is
+            # the frame a sibling DUT's airtime starves first, which is what makes the
+            # join time out under concurrent load. So claim the channel exclusively from
+            # the write through the join confirmation, then release immediately. Nested
+            # INSIDE the adapter lock (order adapter→AP; see _ap_lock). Best-effort:
+            # no lock dir (rig not yet redeployed) ⇒ unserialized, exactly as today.
+            async with _ap_lock("DHCP-join window"):
+                await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+                log("[improv] write ack; awaiting join…")
+                try:
+                    await asyncio.wait_for(done.wait(), timeout)
+                except asyncio.TimeoutError:
+                    if state["state"] != STATE_PROVISIONED:
+                        return {
+                            "ok": False,
+                            "error": "timed out waiting for the player to join",
+                            "device": device,
+                        }
     except _TRANSPORT_ERRORS as e:
         # The board tears BLE down the instant it joins (soft-AP off, STA-only),
         # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is

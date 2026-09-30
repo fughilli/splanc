@@ -255,7 +255,12 @@ def run_on_hardware(args) -> bool:
         host, port = dut_target(redirect, args.ws_scheme)
         with res.forward(host, port) as local_port:
             ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-            return asyncio.run(_run(ws_url, args.led_count, args.insecure))
+            # Hold the per-rig AP-exclusive lock across the bulk chunked upload +
+            # full-map readback (the airtime-heavy body), so a sibling DUT's traffic
+            # can't starve this transfer under concurrent load. Best-effort: a rig
+            # without the lock dir runs unserialized, as today.
+            with res.ap_lock("map upload+readback"):
+                return asyncio.run(_run(ws_url, args.led_count, args.insecure))
     finally:
         res.release()
 
