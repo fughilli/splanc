@@ -95,6 +95,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         CMsg::SetHardwareConfig(_) | CMsg::GetHardwareConfig(_) => {
             matches!(reply, Some(SMsg::HardwareConfigState(_)))
         }
+        // The color-correction read-back replies color_correction_state.
+        CMsg::GetColorCorrection(_) => matches!(reply, Some(SMsg::ColorCorrectionState(_))),
     }
 }
 
@@ -134,6 +136,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetJit(_) => "set_jit",
         CMsg::SetHardwareConfig(_) => "set_hardware_config",
         CMsg::GetHardwareConfig(_) => "get_hardware_config",
+        CMsg::GetColorCorrection(_) => "get_color_correction",
     }
 }
 
