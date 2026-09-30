@@ -87,8 +87,12 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetEffectUniforms(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
-        // Rename, color correction, and output brightness all reply welcome.
-        CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
+        // Rename, color correction, output brightness, and FX crossfade all
+        // reply welcome.
+        CMsg::SetDeviceName(_)
+        | CMsg::SetColorCorrection(_)
+        | CMsg::SetBrightness(_)
+        | CMsg::SetCrossfade(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
         }
         // Hardware config get/set reply hardware_config_state.
@@ -134,6 +138,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetJit(_) => "set_jit",
         CMsg::SetHardwareConfig(_) => "set_hardware_config",
         CMsg::GetHardwareConfig(_) => "get_hardware_config",
+        CMsg::SetCrossfade(_) => "set_crossfade",
     }
 }
 

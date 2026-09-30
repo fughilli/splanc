@@ -592,6 +592,59 @@ fn integer_hash_uniform_and_no_fixed_point() {
     assert!(hash3(1.0, 2.0, 3.0) != hash3(2.0, 1.0, 3.0));
 }
 
+// --- FX crossfade blend (FUG-110) -------------------------------------------
+
+#[test]
+fn blend_rgb_endpoints_are_exact() {
+    let a = (200, 10, 40);
+    let b = (5, 220, 90);
+    // t=0 -> exactly a; t=1 -> exactly b (both modes), so a parked crossfader
+    // never perturbs a deck.
+    for mode in [0u32, 1u32] {
+        assert_eq!(blend_rgb8(a, b, 0.0, mode), a, "mode {mode} t=0");
+        assert_eq!(blend_rgb8(a, b, 1.0, mode), b, "mode {mode} t=1");
+        // out-of-range clamps to the endpoints
+        assert_eq!(blend_rgb8(a, b, -0.5, mode), a, "mode {mode} t<0");
+        assert_eq!(blend_rgb8(a, b, 2.0, mode), b, "mode {mode} t>1");
+    }
+}
+
+#[test]
+fn blend_rgb_linear_midpoint() {
+    // Linear RGB (mode 0): per-channel average at t=0.5.
+    let a = (0, 0, 0);
+    let b = (100, 200, 50);
+    let (r, g, bl) = blend_rgb8(a, b, 0.5, 0);
+    assert_eq!((r, g, bl), (50, 100, 25));
+}
+
+#[test]
+fn blend_hsv_preserves_value_and_takes_short_hue_path() {
+    // Two saturated hues at full value: red (h=0) and green (h=1/3). HSV blend
+    // at the midpoint stays fully saturated + full value (unlike an RGB lerp,
+    // which would dim through a muddy middle) and lands on yellow-ish (h~1/6).
+    let red = (255, 0, 0);
+    let green = (0, 255, 0);
+    let (r, g, b) = blend_rgb8(red, green, 0.5, 1);
+    // yellow: high R and G, ~no B, and brighter than the RGB-lerp midpoint
+    // (which would be (127,127,0)).
+    assert!(r > 200 && g > 200 && b < 20, "hsv mid red->green = {r},{g},{b}");
+    // Shortest hue path from red (0) to blue (h=2/3) goes DOWN through magenta
+    // (wrapping via 1.0), not up through green.
+    let blue = (0, 0, 255);
+    let (mr, mg, mb) = blend_rgb8(red, blue, 0.5, 1);
+    assert!(mr > 150 && mb > 150 && mg < 60, "hsv red->blue should pass magenta, got {mr},{mg},{mb}");
+}
+
+#[test]
+fn blend_hsv_matches_rgb_for_greyscale() {
+    // With zero saturation on both ends the value simply lerps; hue is moot.
+    let dark = (40, 40, 40);
+    let light = (200, 200, 200);
+    let (r, g, b) = blend_rgb8(dark, light, 0.5, 1);
+    assert!((r as i32 - 120).abs() <= 1 && r == g && g == b, "grey hsv mid = {r},{g},{b}");
+}
+
 // --- FUG-122: fixed/int variants of the vector/transcendental/colour/I/O ops --
 //
 // These hand-assembled programs exercise each new opcode. Where a program's
