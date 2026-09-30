@@ -4,7 +4,7 @@
   "description": "LED Mapper phone web app (M5 capture, M6 CV, M7 net, M8 UI) + the virtual LED wall test page.",
   "private": true,
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

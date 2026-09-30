@@ -107,3 +107,13 @@ that unknown fields and unknown message `type`s are rejected.
 - `cycleFrames = 2 + bits`.
 - `encoding` and `syncPattern` are string enums (`"gray"`, `"on_off"`),
   modeled as enums so they can grow without breaking the wire contract.
+
+## License
+
+This directory — the LED Mapper wire protocol and its language bindings — is
+licensed under the **MIT License** (see [`LICENSE`](./LICENSE)), a deliberate
+carve-out from the AGPL-3.0 that covers the rest of the repository. The wire
+contract is meant to be reused: anyone may build interoperable clients,
+servers, or tools against it without the copyleft obligations that apply to the
+Splanc application. See the repository's [`LICENSING.md`](../../LICENSING.md)
+for the full map.

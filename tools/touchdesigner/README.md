@@ -179,3 +179,14 @@ rescaled).
   the field reports no textures; the TOP then uses its `Fallback Width/Height`.
 - `@touchdesigner_sdk` is fetched unpinned (no `sha256`); pin a commit +
   integrity for a reproducible SDK fetch.
+
+## License
+
+This directory — the TouchDesigner client binding (Rust protocol core, C++
+shims, and packaging) — is licensed under the **MIT License** (see
+[`LICENSE`](./LICENSE)), a deliberate carve-out from the AGPL-3.0 that covers
+the rest of the repository. It speaks the same `ledmapper.v1` wire protocol as
+the phone/web app, and is MIT-licensed so anyone can use or fork it to drive
+compatible fixtures without the copyleft obligations that apply to the Splanc
+application. See the repository's [`LICENSING.md`](../../LICENSING.md) for the
+full map.

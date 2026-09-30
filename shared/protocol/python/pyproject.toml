@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "LED Mapper wire-protocol models (Pydantic v2)."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "UNLICENSED" }
+license = { text = "MIT" }
 authors = [{ name = "LED Mapper" }]
 dependencies = [
     "pydantic>=2.6",
