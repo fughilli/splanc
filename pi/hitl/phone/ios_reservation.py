@@ -86,7 +86,11 @@ def stage_payload(dest_tar: str, resolve=_runfile, manifest=None) -> list[str]:
     Directories are added recursively; scp can't recurse, so we ship one tar."""
     manifest = manifest if manifest is not None else payload_manifest()
     included: list[str] = []
-    with tarfile.open(dest_tar, "w") as tar:
+    # dereference: the payload is resolved from bazel runfiles, where the journey
+    # JSONs (and other data) are SYMLINKS into the container's tree. Without following
+    # them the tar carries dangling symlinks that don't exist on the Mac (seen live:
+    # journeys/config.json -> FileNotFoundError). Follow them so real content ships.
+    with tarfile.open(dest_tar, "w", dereference=True) as tar:
         for rel, arc in manifest:
             src = resolve(rel)
             if not src:
