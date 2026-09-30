@@ -175,10 +175,19 @@ def _run(args: argparse.Namespace) -> int:
             tarpath = os.path.join(td, "hitl-ios-payload.tar")
             included = stage_payload(tarpath)
             print(f"[ios-res] payload: {', '.join(included)}", flush=True)
-            res.ssh(f"rm -rf {REMOTE_ROOT} && mkdir -p {REMOTE_ROOT}")
+            # chmod +w before removing: the payload's web/dist + solver come from
+            # read-only bazel runfiles, so a prior run's extracted tree has read-only
+            # DIRS that a plain `rm -rf` can't clear ("Can't unlink … Permission
+            # denied") — leaving stale files the next tar can't overwrite. Make it
+            # writable first, and again after extraction so the next run can clean it.
+            res.ssh(
+                f"chmod -R u+w {REMOTE_ROOT} 2>/dev/null; rm -rf {REMOTE_ROOT}; "
+                f"mkdir -p {REMOTE_ROOT}"
+            )
             res.scp_to([tarpath], REMOTE_ROOT + "/")
             res.ssh(
-                f"cd {REMOTE_ROOT} && tar xf hitl-ios-payload.tar && rm -f hitl-ios-payload.tar"
+                f"cd {REMOTE_ROOT} && tar xf hitl-ios-payload.tar && "
+                f"rm -f hitl-ios-payload.tar && chmod -R u+w {REMOTE_ROOT}"
             )
 
         # 2. Confirm the C6 is discoverable dynamically (informational for smoke;
