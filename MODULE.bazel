@@ -19,6 +19,16 @@ module(
 # ---------------------------------------------------------------------------
 
 bazel_dep(name = "rules_python", version = "2.0.3")
+
+# Requirements-driven development: model, traceability, reports (FUG-89).
+# https://github.com/Studio-Fug/rules_requirements
+bazel_dep(name = "rules_requirements", version = "0.1.0")
+git_override(
+    module_name = "rules_requirements",
+    commit = "263f07495142ab5659abc86c332d666580354f70",
+    remote = "https://github.com/Studio-Fug/rules_requirements.git",
+)
+
 bazel_dep(name = "aspect_rules_js", version = "3.2.2")
 bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")

@@ -222,6 +222,7 @@ jobs:
               --test_env=HITL_WIFI_PASS \
               --test_env=HITL_OWNER \
               --test_env=HITL_EXCLUDE_HOSTS \
+              --test_env=GITHUB_SHA \
               "${server_arg[@]}"
           }
           # rig-3 is fenced fleet-wide (HITL_EXCLUDE_HOSTS): its Pi 3 onboard AP drops the
@@ -236,6 +237,40 @@ jobs:
           echo "::group::HITL tests (GATING)"
           HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
           echo "::endgroup::"
+
+      # Requirements traceability of the on-hardware run (FUG-89): the HITL
+      # harness records each phase as a JUnit case tagged with the PRs it verifies
+      # (level hitl) and stamped with the firmware bundle + DUT commit
+      # (GITHUB_SHA, forwarded above). Only each test's final attempt counts here
+      # (`**/test.xml`): a --flaky_test_attempts retry that passed is what gated.
+      # The software-suite report comes from test.yaml's traceability-report job.
+      - name: HITL traceability report
+        if: always()
+        run: |
+          bazel run @rules_requirements//python:rr \
+            --disk_cache="$HOME/.cache/bazel-disk" -- report \
+            --model "$GITHUB_WORKSPACE/requirements" \
+            --evidence "$(readlink -f bazel-testlogs)/**/test.xml" \
+            --current-build dut_git_sha="$GITHUB_SHA" \
+            --title "splanc HITL traceability" \
+            --queue-out "$GITHUB_WORKSPACE/hitl-traceability-queue.json" \
+            --json "$GITHUB_WORKSPACE/hitl-traceability-report.json" \
+            --md "$GITHUB_WORKSPACE/hitl-traceability-report.md" \
+            --html "$GITHUB_WORKSPACE/hitl-traceability-report.html"
+          cat "$GITHUB_WORKSPACE/hitl-traceability-report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HITL traceability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-traceability-report
+          path: |
+            hitl-traceability-report.html
+            hitl-traceability-report.json
+            hitl-traceability-report.md
+            hitl-traceability-queue.json
+          retention-days: 14
+          if-no-files-found: warn
 
       # Report the run's pass/fail to Grafana Cloud (optional; no-op without the
       # GRAFANA_CLOUD_LOKI_* secrets). always() so a failed suite is reported too.

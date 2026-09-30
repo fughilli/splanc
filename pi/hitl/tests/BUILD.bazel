@@ -49,6 +49,7 @@ py_test(
     deps = [
         "//pi/hitl/harness",
         "@rules_python//python/runfiles",
+        "@rules_requirements//python",
         requirement("pytest"),
     ],
 )

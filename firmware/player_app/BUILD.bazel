@@ -5,6 +5,8 @@ the Rust session core via a C ABI staticlib, RMT WS2812 strip rendering. The
 Rust side links the FIRMWARE capacity profile of the generated protobuf
 (//shared/protocol/rust:ledmapper_pb_fw); host tests drive the same ffi.rs
 against the host profile, and the RFC6455 codec is host-tested byte-exactly.
+
+@rr(PR-13, PR-14, PR-17, PR-18, PR-19, PR-20, PR-21, PR-26, PR-27, PR-28, PR-29, PR-35): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@embedded//rules:firmware.bzl", "firmware_binary")

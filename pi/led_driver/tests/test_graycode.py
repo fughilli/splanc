@@ -21,6 +21,9 @@ from led_driver.graycode import (
 )
 from ledmapper_protocol.fec import secded_decode
 
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-11", "PR-34")
+
 
 def test_gray_sequence_first_values():
     # Canonical binary-reflected Gray code.

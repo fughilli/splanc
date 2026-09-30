@@ -6,6 +6,8 @@ on the reconstruction package for the shared camera model, so synthetic data is
 guaranteed in-distribution for the solver.
 
 `imports = ["."]` exposes the nested `simulator/` package as `simulator`.
+
+@rr(PR-11): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -44,6 +46,7 @@ py_test(
         ":simulator",
         "//pi/reconstruction",
         requirement("numpy"),
+        "@rules_requirements//python",
         requirement("pytest"),
         requirement("scipy"),
     ],

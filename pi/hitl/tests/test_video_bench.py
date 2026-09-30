@@ -5,7 +5,11 @@ in //tools/touchdesigner/stream_bench:stream_bench_test); here we pin the
 device-side effect source and the RESULT-line parsing/verdict the harness relies
 on."""
 
+import pytest
 from video_bench_core import bars_effect_src, parse_result, verdict
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-10", "PR-17")
 
 
 def test_bars_effect_src_declares_texture_and_samples_it():
