@@ -96,6 +96,7 @@ py_library(
         "improv.py",
         "jit_soak_core.py",
         "led_pattern.py",
+        "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
@@ -467,6 +468,48 @@ py_test(
     },
     imports = ["."],
     main = "hitl_tls_churn.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Heap-loaded wss:443 handshake gate (FUG-133 / the PR #114 OOM class) against the
+# esp32c6_netstack drop-in. Reserve, flash, provision, then LOAD the device to its
+# field worst case — a full 768-LED (kMaxLeds) map + an activated texture-sampling
+# effect + a resident streamed texture keyframe — over wss, then DROP that socket so
+# its ~6 KB TLS session frees while the map/effect/texture stay RAM-resident. Then
+# open a FRESH wss:443 session on the loaded heap and complete hello/welcome (this is
+# the exact #114 alloc the gate exists to guard) followed by a SEQUENTIAL cert-page
+# GET / (the netstack TLS server is single-connection — it sheds concurrent SYNs, so
+# a concurrent second session is untestable). Gates on RECOVERY (a clean handshake +
+# 200 within the recover window), reusing tls_churn_core's verdict; the mbedTLS-alloc
+# serial scan is informational, never the gate. A manual+hitl py_test; --device-ws
+# hits a reachable board directly (skips reserve/flash/provision). Pure verdict logic
+# lives in loaded_tls_core + tls_churn_core and is unit-tested in //pi/hitl/tests.
+py_test(
+    name = "loaded_tls_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_loaded_tls.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_loaded_tls.py",
     tags = [
         "hitl",
         "manual",
