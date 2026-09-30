@@ -5,7 +5,7 @@
 Tooling comes from rules_requirements; see docs/requirements-driven-development.md.
 """
 
-load("@rules_requirements//rr:defs.bzl", "rr_annotations_check", "rr_model")
+load("@rules_requirements//rr:defs.bzl", "rr_annotations_check", "rr_editor", "rr_model")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -19,5 +19,12 @@ rr_model(
 # @pytest.mark.requirements(...) annotation in the tree naming an unknown id.
 rr_annotations_check(
     name = "check_annotations",
+    model = ":model",
+)
+
+# `bazel run //requirements:editor` — the web editor on the model: author and
+# edit, trace graph, code annotations, diffs across branches, agentic reviews.
+rr_editor(
+    name = "editor",
     model = ":model",
 )

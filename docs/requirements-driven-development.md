@@ -127,6 +127,36 @@ case tagged with the PRs it verifies at level `hitl` and stamped with the
 firmware bundle and DUT commit (`GITHUB_SHA`), and only each test's final
 attempt counts (a `--flaky_test_attempts` retry that passed is what gated).
 
+## Editing the model in the browser
+
+```sh
+bazel run //requirements:editor   # then open http://localhost:8080/
+```
+
+opens the rules_requirements [web editor](https://studio-fug.github.io/rules_requirements/guides/web-editor.html)
+on `requirements/requirements.yaml`, reading test evidence from `bazel-testlogs`:
+
+- **Author and edit** needs, PRs, risks and mitigations in forms; edits are
+  small, comment-preserving YAML changes, verified before anything is written,
+  so they review like hand edits.
+- **Trace** each item both ways, on a graph coloured by verification status,
+  down to the `@rr(...)` annotations and tests that implement and verify it.
+- **Version**: diff the model between branches, tags and commits, tag
+  baselines, and commit model changes (only the model files).
+- **Review with agents**: a deterministic completeness check (untraced PRs,
+  unverified or under-verified PRs, uncontrolled risks, stale evidence), and
+  Claude-backed reviews — does a test really prove its PR, does a PR really
+  enforce its mitigation, which hazards are missing. Findings become notes on
+  the model (`kind: gap` / `todo` / `question`) or new entities, ready to drive
+  the next implementation cycle. The Claude-backed reviews need the `anthropic`
+  package, which splanc's Python lock does not include yet: run
+  `rr serve --model requirements/ --evidence bazel-testlogs` from a virtualenv
+  with `pip install "rules-requirements[agents] @ git+https://github.com/Studio-Fug/rules_requirements"`
+  and `ANTHROPIC_API_KEY` set (or add `anthropic` to the lock and pass
+  `deps = ["@pypi//anthropic"]` to the `rr_editor` target).
+
+It binds to localhost only and edits your checkout.
+
 ## Recipes
 
 - **Add a requirement:** add a `PR-…` entry (with `satisfies` and `modules`),

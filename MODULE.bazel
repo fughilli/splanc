@@ -25,7 +25,7 @@ bazel_dep(name = "rules_python", version = "2.0.3")
 bazel_dep(name = "rules_requirements", version = "0.1.0")
 git_override(
     module_name = "rules_requirements",
-    commit = "263f07495142ab5659abc86c332d666580354f70",
+    commit = "7f166ead67fcd12b7f569002fe3a60b6ab3ff334",
     remote = "https://github.com/Studio-Fug/rules_requirements.git",
 )
 
