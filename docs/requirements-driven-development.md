@@ -148,12 +148,11 @@ on `requirements/requirements.yaml`, reading test evidence from `bazel-testlogs`
   Claude-backed reviews — does a test really prove its PR, does a PR really
   enforce its mitigation, which hazards are missing. Findings become notes on
   the model (`kind: gap` / `todo` / `question`) or new entities, ready to drive
-  the next implementation cycle. The Claude-backed reviews need the `anthropic`
-  package, which splanc's Python lock does not include yet: run
-  `rr serve --model requirements/ --evidence bazel-testlogs` from a virtualenv
-  with `pip install "rules-requirements[agents] @ git+https://github.com/Studio-Fug/rules_requirements"`
-  and `ANTHROPIC_API_KEY` set (or add `anthropic` to the lock and pass
-  `deps = ["@pypi//anthropic"]` to the `rr_editor` target).
+  the next implementation cycle. The Claude-backed reviews use the `anthropic`
+  SDK from splanc's Python lock, with Claude credentials from the environment
+  you `bazel run` the editor in: `ANTHROPIC_API_KEY`, or an `ant auth login`
+  profile. Without credentials the deterministic completeness check still
+  works (the Claude-backed reviews fail with an authentication error).
 
 It binds to localhost only and edits your checkout.
 

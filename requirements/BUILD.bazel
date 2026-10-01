@@ -24,7 +24,9 @@ rr_annotations_check(
 
 # `bazel run //requirements:editor` — the web editor on the model: author and
 # edit, trace graph, code annotations, diffs across branches, agentic reviews.
+# The Anthropic SDK from the pip hub enables the Claude-backed reviews.
 rr_editor(
     name = "editor",
     model = ":model",
+    deps = ["@pypi//anthropic"],
 )
