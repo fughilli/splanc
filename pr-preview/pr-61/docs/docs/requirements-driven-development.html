@@ -457,12 +457,11 @@ unverified or under-verified PRs, uncontrolled risks, stale evidence), and
 Claude-backed reviews — does a test really prove its PR, does a PR really
 enforce its mitigation, which hazards are missing. Findings become notes on
 the model (<code class="docutils literal notranslate"><span class="pre">kind:</span> <span class="pre">gap</span></code> / <code class="docutils literal notranslate"><span class="pre">todo</span></code> / <code class="docutils literal notranslate"><span class="pre">question</span></code>) or new entities, ready to drive
-the next implementation cycle. The Claude-backed reviews need the <code class="docutils literal notranslate"><span class="pre">anthropic</span></code>
-package, which splanc’s Python lock does not include yet: run
-<code class="docutils literal notranslate"><span class="pre">rr</span> <span class="pre">serve</span> <span class="pre">--model</span> <span class="pre">requirements/</span> <span class="pre">--evidence</span> <span class="pre">bazel-testlogs</span></code> from a virtualenv
-with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;rules-requirements[agents]</span> <span class="pre">&#64;</span> <span class="pre">git+https://github.com/Studio-Fug/rules_requirements&quot;</span></code>
-and <code class="docutils literal notranslate"><span class="pre">ANTHROPIC_API_KEY</span></code> set (or add <code class="docutils literal notranslate"><span class="pre">anthropic</span></code> to the lock and pass
-<code class="docutils literal notranslate"><span class="pre">deps</span> <span class="pre">=</span> <span class="pre">[&quot;&#64;pypi//anthropic&quot;]</span></code> to the <code class="docutils literal notranslate"><span class="pre">rr_editor</span></code> target).</p></li>
+the next implementation cycle. The Claude-backed reviews use the <code class="docutils literal notranslate"><span class="pre">anthropic</span></code>
+SDK from splanc’s Python lock, with Claude credentials from the environment
+you <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code> the editor in: <code class="docutils literal notranslate"><span class="pre">ANTHROPIC_API_KEY</span></code>, or an <code class="docutils literal notranslate"><span class="pre">ant</span> <span class="pre">auth</span> <span class="pre">login</span></code>
+profile. Without credentials the deterministic completeness check still
+works (the Claude-backed reviews fail with an authentication error).</p></li>
 </ul>
 <p>It binds to localhost only and edits your checkout.</p>
 </section>
