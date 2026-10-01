@@ -7,6 +7,8 @@ sink; `spidev` is imported lazily and is only present on the Pi.
 
 `imports = ["."]` exposes the nested `led_driver/` package as `led_driver` (and
 runnable as `python -m led_driver`).
+
+@rr(PR-11): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -56,6 +58,7 @@ py_test(
     deps = [
         ":led_driver",
         "//shared/protocol",
+        "@rules_requirements//python",
         requirement("pytest"),
     ],
 )

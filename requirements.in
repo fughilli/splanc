@@ -64,3 +64,8 @@ sphinx-copybutton
 sphinx-design
 sphinxcontrib-mermaid
 matplotlib
+
+# Requirements web editor (FUG-89): the Anthropic SDK behind the Claude-backed
+# agent reviews of `bazel run //requirements:editor` (rules_requirements'
+# rr_editor imports it lazily; wired in via deps in requirements/BUILD.bazel).
+anthropic>=1

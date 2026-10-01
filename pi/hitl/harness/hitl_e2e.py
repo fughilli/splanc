@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import re
 import ssl
@@ -48,9 +49,11 @@ import urllib.request
 
 import board_caps
 import hitl_ws
+from e2e_phases import SetupError, phase, planned, setup_done, tracked
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
+from rules_requirements.hooks.junit_writer import JUnitWriter
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
@@ -320,6 +323,38 @@ def default_board_caps() -> dict | None:
         return None
 
 
+def _dut_identity(args: argparse.Namespace) -> dict:
+    """Identity of the artifact this run exercises, for evidence-freshness.
+
+    Stamped on every jUnit case so the aggregator can tell a result about the
+    current firmware from a stale one (see docs/requirements-driven-development.md).
+    Uses the flash bundle (its name and a hash of its content, so two builds never
+    share an id) plus the CI commit / board revision from the environment when
+    present; missing keys are simply omitted.
+    """
+    identity: dict = {}
+    bundle = None if args.skip_flash else args.bundle or default_bundle()
+    if bundle:  # with --skip-flash the DUT runs whatever it has: no firmware id
+        identity["firmware_build_id"] = os.path.basename(bundle)
+        try:
+            digest = hashlib.sha256()
+            with open(bundle, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    digest.update(chunk)
+            identity["firmware_build_id"] += "@sha256:" + digest.hexdigest()[:16]
+        except OSError:
+            pass  # not readable here: the name alone
+    sha = os.environ.get("GIT_COMMIT") or os.environ.get("GITHUB_SHA")
+    if sha:
+        # With --skip-flash this run does not know what the DUT runs: an identity
+        # that matches no commit, so the evidence reads STALE.
+        identity["dut_git_sha"] = "unknown (not flashed by this run)" if args.skip_flash else sha
+    board = os.environ.get("HITL_BOARD_REV") or args.device
+    if board:
+        identity["board_rev"] = board
+    return identity
+
+
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
@@ -329,61 +364,107 @@ def run(args: argparse.Namespace) -> int:
         sku=args.sku or None,
         device=args.device or None,
     )
+    # Traceability: each phase is a JUnit testcase tagged with the PRs it verifies
+    # and the identity of the firmware it exercised, so the on-hardware HITL run
+    # feeds the same requirements report as the software suites — and stale results
+    # are detectable. A run that stops early is recorded too (e2e_phases: device
+    # failures fail the PRs of the phases that never ran; rig/setup trouble fails
+    # none). See docs/requirements-driven-development.md.
+    report = JUnitWriter("hitl_e2e", default_level="hitl", artifact=_dut_identity(args))
+    phases = planned(args.skip_flash, args.skip_improv, args.wire_provision, args.skip_ws)
     try:
-        res.acquire()
-        # Default WiFi to the rig's own provisioning AP (creds served by the
-        # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
-        # Both provisioning paths (BLE Improv + wired serial) need the creds.
-        want_provision = not args.skip_improv or args.wire_provision
-        if not args.wifi_ssid and want_provision:
-            creds = res.wifi()
-            if creds:
+        with tracked(report, phases):
+            # Check the invocation before reserving a rig for it.
+            if args.skip_improv and not args.wire_provision and not args.skip_ws:
+                if not (args.device_url or args.device_ws):
+                    raise SetupError(
+                        "--skip-improv needs --device-url or --device-ws (or --skip-ws): "
+                        "nothing provisions the DUT, so there is no URL to connect to"
+                    )
+            if args.wire_provision and args.wifi_ssid and " " in args.wifi_ssid:
+                raise SetupError(
+                    f"wired provisioning can't carry an SSID with a space: {args.wifi_ssid!r}"
+                )
+            if not args.skip_flash and args.bundle and not os.path.isfile(args.bundle):
+                raise SetupError(f"--bundle {args.bundle!r} is not a file")
+            res.acquire()
+            # Default WiFi to the rig's own provisioning AP (creds served by the
+            # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
+            # Both provisioning paths (BLE Improv + wired serial) need the creds.
+            want_provision = not args.skip_improv or args.wire_provision
+            if not args.wifi_ssid and want_provision:
+                creds = res.wifi()
+                if not creds:
+                    raise SetupError(
+                        "no WiFi credentials for provisioning: pass --wifi-ssid (or "
+                        "$HITL_WIFI_SSID); the rig offered none (its /status failed, or it "
+                        "runs no provisioning AP)"
+                    )
                 args.wifi_ssid, args.wifi_pass = creds
                 print(f"[provision] onto the rig AP {args.wifi_ssid!r}", flush=True)
-        if not args.skip_flash:
-            bundle = args.bundle or default_bundle()
-            if not bundle:
-                raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
-            flash(res, bundle, args.monitor_seconds)
-
-        redirect = args.device_url
-        # --wire-provision drives creds over the DUT's serial console (no BLE); otherwise
-        # provision over BLE Improv unless --skip-improv (device already on the network).
-        if args.wire_provision:
-            if not args.wifi_ssid:
-                raise E2EFailure(
-                    "--wifi-ssid (or $HITL_WIFI_SSID) is required with --wire-provision"
+            if args.wire_provision and " " in args.wifi_ssid:
+                raise SetupError(
+                    f"wired provisioning can't carry an SSID with a space: {args.wifi_ssid!r}"
                 )
-            redirect = wire_provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
-        elif not args.skip_improv:
-            if not args.wifi_ssid:
-                raise E2EFailure(
-                    "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
-                )
-            redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+            bundle = None
+            if not args.skip_flash:
+                bundle = args.bundle or default_bundle()
+                if not bundle:
+                    raise SetupError("no flash-bundle in runfiles; pass --bundle or --skip-flash")
+            # Setup is done: from here on a stop is the device's unless it is
+            # identifiable rig trouble (e2e_phases).
+            setup_done(report)
+            if bundle:
+                # Boots the app and brings the Improv BLE service up (heap not starved).
+                with phase(report, "flash_boot"):
+                    flash(res, bundle, args.monitor_seconds)
 
-        if not args.skip_ws:
-            expected_caps = default_board_caps()
-            if args.device_ws:
-                # Explicit override: connect straight to a reachable ws(s) URL.
-                ws_checks(args.device_ws, args.rename_to, not args.ws_verify, expected_caps)
-            else:
-                if not redirect:
-                    raise E2EFailure(
-                        "no device URL: provision the DUT or pass --device-url/--device-ws"
+            redirect = args.device_url
+            # --wire-provision drives creds over the DUT's serial console (no BLE);
+            # otherwise provision over BLE Improv unless --skip-improv (device already
+            # on the network).
+            if args.wire_provision:
+                redirect = wire_provision_dut(
+                    res, args.wifi_ssid, args.wifi_pass, args.improv_timeout
+                )
+            elif not args.skip_improv:
+                with phase(report, "improv_provision"):
+                    redirect = provision_dut(
+                        res, args.wifi_ssid, args.wifi_pass, args.improv_timeout
                     )
-                host, port = dut_target(redirect, args.ws_scheme)
-                # The DUT is on the rig's WiFi LAN, not the harness host's network,
-                # so reach it FROM the rig: tunnel the WS through the reservation's
-                # ssh (the far end dials the DUT from the Pi's container).
-                with res.forward(host, port) as local_port:
-                    ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-                    ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
-    except (E2EFailure, ReserveError) as e:
+
+            if not args.skip_ws:
+                expected_caps = default_board_caps()
+                # WS connect (TLS heap) + time sync + rename over the §7 protobuf protocol.
+                if args.device_ws:
+                    # Explicit override: connect straight to a reachable ws(s) URL.
+                    with phase(report, "websocket_checks"):
+                        ws_checks(args.device_ws, args.rename_to, not args.ws_verify, expected_caps)
+                else:
+                    if not redirect:
+                        raise E2EFailure(
+                            "no device URL: provision the DUT or pass --device-url/--device-ws"
+                        )
+                    host, port = dut_target(redirect, args.ws_scheme)
+                    # The DUT is on the rig's WiFi LAN, not the harness host's network,
+                    # so reach it FROM the rig: tunnel the WS through the reservation's
+                    # ssh (the far end dials the DUT from the Pi's container). An
+                    # unreachable DUT (DutUnreachable) is a device failure.
+                    with res.forward(host, port) as local_port:
+                        ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+                        with phase(report, "websocket_checks"):
+                            ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
+    except (E2EFailure, ReserveError, SetupError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
     finally:
-        res.release()
+        # Write the evidence first: releasing the rig can itself fail (or be
+        # interrupted), and the report must not be lost with it; and release
+        # the rig whatever happens to the report.
+        try:
+            _write_report(report, args)
+        finally:
+            res.release()
     print(
         "\nPASS — ImprovBLE setup, rename, time sync, and board caps all checked out",
         flush=True,
@@ -391,7 +472,29 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_report(report: JUnitWriter, args: argparse.Namespace) -> None:
+    """Write the phase jUnit (with requirement tags) if a destination is set.
+
+    Defaults to Bazel's ``$XML_OUTPUT_FILE`` so ``bazel run`` / ``bazel test``
+    captures it; ``--junit-xml`` overrides.
+    """
+    path = args.junit_xml or os.environ.get("XML_OUTPUT_FILE")
+    if not path or not report.cases:
+        return
+    try:
+        # Whole or not at all: the report step must never ingest a truncated file.
+        report.write(path + ".tmp")
+        os.replace(path + ".tmp", path)
+        print(f"[junit] wrote {len(report.cases)} phase result(s) -> {path}", flush=True)
+    except OSError as e:
+        print(f"[junit] could not write {path}: {e}", file=sys.stderr)
+
+
 def main() -> int:
+    return run(parse_args())
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -451,7 +554,12 @@ def main() -> int:
         help="provision WiFi over the DUT's serial console (PROV command) instead of BLE Improv",
     )
     ap.add_argument("--skip-ws", action="store_true")
-    return run(ap.parse_args())
+    ap.add_argument(
+        "--junit-xml",
+        default=None,
+        help="write per-phase jUnit (with requirement tags) here " "(default: $XML_OUTPUT_FILE)",
+    )
+    return ap.parse_args(argv)
 
 
 if __name__ == "__main__":

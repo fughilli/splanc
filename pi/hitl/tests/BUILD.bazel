@@ -26,6 +26,7 @@ py_test(
         "pytest_main.py",
         "test_ap_lock.py",
         "test_board_caps.py",
+        "test_e2e_phases.py",
         "test_fx_bench.py",
         "test_hardware_config_pattern.py",
         "test_improv.py",
@@ -48,7 +49,9 @@ py_test(
     main = "pytest_main.py",
     deps = [
         "//pi/hitl/harness",
+        "//pi/hitl/harness:hitl_e2e_lib",
         "@rules_python//python/runfiles",
+        "@rules_requirements//python",
         requirement("pytest"),
     ],
 )

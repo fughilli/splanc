@@ -47,6 +47,12 @@ class ReserveError(RuntimeError):
     pass
 
 
+class DutUnreachable(ReserveError):
+    """The DUT itself cannot be reached from the rig after provisioning: a device
+    (or WiFi association) failure, not rig trouble. A ReserveError subclass so
+    callers that only distinguish "the run could not complete" keep working."""
+
+
 DEFAULT_PORT = "8087"
 # ACL tag every splanc HITL rig carries; the pool falls back to discovering rigs by
 # this tag on the tailnet when no host list is given (matches the old Go CLI's
@@ -635,12 +641,20 @@ class Reservation:
             f'timeout {connect_timeout} bash -c "exec 3<>/dev/tcp/{host}/$p" 2>/dev/null '
             f"&& exit 0; done; n=$((n+1)); sleep 2; done; exit 7"
         )
-        proc = self.ssh(
-            probe, capture=True, timeout=tries * (len(ports) * connect_timeout + 3) + 30
-        )
+        try:
+            proc = self.ssh(
+                probe, capture=True, timeout=tries * (len(ports) * connect_timeout + 3) + 30
+            )
+        except subprocess.TimeoutExpired as e:
+            # The probe bounds itself on the rig; only the ssh link can hang this long.
+            raise ReserveError(f"could not probe DUT {host} from the rig (ssh hung)") from e
         if proc.returncode == 0:
             return
-        raise ReserveError(
+        if proc.returncode != 7:  # not the probe's verdict: ssh/the rig itself failed
+            raise ReserveError(
+                f"could not probe DUT {host} from the rig (ssh exited {proc.returncode})"
+            )
+        raise DutUnreachable(
             f"DUT {host} is unreachable from the rig (no TCP on {portlist} after "
             f"{tries} tries). The board most likely joined a foreign AP — check for a "
             f"duplicate provisioning SSID across rigs (`hitl wifi`) — or never joined "

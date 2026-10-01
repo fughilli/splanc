@@ -11,6 +11,8 @@ convention); the codecs are imported both here and by the container's
 `imports = ["."]` puts this directory on the import path so the modules are
 importable as top-level (hitl_client, sync, improv) the way they import each
 other.
+
+@rr(PR-12, PR-13, PR-23, PR-24, PR-29, PR-30, PR-31, PR-36): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -40,6 +42,7 @@ hitl_test(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        "@rules_requirements//python",  # hitl_e2e.py records JUnit phases
         requirement("websockets"),
     ],
 )
@@ -80,6 +83,7 @@ py_test(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        "@rules_requirements//python",  # hitl_e2e.py records JUnit phases
         requirement("websockets"),
     ],
 )
@@ -88,6 +92,7 @@ py_library(
     name = "harness",
     srcs = [
         "board_caps.py",
+        "e2e_phases.py",
         "fx_bench_core.py",
         "hardware_config_pattern.py",
         "hitl_client.py",
@@ -107,6 +112,21 @@ py_library(
     imports = ["."],
     # board_caps parses the BoardCapabilities textproto via the generated py proto.
     deps = ["//shared/protocol/proto:ledmapper_py_proto"],
+)
+
+# hitl_e2e.py as a library, so //pi/hitl/tests can drive run() offline with fakes
+# (how a run that stops early is recorded for the traceability report).
+py_library(
+    name = "hitl_e2e_lib",
+    srcs = ["hitl_e2e.py"],
+    imports = ["."],
+    # ws_checks()/default_bundle() import websockets, //pi/server and the runfiles
+    # lazily; the tests replace them, so the library is for the tests only.
+    visibility = ["//pi/hitl/tests:__pkg__"],
+    deps = [
+        ":harness",
+        "@rules_requirements//python",
+    ],
 )
 
 # Same e2e driver, but against the HEAPLESS-NETSTACK player variant
@@ -143,6 +163,7 @@ py_test(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        "@rules_requirements//python",
         requirement("websockets"),
     ],
 )

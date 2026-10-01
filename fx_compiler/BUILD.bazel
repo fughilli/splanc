@@ -2,6 +2,8 @@
 bytecode + uniform manifest for the fx_vm interpreter. Host + wasm (the browser
 editor compiles live). Tests compile real shaders and run them through the
 actual fx_vm, so the source→bytecode→VM pipeline is verified end-to-end.
+
+@rr(PR-17, PR-27): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")

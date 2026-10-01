@@ -4,6 +4,7 @@ chunking contract that must not drift from web/src/net/client.ts `sendChunked`
 and the firmware's reassembly — each window <= CHUNK_BYTES, dense seq, exactly
 one `last`, and the payloads reassemble to the original frame byte-for-byte."""
 
+import pytest
 from map_upload_core import (
     CHUNK_BYTES,
     needs_chunking,
@@ -12,6 +13,9 @@ from map_upload_core import (
     synth_topology,
     window_plan,
 )
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-12", "PR-31")
 
 
 def _slice(frame: bytes) -> list[bytes]:

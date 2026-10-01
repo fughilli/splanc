@@ -1,4 +1,7 @@
-"""Bench tooling."""
+"""Bench tooling.
+
+@rr(PR-10): implemented in this package (see requirements/requirements.yaml)
+"""
 
 load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary")

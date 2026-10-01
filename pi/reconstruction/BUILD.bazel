@@ -6,6 +6,8 @@ quality metrics → OutputMap (design doc §7.5/§8.3). Library + CLI.
 `imports = ["."]` puts this directory on the import path so the nested
 `reconstruction/` package is importable as `reconstruction` (and runnable as
 `python -m reconstruction`).
+
+@rr(PR-11, PR-31, PR-34): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -54,6 +56,7 @@ py_test(
     deps = [
         ":reconstruction",
         requirement("numpy"),
+        "@rules_requirements//python",
         requirement("pytest"),
     ],
 )
@@ -79,6 +82,7 @@ py_test(
         ":reconstruction",
         "@rules_python//python/runfiles",
         requirement("numpy"),
+        "@rules_requirements//python",
         requirement("pytest"),
         requirement("scipy"),
     ],
@@ -97,6 +101,7 @@ py_test(
     deps = [
         ":reconstruction",
         requirement("numpy"),
+        "@rules_requirements//python",
         requirement("pytest"),
         requirement("scipy"),
     ],

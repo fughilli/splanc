@@ -8,6 +8,8 @@ generates:
 The generation runs as a Bazel genrule so the outputs are reproducible and
 cached. The hand-curated `__init__.py` and `index.ts` re-export the generated
 symbols, giving consumers a stable import surface.
+
+@rr(PR-34): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@pypi//:requirements.bzl", "requirement")

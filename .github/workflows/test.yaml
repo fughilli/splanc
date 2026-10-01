@@ -199,6 +199,103 @@ jobs:
       - name: Run lints (prek)
         run: prek run --all-files --show-diff-on-failure --color=always
 
+  # Requirements traceability report (FUG-89, via rules_requirements).
+  #
+  # The final action in the requirements-driven-development workflow: run the
+  # software test suites (which emit JUnit XML with per-testcase requirement
+  # properties), then aggregate every JUnit XML in bazel-testlogs into a report
+  # that shows validation (user needs) + verification (requirements) + risk
+  # control (mitigations, risks) for the whole model. Uploaded as an artifact.
+  #
+  # Self-contained (its own runner ⇒ can't reuse the test job's testlogs): it
+  # re-runs the suites, but with the `test` job's disk cache as a restore key so
+  # the test actions are warm cache hits and only the report is computed. Tests
+  # run with `|| true` so a genuine failure still yields a report that shows it —
+  # the `test` / `hitl-tests` jobs remain the pass/fail gate. `check_annotations`
+  # DOES gate: it fails if any source/test/module references an unknown id.
+  # ---------------------------------------------------------------------------
+  traceability-report:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-test-
+          gc-max-store-size-linux: 5G
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-trace-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-trace-${{ runner.os }}-
+            bazel-disk-test-${{ runner.os }}-
+
+      # Fail early if any source/test/module references an undefined PR id, and
+      # confirm the committed requirements model itself is valid.
+      - name: Check requirement annotations + model
+        run: |
+          bazel test //requirements:model_test \
+            --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+          bazel run //requirements:check_annotations \
+            --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Run the software suites to populate bazel-testlogs with tagged JUnit XML.
+      # `|| true`: a failing test must still produce a report (it shows the FAIL),
+      # the dedicated test jobs are the gate.
+      # HITL tests are NOT run here: they need the rigs on the tailnet, which only
+      # the HITL workflow joins (hitl.yaml publishes its own hitl-traceability-report
+      # from the real on-hardware run). Run here they could only error.
+      - name: Run test suites (populate jUnit)
+        run: |
+          bazel test //... --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=errors || true
+
+      - name: Aggregate JUnit XML into the traceability report
+        run: |
+          bazel run @rules_requirements//python:rr \
+            --disk_cache="$HOME/.cache/bazel-disk" -- report \
+            --model "$GITHUB_WORKSPACE/requirements" \
+            --evidence "$(readlink -f bazel-testlogs)" \
+            --current-build dut_git_sha="$GITHUB_SHA" \
+            --scan --root "$GITHUB_WORKSPACE" \
+            --queue-out "$GITHUB_WORKSPACE/traceability-queue.json" \
+            --json "$GITHUB_WORKSPACE/traceability-report.json" \
+            --md "$GITHUB_WORKSPACE/traceability-report.md" \
+            --html "$GITHUB_WORKSPACE/traceability-report.html"
+          cat "$GITHUB_WORKSPACE/traceability-report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload traceability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: traceability-report
+          path: |
+            traceability-report.html
+            traceability-report.json
+            traceability-report.md
+            traceability-queue.json
+          retention-days: 14
+
   # ---------------------------------------------------------------------------
   # Deploy the PWA to GitHub Pages (FUG-26).
   #
