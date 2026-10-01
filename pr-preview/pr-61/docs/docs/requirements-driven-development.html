@@ -394,10 +394,13 @@ records each phase with <code class="docutils literal notranslate"><span class="
 (level <code class="docutils literal notranslate"><span class="pre">hitl</span></code>; the phases and the PRs each verifies are in
 <a class="reference internal" href="#../pi/hitl/harness/e2e_phases.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">e2e_phases.py</span></code></span></a>), stamping the firmware
 bundle (name and content hash) / DUT git SHA / board so stale evidence is
-detectable. A run that stops between phases records the failure against the
-PRs of the phases that never ran (<code class="docutils literal notranslate"><span class="pre">incomplete_run</span></code>), so a failed run never
-reads as verified; rig or reservation trouble is recorded untagged and shows up
-as an untraced failure instead of failing any PR.</p>
+detectable. A PR reads VERIFIED from a HITL run only if every phase of that run
+that verifies it passed. A device failure (a phase’s check, no device URL after
+provisioning, the DUT unreachable from the rig) fails the PRs of the failing
+phase, or, when the run stops between phases, of every planned phase that never
+ran (<code class="docutils literal notranslate"><span class="pre">incomplete_run</span></code>). Rig or setup trouble (reservation, ssh/scp transport,
+no WiFi credentials, an interrupt) fails no PR: it is recorded untagged, so it
+shows up as an untraced failure.</p>
 <p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//requirements:check_annotations</span></code> scans the tree and fails on any
 annotation naming an id that does not exist.</p>
 </section>
