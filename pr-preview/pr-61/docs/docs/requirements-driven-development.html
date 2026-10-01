@@ -366,7 +366,8 @@ product requirement (PR-26..37) that tests verify like any other PR. The
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//requirements:model_test</span></code> fails on any malformed entity, bad id,
 dangling reference, orphaned requirement, unsatisfied need or uncontrolled
-risk.</p>
+risk. It is also the evidence for PR-23 and PR-25 (the model and its coverage
+gate), which cite it in <code class="docutils literal notranslate"><span class="pre">verified_by</span></code>.</p>
 </section>
 <section id="annotating-code-and-tests">
 <h2>Annotating code and tests<a class="headerlink" href="#annotating-code-and-tests" title="Link to this heading">¶</a></h2>
@@ -390,8 +391,13 @@ Each package’s <code class="docutils literal notranslate"><span class="pre">te
 <code class="docutils literal notranslate"><span class="pre">&#64;rules_requirements//python</span></code> to the <code class="docutils literal notranslate"><span class="pre">py_test</span></code>’s <code class="docutils literal notranslate"><span class="pre">deps</span></code>.</p>
 <p>The on-hardware harness (<a class="reference internal" href="#../pi/hitl/harness/hitl_e2e.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/hitl_e2e.py</span></code></span></a>)
 records each phase with <code class="docutils literal notranslate"><span class="pre">rules_requirements.hooks.junit_writer.JUnitWriter</span></code>
-(level <code class="docutils literal notranslate"><span class="pre">hitl</span></code>), stamping the firmware build id / DUT git SHA / board so stale
-evidence is detectable.</p>
+(level <code class="docutils literal notranslate"><span class="pre">hitl</span></code>; the phases and the PRs each verifies are in
+<a class="reference internal" href="#../pi/hitl/harness/e2e_phases.py"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">e2e_phases.py</span></code></span></a>), stamping the firmware
+bundle (name and content hash) / DUT git SHA / board so stale evidence is
+detectable. A run that stops between phases records the failure against the
+PRs of the phases that never ran (<code class="docutils literal notranslate"><span class="pre">incomplete_run</span></code>), so a failed run never
+reads as verified; rig or reservation trouble is recorded untagged and shows up
+as an untraced failure instead of failing any PR.</p>
 <p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//requirements:check_annotations</span></code> scans the tree and fails on any
 annotation naming an id that does not exist.</p>
 </section>
@@ -435,7 +441,12 @@ as the <code class="docutils literal notranslate"><span class="pre">traceability
 own <code class="docutils literal notranslate"><span class="pre">hitl-traceability-report</span></code> from the on-hardware run: each harness phase is a
 case tagged with the PRs it verifies at level <code class="docutils literal notranslate"><span class="pre">hitl</span></code> and stamped with the
 firmware bundle and DUT commit (<code class="docutils literal notranslate"><span class="pre">GITHUB_SHA</span></code>), and only each test’s final
-attempt counts (a <code class="docutils literal notranslate"><span class="pre">--flaky_test_attempts</span></code> retry that passed is what gated).</p>
+attempt counts (a <code class="docutils literal notranslate"><span class="pre">--flaky_test_attempts</span></code> retry that passed is what gated).
+Read the two reports together: the software report carries the
+simulation-level evidence and the HITL report the <code class="docutils literal notranslate"><span class="pre">hitl</span></code>-level evidence, so a
+PR that is UNDER-VERIFIED in one can be VERIFIED by the other. HITL harness
+targets other than the e2e phases (fx_bench, led_capture, video_stream, …)
+are not tagged with PRs; their failures appear as untraced failures.</p>
 </section>
 <section id="editing-the-model-in-the-browser">
 <h2>Editing the model in the browser<a class="headerlink" href="#editing-the-model-in-the-browser" title="Link to this heading">¶</a></h2>

@@ -46,7 +46,8 @@ mitigations:
 
 `bazel test //requirements:model_test` fails on any malformed entity, bad id,
 dangling reference, orphaned requirement, unsatisfied need or uncontrolled
-risk.
+risk. It is also the evidence for PR-23 and PR-25 (the model and its coverage
+gate), which cite it in `verified_by`.
 
 ## Annotating code and tests
 
@@ -75,8 +76,13 @@ Each package's `tests/pytest_main.py` delegates to
 
 The on-hardware harness ([`pi/hitl/harness/hitl_e2e.py`](../pi/hitl/harness/hitl_e2e.py))
 records each phase with `rules_requirements.hooks.junit_writer.JUnitWriter`
-(level `hitl`), stamping the firmware build id / DUT git SHA / board so stale
-evidence is detectable.
+(level `hitl`; the phases and the PRs each verifies are in
+[`e2e_phases.py`](../pi/hitl/harness/e2e_phases.py)), stamping the firmware
+bundle (name and content hash) / DUT git SHA / board so stale evidence is
+detectable. A run that stops between phases records the failure against the
+PRs of the phases that never ran (`incomplete_run`), so a failed run never
+reads as verified; rig or reservation trouble is recorded untagged and shows up
+as an untraced failure instead of failing any PR.
 
 `bazel run //requirements:check_annotations` scans the tree and fails on any
 annotation naming an id that does not exist.
@@ -126,6 +132,11 @@ own `hitl-traceability-report` from the on-hardware run: each harness phase is a
 case tagged with the PRs it verifies at level `hitl` and stamped with the
 firmware bundle and DUT commit (`GITHUB_SHA`), and only each test's final
 attempt counts (a `--flaky_test_attempts` retry that passed is what gated).
+Read the two reports together: the software report carries the
+simulation-level evidence and the HITL report the `hitl`-level evidence, so a
+PR that is UNDER-VERIFIED in one can be VERIFIED by the other. HITL harness
+targets other than the e2e phases (fx_bench, led_capture, video_stream, ...)
+are not tagged with PRs; their failures appear as untraced failures.
 
 ## Editing the model in the browser
 
