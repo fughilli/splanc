@@ -87,7 +87,8 @@ def test_planned_phases_follow_the_options():
         (KeyboardInterrupt(), True),
         (subprocess.CalledProcessError(255, ["scp", "a", "rig:/tmp"]), True),
         (subprocess.CalledProcessError(1, ["scp", "a", "rig:/tmp"]), False),
-        (subprocess.TimeoutExpired(["ssh", "rig", "true"], 30), True),
+        # A hung rig and a hung DUT look the same: counted against the device.
+        (subprocess.TimeoutExpired(["ssh", "rig", "true"], 30), False),
     ],
 )
 def test_what_counts_as_rig_trouble(exc, infrastructure):
@@ -165,13 +166,25 @@ def test_record_incomplete_before_any_phase(tmp_path):
 class FakeRig:
     """The parts of hitl_client.Reservation that run() uses."""
 
-    def __init__(self, xml_path, wifi=("rig-ap", "psk"), forward_error=None, release_error=None):
+    def __init__(
+        self,
+        xml_path,
+        wifi=("rig-ap", "psk"),
+        forward_error=None,
+        release_error=None,
+        acquire_error=None,
+        forward_exit_error=None,
+    ):
         self.xml_path, self._wifi = xml_path, wifi
         self.forward_error, self.release_error = forward_error, release_error
+        self.acquire_error, self.forward_exit_error = acquire_error, forward_exit_error
         self.report_written_before_release = None
+        self.acquired = self.released = False
 
     def acquire(self):
-        pass
+        if self.acquire_error:
+            raise self.acquire_error
+        self.acquired = True
 
     def wifi(self):
         return self._wifi
@@ -181,8 +194,11 @@ class FakeRig:
         if self.forward_error:
             raise self.forward_error
         yield 40443
+        if self.forward_exit_error:
+            raise self.forward_exit_error
 
     def release(self):
+        self.released = True
         self.report_written_before_release = os.path.exists(self.xml_path)
         if self.release_error:
             raise self.release_error
@@ -280,3 +296,76 @@ def test_run_report_survives_a_failing_release(drive):
     outcome, status, _, _, rig = drive(release_error=KeyboardInterrupt())
     assert isinstance(outcome, KeyboardInterrupt) and rig.report_written_before_release
     assert set(status.values()) == {"VERIFIED"}
+
+
+def test_run_rig_outage_while_reserving_fails_nothing(drive):
+    import urllib.error
+
+    outcome, status, untraced, _, _ = drive(
+        acquire_error=urllib.error.URLError("connection refused")
+    )
+    assert isinstance(outcome, urllib.error.URLError)
+    assert set(status.values()) == {"UNVERIFIED"} and untraced == 1
+
+
+def test_run_skip_improv_without_a_url_is_a_setup_mistake(drive):
+    outcome, status, untraced, _, rig = drive(["--skip-improv"])
+    assert outcome == 1 and not rig.acquired  # caught before reserving a rig
+    assert set(status.values()) == {"UNVERIFIED"} and untraced == 1
+
+
+def test_run_wired_provisioning_with_a_space_in_the_ssid_stops_before_flashing(drive):
+    flashed = []
+    outcome, status, _, _, _ = drive(
+        ["--wire-provision"], wifi=("rig ap", "psk"), flash=lambda *a: flashed.append(a)
+    )
+    assert outcome == 1 and not flashed and "FAILED" not in status.values()
+
+
+def test_run_device_hang_counts_against_the_device(drive):
+    hang = subprocess.TimeoutExpired(["ssh", "rig", "hitl-flash"], 180)
+    outcome, status, _, _, _ = drive(flash=raises(hang))
+    assert isinstance(outcome, subprocess.TimeoutExpired)
+    assert status["PR-21"] == status["PR-26"] == "FAILED"
+
+
+def test_run_harness_error_after_every_phase_passed(drive):
+    outcome, status, untraced, cases, _ = drive(forward_exit_error=RuntimeError("tunnel cleanup"))
+    assert isinstance(outcome, RuntimeError)
+    assert set(status.values()) == {"VERIFIED"} and untraced == 1 and 'name="harness"' in cases
+
+
+def test_run_releases_the_rig_even_if_writing_the_report_fails(drive, monkeypatch):
+    def broken(*_):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(hitl_e2e, "_write_report", broken)
+    outcome, _, _, _, rig = drive()
+    assert isinstance(outcome, KeyboardInterrupt) and rig.released
+
+
+def test_run_skip_flash_evidence_is_never_current(drive, monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "abc123")
+    _, _, _, cases, _ = drive(["--skip-flash"])
+    assert 'value="unknown (not flashed by this run)"' in cases and "abc123" not in cases
+    assert "firmware_build_id" not in cases
+
+
+def test_an_unknown_phase_fails_before_its_work():
+    report = JUnitWriter("hitl_e2e", default_level="hitl")
+    ran = []
+    with pytest.raises(KeyError):
+        with phase(report, "websocket_check"):
+            ran.append(True)
+    assert not ran and not report.cases
+
+
+def test_the_reachability_probe_tells_the_rig_from_the_dut():
+    from hitl_client import Reservation
+
+    rig = object.__new__(Reservation)
+    for code, error in ((7, DutUnreachable), (255, ReserveError), (127, ReserveError)):
+        rig.ssh = lambda *a, code=code, **k: subprocess.CompletedProcess([], code, "", "")
+        with pytest.raises(error) as exc:
+            rig.assert_reachable("10.0.0.5")
+        assert (type(exc.value) is DutUnreachable) == (code == 7)

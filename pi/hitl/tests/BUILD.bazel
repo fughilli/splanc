@@ -49,7 +49,7 @@ py_test(
     main = "pytest_main.py",
     deps = [
         "//pi/hitl/harness",
-        "//pi/hitl/harness:e2e",
+        "//pi/hitl/harness:hitl_e2e_lib",
         "@rules_python//python/runfiles",
         "@rules_requirements//python",
         requirement("pytest"),

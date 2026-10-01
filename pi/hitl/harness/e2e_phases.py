@@ -9,10 +9,13 @@ only if every phase of that run that verifies it passed.
 - A device failure (a phase's check failing, no device URL after
   provisioning, the DUT unreachable from the rig) fails the requirements of
   the failing phase, or, between phases, of every planned phase that never ran.
-- Rig or setup trouble (reservation, ssh/scp transport, no WiFi credentials,
-  no bundle, an operator's Ctrl-C) fails nothing: it is recorded untagged, so
-  the report shows it as an untraced failure, and the passed phases stop
-  counting toward requirements they share with the phases that never ran.
+  A timeout or a rig tool failing inside a phase counts here too: it cannot be
+  told apart from a hung or failing DUT.
+- Rig or setup trouble (anything before the first phase began; afterwards,
+  reservation/tunnel errors, ssh/scp's own exit 255, an operator's Ctrl-C)
+  fails nothing: it is recorded untagged, so the report shows it as an
+  untraced failure, and the passed phases stop counting toward requirements
+  they share with the phases that never ran.
 
 @rr(PR-23): on-hardware evidence for the HITL runs, failures included
 """
@@ -61,48 +64,55 @@ def planned(skip_flash: bool, skip_improv: bool, wire_provision: bool, skip_ws: 
 
 
 def is_infrastructure(exc: BaseException) -> bool:
-    """Whether ``exc`` is rig or setup trouble rather than a device failure."""
+    """Whether ``exc`` is identifiably rig or setup trouble, not the device.
+
+    Anything else counts against the device, conservatively: a timeout or a
+    tool failing on the rig cannot be told apart from a hung or failing DUT.
+    """
     if isinstance(exc, DutUnreachable):
         return False  # the device did not come up on the rig's network
     if isinstance(exc, (ReserveError, SetupError, KeyboardInterrupt, SystemExit)):
         return True
-    if isinstance(exc, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+    if isinstance(exc, subprocess.CalledProcessError):
         cmd = exc.cmd if isinstance(exc.cmd, (list, tuple)) else str(exc.cmd).split()
         tool = os.path.basename(str(cmd[0])) if cmd else ""
-        # ssh/scp to the rig: a hung transport, or exit 255 (ssh's own failures).
-        return tool in ("ssh", "scp") and (
-            isinstance(exc, subprocess.TimeoutExpired) or exc.returncode == 255
-        )
+        return tool in ("ssh", "scp") and exc.returncode == 255  # ssh's own failure
     return False
+
+
+_STARTED = "_e2e_phase_started"  # set on the report once any phase has begun
 
 
 @contextmanager
 def phase(report: Any, name: str) -> Iterator[None]:
     """Run one phase: a pass or a device failure is recorded against its PRs;
     rig or setup trouble is left to :func:`tracked` (the phase did not run)."""
+    prs = PHASES[name]  # an unknown phase fails here, before the work
+    setattr(report, _STARTED, True)
     start = time.monotonic()
     try:
         yield
     except BaseException as exc:
         if not is_infrastructure(exc):
             report.add(
-                name,
-                PHASES[name],
-                "failed",
-                f"{type(exc).__name__}: {exc}",
-                time.monotonic() - start,
+                name, prs, "failed", f"{type(exc).__name__}: {exc}", time.monotonic() - start
             )
         raise
-    report.add(name, PHASES[name], "passed", "", time.monotonic() - start)
+    report.add(name, prs, "passed", "", time.monotonic() - start)
 
 
 @contextmanager
 def tracked(report: Any, phases: list[str]) -> Iterator[None]:
-    """Wrap a whole run: whatever stops it is recorded (see :func:`record_incomplete`)."""
+    """Wrap a whole run: whatever stops it is recorded (see :func:`record_incomplete`).
+
+    A stop before the first phase began (reserving the rig, fetching WiFi
+    credentials, checking the invocation) is setup trouble, whatever raised it.
+    """
     try:
         yield
     except BaseException as exc:
-        record_incomplete(report, phases, f"{type(exc).__name__}: {exc}", is_infrastructure(exc))
+        infrastructure = is_infrastructure(exc) or not getattr(report, _STARTED, False)
+        record_incomplete(report, phases, f"{type(exc).__name__}: {exc}", infrastructure)
         raise
 
 
@@ -119,6 +129,11 @@ def record_incomplete(
         for case in report.cases:
             case.requirements = [pr for pr in case.requirements if pr not in pending_prs]
         report.add("rig", [], "error", failure)
-    elif not any(case.status in ("failed", "error") for case in report.cases):
-        # A device failure between phases (a failing phase records itself).
+    elif any(case.status in ("failed", "error") for case in report.cases):
+        pass  # the failing phase recorded it
+    elif pending_prs:
+        # A device failure between phases.
         report.add("incomplete_run", pending_prs, "failed", failure)
+    else:
+        # Every phase passed, then the harness failed: nothing about the device.
+        report.add("harness", [], "error", failure)

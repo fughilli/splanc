@@ -346,7 +346,9 @@ def _dut_identity(args: argparse.Namespace) -> dict:
             pass  # not readable here: the name alone
     sha = os.environ.get("GIT_COMMIT") or os.environ.get("GITHUB_SHA")
     if sha:
-        identity["dut_git_sha"] = sha
+        # With --skip-flash this run does not know what the DUT runs: an identity
+        # that matches no commit, so the evidence reads STALE.
+        identity["dut_git_sha"] = "unknown (not flashed by this run)" if args.skip_flash else sha
     board = os.environ.get("HITL_BOARD_REV") or args.device
     if board:
         identity["board_rev"] = board
@@ -372,6 +374,13 @@ def run(args: argparse.Namespace) -> int:
     phases = planned(args.skip_flash, args.skip_improv, args.wire_provision, args.skip_ws)
     try:
         with tracked(report, phases):
+            # Check the invocation before reserving a rig for it.
+            if args.skip_improv and not args.wire_provision and not args.skip_ws:
+                if not (args.device_url or args.device_ws):
+                    raise SetupError(
+                        "--skip-improv needs --device-url or --device-ws (or --skip-ws): "
+                        "nothing provisions the DUT, so there is no URL to connect to"
+                    )
             res.acquire()
             # Default WiFi to the rig's own provisioning AP (creds served by the
             # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
@@ -387,6 +396,10 @@ def run(args: argparse.Namespace) -> int:
                     )
                 args.wifi_ssid, args.wifi_pass = creds
                 print(f"[provision] onto the rig AP {args.wifi_ssid!r}", flush=True)
+            if args.wire_provision and " " in args.wifi_ssid:
+                raise SetupError(
+                    f"wired provisioning can't carry an SSID with a space: {args.wifi_ssid!r}"
+                )
             if not args.skip_flash:
                 bundle = args.bundle or default_bundle()
                 if not bundle:
@@ -435,9 +448,12 @@ def run(args: argparse.Namespace) -> int:
         return 1
     finally:
         # Write the evidence first: releasing the rig can itself fail (or be
-        # interrupted), and the report must not be lost with it.
-        _write_report(report, args)
-        res.release()
+        # interrupted), and the report must not be lost with it; and release
+        # the rig whatever happens to the report.
+        try:
+            _write_report(report, args)
+        finally:
+            res.release()
     print(
         "\nPASS — ImprovBLE setup, rename, time sync, and board caps all checked out",
         flush=True,

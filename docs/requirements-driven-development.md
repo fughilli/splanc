@@ -83,9 +83,12 @@ detectable. A PR reads VERIFIED from a HITL run only if every phase of that run
 that verifies it passed. A device failure (a phase's check, no device URL after
 provisioning, the DUT unreachable from the rig) fails the PRs of the failing
 phase, or, when the run stops between phases, of every planned phase that never
-ran (`incomplete_run`). Rig or setup trouble (reservation, ssh/scp transport,
-no WiFi credentials, an interrupt) fails no PR: it is recorded untagged, so it
-shows up as an untraced failure.
+ran (`incomplete_run`); a timeout or a rig tool failing inside a phase counts
+too, since it cannot be told apart from a hung or failing DUT. Rig or setup
+trouble fails no PR: anything before the first phase (reserving the rig, WiFi
+credentials, the invocation) and, afterwards, reservation and tunnel errors,
+ssh/scp's own exit 255 or an interrupt. It is recorded untagged, so it shows up
+as an untraced failure.
 
 `bazel run //requirements:check_annotations` scans the tree and fails on any
 annotation naming an id that does not exist.

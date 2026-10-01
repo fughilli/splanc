@@ -646,6 +646,10 @@ class Reservation:
         )
         if proc.returncode == 0:
             return
+        if proc.returncode != 7:  # not the probe's verdict: ssh/the rig itself failed
+            raise ReserveError(
+                f"could not probe DUT {host} from the rig (ssh exited {proc.returncode})"
+            )
         raise DutUnreachable(
             f"DUT {host} is unreachable from the rig (no TCP on {portlist} after "
             f"{tries} tries). The board most likely joined a foreign AP — check for a "

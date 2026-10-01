@@ -117,9 +117,12 @@ py_library(
 # hitl_e2e.py as a library, so //pi/hitl/tests can drive run() offline with fakes
 # (how a run that stops early is recorded for the traceability report).
 py_library(
-    name = "e2e",
+    name = "hitl_e2e_lib",
     srcs = ["hitl_e2e.py"],
     imports = ["."],
+    # ws_checks()/default_bundle() import websockets, //pi/server and the runfiles
+    # lazily; the tests replace them, so the library is for the tests only.
+    visibility = ["//pi/hitl/tests:__pkg__"],
     deps = [
         ":harness",
         "@rules_requirements//python",
