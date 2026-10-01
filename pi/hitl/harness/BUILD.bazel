@@ -114,6 +114,18 @@ py_library(
     deps = ["//shared/protocol/proto:ledmapper_py_proto"],
 )
 
+# hitl_e2e.py as a library, so //pi/hitl/tests can drive run() offline with fakes
+# (how a run that stops early is recorded for the traceability report).
+py_library(
+    name = "e2e",
+    srcs = ["hitl_e2e.py"],
+    imports = ["."],
+    deps = [
+        ":harness",
+        "@rules_requirements//python",
+    ],
+)
+
 # Same e2e driver, but against the HEAPLESS-NETSTACK player variant
 # (//firmware/player_app:esp32c6_netstack): BLE Improv provisioning -> our heapless
 # MAC/WPA2/CCMP/DHCP/TCP/TLS/WS -> lm_player_handle, no vendor WiFi on the data path.
