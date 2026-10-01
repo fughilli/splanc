@@ -1,5 +1,7 @@
 """Pytest entry point: rules_requirements' traceability-enabled runner.
 
+@rr(PR-25): the traceability-enabled test runner of this suite
+
 Writes JUnit XML to $XML_OUTPUT_FILE with the @pytest.mark.requirements markers
 emitted as traceability properties (see docs/requirements-driven-development.md).
 """

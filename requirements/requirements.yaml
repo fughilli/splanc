@@ -44,11 +44,11 @@ config:
 
 project:
   name: splanc
-  project: splanc
   source: >-
     FUG-88 "Draft requirements and risk assessment for Splanc" baseline
-    (UN-1..8, PR-1..25, RISK-1..12), verbatim. Derived PRs PR-26..37 capture the
-    per-risk mitigations FUG-88 states as prose (FUG-89).
+    (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88
+    states as prose are mitigations MIT-1..12, each implemented by a
+    risk-control requirement PR-26..37 (FUG-89).
 
 # --------------------------------------------------------------------------- #
 # User needs (FUG-88)                                                         #
@@ -336,6 +336,9 @@ requirements:
     satisfies: [UN-8]
     method: hitl
     modules: [pi/hitl, requirements]
+    # The model's own validation (was requirements_valid_test); the HITL runs
+    # supply the hitl-level evidence.
+    verified_by: ['//requirements:model_test']
 
   - id: PR-24
     title: Multi-DUT validation isolates test resources safely
@@ -354,9 +357,12 @@ requirements:
       shared-resource contention.
     satisfies: [UN-8]
     modules: [requirements]
+    # The model and coverage gate itself (was requirements_valid_test).
+    verified_by: ['//requirements:model_test']
 
   # ------------------------------------------------------------------------- #
-  # Derived requirements — risk mitigations (FUG-89, one per FUG-88 risk).    #
+  # Risk-control requirements (FUG-89): one per FUG-88 risk, each the         #
+  # implementation of mitigation MIT-n for RISK-n (see `mitigations:`).       #
   # ------------------------------------------------------------------------- #
   - id: PR-26
     title: Bound device allocation pressure and abort unsafe workloads

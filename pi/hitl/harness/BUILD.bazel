@@ -92,6 +92,7 @@ py_library(
     name = "harness",
     srcs = [
         "board_caps.py",
+        "e2e_phases.py",
         "fx_bench_core.py",
         "hardware_config_pattern.py",
         "hitl_client.py",

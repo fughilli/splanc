@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import re
 import ssl
@@ -48,6 +49,7 @@ import urllib.request
 
 import board_caps
 import hitl_ws
+from e2e_phases import PHASES, planned, record_incomplete
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
@@ -326,13 +328,21 @@ def _dut_identity(args: argparse.Namespace) -> dict:
 
     Stamped on every jUnit case so the aggregator can tell a result about the
     current firmware from a stale one (see docs/requirements-driven-development.md).
-    Uses the flash-bundle name plus the CI commit / board revision from the
-    environment when present; missing keys are simply omitted.
+    Uses the flash bundle (its name and a hash of its content, so two builds never
+    share an id) plus the CI commit / board revision from the environment when
+    present; missing keys are simply omitted.
     """
     identity: dict = {}
     bundle = args.bundle or default_bundle()
     if bundle:
         identity["firmware_build_id"] = os.path.basename(bundle)
+        try:
+            with open(bundle, "rb") as f:
+                identity["firmware_build_id"] += (
+                    "@sha256:" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                )
+        except OSError:
+            pass  # not readable here: the name alone
     sha = os.environ.get("GIT_COMMIT") or os.environ.get("GITHUB_SHA")
     if sha:
         identity["dut_git_sha"] = sha
@@ -356,6 +366,8 @@ def run(args: argparse.Namespace) -> int:
     # feeds the same requirements report as the software suites — and stale results
     # are detectable (see docs/requirements-driven-development.md).
     report = JUnitWriter("hitl_e2e", default_level="hitl", artifact=_dut_identity(args))
+    phases = planned(args.skip_flash, args.skip_improv, args.wire_provision, args.skip_ws)
+    failure, infrastructure = "", False  # why the run stopped early, if it did
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
@@ -372,7 +384,7 @@ def run(args: argparse.Namespace) -> int:
             if not bundle:
                 raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
             # Boots the app and brings the Improv BLE service up (heap not starved).
-            with report.case("flash_boot", ["PR-13", "PR-21", "PR-26"]):
+            with report.case("flash_boot", PHASES["flash_boot"]):
                 flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
@@ -389,13 +401,13 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
                 )
-            with report.case("improv_provision", ["PR-13", "PR-29"]):
+            with report.case("improv_provision", PHASES["improv_provision"]):
                 redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
             expected_caps = default_board_caps()
             # WS connect (TLS heap) + time sync + rename over the §7 protobuf protocol.
-            ws_prs = ["PR-13", "PR-22", "PR-35"]
+            ws_prs = PHASES["websocket_checks"]
             if args.device_ws:
                 # Explicit override: connect straight to a reachable ws(s) URL.
                 with report.case("websocket_checks", ws_prs):
@@ -414,10 +426,17 @@ def run(args: argparse.Namespace) -> int:
                     with report.case("websocket_checks", ws_prs):
                         ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
     except (E2EFailure, ReserveError) as e:
+        failure, infrastructure = f"{type(e).__name__}: {e}", isinstance(e, ReserveError)
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
+    except BaseException as e:
+        failure = f"{type(e).__name__}: {e}"
+        raise
     finally:
         res.release()
+        if failure:
+            # A stop between phases must not leave a report of passes only.
+            record_incomplete(report, phases, failure, infrastructure)
         _write_report(report, args)
     print(
         "\nPASS — ImprovBLE setup, rename, time sync, and board caps all checked out",
