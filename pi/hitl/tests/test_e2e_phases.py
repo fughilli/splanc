@@ -215,12 +215,13 @@ def drive(tmp_path, monkeypatch):
     monkeypatch.setattr(hitl_e2e, "default_board_caps", lambda: None)
     monkeypatch.setattr(hitl_e2e, "dut_target", lambda redirect, scheme: ("10.0.0.5", 443))
 
-    def go(argv=(), flash=None, provision=None, ws=None, **rig_kwargs):
+    def go(argv=(), flash=None, provision=None, ws=None, wire=None, **rig_kwargs):
         rig = FakeRig(xml, **rig_kwargs)
         monkeypatch.setattr(hitl_e2e, "Reservation", lambda **_: rig)
         monkeypatch.setattr(hitl_e2e, "flash", flash or (lambda *a: "booted"))
         monkeypatch.setattr(hitl_e2e, "provision_dut", provision or (lambda *a: "http://10.0.0.5"))
         monkeypatch.setattr(hitl_e2e, "ws_checks", ws or (lambda *a: None))
+        monkeypatch.setattr(hitl_e2e, "wire_provision_dut", wire or (lambda *a: "http://10.0.0.5"))
         try:
             outcome = hitl_e2e.run(hitl_e2e.parse_args(list(argv)))
         except BaseException as exc:  # noqa: BLE001 — the outcome under test
@@ -332,7 +333,7 @@ def test_run_device_hang_counts_against_the_device(drive):
 def test_run_harness_error_after_every_phase_passed(drive):
     outcome, status, untraced, cases, _ = drive(forward_exit_error=RuntimeError("tunnel cleanup"))
     assert isinstance(outcome, RuntimeError)
-    assert set(status.values()) == {"VERIFIED"} and untraced == 1 and 'name="harness"' in cases
+    assert set(status.values()) == {"VERIFIED"} and untraced == 1 and 'name="after_phases"' in cases
 
 
 def test_run_releases_the_rig_even_if_writing_the_report_fails(drive, monkeypatch):
@@ -351,13 +352,13 @@ def test_run_skip_flash_evidence_is_never_current(drive, monkeypatch):
     assert "firmware_build_id" not in cases
 
 
-def test_an_unknown_phase_fails_before_its_work():
+def test_an_unknown_phase_fails_before_its_work_blaming_no_one():
     report = JUnitWriter("hitl_e2e", default_level="hitl")
     ran = []
-    with pytest.raises(KeyError):
+    with pytest.raises(SetupError):
         with phase(report, "websocket_check"):
             ran.append(True)
-    assert not ran and not report.cases
+    assert not ran and not report.cases and is_infrastructure(SetupError("x"))
 
 
 def test_the_reachability_probe_tells_the_rig_from_the_dut():
@@ -369,3 +370,48 @@ def test_the_reachability_probe_tells_the_rig_from_the_dut():
         with pytest.raises(error) as exc:
             rig.assert_reachable("10.0.0.5")
         assert (type(exc.value) is DutUnreachable) == (code == 7)
+
+    def hung(*a, **k):
+        raise subprocess.TimeoutExpired(["ssh", "rig"], 57)
+
+    rig.ssh = hung
+    with pytest.raises(ReserveError) as exc:
+        rig.assert_reachable("10.0.0.5")
+    assert type(exc.value) is ReserveError and is_infrastructure(exc.value)
+
+
+@pytest.mark.parametrize(
+    "argv, failure",
+    [
+        # Without the flash phase, the device work starts with wired provisioning...
+        (
+            ["--skip-flash", "--wire-provision"],
+            dict(wire=raises(HarnessError("DUT never acked PROV"))),
+        ),
+        # ...or with the reachability probe of an already-provisioned DUT.
+        (
+            ["--skip-flash", "--skip-improv", "--device-url", "http://10.0.0.5"],
+            dict(forward_error=DutUnreachable("DUT 10.0.0.5 is unreachable")),
+        ),
+    ],
+)
+def test_run_skip_flash_device_failures_still_fail(drive, argv, failure):
+    outcome, status, _, cases, _ = drive(argv, **failure)
+    assert outcome == 1 and 'name="incomplete_run"' in cases
+    assert {pr for pr, s in status.items() if s == "FAILED"} == {"PR-13", "PR-22", "PR-35"}
+
+
+def test_run_explicit_ssid_with_a_space_is_refused_before_reserving(drive):
+    outcome, _, _, _, rig = drive(["--wire-provision", "--wifi-ssid", "my ap"])
+    assert outcome == 1 and not rig.acquired
+
+
+def test_run_missing_bundle_file_is_refused_before_reserving(drive, tmp_path):
+    outcome, status, untraced, _, rig = drive(["--bundle", str(tmp_path / "nope.tar")])
+    assert outcome == 1 and not rig.acquired
+    assert set(status.values()) == {"UNVERIFIED"} and untraced == 1
+
+
+def test_run_leaves_no_partial_report(drive, tmp_path):
+    drive()
+    assert not [f for f in os.listdir(tmp_path) if f.endswith(".tmp")]

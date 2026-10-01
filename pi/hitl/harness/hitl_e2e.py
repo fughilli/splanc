@@ -49,7 +49,7 @@ import urllib.request
 
 import board_caps
 import hitl_ws
-from e2e_phases import SetupError, phase, planned, tracked
+from e2e_phases import SetupError, phase, planned, setup_done, tracked
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
@@ -381,6 +381,12 @@ def run(args: argparse.Namespace) -> int:
                         "--skip-improv needs --device-url or --device-ws (or --skip-ws): "
                         "nothing provisions the DUT, so there is no URL to connect to"
                     )
+            if args.wire_provision and args.wifi_ssid and " " in args.wifi_ssid:
+                raise SetupError(
+                    f"wired provisioning can't carry an SSID with a space: {args.wifi_ssid!r}"
+                )
+            if not args.skip_flash and args.bundle and not os.path.isfile(args.bundle):
+                raise SetupError(f"--bundle {args.bundle!r} is not a file")
             res.acquire()
             # Default WiFi to the rig's own provisioning AP (creds served by the
             # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
@@ -400,10 +406,15 @@ def run(args: argparse.Namespace) -> int:
                 raise SetupError(
                     f"wired provisioning can't carry an SSID with a space: {args.wifi_ssid!r}"
                 )
+            bundle = None
             if not args.skip_flash:
                 bundle = args.bundle or default_bundle()
                 if not bundle:
                     raise SetupError("no flash-bundle in runfiles; pass --bundle or --skip-flash")
+            # Setup is done: from here on a stop is the device's unless it is
+            # identifiable rig trouble (e2e_phases).
+            setup_done(report)
+            if bundle:
                 # Boots the app and brings the Improv BLE service up (heap not starved).
                 with phase(report, "flash_boot"):
                     flash(res, bundle, args.monitor_seconds)
@@ -471,7 +482,9 @@ def _write_report(report: JUnitWriter, args: argparse.Namespace) -> None:
     if not path or not report.cases:
         return
     try:
-        report.write(path)
+        # Whole or not at all: the report step must never ingest a truncated file.
+        report.write(path + ".tmp")
+        os.replace(path + ".tmp", path)
         print(f"[junit] wrote {len(report.cases)} phase result(s) -> {path}", flush=True)
     except OSError as e:
         print(f"[junit] could not write {path}: {e}", file=sys.stderr)

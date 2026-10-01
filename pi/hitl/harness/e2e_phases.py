@@ -11,11 +11,14 @@ only if every phase of that run that verifies it passed.
   the failing phase, or, between phases, of every planned phase that never ran.
   A timeout or a rig tool failing inside a phase counts here too: it cannot be
   told apart from a hung or failing DUT.
-- Rig or setup trouble (anything before the first phase began; afterwards,
-  reservation/tunnel errors, ssh/scp's own exit 255, an operator's Ctrl-C)
-  fails nothing: it is recorded untagged, so the report shows it as an
-  untraced failure, and the passed phases stop counting toward requirements
-  they share with the phases that never ran.
+- Rig or setup trouble (anything before setup_done(): reserving the rig,
+  WiFi credentials, the invocation and bundle; afterwards, reservation and
+  tunnel errors, scp's exit 255, the reachability probe failing to reach the
+  rig, an operator's Ctrl-C) fails nothing: it is recorded untagged, so the
+  report shows it as an untraced failure, and the passed phases stop counting
+  toward requirements they share with the phases that never ran. ssh dropping
+  during a phase's remote command is indistinguishable from the device
+  failing it, and counts against the device.
 
 @rr(PR-23): on-hardware evidence for the HITL runs, failures included
 """
@@ -80,15 +83,23 @@ def is_infrastructure(exc: BaseException) -> bool:
     return False
 
 
-_STARTED = "_e2e_phase_started"  # set on the report once any phase has begun
+_SETUP_DONE = "_e2e_setup_done"  # set on the report when the device work begins
+
+
+def setup_done(report: Any) -> None:
+    """Mark the end of setup (rig reserved, credentials and bundle checked):
+    from here on, a stop is the device's unless it is identifiable rig trouble."""
+    setattr(report, _SETUP_DONE, True)
 
 
 @contextmanager
 def phase(report: Any, name: str) -> Iterator[None]:
     """Run one phase: a pass or a device failure is recorded against its PRs;
     rig or setup trouble is left to :func:`tracked` (the phase did not run)."""
-    prs = PHASES[name]  # an unknown phase fails here, before the work
-    setattr(report, _STARTED, True)
+    if name not in PHASES:  # a harness bug: fails before the work, blaming no one
+        raise SetupError(f"unknown e2e phase {name!r}")
+    prs = PHASES[name]
+    setup_done(report)
     start = time.monotonic()
     try:
         yield
@@ -105,13 +116,14 @@ def phase(report: Any, name: str) -> Iterator[None]:
 def tracked(report: Any, phases: list[str]) -> Iterator[None]:
     """Wrap a whole run: whatever stops it is recorded (see :func:`record_incomplete`).
 
-    A stop before the first phase began (reserving the rig, fetching WiFi
-    credentials, checking the invocation) is setup trouble, whatever raised it.
+    A stop before :func:`setup_done` (reserving the rig, fetching WiFi
+    credentials, checking the invocation and the bundle) is setup trouble,
+    whatever raised it.
     """
     try:
         yield
     except BaseException as exc:
-        infrastructure = is_infrastructure(exc) or not getattr(report, _STARTED, False)
+        infrastructure = is_infrastructure(exc) or not getattr(report, _SETUP_DONE, False)
         record_incomplete(report, phases, f"{type(exc).__name__}: {exc}", infrastructure)
         raise
 
@@ -135,5 +147,7 @@ def record_incomplete(
         # A device failure between phases.
         report.add("incomplete_run", pending_prs, "failed", failure)
     else:
-        # Every phase passed, then the harness failed: nothing about the device.
-        report.add("harness", [], "error", failure)
+        # Every planned phase had passed (e.g. a wired-provisioning step under
+        # --skip-ws, or tunnel cleanup): no requirement is affected, but the stop
+        # is listed as an untraced failure.
+        report.add("after_phases", [], "error", failure)

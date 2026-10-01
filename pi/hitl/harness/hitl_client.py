@@ -641,9 +641,13 @@ class Reservation:
             f'timeout {connect_timeout} bash -c "exec 3<>/dev/tcp/{host}/$p" 2>/dev/null '
             f"&& exit 0; done; n=$((n+1)); sleep 2; done; exit 7"
         )
-        proc = self.ssh(
-            probe, capture=True, timeout=tries * (len(ports) * connect_timeout + 3) + 30
-        )
+        try:
+            proc = self.ssh(
+                probe, capture=True, timeout=tries * (len(ports) * connect_timeout + 3) + 30
+            )
+        except subprocess.TimeoutExpired as e:
+            # The probe bounds itself on the rig; only the ssh link can hang this long.
+            raise ReserveError(f"could not probe DUT {host} from the rig (ssh hung)") from e
         if proc.returncode == 0:
             return
         if proc.returncode != 7:  # not the probe's verdict: ssh/the rig itself failed
