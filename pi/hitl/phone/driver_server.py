@@ -73,8 +73,24 @@ class AppDriver:
                 else:
                     fut.set_exception(DriverError(str(msg.get("error"))))
         elif kind == "event":
-            if msg.get("event") == "ready":
+            ev = msg.get("event")
+            if ev == "ready":
                 self._ready.set()
+            elif ev == "status":
+                # Surface the app's own progress (BLE scan/pick/cred-send/join-wait) so a
+                # failed provision shows WHICH device the phone picked and how far it got.
+                print(f"[status] {msg.get('where', '')}: {msg.get('message', '')}", flush=True)
+            elif ev == "error":
+                detail = msg.get("message") or msg.get("error") or ""
+                print(f"[app-error] {msg.get('where', '')}: {detail}", flush=True)
+            elif ev == "milestone":
+                # e.g. the "provisioned" milestone carries the device's redirect URLs, so
+                # we can see the exact wss URL the connect step then dials.
+                print(
+                    f"[milestone] {msg.get('name', '')}: "
+                    f"{json.dumps(msg.get('detail', {}))[:300]}",
+                    flush=True,
+                )
             self._events.put_nowait(msg)
 
     async def wait_ready(self, timeout: float = 60.0) -> None:
