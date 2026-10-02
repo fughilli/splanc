@@ -238,6 +238,33 @@ jobs:
           HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
           echo "::endgroup::"
 
+      # The raw JUnit evidence (each test's final attempt, test.xml only) for the
+      # published combined report (traceability-site.yaml). Resolved here, once:
+      # the HITL tests ran with -c opt, and the `bazel run` of the report below
+      # builds in the default configuration, which repoints bazel-testlogs at
+      # that configuration's (empty) testlogs.
+      - name: Collect HITL JUnit evidence
+        if: always()
+        run: |
+          testlogs="$(readlink -f bazel-testlogs || true)"
+          if [ -z "$testlogs" ] || [ ! -d "$testlogs" ]; then
+            echo "::warning::no bazel-testlogs: the HITL suite did not run"
+            exit 0
+          fi
+          echo "HITL_TESTLOGS=$testlogs" >> "$GITHUB_ENV"
+          cd "$testlogs"
+          find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
+          echo "collected $(find "$GITHUB_WORKSPACE/hitl-traceability-evidence" -name test.xml 2>/dev/null | wc -l) test.xml from $testlogs"
+
+      - name: Upload HITL JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-traceability-evidence
+          path: hitl-traceability-evidence
+          retention-days: 14
+          if-no-files-found: warn
+
       # Requirements traceability of the on-hardware run (FUG-89): the HITL
       # harness records each phase as a JUnit case tagged with the PRs it verifies
       # (level hitl) and stamped with the firmware bundle + DUT commit
@@ -245,12 +272,12 @@ jobs:
       # (`**/test.xml`): a --flaky_test_attempts retry that passed is what gated.
       # The software-suite report comes from test.yaml's traceability-report job.
       - name: HITL traceability report
-        if: always()
+        if: always() && env.HITL_TESTLOGS != ''
         run: |
           bazel run @rules_requirements//python:rr \
             --disk_cache="$HOME/.cache/bazel-disk" -- report \
             --model "$GITHUB_WORKSPACE/requirements" \
-            --evidence "$(readlink -f bazel-testlogs)/**/test.xml" \
+            --evidence "$HITL_TESTLOGS/**/test.xml" \
             --current-build dut_git_sha="$GITHUB_SHA" \
             --title "splanc HITL traceability" \
             --queue-out "$GITHUB_WORKSPACE/hitl-traceability-queue.json" \
@@ -269,23 +296,6 @@ jobs:
             hitl-traceability-report.json
             hitl-traceability-report.md
             hitl-traceability-queue.json
-          retention-days: 14
-          if-no-files-found: warn
-
-      # The raw JUnit evidence (each test's final attempt, test.xml only) for the
-      # published combined report (traceability-site.yaml).
-      - name: Collect HITL JUnit evidence
-        if: always()
-        run: |
-          cd "$(readlink -f bazel-testlogs)"
-          find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
-
-      - name: Upload HITL JUnit evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hitl-traceability-evidence
-          path: hitl-traceability-evidence
           retention-days: 14
           if-no-files-found: warn
 
