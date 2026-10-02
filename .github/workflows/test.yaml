@@ -296,6 +296,22 @@ jobs:
             traceability-queue.json
           retention-days: 14
 
+      # The raw JUnit evidence behind the report: traceability-site.yaml renders
+      # the published combined report (software + the HITL run's hardware
+      # evidence) from it.
+      - name: Collect JUnit evidence
+        run: |
+          cd "$(readlink -f bazel-testlogs)"
+          find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/traceability-evidence/{}" \;
+
+      - name: Upload JUnit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: traceability-evidence
+          path: traceability-evidence
+          retention-days: 14
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
   # Deploy the PWA to GitHub Pages (FUG-26).
   #

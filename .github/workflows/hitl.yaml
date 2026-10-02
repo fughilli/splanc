@@ -272,6 +272,23 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+      # The raw JUnit evidence (each test's final attempt, test.xml only) for the
+      # published combined report (traceability-site.yaml).
+      - name: Collect HITL JUnit evidence
+        if: always()
+        run: |
+          cd "$(readlink -f bazel-testlogs)"
+          find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
+
+      - name: Upload HITL JUnit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-traceability-evidence
+          path: hitl-traceability-evidence
+          retention-days: 14
+          if-no-files-found: warn
+
       # Report the run's pass/fail to Grafana Cloud (optional; no-op without the
       # GRAFANA_CLOUD_LOKI_* secrets). always() so a failed suite is reported too.
       - name: Report result to Grafana
