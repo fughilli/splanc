@@ -57,6 +57,7 @@ py_test(
         "tests/test_codebook.py",
         "tests/test_debug.py",
         "tests/test_handler.py",
+        "tests/test_large_install_scale.py",
         "tests/test_proto_wire.py",
         "tests/test_session.py",
     ],
@@ -79,6 +80,7 @@ py_test(
     srcs = [
         "tests/pytest_main.py",
         "tests/test_app_integration.py",
+        "tests/test_capture_recovery.py",
     ],
     data = ["//solver:solver_cli"],
     imports = ["."],
