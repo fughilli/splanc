@@ -142,6 +142,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.software_evidence or not os.path.isdir(args.software_evidence):
         raise SystemExit("no software evidence: nothing to publish")
+    for path in (args.software_evidence, args.hitl_evidence):
+        # rules_requirements maps .../testlogs/<pkg>/<name>/test.xml to //<pkg>:<name>;
+        # anywhere else the model's verified_by target labels would silently not match.
+        if path and os.path.isdir(path) and "testlogs" not in os.path.abspath(path).split(os.sep):
+            raise SystemExit(
+                f"{path}: evidence must be a Bazel testlogs tree (a directory named testlogs)"
+            )
     evidence = [args.software_evidence]
     has_hitl = bool(args.hitl_evidence) and os.path.isdir(args.hitl_evidence)
     if has_hitl:

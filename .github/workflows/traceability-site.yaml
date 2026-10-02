@@ -70,6 +70,9 @@ jobs:
         with:
           ref: ${{ steps.runs.outputs.sw_sha }}
 
+      # Evidence goes under a directory named testlogs: rules_requirements maps
+      # <...>/testlogs/<pkg>/<name>/test.xml back to //<pkg>:<name>, which the
+      # model's verified_by target labels need.
       - name: Download the runs' reports and evidence
         if: steps.runs.outputs.sw_id != ''
         env:
@@ -79,10 +82,10 @@ jobs:
           HW_ID: ${{ steps.runs.outputs.hw_id }}
         run: |
           gh run download -R "$REPO" "$SW_ID" -n traceability-report -D _in/sw-report
-          gh run download -R "$REPO" "$SW_ID" -n traceability-evidence -D _in/sw-evidence
+          gh run download -R "$REPO" "$SW_ID" -n traceability-evidence -D _in/sw-evidence/testlogs
           if [ -n "$HW_ID" ]; then
             gh run download -R "$REPO" "$HW_ID" -n hitl-traceability-report -D _in/hw-report || true
-            gh run download -R "$REPO" "$HW_ID" -n hitl-traceability-evidence -D _in/hw-evidence
+            gh run download -R "$REPO" "$HW_ID" -n hitl-traceability-evidence -D _in/hw-evidence/testlogs
           fi
 
       - name: Setup Python
@@ -113,8 +116,8 @@ jobs:
           HW_URL: ${{ steps.runs.outputs.hw_url }}
         run: |
           python3 requirements/traceability_site.py --out _site --root . --commit "$SW_SHA" \
-            --software-report _in/sw-report --software-evidence _in/sw-evidence --software-run "$SW_URL" \
-            --hitl-report _in/hw-report --hitl-evidence _in/hw-evidence --hitl-run "$HW_URL" \
+            --software-report _in/sw-report --software-evidence _in/sw-evidence/testlogs --software-run "$SW_URL" \
+            --hitl-report _in/hw-report --hitl-evidence _in/hw-evidence/testlogs --hitl-run "$HW_URL" \
             --hitl-commit "$HW_SHA"
 
       - name: Publish to GitHub Pages (/traceability/)
