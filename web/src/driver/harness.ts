@@ -46,6 +46,7 @@ async function pickImprovDeviceHeadless(
   onStatus?: (s: string) => void,
   windowMs = 5000,
   wantName = "",
+  timeoutMs = 25000,
 ): Promise<ImprovDevice> {
   // `wantName` PINS the pick to a specific advertised name. iOS (CoreBluetooth) never
   // exposes a peripheral's BLE MAC — only an opaque per-app UUID — so on a bench with
@@ -59,20 +60,30 @@ async function pickImprovDeviceHeadless(
     hits.set(h.deviceId, { name: h.name, rssi: h.rssi ?? -999 });
   });
   try {
+    if (wantName) {
+      // Crowded RF: 8+ "Led Widget <hex>" boards can advertise at once and OUR board may
+      // take several scan cycles to surface. POLL until the pinned name appears rather
+      // than snapshot one fixed window (a slow first sighting was a spurious "not found").
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const match = [...hits.entries()].filter(([, v]) => v.name === wantName);
+        const top = match.sort((a, b) => b[1].rssi - a[1].rssi)[0];
+        if (top) {
+          onStatus?.(`selected ${top[1].name} (rssi ${top[1].rssi})`);
+          return improvDeviceById(top[0], top[1].name);
+        }
+        if (Date.now() >= deadline) {
+          const saw = [...hits.values()].map((v) => v.name).join(", ") || "none";
+          throw new Error(`Improv device "${wantName}" not found over BLE (saw: ${saw})`);
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
     await new Promise((r) => setTimeout(r, windowMs));
   } finally {
     await scan.stop();
   }
-  let candidates = [...hits.entries()];
-  if (wantName) {
-    const matched = candidates.filter(([, v]) => v.name === wantName);
-    if (matched.length === 0) {
-      const saw = candidates.map(([, v]) => v.name).join(", ") || "none";
-      throw new Error(`Improv device "${wantName}" not found over BLE (saw: ${saw})`);
-    }
-    candidates = matched;
-  }
-  const top = candidates.sort((a, b) => b[1].rssi - a[1].rssi)[0];
+  const top = [...hits.entries()].sort((a, b) => b[1].rssi - a[1].rssi)[0];
   if (!top) throw new Error("no Improv device found over BLE");
   const [deviceId, best] = top;
   onStatus?.(`selected ${best.name} (rssi ${best.rssi})`);

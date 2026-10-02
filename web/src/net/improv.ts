@@ -274,6 +274,18 @@ export async function provisionViaBle(
       const strings = parseRpcResult(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
       if (strings) {
         clearTimeout(timer);
+        // Drop the BLE link now that the redirect is in hand. The player shares one
+        // 2.4GHz radio between BLE and its WiFi/TLS stack and is heap-tight; holding the
+        // BLE central open starves the wss TLS handshake on :443, so the app then hangs
+        // in "connecting" forever. Freeing the radio here lets the very next step —
+        // connecting to wss://<ip>/ws — complete. The device re-advertises after the
+        // disconnect, and the redirect we already parsed is all the caller needs.
+        // Best-effort: provisioning has already succeeded.
+        try {
+          gatt.disconnect();
+        } catch {
+          // already disconnected — fine
+        }
         resolve(strings);
       }
     });
