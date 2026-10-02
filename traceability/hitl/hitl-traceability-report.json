@@ -1,0 +1,1555 @@
+{
+  "schema": "rules_requirements/report/v1",
+  "title": "splanc HITL traceability",
+  "project": {
+    "name": "splanc",
+    "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89)."
+  },
+  "summary": {
+    "user_needs": 8,
+    "user_needs_validated": 0,
+    "requirements": 37,
+    "requirements_verified": 6,
+    "requirements_under_verified": 0,
+    "requirements_partial": 0,
+    "requirements_failed": 0,
+    "requirements_unverified": 31,
+    "risks": 12,
+    "risks_mitigated": 3,
+    "mitigations": 12,
+    "mitigations_verified": 3,
+    "test_cases": 14,
+    "gaps": 40
+  },
+  "levels": [
+    {
+      "name": "analysis",
+      "rank": 1
+    },
+    {
+      "name": "simulation",
+      "rank": 2
+    },
+    {
+      "name": "sil",
+      "rank": 3
+    },
+    {
+      "name": "hil",
+      "rank": 4
+    },
+    {
+      "name": "hitl",
+      "rank": 5
+    },
+    {
+      "name": "inspection",
+      "rank": null
+    }
+  ],
+  "user_needs": [
+    {
+      "id": "UN-1",
+      "title": "Create, preview and tune effects quickly on desktop and mobile",
+      "status": "UNVALIDATED",
+      "description": "Users need to create, preview, and tune effects quickly on desktop and mobile with responsive controls and efficient layouts.",
+      "requirements": [
+        "PR-1",
+        "PR-2",
+        "PR-3",
+        "PR-4",
+        "PR-5",
+        "PR-33",
+        "PR-37"
+      ]
+    },
+    {
+      "id": "UN-2",
+      "title": "Understandable, non-blocking, trustworthy AI + remapping workflows",
+      "status": "UNVALIDATED",
+      "description": "Users need AI-assisted workflows and control remapping that are understandable, non-blocking, and trustworthy.",
+      "requirements": [
+        "PR-5",
+        "PR-6",
+        "PR-7",
+        "PR-8",
+        "PR-37"
+      ]
+    },
+    {
+      "id": "UN-3",
+      "title": "Drive effects from external inputs without extra hardware",
+      "status": "UNVALIDATED",
+      "description": "Users need to drive effects from external inputs such as cameras and TouchDesigner without unnecessary hardware dependencies.",
+      "requirements": [
+        "PR-9",
+        "PR-10",
+        "PR-33",
+        "PR-34"
+      ]
+    },
+    {
+      "id": "UN-4",
+      "title": "Reliably manage LED topology maps",
+      "status": "PARTIAL",
+      "description": "Users need to create, reconstruct, import, export, and manage LED topology maps reliably, including larger installations.",
+      "requirements": [
+        "PR-11",
+        "PR-12",
+        "PR-22",
+        "PR-31",
+        "PR-34"
+      ]
+    },
+    {
+      "id": "UN-5",
+      "title": "Commission and update devices from the browser",
+      "status": "PARTIAL",
+      "description": "Users need to commission, name, discover, connect to, and update devices from the browser with minimal setup friction.",
+      "requirements": [
+        "PR-13",
+        "PR-14",
+        "PR-15",
+        "PR-16",
+        "PR-29",
+        "PR-32",
+        "PR-35"
+      ]
+    },
+    {
+      "id": "UN-6",
+      "title": "Acceptable quality and predictable performance on device",
+      "status": "UNVALIDATED",
+      "description": "Users need acceptable visual quality and predictable runtime performance on constrained device hardware.",
+      "requirements": [
+        "PR-17",
+        "PR-18",
+        "PR-19",
+        "PR-20",
+        "PR-27",
+        "PR-28",
+        "PR-33",
+        "PR-34"
+      ]
+    },
+    {
+      "id": "UN-7",
+      "title": "Stability during long sessions and networking/memory pressure",
+      "status": "PARTIAL",
+      "description": "Users need the device and app to remain stable during long sessions, networking transitions, and memory pressure.",
+      "requirements": [
+        "PR-12",
+        "PR-19",
+        "PR-21",
+        "PR-22",
+        "PR-26",
+        "PR-28",
+        "PR-31",
+        "PR-34"
+      ]
+    },
+    {
+      "id": "UN-8",
+      "title": "Fast, reliable, representative automated validation",
+      "status": "UNVALIDATED",
+      "description": "Users need automated validation that is fast, reliable, and representative of real device behavior.",
+      "requirements": [
+        "PR-23",
+        "PR-24",
+        "PR-25",
+        "PR-30",
+        "PR-36"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "PR-1",
+      "title": "Apply display scaling consistently across control types and views",
+      "status": "UNVERIFIED",
+      "description": "The UI shall apply display scaling consistently across supported control types and views.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-2",
+      "title": "Immediate feedback with bounded expensive recompute during drag",
+      "status": "UNVERIFIED",
+      "description": "The UI shall provide immediate perceptual feedback during continuous adjustments while avoiding excessive expensive recomputation during active drag interactions.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-3",
+      "title": "Preserve per-view settings; defaults never override explicit settings",
+      "status": "UNVERIFIED",
+      "description": "The workspace shall preserve per-view settings and prevent default view modes from overriding explicit user settings.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-4",
+      "title": "Efficient use of screen space on desktop and mobile",
+      "status": "UNVERIFIED",
+      "description": "The workspace shall make efficient use of screen space on desktop and mobile, including 3D previews, panes, menus, and workspace controls.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-5",
+      "title": "Informational UI elements never obstruct primary workflows",
+      "status": "UNVERIFIED",
+      "description": "Informational UI elements such as banners and tooltips shall not obstruct primary workflows and shall be dismissible or self-clearing when appropriate.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1",
+        "UN-2"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-6",
+      "title": "AI workflow surfaces render responses and progress clearly",
+      "status": "UNVERIFIED",
+      "description": "AI workflow surfaces shall render responses clearly, including Markdown where applicable, and shall expose useful progress and completion feedback to the user.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-2"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-7",
+      "title": "Control remapping to semantic effect inputs without editing source",
+      "status": "UNVERIFIED",
+      "description": "Control remapping shall let users map hardware controls to semantic effect inputs without rewriting effect source code.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-2"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-8",
+      "title": "Support local / on-device model workflows where documented",
+      "status": "UNVERIFIED",
+      "description": "The system shall support local or on-device model workflows where documented capabilities call for them.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-2"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-9",
+      "title": "Preview effects from camera/video inputs without dedicated hardware",
+      "status": "UNVERIFIED",
+      "description": "The workspace shall support previewing effects from camera or video-derived inputs even when dedicated hardware is not connected, where feasible.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-3"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-10",
+      "title": "TouchDesigner texture/uniform-driven effect integration",
+      "status": "UNVERIFIED",
+      "description": "The system shall support TouchDesigner integration for texture and uniform-driven effect workflows.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-3"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "tools",
+        "web"
+      ]
+    },
+    {
+      "id": "PR-11",
+      "title": "Capture, reconstruct, upload, import/export and conflict handling",
+      "status": "UNVERIFIED",
+      "description": "The mapping workflow shall support capture, reconstruction, upload, import, export, and conflict handling for topology maps.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-4"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "pi/reconstruction",
+        "pi/server",
+        "pi/led_driver",
+        "solver",
+        "shared/simulator",
+        "web"
+      ]
+    },
+    {
+      "id": "PR-12",
+      "title": "Tolerate larger installations (batching, scale-aware, recovery)",
+      "status": "UNVERIFIED",
+      "description": "The mapping workflow shall tolerate larger installations through batching, scale-aware upload behavior, and recovery-oriented handling of reconstruction interruptions.",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-4",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "pi/server",
+        "web",
+        "pi/hitl"
+      ]
+    },
+    {
+      "id": "PR-13",
+      "title": "Browser provisioning, rename, discovery, LAN and direct connection",
+      "status": "VERIFIED",
+      "description": "The browser experience shall support device provisioning, rename, discovery, LAN connection, and direct connection by available connection modes.",
+      "evidence": [
+        {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        },
+        {
+          "name": "hitl_e2e::improv_provision",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        },
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "pi/server",
+        "pi/hitl",
+        "web"
+      ],
+      "pyramid_violation": true
+    },
+    {
+      "id": "PR-14",
+      "title": "Consistent device-visible identity across name/AP/hostname",
+      "status": "UNVERIFIED",
+      "description": "The system shall derive or maintain device-visible identity consistently across configured name, AP name, hostname, and related discovery surfaces.",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "firmware"
+      ]
+    },
+    {
+      "id": "PR-15",
+      "title": "Browser firmware update detects hardware and flashes compatible image",
+      "status": "UNVERIFIED",
+      "description": "The browser-based firmware update flow shall detect hardware appropriately and flash compatible firmware images for the detected target.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-16",
+      "title": "Cross-platform browser flashing with safe fallback",
+      "status": "UNVERIFIED",
+      "description": "The product shall support browser-based flashing across supported client platforms and provide safe fallback behavior where support is limited.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-17",
+      "title": "Effect runtime capability + calibrated performance-estimation inputs",
+      "status": "UNVERIFIED",
+      "description": "The runtime shall support effect execution features needed by the documented effect system, including embedded/runtime type support and calibrated performance estimation inputs.",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "firmware",
+        "fx_compiler"
+      ]
+    },
+    {
+      "id": "PR-18",
+      "title": "Performance visibility against device budget",
+      "status": "UNVERIFIED",
+      "description": "The system shall provide users with performance visibility sufficient to understand whether an effect is likely to run within device budget.",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "web",
+        "firmware"
+      ]
+    },
+    {
+      "id": "PR-19",
+      "title": "Adapt playback/execution rate to preserve stability",
+      "status": "UNVERIFIED",
+      "description": "The system shall adapt effect playback rate or execution rate to preserve system stability when performance headroom becomes insufficient.",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "firmware"
+      ]
+    },
+    {
+      "id": "PR-20",
+      "title": "Visual output calibration (color correction)",
+      "status": "UNVERIFIED",
+      "description": "The product shall support visual output calibration features such as color correction where documented.",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "firmware",
+        "web"
+      ]
+    },
+    {
+      "id": "PR-21",
+      "title": "Careful device memory management for networking/control/effects",
+      "status": "VERIFIED",
+      "description": "The device firmware and associated protocols shall manage memory carefully enough to support intended networking, control, and effect workloads on target hardware.",
+      "evidence": [
+        {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "hil",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hil",
+      "modules": [
+        "firmware"
+      ],
+      "pyramid_violation": true
+    },
+    {
+      "id": "PR-22",
+      "title": "Preserve user work across transient disconnects",
+      "status": "VERIFIED",
+      "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
+      "evidence": [
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "simulation",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-4",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "pi/server",
+        "web"
+      ]
+    },
+    {
+      "id": "PR-23",
+      "title": "HITL + CI infrastructure validates representative operational flows",
+      "status": "UNVERIFIED",
+      "description": "HITL and CI infrastructure shall validate provisioning, flashing, connectivity, mapping, and representative operational flows.",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-8"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "pi/hitl",
+        "requirements"
+      ]
+    },
+    {
+      "id": "PR-24",
+      "title": "Multi-DUT validation isolates test resources safely",
+      "status": "UNVERIFIED",
+      "description": "The validation system shall support multiple DUTs safely and isolate test resources well enough to prevent cross-device interference.",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-8"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "pi/hitl"
+      ]
+    },
+    {
+      "id": "PR-25",
+      "title": "CI enforces quality gates under routine infrastructure constraints",
+      "status": "UNVERIFIED",
+      "description": "CI shall enforce quality gates and remain operable under routine infrastructure constraints such as noisy builds, storage pressure, and shared-resource contention.",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-8"
+      ],
+      "refines": [],
+      "implements": [],
+      "modules": [
+        "requirements"
+      ]
+    },
+    {
+      "id": "PR-26",
+      "title": "Bound device allocation pressure and abort unsafe workloads",
+      "status": "VERIFIED",
+      "description": "Reduce allocation pressure, prefer zero-copy or streamed handling where possible, store large static data efficiently, monitor memory budgets, and abort unsafe workloads (mitigates device heap exhaustion/fragmentation).",
+      "category": "risk-control",
+      "evidence": [
+        {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-1"
+      ],
+      "method": "hitl",
+      "modules": [
+        "firmware"
+      ],
+      "pyramid_violation": true
+    },
+    {
+      "id": "PR-27",
+      "title": "Calibrate and cover the effect performance model",
+      "status": "UNVERIFIED",
+      "description": "Expand coverage of modeled operations, calibrate the cost model, validate against held-out workloads, and expose budget visibility so the model does not give false confidence.",
+      "category": "risk-control",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-2"
+      ],
+      "method": "hil",
+      "modules": [
+        "firmware",
+        "fx_compiler",
+        "web"
+      ]
+    },
+    {
+      "id": "PR-28",
+      "title": "Autoscale frame rate and enforce headroom",
+      "status": "UNVERIFIED",
+      "description": "Autoscale frame rate, enforce headroom targets, and notify or abort when safe operation cannot be maintained, so expensive effects cannot starve the runtime.",
+      "category": "risk-control",
+      "demanded_level": "hil",
+      "provided_level": null,
+      "satisfies": [
+        "UN-6",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-3"
+      ],
+      "method": "hil",
+      "modules": [
+        "firmware"
+      ]
+    },
+    {
+      "id": "PR-29",
+      "title": "Readiness-aware, reconnect-hardened provisioning",
+      "status": "VERIFIED",
+      "description": "Improve readiness checks, investigate coexistence/reconnect behavior, perform repeated provisioning validation, and harden naming/discovery so provisioning/association is reliable.",
+      "category": "risk-control",
+      "evidence": [
+        {
+          "name": "hitl_e2e::improv_provision",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-4"
+      ],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "pi/hitl",
+        "web"
+      ],
+      "pyramid_violation": true
+    },
+    {
+      "id": "PR-30",
+      "title": "Isolate per-DUT USB/serial/debug by stable physical identity",
+      "status": "UNVERIFIED",
+      "description": "Isolate USB/serial/debug resources by stable physical identity while preserving compatibility, so multi-DUT runs never flash/reset/inspect the wrong board.",
+      "category": "risk-control",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-8"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-5"
+      ],
+      "method": "hitl",
+      "modules": [
+        "pi/hitl"
+      ]
+    },
+    {
+      "id": "PR-31",
+      "title": "Recover mapping from large or interrupted captures",
+      "status": "UNVERIFIED",
+      "description": "Preserve capture data locally, decouple reconstruction from transient device presence, batch uploads, and scale-test the workflow so large or interrupted captures do not lose user work.",
+      "category": "risk-control",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-4",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-6"
+      ],
+      "method": "hitl",
+      "modules": [
+        "pi/reconstruction",
+        "pi/server",
+        "web",
+        "pi/hitl"
+      ]
+    },
+    {
+      "id": "PR-32",
+      "title": "Detect flashing capability and provide fallback transports",
+      "status": "UNVERIFIED",
+      "description": "Detect platform capability, support alternate transport strategies where feasible, and provide clear fallback behavior so browser flashing is usable across client platforms.",
+      "category": "risk-control",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-7"
+      ],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-33",
+      "title": "Bound preview/thumbnail rendering cost and cache growth",
+      "status": "UNVERIFIED",
+      "description": "Lazy rendering, bounded cache/TTL policies, and preview performance budgets so media-driven preview and animated thumbnails cannot collapse performance or grow storage unbounded.",
+      "category": "risk-control",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1",
+        "UN-3",
+        "UN-6"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-8"
+      ],
+      "modules": [
+        "web"
+      ]
+    },
+    {
+      "id": "PR-34",
+      "title": "Pin the wire schema with cross-language conformance tests",
+      "status": "UNVERIFIED",
+      "description": "Strengthen schema ownership and compatibility tests, validate payload dimensions/boundaries, and add cross-language conformance tests so binary schema/protocol drift cannot cause catastrophic allocations or corruption.",
+      "category": "risk-control",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-3",
+        "UN-4",
+        "UN-6",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-9"
+      ],
+      "modules": [
+        "shared/protocol",
+        "pi/server",
+        "pi/reconstruction",
+        "web",
+        "solver"
+      ]
+    },
+    {
+      "id": "PR-35",
+      "title": "Reconcile device identity on stable attributes",
+      "status": "VERIFIED",
+      "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
+      "category": "risk-control",
+      "evidence": [
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "hitl",
+      "satisfies": [
+        "UN-5"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-10"
+      ],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "web"
+      ],
+      "pyramid_violation": true
+    },
+    {
+      "id": "PR-36",
+      "title": "Readiness-aware HITL/CI orchestration with contention control",
+      "status": "UNVERIFIED",
+      "description": "Replace timing assumptions with readiness-aware orchestration, control shared-resource contention, manage runner storage, and enforce cleaner quality gates so HITL/CI flakiness does not erode trust in results.",
+      "category": "risk-control",
+      "demanded_level": "hitl",
+      "provided_level": null,
+      "satisfies": [
+        "UN-8"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-11"
+      ],
+      "method": "hitl",
+      "modules": [
+        "pi/hitl",
+        "requirements"
+      ]
+    },
+    {
+      "id": "PR-37",
+      "title": "UI regression coverage for state, visibility and layout",
+      "status": "UNVERIFIED",
+      "description": "Regression coverage for settings persistence, visibility, focus, tooltip/banner behavior, and responsive layout so UI state inconsistency or obstruction cannot block primary tasks.",
+      "category": "risk-control",
+      "demanded_level": "simulation",
+      "provided_level": null,
+      "satisfies": [
+        "UN-1",
+        "UN-2"
+      ],
+      "refines": [],
+      "implements": [
+        "MIT-12"
+      ],
+      "modules": [
+        "web"
+      ]
+    }
+  ],
+  "mitigations": [
+    {
+      "id": "MIT-1",
+      "title": "Bound device allocation pressure and abort unsafe workloads",
+      "status": "VERIFIED",
+      "description": "Risk control for RISK-1 (Device heap exhaustion or fragmentation during runtime workloads); FUG-88 prose mitigation, specified as PR-26.",
+      "type": null,
+      "mitigates": [
+        "RISK-1"
+      ],
+      "implemented_by": [
+        "PR-26"
+      ]
+    },
+    {
+      "id": "MIT-2",
+      "title": "Calibrate and cover the effect performance model",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-2 (Effect performance model gives false confidence); FUG-88 prose mitigation, specified as PR-27.",
+      "type": null,
+      "mitigates": [
+        "RISK-2"
+      ],
+      "implemented_by": [
+        "PR-27"
+      ]
+    },
+    {
+      "id": "MIT-3",
+      "title": "Autoscale frame rate and enforce headroom",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-3 (Runtime starvation from expensive effects); FUG-88 prose mitigation, specified as PR-28.",
+      "type": null,
+      "mitigates": [
+        "RISK-3"
+      ],
+      "implemented_by": [
+        "PR-28"
+      ]
+    },
+    {
+      "id": "MIT-4",
+      "title": "Readiness-aware, reconnect-hardened provisioning",
+      "status": "VERIFIED",
+      "description": "Risk control for RISK-4 (Provisioning or wireless association is unreliable); FUG-88 prose mitigation, specified as PR-29.",
+      "type": null,
+      "mitigates": [
+        "RISK-4"
+      ],
+      "implemented_by": [
+        "PR-29"
+      ]
+    },
+    {
+      "id": "MIT-5",
+      "title": "Isolate per-DUT USB/serial/debug by stable physical identity",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-5 (Cross-device interference in multi-DUT environments); FUG-88 prose mitigation, specified as PR-30.",
+      "type": null,
+      "mitigates": [
+        "RISK-5"
+      ],
+      "implemented_by": [
+        "PR-30"
+      ]
+    },
+    {
+      "id": "MIT-6",
+      "title": "Recover mapping from large or interrupted captures",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-6 (Mapping reconstruction or upload fails for large/interrupted captures); FUG-88 prose mitigation, specified as PR-31.",
+      "type": null,
+      "mitigates": [
+        "RISK-6"
+      ],
+      "implemented_by": [
+        "PR-31"
+      ]
+    },
+    {
+      "id": "MIT-7",
+      "title": "Detect flashing capability and provide fallback transports",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-7 (Browser flashing unavailable/unreliable on important platforms); FUG-88 prose mitigation, specified as PR-32.",
+      "type": null,
+      "mitigates": [
+        "RISK-7"
+      ],
+      "implemented_by": [
+        "PR-32"
+      ]
+    },
+    {
+      "id": "MIT-8",
+      "title": "Bound preview/thumbnail rendering cost and cache growth",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-8 (Media preview/thumbnail causes perf collapse or cache growth); FUG-88 prose mitigation, specified as PR-33.",
+      "type": null,
+      "mitigates": [
+        "RISK-8"
+      ],
+      "implemented_by": [
+        "PR-33"
+      ]
+    },
+    {
+      "id": "MIT-9",
+      "title": "Pin the wire schema with cross-language conformance tests",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-9 (Binary schema or protocol drift across components); FUG-88 prose mitigation, specified as PR-34.",
+      "type": null,
+      "mitigates": [
+        "RISK-9"
+      ],
+      "implemented_by": [
+        "PR-34"
+      ]
+    },
+    {
+      "id": "MIT-10",
+      "title": "Reconcile device identity on stable attributes",
+      "status": "VERIFIED",
+      "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
+      "type": null,
+      "mitigates": [
+        "RISK-10"
+      ],
+      "implemented_by": [
+        "PR-35"
+      ]
+    },
+    {
+      "id": "MIT-11",
+      "title": "Readiness-aware HITL/CI orchestration with contention control",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-11 (HITL and CI infrastructure flakiness reduces trust in validation); FUG-88 prose mitigation, specified as PR-36.",
+      "type": null,
+      "mitigates": [
+        "RISK-11"
+      ],
+      "implemented_by": [
+        "PR-36"
+      ]
+    },
+    {
+      "id": "MIT-12",
+      "title": "UI regression coverage for state, visibility and layout",
+      "status": "UNVERIFIED",
+      "description": "Risk control for RISK-12 (UI state inconsistency or obstruction blocks primary tasks); FUG-88 prose mitigation, specified as PR-37.",
+      "type": null,
+      "mitigates": [
+        "RISK-12"
+      ],
+      "implemented_by": [
+        "PR-37"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "RISK-1",
+      "title": "Device heap exhaustion or fragmentation during runtime workloads",
+      "status": "MITIGATED",
+      "description": "Undermines UN-5, UN-6, UN-7 by causing disconnects, instability, or inability to complete operations during networking/control workloads.",
+      "residual": "Reduced but not eliminated \u2014 long-session heap headroom still needs on-hardware soak coverage (PR-26 is HITL-demanded).",
+      "severity": "high",
+      "likelihood": "likely",
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-1"
+      ],
+      "score": 16
+    },
+    {
+      "id": "RISK-2",
+      "title": "Effect performance model gives false confidence",
+      "status": "OPEN",
+      "description": "The model allows effects that exceed realistic runtime budget, undermining UN-6 and indirectly threatening UN-7.",
+      "residual": "Bounded by held-out validation, but the cost model only tracks reality as well as its device calibration (PR-27 is HIL-demanded).",
+      "severity": "high",
+      "likelihood": "possible",
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-2"
+      ],
+      "score": 12
+    },
+    {
+      "id": "RISK-3",
+      "title": "Runtime starvation from expensive effects",
+      "status": "OPEN",
+      "description": "Expensive effects cause unstable frame rate or harm other firmware responsibilities, undermining UN-6 and UN-7.",
+      "severity": "high",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-3"
+      ]
+    },
+    {
+      "id": "RISK-4",
+      "title": "Provisioning or wireless association is unreliable",
+      "status": "MITIGATED",
+      "description": "Directly harms UN-5 and weakens UN-8 when HITL depends on it.",
+      "residual": "Reconnect/coexistence hardening helps, but association reliability is only as good as the last repeated on-bench provisioning run (PR-29 is HITL).",
+      "severity": "high",
+      "likelihood": "possible",
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-4"
+      ],
+      "score": 12
+    },
+    {
+      "id": "RISK-5",
+      "title": "Cross-device interference in multi-DUT environments",
+      "status": "OPEN",
+      "description": "The wrong board is flashed, reset, or inspected, harming UN-8 and invalidating automation confidence.",
+      "severity": "high",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-5"
+      ]
+    },
+    {
+      "id": "RISK-6",
+      "title": "Mapping reconstruction or upload fails for large/interrupted captures",
+      "status": "OPEN",
+      "description": "Harms UN-4 and UN-7 by risking loss of user work or inability to complete installations.",
+      "severity": "medium",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-6"
+      ]
+    },
+    {
+      "id": "RISK-7",
+      "title": "Browser flashing unavailable/unreliable on important platforms",
+      "status": "OPEN",
+      "description": "Harms UN-5 (e.g. Android browser flashing).",
+      "severity": "medium",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-7"
+      ]
+    },
+    {
+      "id": "RISK-8",
+      "title": "Media preview/thumbnail causes perf collapse or cache growth",
+      "status": "OPEN",
+      "description": "Harms UN-1, UN-3, UN-6 through performance collapse or unbounded cache/storage growth.",
+      "severity": "medium",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-8"
+      ]
+    },
+    {
+      "id": "RISK-9",
+      "title": "Binary schema or protocol drift across components",
+      "status": "OPEN",
+      "description": "Causes catastrophic allocations or corrupted behavior, harming UN-3, UN-4, UN-6, UN-7.",
+      "residual": "Cross-language conformance tests catch drift at simulation level; the residual is schema changes shipped without regenerating a consumer.",
+      "severity": "high",
+      "likelihood": "unlikely",
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-9"
+      ],
+      "score": 8
+    },
+    {
+      "id": "RISK-10",
+      "title": "Device identity inconsistencies across IP/hostname/AP/records",
+      "status": "MITIGATED",
+      "description": "Cause connection confusion, harming UN-5.",
+      "severity": "medium",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-10"
+      ]
+    },
+    {
+      "id": "RISK-11",
+      "title": "HITL and CI infrastructure flakiness reduces trust in validation",
+      "status": "OPEN",
+      "description": "Harms UN-8 through unreliable validation results.",
+      "severity": "medium",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-11"
+      ]
+    },
+    {
+      "id": "RISK-12",
+      "title": "UI state inconsistency or obstruction blocks primary tasks",
+      "status": "OPEN",
+      "description": "Confuses users and blocks primary tasks, harming UN-1 and UN-2.",
+      "severity": "low",
+      "likelihood": null,
+      "residual_severity": null,
+      "residual_likelihood": null,
+      "mitigations": [
+        "MIT-12"
+      ]
+    }
+  ],
+  "test_methods": [],
+  "modules": {
+    "firmware": "PARTIAL",
+    "fx_compiler": "UNVERIFIED",
+    "pi/hitl": "PARTIAL",
+    "pi/led_driver": "UNVERIFIED",
+    "pi/reconstruction": "UNVERIFIED",
+    "pi/server": "PARTIAL",
+    "requirements": "UNVERIFIED",
+    "shared/protocol": "UNVERIFIED",
+    "shared/simulator": "UNVERIFIED",
+    "solver": "UNVERIFIED",
+    "tools": "UNVERIFIED",
+    "web": "PARTIAL"
+  },
+  "high_open_risks": [
+    "RISK-2",
+    "RISK-3",
+    "RISK-5",
+    "RISK-9"
+  ],
+  "pyramid_violations": [
+    "PR-13",
+    "PR-21",
+    "PR-26",
+    "PR-29",
+    "PR-35"
+  ],
+  "unknown_evidence": {},
+  "gaps": [
+    {
+      "kind": "unverified",
+      "entity": "PR-1",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-2",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-3",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-4",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-5",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-6",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-7",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-8",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-9",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-10",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-11",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-12",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-13",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-14",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-15",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-16",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-17",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-18",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-19",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-20",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-21",
+      "message": "demands hil but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hil",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-23",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-24",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-25",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-26",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-27",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-28",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hil"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-29",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-30",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-31",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-32",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-33",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-34",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-35",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-36",
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
+      "kind": "unverified",
+      "entity": "PR-37",
+      "message": "no test evidence",
+      "route": "autonomous",
+      "demanded_level": "simulation"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-2",
+      "message": "high risk; mitigation is OPEN",
+      "route": "human-gate"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-3",
+      "message": "high risk; mitigation is OPEN",
+      "route": "human-gate"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-5",
+      "message": "high risk; mitigation is OPEN",
+      "route": "human-gate"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-9",
+      "message": "high risk; mitigation is OPEN",
+      "route": "human-gate"
+    }
+  ]
+}
