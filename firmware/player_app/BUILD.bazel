@@ -15,6 +15,7 @@ load("@embedded//rules:resources.bzl", "c_resource_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
 load("//tools/build_info:build_info.bzl", "build_info_file")
@@ -525,3 +526,152 @@ flash_bundle(
 # (:flash_esp32c6 + :esp32c6_flashbundle removed with the vendor player image above —
 # see the "Vendor player firmware REMOVED" note. The netstack flashbundle
 # (:esp32c6_netstack_flashbundle) is the one the HITL rig flashes now.)
+
+# -- per-case traceability suites (rules_requirements) ------------------------
+# Host tests of the C ABI whose cases each record the ONE requirement they
+# verify (rr::verifies! -> JUnit). The FFI state is process-global, so each
+# binary runs its cases one at a time (every case re-initializes the player).
+
+# Device-visible identity: boot name -> welcome, rename -> reply + the
+# firmware's lm_device_name poll (NVS + BLE) -> reboot restore.
+rr_rust_test(
+    name = "device_identity_test",
+    srcs = ["tests/device_identity.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Expensive/runaway effects cannot starve the render task: instruction-budget
+# and deadline aborts, update-outcome + overrun notification, switch-off.
+rr_rust_test(
+    name = "starvation_guard_test",
+    srcs = ["tests/starvation_guard.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Playback keeps real time when the frame rate drops (built-in topology effects
+# and dt-driven user effects render the same picture at the same time).
+rr_rust_test(
+    name = "playback_rate_test",
+    srcs = ["tests/playback_rate.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# The intended networking / control / effect workloads complete on the device's
+# fixed memory budget (sharded full-cap map, scan topology, per-LED effect state).
+rr_rust_test(
+    name = "memory_workloads_test",
+    srcs = ["tests/memory_workloads.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Allocation pressure stays bounded: streamed decode through one block, packed
+# effect storage, heap figures in every PerfReport, and oversize uploads /
+# effects / video frames / LEDs / buffers refused or clamped, never overflowed.
+rr_rust_test(
+    name = "memory_bounds_test",
+    srcs = ["tests/memory_bounds.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Embedded number types on the device runtime: all-fixed effects, integer
+# transcendentals and int16 per-LED state, against float twins.
+rr_rust_test(
+    name = "embedded_types_test",
+    srcs = ["tests/embedded_types.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Colour calibration: set_color_correction -> the per-channel LUT inputs and the
+# persist/preview decision main.cpp's poll_color_correction acts on.
+rr_rust_test(
+    name = "color_calibration_test",
+    srcs = ["tests/color_calibration.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
+
+# Cost-model inputs + budget visibility: exact per-frame opcode counts in FULL,
+# none in BASIC, and reports pinned to the program that produced them.
+rr_rust_test(
+    name = "perf_cost_counters_test",
+    srcs = ["tests/perf_cost_counters.rs"],
+    args = ["--test-threads=1"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@rules_requirements//rust:rr",
+    ],
+)
