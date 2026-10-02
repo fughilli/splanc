@@ -133,6 +133,14 @@ bazel run @rules_requirements//python:rr -- report \
 The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
 as the `traceability-report` artifact.
 
+The reports are published at
+**<https://fughilli.github.io/splanc/traceability/>** after every Test or HITL
+run on `main` ([`.github/workflows/traceability-site.yaml`](../.github/workflows/traceability-site.yaml)):
+the page is the combined report (the latest main Test run's software evidence
+and the latest main HITL run's hardware evidence against the model), with each
+run's own report under `software/` and `hitl/`, and the JSON report and gap
+queue next to them.
+
 HITL tests only run where the rigs are reachable, so the HITL workflow
 ([`.github/workflows/hitl.yaml`](../.github/workflows/hitl.yaml)) publishes its
 own `hitl-traceability-report` from the on-hardware run: each harness phase is a

@@ -1,0 +1,128 @@
+# Publish the requirements traceability reports to GitHub Pages, at
+# https://fughilli.github.io/splanc/traceability/ , whenever a Test or HITL run
+# on main completes (and on demand):
+#
+#   /traceability/           the COMBINED report: the model at the latest main
+#                            Test run's commit against that run's software
+#                            evidence AND the latest main HITL run's hardware
+#                            evidence (stamped with another commit -> STALE)
+#   /traceability/software/  the Test run's own report
+#   /traceability/hitl/      the HITL run's own report
+#
+# The evidence comes from the runs' traceability-evidence /
+# hitl-traceability-evidence artifacts (the raw JUnit XML), rendered here with
+# rules_requirements installed at the commit MODULE.bazel pins — no Bazel.
+# See docs/requirements-driven-development.md.
+name: Traceability site
+
+on:
+  workflow_run:
+    workflows: ['Test', 'HITL tests']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # push gh-pages
+  actions: read # read the runs' artifacts
+
+# Serialize gh-pages writes with the PR previews and the release deploy.
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # The latest completed main run of each workflow that still has its
+      # evidence artifact (a run's report is uploaded even when tests fail).
+      - name: Find the runs to publish
+        id: runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          latest() {  # <workflow file> <artifact> -> "<run id> <head sha> <url>"
+            for id in $(gh run list -R "$REPO" -w "$1" -b main -s completed -L 30 \
+                          --json databaseId -q '.[].databaseId'); do
+              if gh api "repos/$REPO/actions/runs/$id/artifacts" \
+                   -q ".artifacts[] | select(.name == \"$2\" and (.expired | not)) | .id" | grep -q .; then
+                gh run view -R "$REPO" "$id" --json databaseId,headSha,url \
+                  -q '"\(.databaseId) \(.headSha) \(.url)"'
+                return
+              fi
+            done
+          }
+          read -r sw_id sw_sha sw_url <<<"$(latest test.yaml traceability-evidence)"
+          read -r hw_id hw_sha hw_url <<<"$(latest hitl.yaml hitl-traceability-evidence)"
+          if [ -z "$sw_id" ]; then
+            echo "::warning::no main Test run with a traceability-evidence artifact yet"
+          fi
+          {
+            echo "sw_id=$sw_id"; echo "sw_sha=$sw_sha"; echo "sw_url=$sw_url"
+            echo "hw_id=$hw_id"; echo "hw_sha=$hw_sha"; echo "hw_url=$hw_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Setup repository (the published commit)
+        if: steps.runs.outputs.sw_id != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.runs.outputs.sw_sha }}
+
+      - name: Download the runs' reports and evidence
+        if: steps.runs.outputs.sw_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SW_ID: ${{ steps.runs.outputs.sw_id }}
+          HW_ID: ${{ steps.runs.outputs.hw_id }}
+        run: |
+          gh run download -R "$REPO" "$SW_ID" -n traceability-report -D _in/sw-report
+          gh run download -R "$REPO" "$SW_ID" -n traceability-evidence -D _in/sw-evidence
+          if [ -n "$HW_ID" ]; then
+            gh run download -R "$REPO" "$HW_ID" -n hitl-traceability-report -D _in/hw-report || true
+            gh run download -R "$REPO" "$HW_ID" -n hitl-traceability-evidence -D _in/hw-evidence
+          fi
+
+      - name: Setup Python
+        if: steps.runs.outputs.sw_id != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The same rules_requirements the build uses (the git_override pin).
+      - name: Install rules_requirements
+        if: steps.runs.outputs.sw_id != ''
+        run: |
+          pin=$(python3 - <<'EOF'
+          import re
+          text = open("MODULE.bazel", encoding="utf-8").read()
+          block = re.search(r'git_override\(\s*module_name = "rules_requirements",(.*?)\)', text, re.S)
+          print(re.search(r'commit = "([0-9a-f]{40})"', block.group(1)).group(1))
+          EOF
+          )
+          pip install "rules-requirements @ git+https://github.com/Studio-Fug/rules_requirements@$pin"
+
+      - name: Build the site
+        if: steps.runs.outputs.sw_id != ''
+        env:
+          SW_SHA: ${{ steps.runs.outputs.sw_sha }}
+          SW_URL: ${{ steps.runs.outputs.sw_url }}
+          HW_SHA: ${{ steps.runs.outputs.hw_sha }}
+          HW_URL: ${{ steps.runs.outputs.hw_url }}
+        run: |
+          python3 requirements/traceability_site.py --out _site --root . --commit "$SW_SHA" \
+            --software-report _in/sw-report --software-evidence _in/sw-evidence --software-run "$SW_URL" \
+            --hitl-report _in/hw-report --hitl-evidence _in/hw-evidence --hitl-run "$HW_URL" \
+            --hitl-commit "$HW_SHA"
+
+      - name: Publish to GitHub Pages (/traceability/)
+        if: steps.runs.outputs.sw_id != ''
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site
+          branch: gh-pages
+          target-folder: traceability
+          clean: true
+          commit-message: 'traceability: main @ ${{ steps.runs.outputs.sw_sha }}'

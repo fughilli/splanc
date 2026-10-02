@@ -234,6 +234,7 @@ jobs:
           clean: true
           clean-exclude: |
             pr-preview/
+            traceability/
 
       - name: Deploy to Cloudflare Pages (production)
         if: env.CLOUDFLARE_API_TOKEN != ''
