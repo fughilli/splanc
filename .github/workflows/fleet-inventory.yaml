@@ -1,0 +1,37 @@
+# HITL fleet-inventory — keep the Grafana inventory artifact in sync with the
+# reservation catalogs (FUG-117 follow-on).
+#
+# gen_inventory.py flattens pi/hitl/reserve/catalog*.json (bound to hosts by
+# fleet.json) into pi/hitl/observability/fleet/fleet-inventory.json, which the
+# HITL Fleet Inventory dashboard reads via the Infinity datasource (from the
+# committed file's raw URL — the artifact is tiny, so unlike the fx_bench dataset
+# it's committed rather than a release asset). This workflow runs the aggregation
+# unit tests and fails if the committed JSON is stale, so a catalog edit can't
+# silently drift the dashboard. No secrets / no network needed.
+name: HITL fleet inventory
+on:
+  pull_request:
+    paths:
+      - 'pi/hitl/reserve/catalog*.json'
+      - 'pi/hitl/observability/fleet/**'
+      - '.github/workflows/fleet-inventory.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'pi/hitl/reserve/catalog*.json'
+      - 'pi/hitl/observability/fleet/**'
+      - '.github/workflows/fleet-inventory.yaml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Unit-test the aggregation
+        working-directory: pi/hitl/observability/fleet
+        run: python3 test_gen_inventory.py
+      - name: Fail if the committed inventory is stale
+        run: python3 pi/hitl/observability/fleet/gen_inventory.py --check

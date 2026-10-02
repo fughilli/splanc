@@ -1,0 +1,38 @@
+{
+  "comment": "Host -> reservation-catalog map for the HITL fleet inventory (gen_inventory.py). This is the ONE piece the reservation catalogs can't carry: catalog.json is fleet-identical and discovery-based (it never names hitl-rig-1/2/3), and amd-rig runs TWO daemons off two catalogs — so the host<->catalog binding lives here, alongside each host's board and role. It mirrors the //pi/hitl:BUILD sbc_application targets (hitl / hitl_pi3 -> catalog.json, hitl_sdr -> catalog-sdr.json + catalog-phone.json, the darwin runner -> catalog-mac.json) and the deployed --hostname values (see hitl_station_config.md). Update this when a rig is added/retired or re-boarded.",
+  "hosts": [
+    {
+      "host": "hitl-rig-1",
+      "board": "Raspberry Pi 5",
+      "role": "Pi rig (auto-discovered ESP32-C6 DUTs)",
+      "catalogs": ["catalog.json"],
+      "discovery_chips": ["esp32c6"]
+    },
+    {
+      "host": "hitl-rig-2",
+      "board": "Raspberry Pi 5",
+      "role": "Pi rig (auto-discovered ESP32-C6 DUTs)",
+      "catalogs": ["catalog.json"],
+      "discovery_chips": ["esp32c6"]
+    },
+    {
+      "host": "hitl-rig-3",
+      "board": "Raspberry Pi 3B+",
+      "role": "Pi rig (auto-discovered; DUT 2 is an ESP32-C3, per catalog.json chip_overrides)",
+      "catalogs": ["catalog.json"],
+      "discovery_chips": ["esp32c6", "esp32c3"]
+    },
+    {
+      "host": "amd-rig",
+      "board": "x86_64 (SDR + phone bench)",
+      "role": "SDR RE bench (composite C6+HackRF) + Android phone bench (two daemons)",
+      "catalogs": ["catalog-sdr.json", "catalog-phone.json"]
+    },
+    {
+      "host": "mac-mini",
+      "board": "Mac mini (darwin runner)",
+      "role": "iOS bench (real iPhone + C6)",
+      "catalogs": ["catalog-mac.json"]
+    }
+  ]
+}
