@@ -214,9 +214,11 @@ impl BleHost {
             }
             (HostState::RandAddrSent, _) => {
                 self.state = HostState::AdvParamsSent;
-                // adv interval 0x00A0 (100ms), connectable undirected, own addr type
-                // = 1 (random — matches the address set above).
-                let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
+                // adv interval 0x0140 (320 * 0.625ms = 200ms = 5Hz), connectable
+                // undirected, own addr type = 1 (random — matches the address set
+                // above). Slower than the old 0x00A0 (100ms/10Hz) to ease adv-channel
+                // congestion when 8+ boards advertise on the same bench.
+                let p = [0x40, 0x01, 0x40, 0x01, 0x00, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
                 cmd(OP_LE_SET_ADV_PARAMS, &p, out)
             }
             (HostState::AdvParamsSent, _) => {
