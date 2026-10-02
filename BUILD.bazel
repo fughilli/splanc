@@ -51,6 +51,9 @@ js_library(
 # Exported so other packages (and the codegen genrule) can depend on the source
 # files without leaking implementation details about the root package.
 exports_files([
+    # The HITL CI workflow, read by //pi/hitl/tests:hitl_test to pin its
+    # contention/storage/retry orchestration settings (PR-36).
+    ".github/workflows/hitl.yaml",
     "requirements.in",
     "requirements.lock",
     "package.json",

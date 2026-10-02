@@ -26,6 +26,9 @@ py_test(
         "pytest_main.py",
         "test_ap_lock.py",
         "test_board_caps.py",
+        "test_catalog_multidut_isolation.py",
+        "test_catalog_stable_identity.py",
+        "test_ci_orchestration.py",
         "test_e2e_phases.py",
         "test_fx_bench.py",
         "test_hardware_config_pattern.py",
@@ -38,13 +41,24 @@ py_test(
         "test_mapping_trigger.py",
         "test_pool.py",
         "test_provision.py",
+        "test_reach_preflight.py",
+        "test_reservation_readiness.py",
+        "test_rig_isolation_core.py",
         "test_sync.py",
         "test_tls_churn.py",
         "test_uniform_bench.py",
         "test_video_bench.py",
     ],
-    # test_board_caps pins the REAL descriptor, loaded from runfiles.
-    data = ["//firmware/player_app:board_caps.textproto"],
+    # test_board_caps pins the REAL descriptor, loaded from runfiles; the
+    # reservation catalogs and the HITL CI workflow are the multi-DUT isolation +
+    # orchestration config the catalog/CI tests pin (PR-24, PR-30, PR-36).
+    data = [
+        "//:.github/workflows/hitl.yaml",
+        "//firmware/player_app:board_caps.textproto",
+        "//pi/hitl/reserve:catalog.json",
+        "//pi/hitl/reserve:catalog-phone.json",
+        "//pi/hitl/reserve:catalog-sdr.json",
+    ],
     imports = ["."],
     legacy_create_init = False,
     main = "pytest_main.py",
