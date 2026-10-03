@@ -65,14 +65,6 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
-      "entity": "PR-13",
-      "message": "demands hitl, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
-    },
-    {
       "kind": "unverified",
       "entity": "PR-14",
       "message": "no test evidence",
@@ -111,14 +103,6 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "stale",
-      "entity": "PR-21",
-      "message": "only passing evidence is against an older build",
-      "route": "human-gate",
-      "demanded_level": "hil",
-      "provided_level": "hitl"
-    },
-    {
       "kind": "pyramid",
       "entity": "PR-21",
       "message": "demands hil but has no analysis/simulation evidence backing the physical result",
@@ -140,14 +124,6 @@
       "message": "no test evidence",
       "route": "human-gate",
       "demanded_level": "hitl"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-26",
-      "message": "only passing evidence is against an older build",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
     },
     {
       "kind": "pyramid",
@@ -173,14 +149,6 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "under-verified",
-      "entity": "PR-29",
-      "message": "demands hitl, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
-    },
-    {
       "kind": "unverified",
       "entity": "PR-30",
       "message": "no test evidence",
@@ -203,14 +171,6 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "stale",
-      "entity": "PR-35",
-      "message": "only passing evidence is against an older build",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
       "kind": "pyramid",
       "entity": "PR-35",
       "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
@@ -226,10 +186,10 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "high-risk-open",
-      "entity": "RISK-1",
-      "message": "high risk; mitigation is PARTIAL",
-      "route": "human-gate"
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:map_upload_netstack",
+      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
+      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
@@ -241,12 +201,6 @@
       "kind": "high-risk-open",
       "entity": "RISK-3",
       "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-4",
-      "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
     {
