@@ -141,8 +141,10 @@ fn brightness_to_q8(v: f64) -> u16 {
     q.clamp(0, BRIGHTNESS_ONE_Q8 as i32) as u16
 }
 
-/// Counting-pattern block capacity (matches SetCountingPattern.blocks in the
-/// firmware micropb profile, //shared/protocol/rust:gen_main.rs).
+/// Counting-pattern block capacity the player stores. Matches the HOST wire cap
+/// (SetCountingPattern.blocks); the firmware decodes that arm zero-copy (ffi.rs)
+/// straight into this, so it is the real decode capacity, not the (stubbed)
+/// firmware micropb profile.
 const MAX_COUNTING_BLOCKS: usize = 32;
 
 /// A counting-pattern block with its color pre-reduced to 8-bit RGB. The wire
@@ -622,17 +624,52 @@ impl Player {
         m: pb::SetCountingPattern,
         now_ms: i64,
     ) -> pb::ServerMessage {
+        // Reduce each block's [0,1] wire color to 8-bit, then install via the
+        // shared path. This generated-decode path serves the host tests /
+        // conformance; on firmware the arm is decoded ZERO-COPY in ffi.rs and
+        // calls set_counting_blocks directly (so the fat 32×f64-rgb wire array
+        // never lands on the task stack).
+        let mut reduced: micropb::heapless::Vec<(u32, u32, Rgb), MAX_COUNTING_BLOCKS> =
+            micropb::heapless::Vec::new();
+        for b in m.r#blocks.iter() {
+            let ch = |i: usize| -> u8 {
+                let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
+                (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+            };
+            let _ = reduced.push((
+                b.r#start.max(0) as u32,
+                b.r#count.max(0) as u32,
+                (ch(0), ch(1), ch(2)),
+            ));
+        }
+        self.set_counting_blocks(now_ms, &reduced, m.r#color_order().map(|s| s.as_str()))
+    }
+
+    /// Install a counting pattern from pre-reduced 8-bit blocks (empty = clear
+    /// it), with an optional wire color-order override string (a permutation of
+    /// "RGB"; unset/None = raw identity). Shared by the generated-decode path
+    /// above and the firmware's zero-copy ffi walker, so neither materializes the
+    /// wire ColorBlock array. Colors are pre-reduced by the caller so
+    /// `counting_color` (polled per-LED every render pass) stays pure-integer.
+    /// `color_order` is validated BEFORE any mutation, so a bad string leaves the
+    /// current pattern untouched.
+    pub fn set_counting_blocks(
+        &mut self,
+        now_ms: i64,
+        blocks: &[(u32, u32, Rgb)],
+        color_order: Option<&str>,
+    ) -> pb::ServerMessage {
         let mut state = pb::CountingState::default();
         // Probe wire order (identity = raw). Validated before any mutation so a
         // bad string leaves the current pattern untouched.
-        let order = match m.r#color_order() {
-            Some(s) => match color_order_index(s.as_str()) {
+        let order = match color_order {
+            Some(s) => match color_order_index(s) {
                 Some(i) => COLOR_ORDERS[i as usize].1,
                 None => return error("bad_message", "unknown color_order"),
             },
             None => [0, 1, 2],
         };
-        if m.r#blocks.is_empty() {
+        if blocks.is_empty() {
             self.counting = None;
             self.counting_order = [0, 1, 2];
             state.r#active = false;
@@ -640,22 +677,13 @@ impl Player {
             self.counting_order = order;
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
-            // Pre-reduce each block's [0,1] wire color to 8-bit RGB now (cold),
-            // so the per-LED counting_color polled every render pass is integer.
-            let mut blocks = CountingBlocks::new();
-            for b in m.r#blocks.iter() {
-                let ch = |i: usize| -> u8 {
-                    let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
-                    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-                };
-                // blocks capacity == the wire block cap, so push cannot fail.
-                let _ = blocks.push(CountingBlock {
-                    start: b.r#start.max(0) as u32,
-                    count: b.r#count.max(0) as u32,
-                    rgb: (ch(0), ch(1), ch(2)),
-                });
+            let mut cb = CountingBlocks::new();
+            for &(start, count, rgb) in blocks.iter().take(MAX_COUNTING_BLOCKS) {
+                // capacity == MAX_COUNTING_BLOCKS, and we cap the iterator, so
+                // push cannot fail.
+                let _ = cb.push(CountingBlock { start, count, rgb });
             }
-            self.counting = Some((now_ms, blocks));
+            self.counting = Some((now_ms, cb));
         }
         reply(SMsg::CountingState(state))
     }
