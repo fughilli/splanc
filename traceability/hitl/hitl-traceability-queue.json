@@ -258,18 +258,6 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_netstack",
-      "message": "//pi/hitl/harness:fx_bench_netstack pi/hitl/harness/fx_bench_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:map_upload_netstack",
-      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is OPEN",
