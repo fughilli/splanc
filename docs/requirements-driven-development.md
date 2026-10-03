@@ -139,7 +139,11 @@ run on `main` ([`.github/workflows/traceability-site.yaml`](../.github/workflows
 the page is the combined report (the latest main Test run's software evidence
 and the latest main HITL run's hardware evidence against the model), with each
 run's own report under `software/` and `hitl/`, and the JSON report and gap
-queue next to them.
+queue next to them. Hardware evidence stamped with a different commit than the
+published one counts as STALE there, so right after a push (the Test run lands
+before that commit's HITL run) requirements that only hardware verifies read
+under-verified until the HITL run for the same commit finishes; the banner says
+when this is the case.
 
 HITL tests only run where the rigs are reachable, so the HITL workflow
 ([`.github/workflows/hitl.yaml`](../.github/workflows/hitl.yaml)) publishes its

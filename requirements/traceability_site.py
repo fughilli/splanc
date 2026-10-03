@@ -103,6 +103,17 @@ def _nav(prefix: str, info: dict, current: str) -> str:
         " · ".join(downloads),
     ]
     items = "".join(f"<span>{p}</span>" for p in parts)
+    hw_commit = info["hitl"]["commit"]
+    if current == "combined" and hw_commit and hw_commit != info["commit"]:
+        # Each push to main reaches this page before its own HITL run finishes.
+        items += (
+            '<span style="flex-basis:100%">'
+            f"The hardware evidence is from <code>{html.escape(hw_commit[:8])}</code>, "
+            f"not <code>{html.escape(info['commit'][:8])}</code>: this combined report "
+            "counts it as STALE, so requirements only hardware verifies read "
+            "under-verified until the HITL run for this commit finishes (the "
+            "Hardware page shows that run's own verdicts).</span>"
+        )
     return f'<nav class="rr-site" style="{_NAV_STYLE}">{items}</nav>'
 
 
