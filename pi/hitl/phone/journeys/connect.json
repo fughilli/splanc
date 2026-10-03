@@ -1,13 +1,13 @@
 {
   "name": "connect",
   "description": "Scan for and connect to a device: virtual BLE provision, then connect the player socket and assert we reach 'connected' with a device MAC.",
-  "inputs": { "device_ws": null, "ssid": "FugLink", "password": "" },
+  "inputs": { "device_ws": null, "ssid": "FugLink", "password": "", "improv_name": null },
   "steps": [
     {
       "description": "provision over (virtual) BLE Improv",
       "do": "provisionBle",
-      "with": { "ssid": "${ssid}", "password": "${password}" },
-      "timeout": 90,
+      "with": { "ssid": "${ssid}", "password": "${password}", "deviceName": "${improv_name}" },
+      "timeout": 160,
       "expect": { "urls": "nonempty" }
     },
     {

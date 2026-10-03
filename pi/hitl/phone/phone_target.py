@@ -301,18 +301,24 @@ class AndroidDeviceTarget(PhoneTarget):
 # --- iOS (simulator + real device), via tools/ios_build_server.py ------------
 @dataclass
 class IosBuildClient:
-    """Thin client for the Mac's ios_build_server (build/install/launch). Reused by
-    both iOS targets; the base URL is the reservation session's local server."""
+    """Thin client for the Mac's ios_build_server (tools/ios_build_server.py). It
+    exposes a SINGLE `/run?task=<name|comma-list>` endpoint that streams the task
+    log; there are no per-task top-level routes. The base URL is the reservation
+    session's local server (its default bind, :8099); override with $IOS_BUILD_SERVER."""
 
     base_url: str = field(
-        default_factory=lambda: os.environ.get("IOS_BUILD_SERVER", "http://127.0.0.1:8765")
+        default_factory=lambda: os.environ.get("IOS_BUILD_SERVER", "http://127.0.0.1:8099")
     )
 
-    def post(self, path: str, **params: str) -> list[str]:
+    def run(self, tasks: str, **params: str) -> list[str]:
+        """A `curl` argv that POSTs /run?task=<tasks> (+ validated params). -N streams
+        the server's live build/install/launch log; -f makes curl exit non-zero on an
+        HTTP error so the launch step fails loudly. Empty params are dropped."""
         import urllib.parse
 
-        q = urllib.parse.urlencode(params)
-        return ["curl", "-fsS", "-X", "POST", f"{self.base_url}{path}?{q}"]
+        q = {"task": tasks}
+        q.update({k: v for k, v in params.items() if v})
+        return ["curl", "-fsSN", "-X", "POST", f"{self.base_url}/run?{urllib.parse.urlencode(q)}"]
 
 
 class IosSimulatorTarget(PhoneTarget):
@@ -325,14 +331,16 @@ class IosSimulatorTarget(PhoneTarget):
     ble_mode = "virtual"
 
     def __init__(self, bundle_id: str | None = None) -> None:
-        self.bundle_id = bundle_id or os.environ.get("IOS_BUNDLE_ID", "com.ledmapper.app")
+        self.bundle_id = bundle_id or os.environ.get("IOS_BUNDLE_ID", "dev.splanc.app")
         self._ios = IosBuildClient()
 
     def command_plan(self, ports: StationPorts, app_url: str = "") -> list[list[str]]:
         url = app_url or self.app_url(ports)
+        # Same server.url mechanism as the real device: bake the station app URL into
+        # the Capacitor config so the Simulator's WKWebView loads it (with ?driver=)
+        # instead of the bundle, then build+install+launch on the booted sim.
         return [
-            self._ios.post("/launch", target="booted"),
-            ["xcrun", "simctl", "openurl", "booted", url],
+            self._ios.run("cap-sync,ios-run", server_url=url, target="booted"),
         ]
 
     async def launch(self, ports: StationPorts) -> None:
@@ -349,8 +357,9 @@ class IosDeviceTarget(PhoneTarget):
     name = "ios-phone"
     ble_mode = "real"
 
-    def __init__(self, udid: str | None = None) -> None:
+    def __init__(self, udid: str | None = None, bundle_id: str | None = None) -> None:
         self.udid = udid or os.environ.get("HITL_IOS_UDID", "")
+        self.bundle_id = bundle_id or os.environ.get("IOS_BUNDLE_ID", "dev.splanc.app")
         self._ios = IosBuildClient()
 
     @property
@@ -359,10 +368,24 @@ class IosDeviceTarget(PhoneTarget):
 
     def command_plan(self, ports: StationPorts, app_url: str = "") -> list[list[str]]:
         url = app_url or self.app_url(ports)
+        tgt = self.udid or "device"
+        # A native WKWebView loads the BUNDLED web/dist (capacitor://localhost/) with
+        # no query string, so the ?driver=/&ble=real seam (web/src/ui/app/main.ts) can
+        # never see them there. Instead we point Capacitor's `server.url` at the
+        # station-served app URL (this `url`, which carries ?driver=…&ble=real): the
+        # WKWebView loads it over the LAN and enters driver mode, while native BLE
+        # still bridges through the Capacitor Improv plugin. The URL is baked into the
+        # native config by `cap-sync` reading CAP_SERVER_URL (passed as `server_url`,
+        # which the server sets in the task env — never on the argv/URL of the app),
+        # then device-build signs it and install/launch put it on the phone. One
+        # chained /run so a mid-chain failure stops the whole launch.
         return [
-            self._ios.post("/device-build"),
-            self._ios.post("/device-install", target=self.udid or "device"),
-            self._ios.post("/device-launch", target=self.udid or "device", url=url),
+            self._ios.run(
+                "cap-sync,device-build,device-install,device-launch",
+                server_url=url,
+                target=tgt,
+                bundle=self.bundle_id,
+            ),
         ]
 
     async def launch(self, ports: StationPorts) -> None:

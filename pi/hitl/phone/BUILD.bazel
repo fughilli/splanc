@@ -58,6 +58,37 @@ py_binary(
     ],
 )
 
+# Reservation-driven iOS journey runner: reserve `ios-phone` on the Mac from the
+# container, ship the harness into the reserved session, and run phone_e2e ON THE
+# MAC (where the iPhone can reach the station + the launchd ios-build-server). The
+# recurring, hands-off entrypoint — no manual Mac steps. `manual`+`hitl` keep it out
+# of `bazel build //...` and mark it for the on-hardware lane.
+py_binary(
+    name = "ios_reservation",
+    srcs = ["ios_reservation.py"],
+    data = [
+        # phone_e2e.py is the binary's src elsewhere, not in :phone's library srcs;
+        # ship it (+ the built app, solver, and C6 firmware bundle) into runfiles so
+        # the payload stager can tar them for the Mac.
+        "phone_e2e.py",
+        "ios_serial_diag.py",  # optional: capture C6 serial during a phone BLE provision
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//solver:solver_web",
+        "//web:dist",
+    ],
+    imports = ["."],
+    main = "ios_reservation.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":phone",  # driver_server/journey_runner/phone_target/launcher + journeys data
+        "//pi/hitl/harness",  # hitl_client (reservation) + serial_discovery (shipped)
+        "@rules_python//python/runfiles",
+    ],
+)
+
 # Dry-run tests for the phone targets: assert each target's reachability model +
 # command plan (adb/simctl/devicectl) WITHOUT hardware. Runs in CI/in-container.
 py_test(
@@ -65,6 +96,20 @@ py_test(
     srcs = ["phone_target_test.py"],
     imports = ["."],
     deps = [":phone"],
+)
+
+# Dry-run tests for the reservation-driven iOS runner: payload manifest + the remote
+# phone_e2e command construction, WITHOUT a reservation or hardware (hitl_client is
+# imported lazily inside _run, so the pure planning surface tests offline).
+py_test(
+    name = "ios_reservation_test",
+    srcs = [
+        "ios_reservation.py",
+        "ios_reservation_test.py",
+    ],
+    imports = ["."],
+    main = "ios_reservation_test.py",
+    deps = ["@rules_python//python/runfiles"],
 )
 
 # Dry-run tests for the real-Android-BLE UI provisioner: the view-tree parse + the

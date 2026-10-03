@@ -34,6 +34,10 @@ Endpoints (GET or POST):
                        &configuration=Debug   xcodebuild configuration
                        &scheme=App            xcodebuild scheme
                        &bundle=dev.splanc.app app id (device-launch / device-log)
+                       &server_url=<http url> phone-HITL: baked as Capacitor
+                                              server.url via CAP_SERVER_URL (cap
+                                              sync), so the WKWebView loads the
+                                              station app (with ?driver=/&ble=real)
 
 Named tasks:
 
@@ -223,6 +227,14 @@ _DEVICE_BUILD_SH = (
     '  security unlock-keychain -p "$HITL_SIGN_KEYCHAIN_PASS" "$HITL_SIGN_KEYCHAIN"; '
     '  security list-keychains -d user -s "$HITL_SIGN_KEYCHAIN" '
     '    "$HOME/Library/Keychains/login.keychain-db"; '
+    # Grant apple codesigning tools non-interactive access to the signing key. Without
+    # this the key is usable in an interactive login session but NOT from a headless
+    # launchd context — codesign/xcodebuild then report "No signing certificate … with
+    # a private key" (the cert is visible but the key access is ACL-gated). Seen live:
+    # a direct build in the operator session signed fine, the launchd build server did
+    # not, until this partition-list grant.
+    "  security set-key-partition-list -S apple-tool:,apple: -s "
+    '    -k "$HITL_SIGN_KEYCHAIN_PASS" "$HITL_SIGN_KEYCHAIN" >/dev/null 2>&1 || true; '
     "fi; "
     'TEAM_ARG=""; '
     'if [ -n "$HITL_SIGN_TEAM" ]; then TEAM_ARG="DEVELOPMENT_TEAM=$HITL_SIGN_TEAM"; fi; '
@@ -609,6 +621,14 @@ _PARAM_DEFAULT = {
     "bundle": "dev.splanc.app",
 }
 
+# `server_url` is NOT an argv placeholder — it never touches a command line. It is
+# passed through to the task env as CAP_SERVER_URL, which capacitor.config.ts reads
+# so `cap sync` bakes `server.url` into the native app (the phone-HITL driver seam:
+# the WKWebView then loads that station URL, with its ?driver=/&ble=real query,
+# instead of the bundle). Validated to a plain http(s) URL shape (defence in depth;
+# it only ever becomes an environment value, never a shell token).
+_SERVER_URL_RE = re.compile(r"^https?://[^\s'\"]{1,300}$")
+
 
 def _params(q: dict) -> dict:
     out = dict(_PARAM_DEFAULT)
@@ -808,6 +828,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         params = _params(q)  # validates; raises ValueError → 400
+        # Optional per-run env: server_url → CAP_SERVER_URL for `cap sync` (the
+        # phone-HITL driver seam; see _SERVER_URL_RE). Env only, never argv.
+        env_over: dict[str, str] = {}
+        server_url = q.get("server_url", [None])[0]
+        if server_url is not None:
+            if not _SERVER_URL_RE.match(server_url):
+                raise ValueError(f"invalid server_url: {server_url!r}")
+            env_over["CAP_SERVER_URL"] = server_url
         # Device builds default to Release, simulator builds stay Debug.
         # Swift compiled -Onone is 10-100x slower, and the native capture path's
         # per-pixel reduction runs 30x/s on real hardware — a Debug device build
@@ -829,17 +857,22 @@ class Handler(BaseHTTPRequestHandler):
         self._write(
             f"[ios-build] workspace={CFG['workspace']}\n[ios-build] plan: {' → '.join(seq)}\n\n"
         )
+        if env_over.get("CAP_SERVER_URL"):
+            self._write(
+                f"[ios-build] CAP_SERVER_URL={env_over['CAP_SERVER_URL']} "
+                "(cap sync bakes this as Capacitor server.url)\n\n"
+            )
         for name in seq:
             if name == "doctor":
                 self._write(doctor_report() + "\n")
                 continue
-            rc = self._run_one(name, tasks[name], params)
+            rc = self._run_one(name, tasks[name], params, env_over)
             if rc != 0:
                 self._write(f"\n[ios-build] task {name!r} failed (exit {rc}); stopping.\n")
                 return
         self._write("\n[ios-build] all tasks OK.\n")
 
-    def _run_one(self, name: str, task: dict, params: dict) -> int:
+    def _run_one(self, name: str, task: dict, params: dict, env_over: dict | None = None) -> int:
         cwd = str(Path(CFG["workspace"]) / task.get("cwd", "."))
         if task.get("needs_ios") and not _ios_project_exists():
             self._write(
@@ -857,7 +890,7 @@ class Handler(BaseHTTPRequestHandler):
                 # and the tool takes its default instead of hanging forever.
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                env=child_env(),
+                env={**child_env(), **(env_over or {})},
                 bufsize=1,
                 text=True,
             )
@@ -963,7 +996,20 @@ def main() -> int:
     if dotenv:
         _log(f"loaded credentials/.env: {', '.join(dotenv)}")
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    # Fail LOUDLY on a port conflict rather than silently yielding it. A stale
+    # ios_build_server (e.g. a hand-started one from another checkout) squatting the
+    # port would otherwise keep answering with the WRONG workspace/PATH while the
+    # real (launchd) server crash-loops — a confusing failure. Name it explicitly.
+    try:
+        httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as e:
+        _log(
+            f"FATAL: cannot bind {args.host}:{args.port} ({e}). "
+            f"Another process is likely holding the port — check "
+            f"`lsof -nP -iTCP:{args.port} -sTCP:LISTEN` and kill the stale server, "
+            f"then restart this one."
+        )
+        return 1
     lan = _lan_ip()
     _log(f"ios-build-server on {args.host}:{args.port}  (workspace {CFG['workspace']})")
     _log("  from the container:  tools/iosctl doctor")

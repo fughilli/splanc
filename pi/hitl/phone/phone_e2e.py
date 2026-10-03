@@ -168,6 +168,10 @@ async def run(args: argparse.Namespace, target) -> int:
                 "ssid": args.wifi_ssid,
                 "password": args.wifi_pass,
                 "led_count": args.led_count,
+                # PIN the phone's Improv pick to the reserved board's advertised name
+                # (iOS exposes no BLE MAC), so a real-BLE provision can't grab a stray
+                # C6 on a multi-DUT bench. Empty -> strongest-RSSI (single-device lanes).
+                "improv_name": args.improv_name,
             }
             wanted = args.journeys.split(",") if args.journeys else ["connect", "config"]
             for name in wanted:
@@ -221,8 +225,18 @@ def main() -> int:
         help="reserve + flash + provision a REAL ESP32-C6 on the rig and point the app at it",
     )
     ap.add_argument("--hitl-server", default=os.environ.get("HITL_SERVER"), help="pin a rig")
-    ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID", "FugLink"))
+    # AP creds are NEVER hard-coded here: they ride the reservation session env
+    # (HITL_WIFI_SSID/HITL_WIFI_PASS from the host-managed, non-repo ~/.ssh/environment
+    # — see the secret seam in pi/hitl/nix/hitl-darwin.nix), or an explicit --wifi-*.
+    # No silent fallback SSID: a missing cred must surface, not join a stray network.
+    ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
+    ap.add_argument(
+        "--improv-name",
+        default=os.environ.get("HITL_IMPROV_NAME", ""),
+        help="pin the phone's Improv pick to this advertised BLE name (the reserved "
+        "board's name; iOS has no MAC to pin on). Empty = strongest-RSSI.",
+    )
     ap.add_argument(
         "--journeys",
         default="",
@@ -262,6 +276,15 @@ def main() -> int:
             # The DUT was provisioned onto backend.ssid; point the phone's own join at
             # the SAME resolved network so they can actually reach each other.
             args.wifi_ssid, args.wifi_pass = backend.ssid, backend.psk
+        # Real BLE provisions a PHYSICAL DUT onto a real AP, so a provisioning journey
+        # (connect/mapping/config) needs real creds. Fail loudly rather than provision a
+        # stray/empty SSID — the creds come from the host-managed reservation env or an
+        # explicit --wifi-ssid, never the repo (see hitl-darwin.nix secret seam).
+        if target.ble_mode == "real" and needs_device and not args.wifi_ssid:
+            raise SystemExit(
+                "real BLE provisioning needs a Wi-Fi AP: set HITL_WIFI_SSID/HITL_WIFI_PASS "
+                "in the reservation env (host ~/.ssh/environment) or pass --wifi-ssid/--wifi-pass"
+            )
         if target.name == "browser":
             launcher.ensure_chromium()  # sync context, before the asyncio loop
         return asyncio.run(run(args, target))

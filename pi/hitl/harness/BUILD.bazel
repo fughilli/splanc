@@ -104,6 +104,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
+        "serial_discovery.py",
         "sync.py",
         "tls_churn_core.py",
         "uniform_bench_core.py",
@@ -288,6 +289,22 @@ py_binary(
         ":harness",
         "@rules_python//python/runfiles",
         requirement("websockets"),
+    ],
+)
+
+# Dynamic USB-serial port discovery by VID/PID (ESP32-C6 built-in USB-Serial-JTAG,
+# VID 0x303a). Prints the resolved /dev path so flashing never hardcodes the
+# renumbering device name: `esptool --port "$(bazel run …:serial_discovery)"`.
+# Reusable on the Mac iOS bench AND the Linux rigs (matches the reserved board by
+# its HITL_ADAPTER_SERIAL when several C6s are attached). No hardware/network to
+# build; pyserial provides cross-platform enumeration.
+py_binary(
+    name = "serial_discovery",
+    srcs = ["serial_discovery.py"],
+    imports = ["."],
+    main = "serial_discovery.py",
+    deps = [
+        requirement("pyserial"),
     ],
 )
 

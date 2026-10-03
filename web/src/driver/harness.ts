@@ -17,7 +17,14 @@
  */
 
 import { requestBleDevice, bleSocketFactory } from "../net/bleTransport";
-import { provisionViaBle, requestImprovDevice, wsUrlFromRedirect } from "../net/improv";
+import { improvDeviceById, scanImprovNative } from "../net/capacitorImprov";
+import {
+  provisionViaBle,
+  requestImprovDevice,
+  wsUrlFromRedirect,
+  type ImprovDevice,
+} from "../net/improv";
+import { isNativePlatform } from "../net/native";
 import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
@@ -25,6 +32,74 @@ import type { Router } from "../ui/app/router";
 import { driverCapture, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
+
+/** The wss URL of the most recently BLE-provisioned device, so a following `connect`
+ * with no explicit URL dials it (the iOS bench reaches the C6 directly, rather than
+ * via a rig-forwarded socket). Reset per provision. */
+let lastProvisionedWss: string | null = null;
+
+/** Headless native Improv pick for the HITL driver (no UI chooser): scan the
+ * Capacitor BLE plugin for a short window and return the strongest-RSSI device,
+ * which on the bench is the DUT right next to the phone. Adapts to the shared
+ * `provisionViaBle` seam. Used only on iOS/native, where there is no Web Bluetooth. */
+async function pickImprovDeviceHeadless(
+  onStatus?: (s: string) => void,
+  windowMs = 5000,
+  wantName = "",
+  timeoutMs = 70000,
+): Promise<ImprovDevice> {
+  // `wantName` PINS the pick to a specific advertised name. iOS (CoreBluetooth) never
+  // exposes a peripheral's BLE MAC — only an opaque per-app UUID — so on a bench with
+  // several Improv devices in range (the other rigs' C6s) the ONLY way to target the
+  // reserved board is by its advertised name. When set we accept only that name (and
+  // fail rather than silently provision a stray); when empty we keep the strongest-RSSI
+  // pick (a real user has a single device, and the shipping app uses a visible picker).
+  onStatus?.(wantName ? `scanning for "${wantName}" over Bluetooth…` : "scanning over Bluetooth…");
+  const hits = new Map<string, { name: string; rssi: number }>();
+  const scan = await scanImprovNative((h) => {
+    // iOS delivers a peripheral's scan-response NAME on a LATER advertising callback
+    // than its first discovery (the primary ADV carries only Flags + the Improv UUID).
+    // Keep the best name seen — NEVER clobber a real name with a not-yet-named ("")
+    // sighting — so the pinned-name match below succeeds once the name arrives.
+    const prev = hits.get(h.deviceId);
+    hits.set(h.deviceId, {
+      name: h.name || prev?.name || "",
+      rssi: h.rssi ?? prev?.rssi ?? -999,
+    });
+  });
+  try {
+    if (wantName) {
+      // Crowded RF: 8+ "Led Widget <hex>" boards can advertise at once and OUR board may
+      // take several scan cycles to surface. POLL until the pinned name appears rather
+      // than snapshot one fixed window (a slow first sighting was a spurious "not found").
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const match = [...hits.entries()].filter(([, v]) => v.name === wantName);
+        const top = match.sort((a, b) => b[1].rssi - a[1].rssi)[0];
+        if (top) {
+          onStatus?.(`selected ${top[1].name} (rssi ${top[1].rssi})`);
+          return improvDeviceById(top[0], top[1].name);
+        }
+        if (Date.now() >= deadline) {
+          const saw =
+            [...hits.values()].map((v) => `${v.name || "(unnamed)"}@${v.rssi}`).join(", ") ||
+            "none";
+          throw new Error(`Improv device "${wantName}" not found over BLE (saw: ${saw})`);
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+    await new Promise((r) => setTimeout(r, windowMs));
+  } finally {
+    await scan.stop();
+  }
+  const top = [...hits.entries()].sort((a, b) => b[1].rssi - a[1].rssi)[0];
+  if (!top) throw new Error("no Improv device found over BLE");
+  const [deviceId, best] = top;
+  const label = best.name || "Splanc device";
+  onStatus?.(`selected ${label} (rssi ${best.rssi})`);
+  return improvDeviceById(deviceId, best.name || label);
+}
 
 interface Incoming {
   id?: string;
@@ -72,14 +147,30 @@ async function handle(msg: Incoming): Promise<unknown> {
       return { route: location.hash };
 
     // --- connect / pairing ------------------------------------------------
-    case "connect":
-      appState.connect(String(p.wssUrl), p.label ? String(p.label) : undefined, {
+    case "connect": {
+      // On the iOS bench the phone reaches the C6 directly, so the wss URL isn't a
+      // rig-forwarded input — it's the address the device just reported over Improv.
+      // Fall back to the last provisioned wss when the journey passes no explicit URL.
+      const wssUrl = String(p.wssUrl || lastProvisionedWss || "");
+      if (!wssUrl) throw new Error("connect: no wssUrl (and nothing provisioned yet)");
+      appState.connect(wssUrl, p.label ? String(p.label) : undefined, {
         coldRetryLimit: 6,
       });
       return { connecting: true };
+    }
 
     case "provisionBle": {
-      const dev = await requestImprovDevice();
+      // iOS (native) has no Web Bluetooth: provision over the Capacitor BLE plugin,
+      // headlessly (no UI chooser) — scan for Improv and take the strongest-signal
+      // device, which on the bench is the DUT inches from the phone. The browser/
+      // emulator lane keeps the Web Bluetooth path.
+      const dev = isNativePlatform()
+        ? await pickImprovDeviceHeadless(
+            (s) => emit("status", { where: "provision", message: s }),
+            5000,
+            String(p.deviceName ?? ""),
+          )
+        : await requestImprovDevice();
       const urls = await provisionViaBle(
         dev,
         String(p.ssid ?? ""),
@@ -87,7 +178,11 @@ async function handle(msg: Incoming): Promise<unknown> {
         (s) => emit("status", { where: "provision", message: s }),
       );
       emit("milestone", { name: "provisioned", detail: { urls } });
-      return { urls, wssUrl: urls[0] ? wsUrlFromRedirect(urls[0]) : null };
+      const wssUrl = urls[0] ? wsUrlFromRedirect(urls[0]) : null;
+      // Remember it so a following `connect` with no explicit URL dials this device
+      // (the iOS bench path; see the connect case).
+      lastProvisionedWss = wssUrl;
+      return { urls, wssUrl };
     }
 
     case "connectBle": {
