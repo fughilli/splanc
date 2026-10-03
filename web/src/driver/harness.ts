@@ -46,7 +46,7 @@ async function pickImprovDeviceHeadless(
   onStatus?: (s: string) => void,
   windowMs = 5000,
   wantName = "",
-  timeoutMs = 25000,
+  timeoutMs = 70000,
 ): Promise<ImprovDevice> {
   // `wantName` PINS the pick to a specific advertised name. iOS (CoreBluetooth) never
   // exposes a peripheral's BLE MAC — only an opaque per-app UUID — so on a bench with

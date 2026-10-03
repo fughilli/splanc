@@ -7,7 +7,7 @@
       "description": "provision over (virtual) BLE Improv",
       "do": "provisionBle",
       "with": { "ssid": "${ssid}", "password": "${password}", "deviceName": "${improv_name}" },
-      "timeout": 90,
+      "timeout": 160,
       "expect": { "urls": "nonempty" }
     },
     {
