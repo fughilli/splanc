@@ -1,12 +1,15 @@
-//! Playback keeps real time when the execution rate drops. When an effect (or
-//! the network) eats the frame budget, the render task simply renders fewer
-//! frames per second: main.cpp measures each frame's real elapsed time and hands
-//! it to the player — lm_playback_step(dt_ms) for the built-in topology effects,
-//! lm_fx_update(time, dt) for user effects. These tests pin the player side of
-//! that adaptation: the per-frame advance scales with the measured frame period,
-//! so the same wall-clock time renders the same picture whether the device
-//! managed 30, 10 or 3 frames per second — a slower execution rate never slows,
-//! speeds up or desynchronizes playback.
+//! The player's per-frame advance scales with the frame period it is handed.
+//! main.cpp measures each frame's real elapsed time and hands it to the player:
+//! lm_playback_step(dt_ms) for the built-in topology effects, lm_fx_update(time,
+//! dt) for user effects. These tests pin the player side only: within the
+//! periods main.cpp passes through unchanged (playback dt <= 100 ms; FX dt <=
+//! 200 ms; longer gaps are clamped to 33 ms there, so a device rendering slower
+//! than that runs slow), the same elapsed time renders the same picture at any
+//! frame period.
+//!
+//! Untraced: this is not evidence for PR-19 (adapting the playback or execution
+//! rate to preserve stability). The firmware does no rate adaptation; it only
+//! renders fewer frames when a frame takes longer.
 //!
 //! The FFI state is process-global (one player, as on the device), so every
 //! test re-initializes it and the target runs with `--test-threads=1`.
@@ -120,20 +123,17 @@ fn flood_after(frames: u32, dt_ms: u32) -> Vec<[u8; 3]> {
 }
 
 #[test]
-fn a_flood_shows_the_same_picture_at_the_same_time_at_any_frame_rate() {
-    rr::verifies!("PR-19");
-    // 990 ms of playback reached at ~30 fps, ~10 fps, ~3 fps and in one step.
-    let at_30fps = flood_after(30, 33);
-    let at_10fps = flood_after(10, 99);
-    let at_3fps = flood_after(3, 330);
-    let one_step = flood_after(1, 990);
+fn lm_playback_step_advances_the_flood_by_dt_for_frame_periods_within_the_100ms_clamp() {
+    // 990 ms of playback reached in 33 ms and in 99 ms frames: both periods are
+    // under main.cpp's 100 ms clamp, so the device hands them over unchanged.
+    // (The flood runs at 1 m/s, a whole number of mm per ms at both periods.)
+    let at_33ms = flood_after(30, 33);
+    let at_99ms = flood_after(10, 99);
     // Non-vacuous: the wavefront has lit part of the fixture by then, and the
     // picture has moved on from half-way (the playback really advanced in time).
-    assert!(at_30fps.iter().any(|c| *c != [0, 0, 0]), "the flood lit something: {at_30fps:?}");
-    assert_ne!(at_30fps, flood_after(15, 33), "playback advanced between 495 ms and 990 ms");
-    assert_eq!(at_10fps, at_30fps, "10 fps renders the 30 fps picture at the same time");
-    assert_eq!(at_3fps, at_30fps, "3 fps renders the 30 fps picture at the same time");
-    assert_eq!(one_step, at_30fps);
+    assert!(at_33ms.iter().any(|c| *c != [0, 0, 0]), "the flood lit something: {at_33ms:?}");
+    assert_ne!(at_33ms, flood_after(15, 33), "playback advanced between 495 ms and 990 ms");
+    assert_eq!(at_99ms, at_33ms, "99 ms frames render the 33 ms picture at the same time");
 }
 
 /// A user effect that integrates the frame period it is handed.
@@ -163,17 +163,15 @@ fn effect_after(frames: u32, dt: f32) -> [u8; 3] {
 }
 
 #[test]
-fn a_user_effect_driven_by_the_frame_period_keeps_real_time_at_any_frame_rate() {
-    rr::verifies!("PR-19");
-    // 0.75 s of playback (binary-exact frame periods, so no rounding noise) at
-    // 32, 8 and 4 frames per second.
+fn lm_fx_update_hands_a_user_effect_its_dt_for_frame_periods_within_the_200ms_clamp() {
+    // 0.75 s of playback (binary-exact frame periods, so no rounding noise) in
+    // 1/32 s and 1/8 s frames: both under main.cpp's 200 ms FX clamp, so the
+    // device hands them over unchanged.
     let at_32fps = effect_after(24, 1.0 / 32.0);
     let at_8fps = effect_after(6, 1.0 / 8.0);
-    let at_4fps = effect_after(3, 1.0 / 4.0);
     assert_eq!(at_32fps, [191, 0, 0], "phase 0.75 after 0.75 s");
     assert_eq!(at_8fps, at_32fps, "8 fps reaches the same phase in the same time");
-    assert_eq!(at_4fps, at_32fps, "4 fps reaches the same phase in the same time");
-    // ...and half the wall time is half the phase, whatever the rate.
+    // ...and half the elapsed time is half the phase, at either period.
     assert_eq!(effect_after(12, 1.0 / 32.0), [95, 0, 0]);
     assert_eq!(effect_after(3, 1.0 / 8.0), [95, 0, 0]);
 }

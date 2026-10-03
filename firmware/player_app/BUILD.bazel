@@ -532,8 +532,9 @@ flash_bundle(
 # verify (rr::verifies! -> JUnit). The FFI state is process-global, so each
 # binary runs its cases one at a time (every case re-initializes the player).
 
-# Device-visible identity: boot name -> welcome, rename -> reply + the
-# firmware's lm_device_name poll (NVS + BLE) -> reboot restore.
+# Device-visible identity (display-name surface only): boot name -> welcome,
+# rename -> reply + what lm_device_name hands main.cpp's rename poll, and a
+# byte-exact round trip back through set_identity (reboot simulated).
 rr_rust_test(
     name = "device_identity_test",
     srcs = ["tests/device_identity.rs"],
@@ -549,8 +550,8 @@ rr_rust_test(
     ],
 )
 
-# Expensive/runaway effects cannot starve the render task: instruction-budget
-# and deadline aborts, update-outcome + overrun notification, switch-off.
+# Runaway-effect guards: per-call instruction-budget aborts, update-outcome +
+# overrun notification, switch-off (+ an untraced deadline-flag mechanism case).
 rr_rust_test(
     name = "starvation_guard_test",
     srcs = ["tests/starvation_guard.rs"],
@@ -568,8 +569,8 @@ rr_rust_test(
     ],
 )
 
-# Playback keeps real time when the frame rate drops (built-in topology effects
-# and dt-driven user effects render the same picture at the same time).
+# The player's per-frame advance scales with the frame period main.cpp hands it
+# (within main.cpp's dt clamps). Untraced: no rate adaptation exists (PR-19).
 rr_rust_test(
     name = "playback_rate_test",
     srcs = ["tests/playback_rate.rs"],
@@ -605,7 +606,7 @@ rr_rust_test(
 )
 
 # Allocation pressure stays bounded: streamed decode through one block, packed
-# effect storage, heap figures in every PerfReport, and oversize uploads /
+# effect storage, heap figures carried in PerfReport, and oversize uploads /
 # effects / video frames / LEDs / buffers refused or clamped, never overflowed.
 rr_rust_test(
     name = "memory_bounds_test",

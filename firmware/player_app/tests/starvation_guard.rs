@@ -4,13 +4,17 @@
 //! LED, then lm_perf_push with the frame's cycle spans.
 //!
 //! * abort: every update()/shade() runs under a per-invocation instruction
-//!   budget, so a runaway script hands control back after a bounded amount of
-//!   work (the LED is held black, the frame completes); the budget is a ceiling
-//!   the firmware can tighten at runtime; a raised wall-time deadline flag
-//!   cancels long shades until the next frame starts;
+//!   budget, so each runaway call hands control back after a bounded amount of
+//!   work (the LED is held black, the frame completes); a non-default budget is
+//!   enforced the same way. The budget is per CALL, not per frame: a runaway
+//!   effect can still cost up to (LEDs + 1) x budget opcodes every frame, a known
+//!   PR-28 gap these tests do not count as covered. (lm_fx_set_budget and the
+//!   wall-time deadline flag are hooks no firmware path calls yet; the deadline
+//!   case below is an untraced mechanism test.)
 //! * notify: a cancelled update() is reported (lm_fx_last_update_outcome feeds
-//!   the render loop's `[fx] update=budget` log) and frames that blow the 33 ms
-//!   frame budget are counted into the PerfReport the app polls / is pushed;
+//!   the render loop's `[fx] update=budget` log) and frames main.cpp flags as
+//!   over the 33 ms frame budget are counted into the PerfReport the app polls /
+//!   is pushed (the over-budget decision itself is main.cpp's, not tested here);
 //! * recover: the app can switch a runaway effect off over the protocol.
 //!
 //! The FFI state is process-global (one player, as on the device), so every
@@ -178,20 +182,26 @@ fn render_frame(frame: u32) -> u32 {
 }
 
 #[test]
-fn a_runaway_shade_is_cut_off_at_the_instruction_budget_on_every_led() {
+fn each_runaway_shade_call_is_cut_off_within_the_per_invocation_instruction_budget() {
+    // Partial PR-28 evidence: the per-invocation abort only. Nothing here treats
+    // the frame's total (up to LEDs x budget) as a safe bound.
     rr::verifies!("PR-28");
     fresh_device();
-    // FULL perf so the per-frame opcode count (Tier 1) is latched.
+    // FULL perf so the shade opcode count is latched.
     set_perf(pb::SetPerf_::Mode::Full);
     submit_active("runaway-shade", RUNAWAY_SHADE);
-    let cancelled = render_frame(0);
-    assert_eq!(cancelled, LEDS, "every LED's runaway shade is cancelled, none hangs the frame");
-    // The frame's VM work is capped at exactly budget x LEDs: the render task
-    // always gets control back after a bounded, deterministic amount of work.
-    assert_eq!(unsafe { lm_perf_instr_shade() }, LEDS * DEFAULT_BUDGET);
-    // ...and it is the same bound on every frame (no state that lets it creep).
-    assert_eq!(render_frame(1), LEDS);
-    assert_eq!(unsafe { lm_perf_instr_shade() }, LEDS * DEFAULT_BUDGET);
+    for frame in 0..2 {
+        assert!(unsafe { lm_fx_update(frame as f32 * DT, DT, frame, LEDS) }, "an active effect renders");
+        for i in 0..LEDS {
+            let before = unsafe { lm_perf_instr_shade() };
+            assert_eq!(shade(i), None, "frame {frame} LED {i}: the runaway shade is cancelled, not run out");
+            let spent = unsafe { lm_perf_instr_shade() } - before;
+            assert!(
+                spent > 0 && spent <= DEFAULT_BUDGET,
+                "frame {frame} LED {i}: one shade() call ran {spent} opcodes (budget {DEFAULT_BUDGET})"
+            );
+        }
+    }
 }
 
 #[test]
@@ -210,7 +220,9 @@ fn a_runaway_update_is_cut_off_and_reported_while_the_frame_still_renders() {
 }
 
 #[test]
-fn the_instruction_budget_is_a_ceiling_the_firmware_can_tighten_at_runtime() {
+fn a_non_default_instruction_budget_is_enforced_per_invocation() {
+    // Partial PR-28 evidence: the same per-call abort at another budget. (No
+    // firmware path calls lm_fx_set_budget today: there is no autoscaling.)
     rr::verifies!("PR-28");
     fresh_device();
     submit_active("bounded", BOUNDED_LOOP);
@@ -226,9 +238,11 @@ fn the_instruction_budget_is_a_ceiling_the_firmware_can_tighten_at_runtime() {
     assert_eq!(shade(0), Some(lit));
 }
 
+/// Untraced mechanism test: the VM honours the deadline flag, but no firmware
+/// code raises it yet (main.cpp leaves arming the wall-time timer as a TODO(hw)),
+/// so it is not evidence that the device aborts frames at a deadline.
 #[test]
 fn a_raised_frame_deadline_cancels_long_shades_until_the_next_frame_starts() {
-    rr::verifies!("PR-28");
     fresh_device();
     submit_active("long", LONG_LOOP);
     assert_eq!(render_frame(0), 0, "within budget and before the deadline: renders");
@@ -248,7 +262,8 @@ fn frames_over_the_frame_budget_are_counted_once_and_reported_to_the_app() {
     fresh_device();
     set_perf(pb::SetPerf_::Mode::Basic);
     // Five rendered effect frames as render_once pushes them; two overran the
-    // 33 ms budget (frame+show cycles above it).
+    // 33 ms budget (frame+show cycles above it). The overran flag is passed in:
+    // the threshold decision is main.cpp's and untested here.
     let over = FRAME_BUDGET_CYCLES + 1;
     let under = FRAME_BUDGET_CYCLES / 2;
     unsafe {

@@ -2,10 +2,16 @@
 //! drives. At boot the firmware hands the core the factory MAC + the configured
 //! (NVS-persisted) display name via `lm_player_set_identity`; every `welcome`
 //! the app reads must report exactly that identity. A `set_device_name` rename
-//! must show up in the reply `welcome` AND in what the firmware reads back with
-//! `lm_device_name` after each message (the bytes it persists to NVS and
-//! advertises over BLE), so the app, the persisted name and the advertisement
-//! never disagree — including after a reboot that restores the persisted name.
+//! must show up in the reply `welcome` AND in what `lm_device_name` hands to
+//! main.cpp's post-message rename poll (poll_device_rename).
+//!
+//! Partial PR-14 evidence, for the configured display-name surface only: the
+//! welcome and the poll both read the core's one name field, so these cases
+//! check that boot, rename and set_identity keep that field right. What main.cpp
+//! then does with the polled name (persist it to NVS, push it to BLE, the soft-AP
+//! name, the hostname, mDNS) is not exercised here, and a reboot is simulated by
+//! calling `lm_player_set_identity` again. Cross-surface consistency stays
+//! under-verified.
 //!
 //! The FFI state is process-global (one player, as on the device), so every
 //! test re-initializes it and the target runs with `--test-threads=1`.
@@ -19,8 +25,7 @@ use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
 
 /// main.cpp's rename poll reads the name into `char buf[33]` and passes
-/// `sizeof buf - 1` (poll_device_rename); the persisted / advertised name is
-/// whatever fits there.
+/// `sizeof buf - 1` (poll_device_rename); a longer name yields nothing there.
 const FW_NAME_POLL_CAP: usize = 32;
 
 const MAC: &str = "F0:F5:BD:01:23:45";
@@ -67,8 +72,8 @@ fn rename(name: &str) -> pb::Welcome {
     }
 }
 
-/// What the firmware's post-message rename poll sees (the name it persists to
-/// NVS and re-advertises over BLE), or None when the poll yields nothing.
+/// What `lm_device_name` hands main.cpp's post-message rename poll (into a
+/// buffer of the poll's size), or None when the poll yields nothing.
 fn firmware_polled_name() -> Option<String> {
     let mut buf = [0u8; FW_NAME_POLL_CAP];
     let n = unsafe { lm_device_name(buf.as_mut_ptr(), buf.len()) };
@@ -97,7 +102,7 @@ fn a_rename_reaches_the_reply_the_next_session_and_the_firmware_poll() {
     let reply = rename("Porch Arch");
     assert_eq!(reply.r#device_name.as_str(), "Porch Arch", "the rename reply echoes the new name");
     assert_eq!(reply.r#mac.as_str(), MAC, "a rename never changes the hardware identity");
-    // What main.cpp persists + advertises after handling the message.
+    // What lm_device_name hands main.cpp's rename poll after the message.
     assert_eq!(firmware_polled_name().as_deref(), Some("Porch Arch"));
     // A later session (a reconnecting app) is greeted with the renamed device.
     let w = hello_welcome();
@@ -118,21 +123,25 @@ fn the_last_of_several_renames_wins_on_every_surface() {
 }
 
 #[test]
-fn a_renamed_identity_survives_a_reboot_through_the_persisted_name() {
+fn a_non_ascii_name_round_trips_byte_exact_through_the_rename_poll_and_set_identity() {
     rr::verifies!("PR-14");
     // A non-ASCII name that still fits the firmware's 32-byte name buffer: the
-    // bytes must round-trip exactly (no transcoding, no truncation).
+    // bytes must round-trip exactly (no transcoding, no truncation). (Names of
+    // 33-64 bytes, which the wire accepts, don't fit the poll at all: not
+    // covered here.)
     let name = "Küche – Regal";
     assert!(name.len() <= FW_NAME_POLL_CAP);
     boot_with("Led Widget 1A2B3C");
     assert_eq!(rename(name).r#device_name.as_str(), name);
-    // main.cpp persists exactly what the poll returns (prefs.putString("name")).
-    let persisted = firmware_polled_name().expect("a rename is visible to the firmware poll");
-    assert_eq!(persisted, name);
-    // Reboot: setup() restores the persisted name and hands it back to the core.
-    boot_with(&persisted);
+    // The bytes the poll hands main.cpp (which it would persist with
+    // prefs.putString("name"); NVS itself is not exercised).
+    let polled = firmware_polled_name().expect("a rename is visible to the firmware poll");
+    assert_eq!(polled, name);
+    // A simulated reboot: hand those bytes back through set_identity, as setup()
+    // would after reading NVS.
+    boot_with(&polled);
     let w = hello_welcome();
-    assert_eq!(w.r#device_name.as_str(), name, "the renamed identity survives the reboot");
+    assert_eq!(w.r#device_name.as_str(), name, "the name comes back byte-exact");
     assert_eq!(w.r#mac.as_str(), MAC);
     assert_eq!(firmware_polled_name().as_deref(), Some(name));
 }

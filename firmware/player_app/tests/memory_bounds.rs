@@ -6,8 +6,10 @@
 //!   however large it is;
 //! * efficient storage — narrow (`: fixed8`) effect buffers pack per-LED state
 //!   into a quarter of the f32 footprint;
-//! * monitored — the heap figures main.cpp samples (free, low-water mark, and
-//!   the largest contiguous block, i.e. fragmentation) ride every PerfReport;
+//! * monitored — the heap figures handed to the core (lm_perf_set_heap: free,
+//!   low-water mark, and the largest contiguous block, i.e. fragmentation) are
+//!   carried in the polled and pushed PerfReport. (main.cpp samples them only on
+//!   FX-rendered frames with perf on; that sampling is not tested here.)
 //! * refused, never overflowed — an upload past the storage arena, an effect
 //!   past the effect buffer, a video frame past the texture buffer, LEDs past
 //!   the LED cap and effect buffers past the FX arena are rejected / dropped /
@@ -315,7 +317,7 @@ fn video_frames_past_the_texture_buffer_are_dropped_and_frames_within_it_apply()
 }
 
 #[test]
-fn the_heap_budget_main_cpp_samples_rides_every_perf_report() {
+fn heap_figures_handed_to_the_core_are_carried_in_the_polled_and_pushed_perf_report() {
     rr::verifies!("PR-26");
     lm_player_init(64);
     let sp = pb::SetPerf { r#mode: pb::SetPerf_::Mode::Basic, r#interval_ms: 0 };
