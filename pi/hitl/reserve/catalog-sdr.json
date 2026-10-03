@@ -26,7 +26,7 @@
       "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:B0", "HITL_TTY": "/dev/ttyACM0" }
     },
     {
-      "comment": "Second ESP32-C6 DUT (DUT 1), pinned to /dev/ttyACM1. Uses the suffixed env keys HITL_TTY_1 / HITL_ADAPTER_SERIAL_1 (distinct from DUT 0, so the daemon injects both without collision). Address it from the toolbox with `--dut 1` (hitl-monitor/flash/jtag/gdb) or `hitl-devices` to list the mapping.",
+      "comment": "Second ESP32-C6 DUT (DUT 1), pinned to /dev/ttyACM1. The bench is exactly two C6s on one RF tee (C6 <- tee -> C6, the tee's third port through an attenuator to the HackRF), so this catalog lists exactly these two boards, and no other catalog on amd-rig may name them (catalog-phone.json's c6-a is the spare 8C:FD:49:11:32:18). Uses the suffixed env keys HITL_TTY_1 / HITL_ADAPTER_SERIAL_1 (distinct from DUT 0, so the daemon injects both without collision). Address it from the toolbox with `--dut 1` (hitl-monitor/flash/jtag/gdb) or `hitl-devices` to list the mapping.",
       "name": "c6-1",
       "type": "esp32c6",
       "devices": [
