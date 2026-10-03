@@ -21,13 +21,16 @@
 
   "components": [
     {
-      "comment": "The real-phone unit's C6 DUT (read off the live rig 2026-09-20). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Distinct from the SDR bench's C6 (…FC:B0) and from c6-b. Flashed with the netstack player firmware it advertises Improv as \"Led Widget E2F5EF\" (identity MAC 58:E6:C5:11:FC:DA, BLE addr d1:fe:ff:c5:e6:58) — the real-BLE UI provisioner (android_ble_provision.py) matches the \"E2F5EF\" fragment to pick it out of the crowded lab airspace in the OS Bluetooth chooser. (Spare C6 …8C:FD:49:11:32:18 is unassigned — add a third unit or auto-discovery later.)",
+      "comment": "The real-phone unit's C6 DUT: the bench's spare board (USB-JTAG serial 8C:FD:49:11:32:18). Pinned to /dev/ttyACM0 in the env so the toolbox (hitl-flash/monitor) works unchanged. Every C6 on amd-rig belongs to exactly one unit: …FC:B0 and …FC:D8 are the SDR bench's two tee'd DUTs (catalog-sdr.json c6-0/c6-1), …F9:83:C8 is c6-b. Until 2026-10-03 this unit named …FC:D8 (read off the live rig 2026-09-20), which #174 then wired to the SDR bench, so both daemons could hand out one board. Flashed with the player firmware its default name is \"Led Widget CE0824\" (FNV-1a of its BT MAC 8C:FD:49:11:32:1A = base + 2, main.cpp); HITL_DUT_BLE_NAME carries that name so the real-BLE UI provisioner (phone_target.py → android_ble_provision.py) picks this board, not another Led Widget, out of the crowded lab airspace in the OS Bluetooth chooser.",
       "name": "c6-a",
       "type": "esp32c6",
       "devices": [
-        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_58:E6:C5:11:FC:D8-if00:/dev/ttyACM0"
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_8C:FD:49:11:32:18-if00:/dev/ttyACM0"
       ],
-      "env": { "HITL_ADAPTER_SERIAL": "58:E6:C5:11:FC:D8" }
+      "env": {
+        "HITL_ADAPTER_SERIAL": "8C:FD:49:11:32:18",
+        "HITL_DUT_BLE_NAME": "Led Widget CE0824"
+      }
     },
     {
       "comment": "The emulator unit's C6 DUT (second free board).",
