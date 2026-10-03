@@ -85,18 +85,12 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "failed",
-      "entity": "PR-13",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
-      "route": "human-gate",
-      "demanded_level": "hitl"
-    },
-    {
       "kind": "pyramid",
       "entity": "PR-13",
       "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -154,13 +148,6 @@
       "route": "autonomous",
       "demanded_level": "hil",
       "provided_level": "hitl"
-    },
-    {
-      "kind": "failed",
-      "entity": "PR-22",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
-      "route": "autonomous",
-      "demanded_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -249,11 +236,12 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "failed",
+      "kind": "pyramid",
       "entity": "PR-35",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
