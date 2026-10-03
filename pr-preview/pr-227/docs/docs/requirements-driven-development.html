@@ -443,6 +443,13 @@ runs the suites, then:</p>
 </div>
 <p>The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
 as the <code class="docutils literal notranslate"><span class="pre">traceability-report</span></code> artifact.</p>
+<p>The reports are published at
+<strong><a class="reference external" href="https://fughilli.github.io/splanc/traceability/">https://fughilli.github.io/splanc/traceability/</a></strong> after every Test or HITL
+run on <code class="docutils literal notranslate"><span class="pre">main</span></code> (<a class="reference internal" href="#../.github/workflows/traceability-site.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/traceability-site.yaml</span></code></span></a>):
+the page is the combined report (the latest main Test run’s software evidence
+and the latest main HITL run’s hardware evidence against the model), with each
+run’s own report under <code class="docutils literal notranslate"><span class="pre">software/</span></code> and <code class="docutils literal notranslate"><span class="pre">hitl/</span></code>, and the JSON report and gap
+queue next to them.</p>
 <p>HITL tests only run where the rigs are reachable, so the HITL workflow
 (<a class="reference internal" href="#../.github/workflows/hitl.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/hitl.yaml</span></code></span></a>) publishes its
 own <code class="docutils literal notranslate"><span class="pre">hitl-traceability-report</span></code> from the on-hardware run: each harness phase is a
