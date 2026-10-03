@@ -1,4 +1,4 @@
-"""Installation-scale sharded uploads in the HITL map-upload harness (PR-12).
+"""Installation-scale sharded uploads in the HITL map-upload harness.
 
 test_map_upload.py pins the chunking contract on synthetic byte strings. This
 suite runs the harness's REAL fixtures (map_upload_core.synth_output_map /
@@ -14,7 +14,11 @@ Frames are encoded the way server.proto_wire.encode_client does it (the oneof
 arm named by "type"; polylines carried as repeated Vec3), via the generated
 ledmapper.v1 bindings the harness already depends on.
 
-Every test verifies PR-12 only (see requirements/requirements.yaml).
+These are untraced self-tests of the HITL driver's own uploader re-implementation
+(window_plan / reassemble on its own fixtures): neither the product uploader
+(web/src/net/client.ts sendChunked) nor the firmware reassembly runs here, so they
+are not PR-12 evidence. The product side is covered by web/tests/
+largeInstallation.test.ts and the on-hardware //pi/hitl/harness hitl_map_upload run.
 """
 
 from __future__ import annotations
@@ -59,7 +63,6 @@ def _shard(frame: bytes, chunk_bytes: int = CHUNK_BYTES) -> list:
     return [frame[off:end] for (_seq, off, end, _last) in window_plan(len(frame), chunk_bytes)]
 
 
-@pytest.mark.requirements("PR-12")
 @pytest.mark.parametrize("n_leds", [150, 512, 1024])
 def test_installation_map_shards_into_bounded_windows_that_reassemble_whole(n_leds):
     frame = _encode(synth_output_map(n_leds, map_id="__scale"))
@@ -76,7 +79,6 @@ def test_installation_map_shards_into_bounded_windows_that_reassemble_whole(n_le
     assert [led.id for led in m.leds] == list(range(n_leds))
 
 
-@pytest.mark.requirements("PR-12")
 def test_upload_size_tracks_the_installation():
     # A small installation's map is a single frame; past that the window count
     # grows with the LED count (the 1024-LED map needs ~2x the 512-LED windows).
@@ -91,7 +93,6 @@ def test_upload_size_tracks_the_installation():
     assert counts[-1] >= 2 * counts[-2] - 1
 
 
-@pytest.mark.requirements("PR-12")
 def test_installation_topology_shards_and_keeps_every_association():
     flat = synth_topology(1024, map_id="__scale", n_segments=24, pts_per_seg=32, n_branch=24)
     frame = _encode(flat)
@@ -106,7 +107,6 @@ def test_installation_topology_shards_and_keeps_every_association():
     assert len(topo.branch_points) == 24
 
 
-@pytest.mark.requirements("PR-12")
 def test_tighter_per_record_budget_shrinks_every_window(monkeypatch):
     # The heapless-netstack build decrypts each TLS record in one contiguous
     # buffer, so its runs set HITL_CHUNK_BYTES=1024 (see map_upload_core).

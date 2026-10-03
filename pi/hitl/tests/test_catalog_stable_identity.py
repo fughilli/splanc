@@ -17,8 +17,13 @@ reset). So a multi-DUT run never flashes / resets / inspects the wrong board:
     ``--dut N`` suffix convention (``HITL_ADAPTER_SERIAL`` / ``_1`` / …) and map to
     distinct ttys, so ``--dut 1`` can never resolve DUT 0's board (the FUG-174
     regression this guards);
-  * within a catalog no two DUTs share a physical identity, and USB auto-discovery
-    keys on the stable by-id glob + per-MAC chip overrides, not a port slot.
+  * no two DUTs served from one HOST share a physical identity — compared across
+    every catalog whose daemon runs there (amd-rig runs the SDR and PHONE
+    daemons side by side). KNOWN GAP (RISK-5): board 58:E6:C5:11:FC:D8 is bound
+    in both amd-rig catalogs, so that case is a strict xfail until the rig config
+    is fixed;
+  * USB auto-discovery keys on the stable by-id glob + per-MAC chip overrides,
+    not a port slot.
 
 Pure config inspection: these all FAIL if the protective keying regresses. See
 DESIGN.md "Multiple DUTs per rig" / "Raw-USB isolation (FUG-73)" and commits
@@ -26,12 +31,13 @@ caef056a, dd7943f6, b5ac04ef.
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.requirements("PR-30")
+_PR30 = pytest.mark.requirements("PR-30")
 
 _CATALOG_NAMES = ("catalog.json", "catalog-sdr.json", "catalog-phone.json", "catalog-mac.json")
 
@@ -67,9 +73,25 @@ def _load_catalogs():
     out = {}
     for name in _CATALOG_NAMES:
         p = _repo_file("pi/hitl/reserve/" + name)
-        if p is not None:
-            out[name] = json.loads(p.read_text())
+        if p is None:
+            # Under Bazel every catalog is test data: a missing one is a wiring bug,
+            # not a reason to quietly check fewer catalogs.
+            assert not os.environ.get(
+                "TEST_SRCDIR"
+            ), f"catalog {name!r} missing from the test's runfiles"
+            continue
+        out[name] = json.loads(p.read_text())
     return out
+
+
+# Catalogs whose daemons run side by side on one host: pi/hitl/flake.nix gives
+# amd-rig both nix/hitl-sdr.nix (catalog-sdr) and nix/hitl-phone-daemon.nix
+# (catalog-phone). Every other catalog is its own host.
+_CO_DEPLOYED = (
+    ("amd-rig", ("catalog-sdr.json", "catalog-phone.json")),
+    ("hitl-rig", ("catalog.json",)),
+    ("mac", ("catalog-mac.json",)),
+)
 
 
 def _norm_serial(s):
@@ -97,6 +119,20 @@ def _adapter_serial(component):
     return None
 
 
+def _board_serials(component):
+    """Every normalized USB-JTAG serial a component is bound to: its by-id serial
+    symlinks plus every HITL_ADAPTER_SERIAL[_k] it injects."""
+    ids = {
+        _norm_serial(m.group(1))
+        for dev in component.get("devices") or []
+        if (m := _BYID_RE.search(_host_side(dev)))
+    }
+    for k, v in (component.get("env") or {}).items():
+        if _ADAPTER_KEY_RE.match(k):
+            ids.add(_norm_serial(v))
+    return ids
+
+
 def _esp_components_with_devices():
     """(catalog, component) for every ESP32 DUT that mounts a container serial
     device — the ones the container reaches over /dev/ttyACM0 + libusb."""
@@ -108,6 +144,7 @@ def _esp_components_with_devices():
     return out
 
 
+@_PR30
 def test_esp_duts_address_boards_by_stable_byid_symlink():
     """Each ESP32 DUT's container serial device is a /dev/serial/by-id/ symlink
     (stable across the C6's per-reset re-enumeration), never a boot-order ttyACMn."""
@@ -128,6 +165,7 @@ def test_esp_duts_address_boards_by_stable_byid_symlink():
             ), f"{cat_name}:{comp['name']} by-id path carries no USB-JTAG serial: {host!r}"
 
 
+@_PR30
 def test_jtag_adapter_serial_matches_the_serial_ttys_board():
     """The adapter serial the daemon injects (for hitl-jtag/gdb to pick the board's
     USB-JTAG) equals the serial embedded in the SAME DUT's by-id serial-tty symlink
@@ -153,6 +191,7 @@ def test_jtag_adapter_serial_matches_the_serial_ttys_board():
         )
 
 
+@_PR30
 def test_multi_dut_env_keys_follow_the_per_dut_suffix_convention():
     """In a composite unit, the k-th ESP32 DUT (0-based, in listed order) carries the
     `_k`-suffixed env keys (HITL_ADAPTER_SERIAL[_k] / HITL_TTY[_k]) and a distinct tty,
@@ -194,34 +233,48 @@ def test_multi_dut_env_keys_follow_the_per_dut_suffix_convention():
         pytest.skip("no multi-ESP32 composite unit in the available catalogs")
 
 
-def test_no_two_duts_in_a_catalog_share_a_physical_identity():
-    """Within a catalog no two ESP32 DUTs share a USB-JTAG serial (by-id or adapter):
-    distinct physical boards, so reserving one never reaches another's silicon."""
+@_PR30
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "RISK-5 known gap: board 58:E6:C5:11:FC:D8 is bound in both amd-rig catalogs "
+        "(catalog-sdr.json c6-1 and catalog-phone.json c6-a), so the SDR and phone "
+        "daemons can each hand it out. A rig config fix makes this pass; then drop "
+        "the xfail."
+    ),
+)
+def test_no_two_duts_on_one_host_share_a_physical_identity():
+    """Across every catalog served from one host, no two ESP32 DUTs share a USB-JTAG
+    serial (by-id or adapter): distinct physical boards, so reserving one never
+    reaches another's silicon, whichever daemon hands it out."""
     cats = _load_catalogs()
     checked = False
-    for cat_name, cat in cats.items():
-        serials = {}
-        for comp in cat.get("components", []):
-            if not _is_esp(comp):
+    for host, names in _CO_DEPLOYED:
+        owners = {}  # serial -> "catalog:component"
+        for cat_name in names:
+            cat = cats.get(cat_name)
+            if cat is None:
                 continue
-            ids = {
-                _norm_serial(m.group(1))
-                for dev in comp.get("devices") or []
-                if (m := _BYID_RE.search(_host_side(dev)))
-            }
-            adp = _adapter_serial(comp)
-            if adp:
-                ids.add(_norm_serial(adp))
-            for s in ids:
-                checked = True
-                assert (
-                    s not in serials
-                ), f"{cat_name}: {comp['name']} and {serials[s]} both claim board {s}"
-                serials[s] = comp["name"]
+            for comp in cat.get("components", []):
+                if not _is_esp(comp):
+                    continue
+                label = f"{cat_name}:{comp['name']}"
+                for s in _board_serials(comp):
+                    checked = True
+                    assert s not in owners, f"{host}: {label} and {owners[s]} both claim board {s}"
+                    owners[s] = label
     if not checked:
         pytest.skip("no catalog with explicit ESP32 physical identities available")
 
 
+def test_co_deployed_catalogs_cover_every_listed_catalog():
+    """The host grouping above names each listed catalog exactly once, so a new
+    catalog can't silently escape the per-host identity check."""
+    grouped = [name for _, names in _CO_DEPLOYED for name in names]
+    assert sorted(grouped) == sorted(_CATALOG_NAMES)
+
+
+@_PR30
 def test_usb_discovery_keys_on_stable_byid_identity_not_a_port_slot():
     """Auto-discovery enumerates boards by the stable by-id serial glob and keys its
     chip overrides by MAC (physical identity) — never a boot-order port slot."""

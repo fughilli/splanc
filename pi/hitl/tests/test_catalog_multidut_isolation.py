@@ -3,10 +3,13 @@
 Two config-level isolation guarantees the reservation catalogs + the harness's
 selection logic enforce so concurrent multi-DUT runs can't interfere:
 
-  * No reservable unit shares a component (a board / device node) with another unit
-    in the same catalog, so two concurrent reservations never drive the same
-    hardware. (The amd-rig PHONE bench runs its two units CONCURRENTLY — isolated
-    net namespaces — so a shared C6 there would be a live cross-device collision.)
+  * No reservable unit shares a physical device (a board's USB-JTAG serial, a
+    phone's serial/UDID, a host device node) with another unit served from the
+    same HOST — across every catalog whose daemon runs there (amd-rig runs the
+    SDR and PHONE daemons side by side) — so two concurrent reservations never
+    drive the same hardware. KNOWN GAP (RISK-5): board 58:E6:C5:11:FC:D8 is
+    bound in both amd-rig catalogs (catalog-sdr.json c6-1 and catalog-phone.json
+    c6-a), so that case is a strict xfail until the rig config is fixed.
   * A special-purpose bench unit flagged ``pin_only`` is reachable ONLY by an
     explicit target (its unit name or type), never by a bare "any DUT with these
     caps" request — so an ordinary caps-only job (e.g. a netstack test asking for
@@ -21,12 +24,15 @@ rig" / "Capability-based selection" and the catalog-sdr/-phone ``pin_only`` note
 """
 
 import json
+import os
+import re
 from pathlib import Path
 
 import pytest
 from hitl_client import Reservation, _unit_serves
 
-pytestmark = pytest.mark.requirements("PR-24")
+pytestmark = pytest.mark.usefixtures("clean_hitl_env")
+_PR24 = pytest.mark.requirements("PR-24")
 
 _CATALOG_NAMES = ("catalog.json", "catalog-sdr.json", "catalog-phone.json", "catalog-mac.json")
 
@@ -54,9 +60,55 @@ def _load_catalogs():
     out = {}
     for name in _CATALOG_NAMES:
         p = _repo_file("pi/hitl/reserve/" + name)
-        if p is not None:
-            out[name] = json.loads(p.read_text())
+        if p is None:
+            # Under Bazel every catalog is test data: a missing one is a wiring bug,
+            # not a reason to quietly check fewer catalogs.
+            assert not os.environ.get(
+                "TEST_SRCDIR"
+            ), f"catalog {name!r} missing from the test's runfiles"
+            continue
+        out[name] = json.loads(p.read_text())
     return out
+
+
+# Catalogs whose daemons run side by side on one host: pi/hitl/flake.nix gives
+# amd-rig both nix/hitl-sdr.nix (catalog-sdr) and nix/hitl-phone-daemon.nix
+# (catalog-phone). Every other catalog is its own host.
+_CO_DEPLOYED = (
+    ("amd-rig", ("catalog-sdr.json", "catalog-phone.json")),
+    ("hitl-rig", ("catalog.json",)),
+    ("mac", ("catalog-mac.json",)),
+)
+
+_BYID_RE = re.compile(r"usb-Espressif_USB_JTAG_serial_debug_unit_([0-9A-Fa-f:]+)-if00")
+# env markers that name one physical device: a board's USB-JTAG serial, a phone's
+# adb serial or iOS UDID.
+_IDENTITY_ENV_RE = re.compile(r"^(HITL_ADAPTER_SERIAL(_\d+)?|HITL_ANDROID_SERIAL|HITL_IOS_UDID)$")
+
+
+def _norm(s):
+    return s.replace(":", "").replace("-", "").lower()
+
+
+def _physical_ids(component):
+    """What a component physically IS: board serials (by-id symlink + adapter env),
+    phone serials/UDIDs, and the host side of every device node it mounts."""
+    ids = set()
+    for dev in component.get("devices") or []:
+        host = dev.split(":/", 1)[0] if ":/" in dev else dev
+        m = _BYID_RE.search(host)
+        ids.add(f"board:{_norm(m.group(1))}" if m else f"node:{host}")
+    for key, val in (component.get("env") or {}).items():
+        if _IDENTITY_ENV_RE.match(key):
+            ids.add(f"board:{_norm(val)}" if key.startswith("HITL_ADAPTER") else f"device:{val}")
+    return ids
+
+
+def test_co_deployed_catalogs_cover_every_listed_catalog():
+    """The host grouping below names each listed catalog exactly once, so a new
+    catalog can't silently escape the per-host isolation check."""
+    grouped = [name for _, names in _CO_DEPLOYED for name in names]
+    assert sorted(grouped) == sorted(_CATALOG_NAMES)
 
 
 def _unit_caps(cat, unit):
@@ -92,29 +144,49 @@ def _all_units():
     return out
 
 
-def test_no_component_is_shared_between_two_reservable_units():
-    """Within a catalog no two units co-own a component, so concurrent reservations
-    of different units never drive the same board/device."""
+@_PR24
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "RISK-5 known gap: board 58:E6:C5:11:FC:D8 is bound in both amd-rig catalogs "
+        "(catalog-sdr.json c6-1 in unit c6-sdr, catalog-phone.json c6-a in unit "
+        "android-phone), so reserving both drives one board from two daemons. A rig "
+        "config fix makes this pass; then drop the xfail."
+    ),
+)
+def test_no_physical_device_is_shared_between_two_units_on_one_host():
+    """Across every catalog served from one host, no two units reach the same
+    physical device (by serial / UDID / host device node, not component name), so
+    concurrent reservations of different units never drive the same hardware."""
     cats = _load_catalogs()
     checked = False
-    for cat_name, cat in cats.items():
-        units = cat.get("units", [])
+    for host, names in _CO_DEPLOYED:
+        units = []  # (label, physical ids)
+        for cat_name in names:
+            cat = cats.get(cat_name)
+            if cat is None:
+                continue
+            comps = {c["name"]: c for c in cat.get("components", [])}
+            for unit in cat.get("units", []):
+                ids = set()
+                for comp_name in unit.get("components", []):
+                    ids.add(f"component:{cat_name}:{comp_name}")  # same name, same catalog
+                    ids |= _physical_ids(comps.get(comp_name, {}))
+                units.append((f"{cat_name}:{unit['name']}", ids))
         for i in range(len(units)):
             for j in range(i + 1, len(units)):
                 checked = True
-                a, b = set(units[i].get("components", [])), set(units[j].get("components", []))
-                shared = a & b
+                shared = units[i][1] & units[j][1]
                 assert not shared, (
-                    f"{cat_name}: units {units[i]['name']} and {units[j]['name']} "
-                    f"share component(s) {sorted(shared)} — concurrent reservations collide"
+                    f"{host}: units {units[i][0]} and {units[j][0]} share "
+                    f"{sorted(shared)} — concurrent reservations collide"
                 )
     if not checked:
-        pytest.skip("no catalog with two or more reservable units available")
+        pytest.skip("no host with two or more reservable units available")
 
 
 def test_every_unit_component_reference_resolves_to_a_declared_component():
-    """A unit's components all exist (a dangling reference = a unit that can't be
-    isolated to real hardware)."""
+    """A unit's components all exist (catalog well-formedness; untraced)."""
     units = _all_units()
     if not units:
         pytest.skip("no catalog with explicit reservable units available")
@@ -126,6 +198,7 @@ def test_every_unit_component_reference_resolves_to_a_declared_component():
             ), f"{cat_name}:{unit['name']} references undeclared component {name!r}"
 
 
+@_PR24
 def test_pin_only_units_are_unreachable_by_a_caps_only_request():
     """A pin_only unit is refused by a bare caps-only request of its OWN capabilities
     on both selection paths, but reachable by its exact type — so an any-DUT job can
@@ -153,6 +226,7 @@ def test_pin_only_units_are_unreachable_by_a_caps_only_request():
         assert Reservation(sku=u["type"], require_caps=caps)._unit_matches(u) is True
 
 
+@_PR24
 def test_caps_only_requests_still_reach_an_everyday_unit():
     """A non-pin unit IS served by a caps-only request of its caps — so pin_only isn't
     wrongly stranding ordinary work (the inverse guard: the pin test above can't pass

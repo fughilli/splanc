@@ -1,18 +1,16 @@
-"""PR-30 — unit tests for the on-hardware rig-isolation probe's pure verdict
+"""Unit tests for the on-hardware rig-isolation probe's pure verdict
 (rig_isolation_core). The hardware wrapper (harness/hitl_rig_isolation.py) reserves
 a rig, fetches /status, and runs this verdict; here we cover the verdict off
 hardware so its logic is proven regardless of the bench.
 
-The property under test: the daemon's advertised USB DUTs carry STABLE,
-serial-derived physical identities and no two collide — so a run can't reach the
-wrong board. (Same requirement the catalog tests pin at config level; this is the
-verdict the hitl probe applies to the LIVE fleet.)
+The property under test: the daemon's advertised USB DUT names are serial-derived
+and no two collide (by serial or by a repeated name). These are untraced tooling
+tests of the probe itself, not PR-30 evidence: no catalog, daemon or harness
+isolation code runs here.
 """
 
 import pytest
 from rig_isolation_core import board_identities, check_distinct_board_identities
-
-pytestmark = pytest.mark.requirements("PR-30")
 
 
 def test_serial_derived_names_yield_distinct_identities():
@@ -35,6 +33,16 @@ def test_two_units_sharing_a_serial_identity_are_rejected():
     with pytest.raises(AssertionError) as e:
         check_distinct_board_identities(units)
     assert "share board identity" in str(e.value)
+
+
+def test_one_unit_name_listed_twice_is_rejected():
+    # The realistic collision: names are derived from the serial, so the same board
+    # surfacing twice shows up as a repeated NAME — which a {name -> serial} map
+    # would silently merge into one entry.
+    units = [{"name": "c6-abc123", "type": "esp32c6"}, {"name": "c6-abc123", "type": "esp32c6"}]
+    with pytest.raises(AssertionError) as e:
+        check_distinct_board_identities(units)
+    assert "listed more than once" in str(e.value)
 
 
 def test_board_identity_matching_is_case_insensitive():

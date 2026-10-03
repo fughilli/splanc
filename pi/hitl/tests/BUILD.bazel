@@ -23,6 +23,7 @@ package(default_visibility = ["//visibility:public"])
 py_test(
     name = "hitl_test",
     srcs = [
+        "conftest.py",
         "pytest_main.py",
         "test_ap_lock.py",
         "test_board_caps.py",
@@ -56,6 +57,7 @@ py_test(
         "//:.github/workflows/hitl.yaml",
         "//firmware/player_app:board_caps.textproto",
         "//pi/hitl/reserve:catalog.json",
+        "//pi/hitl/reserve:catalog-mac.json",
         "//pi/hitl/reserve:catalog-phone.json",
         "//pi/hitl/reserve:catalog-sdr.json",
     ],

@@ -1,20 +1,21 @@
-"""On-hardware rig-isolation probe (PR-30, level hitl).
+"""On-hardware rig-isolation sanity probe (level hitl; untraced).
 
 Reserves a free rig from the pool (so a DUT is actually attached and discovered),
-reads the daemon's live ``/status``, and asserts the rig advertises its USB DUTs by
-a STABLE PHYSICAL identity with no two colliding — the live-fleet form of "a
-multi-DUT run never flashes/resets/inspects the wrong board". No flashing, no
-provisioning: a reserve + one ``/status`` GET, then release.
+reads the daemon's live ``/status``, and checks that the rig advertises its USB DUTs
+by serial-derived names with no two colliding (by serial, or by a name listed
+twice). No flashing, no provisioning: a reserve + one ``/status`` GET, then release.
+
+NOT PR-30 evidence, so its JUnit case carries no requirement: it only reads the
+daemon's advertised names (which the daemon itself derives from the board serial),
+never the board the reserved container actually got (e.g. the chip MAC read over
+its tty), so it cannot catch a wrong-board binding. The catalog-level PR-30 checks
+live in //pi/hitl/tests:hitl_test.
 
 Verdict logic is pure in ``rig_isolation_core`` (unit-tested in
-``//pi/hitl/tests:hitl_test``); this wrapper only does the reserve + fetch and emits
-one JUnit case tagged ``PR-30`` at level ``hitl`` (``JUnitWriter``, as hitl_e2e.py
-does). Records SKIPPED — not passed — when the rig advertises no serial-derived board
-names (a layout this probe can't evaluate), so it never fabricates evidence.
-
-Mirrors the existing reserve→/status pattern (hitl_led_capture asserts /status
-before driving; hitl_e2e uses Reservation + JUnitWriter). hitl-tagged, so it joins
-the HITL CI lane by tag; run manually with:
+``//pi/hitl/tests:hitl_test``). Records SKIPPED — not passed — when the rig
+advertises no serial-derived board names, printing the unit names it saw so a
+persistent SKIP is visible in the log. Any failure to reserve or read ``/status``
+is rig trouble: recorded as an error case, never as a verdict.
 
     bazel run //pi/hitl/harness:rig_isolation -- --server http://hitl-rig-1:8087
 """
@@ -25,9 +26,11 @@ import argparse
 import os
 import sys
 
-from hitl_client import Reservation, ReserveError, _get, _host_of
+from hitl_client import Reservation, _get, _host_of
 from rig_isolation_core import check_distinct_board_identities
 from rules_requirements.hooks.junit_writer import JUnitWriter
+
+_CASE = "usb_duts_have_distinct_advertised_identities"
 
 
 def _status_units(server: str) -> list[dict]:
@@ -42,28 +45,32 @@ def run(args: argparse.Namespace) -> int:
     res = Reservation(server=args.server or None, sku=args.sku or None)
     ok = True
     try:
-        res.acquire()
-        units = _status_units(res.server)
-        ids = check_distinct_board_identities(units)
+        try:
+            res.acquire()
+            units = _status_units(res.server)
+        except Exception as e:  # noqa: BLE001 - any reserve / HTTP / decode failure
+            # Rig trouble (reservation, or the /status GET failing / returning junk),
+            # not a verdict on the advertised identities.
+            print(f"\nrig trouble: {type(e).__name__}: {e}", file=sys.stderr)
+            report.add("reserve", [], "error", f"{type(e).__name__}: {e}")
+            return 1
         rig = _host_of(res.server)
+        names = sorted(str(u.get("name", "?")) for u in units)
+        print(f"{rig}: /status units={names}", flush=True)
+        ids = check_distinct_board_identities(units)
         if not ids:
-            names = sorted(str(u.get("name", "?")) for u in units)
             msg = f"{rig}: no serial-derived board names to evaluate (units={names})"
             print(f"SKIP: {msg}", flush=True)
-            report.add("usb_duts_have_distinct_stable_identity", ["PR-30"], "skipped", msg)
+            report.add(_CASE, [], "skipped", msg)
         else:
-            print(f"{rig}: {len(ids)} DUT(s) with distinct stable identities: {ids}", flush=True)
-            report.add("usb_duts_have_distinct_stable_identity", ["PR-30"], "passed", "")
+            print(
+                f"{rig}: {len(ids)} DUT(s) with distinct advertised identities: {ids}", flush=True
+            )
+            report.add(_CASE, [], "passed", "")
     except AssertionError as e:
         ok = False
         print(f"\nFAIL: {e}", file=sys.stderr)
-        report.add("usb_duts_have_distinct_stable_identity", ["PR-30"], "failed", str(e))
-    except (ReserveError, OSError, ValueError) as e:
-        # Rig trouble (reservation, or the /status GET failing / returning junk),
-        # not a device verdict: record untagged so it doesn't fail PR-30.
-        print(f"\nrig trouble: {e}", file=sys.stderr)
-        report.add("reserve", [], "error", str(e))
-        ok = False
+        report.add(_CASE, [], "failed", str(e))
     finally:
         try:
             _write_report(report, args)

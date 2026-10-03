@@ -596,18 +596,17 @@ py_test(
     ],
 )
 
-# On-hardware rig-isolation probe (PR-30, level hitl): reserve a free rig, read the
-# daemon's live /status, and assert its USB DUTs carry STABLE, serial-derived physical
-# identities with no two colliding — the live-fleet form of "a multi-DUT run never
-# flashes/resets/inspects the wrong board". Reserve + one /status GET, then release: no
-# flash, no provisioning. The pass/fail verdict is pure in rig_isolation_core.py (unit-
-# tested in //pi/hitl/tests:hitl_test); this wrapper only reserves + fetches and emits
-# one JUnit case tagged PR-30 at level hitl. hitl-tagged, so it joins the CI lane by tag.
+# On-hardware rig-isolation sanity probe (level hitl, untraced): reserve a free rig,
+# read the daemon's live /status, and check its USB DUTs are advertised under
+# serial-derived names with no two colliding. Reserve + one /status GET, then
+# release: no flash, no provisioning. NOT PR-30 evidence (it never reads the board
+# the reservation actually got), so its JUnit case carries no requirement. The
+# verdict is pure in rig_isolation_core.py (unit-tested in //pi/hitl/tests:hitl_test).
+# hitl-tagged, so it joins the CI lane by tag.
 py_test(
     name = "rig_isolation",
     timeout = "eternal",  # may queue on the shared bench
     srcs = ["hitl_rig_isolation.py"],
-    data = ["@hitl_reserve//cmd/hitl"],
     imports = ["."],
     main = "hitl_rig_isolation.py",
     tags = [

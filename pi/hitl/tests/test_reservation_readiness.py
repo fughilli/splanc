@@ -23,7 +23,7 @@ import hitl_client
 import pytest
 from hitl_client import Reservation, ReserveError, _host_of
 
-pytestmark = pytest.mark.requirements("PR-36")
+pytestmark = [pytest.mark.requirements("PR-36"), pytest.mark.usefixtures("clean_hitl_env")]
 
 CAPS = ["flash", "improv", "wss-app"]
 
@@ -125,9 +125,9 @@ def _pool_get(mapping):
 
 
 def _set_pool(monkeypatch, hosts):
+    # The other selection knobs (HITL_SKU, HITL_EXCLUDE_HOSTS, HITL_TAG, ...) are
+    # already cleared by the module's clean_hitl_env fixture (conftest.py).
     monkeypatch.setenv("HITL_HOSTS", hosts)
-    monkeypatch.delenv("HITL_SERVERS", raising=False)
-    monkeypatch.delenv("HITL_SERVER", raising=False)
 
 
 def test_pick_prefers_a_host_with_a_free_matching_unit(monkeypatch):
