@@ -7,9 +7,9 @@ selection logic enforce so concurrent multi-DUT runs can't interfere:
     phone's serial/UDID, a host device node) with another unit served from the
     same HOST — across every catalog whose daemon runs there (amd-rig runs the
     SDR and PHONE daemons side by side) — so two concurrent reservations never
-    drive the same hardware. KNOWN GAP (RISK-5): board 58:E6:C5:11:FC:D8 is
+    drive the same hardware. This caught RISK-5: board 58:E6:C5:11:FC:D8 was
     bound in both amd-rig catalogs (catalog-sdr.json c6-1 and catalog-phone.json
-    c6-a), so that case is a strict xfail until the rig config is fixed.
+    c6-a) until #235 moved the phone unit to the spare C6.
   * A special-purpose bench unit flagged ``pin_only`` is reachable ONLY by an
     explicit target (its unit name or type), never by a bare "any DUT with these
     caps" request — so an ordinary caps-only job (e.g. a netstack test asking for
@@ -145,15 +145,6 @@ def _all_units():
 
 
 @_PR24
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RISK-5 known gap: board 58:E6:C5:11:FC:D8 is bound in both amd-rig catalogs "
-        "(catalog-sdr.json c6-1 in unit c6-sdr, catalog-phone.json c6-a in unit "
-        "android-phone), so reserving both drives one board from two daemons. A rig "
-        "config fix makes this pass; then drop the xfail."
-    ),
-)
 def test_no_physical_device_is_shared_between_two_units_on_one_host():
     """Across every catalog served from one host, no two units reach the same
     physical device (by serial / UDID / host device node, not component name), so

@@ -19,9 +19,8 @@ reset). So a multi-DUT run never flashes / resets / inspects the wrong board:
     regression this guards);
   * no two DUTs served from one HOST share a physical identity — compared across
     every catalog whose daemon runs there (amd-rig runs the SDR and PHONE
-    daemons side by side). KNOWN GAP (RISK-5): board 58:E6:C5:11:FC:D8 is bound
-    in both amd-rig catalogs, so that case is a strict xfail until the rig config
-    is fixed;
+    daemons side by side). This caught RISK-5: board 58:E6:C5:11:FC:D8 was bound
+    in both amd-rig catalogs until #235 moved the phone unit to the spare C6;
   * USB auto-discovery keys on the stable by-id glob + per-MAC chip overrides,
     not a port slot.
 
@@ -234,15 +233,6 @@ def test_multi_dut_env_keys_follow_the_per_dut_suffix_convention():
 
 
 @_PR30
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RISK-5 known gap: board 58:E6:C5:11:FC:D8 is bound in both amd-rig catalogs "
-        "(catalog-sdr.json c6-1 and catalog-phone.json c6-a), so the SDR and phone "
-        "daemons can each hand it out. A rig config fix makes this pass; then drop "
-        "the xfail."
-    ),
-)
 def test_no_two_duts_on_one_host_share_a_physical_identity():
     """Across every catalog served from one host, no two ESP32 DUTs share a USB-JTAG
     serial (by-id or adapter): distinct physical boards, so reserving one never
