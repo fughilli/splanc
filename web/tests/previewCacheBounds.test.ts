@@ -174,8 +174,12 @@ async function settle(): Promise<void> {
 const HOUR = 60 * 60 * 1000;
 const clip = (n: number): ArrayBuffer => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, n]).buffer;
 
-// The first test runs the session's one-time sweep; keep it first.
 test("the first access of a session sweeps expired clips and caps the cache at the newest 60 [rr:PR-33]", async () => {
+  // Start a fresh "session" whatever ran before: re-arm the store's one-time
+  // sweep (a private flag on the singleton) and zero the read counter, so the
+  // case does not depend on running first.
+  (previewCache as unknown as { swept: boolean }).swept = false;
+  idb.valueReads = 0;
   const now = Date.now();
   const records: PreviewRecord[] = [];
   // 5 clips past the 7-day TTL, then 65 fresh ones (an hour apart, oldest first).

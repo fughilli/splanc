@@ -5,8 +5,12 @@
  *  - UI scale: one knob, applied as the root font-size (src/store/appearance.ts
  *    applyAppearance), which every rem-sized control and screen inherits — set
  *    live from Settings ▸ Appearance and re-applied at startup.
- *  - Screen stylesheets (the injected *.css.ts modules) size their text with the
- *    rem-based type tokens, so each view follows that root scale.
+ *  - The settings, colour-correction, AI-settings, about, hardware-setup, acid
+ *    and MIDI stylesheets size their text with the rem-based type tokens, so
+ *    those views follow that root scale. The perf panel, the shell stylesheet
+ *    (src/ui/app/app.css) and the video-texture panel still use fixed px font
+ *    sizes: a known PR-1 gap, recorded as a `todo` case below so the
+ *    traceability report shows it instead of counting it as covered.
  *  - LED point size: MapView reads renderSettings() every frame, so one change
  *    rescales the LEDs in every open 3D view, in both render modes.
  *  - Display pixel ratio: canvas views size their backing store to CSS size ×
@@ -18,6 +22,8 @@
  */
 
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { test } from "node:test";
 
 import type { OutputMap } from "@ledmapper/protocol";
@@ -36,6 +42,7 @@ import { installAboutStyles } from "../src/ui/screens/about.css";
 import { installHardwareSetupStyles } from "../src/ui/screens/hardwareSetup.css";
 import { installAcidStyles } from "../src/ui/screens/acidMode.css";
 import { installMidiStyles } from "../src/ui/screens/midi";
+import { installPerfStyles } from "../src/ui/screens/perfPanel.css";
 
 const dom = installFakeDom();
 const router = { navigate: () => undefined, path: () => "/settings", back: () => undefined } as unknown as Router;
@@ -123,9 +130,23 @@ test("committing the Settings UI-scale slider rescales the whole app from the ro
   assert.equal(root().style.fontSize, "100.00%");
 });
 
-test("screen stylesheets size their text with the rem-based type tokens, never fixed px [rr:PR-1]", () => {
-  // Each view's injected stylesheet. (perfPanel.css.ts is NOT listed: it still
-  // uses fixed px font sizes — a known gap, reported against PR-1.)
+/** Every `font` / `font-size` declaration in a stylesheet, with its rule's selector. */
+function fontDecls(css: string): { selector: string; prop: string; value: string }[] {
+  const out: { selector: string; prop: string; value: string }[] = [];
+  for (const rule of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = rule[1]!.trim();
+    for (const m of rule[2]!.matchAll(/(?:^|[\s;{])(font(?:-size)?)\s*:\s*([^;}]+)/g)) {
+      out.push({ selector, prop: m[1]!, value: m[2]!.trim() });
+    }
+  }
+  return out;
+}
+
+const FIXED_PX = /\d(?:\.\d+)?px\b/;
+
+test("the settings, colour-correction, AI-settings, about, hardware-setup, acid and MIDI stylesheets size text in rem, never fixed px [rr:PR-1]", () => {
+  // Only these seven views' injected stylesheets: the remaining ones still use
+  // fixed px (see the `todo` case below).
   const sheets: [string, () => void, string][] = [
     ["settings", installSettingsStyles, ".settings-row"],
     ["colorCorrection", installColorCorrectionStyles, ".cc-row"],
@@ -145,10 +166,75 @@ test("screen stylesheets size their text with the rem-based type tokens, never f
     const decls = [...css.matchAll(/(?:^|[\s;{])(font(?:-size)?)\s*:\s*([^;}]+)/g)];
     assert.ok(decls.length > 0, `${name}: declares its text sizes`);
     for (const m of decls) {
-      assert.doesNotMatch(m[2]!, /\d(?:\.\d+)?px\b/, `${name}: "${m[1]}: ${m[2]!.trim()}" won't follow the UI scale`);
+      assert.doesNotMatch(m[2]!, FIXED_PX, `${name}: "${m[1]}: ${m[2]!.trim()}" won't follow the UI scale`);
     }
   }
 });
+
+// The rest of the app's text styles: the perf panel's injected sheet, the shell
+// stylesheet and the video-texture panel's inline sheet. The two source files
+// are wired in as test data (web/BUILD.bazel); outside Bazel they are read from
+// the source tree next to the compiled tests.
+function sourceText(rel: string): string {
+  const candidates = [resolve(__dirname, "../..", rel), resolve("web", rel)];
+  const hit = candidates.find((p) => existsSync(p));
+  assert.ok(hit !== undefined, `${rel}: not found (is it in the displayScaling_test data?)`);
+  return readFileSync(hit, "utf8");
+}
+
+/** px is intended here: the effect editor's code surfaces (the code textarea and
+ * its highlight backdrop, autocomplete, status line, disassembly, diagnostics)
+ * render monospace code whose metrics must line up exactly. */
+const PX_ALLOWED_SELECTORS = new Set([
+  ".fxedit-code",
+  ".fxedit-backdrop",
+  ".fxac",
+  ".fxedit-status",
+  ".fxedit-disasm",
+  ".fxedit-diags",
+]);
+const pxAllowed = (selector: string): boolean => selector.split(",").every((s) => PX_ALLOWED_SELECTORS.has(s.trim()));
+
+function remainingStylesheets(): [string, string][] {
+  installPerfStyles();
+  const perf = asFake(document.head)
+    .querySelectorAll("style")
+    .map((s) => s.textContent)
+    .find((s) => s.includes(".perf-"));
+  assert.ok(perf !== undefined, "perfPanel: stylesheet installed");
+  const video = /const CSS = `([\s\S]*?)`;/.exec(sourceText("src/effects/editor/videoTexture.ts"));
+  assert.ok(video !== null, "videoTexture.ts: inline stylesheet found");
+  return [
+    ["perfPanel.css.ts", perf],
+    ["app.css", sourceText("src/ui/app/app.css")],
+    ["videoTexture.ts", video[1]!],
+  ];
+}
+
+test("the perf-panel, shell (app.css) and video-texture stylesheets are found and declare text sizes", () => {
+  for (const [name, css] of remainingStylesheets()) {
+    assert.ok(fontDecls(css).length > 0, `${name}: declares its text sizes`);
+  }
+});
+
+test(
+  "the perf-panel, shell (app.css) and video-texture stylesheets size text in rem, never fixed px [rr:PR-1]",
+  {
+    todo:
+      "known PR-1 gap: perfPanel.css.ts, src/ui/app/app.css and the videoTexture.ts inline style still declare " +
+      "fixed px font sizes (12px/10px/14px...), so those views ignore the UI scale",
+  },
+  () => {
+    const offenders: string[] = [];
+    for (const [name, css] of remainingStylesheets()) {
+      for (const d of fontDecls(css)) {
+        if (pxAllowed(d.selector)) continue;
+        if (FIXED_PX.test(d.value)) offenders.push(`${name}: ${d.selector.replace(/\s+/g, " ")} { ${d.prop}: ${d.value} }`);
+      }
+    }
+    assert.deepEqual(offenders, [], `fixed px text that won't follow the UI scale:\n${offenders.join("\n")}`);
+  },
+);
 
 test("the LED point-size setting rescales the LEDs in every open 3D view on its next frame [rr:PR-1]", () => {
   resetAppearance();

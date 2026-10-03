@@ -5,8 +5,10 @@
  *
  * colorCorrection.test.ts covers the LUT's qualitative properties and the wire
  * message. This suite pins:
- *   - the web mirror is the FIRMWARE's table (firmware/player_app/
- *     color_correction.h kWs2812b + build_lut), sampled value-for-value;
+ *   - the web mirror's default profile and LUT samples equal values copied by
+ *     hand from the firmware's table (firmware/player_app/color_correction.h
+ *     kWs2812b + build_lut); the test does not read the header, so firmware
+ *     drift would go unnoticed here;
  *   - the reverse transfer and the curve-drag solver are exact inverses;
  *   - the screen: presets push live to the device (debounced, RAM-only, never
  *     a flash write per drag); Save commits; leaving with unsaved curves asks to
@@ -46,7 +48,7 @@ const preset = (id: string): GammaProfile => PRESETS.find((p) => p.id === id)!.p
 
 // -- the LUT math --------------------------------------------------------------
 
-test("the default profile and its LUT are the firmware's WS2812B table [rr:PR-20]", () => {
+test("the default profile carries the WS2812B constants and buildLut yields the expected samples (values hand-copied from firmware color_correction.h, not read from it) [rr:PR-20]", () => {
   // kWs2812b: gamma 2.8, luminance at the middle of the datasheet mcd bins
   // (R 550–700, G 1100–1400, B 200–400).
   assert.deepEqual(DEFAULT_PROFILE, {

@@ -154,12 +154,22 @@ ts_project(
     deps = TYPE_DEPS,
 )
 
+# Source files a test reads as text (not compiled into dist-test): the
+# display-scaling suite scans the shell stylesheet and the video-texture panel's
+# inline CSS for fixed px font sizes (PR-1).
+_TEST_SOURCE_DATA = {
+    "tests/displayScaling.test.ts": [
+        "src/effects/editor/videoTexture.ts",
+        "src/ui/app/app.css",
+    ],
+}
+
 # One js_test per tests/*.test.ts file, running the emitted CJS under
 # node:test (registering tests at require-time sets the exit code).
 [
     js_test(
         name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test",
-        data = [":web_tests_js"],
+        data = [":web_tests_js"] + _TEST_SOURCE_DATA.get(f, []),
         entry_point = ":dist-test/" + f.removesuffix(".ts") + ".js",
     )
     for f in glob(["tests/*.test.ts"])

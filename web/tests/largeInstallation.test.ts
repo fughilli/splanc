@@ -16,7 +16,8 @@
  *   - extracting the topology of a big map yields to the event loop (the page
  *     does not freeze) and can be aborted mid-run when superseded.
  *
- * Every test carries exactly one requirement: PR-12.
+ * Every test carries exactly one requirement: PR-12, except the superseded-
+ * extraction abort, which is bounded recompute during interaction (PR-2).
  */
 
 import assert from "node:assert/strict";
@@ -368,7 +369,7 @@ test("extracting a large map's topology yields to the event loop instead of free
   assert.equal(topo.associations.length, map.leds.length);
 });
 
-test("a large-map extraction superseded mid-run aborts with no result [rr:PR-12]", async () => {
+test("a large-map extraction superseded mid-run aborts with no result [rr:PR-2]", async () => {
   const ac = new AbortController();
   const fracs: number[] = [];
   await assert.rejects(

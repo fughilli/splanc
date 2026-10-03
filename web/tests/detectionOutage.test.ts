@@ -82,6 +82,11 @@ function det(ledId: number): DetectionRecord {
   };
 }
 
+/** Let the client's flush run to completion, however many turns it takes. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i++) await new Promise<void>((r) => setImmediate(r));
+}
+
 async function connectedClient(): Promise<{
   client: LedMapperClient;
   sockets: DeviceSocket[];
@@ -128,7 +133,7 @@ test("detections captured through a long outage with failed reconnects all reach
   fireReconnect();
   sockets[2]!.open();
   welcome(sockets[2]!);
-  await Promise.resolve();
+  await settle();
   assert.deepEqual(
     sockets[2]!.batches(),
     Array.from({ length: 40 }, (_, i) => [i + 1]),
@@ -148,7 +153,7 @@ test("a batch whose write fails on a dying socket stays queued instead of being 
   fireReconnect();
   sockets[1]!.open();
   welcome(sockets[1]!);
-  await Promise.resolve();
+  await settle();
   assert.deepEqual(sockets[1]!.batches(), [[7], [8]]);
   assert.equal(client.pendingBatchCount, 0);
 });

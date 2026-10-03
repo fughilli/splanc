@@ -8,11 +8,12 @@
  *     operand widths, so effects using those types are costed to the end;
  *   - loops and jumps are walked boundedly;
  *   - texture declarations are read from the buffer table (net/fxbTextures.ts);
- *   - the topology classifier (fx/effectTopology.ts) knows every graph intrinsic;
- *   - synthetic fixtures (effects/fixtures.ts) yield effect-ready per-LED
- *     topology inputs (led.seg / led.s / led.branch / led.dist);
  *   - a calibrated device profile reaches the estimator unchanged through
  *     export, import and the persisted store record.
+ * Two untraced cases ride along (not PR-17 evidence: neither touches the
+ * runtime or the estimator): the preview's topology classifier
+ * (fx/effectTopology.ts) knows every graph intrinsic, and the synthetic
+ * fixtures (effects/fixtures.ts) yield in-range per-LED preview topology inputs.
  * Operand layouts below follow firmware/fx_vm/src/lib.rs `enum Op` (the same
  * widths fx_compiler/src/opt.rs `op_len` encodes).
  */
@@ -221,7 +222,7 @@ test("texture sizes come from the buffer table, including dimensions above 255 p
   assert.throws(() => parseFxbTextures(big.subarray(0, 12)), /too short/);
 });
 
-test("every graph-query and geodesic intrinsic marks an effect topology-aware [rr:PR-17]", () => {
+test("every graph-query and geodesic intrinsic marks an effect topology-aware (preview render-path classifier)", () => {
   // The fx_vm GraphQuery kinds (seg_count … term) plus FloodFrom.
   for (const call of [
     "seg_count()",
@@ -243,7 +244,7 @@ test("every graph-query and geodesic intrinsic marks an effect topology-aware [r
   assert.equal(isTopologyAware(helper), false);
 });
 
-test("synthetic fixtures give every LED effect-ready topology inputs [rr:PR-17]", async () => {
+test("synthetic fixtures give every LED in-range preview topology inputs", async () => {
   const opts = { seed: 3, jitterFrac: 0.05 };
   // A star: five arms meeting at one junction.
   const star = generateFixture("star", { count: 60, ...opts });

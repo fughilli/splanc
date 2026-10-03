@@ -1,8 +1,9 @@
 /**
  * Progress + completion feedback of an AI chat turn (src/effects/ai/generate.ts
  * `chatTurn`, FUG-87). The effect editor's chat narrates a turn entirely through
- * the hooks pinned here: `onThinking(round)` per model round (the spinner +
- * "step N"), `onStatus` labels as the response streams ("Thinking…", a fixed
+ * the hooks pinned here: `onThinking(round)` per model round (the editor shows
+ * a "Thinking…" spinner; it does not display the round number), `onStatus`
+ * labels as the response streams ("Thinking…", a fixed
  * tool verb, the model's own set_script summary), the collapsible live transcript
  * (`onTrace`: prompt in, tokens out, each tool call + result, per round), the
  * resolved final reply (completion), and a clear error when a reply is cut off —
@@ -120,7 +121,7 @@ const SOURCE = `uniform float speed = 1.0; // ${"x".repeat(200)}\nvoid update() 
 
 // -- tests ------------------------------------------------------------------------
 
-test("an AI turn reports each round and its live status, then resolves with the final reply [rr:PR-6]", async () => {
+test("an AI turn reports each round and its live status through the chat hooks, then resolves with the final reply [rr:PR-6]", async () => {
   useAnthropic();
   serve(
     sse(
@@ -156,7 +157,8 @@ test("an AI turn reports each round and its live status, then resolves with the 
 
   // Completion: the turn resolves with the model's closing reply.
   assert.equal(final, "Done — it's blue now.");
-  // Progress: one "step" per model round, numbered.
+  // Progress: the hook fires once per model round, numbered (the editor's
+  // spinner ignores the number).
   assert.deepEqual(rounds, [1, 2]);
   // Live status, in order: reasoning, the tool's fixed verb, then the model's
   // own (streamed-first) summary of what it is doing.

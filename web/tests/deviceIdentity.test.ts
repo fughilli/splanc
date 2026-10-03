@@ -5,7 +5,9 @@
  * stable hardware MAC the device reports in `welcome`, never by a URL spelling
  * or an editable name; keep the display name and the device's own (Bluetooth)
  * name in step; and refresh the record when the device's network-facing
- * identity changes (new IP, renamed elsewhere, a cert rotated by a rename).
+ * identity changes (new IP, renamed elsewhere). One reconnect-hardening case
+ * (PR-29) rides along: a board whose cert stops passing the handshake (as after
+ * a rename) stops the reconnect loop and asks to re-trust it.
  *
  * These drive the production stores, the app connection manager and the device
  * screens against simulated players (tests/deviceFakes.ts) that answer over the
@@ -311,20 +313,23 @@ test("a stale advertised Bluetooth name never overwrites the name the device rep
   assert.equal(deviceStore.get(first.id)!.label, "Kitchen");
 });
 
-test("after a rename rotates the device's cert, reconnects stop and ask to re-trust that device [rr:PR-35]", async () => {
+// Reconnect hardening (PR-29), not identity: no rename happens here, the player
+// just starts refusing every handshake after a drop — what a cert rotated by a
+// rename looks like to the client.
+test("once a dropped device's cert stops passing the handshake, warm reconnects stop and ask to re-trust that device [rr:PR-29]", async () => {
   const player = lan.add("10.0.0.30", { mac: "B4:B4:B4:00:00:30", deviceName: "Hall" });
   appState.connect("wss://10.0.0.30/ws");
   await settle();
   assert.equal(appState.status.state, "connected");
 
-  // The rename regenerates the board's self-signed cert and it reboots: every
-  // reconnect now fails the TLS handshake until the user trusts the new cert.
+  // As if a rename regenerated the board's self-signed cert and it rebooted:
+  // every reconnect now fails the TLS handshake until the user trusts the new cert.
   player.mode = "refuse";
   lan.dropAll("10.0.0.30");
   await advance(20_000);
 
   assert.equal(appState.status.text, "trust needed");
-  assert.equal(appState.status.certUrl, "https://10.0.0.30/", "the trust prompt targets the renamed board's origin");
+  assert.equal(appState.status.certUrl, "https://10.0.0.30/", "the trust prompt targets that board's origin");
   const attempts = lan.socketsTo("10.0.0.30").length;
   await advance(60_000);
   assert.equal(lan.socketsTo("10.0.0.30").length, attempts, "no further handshakes until the user acts");

@@ -6,7 +6,8 @@
  * reports — or connects straight to a typed wss address. The native (Capacitor)
  * wrapper provisions through its Bluetooth plugin with the same Improv state
  * machine, and the HITL app-driver substitutes the virtual Improv board at the
- * same seam.
+ * same seam (an untraced test-plumbing case: the provisioning path itself is
+ * PR-13's first case).
  *
  * Simulated boards answer over the real wire (tests/deviceFakes.ts) behind a
  * stand-in Web Bluetooth / WebSocket / Capacitor plugin, under the fake DOM and
@@ -195,7 +196,7 @@ test("the native app provisions through the Capacitor Bluetooth plugin with the 
   }
 });
 
-test("the HITL app driver provisions its virtual Improv board through the production path [rr:PR-13]", async () => {
+test("the HITL app driver provisions its virtual Improv board through the production path", async () => {
   setDriverActive(true);
   try {
     const device = await requestImprovDevice();

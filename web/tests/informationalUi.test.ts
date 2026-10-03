@@ -190,7 +190,7 @@ test("the AI-generation hint starts open on first visit and, once dismissed, is 
   }
 });
 
-test("the AI-generation hint clears itself once an AI provider is configured [rr:PR-5]", () => {
+test("the AI-generation hint is not shown on a screen built after an AI provider is configured [rr:PR-5]", () => {
   freshAiState();
   updateAiConfig({
     kind: "local",

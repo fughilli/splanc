@@ -15,6 +15,8 @@
  *    than racing a handshake in flight;
  *  - probe lazily (one device per tick, backing off to 10 min, idle while the tab
  *    is hidden) with a ceiling long enough not to call a warming device offline.
+ *    (The hidden-tab idling case is untraced: it is a power/scheduling property,
+ *    not readiness or reconnect.)
  *
  * Drives the app connection manager, client, prober and device sheet against
  * simulated players behind a stand-in WebSocket (tests/deviceFakes.ts), under the
@@ -302,7 +304,7 @@ test("the background prober probes lazily, backing off toward one probe per ten 
   assert.equal(lan.peakLiveTo("10.0.0.92"), 1, "one probe at a time");
 });
 
-test("the background prober stays idle while the tab is hidden [rr:PR-29]", async () => {
+test("the background prober stays idle while the tab is hidden", async () => {
   remember("10.0.0.93", 0x93, "Garage");
   lan.add("10.0.0.93", { mac: mac(0x93), deviceName: "Garage" });
   dom.document.hidden = true;

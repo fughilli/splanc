@@ -7,11 +7,12 @@
  *  - Settings: the UI scale (a whole-app reflow) commits on release only; the
  *    3D-view knobs write through live WITHOUT rebuilding the screen, so the
  *    slider being dragged is never torn out mid-gesture (FUG-30).
- *  - Uniform panel: every step streams to preview + device, no re-render; the
- *    device send is fire-and-forget so no step (or the final value) is dropped.
+ *  - Uniform panel: every step reaches its change sink at once, no re-render;
+ *    the client's device send is fire-and-forget so no step (or the final
+ *    value) is dropped.
  *  - Color correction: curves/simulator repaint per step; the device push (a
  *    LUT rebuild) is debounced to one RAM-only update; controls rebuild on release.
- *  - Map detail: a Cleanup drag aborts superseded topology extractions.
+ *  - Map detail: a Cleanup drag aborts superseded topology extractions mid-run.
  *  - Effects workspace: resize relayouts coalesce; divider drags save on release.
  *
  * Runs against the fake DOM (tests/fakeDom.ts) with node:test mock timers.
@@ -38,6 +39,7 @@ import type { Router } from "../src/ui/app/router";
 import { SettingsScreen } from "../src/ui/screens/settings";
 import { ColorCorrectionScreen } from "../src/ui/screens/colorCorrection";
 import { MapDetailScreen } from "../src/ui/screens/mapDetail";
+import * as extractModule from "../src/topology/extract";
 
 const dom = installFakeDom();
 const router = { navigate: () => undefined, path: () => "/", back: () => undefined } as unknown as Router;
@@ -180,7 +182,7 @@ const SPEED: FxUniform = {
   default: [0.5],
 };
 
-test("a uniform-slider drag streams every value to preview and device without re-rendering [rr:PR-2]", () => {
+test("the uniform panel emits every slider step to its change sink at once, without re-rendering under the drag [rr:PR-2]", () => {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const changes: [number, number[]][] = [];
@@ -192,7 +194,7 @@ test("a uniform-slider drag streams every value to preview and device without re
     const steps = ["0.52", "0.61", "0.7", "0.734"];
     steps.forEach((v, i) => {
       typeInto(range, v);
-      assert.equal(changes.length, i + 1, "each step reaches the preview/device sink at once");
+      assert.equal(changes.length, i + 1, "each step reaches the change sink at once");
       assert.deepEqual(changes[i], [3, [parseFloat(v)]]);
       assert.equal(num.value, v, "the value field tracks the thumb");
       assert.ok(range.isConnected, "the panel is not re-rendered under the drag");
@@ -227,7 +229,7 @@ class WireSocket implements SocketLike {
   }
 }
 
-test("every step of a uniform drag goes out to the device immediately, final value last [rr:PR-2]", () => {
+test("the device client sends every uniform step it is handed without waiting for a reply, final value last (panel wired by a test copy of the editor sink) [rr:PR-2]", () => {
   const sockets: WireSocket[] = [];
   const client = new LedMapperClient("ws://device.test/ws", {
     socketFactory: () => {
@@ -256,7 +258,9 @@ test("every step of a uniform drag goes out to the device immediately, final val
     solverBenchMs: null,
   });
   assert.ok(client.isConnected);
-  // The editor / color-test seam: the panel's change sink pushes to the device.
+  // A copy of the editor / color-test seam (effectEditor.ts wires the panel's
+  // change sink to the device the same way); the editor's own wiring is not
+  // exercised here.
   const host = document.createElement("div");
   const panel = new UniformPanel(host, (slot, value) => {
     if (client.isConnected) client.setUniforms([{ slot, value }]);
@@ -371,7 +375,7 @@ test("dragging a curve on the plot reshapes it live and rebuilds the value contr
 
 // -- Map detail: topology preview ------------------------------------------------------
 
-test("a topology Cleanup drag cancels superseded extractions; only the latest is applied [rr:PR-2]", async () => {
+test("a topology Cleanup drag aborts each superseded extraction mid-computation; only the latest runs to completion and is applied [rr:PR-2]", async () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   // Big enough that the extractor yields (every 64 rows) — where an abort lands.
   const map: OutputMap = generateFixture("ring", { count: 256, seed: 3, jitterFrac: 0 });
@@ -391,6 +395,31 @@ test("a topology Cleanup drag cancels superseded extractions; only the latest is
     applied.push(t);
     realSetTopology.call(this, t);
   };
+  // Observe every extraction the screen starts: how far its computation got
+  // (progress steps, one per yield of the O(n²) phases) and how it ended.
+  interface Run {
+    progress: number;
+    outcome: "pending" | "resolved" | "aborted" | "failed";
+  }
+  const runs: Run[] = [];
+  const mod = extractModule as unknown as { extractTopology: typeof extractModule.extractTopology };
+  const realExtract = mod.extractTopology;
+  mod.extractTopology = (m, options, hooks = {}) => {
+    const run: Run = { progress: 0, outcome: "pending" };
+    runs.push(run);
+    const p = realExtract(m, options, {
+      ...hooks,
+      onProgress: (frac) => {
+        run.progress++;
+        hooks.onProgress?.(frac);
+      },
+    });
+    p.then(
+      () => (run.outcome = "resolved"),
+      (e: unknown) => (run.outcome = e instanceof DOMException && e.name === "AbortError" ? "aborted" : "failed"),
+    );
+    return p;
+  };
   const screen = MapDetailScreen(router, "m1");
   document.body.appendChild(screen.el);
   /** Advance mocked timers + run continuations until `done()` (bounded). */
@@ -409,6 +438,10 @@ test("a topology Cleanup drag cancels superseded extractions; only the latest is
       .find((t) => t.textContent === "Topology")!;
     topoTile.click(); // opens the panel → one initial preview
     await until(() => applied.length === 1);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]!.outcome, "resolved");
+    const fullRun = runs[0]!.progress; // what one uncancelled extraction costs
+    assert.ok(fullRun >= 3, `a full extraction of 256 LEDs yields repeatedly (got ${fullRun})`);
 
     // One quick drag across five positions (no extraction finishes in between).
     const { input } = sliderByLabel(screen.el, "Cleanup");
@@ -419,11 +452,24 @@ test("a topology Cleanup drag cancels superseded extractions; only the latest is
       mock.timers.tick(1);
       await flushTasks();
     }
-    assert.equal(applied.length, 2, "superseded drag positions were cancelled, not computed and applied");
+    const drag = runs.slice(1);
+    assert.equal(drag.length, 5, "one extraction started per drag position");
+    const superseded = drag.slice(0, -1);
+    assert.deepEqual(
+      superseded.map((r) => r.outcome),
+      ["aborted", "aborted", "aborted", "aborted"],
+      "each superseded extraction stops with an AbortError instead of computing to the end",
+    );
+    for (const r of superseded) {
+      assert.ok(r.progress < fullRun, `a superseded run stopped early (${r.progress} of ${fullRun} steps)`);
+    }
+    assert.equal(drag.at(-1)!.outcome, "resolved", "the latest position's extraction completes");
+    assert.equal(applied.length, 2, "only the latest position's topology is applied");
   } finally {
     screen.onUnmount?.();
     screen.el.remove();
     store.get = realGet;
+    mod.extractTopology = realExtract;
     MapView.prototype.setTopology = realSetTopology;
     mock.timers.reset();
   }

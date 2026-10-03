@@ -31,7 +31,6 @@ import {
   BIN_MATH_NAMES,
   OPCODE_NAMES,
   UN_MATH_NAMES,
-  costFor,
   parseFxb,
   walkEntry,
   type FixedOverhead,
@@ -55,7 +54,6 @@ const TRUE_FIXED: FixedOverhead = {
   show_fixed: 41_000,
   show_per_led: 530,
 };
-const TRUE_FALLBACK = 8;
 
 /** Lane weight the abstract interpreter gives one application of `feature`. */
 function lanesOf(feature: string): number {
@@ -89,12 +87,14 @@ function chainFxb(feature: string | null, reps: number): Uint8Array {
   return new Uint8Array([...h, ...code]);
 }
 
-/** The synthetic board's true (frame, show) cycles for a program at `leds`. */
-function trueCycles(fxb: Uint8Array, leds: number): { frame: number; show: number } {
-  const hdr = parseFxb(fxb);
-  const hist = walkEntry(hdr.code, hdr.shadeEntry).max;
-  let perLed = TRUE_FIXED.shade_fixed;
-  for (const [op, n] of Object.entries(hist)) perLed += n * costFor(TRUE_COSTS, op, TRUE_FALLBACK);
+/** The synthetic board's true (frame, show) cycles for the chain it was handed
+ * (`chainFxb(feature, reps)`) at `leds`. Counted from what the chain is built
+ * from — LoadCtx, `reps` lane-weighted applications of `feature`, Ret — not by
+ * walking the bytecode, so the op counting under test (walkEntry) is checked
+ * against an independent oracle rather than agreeing with itself. */
+function trueCycles(feature: string | null, reps: number, leds: number): { frame: number; show: number } {
+  let perLed = TRUE_FIXED.shade_fixed + TRUE_COSTS["LoadCtx"]! + TRUE_COSTS["Ret"]!;
+  if (feature !== null) perLed += reps * lanesOf(feature) * TRUE_COSTS[feature]!;
   return {
     frame: TRUE_FIXED.update_fixed + leds * perLed,
     show: TRUE_FIXED.show_fixed + leds * TRUE_FIXED.show_per_led,
@@ -172,19 +172,20 @@ test("the fit residual reports measurements the model cannot explain [rr:PR-27]"
 
 test("a run only overrides the opcodes it measured; the rest keep their seeded cost [rr:PR-27]", () => {
   // A partial device run: overhead + LED sweep + sin chains only.
-  const sample = (label: string, fxb: Uint8Array, leds: number): DeviceSample => {
-    const c = trueCycles(fxb, leds);
+  const sample = (label: string, feature: string | null, reps: number, leds: number): DeviceSample => {
+    const c = trueCycles(feature, reps, leds);
+    const fxb = chainFxb(feature, reps);
     return { label, fxb, ledCount: leds, measuredFrameCycles: c.frame, measuredShowCycles: c.show };
   };
   const bundle = {
     soc: "esp32c6",
     cpuHz: 160_000_000,
     fit: [
-      sample("empty", chainFxb(null, 0), 128),
-      sample("sweep16", chainFxb(null, 0), 16),
-      sample("sweep256", chainFxb(null, 0), 256),
-      sample("sinM", chainFxb("UnMath:sin", 32), 128),
-      sample("sin2M", chainFxb("UnMath:sin", 64), 128),
+      sample("empty", null, 0, 128),
+      sample("sweep16", null, 0, 16),
+      sample("sweep256", null, 0, 256),
+      sample("sinM", "UnMath:sin", 32, 128),
+      sample("sin2M", "UnMath:sin", 64, 128),
     ],
     heldout: [],
   };
@@ -216,7 +217,7 @@ class SyntheticBoard implements CalibDevice {
   readonly cpuHz = 120_000_000;
   readonly perfCalls: [string, number][] = [];
   readonly submitted: { id: string; activate: boolean }[] = [];
-  private current: { fxb: Uint8Array; leds: number; id: string } | null = null;
+  private current: { feature: string | null; reps: number; leds: number; id: string } | null = null;
 
   constructor(private readonly blind: Set<string> = new Set()) {}
 
@@ -224,7 +225,11 @@ class SyntheticBoard implements CalibDevice {
     const bench = BENCHMARKS.find((b) => `__calib_${b.id}` === effectId);
     assert.ok(bench, `unexpected effect ${effectId}`);
     this.submitted.push({ id: effectId, activate });
-    this.current = { fxb, leds: bench.ledCount, id: bench.id };
+    // The board runs the chain the benchmark defines; its cost comes from that
+    // definition, not from re-reading the bytecode it was sent.
+    const reps = bench.targetOp === null ? 0 : repsOf(bench);
+    assert.deepEqual(fxb, chainFxb(bench.targetOp, reps), `${bench.id}: the benchmark's compiled chain was sent`);
+    this.current = { feature: bench.targetOp, reps, leds: bench.ledCount, id: bench.id };
     return {};
   }
   async setPerf(mode: "OFF" | "BASIC" | "FULL", intervalMs: number): Promise<PerfReportMessage> {
@@ -238,7 +243,7 @@ class SyntheticBoard implements CalibDevice {
   private report(): PerfReportMessage {
     const empty = this.current === null || this.blind.has(this.current.id);
     const leds = this.current?.leds ?? 0;
-    const c = empty ? { frame: 0, show: 0 } : trueCycles(this.current!.fxb, leds);
+    const c = empty ? { frame: 0, show: 0 } : trueCycles(this.current!.feature, this.current!.reps, leds);
     const noisyMean = c.frame === 0 ? 0 : Math.round(c.frame * 1.35 + 25_000);
     return {
       type: "perf_report",
@@ -334,7 +339,7 @@ test("in-browser calibration fits every opcode from the interrupt-free window mi
   assert.equal(table.observations.length, BENCHMARKS.length);
   const sin = BENCHMARKS.find((b) => b.id === "sinM")!;
   const obs = table.observations.find((o) => o.label === sin.label)!;
-  const c = trueCycles(chainFxb("UnMath:sin", 32), sin.ledCount);
+  const c = trueCycles("UnMath:sin", repsOf(sin), sin.ledCount);
   assert.equal(obs.measured, c.frame + c.show);
   // Progress walks every benchmark, then the fit.
   assert.deepEqual(progress.at(-1), {
