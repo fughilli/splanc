@@ -48,7 +48,9 @@ py_test(
     name = "reconstruct_test",
     srcs = [
         "tests/pytest_main.py",
+        "tests/test_interrupted_capture.py",
         "tests/test_reconstruct.py",
+        "tests/test_reconstruct_scale.py",
     ],
     imports = ["."],
     legacy_create_init = False,

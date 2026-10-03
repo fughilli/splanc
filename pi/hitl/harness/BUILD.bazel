@@ -104,6 +104,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
+        "rig_isolation_core.py",
         "sync.py",
         "tls_churn_core.py",
         "uniform_bench_core.py",
@@ -592,5 +593,28 @@ py_test(
     deps = [
         ":harness",
         "@rules_python//python/runfiles",
+    ],
+)
+
+# On-hardware rig-isolation sanity probe (level hitl, untraced): reserve a free rig,
+# read the daemon's live /status, and check its USB DUTs are advertised under
+# serial-derived names with no two colliding. Reserve + one /status GET, then
+# release: no flash, no provisioning. NOT PR-30 evidence (it never reads the board
+# the reservation actually got), so its JUnit case carries no requirement. The
+# verdict is pure in rig_isolation_core.py (unit-tested in //pi/hitl/tests:hitl_test).
+# hitl-tagged, so it joins the CI lane by tag.
+py_test(
+    name = "rig_isolation",
+    timeout = "eternal",  # may queue on the shared bench
+    srcs = ["hitl_rig_isolation.py"],
+    imports = ["."],
+    main = "hitl_rig_isolation.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",  # Reservation + rig_isolation_core
+        "@rules_requirements//python",  # JUnitWriter (per-case hitl JUnit)
     ],
 )
