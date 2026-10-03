@@ -106,9 +106,13 @@ function toImprovDevice(ble: typeof BleClientType, dev: BleDevice): ImprovDevice
 /** One device sighting from a native BLE scan. */
 export interface ImprovScanHit {
   deviceId: string;
-  /** Advertised name. On iOS this is the scan-response local name — the piece
-   * the plugin's built-in `requestDevice` picker can't show (it labels devices
-   * "Unknown"), which is why we scan ourselves. Falls back to a generic label. */
+  /** Advertised name, or "" when this sighting carried none yet. On iOS the name is
+   * the scan-response local name (the primary ADV holds only Flags + the Improv
+   * service UUID, so it fills the 31-byte PDU and the name MUST go in the scan
+   * response) — and CoreBluetooth often delivers the first discovery callback for a
+   * peripheral BEFORE its scan response arrives, so `name` is empty on that sighting
+   * and populated on a later one. Callers keep the best name seen and supply their own
+   * display fallback; they must NOT treat "" as the device's real name. */
   name: string;
   rssi?: number;
 }
@@ -127,12 +131,25 @@ export interface ImprovScan {
 export async function scanImprovNative(onHit: (hit: ImprovScanHit) => void): Promise<ImprovScan> {
   const { BleClient } = await import("@capacitor-community/bluetooth-le");
   await BleClient.initialize();
-  await BleClient.requestLEScan({ services: [IMPROV_SERVICE] }, (result) => {
+  // `allowDuplicates: true` is LOAD-BEARING on iOS. The Improv boards advertise the
+  // service UUID in the primary ADV and the NAME in the scan response (the 128-bit
+  // UUID + flags already fill the 31-byte legacy ADV). With the default
+  // `allowDuplicates: false`, CoreBluetooth reports each peripheral exactly ONCE — and
+  // that single callback often fires before the scan response is received, so
+  // `localName` is empty and the board surfaces WITHOUT its name. On a crowded bench
+  // that made our reserved "Led Widget <hex>" board appear nameless most scans, so the
+  // name-pinned pick (harness.ts) missed it (~1 in 5 scans it happened to coalesce the
+  // name in time — the reported flakiness). Allowing duplicates re-reports each
+  // peripheral on later advertising events, which DO carry the merged scan-response
+  // name, so the real name arrives within the scan window. (A short HITL/provisioning
+  // scan, not a background one — the extra callbacks are cheap and we stop promptly.)
+  await BleClient.requestLEScan({ services: [IMPROV_SERVICE], allowDuplicates: true }, (result) => {
     onHit({
       deviceId: result.device.deviceId,
-      // localName is the advertisement/scan-response name; device.name matches it
-      // on first sighting (iOS), then becomes the cached GAP name after connect.
-      name: result.localName || result.device.name || "Splanc device",
+      // localName is the scan-response name; device.name is the cached GAP name after a
+      // prior connect. Either may be absent on an early sighting — report "" then, and
+      // let the caller keep the best name seen (never overwrite a real name with "").
+      name: result.localName || result.device.name || "",
       ...(result.rssi !== undefined ? { rssi: result.rssi } : {}),
     });
   });

@@ -57,7 +57,15 @@ async function pickImprovDeviceHeadless(
   onStatus?.(wantName ? `scanning for "${wantName}" over Bluetooth…` : "scanning over Bluetooth…");
   const hits = new Map<string, { name: string; rssi: number }>();
   const scan = await scanImprovNative((h) => {
-    hits.set(h.deviceId, { name: h.name, rssi: h.rssi ?? -999 });
+    // iOS delivers a peripheral's scan-response NAME on a LATER advertising callback
+    // than its first discovery (the primary ADV carries only Flags + the Improv UUID).
+    // Keep the best name seen — NEVER clobber a real name with a not-yet-named ("")
+    // sighting — so the pinned-name match below succeeds once the name arrives.
+    const prev = hits.get(h.deviceId);
+    hits.set(h.deviceId, {
+      name: h.name || prev?.name || "",
+      rssi: h.rssi ?? prev?.rssi ?? -999,
+    });
   });
   try {
     if (wantName) {
@@ -73,7 +81,9 @@ async function pickImprovDeviceHeadless(
           return improvDeviceById(top[0], top[1].name);
         }
         if (Date.now() >= deadline) {
-          const saw = [...hits.values()].map((v) => v.name).join(", ") || "none";
+          const saw =
+            [...hits.values()].map((v) => `${v.name || "(unnamed)"}@${v.rssi}`).join(", ") ||
+            "none";
           throw new Error(`Improv device "${wantName}" not found over BLE (saw: ${saw})`);
         }
         await new Promise((r) => setTimeout(r, 400));
@@ -86,8 +96,9 @@ async function pickImprovDeviceHeadless(
   const top = [...hits.entries()].sort((a, b) => b[1].rssi - a[1].rssi)[0];
   if (!top) throw new Error("no Improv device found over BLE");
   const [deviceId, best] = top;
-  onStatus?.(`selected ${best.name} (rssi ${best.rssi})`);
-  return improvDeviceById(deviceId, best.name);
+  const label = best.name || "Splanc device";
+  onStatus?.(`selected ${label} (rssi ${best.rssi})`);
+  return improvDeviceById(deviceId, best.name || label);
 }
 
 interface Incoming {
