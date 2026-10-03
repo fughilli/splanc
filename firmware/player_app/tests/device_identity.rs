@@ -111,7 +111,7 @@ fn a_rename_reaches_the_reply_the_next_session_and_the_firmware_poll() {
 }
 
 #[test]
-fn the_last_of_several_renames_wins_on_every_surface() {
+fn the_last_of_several_renames_wins_in_the_reply_the_poll_and_the_next_welcome() {
     rr::verifies!("PR-14");
     boot_with("Led Widget 1A2B3C");
     rename("Kitchen");
