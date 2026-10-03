@@ -9,17 +9,17 @@
     "user_needs": 8,
     "user_needs_validated": 0,
     "requirements": 37,
-    "requirements_verified": 6,
+    "requirements_verified": 3,
     "requirements_under_verified": 0,
     "requirements_partial": 0,
-    "requirements_failed": 0,
+    "requirements_failed": 3,
     "requirements_unverified": 31,
     "risks": 12,
-    "risks_mitigated": 3,
+    "risks_mitigated": 2,
     "mitigations": 12,
-    "mitigations_verified": 3,
+    "mitigations_verified": 2,
     "test_cases": 14,
-    "gaps": 40
+    "gaps": 42
   },
   "levels": [
     {
@@ -91,7 +91,7 @@
     {
       "id": "UN-4",
       "title": "Reliably manage LED topology maps",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need to create, reconstruct, import, export, and manage LED topology maps reliably, including larger installations.",
       "requirements": [
         "PR-11",
@@ -104,7 +104,7 @@
     {
       "id": "UN-5",
       "title": "Commission and update devices from the browser",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need to commission, name, discover, connect to, and update devices from the browser with minimal setup friction.",
       "requirements": [
         "PR-13",
@@ -135,7 +135,7 @@
     {
       "id": "UN-7",
       "title": "Stability during long sessions and networking/memory pressure",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need the device and app to remain stable during long sessions, networking transitions, and memory pressure.",
       "requirements": [
         "PR-12",
@@ -369,7 +369,7 @@
     {
       "id": "PR-13",
       "title": "Browser provisioning, rename, discovery, LAN and direct connection",
-      "status": "VERIFIED",
+      "status": "FAILED",
       "description": "The browser experience shall support device provisioning, rename, discovery, LAN connection, and direct connection by available connection modes.",
       "evidence": [
         {
@@ -386,13 +386,14 @@
         },
         {
           "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "status": "failed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack"
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "message": "HarnessError: ws never opened at wss://localhost:34767/ws: TimeoutError: timed out during opening handshake"
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": null,
       "satisfies": [
         "UN-5"
       ],
@@ -557,18 +558,19 @@
     {
       "id": "PR-22",
       "title": "Preserve user work across transient disconnects",
-      "status": "VERIFIED",
+      "status": "FAILED",
       "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
       "evidence": [
         {
           "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "status": "failed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack"
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "message": "HarnessError: ws never opened at wss://localhost:34767/ws: TimeoutError: timed out during opening handshake"
         }
       ],
       "demanded_level": "simulation",
-      "provided_level": "hitl",
+      "provided_level": null,
       "satisfies": [
         "UN-4",
         "UN-7"
@@ -847,19 +849,20 @@
     {
       "id": "PR-35",
       "title": "Reconcile device identity on stable attributes",
-      "status": "VERIFIED",
+      "status": "FAILED",
       "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
       "category": "risk-control",
       "evidence": [
         {
           "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "status": "failed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack"
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "message": "HarnessError: ws never opened at wss://localhost:34767/ws: TimeoutError: timed out during opening handshake"
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": null,
       "satisfies": [
         "UN-5"
       ],
@@ -871,8 +874,7 @@
       "modules": [
         "firmware",
         "web"
-      ],
-      "pyramid_violation": true
+      ]
     },
     {
       "id": "PR-36",
@@ -1037,7 +1039,7 @@
     {
       "id": "MIT-10",
       "title": "Reconcile device identity on stable attributes",
-      "status": "VERIFIED",
+      "status": "FAILED",
       "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
       "type": null,
       "mitigates": [
@@ -1203,7 +1205,7 @@
     {
       "id": "RISK-10",
       "title": "Device identity inconsistencies across IP/hostname/AP/records",
-      "status": "MITIGATED",
+      "status": "FAILED",
       "description": "Cause connection confusion, harming UN-5.",
       "severity": "medium",
       "likelihood": null,
@@ -1242,18 +1244,18 @@
   ],
   "test_methods": [],
   "modules": {
-    "firmware": "PARTIAL",
+    "firmware": "FAILED",
     "fx_compiler": "UNVERIFIED",
-    "pi/hitl": "PARTIAL",
+    "pi/hitl": "FAILED",
     "pi/led_driver": "UNVERIFIED",
     "pi/reconstruction": "UNVERIFIED",
-    "pi/server": "PARTIAL",
+    "pi/server": "FAILED",
     "requirements": "UNVERIFIED",
     "shared/protocol": "UNVERIFIED",
     "shared/simulator": "UNVERIFIED",
     "solver": "UNVERIFIED",
     "tools": "UNVERIFIED",
-    "web": "PARTIAL"
+    "web": "FAILED"
   },
   "high_open_risks": [
     "RISK-2",
@@ -1265,8 +1267,7 @@
     "PR-13",
     "PR-21",
     "PR-26",
-    "PR-29",
-    "PR-35"
+    "PR-29"
   ],
   "unknown_evidence": {},
   "gaps": [
@@ -1355,12 +1356,18 @@
       "demanded_level": "hitl"
     },
     {
+      "kind": "failed",
+      "entity": "PR-13",
+      "message": "failing evidence: hitl_e2e::websocket_checks",
+      "route": "human-gate",
+      "demanded_level": "hitl"
+    },
+    {
       "kind": "pyramid",
       "entity": "PR-13",
       "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "demanded_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -1418,6 +1425,13 @@
       "route": "autonomous",
       "demanded_level": "hil",
       "provided_level": "hitl"
+    },
+    {
+      "kind": "failed",
+      "entity": "PR-22",
+      "message": "failing evidence: hitl_e2e::websocket_checks",
+      "route": "autonomous",
+      "demanded_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -1506,12 +1520,11 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "pyramid",
+      "kind": "failed",
       "entity": "PR-35",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "message": "failing evidence: hitl_e2e::websocket_checks",
+      "route": "human-gate",
+      "demanded_level": "hitl"
     },
     {
       "kind": "unverified",
