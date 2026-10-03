@@ -59,16 +59,30 @@ export function pickImprovDeviceNative(): Promise<ImprovDevice> {
       else reject(outcome.err ?? new DOMException("cancelled", "AbortError"));
     }
 
+    // Best name seen per device: iOS reports a peripheral's scan-response name on a
+    // later advertising callback than its first sighting (the primary ADV holds only
+    // Flags + the Improv UUID), so a device can surface nameless, then gain its name.
+    const names = new Map<string, string>();
+
     function onHit(hit: ImprovScanHit): void {
-      if (rows.has(hit.deviceId)) return; // first sighting wins (iOS name is freshest then)
+      if (hit.name) names.set(hit.deviceId, hit.name);
+      const label = names.get(hit.deviceId) ?? "Splanc device";
+      const existing = rows.get(hit.deviceId);
+      if (existing) {
+        // Refresh the label if a later sighting supplied the real name (Button renders
+        // its label in a child <span>).
+        const span = existing.querySelector("span");
+        if (span) span.textContent = label;
+        return;
+      }
       hint.textContent = "Tap your device to set it up:";
       const btn = Button({
-        label: hit.name,
+        label,
         block: true,
         onClick: () => {
           void (async () => {
             try {
-              const device = await improvDeviceById(hit.deviceId, hit.name);
+              const device = await improvDeviceById(hit.deviceId, names.get(hit.deviceId));
               finish({ device });
               sheet.close(); // settled already, so onClose's finish() is a no-op
             } catch (e) {
