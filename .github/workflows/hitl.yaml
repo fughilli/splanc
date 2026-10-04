@@ -89,6 +89,16 @@ jobs:
       HITL_SERVERS: ${{ vars.HITL_SERVERS }}
       HITL_WIFI_SSID: ${{ secrets.HITL_WIFI_SSID }}
       HITL_WIFI_PASS: ${{ secrets.HITL_WIFI_PASS }}
+      # Screen-lock PIN of the amd-rig bench phone, injected into the in-env phone_e2e
+      # run so the Android journeys can unlock it unattended (phone_target._unlock_argv).
+      # Set in the HITL environment (Settings → Environments → HITL → secrets). Unset =>
+      # the Android journeys fall back to swipe-only unlock (correct only if the phone
+      # has NO secure lock); see pi/hitl/phone/README.md "Automated CI reps".
+      HITL_ANDROID_PIN: ${{ secrets.HITL_ANDROID_PIN }}
+      # Pin for the Android phone bench daemon (amd-rig's SECOND hitl-reserved instance,
+      # :8088 — tailnet discovery only reaches :8087). Overridable via the HITL env var
+      # if the host/port ever changes; the android_journeys test defaults to it.
+      HITL_ANDROID_SERVER: ${{ vars.HITL_ANDROID_SERVER || 'http://amd-rig:8088' }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
       # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
@@ -100,6 +110,61 @@ jobs:
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
+
+      # Decide whether this run exercises the Android phone-HITL journeys
+      # (//pi/hitl/phone:android_journeys, the `hitl_android`-tagged lane). There is
+      # exactly ONE Android unit (amd-rig's `android-phone`), so running it on every PR
+      # would bottleneck the whole fleet behind it. Policy:
+      #   * workflow_dispatch (the Mac 6h cron + manual) → ALWAYS run — this is where the
+      #     regular Android reps come from.
+      #   * pull_request / push → OPT-IN only, when the change plausibly affects the
+      #     phone/BLE/Android path. Opt in three ways (any one triggers it):
+      #       - add the `hitl-android` LABEL to the PR, OR
+      #       - put a `[hitl-android]` tag in the PR body or the head commit message, OR
+      #       - touch an Android-affecting path (auto; globs below).
+      # CONVENTION: if you judge your change may have impacted the phone / BLE / Improv /
+      # netstack-BLE / Capacitor path and the path globs wouldn't catch it, REQUEST a run
+      # by adding the `hitl-android` label (or the `[hitl-android]` tag). See
+      # pi/hitl/phone/README.md "Automated CI reps".
+      - name: Decide whether to run the Android journeys
+        id: android_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Pass attacker-influenceable text through the environment (NOT interpolated
+          # into the script), so a crafted PR body / commit message / label can't break
+          # the shell quoting or inject commands.
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run=true
+          else
+            # 1) opt-in label on the PR
+            if printf '%s' "$PR_LABELS" | grep -q '"hitl-android"'; then run=true; fi
+            # 2) [hitl-android] tag in the PR body or the head commit message
+            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-android]'; then
+              run=true
+            fi
+            # 3) path filter — did the change touch Android-affecting code? Use the API
+            #    (no full git history needed on the shallow checkout).
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              files=$(gh api --paginate \
+                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+                -q '.[].filename' 2>/dev/null || true)
+            else
+              files=$(gh api \
+                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
+                -q '.files[].filename' 2>/dev/null || true)
+            fi
+            if printf '%s\n' "$files" | grep -Eq \
+              '^(pi/hitl/phone/|pi/hitl/reserve/catalog-phone\.json|pi/hitl/nix/hitl-(phone-daemon|amd-ap)\.nix|firmware/player_app/|firmware/netstack/|firmware/blehost/|web/src/net/|web/src/driver/|web/src/ui/screens/(deviceSheet|addDevice)\.ts)'; then
+              run=true
+            fi
+          fi
+          echo "run_android=$run" >> "$GITHUB_OUTPUT"
+          echo "Android phone-HITL journeys will run this execution: $run"
 
       # Free ~20-30GB of runner disk before the heavy Nix/Bazel build (FUG-76):
       # ubuntu-latest gives only ~14GB free on /, but the flash-bundle build pulls
@@ -237,6 +302,40 @@ jobs:
           echo "::group::HITL tests (GATING)"
           HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
           echo "::endgroup::"
+
+          # The Android phone-HITL journeys (amd-rig's `android-phone` unit, the :8088
+          # phone daemon). Separate from the pool run above: it reserves ONE named unit
+          # on a PINNED server (HITL_ANDROID_SERVER) — NOT the $HITL_SERVERS pool, and
+          # NOT via the `--server` dispatch input — so we do NOT forward server_arg here.
+          # Gated by the android_gate step (scheduled → always; PR/push → opt-in). The
+          # `hitl_android` tag (underscore) is deliberately NOT matched by the `\bhitl\b`
+          # query above, so this never rides along on an ordinary PR.
+          if [ "${{ steps.android_gate.outputs.run_android }}" = "true" ]; then
+            echo "::group::Android phone-HITL journeys (amd-rig :8088, GATING when run)"
+            android=$(bazel query 'attr(tags, "hitl_android", tests(//...))')
+            echo "collected Android tests:"; echo "$android"
+            if [ -z "$android" ]; then echo "no hitl_android-tagged tests found"; exit 1; fi
+            na=$(echo "$android" | wc -w)
+            # --flaky_test_attempts=2: one re-flash/re-provision retry absorbs a per-boot
+            #   wedge or a transient BLE-chooser / WiFi-join hiccup; a real regression
+            #   still fails both attempts and gates.
+            bazel test $android \
+              -c opt \
+              --experimental_worker_for_repo_fetching=off \
+              --loading_phase_threads=1 \
+              --disk_cache="$HOME/.cache/bazel-disk" \
+              --test_output=all \
+              --jobs="$na" \
+              --local_test_jobs="$na" \
+              --flaky_test_attempts=2 \
+              --test_env=HITL_ANDROID_SERVER \
+              --test_env=HITL_ANDROID_PIN \
+              --test_env=HITL_OWNER \
+              --test_env=GITHUB_SHA
+            echo "::endgroup::"
+          else
+            echo "Android phone-HITL journeys skipped this run (see the android_gate step)."
+          fi
 
       # The raw JUnit evidence (each test's final attempt, test.xml only) for the
       # published combined report (traceability-site.yaml). Resolved here, once:

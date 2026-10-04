@@ -266,9 +266,14 @@ def provision_dut(
     raise last
 
 
-# The DUT prints this once the heapless stack gets a DHCP lease (netstack_transport.cpp);
-# the em-dash is matched loosely so a console-encoding quirk can't break the parse.
-_LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
+# The DUT prints its IP two ways once the heapless stack is up on a lease
+# (netstack_transport.cpp): "DHCP LEASE ACQUIRED … IP <ip>" when it acquires a FRESH
+# lease, and "TCP LISTEN on <ip>:443" when the server binds. Either proves the DUT
+# joined WiFi and is serving at <ip>; we accept both so an ALREADY-provisioned DUT
+# (re-PROV'd while it still holds its lease, so no fresh "LEASE ACQUIRED" line prints)
+# is still recognized. The em-dash etc. is matched loosely so a console-encoding quirk
+# can't break the parse.
+_LEASE_RE = re.compile(r"(?:DHCP LEASE ACQUIRED.*?IP\s+|TCP LISTEN on\s+)(\d{1,3}(?:\.\d{1,3}){3})")
 _WIRE_ACK = "[wire] PROV received"
 
 
@@ -302,13 +307,28 @@ def wire_provision_dut(res, ssid: str, password: str, timeout: float) -> str:
     proc = res.ssh_serialized(cmd, capture=True, timeout=timeout + 30)
     log = (proc.stdout or "") + (proc.stderr or "")
     sys.stdout.write(log)
+    # The DHCP lease line is the AUTHORITATIVE success signal: the heapless stack only
+    # prints it after it received the PROV creds, associated, did the 4-way, and got a
+    # lease — so a lease proves the PROV was received and acted on. The `[wire] PROV
+    # received` ack is emitted in the gap between the `printf PROV` and `cat` attaching
+    # to the tty, so it RACES the capture window and is routinely missed even on a fully
+    # successful provision (observed: 4-way complete + DHCP LEASE in the serial, no ack
+    # line). Gating on it produced false failures; treat its absence as a warning and
+    # let the lease decide. Only when there's NO lease do we use the ack to tell "PROV
+    # never reached the DUT" apart from "creds accepted but no lease".
+    m = _LEASE_RE.search(log)
+    if m:
+        if _WIRE_ACK not in log:
+            print(
+                "[wire] note: no '[wire] PROV received' ack in the captured serial "
+                "(it races the capture start) — but a DHCP lease confirms success",
+                flush=True,
+            )
+        url = f"http://{m.group(1)}/"
+        print(f"[wire] OK — DUT joined WiFi, redirect={url}", flush=True)
+        return url
     if _WIRE_ACK not in log:
         raise HarnessError(
             "DUT never acked the wired PROV command (no '[wire] PROV received' in serial)"
         )
-    m = _LEASE_RE.search(log)
-    if not m:
-        raise HarnessError("wired provisioning: DUT accepted creds but never got a DHCP lease")
-    url = f"http://{m.group(1)}/"
-    print(f"[wire] OK — DUT joined WiFi, redirect={url}", flush=True)
-    return url
+    raise HarnessError("wired provisioning: DUT accepted creds but never got a DHCP lease")

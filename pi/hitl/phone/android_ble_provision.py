@@ -388,14 +388,48 @@ class AndroidBleProvisioner:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    # The default mode is the full Web-Bluetooth provisioning flow (back-compat); the
+    # `join-wifi` / `accept-cert` modes expose the two other adb-UI steps the android
+    # CI orchestrator drives in-env before phone_e2e (android_journeys.py) — the phone
+    # has to be on the C6's network and trust its self-signed cert first.
+    ap.add_argument(
+        "--mode", choices=["provision", "join-wifi", "accept-cert"], default="provision"
+    )
     ap.add_argument("--serial", default=os.environ.get("HITL_ANDROID_SERIAL", ""))
-    ap.add_argument("--ssid", required=True)
+    ap.add_argument("--ssid", default="")
     ap.add_argument("--password", default="")
-    ap.add_argument("--name-match", required=True, help="fragment identifying the DUT, e.g. E2F5EF")
+    ap.add_argument(
+        "--name-match",
+        default=os.environ.get("HITL_DUT_BLE_NAME", ""),
+        help="fragment identifying the DUT in the chooser (e.g. E2F5EF / 'Led Widget CE0824')",
+    )
+    ap.add_argument("--host", default="", help="device host (accept-cert mode): https://<host>/")
     ap.add_argument("--timeout", type=float, default=60.0)
     ap.add_argument("--shot", default="", help="write a screenshot here at the end")
     args = ap.parse_args()
     p = AndroidBleProvisioner(serial=args.serial)
+
+    if args.mode == "join-wifi":
+        if not args.ssid:
+            ap.error("--ssid is required for --mode join-wifi")
+        ok = p.join_wifi(args.ssid, args.password)
+        if args.shot:
+            p.screenshot(args.shot)
+        print("[wifi] JOIN", "OK" if ok else "FAILED", flush=True)
+        return 0 if ok else 1
+
+    if args.mode == "accept-cert":
+        if not args.host:
+            ap.error("--host is required for --mode accept-cert")
+        ok = p.accept_cert(args.host)
+        if args.shot:
+            p.screenshot(args.shot)
+        print("[cert] ACCEPT", "OK" if ok else "FAILED", flush=True)
+        return 0 if ok else 1
+
+    # provision (default)
+    if not args.ssid or not args.name_match:
+        ap.error("--ssid and --name-match are required for --mode provision")
     ok = p.provision(args.ssid, args.password, args.name_match, timeout=args.timeout)
     if args.shot:
         p.screenshot(args.shot)

@@ -175,3 +175,69 @@ def test_provision_dut_raises_after_exhausting_attempts(monkeypatch):
     with pytest.raises(HarnessError) as e:
         provision_dut(ProvisionRes(), "ssid", "pw", timeout=5, attempts=2, sleep=lambda _s: None)
     assert "unable_to_connect" in str(e.value)
+
+
+# --- wired (serial) provisioning: the lease is the authoritative success signal ----
+from provision import wire_provision_dut  # noqa: E402
+
+# A real capture from the amd-rig phone bench: the 4-way completes and the heapless
+# stack prints the DHCP lease, but the `[wire] PROV received` ack raced the `cat`
+# attaching to the tty and never made it into the window (see wire_provision_dut).
+LEASE_NO_ACK = (
+    "ASSOCIATED -> 4-way\n"
+    "4-way: diag=3f (parse=1 mic=1 install=1 ack=1 secure=1 micok=1)\n"
+    "*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***\n"
+    "DHCP reply: type=5 yiaddr=192.168.60.141\n"
+    "*** DHCP LEASE ACQUIRED — IP 192.168.60.141 over heapless WiFi ***\n"
+    "*** TCP LISTEN on 192.168.60.141:443 — heapless server ***\n"
+)
+ACK_NO_LEASE = "[wire] PROV received\nASSOCIATED -> 4-way\n(association stalls, no lease)\n"
+SILENT_SERIAL = "(idle; neither ack nor lease)\n"
+
+
+class WireRes:
+    """Feeds wire_provision_dut one scripted serial capture via ssh_serialized."""
+
+    def __init__(self, serial):
+        self._serial = serial
+        self.calls = []
+
+    def ssh_serialized(self, cmd, capture=False, timeout=None, lock_dir=None):
+        self.calls.append(cmd)
+        return FakeProc(stdout=self._serial, returncode=0)
+
+
+def test_wire_provision_lease_is_success_even_without_the_ack():
+    # The false-failure we hit on the bench: lease present, ack missing → still success.
+    url = wire_provision_dut(WireRes(LEASE_NO_ACK), "amd-rig-ap", "amd-rig-provision", timeout=5)
+    assert url == "http://192.168.60.141/"
+
+
+def test_wire_provision_accepts_tcp_listen_ip_when_already_leased():
+    # An already-provisioned DUT re-PROV'd while it still holds its lease prints no fresh
+    # "LEASE ACQUIRED", but the server's "TCP LISTEN on <ip>:443" still carries the IP.
+    serial = (
+        "ASSOCIATED -> 4-way\n"
+        "4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP\n"
+        "*** TCP LISTEN on 192.168.60.141:443 — heapless server ***\n"
+    )
+    url = wire_provision_dut(WireRes(serial), "amd-rig-ap", "pw", timeout=5)
+    assert url == "http://192.168.60.141/"
+
+
+def test_wire_provision_no_ack_no_lease_reports_prov_not_received():
+    with pytest.raises(HarnessError) as e:
+        wire_provision_dut(WireRes(SILENT_SERIAL), "amd-rig-ap", "pw", timeout=5)
+    assert "never acked" in str(e.value)
+
+
+def test_wire_provision_ack_but_no_lease_reports_no_lease():
+    with pytest.raises(HarnessError) as e:
+        wire_provision_dut(WireRes(ACK_NO_LEASE), "amd-rig-ap", "pw", timeout=5)
+    assert "never got a DHCP lease" in str(e.value)
+
+
+def test_wire_provision_rejects_ssid_with_space():
+    with pytest.raises(HarnessError) as e:
+        wire_provision_dut(WireRes(LEASE_NO_ACK), "has space", "pw", timeout=5)
+    assert "space" in str(e.value)

@@ -58,6 +58,41 @@ py_binary(
     ],
 )
 
+# Automated Android phone-HITL journeys — the unattended CI rep on amd-rig's
+# `android-phone` unit (real Samsung phone + real C6, :8088 phone daemon). Reserves
+# the unit BY NAME on a PINNED server (tailnet discovery only reaches :8087), ships
+# this harness + the web app + solver + netstack bundle into the env, flashes +
+# provisions c6-a onto amd-rig-ap, puts the phone on the AP, and runs phone_e2e in-env
+# (real Web-Bluetooth + cert-trust via adb/uiautomator). See android_journeys.py.
+#
+# Tagged `hitl_android` (NOT `hitl`): the CI lane's gating query is
+# `attr(tags, "\bhitl\b", tests(//...))`, and the `_` keeps this OUT of that word-
+# boundary match — so it never runs on every PR (only ONE android unit exists, which
+# would bottleneck the fleet). The scheduled 6h run always includes it, and a PR opts
+# in via the `hitl-android` label / a path-match / a `[hitl-android]` tag — the lane
+# collects it with `attr(tags, "hitl_android", tests(//...))`. See .github/workflows/hitl.yaml.
+py_test(
+    name = "android_journeys",
+    timeout = "eternal",  # reserve + flash + provision + 4 journeys runs many minutes
+    srcs = ["android_journeys.py"],
+    data = [
+        "phone_e2e.py",  # the in-env entrypoint (shipped alongside :phone's modules)
+        "//firmware/player_app:esp32c6_netstack_flashbundle",  # flashed onto c6-a
+        "//solver:solver_web",  # on-device deep-mapping solve, served at /solver/
+        "//web:dist",  # the LED Mapper app, served to the phone's Chrome
+    ],
+    imports = ["."],
+    main = "android_journeys.py",
+    tags = [
+        "hitl_android",
+        "manual",
+    ],
+    deps = [
+        ":phone",  # phone_e2e's modules + journeys + //pi/hitl/harness (hitl_client/provision)
+        "@rules_python//python/runfiles",
+    ],
+)
+
 # Dry-run tests for the phone targets: assert each target's reachability model +
 # command plan (adb/simctl/devicectl) WITHOUT hardware. Runs in CI/in-container.
 py_test(
