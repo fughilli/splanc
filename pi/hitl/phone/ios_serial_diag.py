@@ -28,20 +28,25 @@ def _ts(t0: float) -> str:
 
 
 def app_reset(sp: serial.Serial) -> None:
-    """Reset the C6 straight into the APPLICATION (not the download bootloader).
+    """Reset the C6 straight into the APPLICATION (not the download bootloader), then
+    leave the port able to RECEIVE the boot banner.
 
-    The two-transistor auto-reset circuit maps DTR->IO9(boot) and RTS->EN(reset) and
-    cancels when both are asserted at once. Pulsing RTS (EN) with DTR held DEASSERTED
-    the whole time leaves IO9/boot high, so the chip reboots into the flashed app and
-    prints its boot banner — including the `[ble] advertising "<name>" ...` line the
-    name resolver greps. (esptool's classic `usb_jtag_reset` sequence drives IO9 low
-    and can land the board in USB download mode, where it never advertises.)"""
+    Reset is an RTS (EN) pulse with DTR held DEASSERTED across the reset edge so IO9/
+    boot stays high and the chip reboots into the flashed app (esptool's own hard reset
+    is an RTS pulse too — "Hard resetting via RTS pin"). DTR is NOT a reset strap after
+    the edge, so once the chip is running we RE-ASSERT DTR: the Arduino USB-CDC gates
+    its TX on DTR, and WITHOUT this the boot `[ble] advertising "<name>" ...` banner is
+    produced but never transmitted — the port reads empty and the name resolver got ""
+    (observed on the live bench: strongest-RSSI fallback then provisioned a STRAY board).
+    (esptool's classic `usb_jtag_reset` drives IO9 low and can land the board in USB
+    download mode, where it never advertises.)"""
     try:
         sp.setDTR(False)  # IO9/boot released (high) — stay OUT of download mode
         sp.setRTS(True)  # EN asserted: chip held in reset
         time.sleep(0.1)
-        sp.setRTS(False)  # EN released: boot into the application
-        sp.setDTR(False)
+        sp.setRTS(False)  # EN released: boot into the application (IO9 high)
+        time.sleep(0.05)  # let the reset edge settle before touching DTR again
+        sp.setDTR(True)  # ungate the USB-CDC TX so the boot banner is transmitted
     except Exception as e:  # noqa: BLE001
         print(f"[diag] app-reset toggle failed (non-fatal): {e}", flush=True)
 
