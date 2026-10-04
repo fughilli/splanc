@@ -235,7 +235,20 @@ class AndroidDeviceTarget(PhoneTarget):
             self._reversed.append(p)
 
     async def launch(self, ports: StationPorts) -> None:
-        subprocess.run(_adb_prefix() + self._launch_argv(self.app_url(ports)), check=True)
+        url = self.app_url(ports)
+        subprocess.run(_adb_prefix() + self._launch_argv(url), check=True)
+        # The debloated bench phone shows Chrome's welcome / ToS / sign-in / sync /
+        # notification walls on the first run; the launched tab sits BEHIND them, so
+        # the app never loads and never connects back (wait_ready times out). Clear
+        # them via uiautomator, then re-issue the VIEW intent (first-run can swallow
+        # the queued one). Best-effort — a clean Chrome has nothing to dismiss.
+        try:
+            from android_ble_provision import AndroidBleProvisioner
+
+            if AndroidBleProvisioner().dismiss_chrome_first_run():
+                subprocess.run(_adb_prefix() + self._launch_argv(url), check=False)
+        except Exception as e:  # noqa: BLE001 — never let first-run cleanup abort the run
+            print(f"[chrome] first-run cleanup skipped: {e}", file=sys.stderr)
 
     # --- real-gesture handlers (Chrome forbids Web Bluetooth requestDevice() and the
     #     cert-trust window.open() without a user activation, so the driver RPC can't

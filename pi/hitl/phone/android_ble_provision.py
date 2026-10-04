@@ -25,6 +25,7 @@ are unit-tested in android_ble_provision_test.py without hardware.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import re
 import subprocess
@@ -69,8 +70,10 @@ def parse_nodes(xml: str) -> list[Node]:
             continue
         out.append(
             Node(
-                text=attrs.get("text", ""),
-                desc=attrs.get("content-desc", ""),
+                # uiautomator XML-escapes label text (e.g. "Accept &amp; continue");
+                # unescape so callers match against the real on-screen string.
+                text=html.unescape(attrs.get("text", "")),
+                desc=html.unescape(attrs.get("content-desc", "")),
                 cls=attrs.get("class", ""),
                 clickable=attrs.get("clickable") == "true",
                 password=attrs.get("password") == "true",
@@ -87,6 +90,95 @@ def find_chooser_row(nodes: list[Node], name_match: str) -> Node | None:
     cands = [n for n in nodes if key in n.text.lower() or key in n.desc.lower()]
     cands.sort(key=lambda n: (not n.clickable, -n.area))
     return cands[0] if cands else None
+
+
+def find_network_row(nodes: list[Node], ssid: str) -> Node | None:
+    """The Wi-Fi settings list row for `ssid`: a node whose text OR content-desc
+    contains the SSID (Samsung OneUI sometimes carries it only in content-desc, and
+    off-screen rows aren't in the dump until scrolled). Prefer the clickable row (or
+    the largest node) so tapping it opens the connect sheet, not a sub-label."""
+    key = ssid.lower()
+    cands = [n for n in nodes if key in n.text.lower() or key in n.desc.lower()]
+    cands.sort(key=lambda n: (not n.clickable, -n.area))
+    return cands[0] if cands else None
+
+
+# Chrome's first-run / sign-in / sync / notification walls, in the order we must clear
+# them: ACCEPT the Terms of Service (nothing loads until it's accepted), then DECLINE
+# the sign-in/sync prompts, then DENY any notification permission, then dismiss a
+# generic leftover dialog. Matched against a node's text/content-desc (lowercased);
+# distinctive enough not to collide with the LED-mapper app's own buttons ("Add device
+# (Bluetooth)", "Scan for device", "Connect").
+_FIRST_RUN_PATTERNS = (
+    # Terms-of-Service welcome ("Accept & continue"), on builds that show it standalone.
+    "accept & continue",
+    "accept and continue",
+    # The modern combined welcome ("Make Chrome your own … By continuing you agree to the
+    # Terms of Service") proceeds via "Stay signed out" / "Use without an account" — these
+    # ALSO accept the ToS, so they're how we clear the wall on this phone's Chrome.
+    "stay signed out",
+    "use without an account",
+    "use without signing in",
+    "continue without an account",
+    "no thanks",
+    "no, thanks",
+    "turn on sync",  # the Samsung/Chrome sync dialog's heading sits above a "No thanks"
+    "maybe later",
+    "not now",
+    "no, i'm not interested",
+    # Notification / page permission prompts.
+    "don't allow",
+    "deny",
+    "block",
+    # Generic leftover dialog dismissals (lowest precedence).
+    "got it",
+    "dismiss",
+)
+
+
+def find_first_run_button(nodes: list[Node]) -> Node | None:
+    """Return the node to tap to clear the current Chrome first-run / permission wall,
+    following `_FIRST_RUN_PATTERNS` precedence (ToS accept first, then decline sign-in,
+    then deny notifications). None when no such wall is on screen. Pure (unit-tested)."""
+    for pat in _FIRST_RUN_PATTERNS:
+        hit: Node | None = None
+        for n in nodes:
+            t, d = n.text.strip().lower(), n.desc.strip().lower()
+            if t == pat or d == pat or t.startswith(pat) or d.startswith(pat):
+                if n.clickable:
+                    return n
+                hit = hit or n
+        if hit is not None:
+            return hit
+    return None
+
+
+def parse_wifi_ssid(dumpsys_wifi: str) -> str:
+    """The SSID the phone is associated to, from `dumpsys wifi` (empty if none). Reads
+    the `mWifiInfo … SSID: <ssid>, BSSID: …` line and only trusts it when the
+    supplicant has COMPLETED association. Works on Android 10, where `cmd wifi status`
+    is root-gated. Pure (unit-tested)."""
+    m = re.search(r'SSID:\s*"?([^",\n]+?)"?,\s*BSSID', dumpsys_wifi)
+    if not m:
+        return ""
+    ssid = m.group(1).strip()
+    if ssid.lower() in ("", "<unknown ssid>", "null", "<none>", "0x"):
+        return ""
+    if re.search(r"Supplicant state:\s*COMPLETED", dumpsys_wifi):
+        return ssid
+    # Some builds don't print the supplicant line in this block; fall back to the
+    # network-state marker if present, else accept a concrete SSID.
+    if re.search(r"(mNetworkInfo.*state:\s*CONNECTED|NetworkInfo.*CONNECTED)", dumpsys_wifi):
+        return ssid
+    return ssid
+
+
+def parse_connectivity_ssid(dumpsys_connectivity: str) -> str:
+    """The active WIFI network's SSID from `dumpsys connectivity` (the NetworkAgentInfo
+    `extra:` field), empty if there is no connected WIFI network. A second, independent
+    read of association used to confirm `parse_wifi_ssid`. Pure (unit-tested)."""
+    m = re.search(r'WIFI[^\n]*?extra:\s*"([^"]+)"', dumpsys_connectivity)
+    return m.group(1).strip() if m else ""
 
 
 class AndroidBleProvisioner:
@@ -212,26 +304,91 @@ class AndroidBleProvisioner:
         self._shell("input", "keyevent", "4")
         time.sleep(1.0)
 
-    def join_wifi(self, ssid: str, psk: str) -> bool:
-        """Join a WPA2 network via the Settings UI. `cmd wifi connect-network` is blocked
-        for the shell uid on Android 10 ("Uid 2000 does not have access to wifi commands"),
-        so open Wi-Fi settings, tap the SSID, type the password, Connect. A network the
-        phone already saved connects with no password prompt. Returns True once Connect is
-        tapped (caller verifies the association)."""
+    def current_ssid(self) -> str:
+        """The SSID the phone is currently associated to (empty if none). Read-only;
+        works on Android 10, where `cmd wifi status` is root-gated for the shell uid.
+        Cross-checks `dumpsys wifi` against `dumpsys connectivity` — a concrete SSID
+        from either is good enough (the connectivity read only has it once the network
+        is validated)."""
+        ssid = parse_wifi_ssid(self._shell("dumpsys", "wifi", capture=True, timeout=25))
+        if ssid:
+            return ssid
+        return parse_connectivity_ssid(
+            self._shell("dumpsys", "connectivity", capture=True, timeout=25)
+        )
+
+    def _wait_assoc(self, ssid: str, timeout: float) -> bool:
+        """Poll until the phone is associated to `ssid`, up to `timeout` seconds."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.current_ssid() == ssid:
+                return True
+            time.sleep(2.0)
+        return False
+
+    def join_wifi(self, ssid: str, psk: str, verify_timeout: float = 35.0) -> bool:
+        """Put the phone on the WPA2 network `ssid`, idempotently, and VERIFY it.
+
+        `cmd wifi connect-network` is root-gated on this phone (Android 10:
+        "Uid 2000 does not have access to wifi commands"), and `adb root` is blocked on
+        the production Samsung build, so there is no programmatic connect — the Settings
+        UI is the only non-root path on API 29. We make it reliable instead of blind:
+
+          1. enable Wi-Fi + Location (Wi-Fi scan results need Location on, or the list
+             comes back empty — the "not in the network list" failure);
+          2. fast-path: if already associated to `ssid`, done (idempotent);
+          3. let a SAVED network auto-reconnect after the radio comes up;
+          4. otherwise drive the Wi-Fi settings list (match by text OR content-desc,
+             scroll to reveal weak/below-the-fold APs, type the PSK on a fresh network);
+          5. confirm REAL association via dumpsys — return True only when on `ssid`,
+             so the caller gets a truthful signal (the old code returned True the moment
+             it tapped Connect, masking a failed join)."""
         self._shell("svc", "wifi", "enable")
+        # Wi-Fi scanning is gated on Location being ON; without it the settings list is
+        # empty and the SSID "isn't in the list". Enabling persists + needs no UI.
+        try:
+            self._shell("settings", "put", "secure", "location_mode", "3")
+        except subprocess.SubprocessError:
+            pass
         time.sleep(2)
+
+        if self.current_ssid() == ssid:
+            print(f"[wifi] already associated to {ssid!r}", flush=True)
+            return True
+        # A saved network reconnects on its own once the radio is up.
+        if self._wait_assoc(ssid, 12.0):
+            print(f"[wifi] auto-reconnected to saved {ssid!r}", flush=True)
+            return True
+
+        self._join_wifi_ui(ssid, psk)
+        if self._wait_assoc(ssid, verify_timeout):
+            print(f"[wifi] associated to {ssid!r}", flush=True)
+            return True
+        print(
+            f"[wifi] NOT associated to {ssid!r} after the Settings join "
+            f"(current={self.current_ssid()!r})",
+            file=sys.stderr,
+        )
+        return False
+
+    def _join_wifi_ui(self, ssid: str, psk: str) -> None:
+        """Drive the Wi-Fi settings list: open it (which kicks a scan), find the SSID
+        (scrolling to reveal it), tap it, type the PSK if prompted, Connect, then leave
+        the settings screen. Best-effort — association is verified by the caller."""
         self._shell("am", "start", "-a", "android.settings.WIFI_SETTINGS")
         time.sleep(4)
-        net = self.find(text=ssid)
-        for _ in range(4):
+        net = None
+        for _ in range(8):
+            net = find_network_row(self.dump(), ssid)
             if net:
                 break
-            self._shell("input", "swipe", "360", "1000", "360", "500")
-            time.sleep(1)
-            net = self.find(text=ssid)
+            # scroll the AP list down to reveal weaker / below-the-fold networks
+            self._shell("input", "swipe", "360", "1300", "360", "500", "300")
+            time.sleep(1.5)
         if not net:
             print(f"[wifi] {ssid!r} not in the network list", file=sys.stderr)
-            return False
+            self._shell("input", "keyevent", "3")  # HOME, off the settings screen
+            return
         self.tap_node(net)
         time.sleep(2)
         pw = self.find(cls="EditText", password=True)
@@ -239,13 +396,17 @@ class AndroidBleProvisioner:
             self.tap_node(pw)
             self.type_text(psk)
             conn = next(
-                (n for n in self.dump() if n.clickable and n.text.strip().lower() == "connect"),
+                (
+                    n
+                    for n in self.dump()
+                    if n.clickable and n.text.strip().lower() in ("connect", "join")
+                ),
                 None,
             )
             if conn:
                 self.tap_node(conn)
-        time.sleep(8)
-        return True
+        self._shell("input", "keyevent", "3")  # HOME, off the settings screen
+        time.sleep(2)
 
     def accept_cert(self, host: str) -> bool:
         """Trust the device's self-signed cert: visit its https origin and tap through
@@ -306,6 +467,42 @@ class AndroidBleProvisioner:
             if not cancel:
                 return
             self.tap_node(cancel)
+
+    def _focused_activity(self) -> str:
+        """The resumed/focused window's component (lowercased), best-effort — used to
+        tell whether Chrome's first-run flow is still on screen."""
+        out = self._shell("dumpsys", "window", capture=True, timeout=15)
+        m = re.search(r"mCurrentFocus=\S+\s+\S+\s+([^\s}]+)", out)
+        if m:
+            return m.group(1).lower()
+        m = re.search(r"mFocusedApp=\S+\s+\S+\s+([^\s}]+)", out)
+        return m.group(1).lower() if m else ""
+
+    def dismiss_chrome_first_run(self, rounds: int = 12) -> bool:
+        """Clear Chrome's welcome / Terms-of-Service / sign-in / sync / notification
+        walls so the launched app URL actually loads (a debloated phone shows them on
+        the first run, and the tab stays behind them → the app never connects back and
+        wait_ready times out). Taps the right button each round (accept ToS, decline
+        sign-in, deny notifications) until nothing first-run-ish is on screen. Robust to
+        their presence or absence. Returns True if it dismissed anything."""
+        dismissed = False
+        for _ in range(rounds):
+            nodes = self.dump()
+            btn = find_first_run_button(nodes)
+            if btn is None:
+                foc = self._focused_activity()
+                # Still inside a Chrome first-run activity with no actionable button yet
+                # (mid-animation) — wait a beat and re-check; otherwise we're done.
+                if any(k in foc for k in ("firstrun", "signin", "tos", "searchactivity")):
+                    time.sleep(1.5)
+                    continue
+                return dismissed
+            label = (btn.text or btn.desc).strip()
+            self.tap_node(btn)
+            print(f"[chrome] dismissed first-run wall: {label!r}", flush=True)
+            dismissed = True
+            time.sleep(1.5)
+        return dismissed
 
     # --- the flow -----------------------------------------------------------
     def provision(self, ssid: str, password: str, name_match: str, timeout: float = 60.0) -> bool:
@@ -393,7 +590,9 @@ def main() -> int:
     # CI orchestrator drives in-env before phone_e2e (android_journeys.py) — the phone
     # has to be on the C6's network and trust its self-signed cert first.
     ap.add_argument(
-        "--mode", choices=["provision", "join-wifi", "accept-cert"], default="provision"
+        "--mode",
+        choices=["provision", "join-wifi", "accept-cert", "dismiss-chrome"],
+        default="provision",
     )
     ap.add_argument("--serial", default=os.environ.get("HITL_ANDROID_SERIAL", ""))
     ap.add_argument("--ssid", default="")
@@ -417,6 +616,13 @@ def main() -> int:
             p.screenshot(args.shot)
         print("[wifi] JOIN", "OK" if ok else "FAILED", flush=True)
         return 0 if ok else 1
+
+    if args.mode == "dismiss-chrome":
+        did = p.dismiss_chrome_first_run()
+        if args.shot:
+            p.screenshot(args.shot)
+        print("[chrome] FIRST-RUN", "DISMISSED" if did else "CLEAR", flush=True)
+        return 0
 
     if args.mode == "accept-cert":
         if not args.host:

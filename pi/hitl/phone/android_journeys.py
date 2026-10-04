@@ -237,6 +237,12 @@ def main() -> int:
         "wss (e.g. wss://192.168.60.141/ws) — a fast local loop on a provisioned DUT",
     )
     ap.add_argument("--monitor-seconds", type=float, default=8.0)
+    ap.add_argument(
+        "--prov-timeout",
+        type=float,
+        default=float(os.environ.get("HITL_WIRE_PROV_TIMEOUT") or 240.0),
+        help="seconds to wait for the wire-provision DHCP lease (slow lab-RF assoc)",
+    )
     # These exist only so `bazel test` can pass the fan-out args the other hitl tests
     # take; this test pins its own server/unit, so they're accepted and ignored.
     ap.add_argument("--sku", default="", help=argparse.SUPPRESS)
@@ -244,6 +250,7 @@ def main() -> int:
     args = ap.parse_args()
     ssid, psk = args.wifi_ssid, args.wifi_pass
     pin = os.environ.get("HITL_ANDROID_PIN", "")
+    prov_timeout = args.prov_timeout
 
     from hitl_client import Reservation
     from provision import dut_target, wire_provision_dut
@@ -265,7 +272,12 @@ def main() -> int:
             else:
                 _log("[flash] skipped (--no-flash); using c6-a's current firmware")
             _log(f"[provision] wire-provisioning c6-a onto {ssid!r} over serial…")
-            redirect = wire_provision_dut(res, ssid, psk, timeout=120.0)
+            # The heapless netstack's association to the AP can be slow under lab-RF
+            # contention (observed on the bench: auth→assoc→4-way→DHCP taking well over
+            # two minutes). The lease line is the authoritative success signal, so give
+            # it a generous window — a short timeout spuriously fails an otherwise-good
+            # join that simply landed its lease late.
+            redirect = wire_provision_dut(res, ssid, psk, timeout=prov_timeout)
             host, _port = dut_target(redirect, "wss")
             device_ws = f"wss://{host}/ws"
             _log(f"[provision] c6-a reachable at {device_ws} (redirect {redirect})")
