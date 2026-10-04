@@ -8,6 +8,7 @@ The pure logic (bars pattern, FPS math) is unit-tested in :stream_bench_test; th
 end-to-end streaming needs a real device, driven by the HITL harness.
 """
 
+load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -30,8 +31,10 @@ rust_binary(
     ],
 )
 
-rust_test(
+# One JUnit case per libtest test (rr_rust_test runs :stream_bench_test_bin).
+rr_rust_test(
     name = "stream_bench_test",
     crate = ":stream_bench_lib",
     edition = "2021",
+    rule = rust_test,
 )

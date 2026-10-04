@@ -89,14 +89,14 @@ rust_library(
     ],
 )
 
-rust_test(
+rr_rust_test(
     name = "ffi_test",
     srcs = ["tests/ffi.rs"],
     edition = "2021",
-    env = {
-        # Host-profile envelopes carry big inline heapless storage.
-        "RUST_MIN_STACK": "16777216",
-    },
+    # On the wrapper; the test binary it runs inherits it. Host-profile
+    # envelopes carry big inline heapless storage.
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -108,14 +108,14 @@ rust_test(
 # The color-order counting probe must preempt the FX engine with no map stored.
 # Own binary (fresh process-global FFI state) so it can arm an effect + skip the
 # map without the full-flow test's ordering — see tests/counting_preempt.rs.
-rust_test(
+rr_rust_test(
     name = "counting_preempt_test",
     srcs = ["tests/counting_preempt.rs"],
     edition = "2021",
-    env = {
-        # Host-profile envelopes carry big inline heapless storage.
-        "RUST_MIN_STACK": "16777216",
-    },
+    # On the wrapper; the test binary it runs inherits it. Host-profile
+    # envelopes carry big inline heapless storage.
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
