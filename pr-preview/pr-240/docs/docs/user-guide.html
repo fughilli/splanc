@@ -1,0 +1,761 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Splanc user guide - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/user-guide.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/user-guide.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <!-- Generated by web/tests/tools/genUserGuide.ts. DO NOT EDIT BY HAND. -->
+<section id="splanc-user-guide">
+<h1>Splanc user guide<a class="headerlink" href="#splanc-user-guide" title="Link to this heading">¶</a></h1>
+<p>This guide walks through every user-facing feature of Splanc — the phone app for mapping,
+controlling, and animating addressable LED fixtures. It is <strong>auto-generated</strong> from the same catalog
+that drives the app’s in-app interactive tutorial (<code class="docutils literal notranslate"><span class="pre">web/src/ui/guide/catalog.ts</span></code>), so the two never
+drift. Regenerate it with:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//web:gen_user_guide
+</pre></div>
+</div>
+<p>You can take the same tour interactively inside the app: on first launch a hint offers it, and you
+can restart it any time from <strong>Settings ▸ Help &amp; tutorial</strong>. This document is also published as a
+static site at <code class="docutils literal notranslate"><span class="pre">/user-guide/</span></code> on the deployed app.</p>
+<section id="contents">
+<h2>Contents<a class="headerlink" href="#contents" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Getting started</strong></p>
+<ul>
+<li><p><a class="reference internal" href="#welcome-to-splanc">Welcome to Splanc</a> — Map, control, and animate addressable LED fixtures
+from your phone.</p></li>
+</ul>
+</li>
+<li><p><strong>Maps</strong></p>
+<ul>
+<li><p><a class="reference internal" href="#the-maps-library">The maps library</a> — Browse, search, organize, import, and export your
+captured fixtures.</p></li>
+<li><p><a class="reference internal" href="#mapping-a-fixture-with-the-camera">Mapping a fixture with the camera</a> — Point the camera at a
+running fixture to reconstruct its LEDs in 3D.</p></li>
+<li><p><a class="reference internal" href="#the-mapping-workspace">The mapping workspace</a> — Inspect the 3D solve, clean up topology, and
+push maps to a device.</p></li>
+</ul>
+</li>
+<li><p><strong>Effects</strong></p>
+<ul>
+<li><p><a class="reference internal" href="#the-effects-library">The effects library</a> — Browse, create, tag, and test the shader effects
+that drive your LEDs.</p></li>
+<li><p><a class="reference internal" href="#the-effect-editor">The effect editor</a> — Write, preview, and push shader effects with the exact
+on-device VM.</p></li>
+</ul>
+</li>
+<li><p><strong>Devices</strong></p>
+<ul>
+<li><p><a class="reference internal" href="#connecting-a-device">Connecting a device</a> — Link a controller over Bluetooth or by address —
+or start offline.</p></li>
+<li><p><a class="reference internal" href="#managing-devices">Managing devices</a> — Connect, rename, re-discover, and forget the controllers
+you know.</p></li>
+<li><p><a class="reference internal" href="#flashing-firmware">Flashing firmware</a> — Commission a blank board over USB, right from the
+browser.</p></li>
+<li><p><a class="reference internal" href="#color-correction">Color correction</a> — Tune per-device gamma and white balance so colors read
+true.</p></li>
+<li><p><a class="reference internal" href="#performance-calibration">Performance &amp; calibration</a> — Watch the live frame budget and
+calibrate a device’s cost model.</p></li>
+</ul>
+</li>
+<li><p><strong>Settings &amp; help</strong></p>
+<ul>
+<li><p><a class="reference internal" href="#midi-controllers">MIDI controllers</a> — Name physical knobs and bind them to effect parameters.</p></li>
+<li><p><a class="reference internal" href="#appearance-behavior">Appearance &amp; behavior</a> — Theme the app, pick fonts, and tune the 3D view
+and capture defaults.</p></li>
+<li><p><a class="reference internal" href="#help-tutorial-about">Help, tutorial &amp; about</a> — Restart this tutorial any time, and find
+licensing and credits.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="getting-started">
+<h2>Getting started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h2>
+<section id="welcome-to-splanc">
+<h3>Welcome to Splanc<a class="headerlink" href="#welcome-to-splanc" title="Link to this heading">¶</a></h3>
+<p><em>Map, control, and animate addressable LED fixtures from your phone.</em></p>
+<p><img alt="Welcome to Splanc — Splanc app screen" src="docs/user-guide/img/welcome.png" /></p>
+<p>Splanc turns a phone into the control surface for addressable LED art. You point the camera at a
+running fixture, the app watches the LEDs blink out their addresses, and it reconstructs where every
+LED sits in 3D space. That map then drives real-time effects on the fixture — authored on the phone
+and played back by the on-device firmware.</p>
+<p>Everything lives on the device in front of you: maps and effects are stored locally in the browser,
+and the app works fully offline once loaded. It is an installable PWA, so you can add it to your
+home screen and launch it like a native app.</p>
+<section id="the-three-tabs">
+<h4>The three tabs<a class="headerlink" href="#the-three-tabs" title="Link to this heading">¶</a></h4>
+<p>The bottom bar is the whole app in miniature:</p>
+<ul class="simple">
+<li><p><strong>Maps</strong> — your library of captured fixtures and the 3D mapping workspace.</p></li>
+<li><p><strong>Effects</strong> — the effect library and the in-app shader editor.</p></li>
+<li><p><strong>Device</strong> — connect to, name, flash, and tune the physical controllers.</p></li>
+</ul>
+</section>
+</section>
+</section>
+<section id="maps">
+<h2>Maps<a class="headerlink" href="#maps" title="Link to this heading">¶</a></h2>
+<section id="the-maps-library">
+<h3>The maps library<a class="headerlink" href="#the-maps-library" title="Link to this heading">¶</a></h3>
+<p><em>Browse, search, organize, import, and export your captured fixtures.</em></p>
+<p><img alt="The maps library — Splanc app screen" src="docs/user-guide/img/maps-library.png" /></p>
+<p>The Maps tab is your library of captured fixtures. Each row is one map — a solved 3D reconstruction
+of a fixture’s LEDs. Search by name, filter by tag, and group maps into folders for larger
+installations.</p>
+<section id="managing-the-library">
+<h4>Managing the library<a class="headerlink" href="#managing-the-library" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Tap a map to open its <strong>mapping workspace</strong> (the 3D solve + topology tools).</p></li>
+<li><p>The <strong>+ New</strong> button starts a fresh camera capture.</p></li>
+<li><p>A row’s ⋯ menu renames, tags, moves to a folder, duplicates, or deletes.</p></li>
+<li><p>The tab’s ⋯ menu <strong>imports and exports</strong> the whole library as a bundle, so you can move maps
+between phones or back them up.</p></li>
+</ul>
+</section>
+</section>
+<section id="mapping-a-fixture-with-the-camera">
+<h3>Mapping a fixture with the camera<a class="headerlink" href="#mapping-a-fixture-with-the-camera" title="Link to this heading">¶</a></h3>
+<p><em>Point the camera at a running fixture to reconstruct its LEDs in 3D.</em></p>
+<p><img alt="Mapping a fixture with the camera — Splanc app screen" src="docs/user-guide/img/capture.png" /></p>
+<p>Capture is where a physical fixture becomes a map. The connected device runs a special addressing
+pattern — each LED blinks out its own index in a gray-coded sequence — and the phone camera decodes
+those blinks frame by frame, building up a per-LED position estimate as you move the phone around
+the fixture.</p>
+<section id="how-a-capture-goes">
+<h4>How a capture goes<a class="headerlink" href="#how-a-capture-goes" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Grant camera access and frame the fixture so its LEDs fill a good part of view.</p></li>
+<li><p>Move slowly around the fixture — parallax from multiple angles is what lets the solver triangulate
+depth.</p></li>
+<li><p>The live overlay shows detected LEDs and decode progress; keep going until coverage looks
+complete.</p></li>
+<li><p><strong>Advanced ▸ Manual override</strong> exposes a manual exposure slider for tricky lighting (its ceiling
+is set in Settings ▸ Behavior).</p></li>
+<li><p>Stop when done — the app runs a final solve and drops you into the new map’s workspace.</p></li>
+</ul>
+<p>The heavy solve can run on-device (WASM) or on a host server; the app picks the better placement
+automatically.</p>
+</section>
+</section>
+<section id="the-mapping-workspace">
+<h3>The mapping workspace<a class="headerlink" href="#the-mapping-workspace" title="Link to this heading">¶</a></h3>
+<p><em>Inspect the 3D solve, clean up topology, and push maps to a device.</em></p>
+<p><img alt="The mapping workspace — Splanc app screen" src="docs/user-guide/img/map-workspace.png" /></p>
+<p>Opening a map lands you in its workspace — an orbitable 3D view of the solved LEDs plus the tools to
+refine and use the map.</p>
+<section id="what-you-can-do-here">
+<h4>What you can do here<a class="headerlink" href="#what-you-can-do-here" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Inspect the solve</strong> in 3D: orbit, zoom, and auto-scale/recenter the view.</p></li>
+<li><p><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
+handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
+<li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
+<li><p><strong>Jump to Effects</strong> to start animating this fixture.</p></li>
+<li><p><strong>Edit metadata</strong> — name, tags, and folder.</p></li>
+</ul>
+<p>The 3D view honors the render knobs in Settings ▸ Appearance (LED size, glow, background, ground
+grid, and axes triad).</p>
+</section>
+</section>
+</section>
+<section id="effects">
+<h2>Effects<a class="headerlink" href="#effects" title="Link to this heading">¶</a></h2>
+<section id="the-effects-library">
+<h3>The effects library<a class="headerlink" href="#the-effects-library" title="Link to this heading">¶</a></h3>
+<p><em>Browse, create, tag, and test the shader effects that drive your LEDs.</em></p>
+<p><img alt="The effects library — Splanc app screen" src="docs/user-guide/img/effects-library.png" /></p>
+<p>The Effects tab is a library of animations, mirroring the maps browser: a search box, tag chips,
+folders, and a row per saved effect. Tap one to open the editor; the + button creates a new effect
+from a starter template.</p>
+<section id="in-the-library">
+<h4>In the library<a class="headerlink" href="#in-the-library" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Search and tag</strong> effects, and group them into folders.</p></li>
+<li><p><strong>Animated previews</strong> can be enabled in Settings ▸ Appearance ▸ Experimental (off by default —
+they’re heavy on mobile).</p></li>
+<li><p><strong>AI key</strong> — a discoverable affordance to bring your own API key for the editor’s AI assistant
+(optional; see the effect editor).</p></li>
+<li><p>The tab’s ⋯ menu can <strong>send the whole library to a debug server</strong>.</p></li>
+</ul>
+</section>
+</section>
+<section id="the-effect-editor">
+<h3>The effect editor<a class="headerlink" href="#the-effect-editor" title="Link to this heading">¶</a></h3>
+<p><em>Write, preview, and push shader effects with the exact on-device VM.</em></p>
+<p><img alt="The effect editor — Splanc app screen" src="docs/user-guide/img/effect-editor.png" /></p>
+<p><img alt="The effect editor: disassembly" src="docs/user-guide/img/effect-editor-disassembly.png" /></p>
+<p>Disassembly — the compiled <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode as a readable op listing, straight from the Rust
+disassembler the device uses.</p>
+<p><img alt="The effect editor: device" src="docs/user-guide/img/effect-editor-device.png" /></p>
+<p>Device — with a controller connected, push the compiled effect and drive its live uniforms straight
+onto the fixture.</p>
+<p>The editor is a full-screen workspace for one effect. You write the effect’s source, and the app
+compiles it off-thread and previews it live over a map using the EXACT same virtual machine the
+firmware runs — so what you see is what the fixture will do. Edits autosave back to the library.</p>
+<section id="editor-features">
+<h4>Editor features<a class="headerlink" href="#editor-features" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Live preview</strong> on a real map with the firmware VM, plus a preview grid.</p></li>
+<li><p><strong>Uniforms pane</strong> — expose tunable parameters (speed, color, …) and bind them to MIDI controls or
+the on-screen sliders.</p></li>
+<li><p><strong>Compile feedback</strong> — errors surface inline as you type.</p></li>
+<li><p><strong>Push to device</strong> — when a controller is connected, send the compiled <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> and live uniform
+values so the fixture updates as you edit.</p></li>
+<li><p><strong>AI assistant</strong> (optional, bring-your-own-key) — describe a change in words and have it drafted
+for you.</p></li>
+</ul>
+</section>
+</section>
+</section>
+<section id="devices">
+<h2>Devices<a class="headerlink" href="#devices" title="Link to this heading">¶</a></h2>
+<section id="connecting-a-device">
+<h3>Connecting a device<a class="headerlink" href="#connecting-a-device" title="Link to this heading">¶</a></h3>
+<p><em>Link a controller over Bluetooth or by address — or start offline.</em></p>
+<p><img alt="Connecting a device — Splanc app screen" src="docs/user-guide/img/connect-device.png" /></p>
+<p>A Splanc device is an ESP32 controller running the player firmware. The app talks to it over a
+secure WebSocket on your local network; to get there it first has to learn the device’s Wi-Fi and
+address.</p>
+<section id="ways-to-add-a-device">
+<h4>Ways to add a device<a class="headerlink" href="#ways-to-add-a-device" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Bluetooth</strong> — the app scans over Web Bluetooth and provisions the board onto a Wi-Fi network you
+pick (Improv). Shown where the browser supports it.</p></li>
+<li><p><strong>Manual address</strong> — type a device’s LAN address directly if you already know it.</p></li>
+<li><p><strong>Flash a blank board</strong> — commission a brand-new board over USB (see Flashing firmware), then
+provision it.</p></li>
+<li><p><strong>Skip / go offline</strong> — explore maps and effects with no hardware; connect later from the Device
+tab.</p></li>
+</ul>
+<p>Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or
+the Device tab) any time to reopen the device sheet.</p>
+</section>
+</section>
+<section id="managing-devices">
+<h3>Managing devices<a class="headerlink" href="#managing-devices" title="Link to this heading">¶</a></h3>
+<p><em>Connect, rename, re-discover, and forget the controllers you know.</em></p>
+<p><img alt="Managing devices — Splanc app screen" src="docs/user-guide/img/device-management.png" /></p>
+<p>The device sheet — reachable from the app-bar pill and the Device tab on every screen — lists the
+controllers you’ve added, each with a live reachability indicator probed over the same WebSocket the
+app uses.</p>
+<section id="per-device-actions">
+<h4>Per-device actions<a class="headerlink" href="#per-device-actions" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Connect</strong> to a reachable device to make it the active target for maps and effects.</p></li>
+<li><p><strong>Re-discover over Bluetooth</strong> when a device has moved networks or gone unreachable.</p></li>
+<li><p><strong>Rename</strong> — the display name is reflected to the device itself.</p></li>
+<li><p>A row’s ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and can <strong>forget</strong> the
+device.</p></li>
+</ul>
+</section>
+</section>
+<section id="flashing-firmware">
+<h3>Flashing firmware<a class="headerlink" href="#flashing-firmware" title="Link to this heading">¶</a></h3>
+<p><em>Commission a blank board over USB, right from the browser.</em></p>
+<p><img alt="Flashing firmware — Splanc app screen" src="docs/user-guide/img/flashing.png" /></p>
+<p>Splanc can flash the player firmware onto a USB-connected board directly from the browser — no
+toolchain, no command line. The flash sheet (from the Device tab) writes the firmware image this
+build bundles over Web Serial, with live progress, a log, and a diagnostics panel.</p>
+<section id="good-to-know">
+<h4>Good to know<a class="headerlink" href="#good-to-know" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Works on desktop Chromium (native Web Serial) and Android Chrome (via a WebUSB polyfill).</p></li>
+<li><p>iOS Safari has neither API, so flashing isn’t available there — the sheet says so rather than
+failing silently.</p></li>
+<li><p>After flashing, provision the fresh board onto Wi-Fi like any other device.</p></li>
+</ul>
+</section>
+</section>
+<section id="color-correction">
+<h3>Color correction<a class="headerlink" href="#color-correction" title="Link to this heading">¶</a></h3>
+<p><em>Tune per-device gamma and white balance so colors read true.</em></p>
+<p><img alt="Color correction — Splanc app screen" src="docs/user-guide/img/color-correction.png" /></p>
+<p>Different LED strips render color differently. Color correction is a per-device surface for the
+strip’s gamma and white-balance curves: pick a built-in profile, tune per-channel gamma and white
+balance by value or by dragging the transfer curve, and preview the effect on real colors before
+(and while) it’s on the strip.</p>
+<p>The curve math mirrors the firmware exactly, so the on-screen simulator matches what the fixture
+actually shows.</p>
+</section>
+<section id="performance-calibration">
+<h3>Performance &amp; calibration<a class="headerlink" href="#performance-calibration" title="Link to this heading">¶</a></h3>
+<p><em>Watch the live frame budget and calibrate a device’s cost model.</em></p>
+<p><img alt="Performance &amp; calibration — Splanc app screen" src="docs/user-guide/img/performance.png" /></p>
+<p>Effects have to fit inside the device’s per-frame time budget. The Performance panel (from the ⋯
+menu) shows the running effect’s frame budget live when a device is connected: a
+frame-time-vs-budget graph, a per-phase breakdown (update / shade / show), and a headroom gauge.</p>
+<section id="calibration">
+<h4>Calibration<a class="headerlink" href="#calibration" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Calibrate this device</strong> runs ~30 s of tiny benchmark effects on the connected controller and
+least-squares-fits its per-opcode cost model, so the app’s predictions match your exact hardware.</p></li>
+<li><p>Offline, the panel shows the predicted cost model from the default table.</p></li>
+<li><p><strong>Performance profiles</strong> manages saved per-device cost tables.</p></li>
+</ul>
+</section>
+</section>
+</section>
+<section id="settings-help">
+<h2>Settings &amp; help<a class="headerlink" href="#settings-help" title="Link to this heading">¶</a></h2>
+<section id="midi-controllers">
+<h3>MIDI controllers<a class="headerlink" href="#midi-controllers" title="Link to this heading">¶</a></h3>
+<p><em>Name physical knobs and bind them to effect parameters.</em></p>
+<p><img alt="MIDI controllers — Splanc app screen" src="docs/user-guide/img/midi.png" /></p>
+<p>Splanc can drive effect parameters from a hardware MIDI controller. Under Settings ▸ MIDI you enable
+Web MIDI, see connected devices, and give physical controls semantic names: wiggle a knob, type
+“speed”, assign.</p>
+<p>Those names are global, so any effect with a matching uniform can bind to them. The per-effect
+binding itself lives in the effect editor’s Uniforms pane.</p>
+</section>
+<section id="appearance-behavior">
+<h3>Appearance &amp; behavior<a class="headerlink" href="#appearance-behavior" title="Link to this heading">¶</a></h3>
+<p><em>Theme the app, pick fonts, and tune the 3D view and capture defaults.</em></p>
+<p><img alt="Appearance &amp; behavior — Splanc app screen" src="docs/user-guide/img/appearance.png" /></p>
+<p>Settings is split into Appearance and Behavior. Every control writes through immediately and
+persists across reloads, with a live 3D preview so the render knobs show their effect as you drag.</p>
+<section id="appearance">
+<h4>Appearance<a class="headerlink" href="#appearance" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Theme</strong> — light/dark and an accent color (presets or a custom picker).</p></li>
+<li><p><strong>Typography</strong> — a workspace font, a monospace font for the editor, and a UI scale.</p></li>
+<li><p><strong>3D view</strong> — LED point size, glow, background, and default ground grid / axes.</p></li>
+<li><p><strong>Startup</strong> — toggle the branded launch splash.</p></li>
+<li><p><strong>Experimental</strong> — opt into animated effect previews in the library.</p></li>
+</ul>
+</section>
+<section id="behavior">
+<h4>Behavior<a class="headerlink" href="#behavior" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Manual exposure ceiling</strong> — the top of the capture screen’s manual exposure slider, for lighting
+a frame under artificial light.</p></li>
+</ul>
+</section>
+</section>
+<section id="help-tutorial-about">
+<h3>Help, tutorial &amp; about<a class="headerlink" href="#help-tutorial-about" title="Link to this heading">¶</a></h3>
+<p><em>Restart this tutorial any time, and find licensing and credits.</em></p>
+<p><img alt="Help, tutorial &amp; about — Splanc app screen" src="docs/user-guide/img/help.png" /></p>
+<p>The interactive tutorial you can launch in the app is dismissible — once you skip or finish it, it
+won’t nag you again. You can restart it any time from <strong>Settings ▸ Help &amp; tutorial</strong>, which also
+links back to this documentation.</p>
+<p>The <strong>About</strong> page (⋯ menu) describes the project, states the license and copyright, links to the
+source, and lists the open-source components the app ships.</p>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Splanc user guide</a><ul>
+<li><a class="reference internal" href="#contents">Contents</a></li>
+<li><a class="reference internal" href="#getting-started">Getting started</a><ul>
+<li><a class="reference internal" href="#welcome-to-splanc">Welcome to Splanc</a><ul>
+<li><a class="reference internal" href="#the-three-tabs">The three tabs</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a class="reference internal" href="#maps">Maps</a><ul>
+<li><a class="reference internal" href="#the-maps-library">The maps library</a><ul>
+<li><a class="reference internal" href="#managing-the-library">Managing the library</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#mapping-a-fixture-with-the-camera">Mapping a fixture with the camera</a><ul>
+<li><a class="reference internal" href="#how-a-capture-goes">How a capture goes</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#the-mapping-workspace">The mapping workspace</a><ul>
+<li><a class="reference internal" href="#what-you-can-do-here">What you can do here</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a class="reference internal" href="#effects">Effects</a><ul>
+<li><a class="reference internal" href="#the-effects-library">The effects library</a><ul>
+<li><a class="reference internal" href="#in-the-library">In the library</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#the-effect-editor">The effect editor</a><ul>
+<li><a class="reference internal" href="#editor-features">Editor features</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a class="reference internal" href="#devices">Devices</a><ul>
+<li><a class="reference internal" href="#connecting-a-device">Connecting a device</a><ul>
+<li><a class="reference internal" href="#ways-to-add-a-device">Ways to add a device</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#managing-devices">Managing devices</a><ul>
+<li><a class="reference internal" href="#per-device-actions">Per-device actions</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#flashing-firmware">Flashing firmware</a><ul>
+<li><a class="reference internal" href="#good-to-know">Good to know</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#color-correction">Color correction</a></li>
+<li><a class="reference internal" href="#performance-calibration">Performance &amp; calibration</a><ul>
+<li><a class="reference internal" href="#calibration">Calibration</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a class="reference internal" href="#settings-help">Settings &amp; help</a><ul>
+<li><a class="reference internal" href="#midi-controllers">MIDI controllers</a></li>
+<li><a class="reference internal" href="#appearance-behavior">Appearance &amp; behavior</a><ul>
+<li><a class="reference internal" href="#appearance">Appearance</a></li>
+<li><a class="reference internal" href="#behavior">Behavior</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#help-tutorial-about">Help, tutorial &amp; about</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
