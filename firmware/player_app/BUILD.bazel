@@ -170,7 +170,10 @@ cc_library(
 cc_test(
     name = "ws_codec_test",
     srcs = ["ws_codec_test.cc"],
-    deps = [":ws_codec"],
+    deps = [
+        ":ws_codec",
+        "@rules_requirements//cc:case",
+    ],
 )
 
 cc_library(
@@ -209,13 +212,19 @@ cc_library(
 cc_test(
     name = "color_correction_test",
     srcs = ["color_correction_test.cc"],
-    deps = [":color_correction"],
+    deps = [
+        ":color_correction",
+        "@rules_requirements//cc:case",
+    ],
 )
 
 cc_test(
     name = "improv_codec_test",
     srcs = ["improv_codec_test.cc"],
-    deps = [":improv_codec"],
+    deps = [
+        ":improv_codec",
+        "@rules_requirements//cc:case",
+    ],
 )
 
 # Board capability descriptor (FUG-123): the checked-in textproto is compiled to

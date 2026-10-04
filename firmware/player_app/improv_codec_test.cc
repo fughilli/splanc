@@ -3,8 +3,9 @@
 #include "firmware/player_app/improv_codec.h"
 
 #include <cassert>
-#include <cstdio>
 #include <cstring>
+
+#include "rr_case.h"
 
 static void test_wifi_settings_vector() {
   // buildWifiSettings("net", "pw") from improv.test.ts.
@@ -59,11 +60,15 @@ static void test_result_roundtrip_matches_web_vector() {
   assert(improv_build_result(IMPROV_CMD_WIFI_SETTINGS, url, out, 5) == 0);
 }
 
-int main() {
-  test_wifi_settings_vector();
-  test_open_network();
-  test_bad_packets();
-  test_result_roundtrip_matches_web_vector();
-  printf("PASS\n");
-  return 0;
+// One JUnit case per test function (rr_case.h): each runs in its own forked
+// child, so a failing assert() fails that case and the rest still run; the
+// binary exits 1 if any case failed, as the plain main did.
+int main(int argc, char **argv) {
+  return rr::RunCases(argc, argv, "improv_codec",
+                      {
+                          {"wifi_settings_vector", test_wifi_settings_vector},
+                          {"open_network", test_open_network},
+                          {"bad_packets", test_bad_packets},
+                          {"result_roundtrip_matches_web_vector", test_result_roundtrip_matches_web_vector},
+                      });
 }
