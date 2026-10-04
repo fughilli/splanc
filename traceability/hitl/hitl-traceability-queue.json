@@ -259,8 +259,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:video_stream_netstack",
-      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
+      "entity": "//pi/hitl/phone:android_journeys",
+      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
       "route": "autonomous"
     },
     {
