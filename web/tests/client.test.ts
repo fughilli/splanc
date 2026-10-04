@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, type SocketLike } from "../src/net/client";
+import { certApprovalUrl, LedMapperClient, RequestTimeoutError, type SocketLike } from "../src/net/client";
 import { decodeClient, encodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
@@ -744,4 +744,43 @@ test("certApprovalUrl points cross-origin wss targets at the player origin", () 
   // Non-wss targets have no certificate to approve; garbage is not a URL.
   assert.equal(certApprovalUrl("ws://esp32.local/ws", page), null);
   assert.equal(certApprovalUrl("not a url", page), null);
+});
+
+test("getHardwareConfig rejects with RequestTimeoutError when the firmware never answers", async () => {
+  // Re-investigation of the "firmware doesn't report hardware config" note: a
+  // matching c6/c3 build ALWAYS replies to get_hardware_config, so no reply means
+  // firmware too old for the protocol (or a wedged link). Without a deadline the
+  // request hangs forever and the empty-state note sticks silently; the timeout
+  // turns that into a distinguishable rejection.
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const p = client.getHardwareConfig();
+  p.catch(() => undefined); // avoid an unhandled rejection before we fire the timer
+  assert.ok(scheduled.length >= 1, "the request scheduled a timeout");
+  // The request timeout is the most-recently scheduled callback.
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(p, (e: unknown) => e instanceof RequestTimeoutError);
+});
+
+test("a reply before the deadline resolves; the later timeout fires harmlessly", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const p = client.getHardwareConfig();
+  s.receive({
+    type: "hardware_config_state",
+    channels: [{ channel: 0, gpio: 20, ledType: "ws281x", colorOrder: "GRB" }],
+  });
+  const st = (await p) as unknown as { channels: unknown[] };
+  assert.equal(st.channels.length, 1);
+  // Firing the now-stale timeout must be a no-op (first settle wins): no throw,
+  // no second rejection.
+  scheduled[scheduled.length - 1]!();
 });
