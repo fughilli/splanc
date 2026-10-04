@@ -533,6 +533,7 @@ message ClientMessage {
     SetJit set_jit = 32;
     SetHardwareConfig set_hardware_config = 33;
     GetHardwareConfig get_hardware_config = 34;
+    GetColorCorrection get_color_correction = 35;
   }
 }
 
@@ -582,6 +583,14 @@ message HardwareChannel {
 // so the Hardware Setup page can hydrate on open. Reply: hardware_config_state.
 message GetHardwareConfig {}
 
+// Request the device's CURRENT color correction (the resolved per-channel gamma
+// + relative luminance built into its LUTs), so the Color Correction page can
+// hydrate on open and a HITL journey can assert the device reports the gamma it
+// was set to (not just that set_color_correction ack'd). The device always has
+// a concrete profile (the WS2812B default after a reboot), so the reply carries
+// resolved values, never a profile name. Reply: color_correction_state.
+message GetColorCorrection {}
+
 // Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
 // the frame quantized to `format` (row-major, `width`*`height` texels),
 // optionally XOR-delta'd against the previous frame (flags bit0 = DELTA — the
@@ -630,6 +639,25 @@ message SetColorCorrection {
   // drags curves, so a rapid stream of updates doesn't hammer the flash. The UI
   // sends one commit=true when it's done (e.g. the panel closes).
   optional bool commit = 8;
+}
+
+// Reply to get_color_correction: the per-channel color correction the device is
+// CURRENTLY applying — the resolved gamma exponents + relative luminance it
+// built its LUTs from (a set_color_correction resolves a profile name or the
+// explicit fields down to these concrete values). The Color Correction page
+// hydrates its curves from this on open, and a HITL gamma journey asserts the
+// device reports the gamma it was set to. Non-optional: the device always has a
+// concrete profile (the WS2812B default after a reboot), so every field is set.
+message ColorCorrectionState {
+  // Per-channel gamma exponent currently applied (WS2812B default 2.8).
+  float gamma_r = 1;
+  float gamma_g = 2;
+  float gamma_b = 3;
+  // Per-channel relative luminance used for white balance (datasheet mcd; only
+  // the ratios matter — the brightest channels are scaled down for neutral white).
+  float lum_r = 4;
+  float lum_g = 5;
+  float lum_b = 6;
 }
 
 // Global output brightness — a single scalar applied to every LED's rendered
@@ -905,5 +933,6 @@ message ServerMessage {
     PerfReport perf_report = 17;
     ChunkAck chunk_ack = 18;
     HardwareConfigState hardware_config_state = 19;
+    ColorCorrectionState color_correction_state = 20;
   }
 }

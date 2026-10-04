@@ -410,3 +410,63 @@ fn hardware_config_roundtrip() {
     // Nothing above changed channel 0's order.
     assert_eq!(player.hw_color_order_name(0), "RBG");
 }
+
+/// set_color_correction -> get_color_correction: the read-back echoes the gamma
+/// (and luminance) the device is applying, so the Color Correction page can
+/// hydrate on open and a gamma HITL journey can assert "device applied gamma =
+/// X" rather than only that the set was ack'd.
+#[test]
+fn color_correction_roundtrip() {
+    let mut player = Player::new("esp32-0001", 256);
+
+    // A fresh player reports the WS2812B default (gamma 2.8, datasheet luminance)
+    // — the device always has a concrete profile, so the read-back is never empty.
+    let Some(SMsg::ColorCorrectionState(st)) =
+        send(&mut player, CMsg::GetColorCorrection(pb::GetColorCorrection::default()), 0.0)
+    else {
+        panic!("get_color_correction must produce color_correction_state");
+    };
+    assert_eq!(st.r#gamma_r, 2.8);
+    assert_eq!(st.r#gamma_g, 2.8);
+    assert_eq!(st.r#gamma_b, 2.8);
+    assert_eq!((st.r#lum_r, st.r#lum_g, st.r#lum_b), (625.0, 1250.0, 300.0));
+
+    // Set explicit per-channel gamma + luminance, then read it straight back:
+    // the reply must echo exactly what was set.
+    let mut cc = pb::SetColorCorrection::default();
+    cc.set_gamma_r(2.0);
+    cc.set_gamma_g(2.2);
+    cc.set_gamma_b(2.4);
+    cc.set_lum_r(700.0);
+    cc.set_lum_g(1200.0);
+    cc.set_lum_b(350.0);
+    // set_color_correction acks with welcome (no state in the reply).
+    let Some(SMsg::Welcome(_)) = send(&mut player, CMsg::SetColorCorrection(cc), 100.0) else {
+        panic!("set_color_correction acks with welcome");
+    };
+
+    let Some(SMsg::ColorCorrectionState(st)) =
+        send(&mut player, CMsg::GetColorCorrection(pb::GetColorCorrection::default()), 200.0)
+    else {
+        panic!("get_color_correction must produce color_correction_state");
+    };
+    assert_eq!((st.r#gamma_r, st.r#gamma_g, st.r#gamma_b), (2.0, 2.2, 2.4));
+    assert_eq!((st.r#lum_r, st.r#lum_g, st.r#lum_b), (700.0, 1200.0, 350.0));
+
+    // A named profile resolves to its concrete values, which the read-back
+    // reports (a partial gamma-only set leaves the profile's luminance in place).
+    let mut cc = pb::SetColorCorrection::default();
+    cc.set_gamma_r(3.0);
+    let Some(SMsg::Welcome(_)) = send(&mut player, CMsg::SetColorCorrection(cc), 300.0) else {
+        panic!("set_color_correction acks with welcome");
+    };
+    let Some(SMsg::ColorCorrectionState(st)) =
+        send(&mut player, CMsg::GetColorCorrection(pb::GetColorCorrection::default()), 400.0)
+    else {
+        panic!("color_correction_state");
+    };
+    // Only gamma_r was overridden; the rest fall back to the WS2812B default.
+    assert_eq!(st.r#gamma_r, 3.0);
+    assert_eq!((st.r#gamma_g, st.r#gamma_b), (2.8, 2.8));
+    assert_eq!((st.r#lum_r, st.r#lum_g, st.r#lum_b), (625.0, 1250.0, 300.0));
+}

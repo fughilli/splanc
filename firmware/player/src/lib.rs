@@ -460,6 +460,10 @@ impl Player {
             // setting at a time); an unset field is left unchanged.
             CMsg::SetHardwareConfig(m) => Some(self.set_hardware_config(&m)),
             CMsg::GetHardwareConfig(_) => Some(self.hardware_config_state()),
+            // Read-back: report the resolved gamma + luminance the device is
+            // currently applying (what set_color_correction stored), so the app
+            // can hydrate its curves and a journey can assert the applied gamma.
+            CMsg::GetColorCorrection(_) => Some(self.color_correction_state()),
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
@@ -864,6 +868,26 @@ impl Player {
             state.set_board(caps.clone());
         }
         reply(SMsg::HardwareConfigState(state))
+    }
+
+    /// The device's current color correction as a `color_correction_state` reply
+    /// (the Color Correction page hydrates from this; a gamma journey asserts
+    /// against it). Reports the RESOLVED per-channel gamma + luminance the last
+    /// `set_color_correction` stored — the concrete values the LUTs are built
+    /// from, not a profile name (the device always has a profile: WS2812B after
+    /// a reboot). `get_color_correction` echoes whatever `set_color_correction`
+    /// set, so set->get round-trips the gamma.
+    fn color_correction_state(&self) -> pb::ServerMessage {
+        let (gamma, lum) = (self.color_correction.gamma, self.color_correction.luminance);
+        let state = pb::ColorCorrectionState {
+            r#gamma_r: gamma[0],
+            r#gamma_g: gamma[1],
+            r#gamma_b: gamma[2],
+            r#lum_r: lum[0],
+            r#lum_g: lum[1],
+            r#lum_b: lum[2],
+        };
+        reply(SMsg::ColorCorrectionState(state))
     }
 
     /// Seed a hardware channel's config at boot from what the firmware actually
