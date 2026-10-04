@@ -152,5 +152,44 @@ class RemoteCmdTests(unittest.TestCase):
         self.assertIn('--fallback "$HITL_ESP_PORT"', cmd)
 
 
+class ResolveImprovNameTests(unittest.TestCase):
+    """resolve_improv_name reads the board's LIVE name — it must force a boot (so the
+    banner prints) and never trust a stale/first match."""
+
+    class _FakeResult:
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+            self.stderr = ""
+
+    class _FakeRes:
+        def __init__(self, stdout: str) -> None:
+            self._stdout = stdout
+            self.last_cmd = ""
+
+        def ssh(self, cmd, capture=False, timeout=None):  # noqa: ANN001
+            self.last_cmd = cmd
+            return ResolveImprovNameTests._FakeResult(self._stdout)
+
+    def test_forces_an_app_reset_not_a_download_reset(self) -> None:
+        res = self._FakeRes('[ble] advertising "HITL Test 96804" as C0:DE:...\n')
+        ir.resolve_improv_name(res)
+        # The app-reset (boot high) is what makes the banner print inside the window;
+        # the esptool-style --reset can land the board in download mode (no advertising).
+        self.assertIn("--app-reset", res.last_cmd)
+        self.assertNotIn(" --reset", res.last_cmd)
+
+    def test_returns_the_last_banner_when_the_name_churned(self) -> None:
+        # If the board rebooted more than once in the window, the CURRENT NVS name is
+        # the most recent banner — never the first (stale) one.
+        res = self._FakeRes(
+            '[ble] advertising "Led Widget ED4555" as C0:DE:11\n'
+            '[ble] advertising "HITL Test 96804" as C0:DE:11\n'
+        )
+        self.assertEqual(ir.resolve_improv_name(res), "HITL Test 96804")
+
+    def test_returns_empty_when_no_banner(self) -> None:
+        self.assertEqual(ir.resolve_improv_name(self._FakeRes("no boot output\n")), "")
+
+
 if __name__ == "__main__":
     unittest.main()

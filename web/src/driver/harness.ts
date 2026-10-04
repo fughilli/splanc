@@ -17,7 +17,7 @@
  */
 
 import { requestBleDevice, bleSocketFactory } from "../net/bleTransport";
-import { improvDeviceById, scanImprovNative } from "../net/capacitorImprov";
+import { improvDeviceById, readGapDeviceName, scanImprovNative } from "../net/capacitorImprov";
 import {
   provisionViaBle,
   requestImprovDevice,
@@ -73,12 +73,34 @@ async function pickImprovDeviceHeadless(
       // take several scan cycles to surface. POLL until the pinned name appears rather
       // than snapshot one fixed window (a slow first sighting was a spurious "not found").
       const deadline = Date.now() + timeoutMs;
+      // Devices we've already connected-and-read for a GAP name, so we probe each at
+      // most once even as the scan keeps re-reporting it.
+      const probed = new Set<string>();
       for (;;) {
         const match = [...hits.entries()].filter(([, v]) => v.name === wantName);
         const top = match.sort((a, b) => b[1].rssi - a[1].rssi)[0];
         if (top) {
           onStatus?.(`selected ${top[1].name} (rssi ${top[1].rssi})`);
           return improvDeviceById(top[0], top[1].name);
+        }
+        // No sighting carries the pinned name yet. On a coex-busy unprovisioned board
+        // the scan-response name may NEVER arrive (coex starves its TX reply), so the
+        // reserved board can sit here nameless forever. Connect to the strongest
+        // not-yet-probed UNNAMED candidate and read its name over GATT (GAP 0x2A00,
+        // which the firmware exposes independent of the scan response); fold the
+        // resolved name back into `hits` so the match check above catches it next loop.
+        const unnamed = [...hits.entries()]
+          .filter(([id, v]) => !v.name && !probed.has(id))
+          .sort((a, b) => b[1].rssi - a[1].rssi);
+        if (unnamed[0]) {
+          const [id, v] = unnamed[0];
+          probed.add(id);
+          onStatus?.(`reading name of an unnamed device over GATT (rssi ${v.rssi})…`);
+          const gapName = await readGapDeviceName(id);
+          if (gapName) {
+            hits.set(id, { name: gapName, rssi: hits.get(id)?.rssi ?? v.rssi });
+            continue; // re-evaluate the pinned-name match immediately
+          }
         }
         if (Date.now() >= deadline) {
           const saw =

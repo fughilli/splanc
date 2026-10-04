@@ -27,6 +27,25 @@ def _ts(t0: float) -> str:
     return f"[+{time.monotonic() - t0:6.2f}s] "
 
 
+def app_reset(sp: serial.Serial) -> None:
+    """Reset the C6 straight into the APPLICATION (not the download bootloader).
+
+    The two-transistor auto-reset circuit maps DTR->IO9(boot) and RTS->EN(reset) and
+    cancels when both are asserted at once. Pulsing RTS (EN) with DTR held DEASSERTED
+    the whole time leaves IO9/boot high, so the chip reboots into the flashed app and
+    prints its boot banner — including the `[ble] advertising "<name>" ...` line the
+    name resolver greps. (esptool's classic `usb_jtag_reset` sequence drives IO9 low
+    and can land the board in USB download mode, where it never advertises.)"""
+    try:
+        sp.setDTR(False)  # IO9/boot released (high) — stay OUT of download mode
+        sp.setRTS(True)  # EN asserted: chip held in reset
+        time.sleep(0.1)
+        sp.setRTS(False)  # EN released: boot into the application
+        sp.setDTR(False)
+    except Exception as e:  # noqa: BLE001
+        print(f"[diag] app-reset toggle failed (non-fatal): {e}", flush=True)
+
+
 def usb_jtag_reset(sp: serial.Serial) -> None:
     """Best-effort ESP32 USB-Serial-JTAG reset via the CDC control lines (esptool's
     sequence). If the peripheral ignores it, we still capture the running firmware's
@@ -62,6 +81,12 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=60.0, help="capture window after PROV")
     ap.add_argument("--warmup", type=float, default=6.0, help="pre-PROV read (catch boot scan)")
     ap.add_argument("--reset", action="store_true", help="pulse a USB-JTAG reset first")
+    ap.add_argument(
+        "--app-reset",
+        action="store_true",
+        help="reset into the APPLICATION (RTS/EN pulse, boot high) to capture the boot "
+        "banner — unlike --reset, which can land the board in USB download mode",
+    )
     ap.add_argument("--baud", type=int, default=115200)
     args = ap.parse_args()
     if not args.monitor_only and not args.ssid:
@@ -103,7 +128,10 @@ def main() -> int:
             sys.stdout.write(_ts(t0) + buf.decode("utf-8", "replace") + "\n")
             sys.stdout.flush()
 
-    if args.reset:
+    if args.app_reset:
+        print("[diag] app-reset (RTS/EN pulse, boot high) into the application…", flush=True)
+        app_reset(sp)
+    elif args.reset:
         print("[diag] pulsing USB-JTAG reset…", flush=True)
         usb_jtag_reset(sp)
 
