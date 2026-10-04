@@ -19,6 +19,8 @@ read the cross ELF fine), plus `addr2line` to attribute symbols `nm -l` can't.
     python3 tools/fw_memaudit.py            # auto-locates the built ELF
     python3 tools/fw_memaudit.py --elf x.elf --top 40 --min 256 --depth 3
     python3 tools/fw_memaudit.py --json     # machine-readable tree
+    python3 tools/fw_memaudit.py --json > before.json   # snapshot a baseline
+    python3 tools/fw_memaudit.py --compare before.json  # diff a cut (per-symbol)
 """
 
 from __future__ import annotations
@@ -148,6 +150,50 @@ def human(n: int) -> str:
     return f"{n/1024:.1f}K" if n >= 1024 else f"{n}B"
 
 
+def signed(n: int) -> str:
+    return f"+{human(n)}" if n > 0 else (f"-{human(-n)}" if n < 0 else "0")
+
+
+def _symbol_totals(obj: dict) -> dict[str, int]:
+    """{symbol_name: bytes} flattened across the tree of a --json snapshot."""
+    out: dict[str, int] = {}
+    for comp in obj.get("components", {}).values():
+        for f in comp.get("files", {}).values():
+            for s in f.get("symbols", []):
+                out[s["name"]] = out.get(s["name"], 0) + s["bytes"]
+    return out
+
+
+def print_compare(cur: dict, baseline_path: str) -> int:
+    """Diff current SRAM against an earlier --json snapshot: totals, then the
+    per-symbol movers (added / reclaimed / resized). This is the lever for
+    "pin as you iterate" — every cut shows up as a concrete negative delta."""
+    with open(baseline_path) as fh:
+        base = json.load(fh)
+    b_tot, c_tot = base.get("total_ram_bytes", 0), cur["total_ram_bytes"]
+    print(f"baseline: {baseline_path}")
+    print(f"current:  {cur['elf']}")
+    print("\n== SRAM total ==")
+    print(f"  {human(b_tot):>9}  baseline")
+    print(f"  {human(c_tot):>9}  current")
+    print(f"  {signed(c_tot - b_tot):>9}  delta")
+
+    bs, cs = _symbol_totals(base), _symbol_totals(cur)
+    deltas = []
+    for name in set(bs) | set(cs):
+        d = cs.get(name, 0) - bs.get(name, 0)
+        if d:
+            deltas.append((d, name))
+    if not deltas:
+        print("\n(no per-symbol change)")
+        return 0
+    print("\n== per-symbol movers (current − baseline) ==")
+    for d, name in sorted(deltas, key=lambda x: x[0]):  # reclaimed (neg) first
+        tag = "new" if name not in bs else ("gone" if name not in cs else "")
+        print(f"  {signed(d):>9}  {name}  {tag}".rstrip())
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -164,6 +210,12 @@ def main() -> int:
         "--depth", type=int, default=2, help="tree depth (1=component, 2=+file, 3=+symbol)"
     )
     ap.add_argument("--json", action="store_true", help="emit the tree as JSON")
+    ap.add_argument(
+        "--compare",
+        metavar="BASELINE.json",
+        help="diff this ELF's per-component/-symbol SRAM against an earlier "
+        "--json snapshot (shows what a change added/reclaimed)",
+    )
     args = ap.parse_args()
 
     if args.toolchain:
@@ -189,30 +241,33 @@ def main() -> int:
     total_ram = sum(s for _n, s in sections)
     comp_tot = {c: sum(sz for f in files.values() for sz, _ in f) for c, files in tree.items()}
 
+    obj = {
+        "elf": elf,
+        "sections": [{"name": n, "bytes": s} for n, s in sections],
+        "total_ram_bytes": total_ram,
+        "components": {
+            c: {
+                "bytes": comp_tot[c],
+                "files": {
+                    f: {
+                        "bytes": sum(sz for sz, _ in items),
+                        "symbols": [
+                            {"name": nm_, "bytes": sz} for sz, nm_ in sorted(items, reverse=True)
+                        ],
+                    }
+                    for f, items in files.items()
+                },
+            }
+            for c, files in tree.items()
+        },
+    }
+
     if args.json:
-        obj = {
-            "elf": elf,
-            "sections": [{"name": n, "bytes": s} for n, s in sections],
-            "total_ram_bytes": total_ram,
-            "components": {
-                c: {
-                    "bytes": comp_tot[c],
-                    "files": {
-                        f: {
-                            "bytes": sum(sz for sz, _ in items),
-                            "symbols": [
-                                {"name": nm_, "bytes": sz}
-                                for sz, nm_ in sorted(items, reverse=True)
-                            ],
-                        }
-                        for f, items in files.items()
-                    },
-                }
-                for c, files in tree.items()
-            },
-        }
         print(json.dumps(obj, indent=2))
         return 0
+
+    if args.compare:
+        return print_compare(obj, args.compare)
 
     print(f"ELF: {elf}")
     print(f"\n== RAM sections ({human(total_ram)} static) ==")

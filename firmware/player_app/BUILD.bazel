@@ -18,6 +18,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
+load("//tools:ram_chart.bzl", "ram_chart")
 load("//tools/build_info:build_info.bzl", "build_info_file")
 load(":led_caps.bzl", "MAX_LEDS")
 
@@ -121,6 +122,16 @@ rust_test(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],
+)
+
+# Regression guard on the firmware-profile envelope struct sizes (they sit on
+# the heap-allocated task stacks; FUG-71). Host-profile crate, but the sizes it
+# asserts are the firmware ones.
+rust_test(
+    name = "envelope_size_test",
+    srcs = ["tests/envelope_size.rs"],
+    edition = "2021",
+    deps = ["//shared/protocol/rust:ledmapper_pb_fw"],
 )
 
 # Transport profile (FUG-121): per-uniform-update device-CPU cost of the proto
@@ -335,6 +346,16 @@ flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
     tags = ["manual"],
+)
+
+# Static RAM auditor sibling:
+# `bazel run //firmware/player_app:esp32c6_netstack.ram_chart`
+# charts where the image's .bss/.data (internal SRAM — the heap the TLS/BLE/WiFi
+# pools draw from) goes, per symbol/component. `-- --json` snapshots it and
+# `-- --compare before.json` diffs a cut. See //tools:ram_chart.bzl.
+ram_chart(
+    name = "esp32c6_netstack.ram_chart",
+    binary = ":esp32c6_netstack",
 )
 
 # -- esp32c3 netstack player (BUILD-ONLY) -------------------------------------
