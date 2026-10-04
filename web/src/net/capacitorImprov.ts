@@ -201,21 +201,32 @@ export async function readGapDeviceName(deviceId: string): Promise<string> {
   } catch {
     return "";
   }
-  let name = "";
-  try {
-    const view = await BleClient.read(deviceId, GAP_SERVICE, GAP_DEVICE_NAME_CHAR);
-    name = new TextDecoder()
+  const decode = (view: DataView): string =>
+    new TextDecoder()
       .decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
       .replace(/\0+$/, "");
-  } catch {
-    // iOS won't hand an app the reserved GAP service — but it read 0x2A00 on connect
-    // to populate CBPeripheral.name, so recover that cached name instead.
+  let name = "";
+  // iOS reads GAP 0x2A00 ITSELF on connect and populates CBPeripheral.name LAZILY
+  // (it refuses an app read of the reserved GAP service), so a single immediate read
+  // comes back empty. Poll briefly: attempt the direct 0x2A00 read (works on
+  // Android/Web Bluetooth and also triggers iOS service discovery, which makes iOS
+  // fetch the GAP name), then read the cached connected-device name (iOS), giving
+  // CoreBluetooth a few hundred ms per round to surface it.
+  for (let i = 0; i < 8 && !name; i++) {
     try {
-      const connected = await BleClient.getConnectedDevices([IMPROV_SERVICE]);
-      name = connected.find((d) => d.deviceId === deviceId)?.name ?? "";
+      name = decode(await BleClient.read(deviceId, GAP_SERVICE, GAP_DEVICE_NAME_CHAR));
     } catch {
-      name = "";
+      // GAP service not app-readable (iOS) — fall through to the cached name.
     }
+    if (!name) {
+      try {
+        const connected = await BleClient.getConnectedDevices([IMPROV_SERVICE]);
+        name = connected.find((d) => d.deviceId === deviceId)?.name ?? "";
+      } catch {
+        // not available yet — retry after a short settle
+      }
+    }
+    if (!name) await new Promise((r) => setTimeout(r, 500));
   }
   try {
     await BleClient.disconnect(deviceId);

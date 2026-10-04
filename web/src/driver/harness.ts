@@ -73,9 +73,11 @@ async function pickImprovDeviceHeadless(
       // take several scan cycles to surface. POLL until the pinned name appears rather
       // than snapshot one fixed window (a slow first sighting was a spurious "not found").
       const deadline = Date.now() + timeoutMs;
-      // Devices we've already connected-and-read for a GAP name, so we probe each at
-      // most once even as the scan keeps re-reporting it.
-      const probed = new Set<string>();
+      // How many times we've connected-and-read each device for a GAP name. iOS
+      // surfaces the name lazily after connect, so allow a few attempts per device
+      // (not just one) before giving up on it.
+      const probeCount = new Map<string, number>();
+      const MAX_GAP_PROBES = 4;
       for (;;) {
         const match = [...hits.entries()].filter(([, v]) => v.name === wantName);
         const top = match.sort((a, b) => b[1].rssi - a[1].rssi)[0];
@@ -90,11 +92,11 @@ async function pickImprovDeviceHeadless(
         // which the firmware exposes independent of the scan response); fold the
         // resolved name back into `hits` so the match check above catches it next loop.
         const unnamed = [...hits.entries()]
-          .filter(([id, v]) => !v.name && !probed.has(id))
+          .filter(([id, v]) => !v.name && (probeCount.get(id) ?? 0) < MAX_GAP_PROBES)
           .sort((a, b) => b[1].rssi - a[1].rssi);
         if (unnamed[0]) {
           const [id, v] = unnamed[0];
-          probed.add(id);
+          probeCount.set(id, (probeCount.get(id) ?? 0) + 1);
           onStatus?.(`reading name of an unnamed device over GATT (rssi ${v.rssi})…`);
           const gapName = await readGapDeviceName(id);
           if (gapName) {
