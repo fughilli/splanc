@@ -4,7 +4,8 @@
 #include "firmware/player_app/color_correction.h"
 
 #include <cassert>
-#include <cstdio>
+
+#include "rr_case.h"
 
 // Each channel's LUT must be monotonic non-decreasing and pinned at 0 for input
 // 0 (off stays off) — a gamma/balance curve never inverts or lifts black.
@@ -54,11 +55,15 @@ static void test_linear_profile_passthrough() {
   }
 }
 
-int main() {
-  test_monotonic_and_zero();
-  test_white_balance();
-  test_gamma_darkens_midtones();
-  test_linear_profile_passthrough();
-  printf("color_correction_test: all passed\n");
-  return 0;
+// One JUnit case per test function (rr_case.h): each runs in its own forked
+// child, so a failing assert() fails that case and the rest still run; the
+// binary exits 1 if any case failed, as the plain main did.
+int main(int argc, char **argv) {
+  return rr::RunCases(argc, argv, "color_correction",
+                      {
+                          {"monotonic_and_zero", test_monotonic_and_zero},
+                          {"white_balance", test_white_balance},
+                          {"gamma_darkens_midtones", test_gamma_darkens_midtones},
+                          {"linear_profile_passthrough", test_linear_profile_passthrough},
+                      });
 }

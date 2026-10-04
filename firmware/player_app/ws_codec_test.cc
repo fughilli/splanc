@@ -3,8 +3,9 @@
 #include "firmware/player_app/ws_codec.h"
 
 #include <cassert>
-#include <cstdio>
 #include <cstring>
+
+#include "rr_case.h"
 
 static void test_accept_key_rfc_vector() {
   // RFC 6455 §1.3's worked example.
@@ -96,13 +97,17 @@ static void test_unmask_incremental() {
   assert(memcmp(parts, "Hello", 5) == 0);
 }
 
-int main() {
-  test_accept_key_rfc_vector();
-  test_find_key();
-  test_header_lengths();
-  test_short_buffers_ask_for_more();
-  test_violations();
-  test_unmask_incremental();
-  printf("PASS\n");
-  return 0;
+// One JUnit case per test function (rr_case.h): each runs in its own forked
+// child, so a failing assert() fails that case and the rest still run; the
+// binary exits 1 if any case failed, as the plain main did.
+int main(int argc, char **argv) {
+  return rr::RunCases(argc, argv, "ws_codec",
+                      {
+                          {"accept_key_rfc_vector", test_accept_key_rfc_vector},
+                          {"find_key", test_find_key},
+                          {"header_lengths", test_header_lengths},
+                          {"short_buffers_ask_for_more", test_short_buffers_ask_for_more},
+                          {"violations", test_violations},
+                          {"unmask_incremental", test_unmask_incremental},
+                      });
 }
