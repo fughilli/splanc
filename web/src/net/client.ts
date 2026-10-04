@@ -42,6 +42,7 @@ import type {
 } from "@ledmapper/protocol";
 import {
   type ChunkAckMessage,
+  type ColorCorrectionStateMessage,
   type ColorOrder,
   decodeMappingBundle,
   type EffectUniformsMessage,
@@ -602,6 +603,19 @@ export class LedMapperClient {
       { type: "get_hardware_config" } as unknown as ClientMessage,
       "hardware_config_state",
     )) as unknown as HardwareConfigStateMessage;
+  }
+
+  /** Fetch the device's current color correction — the resolved per-channel
+   * gamma + relative luminance it is applying (what the last setColorCorrection
+   * stored). Lets the Color Correction page hydrate its curves from the device
+   * on open (instead of only the last locally-remembered profile), and lets a
+   * gamma HITL journey assert the device reports the gamma it was set to. Reply:
+   * color_correction_state (the WS2812B default on a freshly-booted device). */
+  async getColorCorrection(): Promise<ColorCorrectionStateMessage> {
+    return (await this.request(
+      { type: "get_color_correction" } as unknown as ClientMessage,
+      "color_correction_state",
+    )) as unknown as ColorCorrectionStateMessage;
   }
 
   /** Paint a static color-block pattern on a channel (proto SetCountingPattern):

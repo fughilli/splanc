@@ -181,6 +181,8 @@ async function handle(msg: Incoming): Promise<unknown> {
       return await client().getHardwareConfig();
     case "setColorCorrection":
       return await client().setColorCorrection(p as Json);
+    case "getColorCorrection":
+      return await client().getColorCorrection();
 
     // --- queries ----------------------------------------------------------
     case "appState":

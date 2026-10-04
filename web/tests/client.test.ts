@@ -361,6 +361,35 @@ test("start/stop/status/pattern request-response", async () => {
   assert.equal((await stopP).mapId, "m-9");
 });
 
+test("getColorCorrection round-trips the device's applied gamma", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  // The read-back is a bare request; the device replies with the resolved
+  // per-channel gamma + luminance it is applying (what set_color_correction
+  // set). The proto fields are float32, so values chosen here are ones that
+  // round-trip exactly through single precision (the device is f32-only too).
+  const ccP = client.getColorCorrection();
+  assert.deepEqual(s.lastSent(), { type: "get_color_correction" });
+  s.receive({
+    type: "color_correction_state",
+    gammaR: 2,
+    gammaG: 2.5,
+    gammaB: 3,
+    lumR: 700,
+    lumG: 1200,
+    lumB: 350,
+  });
+  const cc = await ccP;
+  assert.equal(cc.type, "color_correction_state");
+  assert.deepEqual([cc.gammaR, cc.gammaG, cc.gammaB], [2, 2.5, 3]);
+  assert.deepEqual([cc.lumR, cc.lumG, cc.lumB], [700, 1200, 350]);
+});
+
 test("getFrameTiming drains the player's rendered-frame log", async () => {
   const { client, sockets } = makeClient();
   const p = client.connect();

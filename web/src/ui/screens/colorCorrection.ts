@@ -41,8 +41,10 @@ const CHANNELS = ["R", "G", "B"] as const;
 const CH_COLOR = ["#ff5d5d", "#57d16a", "#5d8bff"];
 const PUSH_DEBOUNCE_MS = 200;
 
-/** Per-device persistence of the last-used profile (there's no device read-back
- * for color correction, so the UI remembers what was last dialed in). */
+/** Per-device persistence of the last-used profile: the UI remembers what was
+ * last dialed in for a fast first paint and an offline fallback. On open, if a
+ * device is connected, get_color_correction hydrates the authoritative current
+ * values over this (see hydrateFromDevice). */
 function storeKey(deviceId: string): string {
   return `cc:profile:${deviceId}`;
 }
@@ -74,9 +76,9 @@ export function ColorCorrectionScreen(_router: Router): Screen {
 
   const deviceId = deviceStore.activeId();
   let profile = loadProfile(deviceId);
-  // Baseline the curves were last committed to the device at (assumed == the
-  // persisted profile on open, since there's no device read-back). "Discard"
-  // reverts to this; a successful save advances it.
+  // Baseline the curves were last committed to the device at (the persisted
+  // profile on open; replaced by the device's reported values once
+  // hydrateFromDevice resolves). "Discard" reverts to this; a save advances it.
   let snapshot = cloneProfile(profile);
   let brightness = loadBrightness(deviceId);
   let live = true;
@@ -467,10 +469,38 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   rebuildControls();
   drawPlot(plot, profile);
   sim.draw(profile);
+
+  // Hydrate the curves from the DEVICE on open (get_color_correction): the
+  // device reports the resolved gamma + luminance it is actually applying, which
+  // is authoritative over the last locally-remembered profile (another phone may
+  // have changed it, or flash was reset). We adopt it as the clean baseline —
+  // NOT a dirty edit — so nothing is pushed back and the save button stays idle.
+  async function hydrateFromDevice(): Promise<void> {
+    const c = appState.client;
+    if (!c?.isConnected) return;
+    try {
+      const st = await c.getColorCorrection();
+      profile = {
+        gamma: [st.gammaR, st.gammaG, st.gammaB],
+        luminance: [st.lumR, st.lumG, st.lumB],
+      };
+      snapshot = cloneProfile(profile);
+      saveProfile(deviceId, profile);
+      dirty = false;
+      savedOk = false;
+      drawPlot(plot, profile);
+      sim.draw(profile);
+      rebuildControls();
+    } catch {
+      // Older firmware without the read-back: keep the locally-remembered profile.
+    }
+  }
+
   // Assert the saved brightness setpoint on open: the device holds brightness
   // only at runtime (full after a reboot), so re-push the user's level now.
   if (appState.client?.isConnected) {
     void appState.client.setBrightness(brightness).catch(() => undefined);
+    void hydrateFromDevice();
   }
 
   return {

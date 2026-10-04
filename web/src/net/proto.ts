@@ -57,6 +57,7 @@ const CLIENT_ARMS: Record<string, string> = {
   set_brightness: "setBrightness",
   set_hardware_config: "setHardwareConfig",
   get_hardware_config: "getHardwareConfig",
+  get_color_correction: "getColorCorrection",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -78,6 +79,7 @@ const SERVER_ARMS: Record<string, string> = {
   perf_report: "perfReport",
   chunk_ack: "chunkAck",
   hardware_config_state: "hardwareConfigState",
+  color_correction_state: "colorCorrectionState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -402,6 +404,34 @@ export interface HardwareConfigStateMessage {
   /** Static board capabilities (pin catalog + LED modes). Undefined on older
    * firmware that doesn't report them — the app falls back to a built-in catalog. */
   board?: BoardCapabilitiesFlat;
+}
+
+// -- Color-correction read-back (flat shapes) -------------------------------
+// Request the device's current color correction + its reply (proto
+// GetColorCorrection / ColorCorrectionState). Like the hardware-config arms
+// above, these newer arms live as flat shapes here rather than in the checked-in
+// @ledmapper/protocol types. Field names are the proto3 JSON (camel) names.
+
+/** Request the device's current color correction (proto GetColorCorrection).
+ * Reply: color_correction_state. */
+export interface GetColorCorrectionMessage {
+  type: "get_color_correction";
+}
+
+/** Reply to get_color_correction (proto ColorCorrectionState): the resolved
+ * per-channel gamma + relative luminance the device is currently applying (what
+ * the last set_color_correction stored). The Color Correction page hydrates its
+ * curves from this on open; a gamma journey asserts the device reports the gamma
+ * it was set to. Every field is present — the device always has a concrete
+ * profile (the WS2812B default after a reboot). */
+export interface ColorCorrectionStateMessage {
+  type: "color_correction_state";
+  gammaR: number;
+  gammaG: number;
+  gammaB: number;
+  lumR: number;
+  lumG: number;
+  lumB: number;
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------
