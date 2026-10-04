@@ -13,7 +13,12 @@
  */
 
 import { Button, Sheet } from "../kit";
-import { improvDeviceById, scanImprovNative, type ImprovScanHit } from "../../net/capacitorImprov";
+import {
+  improvDeviceById,
+  readGapDeviceName,
+  scanImprovNative,
+  type ImprovScanHit,
+} from "../../net/capacitorImprov";
 import type { ImprovDevice } from "../../net/improv";
 
 /** Scan + let the user pick an Improv device. Rejects with an AbortError
@@ -63,6 +68,29 @@ export function pickImprovDeviceNative(): Promise<ImprovDevice> {
     // later advertising callback than its first sighting (the primary ADV holds only
     // Flags + the Improv UUID), so a device can surface nameless, then gain its name.
     const names = new Map<string, string>();
+    // Devices we've already connected-and-read for a GAP name, so we probe each at
+    // most once (see resolveNameOverGatt).
+    const gapProbed = new Set<string>();
+
+    function setLabel(deviceId: string, label: string): void {
+      const span = rows.get(deviceId)?.querySelector("span");
+      if (span) span.textContent = label;
+    }
+
+    /** If a device is still nameless a moment after it surfaces, its scan-response
+     * name may never arrive (BLE/WiFi coex can starve it on a busy board). Connect
+     * once and read the GAP Device Name (0x2A00) the firmware exposes, then relabel
+     * the row with the real name. Best-effort: a failure leaves "Splanc device". */
+    function resolveNameOverGatt(deviceId: string): void {
+      if (gapProbed.has(deviceId) || names.has(deviceId) || settled) return;
+      gapProbed.add(deviceId);
+      void readGapDeviceName(deviceId).then((name) => {
+        if (name && !names.has(deviceId) && !settled) {
+          names.set(deviceId, name);
+          setLabel(deviceId, name);
+        }
+      });
+    }
 
     function onHit(hit: ImprovScanHit): void {
       if (hit.name) names.set(hit.deviceId, hit.name);
@@ -71,8 +99,9 @@ export function pickImprovDeviceNative(): Promise<ImprovDevice> {
       if (existing) {
         // Refresh the label if a later sighting supplied the real name (Button renders
         // its label in a child <span>).
-        const span = existing.querySelector("span");
-        if (span) span.textContent = label;
+        setLabel(hit.deviceId, label);
+        // Still nameless after re-sighting → fall back to a GATT name read.
+        if (!names.has(hit.deviceId)) resolveNameOverGatt(hit.deviceId);
         return;
       }
       hint.textContent = "Tap your device to set it up:";

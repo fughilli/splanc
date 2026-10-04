@@ -170,3 +170,57 @@ export async function improvDeviceById(deviceId: string, name?: string): Promise
   const { BleClient } = await import("@capacitor-community/bluetooth-le");
   return toImprovDevice(BleClient, { deviceId, ...(name !== undefined ? { name } : {}) });
 }
+
+/** GAP Generic Access service (0x1800) + Device Name characteristic (0x2A00),
+ * as full 128-bit UUIDs (the 16-bit assigned number expanded against the Bluetooth
+ * base UUID). The netstack firmware exposes the board's name here so it is readable
+ * over GATT independent of the scan-response Complete-Local-Name. */
+export const GAP_SERVICE = "00001800-0000-1000-8000-00805f9b34fb";
+export const GAP_DEVICE_NAME_CHAR = "00002a00-0000-1000-8000-00805f9b34fb";
+
+/**
+ * Connect to a surfaced-but-UNNAMED Improv peripheral and resolve its name.
+ *
+ * A board can surface over BLE carrying no name: iOS delivers the scan-response
+ * Complete-Local-Name on a LATER advertising callback than the first sighting, and on
+ * a busy unprovisioned board BLE/WiFi coex can starve the scan-response TX window so
+ * that name never arrives in the scan at all. The firmware therefore ALSO exposes the
+ * name over GATT as GAP Device Name (0x2A00); connecting and reading it resolves the
+ * name independent of the fragile scan response.
+ *
+ * Reads 0x2A00 directly where the platform permits (Android/Web Bluetooth). iOS
+ * reserves the GAP service and refuses a direct app read, but CoreBluetooth reads
+ * 0x2A00 ITSELF on connect to populate the peripheral name, so we recover it from the
+ * connected-device list as a fallback. Returns "" on any failure, and always
+ * disconnects so the subsequent provisioning connect starts clean.
+ */
+export async function readGapDeviceName(deviceId: string): Promise<string> {
+  const { BleClient } = await import("@capacitor-community/bluetooth-le");
+  try {
+    await BleClient.connect(deviceId);
+  } catch {
+    return "";
+  }
+  let name = "";
+  try {
+    const view = await BleClient.read(deviceId, GAP_SERVICE, GAP_DEVICE_NAME_CHAR);
+    name = new TextDecoder()
+      .decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+      .replace(/\0+$/, "");
+  } catch {
+    // iOS won't hand an app the reserved GAP service — but it read 0x2A00 on connect
+    // to populate CBPeripheral.name, so recover that cached name instead.
+    try {
+      const connected = await BleClient.getConnectedDevices([IMPROV_SERVICE]);
+      name = connected.find((d) => d.deviceId === deviceId)?.name ?? "";
+    } catch {
+      name = "";
+    }
+  }
+  try {
+    await BleClient.disconnect(deviceId);
+  } catch {
+    // already disconnected — nothing to clean up
+  }
+  return name;
+}

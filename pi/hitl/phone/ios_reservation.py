@@ -172,23 +172,33 @@ STATION_IP_EXPR = " || ".join(
 
 
 def resolve_improv_name(res) -> str:
-    """Read the reserved C6's advertised BLE (Improv) name from its serial console.
+    """Read the reserved C6's CURRENT advertised BLE (Improv) name from its console.
 
     iOS/CoreBluetooth never exposes a peripheral's MAC — only an opaque per-app UUID —
     so on a bench with several Improv C6s in range the ONLY way to make the phone
     provision the RESERVED board (not a stray) is to pin the pick to its advertised
-    name. The netstack prints it at boot (`[ble] advertising "<name>" as <mac>`); a
-    short monitor-only capture greps it out. Returns "" if it can't be read."""
+    name. That name is NOT fixed: other bench activity renames the shared board in NVS
+    (seen churn "Led Widget ED4555" -> "HITL Test 96804"), so it must be read LIVE every
+    run, never hardcoded.
+
+    The netstack prints the name only in its boot banner (`[ble] advertising "<name>"
+    as <mac>`). A bare monitor capture misses it whenever the board doesn't happen to
+    reboot inside the window — so we FORCE a boot with an app-reset (RTS/EN pulse, boot
+    held high) and then capture the banner. `--app-reset` (not `--reset`) is essential:
+    the esptool-style reset can land the board in USB download mode, where it never
+    advertises. Returns "" if the name can't be read."""
     cmd = (
         "export PATH=/run/current-system/sw/bin:$PATH; "
-        f"python3 {REMOTE_ROOT}/ios_serial_diag.py --monitor-only "
+        f"python3 {REMOTE_ROOT}/ios_serial_diag.py --monitor-only --app-reset "
         f'--serial "$HITL_ADAPTER_SERIAL" --fallback "$HITL_ESP_PORT" '
-        "--warmup 1 --seconds 6"
+        "--warmup 3 --seconds 8"
     )
-    r = res.ssh(cmd, capture=True, timeout=40)
+    r = res.ssh(cmd, capture=True, timeout=45)
     out = (r.stdout or "") + (r.stderr or "")
-    m = re.search(r'advertising "([^"]+)"', out)
-    return m.group(1) if m else ""
+    # Take the LAST match: if the board rebooted more than once in the window, the most
+    # recent banner reflects the current NVS name.
+    matches = re.findall(r'advertising "([^"]+)"', out)
+    return matches[-1] if matches else ""
 
 
 def discover_c6_cmd(serial_env: str = "$HITL_ADAPTER_SERIAL") -> str:

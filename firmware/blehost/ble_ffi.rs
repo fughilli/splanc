@@ -16,6 +16,12 @@ use ledmapper_netstack::rx::Buf;
 
 static mut HOST: BleHost = BleHost::new();
 static mut IMPROV: Option<ImprovService> = None;
+/// The board's live device name (set by the firmware via `ns_ble_set_name`). Kept
+/// here so it can be re-applied to the GAP Device-Name (0x2A00) characteristic
+/// every time the Improv service is rebuilt on a fresh connection — otherwise a
+/// reconnect would reset the name to the build default. Bounded to the 29-byte
+/// legacy scan-response name budget.
+static mut DEVICE_NAME: Buf<29> = Buf::new();
 
 // Pending provisioning request handed to the firmware (which owns Wi-Fi), plus a
 // queue of value handles to notify the central after an RPC.
@@ -324,6 +330,13 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             if now_connected && !was_connected {
                 unsafe {
                     IMPROV = Some(ImprovService::new());
+                    // Re-apply the live device name to the fresh service's GAP
+                    // Device-Name (0x2A00) so a central that connects and reads it
+                    // gets the real name, not the build default (the service is a
+                    // static that we rebuild clean on every connection edge).
+                    if let Some(svc) = IMPROV.as_mut() {
+                        svc.set_device_name(DEVICE_NAME.as_slice());
+                    }
                     NOTIFY_N = 0;
                     HAS_PENDING = false;
                     L2CAP.reset(); // drop any partial fragment from a prior link
@@ -571,7 +584,18 @@ pub extern "C" fn ns_ble_set_name(name: *const u8, len: u32) {
     let mut sr: Buf<31> = Buf::new();
     let _ = sr.extend(&[(s.len() + 1) as u8, 0x09]); // AD length, type=Complete Local Name
     let _ = sr.extend(s);
-    unsafe { HOST.set_scan_rsp(sr.as_slice()) };
+    unsafe {
+        HOST.set_scan_rsp(sr.as_slice());
+        // Remember the name and expose it over GATT (GAP Device Name 0x2A00) so a
+        // central can read it on connect even when coex starves the scan-response —
+        // the binding iOS-bench failure (board surfaces UNNAMED). DEVICE_NAME is
+        // re-applied to the service on every reconnect (see ns_ble_on_hci).
+        DEVICE_NAME.clear();
+        let _ = DEVICE_NAME.extend(s);
+        if let Some(svc) = IMPROV.as_mut() {
+            svc.set_device_name(s);
+        }
+    }
 }
 
 /// Override the advertised (static random) BLE address before advertising starts.
