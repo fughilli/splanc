@@ -57,6 +57,15 @@ DEFAULT_PSK = os.environ.get("HITL_WIFI_PASS") or "amd-rig-provision"
 DEFAULT_JOURNEYS = "connect,config,mapping_capture,mapping_solve"
 
 REMOTE_ROOT = "/tmp/hitl-android"  # where the shipped bundle lands in the env
+# Launch the app EXPLICITLY in Chrome. The bench phone is debloated (Samsung Internet
+# removed), so it has no default browser for an http VIEW intent — a bare `am start -d
+# <url>` returns "unable to resolve Intent" and the app never loads. phone_target's
+# _launch_argv adds `-n <component>` when HITL_ANDROID_BROWSER is set; point it at
+# Chrome's IntentDispatcher (the same component android_ble_provision.accept_cert uses).
+DEFAULT_BROWSER = (
+    os.environ.get("HITL_ANDROID_BROWSER")
+    or "com.android.chrome/com.google.android.apps.chrome.IntentDispatcher"
+)
 
 
 def _log(msg: str) -> None:
@@ -183,6 +192,7 @@ def _run_journeys(
         f"PYTHONPATH={REMOTE_ROOT}/phone "
         f"HITL_WEB_DIST={REMOTE_ROOT}/web/dist "
         f"HITL_SOLVER_WEB={REMOTE_ROOT}/solver/solver_web "
+        f"HITL_ANDROID_BROWSER={shlex.quote(DEFAULT_BROWSER)} "
     )
     if pin:
         env += f"HITL_ANDROID_PIN={shlex.quote(pin)} "
