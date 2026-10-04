@@ -188,6 +188,63 @@ reclaimable page cache, and ~190 MB of the "2 GB" is firmware-reserved carveouts
 sees. Going below the ~1 GB floor needs root (freeze/strip GMS+Knox) or a minimal GSI reflash —
 out of scope for this bench.
 
+## Automated CI reps (scheduled HITL lane)
+
+The Android journeys run **unattended** in the HITL CI lane as
+`//pi/hitl/phone:android_journeys` (a `py_test`), so they accumulate regular reps on
+real hardware the same way the rig DUT tests do. The test is the committed form of the
+by-hand bench scenario: it **reserves amd-rig's `android-phone` unit by name on the
+pinned phone daemon** (`http://amd-rig:8088` — the SECOND `hitl-reserved` instance;
+tailnet discovery only reaches `:8087`, so it is pinned, not discovered), ships this
+harness + the built web app + solver + the netstack flash bundle into the reservation
+env, then in-env: `hitl-flash` c6-a → `wire_provision_dut` it onto **`amd-rig-ap`**
+(a deterministic DHCP IP, independent of the phone chooser) → `join_wifi` the phone
+onto the same AP → runs `phone_e2e --phone-target android-phone --ble-mode real` for
+`connect,config,mapping_capture,mapping_solve`. The journey drives the **real Web
+Bluetooth provision + cert-trust via adb/uiautomator taps**; because the C6 is already
+wire-provisioned and reachable, a flaky OS Bluetooth chooser can't fail the rep
+(`provision_ble` never raises). Everything runs in-env because the phone's adb server,
+the served app + driver-WS (`adb reverse`), and the C6 are all co-located on amd-rig.
+
+Run it by hand (from a tailnet-joined container):
+
+```sh
+bazel test //pi/hitl/phone:android_journeys           # reserves amd-rig:8088, all 4 journeys
+bazel run  //pi/hitl/phone:android_journeys -- \
+    --journeys connect,config --no-flash               # fast loop on c6-a's current firmware
+```
+
+**When it runs in the lane** (`.github/workflows/hitl.yaml`). The test is tagged
+`hitl_android` (NOT `hitl`), so the gating pool query `attr(tags, "\bhitl\b", …)` does
+**not** pick it up — there is only ONE Android unit, and running it on every PR would
+bottleneck the whole fleet behind it. Instead:
+
+- **Scheduled 6h run (the Mac-cron `workflow_dispatch`): ALWAYS.** This is where the
+  regular reps come from — every scheduled HITL run exercises the Android journeys.
+- **PRs / pushes: OPT-IN only**, when the change plausibly affects the phone/BLE path.
+  Three ways to opt in (any one triggers it):
+  1. a **path match** (auto) — the change touches `pi/hitl/phone/**`,
+     `firmware/player_app/**`, `firmware/netstack/**`, `firmware/blehost/**`,
+     `web/src/net/**`, `web/src/driver/**`, `web/src/ui/screens/{deviceSheet,addDevice}.ts`,
+     or the amd-rig phone/AP nix + `catalog-phone.json`;
+  2. the **`hitl-android` label** on the PR; or
+  3. a **`[hitl-android]` tag** in the PR body or the head commit message.
+
+**Convention for contributors/agents:** if you judge your change may have impacted the
+phone / BLE / Improv / netstack-BLE / Capacitor path and the path globs above wouldn't
+catch it, **request a run** by adding the `hitl-android` label (or a `[hitl-android]`
+tag). Deliberate and discoverable — not automatic on every PR, and not forgotten.
+
+**Device-prep the owner must do once (never committed):** everything in _Real-Android
+bench device prep_ above, plus set **`secrets.HITL_ANDROID_PIN`** in the GitHub `HITL`
+environment (the phone's screen-lock PIN) so the in-env run can unlock the phone
+unattended. If that secret is unset the run falls back to a swipe-only unlock, which
+only works if the phone has no secure lock. The bench phone should also be left on the
+app's onboarding screen with Chrome installed and `amd-rig-ap` a known/saved network
+(the harness re-joins it each run via the Settings UI, but a saved network is more
+reliable). The amd-rig controlled AP (`amd-rig-ap` / `amd-rig-provision`, ch1) and its
+intra-BSS forwarding are deployed by `nix/hitl-amd-ap.nix`.
+
 ## Journey format (`journeys/*.json`)
 
 Declarative, Maestro-inspired but over our semantic protocol (not DOM selectors):
