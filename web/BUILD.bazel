@@ -21,6 +21,7 @@ load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_run_devserver", "js_test"
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
+load("@rules_requirements//rr:defs.bzl", "rr_node_test")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("//tools/build_info:build_info.bzl", "build_info_file")
 
@@ -165,12 +166,23 @@ _TEST_SOURCE_DATA = {
 }
 
 # One js_test per tests/*.test.ts file, running the emitted CJS under
-# node:test (registering tests at require-time sets the exit code).
+# node:test (registering tests at require-time sets the exit code), wrapped by
+# rules_requirements' rr_node_test so test.xml carries one JUnit case per
+# test() / it() (rr.requirement diagnostics become case properties) instead of
+# one synthetic result per file. The target keeps node's exit code, so a
+# failing test still fails it; the target names (and so :unit_tests and the
+# whole-target verified_by refs in requirements.yaml) are unchanged. rr.file
+# names the compiled dist-test/*.js, not the .ts source. :dist_test_pkg_json
+# pins the CommonJS scope for the child node that runs the test file.
 [
-    js_test(
+    rr_node_test(
         name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test",
-        data = [":web_tests_js"] + _TEST_SOURCE_DATA.get(f, []),
-        entry_point = ":dist-test/" + f.removesuffix(".ts") + ".js",
+        data = [
+            ":dist_test_pkg_json",
+            ":web_tests_js",
+        ] + _TEST_SOURCE_DATA.get(f, []),
+        rule = js_test,
+        test = ":dist-test/" + f.removesuffix(".ts") + ".js",
     )
     for f in glob(["tests/*.test.ts"])
 ]
