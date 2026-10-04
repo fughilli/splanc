@@ -1,7 +1,10 @@
 # NixOS module that runs Grafana Alloy on a HITL rig to ship metrics to Grafana
-# Cloud (FUG-117). Import it from the rig's system config alongside hitl-app.nix:
+# Cloud (FUG-117). It's a FUNCTION of an optional `extraScrapeJobs` arg, so import
+# it applied — from the rig's system config alongside hitl-app.nix:
 #
-#   imports = [ ./hitl-app.nix ./observability/alloy.nix ];
+#   imports = [ ./hitl-app.nix (import ./observability/alloy.nix { }) ];
+#
+# (A host with a second daemon passes extra scrape targets — see below / flake.nix.)
 #
 # It's intentionally a separate, opt-in module rather than baked into
 # hitl-app.nix: a rig only reports once its Grafana Cloud credentials exist. The
@@ -20,13 +23,41 @@
 # scripts/seed-*.sh) at the path below; until it exists Alloy simply doesn't
 # start, so importing this module never breaks a rig that isn't wired to Grafana
 # yet. The alloy.alloy config next to this file is the scrape/remote_write spec.
+#
+# `extraScrapeJobs` lets a host that runs MORE than the one reservation daemon add
+# scrape targets to the shared pipeline. The Pi rigs run a single daemon on :8087
+# (the base config), so they import this with the default (empty) list and get the
+# alloy.alloy file verbatim. amd-rig runs a SECOND daemon — the phone bench on
+# :8088 (hitl-phone-daemon.nix) — so flake.nix passes it a `hitl-managerd-phone`
+# job here; without it, amd-rig's phone-bench DUTs (its two C6s + the Android
+# phone) would push nothing and be invisible on Grafana. Each entry is
+# { name (Alloy block label, a valid identifier); job (the `job` label);
+#   address ("host:port") } — see flake.nix for the amd-rig value.
+{ extraScrapeJobs ? [ ] }:
 { config, pkgs, lib, ... }:
 
 let
-  # The Alloy pipeline config (scrape localhost:8087/metrics + host metrics,
-  # remote_write to Grafana Cloud). Copied into the store so it's part of the
-  # system closure and updates atomically with a rebuild.
-  alloyConfig = ./alloy.alloy;
+  # The base Alloy pipeline (scrape localhost:8087/metrics + host metrics,
+  # remote_write to Grafana Cloud), plus any extra per-host scrape blocks. Copied
+  # into the store as a single file so it's part of the system closure and updates
+  # atomically with a rebuild. With no extraScrapeJobs (the Pi rigs) the generated
+  # file is byte-identical to alloy.alloy.
+  mkScrape = j: ''
+
+    // Extra reservation daemon on this host (injected by alloy.nix's
+    // extraScrapeJobs) — scraped exactly like the primary :8087 daemon and
+    // tagged with its own `job` so the two daemons' series stay distinct.
+    prometheus.scrape ${builtins.toJSON j.name} {
+      targets = [
+        { "__address__" = ${builtins.toJSON j.address}, "job" = ${builtins.toJSON j.job} },
+      ]
+      metrics_path    = "/metrics"
+      scrape_interval = "15s"
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+    }
+  '';
+  alloyConfig = pkgs.writeText "alloy.alloy"
+    (builtins.readFile ./alloy.alloy + lib.concatMapStrings mkScrape extraScrapeJobs);
   envFile = "/var/lib/hitl/grafana.env";
 in
 {

@@ -18,6 +18,48 @@ serves its data to Grafana through the existing Infinity datasource (reading a
 only the read/write-dashboards `grafana_local` token. See
 [`fxbench/README.md`](fxbench/README.md).
 
+**`fleet/`** is a second Infinity-served layer: a **fleet-inventory table** —
+every host and DUT with its board type, capabilities, and identifying
+serial/port/UDID, aggregated from the reservation catalogs (which the live metrics
+don't carry) into a committed `fleet-inventory.json`, plus a live free/busy table.
+It covers the WHOLE fleet (Pi rigs, `amd-rig`, the Mac) — including hosts not yet
+pushing metrics, since the catalog is static. See [`fleet/README.md`](fleet/README.md)
+and the `hitl-fleet` dashboard.
+
+## Fleet coverage of the metrics push
+
+The Alloy push (below) reports every rig that has been seeded with Grafana creds
+and imports `alloy.nix` — **all the Pi rigs and `amd-rig`**. Two notes:
+
+- **`amd-rig` runs two reservation daemons** — the SDR bench on `:8087` and the
+  phone bench on `:8088` (`nix/hitl-phone-daemon.nix`). `alloy.nix` takes an
+  `extraScrapeJobs` argument so its pipeline scrapes both; `flake.nix` passes the
+  `:8088` job for the x86 host, so `amd-rig`'s phone-bench DUTs (its two C6s + the
+  Android phone) report too. The Pi rigs run one daemon and import `alloy.nix` with
+  the default empty list (the `alloy.alloy` config verbatim).
+- **The Mac (`mac-mini`) does not push metrics yet** — `nix/hitl-darwin.nix` does
+  not import an observability module, and `prometheus.exporter.unix` is Linux-only.
+  Its DUTs still appear in the **fleet-inventory table** (from the static catalog).
+  Wiring the Mac's push is a documented follow-up (see below).
+
+### Follow-up: Mac (`mac-mini`) metrics push
+
+Deferred until PR #227 (the iOS-bench bring-up, actively editing `hitl-darwin.nix`)
+lands, to avoid a merge collision. Then wire it with a **darwin-appropriate**
+approach — Alloy can't reuse the Pi/amd path verbatim because that path's host
+metrics come from `prometheus.exporter.unix` (Linux):
+
+- Run Alloy as a **launchd** agent on the Mac (not a systemd unit), gated on the
+  same `grafana.env` creds, scraping the darwin daemon's `:8087/metrics` (the
+  reservation daemon exposes the same `hitl_*` series on darwin) and
+  `remote_write`-ing to Grafana Cloud with `external_labels = { rig = "mac-mini" }`.
+- For host metrics, either **omit** them (the daemon already self-reports
+  CPU/mem/temp for a minimal view) or add a darwin host exporter — Alloy's
+  `prometheus.exporter.unix` collectors are Linux-oriented, so this needs a macOS
+  node exporter rather than the shared `alloy.alloy` host block.
+- Once it pushes, `mac-mini` appears on `hitl-rigs` and the `hitl-fleet` live-status
+  table automatically (the dashboards are metrics-driven and don't hardcode hosts).
+
 ## Architecture
 
 ```text
@@ -138,12 +180,14 @@ Grafana yet — it stays dormant until `seed_grafana` drops the creds in.
 ## 5. Dashboards as code (bonus)
 
 `dashboards/*.json` are Grafana dashboard models, versioned and reviewed like
-code. `dashboards/hitl-rigs.json` covers the rig metrics above. It carries **no
-template variables** (so the dashboard can be shared via Grafana's public/shared
-link — those reject `datasource`/`query` variables): every panel pins the
-Prometheus datasource `grafanacloud-prom`, and each panel breaks the
-fleet out per-rig via the `{{rig}}` legend rather than a `$rig` filter. If your
-Prometheus datasource UID differs, update the pinned `uid` in the JSON.
+code. `dashboards/hitl-rigs.json` covers the rig metrics above;
+`dashboards/hitl-fleet.json` is the fleet-inventory + live-status table (see
+[`fleet/README.md`](fleet/README.md)). Both carry **no template variables** (so
+they can be shared via Grafana's public/shared link — those reject
+`datasource`/`query` variables): every panel pins its datasource (`grafanacloud-prom`
+for Prometheus, `grafanacloud-infinity` for the catalog-inventory JSON), and each
+Prometheus panel breaks the fleet out per-rig via the `{{rig}}` legend rather than
+a `$rig` filter. If your datasource UIDs differ, update the pinned `uid` in the JSON.
 
 `.github/workflows/grafana-dashboards.yaml` pushes them to Grafana on any change
 to `dashboards/` on `main` (`POST /api/dashboards/db`, `overwrite:true`, keyed on
