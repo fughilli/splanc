@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 15,
-    "gaps": 40
+    "gaps": 41
   },
   "levels": [
     {
@@ -1526,6 +1526,12 @@
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:video_stream_netstack",
+      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
+      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",

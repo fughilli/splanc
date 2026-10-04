@@ -215,6 +215,12 @@
       "provided_level": "simulation"
     },
     {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:video_stream_netstack",
+      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",
