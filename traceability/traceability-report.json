@@ -9,17 +9,17 @@
     "user_needs": 8,
     "user_needs_validated": 0,
     "requirements": 37,
-    "requirements_verified": 10,
-    "requirements_under_verified": 17,
+    "requirements_verified": 9,
+    "requirements_under_verified": 15,
     "requirements_partial": 0,
-    "requirements_failed": 0,
+    "requirements_failed": 3,
     "requirements_unverified": 10,
     "risks": 12,
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1294,
-    "gaps": 34
+    "test_cases": 1293,
+    "gaps": 37
   },
   "levels": [
     {
@@ -91,7 +91,7 @@
     {
       "id": "UN-4",
       "title": "Reliably manage LED topology maps",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need to create, reconstruct, import, export, and manage LED topology maps reliably, including larger installations.",
       "requirements": [
         "PR-11",
@@ -104,7 +104,7 @@
     {
       "id": "UN-5",
       "title": "Commission and update devices from the browser",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need to commission, name, discover, connect to, and update devices from the browser with minimal setup friction.",
       "requirements": [
         "PR-13",
@@ -135,7 +135,7 @@
     {
       "id": "UN-7",
       "title": "Stability during long sessions and networking/memory pressure",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Users need the device and app to remain stable during long sessions, networking transitions, and memory pressure.",
       "requirements": [
         "PR-12",
@@ -2213,7 +2213,7 @@
     {
       "id": "PR-13",
       "title": "Browser provisioning, rename, discovery, LAN and direct connection",
-      "status": "UNDER-VERIFIED",
+      "status": "FAILED",
       "description": "The browser experience shall support device provisioning, rename, discovery, LAN connection, and direct connection by available connection modes.",
       "evidence": [
         {
@@ -2245,11 +2245,11 @@
           "stale": true
         },
         {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "name": "hitl_e2e::incomplete_run",
+          "status": "failed",
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "message": "DutUnreachable: DUT 10.42.0.68 is unreachable from the rig (no TCP on 443 80 81 after 3 tries). The board most likely joined a foreign AP \u2014 check for a duplicate provisioning SSID across rigs (`hitl wifi`) \u2014 or never joined WiFi. Failing here instead of a later, vaguer WebSocket timeout."
         },
         {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
@@ -2550,7 +2550,7 @@
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "simulation",
+      "provided_level": null,
       "satisfies": [
         "UN-5"
       ],
@@ -3610,15 +3610,15 @@
     {
       "id": "PR-22",
       "title": "Preserve user work across transient disconnects",
-      "status": "VERIFIED",
+      "status": "FAILED",
       "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
       "evidence": [
         {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "name": "hitl_e2e::incomplete_run",
+          "status": "failed",
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "message": "DutUnreachable: DUT 10.42.0.68 is unreachable from the rig (no TCP on 443 80 81 after 3 tries). The board most likely joined a foreign AP \u2014 check for a duplicate provisioning SSID across rigs (`hitl wifi`) \u2014 or never joined WiFi. Failing here instead of a later, vaguer WebSocket timeout."
         },
         {
           "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
@@ -3670,7 +3670,7 @@
         }
       ],
       "demanded_level": "simulation",
-      "provided_level": "simulation",
+      "provided_level": null,
       "satisfies": [
         "UN-4",
         "UN-7"
@@ -6160,20 +6160,20 @@
     {
       "id": "PR-35",
       "title": "Reconcile device identity on stable attributes",
-      "status": "UNDER-VERIFIED",
+      "status": "FAILED",
       "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
       "category": "risk-control",
       "evidence": [
         {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
+          "name": "hitl_e2e::incomplete_run",
+          "status": "failed",
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "message": "DutUnreachable: DUT 10.42.0.68 is unreachable from the rig (no TCP on 443 80 81 after 3 tries). The board most likely joined a foreign AP \u2014 check for a duplicate provisioning SSID across rigs (`hitl wifi`) \u2014 or never joined WiFi. Failing here instead of a later, vaguer WebSocket timeout."
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": null,
       "satisfies": [
         "UN-5"
       ],
@@ -6186,8 +6186,6 @@
         "firmware",
         "web"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -6571,7 +6569,7 @@
     {
       "id": "MIT-10",
       "title": "Reconcile device identity on stable attributes",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
       "type": null,
       "mitigates": [
@@ -6743,7 +6741,7 @@
     {
       "id": "RISK-10",
       "title": "Device identity inconsistencies across IP/hostname/AP/records",
-      "status": "PARTIAL",
+      "status": "FAILED",
       "description": "Cause connection confusion, harming UN-5.",
       "severity": "medium",
       "likelihood": null,
@@ -6782,18 +6780,18 @@
   ],
   "test_methods": [],
   "modules": {
-    "firmware": "PARTIAL",
+    "firmware": "FAILED",
     "fx_compiler": "PARTIAL",
-    "pi/hitl": "PARTIAL",
+    "pi/hitl": "FAILED",
     "pi/led_driver": "VERIFIED",
     "pi/reconstruction": "PARTIAL",
-    "pi/server": "PARTIAL",
+    "pi/server": "FAILED",
     "requirements": "PARTIAL",
     "shared/protocol": "VERIFIED",
     "shared/simulator": "VERIFIED",
     "solver": "VERIFIED",
     "tools": "VERIFIED",
-    "web": "PARTIAL"
+    "web": "FAILED"
   },
   "high_open_risks": [
     "RISK-1",
@@ -6802,9 +6800,7 @@
     "RISK-4",
     "RISK-5"
   ],
-  "pyramid_violations": [
-    "PR-35"
-  ],
+  "pyramid_violations": [],
   "unknown_evidence": {},
   "gaps": [
     {
@@ -6872,12 +6868,11 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "under-verified",
+      "kind": "failed",
       "entity": "PR-13",
-      "message": "demands hitl, best passing evidence is simulation",
+      "message": "failing evidence: hitl_e2e::incomplete_run",
       "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
+      "demanded_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -6925,6 +6920,13 @@
       "route": "human-gate",
       "demanded_level": "hil",
       "provided_level": "simulation"
+    },
+    {
+      "kind": "failed",
+      "entity": "PR-22",
+      "message": "failing evidence: hitl_e2e::incomplete_run",
+      "route": "autonomous",
+      "demanded_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -6998,20 +7000,11 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "stale",
+      "kind": "failed",
       "entity": "PR-35",
-      "message": "only passing evidence is against an older build",
+      "message": "failing evidence: hitl_e2e::incomplete_run",
       "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-35",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "demanded_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -7023,8 +7016,26 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:android_journeys",
-      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
+      "entity": "//pi/hitl/harness:led_capture_jit_netstack",
+      "message": "//pi/hitl/harness:led_capture_jit_netstack pi/hitl/harness/led_capture_jit_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:led_capture_netstack",
+      "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:map_upload_netstack",
+      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:video_stream_netstack",
+      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
