@@ -259,12 +259,6 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:led_capture_jit_netstack",
       "message": "//pi/hitl/harness:led_capture_jit_netstack pi/hitl/harness/led_capture_jit_netstack error and traces to no requirement",
       "route": "autonomous"
@@ -273,6 +267,12 @@
       "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:led_capture_netstack",
       "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:loaded_tls_netstack",
+      "message": "//pi/hitl/harness:loaded_tls_netstack pi/hitl/harness/loaded_tls_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
