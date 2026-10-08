@@ -4,7 +4,9 @@ const out=process.argv[2],url='http://127.0.0.1:8767/advertising-kit/';
 const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true,chromiumSandbox:true});
 const context=await browser.newContext({viewport:{width:1440,height:900}}),page=await context.newPage();
 let errors=[];page.on('pageerror',e=>errors.push(String(e)));
-await page.goto(url+'sim/');await page.waitForFunction(()=>window.splancReady,{timeout:60000});
+await page.goto(url+'sim/');
+try{await page.waitForFunction(()=>window.splancReady,null,{timeout:60000});}
+catch(e){console.log(JSON.stringify({errors,text:await page.locator('body').innerText()}));await page.screenshot({path:out+'/review/browser-error.png'});await browser.close();throw e;}
 await page.waitForTimeout(8000);
 const active=await page.evaluate(()=>window.splancStats);
 await page.screenshot({path:out+'/review/sim-desktop.png'});

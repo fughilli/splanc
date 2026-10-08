@@ -87,7 +87,7 @@ price tiers are separated; obtain supplier/tooling quotes before committing.
   title="Splanc products in zero gravity"
   style="width:100%;height:560px;border:0"
   loading="lazy"&gt;&lt;/iframe&gt;</pre><a href="README.md">Full integration notes</a></details></section><section><h2>Planning prices</h2>{prices}<p class="sub">MAX excludes the Raspberry Pi. These are planning proposals with first-batch tooling allocations, not supplier quotes. Mini and Splanc estimates are carried forward; MAX reflects r11 hardware.</p><a class="pill" href="pricing/">Pricing and cost basis →</a><a class="pill" href="outputs/pricing-20261008/splanc-pricing.xlsx">Download editable workbook ↓</a></section><footer><p><small>CAD design renders, not production photography. Final electronics, thermal and tooling qualification remain in progress.</small></p></footer></main></html>''')
-files=[p for p in O.rglob('*') if p.is_file() and not any(x in p.relative_to(O).parts for x in ['authoring','blender','review']) and p.suffix not in ['.zip','.ndjson']]
+files=[p for p in O.rglob('*') if p.is_file() and p.name!='manifest.json' and not any(x in p.relative_to(O).parts for x in ['authoring','blender','review']) and p.suffix not in ['.zip','.ndjson']]
 manifest={'revision':'max-service-r11','date':'2026-10-08','stills':13,'videos':5,'resolution':[1920,1080],'fps':24,'files':[{"path":str(p.relative_to(O)),"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
 (O/'manifest.json').write_text(json.dumps(manifest,indent=2));files.append(O/'manifest.json')
 with zipfile.ZipFile(O/'splanc-browser-sim.zip','w',zipfile.ZIP_DEFLATED) as z:
