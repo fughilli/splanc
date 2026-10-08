@@ -1,0 +1,14 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component ISOPWR:
+    trait is_atomic_part<manufacturer="TRACO POWER", partnumber="THL 40-2411WI", footprint="ISOPWR.kicad_mod", symbol="ISOPWR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="TRACO POWER", partno="THL 40-2411WI">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4
+    signal p5 ~ pin 5
+    signal p6 ~ pin 6

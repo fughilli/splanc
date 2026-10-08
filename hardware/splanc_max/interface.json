@@ -59,33 +59,81 @@
           ],
           "kind": "ribbon50",
           "center_z_above_pcb_mm": 4
+        },
+        {
+          "ref": "J4",
+          "position": [
+            74,
+            44
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "protected_5V_input",
+          "center_z_above_pcb_mm": 7
         }
       ]
     },
     "power": {
       "outline": {
-        "width_mm": 200,
+        "width_mm": 238,
         "height_mm": 120,
-        "thickness_mm": 1.6
+        "thickness_mm": 1.6,
+        "polygon_mm": [
+          [
+            38,
+            0
+          ],
+          [
+            238,
+            0
+          ],
+          [
+            238,
+            120
+          ],
+          [
+            38,
+            120
+          ],
+          [
+            38,
+            82
+          ],
+          [
+            0,
+            82
+          ],
+          [
+            0,
+            32
+          ],
+          [
+            38,
+            32
+          ]
+        ]
       },
       "mounts": [
         {
-          "x": 5,
+          "x": 43,
           "y": 15,
           "diameter_mm": 3.2
         },
         {
-          "x": 195,
+          "x": 233,
           "y": 15,
           "diameter_mm": 3.2
         },
         {
-          "x": 5,
+          "x": 43,
           "y": 105,
           "diameter_mm": 3.2
         },
         {
-          "x": 195,
+          "x": 233,
           "y": 105,
           "diameter_mm": 3.2
         }
@@ -94,7 +142,7 @@
         {
           "ref": "J1",
           "position": [
-            28,
+            66,
             60
           ],
           "edge": "internal",
@@ -108,35 +156,35 @@
         {
           "ref": "J2",
           "position": [
-            0,
+            38,
             45
           ],
-          "edge": "west",
+          "edge": "internal",
           "opening": [
             13,
             13
           ],
-          "kind": "power_lug_positive",
+          "kind": "internal_busbar_cable_stud",
           "center_z_above_pcb_mm": 8
         },
         {
           "ref": "J3",
           "position": [
-            0,
+            38,
             75
           ],
-          "edge": "west",
+          "edge": "internal",
           "opening": [
             13,
             13
           ],
-          "kind": "power_lug_return",
+          "kind": "internal_busbar_cable_stud",
           "center_z_above_pcb_mm": 8
         },
         {
           "ref": "J10",
           "position": [
-            14.5,
+            52.5,
             0
           ],
           "edge": "south",
@@ -150,7 +198,7 @@
         {
           "ref": "J11",
           "position": [
-            33.5,
+            71.5,
             0
           ],
           "edge": "south",
@@ -164,7 +212,7 @@
         {
           "ref": "J12",
           "position": [
-            52.5,
+            90.5,
             0
           ],
           "edge": "south",
@@ -178,7 +226,7 @@
         {
           "ref": "J13",
           "position": [
-            71.5,
+            109.5,
             0
           ],
           "edge": "south",
@@ -192,7 +240,7 @@
         {
           "ref": "J14",
           "position": [
-            90.5,
+            128.5,
             0
           ],
           "edge": "south",
@@ -206,7 +254,7 @@
         {
           "ref": "J15",
           "position": [
-            109.5,
+            147.5,
             0
           ],
           "edge": "south",
@@ -220,7 +268,7 @@
         {
           "ref": "J16",
           "position": [
-            128.5,
+            166.5,
             0
           ],
           "edge": "south",
@@ -234,7 +282,7 @@
         {
           "ref": "J17",
           "position": [
-            147.5,
+            185.5,
             0
           ],
           "edge": "south",
@@ -248,7 +296,7 @@
         {
           "ref": "J18",
           "position": [
-            166.5,
+            204.5,
             0
           ],
           "edge": "south",
@@ -262,7 +310,7 @@
         {
           "ref": "J19",
           "position": [
-            185.5,
+            223.5,
             0
           ],
           "edge": "south",
@@ -276,7 +324,7 @@
         {
           "ref": "J20",
           "position": [
-            14.5,
+            52.5,
             120
           ],
           "edge": "north",
@@ -290,7 +338,7 @@
         {
           "ref": "J21",
           "position": [
-            33.5,
+            71.5,
             120
           ],
           "edge": "north",
@@ -304,7 +352,7 @@
         {
           "ref": "J22",
           "position": [
-            52.5,
+            90.5,
             120
           ],
           "edge": "north",
@@ -318,7 +366,7 @@
         {
           "ref": "J23",
           "position": [
-            71.5,
+            109.5,
             120
           ],
           "edge": "north",
@@ -332,7 +380,7 @@
         {
           "ref": "J24",
           "position": [
-            90.5,
+            128.5,
             120
           ],
           "edge": "north",
@@ -346,7 +394,7 @@
         {
           "ref": "J25",
           "position": [
-            109.5,
+            147.5,
             120
           ],
           "edge": "north",
@@ -360,7 +408,7 @@
         {
           "ref": "J26",
           "position": [
-            128.5,
+            166.5,
             120
           ],
           "edge": "north",
@@ -374,7 +422,7 @@
         {
           "ref": "J27",
           "position": [
-            147.5,
+            185.5,
             120
           ],
           "edge": "north",
@@ -388,7 +436,7 @@
         {
           "ref": "J28",
           "position": [
-            166.5,
+            204.5,
             120
           ],
           "edge": "north",
@@ -402,7 +450,7 @@
         {
           "ref": "J29",
           "position": [
-            185.5,
+            223.5,
             120
           ],
           "edge": "north",
@@ -412,6 +460,34 @@
           ],
           "kind": "led_output3",
           "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J4",
+          "position": [
+            37,
+            60
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "control_supply_output",
+          "center_z_above_pcb_mm": 7
+        },
+        {
+          "ref": "J5",
+          "position": [
+            16,
+            38.5
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "fused_supply_input",
+          "center_z_above_pcb_mm": 7
         }
       ]
     },
@@ -465,7 +541,7 @@
     "busbars": [
       {
         "net": "LED_VIN",
-        "x": 13,
+        "x": 51,
         "y": 35,
         "length_mm": 160,
         "width_mm": 8,
@@ -473,7 +549,7 @@
       },
       {
         "net": "PGND",
-        "x": 13,
+        "x": 51,
         "y": 77,
         "length_mm": 160,
         "width_mm": 8,

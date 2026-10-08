@@ -1,14 +1,14 @@
 {
   "lv": {
-    "footprints": 56,
+    "footprints": 57,
     "overlap_pairs": [],
     "width_mm": 85,
     "height_mm": 56
   },
   "power": {
-    "footprints": 321,
+    "footprints": 325,
     "overlap_pairs": [],
-    "width_mm": 200,
+    "width_mm": 238,
     "height_mm": 120
   },
   "usb_bridge": {

@@ -1,3 +1,19 @@
+## Current revision: MAX service end (r11)
+
+The current power/network architecture is [MAX-SERVICE-R11.md](MAX-SERVICE-R11.md).
+The power PCB now has a central 38 mm service tongue (238 × 120 mm bounding box).
+The original 200 × 120 mm LED section and its twenty channels are retained.
+DC enters through one keyed XT150 pair; all busbar attachments are internal.
+An isolated THL40-2411WI supplies the control domain through a protected harness.
+Pi USB-C and Pi Ethernet are covered by the enclosure. Two panel Ethernet sockets
+connect to a new 80 × 60 mm NET3 Gigabit switch board and an internal Pi patch lead.
+
+`service-system.json` is the electrical/packaging contract and
+`elec/src/service_system.ato` records the functional connections. The NET3 board
+is a placement/specification study, not a pin-complete or routed design. The
+older two-board description below remains historical; its exposed lug and
+external Pi-power statements are superseded by r11.
+
 # Splanc MAX — two-board engineering draft
 
 This project reserves 20 independently switched, sensed and isolated-data LED

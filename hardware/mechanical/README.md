@@ -1,3 +1,11 @@
+# Current MAX service-end revision
+
+MAX now uses the r11 model at `output/max-service-r11` and the specification
+in `../splanc_max/MAX-SERVICE-R11.md`. Rebuild with
+`build_clean_enclosures.py`, then run `check_max_service.py` and the existing
+family fit checks. The private section viewer is rebuilt from that output.
+Old dimensions and exposed Pi ports described below are historical.
+
 # Active enclosure build
 
 Use [CLEAN-ENCLOSURES.md](CLEAN-ENCLOSURES.md) and `build_clean_enclosures.py` with `enclosure-spec.json`. The earlier STEP patch pipeline is historical and must not be run on the current output. Latest output is `output/compact-handheld-r9`.

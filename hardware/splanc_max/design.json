@@ -658,6 +658,39 @@
       "manufacturer": "Design selection",
       "footprint_status": "PROVISIONAL USB2 male envelope pinmap: VBUS,D-,D+,GND,CC,shield"
     },
+    "ISOPWR": {
+      "mpn": "THL 40-2411WI",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ],
+      "footprint": "Converter_DCDC:Converter_DCDC_TRACO_THL40-xxxxWI_THT",
+      "manufacturer": "TRACO POWER"
+    },
+    "CTRL_PWR": {
+      "mpn": "18AWG four-wire solder harness landing",
+      "pins": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "footprint": "custom:CTRL_PWR",
+      "manufacturer": "Design selection",
+      "qualification": "Two positive and two return leads; strain relief required; header current and final copper sizing must be qualified"
+    },
+    "TEST": {
+      "mpn": "Test point",
+      "pins": [
+        "1"
+      ],
+      "footprint": "TestPoint:TestPoint_Pad_D1.0mm",
+      "manufacturer": "Design selection"
+    },
     "R_5_1k": {
       "mpn": "5.1k R0603 engineering specification",
       "pins": [
@@ -941,6 +974,20 @@
           ],
           "kind": "ribbon50",
           "center_z_above_pcb_mm": 4
+        },
+        {
+          "ref": "J4",
+          "position": [
+            74,
+            44
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "protected_5V_input",
+          "center_z_above_pcb_mm": 7
         }
       ],
       "components": [
@@ -1849,33 +1896,82 @@
             "2": "DGND"
           },
           "value": "100nF16V"
+        },
+        {
+          "ref": "J4",
+          "part": "CTRL_PWR",
+          "position": [
+            74,
+            44
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "PI_5V",
+            "2": "PI_5V",
+            "3": "DGND",
+            "4": "DGND"
+          }
         }
       ]
     },
     "power": {
       "outline": {
-        "width_mm": 200,
+        "width_mm": 238,
         "height_mm": 120,
-        "thickness_mm": 1.6
+        "thickness_mm": 1.6,
+        "polygon_mm": [
+          [
+            38,
+            0
+          ],
+          [
+            238,
+            0
+          ],
+          [
+            238,
+            120
+          ],
+          [
+            38,
+            120
+          ],
+          [
+            38,
+            82
+          ],
+          [
+            0,
+            82
+          ],
+          [
+            0,
+            32
+          ],
+          [
+            38,
+            32
+          ]
+        ]
       },
       "mounts": [
         {
-          "x": 5,
+          "x": 43,
           "y": 15,
           "diameter_mm": 3.2
         },
         {
-          "x": 195,
+          "x": 233,
           "y": 15,
           "diameter_mm": 3.2
         },
         {
-          "x": 5,
+          "x": 43,
           "y": 105,
           "diameter_mm": 3.2
         },
         {
-          "x": 195,
+          "x": 233,
           "y": 105,
           "diameter_mm": 3.2
         }
@@ -1884,7 +1980,7 @@
         {
           "ref": "J1",
           "position": [
-            28,
+            66,
             60
           ],
           "edge": "internal",
@@ -1898,35 +1994,35 @@
         {
           "ref": "J2",
           "position": [
-            0,
+            38,
             45
           ],
-          "edge": "west",
+          "edge": "internal",
           "opening": [
             13,
             13
           ],
-          "kind": "power_lug_positive",
+          "kind": "internal_busbar_cable_stud",
           "center_z_above_pcb_mm": 8
         },
         {
           "ref": "J3",
           "position": [
-            0,
+            38,
             75
           ],
-          "edge": "west",
+          "edge": "internal",
           "opening": [
             13,
             13
           ],
-          "kind": "power_lug_return",
+          "kind": "internal_busbar_cable_stud",
           "center_z_above_pcb_mm": 8
         },
         {
           "ref": "J10",
           "position": [
-            14.5,
+            52.5,
             0
           ],
           "edge": "south",
@@ -1940,7 +2036,7 @@
         {
           "ref": "J11",
           "position": [
-            33.5,
+            71.5,
             0
           ],
           "edge": "south",
@@ -1954,7 +2050,7 @@
         {
           "ref": "J12",
           "position": [
-            52.5,
+            90.5,
             0
           ],
           "edge": "south",
@@ -1968,7 +2064,7 @@
         {
           "ref": "J13",
           "position": [
-            71.5,
+            109.5,
             0
           ],
           "edge": "south",
@@ -1982,7 +2078,7 @@
         {
           "ref": "J14",
           "position": [
-            90.5,
+            128.5,
             0
           ],
           "edge": "south",
@@ -1996,7 +2092,7 @@
         {
           "ref": "J15",
           "position": [
-            109.5,
+            147.5,
             0
           ],
           "edge": "south",
@@ -2010,7 +2106,7 @@
         {
           "ref": "J16",
           "position": [
-            128.5,
+            166.5,
             0
           ],
           "edge": "south",
@@ -2024,7 +2120,7 @@
         {
           "ref": "J17",
           "position": [
-            147.5,
+            185.5,
             0
           ],
           "edge": "south",
@@ -2038,7 +2134,7 @@
         {
           "ref": "J18",
           "position": [
-            166.5,
+            204.5,
             0
           ],
           "edge": "south",
@@ -2052,7 +2148,7 @@
         {
           "ref": "J19",
           "position": [
-            185.5,
+            223.5,
             0
           ],
           "edge": "south",
@@ -2066,7 +2162,7 @@
         {
           "ref": "J20",
           "position": [
-            14.5,
+            52.5,
             120
           ],
           "edge": "north",
@@ -2080,7 +2176,7 @@
         {
           "ref": "J21",
           "position": [
-            33.5,
+            71.5,
             120
           ],
           "edge": "north",
@@ -2094,7 +2190,7 @@
         {
           "ref": "J22",
           "position": [
-            52.5,
+            90.5,
             120
           ],
           "edge": "north",
@@ -2108,7 +2204,7 @@
         {
           "ref": "J23",
           "position": [
-            71.5,
+            109.5,
             120
           ],
           "edge": "north",
@@ -2122,7 +2218,7 @@
         {
           "ref": "J24",
           "position": [
-            90.5,
+            128.5,
             120
           ],
           "edge": "north",
@@ -2136,7 +2232,7 @@
         {
           "ref": "J25",
           "position": [
-            109.5,
+            147.5,
             120
           ],
           "edge": "north",
@@ -2150,7 +2246,7 @@
         {
           "ref": "J26",
           "position": [
-            128.5,
+            166.5,
             120
           ],
           "edge": "north",
@@ -2164,7 +2260,7 @@
         {
           "ref": "J27",
           "position": [
-            147.5,
+            185.5,
             120
           ],
           "edge": "north",
@@ -2178,7 +2274,7 @@
         {
           "ref": "J28",
           "position": [
-            166.5,
+            204.5,
             120
           ],
           "edge": "north",
@@ -2192,7 +2288,7 @@
         {
           "ref": "J29",
           "position": [
-            185.5,
+            223.5,
             120
           ],
           "edge": "north",
@@ -2202,6 +2298,34 @@
           ],
           "kind": "led_output3",
           "center_z_above_pcb_mm": 4.3
+        },
+        {
+          "ref": "J4",
+          "position": [
+            37,
+            60
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "control_supply_output",
+          "center_z_above_pcb_mm": 7
+        },
+        {
+          "ref": "J5",
+          "position": [
+            16,
+            38.5
+          ],
+          "edge": "internal",
+          "opening": [
+            10,
+            14
+          ],
+          "kind": "fused_supply_input",
+          "center_z_above_pcb_mm": 7
         }
       ],
       "components": [
@@ -2209,7 +2333,7 @@
           "ref": "J1",
           "part": "RIBBON",
           "position": [
-            28,
+            66,
             60
           ],
           "rotation": 0,
@@ -2270,7 +2394,7 @@
           "ref": "J2",
           "part": "LUG",
           "position": [
-            7,
+            45,
             45
           ],
           "rotation": 0,
@@ -2282,7 +2406,7 @@
           "ref": "J3",
           "part": "LUG",
           "position": [
-            7,
+            45,
             75
           ],
           "rotation": 0,
@@ -2294,7 +2418,7 @@
           "ref": "U1",
           "part": "ISO",
           "position": [
-            43,
+            81,
             27
           ],
           "rotation": 0,
@@ -2321,7 +2445,7 @@
           "ref": "U2",
           "part": "ISO",
           "position": [
-            43,
+            81,
             45
           ],
           "rotation": 0,
@@ -2348,7 +2472,7 @@
           "ref": "U3",
           "part": "ISO",
           "position": [
-            43,
+            81,
             63
           ],
           "rotation": 0,
@@ -2375,7 +2499,7 @@
           "ref": "U4",
           "part": "ISO",
           "position": [
-            43,
+            81,
             81
           ],
           "rotation": 0,
@@ -2402,7 +2526,7 @@
           "ref": "U5",
           "part": "ISOSPI",
           "position": [
-            43,
+            81,
             99
           ],
           "rotation": 0,
@@ -2429,7 +2553,7 @@
           "ref": "U6",
           "part": "SHIFT",
           "position": [
-            65,
+            103,
             60
           ],
           "rotation": 0,
@@ -2456,7 +2580,7 @@
           "ref": "U7",
           "part": "SHIFT",
           "position": [
-            78,
+            116,
             60
           ],
           "rotation": 0,
@@ -2483,7 +2607,7 @@
           "ref": "U8",
           "part": "SHIFT",
           "position": [
-            91,
+            129,
             60
           ],
           "rotation": 0,
@@ -2510,7 +2634,7 @@
           "ref": "U9",
           "part": "ADC",
           "position": [
-            123,
+            161,
             60
           ],
           "rotation": 0,
@@ -2537,7 +2661,7 @@
           "ref": "U50",
           "part": "CSA",
           "position": [
-            68,
+            106,
             43
           ],
           "rotation": 0,
@@ -2562,7 +2686,7 @@
           "ref": "U60",
           "part": "MUX",
           "position": [
-            68,
+            106,
             52
           ],
           "rotation": 0,
@@ -2589,7 +2713,7 @@
           "ref": "C100",
           "part": "C_100nF16V",
           "position": [
-            68.0,
+            106.0,
             47.5
           ],
           "rotation": 0,
@@ -2603,7 +2727,7 @@
           "ref": "C105",
           "part": "C_100nF16V",
           "position": [
-            68.0,
+            106.0,
             56.0
           ],
           "rotation": 0,
@@ -2617,7 +2741,7 @@
           "ref": "U51",
           "part": "CSA",
           "position": [
-            91,
+            129,
             43
           ],
           "rotation": 0,
@@ -2642,7 +2766,7 @@
           "ref": "U61",
           "part": "MUX",
           "position": [
-            91,
+            129,
             52
           ],
           "rotation": 0,
@@ -2669,7 +2793,7 @@
           "ref": "C101",
           "part": "C_100nF16V",
           "position": [
-            91.0,
+            129.0,
             47.5
           ],
           "rotation": 0,
@@ -2683,7 +2807,7 @@
           "ref": "C106",
           "part": "C_100nF16V",
           "position": [
-            91.0,
+            129.0,
             56.0
           ],
           "rotation": 0,
@@ -2697,7 +2821,7 @@
           "ref": "U52",
           "part": "CSA",
           "position": [
-            114,
+            152,
             43
           ],
           "rotation": 0,
@@ -2722,7 +2846,7 @@
           "ref": "U62",
           "part": "MUX",
           "position": [
-            114,
+            152,
             52
           ],
           "rotation": 0,
@@ -2749,7 +2873,7 @@
           "ref": "C102",
           "part": "C_100nF16V",
           "position": [
-            114.0,
+            152.0,
             47.5
           ],
           "rotation": 0,
@@ -2763,7 +2887,7 @@
           "ref": "C107",
           "part": "C_100nF16V",
           "position": [
-            114.0,
+            152.0,
             56.0
           ],
           "rotation": 0,
@@ -2777,7 +2901,7 @@
           "ref": "U53",
           "part": "CSA",
           "position": [
-            137,
+            175,
             43
           ],
           "rotation": 0,
@@ -2802,7 +2926,7 @@
           "ref": "U63",
           "part": "MUX",
           "position": [
-            137,
+            175,
             52
           ],
           "rotation": 0,
@@ -2829,7 +2953,7 @@
           "ref": "C103",
           "part": "C_100nF16V",
           "position": [
-            137.0,
+            175.0,
             47.5
           ],
           "rotation": 0,
@@ -2843,7 +2967,7 @@
           "ref": "C108",
           "part": "C_100nF16V",
           "position": [
-            137.0,
+            175.0,
             56.0
           ],
           "rotation": 0,
@@ -2857,7 +2981,7 @@
           "ref": "U54",
           "part": "CSA",
           "position": [
-            160,
+            198,
             43
           ],
           "rotation": 0,
@@ -2882,7 +3006,7 @@
           "ref": "U64",
           "part": "MUX",
           "position": [
-            160,
+            198,
             52
           ],
           "rotation": 0,
@@ -2909,7 +3033,7 @@
           "ref": "C104",
           "part": "C_100nF16V",
           "position": [
-            160.0,
+            198.0,
             47.5
           ],
           "rotation": 0,
@@ -2923,7 +3047,7 @@
           "ref": "C109",
           "part": "C_100nF16V",
           "position": [
-            160.0,
+            198.0,
             56.0
           ],
           "rotation": 0,
@@ -2937,7 +3061,7 @@
           "ref": "R100",
           "part": "R_100k_mux_address_pulldown",
           "position": [
-            95,
+            133,
             64
           ],
           "rotation": 0,
@@ -2951,7 +3075,7 @@
           "ref": "R101",
           "part": "R_100k_mux_address_pulldown",
           "position": [
-            99,
+            137,
             64
           ],
           "rotation": 0,
@@ -2965,7 +3089,7 @@
           "ref": "R102",
           "part": "R_100k_mux_address_pulldown",
           "position": [
-            103,
+            141,
             64
           ],
           "rotation": 0,
@@ -2979,7 +3103,7 @@
           "ref": "R103",
           "part": "R_4_7k_aggregate_open_drain_status_pullup",
           "position": [
-            144,
+            182,
             64
           ],
           "rotation": 0,
@@ -2993,7 +3117,7 @@
           "ref": "R104",
           "part": "R_100k_0_1percent_bus_divider_upper",
           "position": [
-            150,
+            188,
             65
           ],
           "rotation": 0,
@@ -3007,7 +3131,7 @@
           "ref": "R105",
           "part": "R_10k_0_1percent_bus_divider_lower",
           "position": [
-            155,
+            193,
             65
           ],
           "rotation": 0,
@@ -3021,7 +3145,7 @@
           "ref": "C110",
           "part": "C_10nF50V_bus_divider_filter",
           "position": [
-            160,
+            198,
             65
           ],
           "rotation": 0,
@@ -3035,7 +3159,7 @@
           "ref": "C111",
           "part": "C_1uF10V_ADC_supply",
           "position": [
-            125.0,
+            163.0,
             67.0
           ],
           "rotation": 0,
@@ -3049,7 +3173,7 @@
           "ref": "Q1",
           "part": "NPN",
           "position": [
-            65,
+            103,
             69
           ],
           "rotation": 0,
@@ -3063,7 +3187,7 @@
           "ref": "R90",
           "part": "R_10k",
           "position": [
-            69,
+            107,
             69
           ],
           "rotation": 0,
@@ -3077,7 +3201,7 @@
           "ref": "R91",
           "part": "R_10k",
           "position": [
-            61,
+            99,
             69
           ],
           "rotation": 0,
@@ -3091,7 +3215,7 @@
           "ref": "R92",
           "part": "R_100k",
           "position": [
-            61,
+            99,
             73
           ],
           "rotation": 0,
@@ -3105,7 +3229,7 @@
           "ref": "U11",
           "part": "REF",
           "position": [
-            105,
+            143,
             70
           ],
           "rotation": 0,
@@ -3119,7 +3243,7 @@
           "ref": "U12",
           "part": "BUCK",
           "position": [
-            18,
+            56,
             94
           ],
           "rotation": 0,
@@ -3133,7 +3257,7 @@
           "ref": "J10",
           "part": "OUT",
           "position": [
-            9.42,
+            47.42,
             9.9
           ],
           "rotation": 0,
@@ -3147,7 +3271,7 @@
           "ref": "U20",
           "part": "SW",
           "position": [
-            14.5,
+            52.5,
             19
           ],
           "rotation": 0,
@@ -3170,7 +3294,7 @@
           "ref": "R1",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            10.5,
+            48.5,
             23.5
           ],
           "rotation": 0,
@@ -3184,7 +3308,7 @@
           "ref": "RS0",
           "part": "SHUNT",
           "position": [
-            14.5,
+            52.5,
             27
           ],
           "rotation": 0,
@@ -3197,7 +3321,7 @@
           "ref": "RVH0",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            10.5,
+            48.5,
             30.5
           ],
           "rotation": 0,
@@ -3211,7 +3335,7 @@
           "ref": "RVL0",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            14.5,
+            52.5,
             30.5
           ],
           "rotation": 0,
@@ -3225,7 +3349,7 @@
           "ref": "CV0",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            18.5,
+            56.5,
             30.5
           ],
           "rotation": 0,
@@ -3239,7 +3363,7 @@
           "ref": "RI0",
           "part": "R_100R_current_filter",
           "position": [
-            10.5,
+            48.5,
             34
           ],
           "rotation": 0,
@@ -3253,7 +3377,7 @@
           "ref": "CI0",
           "part": "C_1nF16V_current_filter",
           "position": [
-            14.5,
+            52.5,
             34
           ],
           "rotation": 0,
@@ -3267,7 +3391,7 @@
           "ref": "R3",
           "part": "R_100k_pulldown",
           "position": [
-            18.5,
+            56.5,
             23.5
           ],
           "rotation": 0,
@@ -3281,7 +3405,7 @@
           "ref": "R4",
           "part": "R_100R_series",
           "position": [
-            18.5,
+            56.5,
             14
           ],
           "rotation": 0,
@@ -3295,7 +3419,7 @@
           "ref": "C1",
           "part": "C_100nF50V",
           "position": [
-            14.5,
+            52.5,
             14
           ],
           "rotation": 0,
@@ -3309,7 +3433,7 @@
           "ref": "J11",
           "part": "OUT",
           "position": [
-            28.42,
+            66.42,
             9.9
           ],
           "rotation": 0,
@@ -3323,7 +3447,7 @@
           "ref": "U21",
           "part": "SW",
           "position": [
-            32.5,
+            70.5,
             19.0
           ],
           "rotation": 0,
@@ -3346,7 +3470,7 @@
           "ref": "R5",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            29.5,
+            67.5,
             23.5
           ],
           "rotation": 0,
@@ -3360,7 +3484,7 @@
           "ref": "RS1",
           "part": "SHUNT",
           "position": [
-            32.5,
+            70.5,
             27.0
           ],
           "rotation": 0,
@@ -3373,7 +3497,7 @@
           "ref": "RVH1",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            28.0,
+            67.5,
             30.5
           ],
           "rotation": 0,
@@ -3387,7 +3511,7 @@
           "ref": "RVL1",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            31.5,
+            71.5,
             30.5
           ],
           "rotation": 0,
@@ -3401,8 +3525,8 @@
           "ref": "CV1",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            35.0,
-            30.5
+            73.0,
+            32.5
           ],
           "rotation": 0,
           "nets": {
@@ -3415,7 +3539,7 @@
           "ref": "RI1",
           "part": "R_100R_current_filter",
           "position": [
-            29.5,
+            67.5,
             34
           ],
           "rotation": 0,
@@ -3429,7 +3553,7 @@
           "ref": "CI1",
           "part": "C_1nF16V_current_filter",
           "position": [
-            33.5,
+            71.5,
             34.5
           ],
           "rotation": 0,
@@ -3443,7 +3567,7 @@
           "ref": "R7",
           "part": "R_100k_pulldown",
           "position": [
-            35.0,
+            73.0,
             23.5
           ],
           "rotation": 0,
@@ -3457,7 +3581,7 @@
           "ref": "R8",
           "part": "R_100R_series",
           "position": [
-            37.5,
+            75.5,
             14
           ],
           "rotation": 0,
@@ -3471,7 +3595,7 @@
           "ref": "C2",
           "part": "C_100nF50V",
           "position": [
-            33.5,
+            71.5,
             14
           ],
           "rotation": 0,
@@ -3485,7 +3609,7 @@
           "ref": "J12",
           "part": "OUT",
           "position": [
-            47.42,
+            85.42,
             9.9
           ],
           "rotation": 0,
@@ -3499,7 +3623,7 @@
           "ref": "U22",
           "part": "SW",
           "position": [
-            52.5,
+            90.5,
             18.0
           ],
           "rotation": 0,
@@ -3522,7 +3646,7 @@
           "ref": "R9",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            51.0,
+            89.0,
             23.5
           ],
           "rotation": 0,
@@ -3536,7 +3660,7 @@
           "ref": "RS2",
           "part": "SHUNT",
           "position": [
-            53.5,
+            91.5,
             27.0
           ],
           "rotation": 0,
@@ -3549,7 +3673,7 @@
           "ref": "RVH2",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            51.0,
+            89.0,
             30.5
           ],
           "rotation": 0,
@@ -3563,7 +3687,7 @@
           "ref": "RVL2",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            54.5,
+            92.5,
             30.5
           ],
           "rotation": 0,
@@ -3577,7 +3701,7 @@
           "ref": "CV2",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            58.0,
+            96.0,
             30.5
           ],
           "rotation": 0,
@@ -3591,7 +3715,7 @@
           "ref": "RI2",
           "part": "R_100R_current_filter",
           "position": [
-            48.5,
+            86.5,
             34
           ],
           "rotation": 0,
@@ -3605,7 +3729,7 @@
           "ref": "CI2",
           "part": "C_1nF16V_current_filter",
           "position": [
-            52.5,
+            90.5,
             34
           ],
           "rotation": 0,
@@ -3619,7 +3743,7 @@
           "ref": "R11",
           "part": "R_100k_pulldown",
           "position": [
-            56.5,
+            94.5,
             23.5
           ],
           "rotation": 0,
@@ -3633,7 +3757,7 @@
           "ref": "R12",
           "part": "R_100R_series",
           "position": [
-            56.5,
+            94.5,
             14
           ],
           "rotation": 0,
@@ -3647,7 +3771,7 @@
           "ref": "C3",
           "part": "C_100nF50V",
           "position": [
-            52.5,
+            90.5,
             14
           ],
           "rotation": 0,
@@ -3661,7 +3785,7 @@
           "ref": "J13",
           "part": "OUT",
           "position": [
-            66.42,
+            104.42,
             9.9
           ],
           "rotation": 0,
@@ -3675,7 +3799,7 @@
           "ref": "U23",
           "part": "SW",
           "position": [
-            71.5,
+            109.5,
             19
           ],
           "rotation": 0,
@@ -3698,7 +3822,7 @@
           "ref": "R13",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            67.5,
+            105.5,
             23.5
           ],
           "rotation": 0,
@@ -3712,7 +3836,7 @@
           "ref": "RS3",
           "part": "SHUNT",
           "position": [
-            71.5,
+            109.5,
             27
           ],
           "rotation": 0,
@@ -3725,7 +3849,7 @@
           "ref": "RVH3",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            67.5,
+            105.5,
             30.5
           ],
           "rotation": 0,
@@ -3739,7 +3863,7 @@
           "ref": "RVL3",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            71.5,
+            109.5,
             30.5
           ],
           "rotation": 0,
@@ -3753,7 +3877,7 @@
           "ref": "CV3",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            75.5,
+            113.5,
             30.5
           ],
           "rotation": 0,
@@ -3767,7 +3891,7 @@
           "ref": "RI3",
           "part": "R_100R_current_filter",
           "position": [
-            67.5,
+            105.5,
             34
           ],
           "rotation": 0,
@@ -3781,7 +3905,7 @@
           "ref": "CI3",
           "part": "C_1nF16V_current_filter",
           "position": [
-            71.5,
+            109.5,
             34
           ],
           "rotation": 0,
@@ -3795,7 +3919,7 @@
           "ref": "R15",
           "part": "R_100k_pulldown",
           "position": [
-            75.5,
+            113.5,
             23.5
           ],
           "rotation": 0,
@@ -3809,7 +3933,7 @@
           "ref": "R16",
           "part": "R_100R_series",
           "position": [
-            75.5,
+            113.5,
             14
           ],
           "rotation": 0,
@@ -3823,7 +3947,7 @@
           "ref": "C4",
           "part": "C_100nF50V",
           "position": [
-            71.5,
+            109.5,
             14
           ],
           "rotation": 0,
@@ -3837,7 +3961,7 @@
           "ref": "J14",
           "part": "OUT",
           "position": [
-            85.42,
+            123.42,
             9.9
           ],
           "rotation": 0,
@@ -3851,7 +3975,7 @@
           "ref": "U24",
           "part": "SW",
           "position": [
-            90.5,
+            128.5,
             19
           ],
           "rotation": 0,
@@ -3874,7 +3998,7 @@
           "ref": "R17",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            86.5,
+            124.5,
             23.5
           ],
           "rotation": 0,
@@ -3888,7 +4012,7 @@
           "ref": "RS4",
           "part": "SHUNT",
           "position": [
-            90.5,
+            128.5,
             27
           ],
           "rotation": 0,
@@ -3901,7 +4025,7 @@
           "ref": "RVH4",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            86.5,
+            124.5,
             30.5
           ],
           "rotation": 0,
@@ -3915,7 +4039,7 @@
           "ref": "RVL4",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            90.5,
+            128.5,
             30.5
           ],
           "rotation": 0,
@@ -3929,7 +4053,7 @@
           "ref": "CV4",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            94.5,
+            132.5,
             30.5
           ],
           "rotation": 0,
@@ -3943,7 +4067,7 @@
           "ref": "RI4",
           "part": "R_100R_current_filter",
           "position": [
-            86.5,
+            124.5,
             34
           ],
           "rotation": 0,
@@ -3957,7 +4081,7 @@
           "ref": "CI4",
           "part": "C_1nF16V_current_filter",
           "position": [
-            90.5,
+            128.5,
             34
           ],
           "rotation": 0,
@@ -3971,7 +4095,7 @@
           "ref": "R19",
           "part": "R_100k_pulldown",
           "position": [
-            94.5,
+            132.5,
             23.5
           ],
           "rotation": 0,
@@ -3985,7 +4109,7 @@
           "ref": "R20",
           "part": "R_100R_series",
           "position": [
-            94.5,
+            132.5,
             14
           ],
           "rotation": 0,
@@ -3999,7 +4123,7 @@
           "ref": "C5",
           "part": "C_100nF50V",
           "position": [
-            90.5,
+            128.5,
             14
           ],
           "rotation": 0,
@@ -4013,7 +4137,7 @@
           "ref": "J15",
           "part": "OUT",
           "position": [
-            104.42,
+            142.42000000000002,
             9.9
           ],
           "rotation": 0,
@@ -4027,7 +4151,7 @@
           "ref": "U25",
           "part": "SW",
           "position": [
-            109.5,
+            147.5,
             19
           ],
           "rotation": 0,
@@ -4050,7 +4174,7 @@
           "ref": "R21",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            105.5,
+            143.5,
             23.5
           ],
           "rotation": 0,
@@ -4064,7 +4188,7 @@
           "ref": "RS5",
           "part": "SHUNT",
           "position": [
-            109.5,
+            147.5,
             27
           ],
           "rotation": 0,
@@ -4077,7 +4201,7 @@
           "ref": "RVH5",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            105.5,
+            143.5,
             30.5
           ],
           "rotation": 0,
@@ -4091,7 +4215,7 @@
           "ref": "RVL5",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            109.5,
+            147.5,
             30.5
           ],
           "rotation": 0,
@@ -4105,7 +4229,7 @@
           "ref": "CV5",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            113.5,
+            151.5,
             30.5
           ],
           "rotation": 0,
@@ -4119,7 +4243,7 @@
           "ref": "RI5",
           "part": "R_100R_current_filter",
           "position": [
-            105.5,
+            143.5,
             34
           ],
           "rotation": 0,
@@ -4133,7 +4257,7 @@
           "ref": "CI5",
           "part": "C_1nF16V_current_filter",
           "position": [
-            109.5,
+            147.5,
             34
           ],
           "rotation": 0,
@@ -4147,7 +4271,7 @@
           "ref": "R23",
           "part": "R_100k_pulldown",
           "position": [
-            113.5,
+            151.5,
             23.5
           ],
           "rotation": 0,
@@ -4161,7 +4285,7 @@
           "ref": "R24",
           "part": "R_100R_series",
           "position": [
-            113.5,
+            151.5,
             14
           ],
           "rotation": 0,
@@ -4175,7 +4299,7 @@
           "ref": "C6",
           "part": "C_100nF50V",
           "position": [
-            109.5,
+            147.5,
             14
           ],
           "rotation": 0,
@@ -4189,7 +4313,7 @@
           "ref": "J16",
           "part": "OUT",
           "position": [
-            123.42,
+            161.42000000000002,
             9.9
           ],
           "rotation": 0,
@@ -4203,7 +4327,7 @@
           "ref": "U26",
           "part": "SW",
           "position": [
-            128.5,
+            166.5,
             19
           ],
           "rotation": 0,
@@ -4226,7 +4350,7 @@
           "ref": "R25",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            124.5,
+            162.5,
             23.5
           ],
           "rotation": 0,
@@ -4240,7 +4364,7 @@
           "ref": "RS6",
           "part": "SHUNT",
           "position": [
-            128.5,
+            166.5,
             27
           ],
           "rotation": 0,
@@ -4253,7 +4377,7 @@
           "ref": "RVH6",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            124.5,
+            162.5,
             30.5
           ],
           "rotation": 0,
@@ -4267,7 +4391,7 @@
           "ref": "RVL6",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            128.5,
+            166.5,
             30.5
           ],
           "rotation": 0,
@@ -4281,7 +4405,7 @@
           "ref": "CV6",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            132.5,
+            170.5,
             30.5
           ],
           "rotation": 0,
@@ -4295,7 +4419,7 @@
           "ref": "RI6",
           "part": "R_100R_current_filter",
           "position": [
-            124.5,
+            162.5,
             34
           ],
           "rotation": 0,
@@ -4309,7 +4433,7 @@
           "ref": "CI6",
           "part": "C_1nF16V_current_filter",
           "position": [
-            128.5,
+            166.5,
             34
           ],
           "rotation": 0,
@@ -4323,7 +4447,7 @@
           "ref": "R27",
           "part": "R_100k_pulldown",
           "position": [
-            132.5,
+            170.5,
             23.5
           ],
           "rotation": 0,
@@ -4337,7 +4461,7 @@
           "ref": "R28",
           "part": "R_100R_series",
           "position": [
-            132.5,
+            170.5,
             14
           ],
           "rotation": 0,
@@ -4351,7 +4475,7 @@
           "ref": "C7",
           "part": "C_100nF50V",
           "position": [
-            128.5,
+            166.5,
             14
           ],
           "rotation": 0,
@@ -4365,7 +4489,7 @@
           "ref": "J17",
           "part": "OUT",
           "position": [
-            142.42,
+            180.42,
             9.9
           ],
           "rotation": 0,
@@ -4379,7 +4503,7 @@
           "ref": "U27",
           "part": "SW",
           "position": [
-            147.5,
+            185.5,
             19
           ],
           "rotation": 0,
@@ -4402,7 +4526,7 @@
           "ref": "R29",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            143.5,
+            181.5,
             23.5
           ],
           "rotation": 0,
@@ -4416,7 +4540,7 @@
           "ref": "RS7",
           "part": "SHUNT",
           "position": [
-            147.5,
+            185.5,
             27
           ],
           "rotation": 0,
@@ -4429,7 +4553,7 @@
           "ref": "RVH7",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            143.5,
+            181.5,
             30.5
           ],
           "rotation": 0,
@@ -4443,7 +4567,7 @@
           "ref": "RVL7",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            147.5,
+            185.5,
             30.5
           ],
           "rotation": 0,
@@ -4457,7 +4581,7 @@
           "ref": "CV7",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            151.5,
+            189.5,
             30.5
           ],
           "rotation": 0,
@@ -4471,7 +4595,7 @@
           "ref": "RI7",
           "part": "R_100R_current_filter",
           "position": [
-            143.5,
+            181.5,
             34
           ],
           "rotation": 0,
@@ -4485,7 +4609,7 @@
           "ref": "CI7",
           "part": "C_1nF16V_current_filter",
           "position": [
-            147.5,
+            185.5,
             34
           ],
           "rotation": 0,
@@ -4499,7 +4623,7 @@
           "ref": "R31",
           "part": "R_100k_pulldown",
           "position": [
-            151.5,
+            189.5,
             23.5
           ],
           "rotation": 0,
@@ -4513,7 +4637,7 @@
           "ref": "R32",
           "part": "R_100R_series",
           "position": [
-            151.5,
+            189.5,
             14
           ],
           "rotation": 0,
@@ -4527,7 +4651,7 @@
           "ref": "C8",
           "part": "C_100nF50V",
           "position": [
-            147.5,
+            185.5,
             14
           ],
           "rotation": 0,
@@ -4541,7 +4665,7 @@
           "ref": "J18",
           "part": "OUT",
           "position": [
-            161.42,
+            199.42,
             9.9
           ],
           "rotation": 0,
@@ -4555,7 +4679,7 @@
           "ref": "U28",
           "part": "SW",
           "position": [
-            166.5,
+            204.5,
             19
           ],
           "rotation": 0,
@@ -4578,7 +4702,7 @@
           "ref": "R33",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            162.5,
+            200.5,
             23.5
           ],
           "rotation": 0,
@@ -4592,7 +4716,7 @@
           "ref": "RS8",
           "part": "SHUNT",
           "position": [
-            166.5,
+            204.5,
             27
           ],
           "rotation": 0,
@@ -4605,7 +4729,7 @@
           "ref": "RVH8",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            162.5,
+            200.5,
             30.5
           ],
           "rotation": 0,
@@ -4619,7 +4743,7 @@
           "ref": "RVL8",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            166.5,
+            204.5,
             30.5
           ],
           "rotation": 0,
@@ -4633,7 +4757,7 @@
           "ref": "CV8",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            170.5,
+            208.5,
             30.5
           ],
           "rotation": 0,
@@ -4647,7 +4771,7 @@
           "ref": "RI8",
           "part": "R_100R_current_filter",
           "position": [
-            162.5,
+            200.5,
             34
           ],
           "rotation": 0,
@@ -4661,7 +4785,7 @@
           "ref": "CI8",
           "part": "C_1nF16V_current_filter",
           "position": [
-            166.5,
+            204.5,
             34
           ],
           "rotation": 0,
@@ -4675,7 +4799,7 @@
           "ref": "R35",
           "part": "R_100k_pulldown",
           "position": [
-            170.5,
+            208.5,
             23.5
           ],
           "rotation": 0,
@@ -4689,7 +4813,7 @@
           "ref": "R36",
           "part": "R_100R_series",
           "position": [
-            170.5,
+            208.5,
             14
           ],
           "rotation": 0,
@@ -4703,7 +4827,7 @@
           "ref": "C9",
           "part": "C_100nF50V",
           "position": [
-            166.5,
+            204.5,
             14
           ],
           "rotation": 0,
@@ -4717,7 +4841,7 @@
           "ref": "J19",
           "part": "OUT",
           "position": [
-            180.42,
+            218.42,
             9.9
           ],
           "rotation": 0,
@@ -4731,7 +4855,7 @@
           "ref": "U29",
           "part": "SW",
           "position": [
-            185.5,
+            223.5,
             19
           ],
           "rotation": 0,
@@ -4754,7 +4878,7 @@
           "ref": "R37",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            181.5,
+            219.5,
             23.5
           ],
           "rotation": 0,
@@ -4768,7 +4892,7 @@
           "ref": "RS9",
           "part": "SHUNT",
           "position": [
-            185.5,
+            223.5,
             27
           ],
           "rotation": 0,
@@ -4781,7 +4905,7 @@
           "ref": "RVH9",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            181.5,
+            219.5,
             30.5
           ],
           "rotation": 0,
@@ -4795,7 +4919,7 @@
           "ref": "RVL9",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            185.5,
+            223.5,
             30.5
           ],
           "rotation": 0,
@@ -4809,7 +4933,7 @@
           "ref": "CV9",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            189.5,
+            227.5,
             30.5
           ],
           "rotation": 0,
@@ -4823,7 +4947,7 @@
           "ref": "RI9",
           "part": "R_100R_current_filter",
           "position": [
-            181.5,
+            219.5,
             34
           ],
           "rotation": 0,
@@ -4837,7 +4961,7 @@
           "ref": "CI9",
           "part": "C_1nF16V_current_filter",
           "position": [
-            185.5,
+            223.5,
             34
           ],
           "rotation": 0,
@@ -4851,7 +4975,7 @@
           "ref": "R39",
           "part": "R_100k_pulldown",
           "position": [
-            189.5,
+            227.5,
             23.5
           ],
           "rotation": 0,
@@ -4865,7 +4989,7 @@
           "ref": "R40",
           "part": "R_100R_series",
           "position": [
-            189.5,
+            227.5,
             14
           ],
           "rotation": 0,
@@ -4879,7 +5003,7 @@
           "ref": "C10",
           "part": "C_100nF50V",
           "position": [
-            185.5,
+            223.5,
             14
           ],
           "rotation": 0,
@@ -4893,7 +5017,7 @@
           "ref": "J20",
           "part": "OUT",
           "position": [
-            19.58,
+            57.58,
             110.1
           ],
           "rotation": 180,
@@ -4907,7 +5031,7 @@
           "ref": "U30",
           "part": "SW",
           "position": [
-            14.5,
+            52.5,
             101.5
           ],
           "rotation": 0,
@@ -4930,7 +5054,7 @@
           "ref": "R41",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            10.0,
+            48.0,
             95.0
           ],
           "rotation": 0,
@@ -4944,7 +5068,7 @@
           "ref": "RS10",
           "part": "SHUNT",
           "position": [
-            14.5,
+            52.5,
             87.0
           ],
           "rotation": 0,
@@ -4957,7 +5081,7 @@
           "ref": "RVH10",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            10.0,
+            48.0,
             90.5
           ],
           "rotation": 0,
@@ -4971,7 +5095,7 @@
           "ref": "RVL10",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            10.0,
+            48.0,
             92.5
           ],
           "rotation": 0,
@@ -4985,7 +5109,7 @@
           "ref": "CV10",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            20.5,
+            58.5,
             88.5
           ],
           "rotation": 0,
@@ -4999,7 +5123,7 @@
           "ref": "RI10",
           "part": "R_100R_current_filter",
           "position": [
-            8.5,
+            46.5,
             86.0
           ],
           "rotation": 0,
@@ -5013,7 +5137,7 @@
           "ref": "CI10",
           "part": "C_1nF16V_current_filter",
           "position": [
-            14.5,
+            52.5,
             83.5
           ],
           "rotation": 0,
@@ -5027,7 +5151,7 @@
           "ref": "R43",
           "part": "R_100k_pulldown",
           "position": [
-            20.5,
+            58.5,
             99.5
           ],
           "rotation": 0,
@@ -5041,7 +5165,7 @@
           "ref": "R44",
           "part": "R_100R_series",
           "position": [
-            18.5,
+            56.5,
             106
           ],
           "rotation": 0,
@@ -5055,7 +5179,7 @@
           "ref": "C11",
           "part": "C_100nF50V",
           "position": [
-            14.5,
+            52.5,
             106
           ],
           "rotation": 0,
@@ -5069,7 +5193,7 @@
           "ref": "J21",
           "part": "OUT",
           "position": [
-            38.58,
+            76.58,
             110.1
           ],
           "rotation": 180,
@@ -5083,7 +5207,7 @@
           "ref": "U31",
           "part": "SW",
           "position": [
-            32.5,
+            70.5,
             101.0
           ],
           "rotation": 0,
@@ -5106,7 +5230,7 @@
           "ref": "R45",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            29.5,
+            67.5,
             96.5
           ],
           "rotation": 0,
@@ -5120,7 +5244,7 @@
           "ref": "RS11",
           "part": "SHUNT",
           "position": [
-            32.5,
+            70.5,
             93.0
           ],
           "rotation": 0,
@@ -5133,7 +5257,7 @@
           "ref": "RVH11",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            29.5,
+            67.5,
             89.5
           ],
           "rotation": 0,
@@ -5147,8 +5271,8 @@
           "ref": "RVL11",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            33.5,
-            87.5
+            71.5,
+            89.5
           ],
           "rotation": 0,
           "nets": {
@@ -5161,7 +5285,7 @@
           "ref": "CV11",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            37.5,
+            75.5,
             89.5
           ],
           "rotation": 0,
@@ -5175,7 +5299,7 @@
           "ref": "RI11",
           "part": "R_100R_current_filter",
           "position": [
-            29.5,
+            67.5,
             86
           ],
           "rotation": 0,
@@ -5189,8 +5313,8 @@
           "ref": "CI11",
           "part": "C_1nF16V_current_filter",
           "position": [
-            33.5,
-            85.5
+            71.5,
+            86
           ],
           "rotation": 0,
           "nets": {
@@ -5203,7 +5327,7 @@
           "ref": "R47",
           "part": "R_100k_pulldown",
           "position": [
-            35.0,
+            73.0,
             96.5
           ],
           "rotation": 0,
@@ -5217,7 +5341,7 @@
           "ref": "R48",
           "part": "R_100R_series",
           "position": [
-            37.5,
+            75.5,
             106
           ],
           "rotation": 0,
@@ -5231,7 +5355,7 @@
           "ref": "C12",
           "part": "C_100nF50V",
           "position": [
-            33.5,
+            71.5,
             106
           ],
           "rotation": 0,
@@ -5245,7 +5369,7 @@
           "ref": "J22",
           "part": "OUT",
           "position": [
-            57.58,
+            95.58,
             110.1
           ],
           "rotation": 180,
@@ -5259,7 +5383,7 @@
           "ref": "U32",
           "part": "SW",
           "position": [
-            53.5,
+            91.5,
             101.0
           ],
           "rotation": 0,
@@ -5282,7 +5406,7 @@
           "ref": "R49",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            51.0,
+            89.0,
             96.5
           ],
           "rotation": 0,
@@ -5296,7 +5420,7 @@
           "ref": "RS12",
           "part": "SHUNT",
           "position": [
-            53.5,
+            91.5,
             93.0
           ],
           "rotation": 0,
@@ -5309,7 +5433,7 @@
           "ref": "RVH12",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            48.5,
+            86.5,
             89.5
           ],
           "rotation": 0,
@@ -5323,7 +5447,7 @@
           "ref": "RVL12",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            52.5,
+            90.5,
             89.5
           ],
           "rotation": 0,
@@ -5337,7 +5461,7 @@
           "ref": "CV12",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            56.5,
+            94.5,
             89.5
           ],
           "rotation": 0,
@@ -5351,7 +5475,7 @@
           "ref": "RI12",
           "part": "R_100R_current_filter",
           "position": [
-            51.0,
+            89.0,
             86.0
           ],
           "rotation": 0,
@@ -5365,7 +5489,7 @@
           "ref": "CI12",
           "part": "C_1nF16V_current_filter",
           "position": [
-            52.5,
+            90.5,
             84.0
           ],
           "rotation": 0,
@@ -5379,7 +5503,7 @@
           "ref": "R51",
           "part": "R_100k_pulldown",
           "position": [
-            56.5,
+            94.5,
             96.5
           ],
           "rotation": 0,
@@ -5393,7 +5517,7 @@
           "ref": "R52",
           "part": "R_100R_series",
           "position": [
-            56.5,
+            94.5,
             106
           ],
           "rotation": 0,
@@ -5407,7 +5531,7 @@
           "ref": "C13",
           "part": "C_100nF50V",
           "position": [
-            52.5,
+            90.5,
             106
           ],
           "rotation": 0,
@@ -5421,7 +5545,7 @@
           "ref": "J23",
           "part": "OUT",
           "position": [
-            76.58,
+            114.58,
             110.1
           ],
           "rotation": 180,
@@ -5435,7 +5559,7 @@
           "ref": "U33",
           "part": "SW",
           "position": [
-            71.5,
+            109.5,
             101
           ],
           "rotation": 0,
@@ -5458,7 +5582,7 @@
           "ref": "R53",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            67.5,
+            105.5,
             96.5
           ],
           "rotation": 0,
@@ -5472,7 +5596,7 @@
           "ref": "RS13",
           "part": "SHUNT",
           "position": [
-            71.5,
+            109.5,
             93
           ],
           "rotation": 0,
@@ -5485,7 +5609,7 @@
           "ref": "RVH13",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            67.5,
+            105.5,
             89.5
           ],
           "rotation": 0,
@@ -5499,7 +5623,7 @@
           "ref": "RVL13",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            71.5,
+            109.5,
             89.5
           ],
           "rotation": 0,
@@ -5513,7 +5637,7 @@
           "ref": "CV13",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            75.5,
+            113.5,
             89.5
           ],
           "rotation": 0,
@@ -5527,7 +5651,7 @@
           "ref": "RI13",
           "part": "R_100R_current_filter",
           "position": [
-            67.5,
+            105.5,
             86
           ],
           "rotation": 0,
@@ -5541,7 +5665,7 @@
           "ref": "CI13",
           "part": "C_1nF16V_current_filter",
           "position": [
-            71.5,
+            109.5,
             86
           ],
           "rotation": 0,
@@ -5555,7 +5679,7 @@
           "ref": "R55",
           "part": "R_100k_pulldown",
           "position": [
-            75.5,
+            113.5,
             96.5
           ],
           "rotation": 0,
@@ -5569,7 +5693,7 @@
           "ref": "R56",
           "part": "R_100R_series",
           "position": [
-            75.5,
+            113.5,
             106
           ],
           "rotation": 0,
@@ -5583,7 +5707,7 @@
           "ref": "C14",
           "part": "C_100nF50V",
           "position": [
-            71.5,
+            109.5,
             106
           ],
           "rotation": 0,
@@ -5597,7 +5721,7 @@
           "ref": "J24",
           "part": "OUT",
           "position": [
-            95.58,
+            133.57999999999998,
             110.1
           ],
           "rotation": 180,
@@ -5611,7 +5735,7 @@
           "ref": "U34",
           "part": "SW",
           "position": [
-            90.5,
+            128.5,
             101
           ],
           "rotation": 0,
@@ -5634,7 +5758,7 @@
           "ref": "R57",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            86.5,
+            124.5,
             96.5
           ],
           "rotation": 0,
@@ -5648,7 +5772,7 @@
           "ref": "RS14",
           "part": "SHUNT",
           "position": [
-            90.5,
+            128.5,
             93
           ],
           "rotation": 0,
@@ -5661,7 +5785,7 @@
           "ref": "RVH14",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            86.5,
+            124.5,
             89.5
           ],
           "rotation": 0,
@@ -5675,7 +5799,7 @@
           "ref": "RVL14",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            90.5,
+            128.5,
             89.5
           ],
           "rotation": 0,
@@ -5689,7 +5813,7 @@
           "ref": "CV14",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            94.5,
+            132.5,
             89.5
           ],
           "rotation": 0,
@@ -5703,7 +5827,7 @@
           "ref": "RI14",
           "part": "R_100R_current_filter",
           "position": [
-            86.5,
+            124.5,
             86
           ],
           "rotation": 0,
@@ -5717,7 +5841,7 @@
           "ref": "CI14",
           "part": "C_1nF16V_current_filter",
           "position": [
-            90.5,
+            128.5,
             86
           ],
           "rotation": 0,
@@ -5731,7 +5855,7 @@
           "ref": "R59",
           "part": "R_100k_pulldown",
           "position": [
-            94.5,
+            132.5,
             96.5
           ],
           "rotation": 0,
@@ -5745,7 +5869,7 @@
           "ref": "R60",
           "part": "R_100R_series",
           "position": [
-            94.5,
+            132.5,
             106
           ],
           "rotation": 0,
@@ -5759,7 +5883,7 @@
           "ref": "C15",
           "part": "C_100nF50V",
           "position": [
-            90.5,
+            128.5,
             106
           ],
           "rotation": 0,
@@ -5773,7 +5897,7 @@
           "ref": "J25",
           "part": "OUT",
           "position": [
-            114.58,
+            152.57999999999998,
             110.1
           ],
           "rotation": 180,
@@ -5787,7 +5911,7 @@
           "ref": "U35",
           "part": "SW",
           "position": [
-            109.5,
+            147.5,
             101
           ],
           "rotation": 0,
@@ -5810,7 +5934,7 @@
           "ref": "R61",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            105.5,
+            143.5,
             96.5
           ],
           "rotation": 0,
@@ -5824,7 +5948,7 @@
           "ref": "RS15",
           "part": "SHUNT",
           "position": [
-            109.5,
+            147.5,
             93
           ],
           "rotation": 0,
@@ -5837,7 +5961,7 @@
           "ref": "RVH15",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            105.5,
+            143.5,
             89.5
           ],
           "rotation": 0,
@@ -5851,7 +5975,7 @@
           "ref": "RVL15",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            109.5,
+            147.5,
             89.5
           ],
           "rotation": 0,
@@ -5865,7 +5989,7 @@
           "ref": "CV15",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            113.5,
+            151.5,
             89.5
           ],
           "rotation": 0,
@@ -5879,7 +6003,7 @@
           "ref": "RI15",
           "part": "R_100R_current_filter",
           "position": [
-            105.5,
+            143.5,
             86
           ],
           "rotation": 0,
@@ -5893,7 +6017,7 @@
           "ref": "CI15",
           "part": "C_1nF16V_current_filter",
           "position": [
-            109.5,
+            147.5,
             86
           ],
           "rotation": 0,
@@ -5907,7 +6031,7 @@
           "ref": "R63",
           "part": "R_100k_pulldown",
           "position": [
-            113.5,
+            151.5,
             96.5
           ],
           "rotation": 0,
@@ -5921,7 +6045,7 @@
           "ref": "R64",
           "part": "R_100R_series",
           "position": [
-            113.5,
+            151.5,
             106
           ],
           "rotation": 0,
@@ -5935,7 +6059,7 @@
           "ref": "C16",
           "part": "C_100nF50V",
           "position": [
-            109.5,
+            147.5,
             106
           ],
           "rotation": 0,
@@ -5949,7 +6073,7 @@
           "ref": "J26",
           "part": "OUT",
           "position": [
-            133.58,
+            171.58,
             110.1
           ],
           "rotation": 180,
@@ -5963,7 +6087,7 @@
           "ref": "U36",
           "part": "SW",
           "position": [
-            128.5,
+            166.5,
             101
           ],
           "rotation": 0,
@@ -5986,7 +6110,7 @@
           "ref": "R65",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            124.5,
+            162.5,
             96.5
           ],
           "rotation": 0,
@@ -6000,7 +6124,7 @@
           "ref": "RS16",
           "part": "SHUNT",
           "position": [
-            128.5,
+            166.5,
             93
           ],
           "rotation": 0,
@@ -6013,7 +6137,7 @@
           "ref": "RVH16",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            124.5,
+            162.5,
             89.5
           ],
           "rotation": 0,
@@ -6027,7 +6151,7 @@
           "ref": "RVL16",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            128.5,
+            166.5,
             89.5
           ],
           "rotation": 0,
@@ -6041,7 +6165,7 @@
           "ref": "CV16",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            132.5,
+            170.5,
             89.5
           ],
           "rotation": 0,
@@ -6055,7 +6179,7 @@
           "ref": "RI16",
           "part": "R_100R_current_filter",
           "position": [
-            124.5,
+            162.5,
             86
           ],
           "rotation": 0,
@@ -6069,7 +6193,7 @@
           "ref": "CI16",
           "part": "C_1nF16V_current_filter",
           "position": [
-            128.5,
+            166.5,
             86
           ],
           "rotation": 0,
@@ -6083,7 +6207,7 @@
           "ref": "R67",
           "part": "R_100k_pulldown",
           "position": [
-            132.5,
+            170.5,
             96.5
           ],
           "rotation": 0,
@@ -6097,7 +6221,7 @@
           "ref": "R68",
           "part": "R_100R_series",
           "position": [
-            132.5,
+            170.5,
             106
           ],
           "rotation": 0,
@@ -6111,7 +6235,7 @@
           "ref": "C17",
           "part": "C_100nF50V",
           "position": [
-            128.5,
+            166.5,
             106
           ],
           "rotation": 0,
@@ -6125,7 +6249,7 @@
           "ref": "J27",
           "part": "OUT",
           "position": [
-            152.58,
+            190.58,
             110.1
           ],
           "rotation": 180,
@@ -6139,7 +6263,7 @@
           "ref": "U37",
           "part": "SW",
           "position": [
-            147.5,
+            185.5,
             101
           ],
           "rotation": 0,
@@ -6162,7 +6286,7 @@
           "ref": "R69",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            143.5,
+            181.5,
             96.5
           ],
           "rotation": 0,
@@ -6176,7 +6300,7 @@
           "ref": "RS17",
           "part": "SHUNT",
           "position": [
-            147.5,
+            185.5,
             93
           ],
           "rotation": 0,
@@ -6189,7 +6313,7 @@
           "ref": "RVH17",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            143.5,
+            181.5,
             89.5
           ],
           "rotation": 0,
@@ -6203,7 +6327,7 @@
           "ref": "RVL17",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            147.5,
+            185.5,
             89.5
           ],
           "rotation": 0,
@@ -6217,7 +6341,7 @@
           "ref": "CV17",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            151.5,
+            189.5,
             89.5
           ],
           "rotation": 0,
@@ -6231,7 +6355,7 @@
           "ref": "RI17",
           "part": "R_100R_current_filter",
           "position": [
-            143.5,
+            181.5,
             86
           ],
           "rotation": 0,
@@ -6245,7 +6369,7 @@
           "ref": "CI17",
           "part": "C_1nF16V_current_filter",
           "position": [
-            147.5,
+            185.5,
             86
           ],
           "rotation": 0,
@@ -6259,7 +6383,7 @@
           "ref": "R71",
           "part": "R_100k_pulldown",
           "position": [
-            151.5,
+            189.5,
             96.5
           ],
           "rotation": 0,
@@ -6273,7 +6397,7 @@
           "ref": "R72",
           "part": "R_100R_series",
           "position": [
-            151.5,
+            189.5,
             106
           ],
           "rotation": 0,
@@ -6287,7 +6411,7 @@
           "ref": "C18",
           "part": "C_100nF50V",
           "position": [
-            147.5,
+            185.5,
             106
           ],
           "rotation": 0,
@@ -6301,7 +6425,7 @@
           "ref": "J28",
           "part": "OUT",
           "position": [
-            171.58,
+            209.58,
             110.1
           ],
           "rotation": 180,
@@ -6315,7 +6439,7 @@
           "ref": "U38",
           "part": "SW",
           "position": [
-            166.5,
+            204.5,
             101
           ],
           "rotation": 0,
@@ -6338,7 +6462,7 @@
           "ref": "R73",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            162.5,
+            200.5,
             96.5
           ],
           "rotation": 0,
@@ -6352,7 +6476,7 @@
           "ref": "RS18",
           "part": "SHUNT",
           "position": [
-            166.5,
+            204.5,
             93
           ],
           "rotation": 0,
@@ -6365,7 +6489,7 @@
           "ref": "RVH18",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            162.5,
+            200.5,
             89.5
           ],
           "rotation": 0,
@@ -6379,7 +6503,7 @@
           "ref": "RVL18",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            166.5,
+            204.5,
             89.5
           ],
           "rotation": 0,
@@ -6393,7 +6517,7 @@
           "ref": "CV18",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            170.5,
+            208.5,
             89.5
           ],
           "rotation": 0,
@@ -6407,7 +6531,7 @@
           "ref": "RI18",
           "part": "R_100R_current_filter",
           "position": [
-            162.5,
+            200.5,
             86
           ],
           "rotation": 0,
@@ -6421,7 +6545,7 @@
           "ref": "CI18",
           "part": "C_1nF16V_current_filter",
           "position": [
-            166.5,
+            204.5,
             86
           ],
           "rotation": 0,
@@ -6435,7 +6559,7 @@
           "ref": "R75",
           "part": "R_100k_pulldown",
           "position": [
-            170.5,
+            208.5,
             96.5
           ],
           "rotation": 0,
@@ -6449,7 +6573,7 @@
           "ref": "R76",
           "part": "R_100R_series",
           "position": [
-            170.5,
+            208.5,
             106
           ],
           "rotation": 0,
@@ -6463,7 +6587,7 @@
           "ref": "C19",
           "part": "C_100nF50V",
           "position": [
-            166.5,
+            204.5,
             106
           ],
           "rotation": 0,
@@ -6477,7 +6601,7 @@
           "ref": "J29",
           "part": "OUT",
           "position": [
-            190.58,
+            228.58,
             110.1
           ],
           "rotation": 180,
@@ -6491,7 +6615,7 @@
           "ref": "U39",
           "part": "SW",
           "position": [
-            185.5,
+            223.5,
             101
           ],
           "rotation": 0,
@@ -6514,7 +6638,7 @@
           "ref": "R77",
           "part": "R_1_00k_currentlimit_nominal2_47A",
           "position": [
-            181.5,
+            219.5,
             96.5
           ],
           "rotation": 0,
@@ -6528,7 +6652,7 @@
           "ref": "RS19",
           "part": "SHUNT",
           "position": [
-            185.5,
+            223.5,
             93
           ],
           "rotation": 0,
@@ -6541,7 +6665,7 @@
           "ref": "RVH19",
           "part": "R_100k_0_1percent_voltage_divider_upper",
           "position": [
-            181.5,
+            219.5,
             89.5
           ],
           "rotation": 0,
@@ -6555,7 +6679,7 @@
           "ref": "RVL19",
           "part": "R_10k_0_1percent_voltage_divider_lower",
           "position": [
-            185.5,
+            223.5,
             89.5
           ],
           "rotation": 0,
@@ -6569,7 +6693,7 @@
           "ref": "CV19",
           "part": "C_10nF50V_voltage_filter",
           "position": [
-            189.5,
+            227.5,
             89.5
           ],
           "rotation": 0,
@@ -6583,7 +6707,7 @@
           "ref": "RI19",
           "part": "R_100R_current_filter",
           "position": [
-            181.5,
+            219.5,
             86
           ],
           "rotation": 0,
@@ -6597,7 +6721,7 @@
           "ref": "CI19",
           "part": "C_1nF16V_current_filter",
           "position": [
-            185.5,
+            223.5,
             86
           ],
           "rotation": 0,
@@ -6611,7 +6735,7 @@
           "ref": "R79",
           "part": "R_100k_pulldown",
           "position": [
-            189.5,
+            227.5,
             96.5
           ],
           "rotation": 0,
@@ -6625,7 +6749,7 @@
           "ref": "R80",
           "part": "R_100R_series",
           "position": [
-            189.5,
+            227.5,
             106
           ],
           "rotation": 0,
@@ -6639,7 +6763,7 @@
           "ref": "C20",
           "part": "C_100nF50V",
           "position": [
-            185.5,
+            223.5,
             106
           ],
           "rotation": 0,
@@ -6653,7 +6777,7 @@
           "ref": "C30",
           "part": "C_100nF16V",
           "position": [
-            60,
+            98,
             75
           ],
           "rotation": 0,
@@ -6667,7 +6791,7 @@
           "ref": "C31",
           "part": "C_100nF16V",
           "position": [
-            68,
+            106,
             75
           ],
           "rotation": 0,
@@ -6681,7 +6805,7 @@
           "ref": "C32",
           "part": "C_100nF16V",
           "position": [
-            76,
+            114,
             75
           ],
           "rotation": 0,
@@ -6695,7 +6819,7 @@
           "ref": "C33",
           "part": "C_100nF16V",
           "position": [
-            84,
+            122,
             75
           ],
           "rotation": 0,
@@ -6709,7 +6833,7 @@
           "ref": "C34",
           "part": "C_100nF16V",
           "position": [
-            92,
+            130,
             75
           ],
           "rotation": 0,
@@ -6723,7 +6847,7 @@
           "ref": "C35",
           "part": "C_100nF16V",
           "position": [
-            100,
+            138,
             75
           ],
           "rotation": 0,
@@ -6737,7 +6861,7 @@
           "ref": "C36",
           "part": "C_100nF16V",
           "position": [
-            108,
+            146,
             75
           ],
           "rotation": 0,
@@ -6751,7 +6875,7 @@
           "ref": "C37",
           "part": "C_100nF16V",
           "position": [
-            116,
+            154,
             75
           ],
           "rotation": 0,
@@ -6765,7 +6889,7 @@
           "ref": "C38",
           "part": "C_100nF16V",
           "position": [
-            124,
+            162,
             75
           ],
           "rotation": 0,
@@ -6779,7 +6903,7 @@
           "ref": "C39",
           "part": "C_100nF16V",
           "position": [
-            132,
+            170,
             75
           ],
           "rotation": 0,
@@ -6793,7 +6917,7 @@
           "ref": "C40",
           "part": "C_100nF16V",
           "position": [
-            140,
+            178,
             75
           ],
           "rotation": 0,
@@ -6807,7 +6931,7 @@
           "ref": "C41",
           "part": "C_100nF16V",
           "position": [
-            148,
+            186,
             75
           ],
           "rotation": 0,
@@ -6821,7 +6945,7 @@
           "ref": "C42",
           "part": "C_100nF16V",
           "position": [
-            60,
+            98,
             79
           ],
           "rotation": 0,
@@ -6835,7 +6959,7 @@
           "ref": "C43",
           "part": "C_100nF16V",
           "position": [
-            68,
+            106,
             79
           ],
           "rotation": 0,
@@ -6849,7 +6973,7 @@
           "ref": "C44",
           "part": "C_100nF16V",
           "position": [
-            76,
+            114,
             79
           ],
           "rotation": 0,
@@ -6863,7 +6987,7 @@
           "ref": "C45",
           "part": "C_100nF16V",
           "position": [
-            84,
+            122,
             79
           ],
           "rotation": 0,
@@ -6877,7 +7001,7 @@
           "ref": "C46",
           "part": "C_100nF16V",
           "position": [
-            92,
+            130,
             79
           ],
           "rotation": 0,
@@ -6891,7 +7015,7 @@
           "ref": "C47",
           "part": "C_100nF16V",
           "position": [
-            100,
+            138,
             79
           ],
           "rotation": 0,
@@ -6905,7 +7029,7 @@
           "ref": "C48",
           "part": "C_100nF16V",
           "position": [
-            108,
+            146,
             79
           ],
           "rotation": 0,
@@ -6919,7 +7043,7 @@
           "ref": "C49",
           "part": "C_100nF16V",
           "position": [
-            116,
+            154,
             79
           ],
           "rotation": 0,
@@ -6933,7 +7057,7 @@
           "ref": "C50",
           "part": "C_100nF16V",
           "position": [
-            124,
+            162,
             79
           ],
           "rotation": 0,
@@ -6947,7 +7071,7 @@
           "ref": "C51",
           "part": "C_100nF16V",
           "position": [
-            132,
+            170,
             79
           ],
           "rotation": 0,
@@ -6961,7 +7085,7 @@
           "ref": "C52",
           "part": "C_100nF16V",
           "position": [
-            140,
+            178,
             79
           ],
           "rotation": 0,
@@ -6975,7 +7099,7 @@
           "ref": "C53",
           "part": "C_100nF16V",
           "position": [
-            148,
+            186,
             79
           ],
           "rotation": 0,
@@ -6989,8 +7113,8 @@
           "ref": "C60",
           "part": "C_100nF16V",
           "position": [
-            35.0,
-            32.5
+            76.5,
+            20.0
           ],
           "rotation": 0,
           "nets": {
@@ -7003,7 +7127,7 @@
           "ref": "C61",
           "part": "C_100nF16V",
           "position": [
-            35.0,
+            73.0,
             43.0
           ],
           "rotation": 0,
@@ -7017,7 +7141,7 @@
           "ref": "C62",
           "part": "C_100nF16V",
           "position": [
-            35.0,
+            73.0,
             59.0
           ],
           "rotation": 0,
@@ -7031,7 +7155,7 @@
           "ref": "C63",
           "part": "C_100nF16V",
           "position": [
-            35.0,
+            73.0,
             75.0
           ],
           "rotation": 0,
@@ -7045,8 +7169,8 @@
           "ref": "C64",
           "part": "C_100nF16V",
           "position": [
-            34.0,
-            89.5
+            76.5,
+            91.5
           ],
           "rotation": 0,
           "nets": {
@@ -7059,7 +7183,7 @@
           "ref": "C70",
           "part": "C_10uF10V",
           "position": [
-            22.0,
+            60.0,
             101.5
           ],
           "rotation": 0,
@@ -7073,7 +7197,7 @@
           "ref": "C71",
           "part": "C_1uF10V",
           "position": [
-            104.5,
+            142.5,
             74.0
           ],
           "rotation": 0,
@@ -7082,6 +7206,64 @@
             "2": "PGND"
           },
           "value": "1uF10V"
+        },
+        {
+          "ref": "U13",
+          "part": "ISOPWR",
+          "position": [
+            14.46,
+            70.16
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LED_VIN_FUSED",
+            "2": "PGND",
+            "3": "SYS5V_RAW",
+            "4": "SUPPLY_TRIM",
+            "5": "DGND",
+            "6": "SUPPLY_REMOTE"
+          }
+        },
+        {
+          "ref": "J4",
+          "part": "CTRL_PWR",
+          "position": [
+            37,
+            60
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "SYS5V_RAW",
+            "2": "SYS5V_RAW",
+            "3": "DGND",
+            "4": "DGND"
+          }
+        },
+        {
+          "ref": "J5",
+          "part": "CTRL_PWR",
+          "position": [
+            16,
+            38.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "LED_VIN_FUSED",
+            "2": "PGND",
+            "3": "SUPPLY_REMOTE"
+          }
+        },
+        {
+          "ref": "TP1",
+          "part": "TEST",
+          "position": [
+            33.0,
+            67.5
+          ],
+          "rotation": 0,
+          "nets": {
+            "1": "SUPPLY_TRIM"
+          }
         }
       ]
     },

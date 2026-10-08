@@ -1,6 +1,7 @@
 from "parts/ADC/ADC.ato" import ADC
 from "parts/BUCK/BUCK.ato" import BUCK
 from "parts/CSA/CSA.ato" import CSA
+from "parts/CTRL_PWR/CTRL_PWR.ato" import CTRL_PWR
 from "parts/C_100nF16V/C_100nF16V.ato" import C_100nF16V
 from "parts/C_100nF50V/C_100nF50V.ato" import C_100nF50V
 from "parts/C_10nF50V_bus_divider_filter/C_10nF50V_bus_divider_filter.ato" import C_10nF50V_bus_divider_filter
@@ -10,6 +11,7 @@ from "parts/C_1nF16V_current_filter/C_1nF16V_current_filter.ato" import C_1nF16V
 from "parts/C_1uF10V/C_1uF10V.ato" import C_1uF10V
 from "parts/C_1uF10V_ADC_supply/C_1uF10V_ADC_supply.ato" import C_1uF10V_ADC_supply
 from "parts/ISO/ISO.ato" import ISO
+from "parts/ISOPWR/ISOPWR.ato" import ISOPWR
 from "parts/ISOSPI/ISOSPI.ato" import ISOSPI
 from "parts/LUG/LUG.ato" import LUG
 from "parts/MUX/MUX.ato" import MUX
@@ -32,6 +34,7 @@ from "parts/R_4_7k_aggregate_open_drain_status_pullup/R_4_7k_aggregate_open_drai
 from "parts/SHIFT/SHIFT.ato" import SHIFT
 from "parts/SHUNT/SHUNT.ato" import SHUNT
 from "parts/SW/SW.ato" import SW
+from "parts/TEST/TEST.ato" import TEST
 
 module SplancMaxPower:
     signal ADC_MISO
@@ -185,6 +188,7 @@ module SplancMaxPower:
     signal LED_DATA8
     signal LED_DATA9
     signal LED_VIN
+    signal LED_VIN_FUSED
     signal LV3V3
     signal MUX_OUT0
     signal MUX_OUT1
@@ -249,6 +253,9 @@ module SplancMaxPower:
     signal SHIFT1
     signal SHIFT2
     signal SHIFT_OE_N
+    signal SUPPLY_REMOTE
+    signal SUPPLY_TRIM
+    signal SYS5V_RAW
     signal UNUSED_ISO21
     signal UNUSED_ISO22
     signal UNUSED_ISO23
@@ -1749,6 +1756,24 @@ module SplancMaxPower:
     C71 = new C_1uF10V
     C71.p1 ~ REF2V5
     C71.p2 ~ PGND
+    U13 = new ISOPWR
+    U13.p1 ~ LED_VIN_FUSED
+    U13.p2 ~ PGND
+    U13.p3 ~ SYS5V_RAW
+    U13.p4 ~ SUPPLY_TRIM
+    U13.p5 ~ DGND
+    U13.p6 ~ SUPPLY_REMOTE
+    J4 = new CTRL_PWR
+    J4.p1 ~ SYS5V_RAW
+    J4.p2 ~ SYS5V_RAW
+    J4.p3 ~ DGND
+    J4.p4 ~ DGND
+    J5 = new CTRL_PWR
+    J5.p1 ~ LED_VIN_FUSED
+    J5.p2 ~ PGND
+    J5.p3 ~ SUPPLY_REMOTE
+    TP1 = new TEST
+    TP1.p1 ~ SUPPLY_TRIM
     # @pnr-current {"target": "U20", "pads": ["5", "6", "7"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
     # @pnr-current {"target": "U20", "pads": ["8", "9", "10"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}
     # @pnr-current {"target": "J10", "pads": ["1"], "scope": "terminal", "rms_current_a": 2, "peak_current_a": 2.8, "neck_max_length_mm": 0.5}

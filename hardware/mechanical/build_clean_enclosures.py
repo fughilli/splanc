@@ -65,7 +65,10 @@ def screw(x,y,top,d=2.5,head=2.25,seat=1.8,length=12):
 class Build:
  def __init__(self,out):
   self.out=out;out.mkdir(parents=True,exist_ok=True);self.items=json.loads(gzip.decompress((HERE/'assets/reference-electronics.json.gz').read_bytes()))['items'];self.reports={};self.shapes={}
+  self.items=[i for i in self.items if not (i['product']=='max' and i['name'].startswith(('M5-lug','busbar-lug-tab')))]
   for i in self.items:
+   if i['product']=='max':
+    dx=SPEC['max'].get('service_extension_mm',0);i['vertices']=[[x+dx,y,z] for x,y,z in i['vertices']]
    if i['product'] in ('mini','splanc'):
     dz=SPEC['handheld'].get('assembly_z_shift_mm',0);i['vertices']=[[x,y,z+dz] for x,y,z in i['vertices']]
  def emit(self,p,n,q,mat,**extra):
@@ -155,31 +158,25 @@ class Build:
   l=l.union(ring(2.7,2.7,split,w-5.4,h-5.4,.8,1.3,2)).union(ring(3.1,3.1,split-1.8,w-6.2,h-6.2,2,.9,2))
   interface=json.loads((REFERENCE/'splanc_max/interface.json').read_text());power=interface['boards']['power'];lv=interface['boards']['lv']
   def pi(q):return q.rotate((0,0,0),(0,0,1),90).translate(tuple(d['pi_origin']))
-  mounts=[(7+m['x'],7+m['y']) for m in power['mounts']]+[(285-m['y'],28+m['x']) for m in lv['mounts']]
+  dx=d.get('service_extension_mm',0)
+  mounts=[(7+dx+m['x'],7+m['y']) for m in power['mounts']]+[(d['pi_origin'][0]-m['y'],28+m['x']) for m in lv['mounts']]
   for x,y in mounts:b=b.union(cyl(x,y,floor,3.6,8-floor)).cut(cyl(x,y,1.4,1.25,8))
   # Case bosses bridge down from above the output opening at the middle screws.
   for j,(x,y) in enumerate(d['case_mounts'],1):
-   start=23 if x==146 else floor
+   start=23 if x==146+dx else floor
    b=b.union(cyl(x,y,start,3,split-start)).cut(cyl(x,y,split-12,1.25,15))
    l=l.cut(cyl(x,y,split-2.1,3.3,2.1)).cut(cyl(x,y,split-2,1.75,10)).cut(cyl(x,y,top-2,3,3))
    self.emit(p,f'case-screw-{j}',screw(x,y,top,3,2.7,2,14),'fastener')
   # Output banks: two planned continuous scallops, no obsolete individual windows.
-  for y,north in [(-.1,False),(h+.1,True)]:b=b.cut(funnel(107,y,12.3,189.2,13,7.2,190,21,north))
-  # Lug-only access on the west side.
-  for c in power['connectors']:
-   if c['edge']=='west':
-    x,y=c['position'];cw,ch=c['opening'];z=8+c['center_z_above_pcb_mm'];b=b.cut(box(-1,7+y-cw/2,z-ch/2,17,cw,ch))
-  # Pi access whitelist: Ethernet and power. USB-A and HDMI never get cutters.
-  x=d['ethernet_center_x'];b=b.cut(funnel(x,h+.1,17.5,19,18,20.1,25,24,True))
-  b=b.cut(box(x-11,d['ethernet_inner_y'],-1,22,h-d['ethernet_inner_y']+2,14,2))
-  powercut,power_support,power_seal_stop=usb_c_features((286.2,d['power_center_y'],11.016),(1,0,0),(0,1,0),w-286.2,True)
-  b=b.union(power_support).cut(powercut)
+  for y,north in [(-.1,False),(h+.1,True)]:b=b.cut(funnel(107+dx,y,12.3,189.2,13,7.2,190,21,north))
+  from max_service import build_service
+  b,l=build_service(self,b,l,d)
   # Roof cooling slots are split around a solid logo field by construction.
   for x in range(25,203,8):
-   for y,length in [(35,17),(82,17)]:l=l.cut(box(x,y,top-3.4,3,length,4,1))
-  for x in range(235,281,6):l=l.cut(box(x,40,top-3.4,2.4,55,4,1))
-  for x in range(25,203,10):b=b.cut(box(x,32,-1,3,70,4,1))
-  for x in range(235,281,6):b=b.cut(box(x,42,-1,2.4,44,4,1))
+   for y,length in [(35,17),(82,17)]:l=l.cut(box(x+dx,y,top-3.4,3,length,4,1))
+  for x in range(235,281,6):l=l.cut(box(x+dx,40,top-3.4,2.4,55,4,1))
+  for x in range(25,203,10):b=b.cut(box(x+dx,32,-1,3,70,4,1))
+  for x in range(235,281,6):b=b.cut(box(x+dx,42,-1,2.4,44,4,1))
   logo=embossed_logo(d['logo_width'],w/2,h/2,top-.7,.7);l=l.cut(logo);self.emit(p,'logo-white-inlay',logo,'logo_white')
   self.emit(p,'lv-pcb-envelope',pi(populated(lv,(0,0,d['hat_z']-8))),'pcb')
   for j,m in enumerate(lv['mounts'],1):self.emit(p,f'hat-standoff-{j}',pi(cyl(m['x'],m['y'],1.6,2.8,d['hat_z']-9.6).cut(cyl(m['x'],m['y'],1.5,1.35,30))),'nickel')
@@ -188,7 +185,7 @@ class Build:
   self.emit(p,'usb-jumper-pcb-envelope',pi(box(98,29.1-bw/2,-3.4,1.6,bw,bh)),'pcb')
   for name,z,width,height in [('A',3.6,12,4.5),('C',d['hat_z']-6,8.4,2.8)]:self.emit(p,'usb-male-'+name+'-envelope',pi(box(83,29.1-width/2,z-height/2,15,width,height)),'nickel')
   gland=ring(1,1,split-.2,w-2,h-2,.4,.8,4)
-  gland=gland.cut(power_seal_stop).intersect(b.union(l))
+  gland=gland.intersect(b.union(l))
   assert gland.cut(b.union(l)).val().Volume()<1e-5
   self.reports.setdefault(p,{})['sealant_segments']=len(gland.val().Solids())
   b=b.cut(gland);l=l.cut(gland);self.emit(p,'seam-sealant',gland,'seal',note='Dispensed bead in supported gland; vented enclosure is not waterproof')
@@ -217,6 +214,6 @@ class Build:
   (self.out/'design.json').write_text(json.dumps({'revision':SPEC['revision'],'spec':SPEC,'reference_inputs':json.loads((REFERENCE/'manifest.json').read_text()),'qualification':'mechanical prototype; mating, supplier tolerances, fatigue, thermal and production tooling require qualification'},indent=2))
 
 if __name__=='__main__':
- ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=Path('output/usb-conformal-r10'));args=ap.parse_args();b=Build(args.out)
+ ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=Path('output/max-service-r11'));args=ap.parse_args();b=Build(args.out)
  for p in ('mini','splanc'):b.handheld(p)
  b.max();b.variant('mini','mini-weather');b.variant('splanc','splanc-weather');b.save()

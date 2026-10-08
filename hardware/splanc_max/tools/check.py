@@ -44,6 +44,15 @@ for i in range(20):
  assert pw[f'U{i+20}']['nets']['3']==f'EN{i}'
  assert pw[f'U{50+i//4}']['nets'][str([3,5,10,12][i%4])]==f'RETURN{i}'
  assert pw[f'U{50+i//4}']['nets'][str([2,6,9,13][i%4])]=='PGND'
+# The new control supply must not collapse the functional isolation boundary.
+assert pw['U13']['nets']=={'1':'LED_VIN_FUSED','2':'PGND','3':'SYS5V_RAW','4':'SUPPLY_TRIM','5':'DGND','6':'SUPPLY_REMOTE'}
+assert pw['J4']['nets']=={'1':'SYS5V_RAW','2':'SYS5V_RAW','3':'DGND','4':'DGND'}
+assert pw['J5']['nets']['1']=='LED_VIN_FUSED'
+assert all(c['edge']=='internal' for c in d['boards']['power']['connectors'] if c['ref'] in ('J2','J3'))
+assert d['boards']['power']['outline']['polygon_mm']==[[38,0],[238,0],[238,120],[38,120],[38,82],[0,82],[0,32],[38,32]]
+# KiCad library origin of THL40 is offset from the module centre; match mechanical contract.
+assert abs(pw['U13']['position'][0]+2.54-17)<.01
+assert abs(pw['U13']['position'][1]-10.16-60)<.01
 native_power=k.LoadBoard(str(R/'boards/splanc_max_power.kicad_pcb'));nf={f.GetReference():f for f in native_power.GetFootprints()}
 header_report=[]
 for i in range(20):

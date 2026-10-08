@@ -16,8 +16,9 @@ for p in ('mini','splanc','max'):
  logo=read(p,'logo-white-inlay');expect_clear(checks,'logo',logo,l)
  assert vol(logo.translate((0,0,-.7)).cut(l))<1e-4,(p,'inlay backing')
  if p=='max':
+  dx=SPEC['max'].get('service_extension_mm',0)
   with tempfile.NamedTemporaryFile(suffix='.step') as f:
-   f.write(gzip.decompress((HERE/'assets/pi5-visible-ports.step.gz').read_bytes()));f.flush();pi=cq.importers.importStep(f.name).rotate((0,0,0),(0,0,1),90).translate((285,28,8))
+   f.write(gzip.decompress((HERE/'assets/pi5-visible-ports.step.gz').read_bytes()));f.flush();pi=cq.importers.importStep(f.name).rotate((0,0,0),(0,0,1),90).translate(tuple(SPEC['max']['pi_origin']))
   expect_clear(checks,'Pi versus shell',pi,shell)
   for name in ('lv-pcb-envelope','active-cooler-envelope','usb-jumper-pcb-envelope','usb-male-A-envelope','usb-male-C-envelope'):expect_clear(checks,name,read(p,name),shell)
   interface=json.loads((REFERENCE/'splanc_max/interface.json').read_text());design=json.loads((REFERENCE/'splanc_max/design.json').read_text())
@@ -26,18 +27,18 @@ for p in ('mini','splanc','max'):
   for connector in power['connectors']:
    if connector['kind']!='led_output3':continue
    component=components[connector['ref']];x,y=component['position'];rotation=component['rotation']
-   expect_clear(checks,connector['ref']+' header',header.rotate((0,0,0),(0,0,1),rotation).translate((7+x,7+y,9.6)),shell)
+   expect_clear(checks,connector['ref']+' header',header.rotate((0,0,0),(0,0,1),rotation).translate((7+dx+x,7+y,9.6)),shell)
   from generate_enclosures import board_shape
-  expect_clear(checks,'power PCB',board_shape(power,(7,7,8)),shell)
+  expect_clear(checks,'power PCB',board_shape(power,(7+dx,7,8)),shell)
   lug=cq.importers.importStep(str(HERE/'assets/max-connectors/wurth-5580510.step'))
-  for y in (52,82):expect_clear(checks,f'power lug {y}',lug.rotate((0,0,0),(0,0,1),-90).translate((-15.5,y,17.25)),shell)
-  for n,bar in enumerate(interface['power']['busbars']):expect_clear(checks,f'busbar {n}',box(7+bar['x'],7+bar['y'],11,bar['length_mm'],bar['width_mm'],bar['thickness_mm']),shell)
+  for y in (() if dx else (52,82)):expect_clear(checks,f'power lug {y}',lug.rotate((0,0,0),(0,0,1),-90).translate((-15.5,y,17.25)),shell)
+  for n,bar in enumerate(interface['power']['busbars']):expect_clear(checks,f'busbar {n}',box(7+dx+bar['x'],7+bar['y'],11,bar['length_mm'],bar['width_mm'],bar['thickness_mm']),shell)
   hat=read(p,'lv-pcb-envelope');expect_clear(checks,'HAT 1mm allowance',hat.translate((0,0,-1)),pi)
   expect_clear(checks,'cooler 1mm allowance',hat.translate((0,0,-1)),read(p,'active-cooler-envelope'))
-  expect_clear(checks,'finger approach',box(266,114.3,-.5,17.5,20,13),shell)
+  if not dx:expect_clear(checks,'finger approach',box(266,114.3,-.5,17.5,20,13),shell)
   # Positive material probes: excluded Pi ports must have continuous exterior walls.
-  for x in (238,255.9):assert vol(box(x-4,132,10,8,1,8).cut(b))<1e-5,('USB cover',x)
-  for y in (53.8,67.2):assert vol(box(290,y-4,9,1,8,7).cut(b))<1e-5,('HDMI cover',y)
+  for x in (238,255.9):assert vol(box(x+dx-4,132,10,8,1,8).cut(b))<1e-5,('USB cover',x)
+  for y in (53.8,67.2):assert vol(box(290+dx,y-4,9,1,8,7).cut(b))<1e-5,('HDMI cover',y)
   # Detailed stepped USB-C cable insertion is checked in check_usb_c.py.
   assert abs(l.val().BoundingBox().zmax-43)<1e-5
  else:

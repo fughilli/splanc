@@ -142,7 +142,28 @@ for j in range(5):passive(lv,f'C{40+j}','100nF16V',7+j*4,27,'BANK1V8' if j<2 els
 for j in range(5):passive(pw,f'C{60+j}','100nF16V',36,27+j*16,'LV3V3','DGND',True)
 passive(pw,'C70','10uF10V',22,100,'P5V','PGND',True)
 passive(pw,'C71','1uF10V',105,74,'REF2V5','PGND',True)
-interface={'schema':'splanc-mechanical-v1','units':'mm','status':'rough-unrouted-design-review-required','boards':{k:{x:v for x,v in B.items() if x!='components'} for k,B in boards.items()},'power':{'channels':20,'continuous_current_A_per_channel':2,'aggregate_current_A':40,'default_input_V':[12,24],'busbars':[{'net':'LED_VIN','x':13,'y':35,'length_mm':160,'width_mm':8,'thickness_mm':2},{'net':'PGND','x':13,'y':77,'length_mm':160,'width_mm':8,'thickness_mm':2}],'qualification':'thermal, protection, connector and current-sharing qualification pending'}}
+# MAX r11: shift the preserved power section east and add a service tongue.
+for c in pw['components']:c['position'][0]+=38
+for m in pw['mounts']:m['x']+=38
+for c in pw['connectors']:
+ c['position'][0]+=38
+ if c['ref'] in ('J2','J3'):c['edge']='internal';c['kind']='internal_busbar_cable_stud'
+pw['outline']['width_mm']=238
+pw['outline']['polygon_mm']=[[38,0],[238,0],[238,120],[38,120],[38,82],[0,82],[0,32],[38,32]]
+part('ISOPWR','THL 40-2411WI',6,'Converter_DCDC:Converter_DCDC_TRACO_THL40-xxxxWI_THT','TRACO POWER')
+add(pw,'U13','ISOPWR',14.46,70.16,{1:'LED_VIN_FUSED',2:'PGND',3:'SYS5V_RAW',4:'SUPPLY_TRIM',5:'DGND',6:'SUPPLY_REMOTE'})
+# These are real separated terminals; protection is an explicit harness stage, not a short.
+part('CTRL_PWR','18AWG four-wire solder harness landing',4,'custom:CTRL_PWR',extra=dict(qualification='Two positive and two return leads; strain relief required; header current and final copper sizing must be qualified'))
+add(pw,'J4','CTRL_PWR',37,60,{1:'SYS5V_RAW',2:'SYS5V_RAW',3:'DGND',4:'DGND'})
+add(pw,'J5','CTRL_PWR',16,38.5,{1:'LED_VIN_FUSED',2:'PGND',3:'SUPPLY_REMOTE'})
+con(pw,'J4',[37,60],'internal',[10,14],'control_supply_output',7)
+con(pw,'J5',[16,38.5],'internal',[10,14],'fused_supply_input',7)
+add(lv,'J4','CTRL_PWR',74,44,{1:'PI_5V',2:'PI_5V',3:'DGND',4:'DGND'})
+con(lv,'J4',[74,44],'internal',[10,14],'protected_5V_input',7)
+# Do not silently install an uncalculated trim resistor: TRIM remains a test/config terminal.
+part('TEST','Test point',1,'TestPoint:TestPoint_Pad_D1.0mm')
+add(pw,'TP1','TEST',33,65,{1:'SUPPLY_TRIM'})
+interface={'schema':'splanc-mechanical-v1','units':'mm','status':'rough-unrouted-design-review-required','boards':{k:{x:v for x,v in B.items() if x!='components'} for k,B in boards.items()},'power':{'channels':20,'continuous_current_A_per_channel':2,'aggregate_current_A':40,'default_input_V':[12,24],'busbars':[{'net':'LED_VIN','x':51,'y':35,'length_mm':160,'width_mm':8,'thickness_mm':2},{'net':'PGND','x':51,'y':77,'length_mm':160,'width_mm':8,'thickness_mm':2}],'qualification':'thermal, protection, connector and current-sharing qualification pending'}}
 (ROOT/'interface.json').write_text(json.dumps(interface,indent=2)+'\n')
 (ROOT/'design.json').write_text(json.dumps(dict(parts=parts,boards=boards),indent=2)+'\n')
 # Expand each passive value into its own atomic definition so source/BOM keep values.
@@ -160,6 +181,8 @@ for key,p in parts.items():
  pins=p['pins'];foot=p['footprint'];fp=d/(key+'.kicad_mod')
  if not foot.startswith('custom:'):
   lib,name=foot.split(':');shutil.copyfile(LIB/(lib+'.pretty')/(name+'.kicad_mod'),fp);fp.write_text(re.sub(r'\(footprint \"[^\"]+\"', '(footprint \"'+key+'\"', fp.read_text(), count=1))
+  if key=='TEST':
+   text=fp.read_text();idx=text.rfind(')');fp.write_text(text[:idx]+'(fp_line (start -0.6 -1) (end 0.6 -1) (stroke (width 0.12)(type solid))(layer "F.SilkS"))'+text[idx:])
  else:
   pads=[];body=(8,8)
   if key=='FPGA':
@@ -172,6 +195,7 @@ for key,p in parts.items():
     if key=='RIBBON':px,py=(j%2-.5)*1.27,(j//2-12)*1.27;body=(6,35);size,drill=1,.65
     elif key=='OUT':px,py=j*5.08,0;body=(17.24,12);size,drill=2.7,1.5
     elif key in ('USBAP','USBCP'):px,py=(j-(len(pins)-1)/2)*1.0,0;body=(13 if key=='USBAP' else 9,5);size,drill=.8,.4
+    elif key=='CTRL_PWR':px,py=(j%2)*4.2,(j//2)*4.2;body=(12,12);size,drill=3,1.5
     elif key=='LUG':px=py=0;body=(12,12);size,drill=10,5.3
     else:px,py=(j-1)*2.54,0;body=(11.6,8.5);size,drill=2,1
     pads.append(f'(pad "{n}" thru_hole circle (at {px} {py}) (size {size} {size}) (drill {drill}) (layers "*.Cu" "*.Mask"))')
@@ -221,7 +245,9 @@ if '--pcb' in sys.argv:
    for pad in f.Pads():
     if pad.GetNumber() in c['nets']:pad.SetNet(nm[c['nets'][pad.GetNumber()]])
   w,h=B['outline']['width_mm'],B['outline']['height_mm']
-  for a,z in [((0,0),(w,0)),((w,0),(w,h)),((w,h),(0,h)),((0,h),(0,0))]:
+  outline=B['outline'].get('polygon_mm',[[0,0],[w,0],[w,h],[0,h]])
+  native=[(x,h-y) for x,y in outline]
+  for a,z in zip(native,native[1:]+native[:1]):
    sh=k.PCB_SHAPE();sh.SetShape(k.SHAPE_T_SEGMENT);sh.SetLayer(k.Edge_Cuts);sh.SetStart(k.VECTOR2I(*[k.FromMM(v) for v in a]));sh.SetEnd(k.VECTOR2I(*[k.FromMM(v) for v in z]));sh.SetWidth(k.FromMM(.05));board.Add(sh)
   for i,m in enumerate(B['mounts']):
    f=k.FOOTPRINT(board);f.SetReference(f'H{i+1}');p=k.PAD(f);p.SetAttribute(k.PAD_ATTRIB_NPTH);p.SetShape(k.PAD_SHAPE_CIRCLE);p.SetSize(k.VECTOR2I(k.FromMM(m['diameter_mm']),k.FromMM(m['diameter_mm'])));p.SetDrillSize(p.GetSize());p.SetLayerSet(k.LSET.AllCuMask());f.Add(p);board.Add(f);f.SetPosition(k.VECTOR2I(k.FromMM(m['x']),k.FromMM(h-m['y'])))

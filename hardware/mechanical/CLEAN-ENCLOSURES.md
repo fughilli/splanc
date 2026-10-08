@@ -1,3 +1,12 @@
+## MAX r11 service end
+
+Current source revision is `max-service-r11`. MAX is 330 × 134 × 43 mm,
+with one DC connector assembly and two rear-mounted Ethernet couplers on the
+west end. Pi USB-C and Ethernet access cutters are removed. Actual Neutrik CAD
+is used; DC carrier, switch circuitry and cables are marked prototype envelopes.
+Mini and Splanc retain the frozen r10 geometry. See
+`../splanc_max/MAX-SERVICE-R11.md` for the power/network specification and gates.
+
 # Clean enclosure build
 
 The active generator is `build_clean_enclosures.py`, with dimensions in

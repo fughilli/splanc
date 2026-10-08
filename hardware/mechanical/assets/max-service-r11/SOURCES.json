@@ -1,0 +1,22 @@
+{
+  "ne8fdp.pdf": {
+    "url": "https://www.neutrik.us/media/8668/download/ne8fdp-3.pdf?v=1",
+    "sha256_saved": "d95968bb26d928443c8775abff8b6f98e19b306a59511781581c2814cf5f75fa",
+    "retrieved": "2026-10-08"
+  },
+  "thl40wi.pdf": {
+    "url": "https://www.tracopower.com/products/thl40wi.pdf",
+    "sha256_saved": "c6efbfb726a8483f48eebe3960de54ace827ec9817e0489b3ac2745e3491f456",
+    "retrieved": "2026-10-08"
+  },
+  "xt150.pdf": {
+    "url": "https://www.china-amass.net/uploads/129.XT150-F.G2-SPEC-2025V01.pdf",
+    "sha256_saved": "829f84a74b774ee902d4779c93e84693e22fc74d341a3ca0e525cd65bccdc1be",
+    "retrieved": "2026-10-08"
+  },
+  "ne8fdp.step.gz": {
+    "url": "https://www.neutrik.us/media/12094/download/30010088_-_NE8FDP.stp?v=2",
+    "sha256_saved": "594233bfe0509fe70458bc0c39c8f318cc33ca6240e99bf8b7ea9a0ce5c11802",
+    "retrieved": "2026-10-08"
+  }
+}

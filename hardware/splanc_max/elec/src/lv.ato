@@ -1,3 +1,4 @@
+from "parts/CTRL_PWR/CTRL_PWR.ato" import CTRL_PWR
 from "parts/C_100nF/C_100nF.ato" import C_100nF
 from "parts/C_100nF16V/C_100nF16V.ato" import C_100nF16V
 from "parts/C_10uF10V/C_10uF10V.ato" import C_10uF10V
@@ -432,3 +433,8 @@ module SplancMaxLV:
     C44 = new C_100nF16V
     C44.p1 ~ LV3V3
     C44.p2 ~ DGND
+    J4 = new CTRL_PWR
+    J4.p1 ~ PI_5V
+    J4.p2 ~ PI_5V
+    J4.p3 ~ DGND
+    J4.p4 ~ DGND

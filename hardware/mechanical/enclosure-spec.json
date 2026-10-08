@@ -1,5 +1,5 @@
 {
-  "revision": "usb-conformal-r10",
+  "revision": "max-service-r11",
   "units": "mm",
   "edge_chamfer": 0.5,
   "handheld": {
@@ -106,7 +106,7 @@
   },
   "max": {
     "outside": [
-      292,
+      330,
       134,
       43
     ],
@@ -114,14 +114,14 @@
     "floor": 2.5,
     "split": 37,
     "pi_origin": [
-      285,
+      323,
       28,
       8
     ],
     "pi_rotation_deg": 90,
     "hat_z": 28,
     "power_origin": [
-      7,
+      45,
       7,
       8
     ],
@@ -131,7 +131,7 @@
         4
       ],
       [
-        288,
+        326,
         4
       ],
       [
@@ -139,26 +139,50 @@
         130
       ],
       [
-        288,
+        326,
         130
       ],
       [
-        146,
+        184,
         4
       ],
       [
-        146,
+        184,
         130
       ]
     ],
-    "ethernet_center_x": 274.8,
-    "ethernet_inner_y": 114.0,
-    "power_center_y": 39.2,
-    "exposed_pi_ports": [
-      "Ethernet",
-      "USB-C power"
+    "exposed_pi_ports": [],
+    "logo_width": 82,
+    "service_extension_mm": 38,
+    "network_origin": [
+      112,
+      37,
+      23.5
     ],
-    "logo_width": 82
+    "network_size": [
+      80,
+      60,
+      1.6
+    ],
+    "panel_ethernet_centers": [
+      [
+        25,
+        21
+      ],
+      [
+        106,
+        21
+      ]
+    ],
+    "dc_center": [
+      66.5,
+      29
+    ],
+    "smps_center": [
+      24,
+      67,
+      9.6
+    ]
   },
   "usb_c": {
     "shell_width_mm": 8.94,

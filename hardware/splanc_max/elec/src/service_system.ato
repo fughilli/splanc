@@ -1,0 +1,42 @@
+# MAX r11 functional architecture. Deliberately not a build target: no fake pin-level PCB.
+# See service-system.json for component choices, budgets, placements and release gates.
+interface Rail:
+    signal positive
+    signal return_
+
+interface GigabitCopper:
+    signal A_p
+    signal A_n
+    signal B_p
+    signal B_n
+    signal C_p
+    signal C_n
+    signal D_p
+    signal D_n
+
+module IsolatedControlSupply:
+    input = new Rail
+    output = new Rail
+    # THL40-2411WI; input and output returns intentionally not joined.
+
+module ThreePortGigabitSwitch:
+    power = new Rail
+    upstream = new GigabitCopper
+    downstream = new GigabitCopper
+    pi = new GigabitCopper
+    # KSZ9896C PHY1/2/3, each through its own isolation magnetics.
+    # Local boot MCU configures forwarding without dependence on Pi boot.
+
+module SplancMaxServiceSystem:
+    dc_input = new Rail
+    led_bus = new Rail
+    pi_power = new Rail
+    hat_power = new Rail
+    supply = new IsolatedControlSupply
+    network = new ThreePortGigabitSwitch
+    dc_input ~ led_bus
+    dc_input ~ supply.input
+    supply.output ~ pi_power
+    supply.output ~ hat_power
+    supply.output ~ network.power
+    # Fused/reverse-blocked branch implementation required before fabrication.

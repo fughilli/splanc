@@ -14,6 +14,7 @@ def rect(origin,normal,u,t,length,w,h,r,du=0,dv=0):
  wire=cq.Workplane(plane(origin,normal,u,t,du,dv)).rect(w,h).val();wire=wire.fillet2D(r,wire.Vertices())
  return cq.Workplane(obj=cq.Solid.extrudeLinear(wire,[],cq.Vector(*(n*length for n in normal))))
 for p in ('mini','splanc','max'):
+ if p=='max' and spec['max'].get('exposed_pi_ports')==[]:continue
  b,l=read(p,'base'),read(p,'lid');shell=b.union(l);bead=read(p,'seam-sealant')
  if p=='max':origin=(286.2,39.2,11.016);normal=(1,0,0);u=(0,1,0)
  else:origin=(spec['handheld'][p]['usb_x'],-1.45,9.13+spec['handheld']['assembly_z_shift_mm']);normal=(0,-1,0);u=(1,0,0)

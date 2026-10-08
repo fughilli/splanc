@@ -22,6 +22,7 @@ def run():
    for x,y in candidates:
     f.SetPosition(k.VECTOR2I(k.FromMM(x),k.FromMM(h-y)));bb=box(f,h)
     if bb[0]<.5 or bb[1]<.5 or bb[2]>w-.5 or bb[3]>h-.5:continue
+    if name=='power' and 'polygon_mm' in B['outline'] and bb[0]<38 and (bb[1]<32.5 or bb[3]>81.5):continue
     if any(overlap(bb,z) for _,z in occupied):continue
     chosen=[x,y];occupied.append((c['ref'],bb));break
    if chosen is None:raise RuntimeError('No legal rough placement for '+name+':'+c['ref'])

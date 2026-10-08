@@ -1,18 +1,18 @@
 {
   "lv": {
-    "native_unconnected_count": 226,
-    "footprints": 56,
-    "circuit_components": 52,
-    "connected_pads_checked": 294,
+    "native_unconnected_count": 230,
+    "footprints": 57,
+    "circuit_components": 53,
+    "connected_pads_checked": 298,
     "atopile_net_partition_matches": true,
     "no_tracks": true,
     "mounts_checked": 4
   },
   "power": {
-    "native_unconnected_count": 920,
-    "footprints": 321,
-    "circuit_components": 317,
-    "connected_pads_checked": 1159,
+    "native_unconnected_count": 930,
+    "footprints": 325,
+    "circuit_components": 321,
+    "connected_pads_checked": 1173,
     "atopile_net_partition_matches": true,
     "no_tracks": true,
     "mounts_checked": 4,
