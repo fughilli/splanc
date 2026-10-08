@@ -65,11 +65,12 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "failed",
+      "kind": "under-verified",
       "entity": "PR-13",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -117,13 +118,6 @@
       "route": "human-gate",
       "demanded_level": "hil",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "failed",
-      "entity": "PR-22",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
-      "route": "autonomous",
-      "demanded_level": "simulation"
     },
     {
       "kind": "under-verified",
@@ -197,11 +191,20 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "failed",
+      "kind": "stale",
       "entity": "PR-35",
-      "message": "failing evidence: hitl_e2e::websocket_checks",
+      "message": "only passing evidence is against an older build",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-35",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -210,12 +213,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "untraced-failure",
@@ -237,8 +234,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:tls_churn_netstack",
-      "message": "//pi/hitl/harness:tls_churn_netstack pi/hitl/harness/tls_churn_netstack error and traces to no requirement",
+      "entity": "//pi/hitl/harness:map_upload_netstack",
+      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
