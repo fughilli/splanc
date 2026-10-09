@@ -114,3 +114,30 @@ The family reveal has intentional close framing during the initial pullback;
 the macro roll enters lower-left and exits right. The browser uses simpler
 materials and geometry than the path-traced stills, with no internal exposed
 flexure geometry. Remaining product engineering gates are unchanged.
+
+
+## Browser model delivery, 9 October 2026
+
+After a report of disembodied connectors, fresh Chrome and WebKit screenshots
+showed complete enclosures; the exact user-tab failure was not reproduced.
+The app tab-capture tool failed to initialize, so these are isolated browsers
+at the same live URL, not a capture of the user's existing tab.
+
+Delivery now uses an uncached model catalog, content-addressed metadata and
+binary filenames, atomic deployment and versioned script imports. This closes
+a real cache/deployment race: older layout offsets can no longer be combined
+with a newly exported binary under the same URL. The loader checks byte length,
+alignment, index ranges, finite geometry and required enclosure parts before
+rendering. A rejected model displays the fallback instead of partial geometry.
+`advertising/check_model_delivery.mjs` verifies gzip/raw delivery and warm
+reloads in Chromium and WebKit, plus explicit mismatched-metadata rejection.
+Actual screenshots and results are in `review/model-delivery-*`. The isolated
+WebKit test installation is in ignored `authoring/browser-cache`; it changes
+no app permissions or user browser profile. Stills/CAD remain unchanged.
+
+A repeated-load check also observed `ERR_CONNECTION_RESET` on a JavaScript
+module, leaving the page at its loading message. The private viewer now allows
+a backlog of 64 connections (previously 5) for parallel module/mesh loads and
+sets revalidation headers for current code/catalogs and immutable caching for
+hashed models. This is a loading reliability fix, not proof of the reported
+connector-only rendering cause. Both existing bind addresses are preserved.

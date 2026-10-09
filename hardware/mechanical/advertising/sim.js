@@ -3,6 +3,7 @@ import {step,contact,random} from './physics.mjs';
 import {PerimeterLEDs} from './perimeter-leds.js';
 import {Inspector} from './inspect.js';
 import {PerimeterLighting} from './perimeter-lighting.js';
+import {loadModelData} from './model-data.js';
 const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);
 if(params.get('embed')==='1')document.body.classList.add('embed');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
@@ -20,8 +21,7 @@ const inspector=new Inspector({renderer,camera,scene,bounds:()=>bounds,reduced,o
 const lighting=new PerimeterLighting(renderer);
 const styles={shell_base:[0x14161a,.48,.05],shell_lid:[0x17191c,.48,.05],logo_white:[0xf6f4eb,.46,0],button:[0xffcf56,.55,0],nickel:[0xb4bec4,.28,.85],gold:[0xd6b75c,.32,.75],fastener:[0x87919b,.31,.85],nylon:[0x1a1d22,.55,0],white_nylon:[0xe9e7d8,.55,0],terminal:[0x223832,.55,0],lightpipe:[0x98d9c1,.35,.05],seal:[0x141414,.85,0],dc_red:[0xa81016,.4,0]};
 async function load(sku){
- const compressed='DecompressionStream' in window;
- const [meta,buffer]=await Promise.all([fetch(`models/${sku}.json`).then(r=>{if(!r.ok)throw Error(r.status);return r.json();}),fetch(`models/${sku}.bin${compressed?'.gz':''}`).then(r=>{if(!r.ok)throw Error(r.status);return compressed?new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer():r.arrayBuffer();})]);
+ const {meta,buffer}=await loadModelData(sku);
  const root=new T.Group();
  for(const p of meta.parts){
   const g=new T.BufferGeometry(),inter=new T.InterleavedBuffer(new Float32Array(buffer,p.offset,p.vertices*6),6);
