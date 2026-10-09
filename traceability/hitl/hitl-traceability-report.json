@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 16,
-    "gaps": 43
+    "gaps": 44
   },
   "levels": [
     {
@@ -1543,6 +1543,12 @@
       "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:led_capture_netstack",
       "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:video_stream_netstack",
+      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
