@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 16,
-    "gaps": 44
+    "gaps": 43
   },
   "levels": [
     {
@@ -1526,12 +1526,6 @@
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "untraced-failure",
