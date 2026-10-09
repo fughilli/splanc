@@ -33,13 +33,13 @@ world = lib.world.copy()
 s = bpy.data.scenes.new('Splanc campaign');s.world=world;bpy.context.window.scene=s
 for old in list(bpy.data.scenes):
     if old != s: bpy.data.scenes.remove(old)
-groups={}; pivots={}; sizes={}
+groups={}; pivots={}; sizes={};centers={}
 for sku in ['mini','splanc','max']:
     items=[i for i in cad['items'] if i['product']==sku]
     verts=[v for i in items for v in i['vertices']]
     lo=Vector([min(v[k] for v in verts)*.001 for k in range(3)])
     hi=Vector([max(v[k] for v in verts)*.001 for k in range(3)])
-    center=(lo+hi)/2;sizes[sku]=hi-lo
+    center=(lo+hi)/2;sizes[sku]=hi-lo;centers[sku]=center
     p=bpy.data.objects.new('Product / '+sku,None);s.collection.objects.link(p)
     pivots[sku]=p;groups[sku]=[]
     for i in items:
@@ -93,17 +93,76 @@ def still(path):
     print('ASSET',path.name,round(time.monotonic()-t,2),flush=True)
 if a.mode=='web':
     import numpy as np
+    import bmesh
     from collections import defaultdict
     dest=O/'sim'/'models';dest.mkdir(parents=True,exist_ok=True)
-    report={}
+    report={};topology=[]
+    def port_anchors(sku):
+        items=[i for i in cad['items'] if i['product']==sku]
+        def bounds(prefix):
+            v=[pt for i in items if i['name'].startswith(prefix) for pt in i['vertices']]
+            return np.min(v,axis=0),np.max(v,axis=0)
+        ports=[]
+        def add(key,label,description,p,normal):
+            ports.append(dict(id=key,label=label,description=description,position=list(Vector(p)*.001-centers[sku]),normal=normal))
+        if sku in ['mini','splanc']:
+            lo,hi=bounds('USB4105');p=(lo+hi)/2;p[1]=lo[1]
+            add('usb','USB-C','USB-C power and USB data connection.',p,[0,-1,0])
+            for n,prefix in enumerate(['JST-20','JST-31'] if sku=='mini' else ['board.led0.conn','board.led1.conn'],1):
+                lo,hi=bounds(prefix);p=(lo+hi)/2;p[2]=hi[2]
+                add(f'led-{n}',f'LED {n}',f'Addressable LED strip output {n}. Two strip outputs are provided on this module.',p,[0,0,1])
+        else:
+            for n in [1,2]:
+                lo,hi=bounds(f'ethernet-panel-{n}');p=(lo+hi)/2;p[0]=lo[0]
+                add(f'ethernet-{n}',f'Ethernet {n}','2× shielded Ethernet, daisy-chainable through the internal network switch. Connect the upstream network and the next unit here.',p,[-1,0,0])
+            lo,hi=bounds('XT150');p=(lo+hi)/2;p[0]=lo[0]
+            add('dc','DC power','Paired XT150 positive and return connectors. Powers the LED rail and the internal 5 V supply for the Raspberry Pi.',p,[-1,0,0])
+            for row,start in enumerate([10,20]):
+                v=[pt for i in items if any(i['name'].startswith(f'DEGSON-J{n}-') for n in range(start,start+10)) for pt in i['vertices']]
+                lo=np.min(v,axis=0);hi=np.max(v,axis=0);p=(lo+hi)/2;p[1]=lo[1] if row==0 else hi[1]
+                label=f'LED {row*10+1}–{row*10+10}'
+                add(f'led-bank-{row}',label,'Ten addressable LED strip outputs in this bank; twenty total, with per-channel power switching and current telemetry in the MAX design.',p,[0,-1 if row==0 else 1,0])
+        return ports
+    def mesh_health(me):
+        bm=bmesh.new();bm.from_mesh(me)
+        result=dict(nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),faces=len(bm.faces),volume=bm.calc_volume(signed=True))
+        bm.free();return result
+    def evaluated_mesh(ob):
+        deps=bpy.context.evaluated_depsgraph_get()
+        return bpy.data.meshes.new_from_object(ob.evaluated_get(deps),depsgraph=deps)
     for sku,objects in groups.items():
         bundles=defaultdict(list)
         for ob in objects:
             name=ob['source_name']
             visible=(name in ['base','lid','logo-white-inlay','seam-sealant'] or name.startswith(('USB4105','JST-','board.led0.conn','board.led1.conn','case-screw','lightpipe','button-shuttle','DEGSON','ethernet-panel','ethernet-mount-screw','XT150','dc-carrier')))
             if not visible:continue
-            dec=ob.modifiers.new('Web mesh budget','DECIMATE');dec.ratio=.12 if name.startswith('ethernet-panel') else .65
-            deps=bpy.context.evaluated_depsgraph_get();me=bpy.data.meshes.new_from_object(ob.evaluated_get(deps),depsgraph=deps);me.calc_loop_triangles()
+            # CAD tessellation duplicates vertices at face boundaries. Weld seams
+            # before simplifying, otherwise collapse can delete whole cap faces.
+            bm=bmesh.new();bm.from_mesh(ob.data)
+            bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=1e-8)
+            bm.to_mesh(ob.data);bm.free();ob.data.update()
+            before=mesh_health(ob.data);dec=None
+            # CAD already carries the enclosure fillets. A second bevel on every
+            # connector triangle wastes bandwidth; retain it only on simple caps.
+            ob.modifiers.clear()
+            if name.startswith('button-shuttle'):
+                bevel=ob.modifiers.new('Cap edge highlight','BEVEL');bevel.width=.00006;bevel.segments=2
+            if before['faces']>500:
+                dec=ob.modifiers.new('Web mesh budget','DECIMATE')
+                if before['nonmanifold_edges']==0:
+                    dec.ratio=.12 if name.startswith('ethernet-panel') else .65
+                else:
+                    # Vendor multi-solid tessellations can have shared/open edges.
+                    # Dissolve coplanar interior edges without collapsing boundaries.
+                    dec.decimate_type='DISSOLVE';dec.angle_limit=.005;dec.use_dissolve_boundaries=False
+            me=evaluated_mesh(ob);after=mesh_health(me);fallback=False
+            if before['nonmanifold_edges']==0 and (after['nonmanifold_edges'] or before['volume']*after['volume']<=0):
+                # Preserve original tessellation if any display modifier opens it.
+                bpy.data.meshes.remove(me);ob.modifiers.clear();me=evaluated_mesh(ob);after=mesh_health(me);fallback=True
+                if after['nonmanifold_edges'] or before['volume']*after['volume']<=0:
+                    raise RuntimeError(f'Closed web solid became open or inverted: {sku}/{name}')
+            topology.append(dict(product=sku,part=name,before=before,after=after,fallback=fallback,decimated=bool(dec) and not fallback))
+            me.calc_loop_triangles()
             pos=np.array([tuple(v.co+ob.location) for v in me.vertices],dtype='<f4')
             indices=np.array([tuple(t.loops) for t in me.loop_triangles],dtype=np.int32).reshape(-1)
             lv=np.array([l.vertex_index for l in me.loops],dtype=np.int32)
@@ -118,11 +177,12 @@ if a.mode=='web':
             offset=len(blob);blob.extend(vertices.tobytes());idxoffset=len(blob);blob.extend(index.tobytes())
             parts.append(dict(material=mat,offset=offset,vertices=len(vertices),indexOffset=idxoffset,indices=len(index)))
         (dest/(sku+'.bin')).write_bytes(blob)
-        manifest=dict(product=sku,revision='max-service-r11',size=list(sizes[sku]),parts=parts,bytes=len(blob))
+        manifest=dict(product=sku,revision='max-service-r11',size=list(sizes[sku]),ports=port_anchors(sku),parts=parts,bytes=len(blob))
         (dest/(sku+'.json')).write_text(json.dumps(manifest));report[sku]=manifest
     env=next(n.image for n in world.node_tree.nodes if n.type=='TEX_ENVIRONMENT')
     copy=env.copy();copy.scale(1024,512);s.render.image_settings.file_format='JPEG';copy.save_render(str(dest/'environment.jpg'),scene=s)
     (O/'review'/'web-models.json').write_text(json.dumps(report,indent=2))
+    (O/'review'/'web-topology.json').write_text(json.dumps(topology,indent=2))
 elif a.mode=='stills':
     for sku in groups:
         show(sku);reset();w=sizes[sku].x;h=sizes[sku].y

@@ -6,7 +6,7 @@ R=Path.cwd();O=R/'output/advertising-kit-20261008';P=R/'output/mechanical-viewer
 P.mkdir(parents=True,exist_ok=True)
 source=R/'hardware/mechanical/advertising'
 shutil.copy2(source/'sim.html',O/'sim/index.html')
-for f in ['sim.js','physics.mjs']:shutil.copy2(source/f,O/'sim'/f)
+for f in ['sim.js','physics.mjs','perimeter-leds.js','inspect.js','port-labels.js','perimeter-lighting.js']:shutil.copy2(source/f,O/'sim'/f)
 for f in (O/'sim/models').glob('*.bin'):(f.with_suffix('.bin.gz')).write_bytes(gzip.compress(f.read_bytes(),compresslevel=6,mtime=0))
 Image.open(O/'stills/family.png').convert('RGB').save(O/'sim/poster.jpg',quality=85)
 d=json.loads((O/'pricing/pricing-model.json').read_text())
@@ -49,6 +49,16 @@ are local; no CDN, telemetry or account is required. Use:
 The iframe should have a useful accessible title. Reduced-motion preference
 starts it paused. It pauses processing when hidden. Play/pause is always
 available. Normal view adds density, speed, reset and drag-to-throw controls.
+A WS2812-style RGB strip runs a smooth chaser around the viewport perimeter.
+Emitters face inward; one screen-space pass approximates their colored spill
+on the product surfaces without shadow-map lights. Its motion shares the
+simulation speed, pause and reduced-motion controls.
+Double-click or double-tap any product to inspect it: drag to orbit and scroll
+or pinch to zoom. Tap the background, press Escape, or use the X to ease it
+back into its saved flight state. Inspection freezes the simulation; closing
+restores its prior playing/paused state. Reduced motion skips the transitions.
+Tappable port bubbles track the CAD connector locations while orbiting; only
+the facing ports are labeled. Tap a bubble to expand its description.
 Seed can be set with ?seed=42. No host DOM or postMessage permission required.
 The model sizes remain proportional. Impacts use conservative 2D oriented
 rectangle bounds with cosmetic 3D tilt, not a full 3D impact solver.
@@ -83,12 +93,12 @@ Network circuitry remains specification-stage. Cost allowances and retrieved
 price tiers are separated; obtain supplier/tooling quotes before committing.
 '''
 (O/'README.md').write_text(readme)
-(O/'index.html').write_text(f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc advertising kit</title><style>{css}</style><main><nav><strong>Splanc</strong><a href="#stills">Product shots</a><a href="#motion">Motion</a><a href="#live">Zero gravity</a><a href="pricing/">Pricing</a></nav><h1>The Splanc family.</h1><p class="sub">Full-HD product artwork, camera motion and an interactive playground. Latest enclosure design: Mini, Splanc with optional GNSS, and MAX.</p><a class="pill" href="splanc-advertising-kit.zip" download>Download the kit ↓</a><a class="pill" href="sim/">Open live simulation ↗</a><img class="hero" src="sim/poster.jpg" alt="Splanc product family"><small>Design visualizations · 1920 × 1080 · 8 October 2026</small><div id="stills">{''.join(cards)}</div><section id="motion"><h2>Camera studies</h2><p class="sub">HD H.264 · 24 fps · silent · three orbits, a diagonal rolling entrance and a family reveal.</p><div class="grid">{''.join(videos)}</div></section><section id="live"><h2>Zero gravity, live.</h2><p class="sub">Drag, throw and watch the family collide. A self-contained animation for your website.</p><iframe src="sim/?embed=1" title="Splanc products in zero gravity" loading="lazy"></iframe><a class="pill" href="splanc-browser-sim.zip" download>Download standalone embed ↓</a><details><summary>Embed instructions</summary><p>Copy the sim directory to your website. No CDN or service required.</p><pre>&lt;iframe src="/splanc/sim/?embed=1"
+(O/'index.html').write_text(f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc advertising kit</title><style>{css}</style><main><nav><strong>Splanc</strong><a href="#stills">Product shots</a><a href="#motion">Motion</a><a href="#live">Zero gravity</a><a href="pricing/">Pricing</a></nav><h1>The Splanc family.</h1><p class="sub">Full-HD product artwork, camera motion and an interactive playground. Latest enclosure design: Mini, Splanc with optional GNSS, and MAX.</p><a class="pill" href="splanc-advertising-kit.zip" download>Download the kit ↓</a><a class="pill" href="sim/">Open live simulation ↗</a><img class="hero" src="sim/poster.jpg" alt="Splanc product family"><small>Design visualizations · 1920 × 1080 · 8 October 2026</small><div id="stills">{''.join(cards)}</div><section id="motion"><h2>Camera studies</h2><p class="sub">HD H.264 · 24 fps · silent · three orbits, a diagonal rolling entrance and a family reveal.</p><div class="grid">{''.join(videos)}</div></section><section id="live"><h2>Zero gravity, live.</h2><p class="sub">Drag, throw and watch the family collide inside a chasing RGB light strip. Double-tap a product to orbit and zoom. A self-contained animation for your website.</p><iframe src="sim/?embed=1" title="Splanc products in zero gravity" loading="lazy"></iframe><a class="pill" href="splanc-browser-sim.zip" download>Download standalone embed ↓</a><details><summary>Embed instructions</summary><p>Copy the sim directory to your website. No CDN or service required.</p><pre>&lt;iframe src="/splanc/sim/?embed=1"
   title="Splanc products in zero gravity"
   style="width:100%;height:560px;border:0"
   loading="lazy"&gt;&lt;/iframe&gt;</pre><a href="README.md">Full integration notes</a></details></section><section><h2>Planning prices</h2>{prices}<p class="sub">MAX excludes the Raspberry Pi. These are planning proposals with first-batch tooling allocations, not supplier quotes. Mini and Splanc estimates are carried forward; MAX reflects r11 hardware.</p><a class="pill" href="pricing/">Pricing and cost basis →</a><a class="pill" href="outputs/pricing-20261008/splanc-pricing.xlsx">Download editable workbook ↓</a></section><footer><p><small>CAD design renders, not production photography. Final electronics, thermal and tooling qualification remain in progress.</small></p></footer></main></html>''')
 files=[p for p in O.rglob('*') if p.is_file() and p.name!='manifest.json' and not any(x in p.relative_to(O).parts for x in ['authoring','blender','review']) and p.suffix not in ['.zip','.ndjson']]
-manifest={'revision':'max-service-r11','date':'2026-10-08','stills':13,'videos':5,'resolution':[1920,1080],'fps':24,'files':[{"path":str(p.relative_to(O)),"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
+manifest={'revision':'max-service-r11','date':'2026-10-08','simulation_updated':'2026-10-09','stills':13,'videos':5,'resolution':[1920,1080],'fps':24,'files':[{"path":str(p.relative_to(O)),"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
 (O/'manifest.json').write_text(json.dumps(manifest,indent=2));files.append(O/'manifest.json')
 with zipfile.ZipFile(O/'splanc-browser-sim.zip','w',zipfile.ZIP_DEFLATED) as z:
  for p in (O/'sim').rglob('*'):

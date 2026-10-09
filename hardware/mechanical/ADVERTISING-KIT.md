@@ -40,6 +40,36 @@ web model. The simulation retains relative dimensions and uses fixed-step
 planar oriented-box collision impulses with cosmetic tilt, not engineering
 impact physics. Density is a maximum; packing may reduce count to avoid overlap.
 
+## Simulation interaction update, 9 October 2026
+
+A local Canvas2D overlay draws a WS2812-style perimeter strip with three smooth
+RGB chaser tails. Emitters face into the viewport; a single screen-space GPU
+pass approximates colored illumination on opaque product pixels. This is a
+visual approximation with no ray-traced occlusion or engineering photometry.
+Package geometry is cached on resize; the pointer-transparent overlay follows
+shared pause, speed, visibility and reduced-motion settings.
+Double-click/tap a product to inspect it at the center, then drag to orbit,
+scroll/pinch to zoom, and use the background, X or Escape to return. The flight
+state is frozen during inspection; position, orientation and velocity are
+preserved. Returning uses quaternion interpolation; reduced motion skips these
+transitions. Port bubbles follow connector anchors extracted from the frozen
+CAD and expand on tap. Back-facing ports are hidden until rotated into view.
+This works in the standalone view and minimal website embed.
+
+The source button normals were correct, but the old browser decimator removed
+front faces (7 triangles per cap instead of 12). The web exporter now welds CAD
+face seams, retains small solids, avoids a second bevel on complex connectors,
+uses boundary-preserving planar dissolve on open vendor tessellations and
+rejects modifiers that open or invert a closed input. Exported Mini/Splanc caps
+have zero unpaired geometric edges and no inverted shading normals. Blender
+stills/videos were unaffected; the frozen source CAD was not changed.
+
+`advertising/check_interactions.mjs` checks exact paused flight restoration,
+orbit, wheel/pinch zoom, background/X/Escape return, desktop/touch port bubbles,
+LED animation/pause and reduced motion in an isolated Chrome profile. Evidence
+lives in the kit's `review/interaction-validation.json`, screenshots,
+`button-mesh-validation.json` and `web-topology.json`.
+
 ## Pricing
 
 Run `hardware/pricing/max_service_r11.py`; then run
