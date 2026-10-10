@@ -41,8 +41,8 @@ def main() -> None:
     (args.destination / "README.md").write_text(
         "# Live fixture showcase\n\n"
         "Generated from the Splanc application, using its MapView, firmware VM, "
-        "Maxa, Tree of Tenere and Primitive Obsession meshes and prebaked topology. "
-        "The captured shader and all 11 Maxa control positions come from "
+        "Resting Deer, Tree of Light and Primitive Obsession meshes and prebaked topology. "
+        "The captured shader and all 11 Resting Deer control positions come from "
         "`web/src/demo/maxaScene.ts`; `showcaseScenes.ts` defines the gallery. "
         "Primitive Obsession uses the spatial bands with the topology flood disabled. "
         "Colors are normalized RGB values. The gallery cycles every 12 seconds, "

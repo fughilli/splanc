@@ -2,7 +2,7 @@ import type { EffectScene } from "../effects/scene";
 
 export const MAXA_DEMO_ID = "builtin-maxa-acid";
 export const MAXA_TUTORIAL_ID = "tutorial-maxa-acid";
-export const MAXA_DEMO_NAME = "Maxa: spatial bands + topology flood";
+export const MAXA_DEMO_NAME = "Resting Deer: spatial bands + topology flood";
 
 // Captured from the live Acid Mode scene. Keep shader defaults separate from
 // the captured control positions so the original authoring source is intact.

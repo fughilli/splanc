@@ -12,12 +12,12 @@ export interface ShowcaseScene {
 
 export const SHOWCASE_SCENES: ShowcaseScene[] = [
   {
-    id: MAXA_DEMO_ID, name: MAXA_DEMO_NAME, label: "Maxa Art Car",
+    id: MAXA_DEMO_ID, name: MAXA_DEMO_NAME, label: "Resting Deer",
     source: MAXA_DEMO_SOURCE, scene: MAXA_DEMO_SCENE, tags: ["demo", "topology", "spatial"],
   },
   {
-    id: "builtin-tenere-acid", name: "Tree of Tenere: spatial bands + topology flood",
-    label: "Tree of Tenere", source: MAXA_DEMO_SOURCE,
+    id: "builtin-tenere-acid", name: "Tree of Light: spatial bands + topology flood",
+    label: "Tree of Light", source: MAXA_DEMO_SOURCE,
     scene: { mapId: "sample-tenere", uniforms: structuredClone(MAXA_DEMO_SCENE.uniforms) },
     tags: ["demo", "topology", "spatial"],
   },

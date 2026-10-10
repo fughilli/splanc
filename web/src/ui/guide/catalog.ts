@@ -409,8 +409,8 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     screenshotWaitMs: 2800,
     steps: [
       {
-        pane: "preview", target: ".fxedit-canvas", title: "Author effects on Maxa",
-        body: "This is the real editor, running the captured Acid Mode scene on the Maxa deer. Yellow bands move through space; pink floods follow the connected edges. No hardware or AI key is needed.",
+        pane: "preview", target: ".fxedit-canvas", title: "Author effects on Resting Deer",
+        body: "This is the real editor, running the captured Acid Mode scene on the Resting Deer. Yellow bands move through space; pink floods follow the connected edges. No hardware or AI key is needed.",
       },
       {
         pane: "code", target: ".fxedit-code", title: "Two ways to move light",
@@ -426,7 +426,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
       },
       {
         pane: "diagnostics", target: ".fxedit-diagbody", title: "Take the effect to your fixture",
-        body: "With a controller connected, Send uploads the compiled effect and its live uniforms. The preview runs the same firmware VM. Your tutorial copy stays in Effects, and the original Maxa demo is available to duplicate again.",
+        body: "With a controller connected, Send uploads the compiled effect and its live uniforms. The preview runs the same firmware VM. Your tutorial copy stays in Effects, and the original Resting Deer demo is available to duplicate again.",
       },
     ],
     gallery: [

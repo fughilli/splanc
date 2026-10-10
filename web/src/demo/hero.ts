@@ -75,8 +75,8 @@ async function mount(): Promise<void> {
     const animate = (now: number): void => {
       raf = 0;
       if (disposed || document.hidden || !inView || reducedMotion.matches) return;
-      // Cap dense volumes at 30 fps while keeping shader and camera time in sync.
-      if (now - previous >= 1000 / 30) {
+      // Match the app preview: one update per display frame.
+      {
         const dt = Math.min((now - previous) / 1000, 0.1);
         previous = now;
         elapsed += dt;
