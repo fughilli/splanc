@@ -13,7 +13,7 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import { defineConfig } from "vite";
+import { build, defineConfig } from "vite";
 
 const backend = process.env["LEDMAPPER_BACKEND"] ?? "http://localhost:8080";
 
@@ -70,6 +70,24 @@ function resolveBuildInfo(): BuildInfo {
 const buildInfo = resolveBuildInfo();
 
 export default defineConfig({
+  plugins: [{
+    name: "standalone-scene",
+    apply: "build",
+    async closeBundle() {
+      // A separate graph keeps Rollup's shared helpers from pulling the main
+      // app bootstrap into the decorative hero. Append just this entry's assets.
+      await build({
+        configFile: false,
+        // The app build already copied public assets; Bazel makes them read-only.
+        publicDir: false,
+        base: "./",
+        build: {
+          outDir: "dist", emptyOutDir: false,
+          rollupOptions: { input: { scene: "scene.html" } },
+        },
+      });
+    },
+  }],
   // Compile-time git build info, read by src/buildInfo.ts (About page + device
   // card commit links). Replaced literally in the bundle by esbuild/rolldown.
   define: {

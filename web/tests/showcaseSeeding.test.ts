@@ -59,3 +59,24 @@ test("digital twins render as gray translucent faces and hide without changing L
     assert.equal(rec.of("arc").length, sample.map.ledCount);
   } finally { view.stop(); }
 });
+
+test("externally animated camera poses change projection without changing fixture geometry", () => {
+  const sample = SHOWCASE_SAMPLES[2]!;
+  const before = JSON.stringify({ map: sample.map, mesh: sample.mesh });
+  const canvas = asFake(document.createElement("canvas"));
+  canvas.rect = { x: 0, y: 0, width: 640, height: 420 };
+  const rec = recordCanvas(canvas);
+  const view = new MapView(canvas as unknown as HTMLCanvasElement, sample.map).useThumbnailFraming();
+  view.setMesh(sample.mesh);
+  view.setOrbit(0, 0.35);
+  view.renderFrame();
+  const initial = rec.of("arc").map(call => call.args);
+  rec.clear();
+  view.setOrbit(0.5, 0.47);
+  view.renderFrame();
+  const moved = rec.of("arc").map(call => call.args);
+  assert.equal(moved.length, sample.map.ledCount);
+  assert.notDeepEqual(moved, initial);
+  assert.ok(moved.every(args => args.slice(0, 3).every(value => typeof value === "number" && Number.isFinite(value))));
+  assert.equal(JSON.stringify({ map: sample.map, mesh: sample.mesh }), before);
+});

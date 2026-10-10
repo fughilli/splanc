@@ -39,7 +39,7 @@ function addLine(points: Vec3[], a: Vec3, b: Vec3, pitch = 0.14, includeStart = 
   for (let i = includeStart ? 0 : 1; i <= steps; i++) points.push(lerp(a, b, i / steps));
 }
 function tree(): { map: OutputMap; mesh: MeshOverlay } {
-  const mesh = model("Tenere-inspired trunk, branches and leaves");
+  const mesh = model("Tree of Light trunk, branches and leaves");
   const points: Vec3[] = [];
   const root: Vec3 = [0, 3.1, 0];
   // Bare trunk and root flare; the lights start where the canopy branches.
@@ -90,7 +90,7 @@ function volume(): { map: OutputMap; mesh: MeshOverlay } {
   return { map: map("sample-primitive-obsession", points), mesh };
 }
 function deer(): { map: OutputMap; mesh: MeshOverlay } {
-  const mesh = model("Maxa-inspired crouching low-poly deer");
+  const mesh = model("Resting Deer low-poly mesh");
   // An irregular triangular skin constructed from rings. X is the long axis,
   // Y is up; body rests low, folded legs sit beside it, head and antlers rise.
   const skin = (rings: [Vec3, number, number][], sides = 7): void => {
@@ -141,10 +141,10 @@ function deer(): { map: OutputMap; mesh: MeshOverlay } {
 }
 async function main(): Promise<void> {
   const samples = [];
-  for (const [name, build, volumetric] of [["Sample: Tree of Tenere", tree, false], ["Sample: Primitive Obsession", volume, true], ["Sample: Maxa Art Car", deer, false]] as const) {
+  for (const [name, build, volumetric] of [["Sample: Tree of Light", tree, false], ["Sample: Primitive Obsession", volume, true], ["Sample: Resting Deer", deer, false]] as const) {
     const data = build();
     const topology: Topology = volumetric ? { mapId: data.map.mapId, segments: [], branchPoints: [], associations: [] } :
-      await extractTopology(data.map, { loopFactor: volumetric ? 0 : name.includes("Maxa") ? 1.8 : 0, pruneFactor: 1, radiusFactor: 2.5, simplifyFrac: 0.3 });
+      await extractTopology(data.map, { loopFactor: volumetric ? 0 : build === deer ? 1.8 : 0, pruneFactor: 1, radiusFactor: 2.5, simplifyFrac: 0.3 });
     console.log(`${name}: ${data.map.ledCount} LEDs, ${data.mesh.triangles.length} triangles, ${topology.segments.length} segments, ${topology.branchPoints.length} junctions`);
     samples.push({ name, ...data, topology });
   }

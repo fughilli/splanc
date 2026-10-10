@@ -26,6 +26,10 @@ export type GuideTab = "start" | "maps" | "effects" | "device" | "settings";
 
 /** One coach-mark in the interactive tour. */
 export interface GuideStep {
+  /** Optional workspace route; defaults to the topic's tour route. */
+  route?: string;
+  /** Editor pane to reveal before locating the spotlight target. */
+  pane?: string;
   /** CSS selector for the element to spotlight on the *currently mounted*
    * screen. Omit for a centered modal step (intro / prose-only). Selectors must
    * point at stable, always-present chrome (e.g. `.tab[data-tab="maps"]`, the
@@ -50,6 +54,8 @@ export interface GuideSection {
 
 /** One documented feature area. */
 export interface GuideTopic {
+  /** Explicit interactive workspace route, independent of the docs link. */
+  tourRoute?: string;
   /** Stable slug — the markdown anchor, the site page id, and the tour key. */
   id: string;
   title: string;
@@ -391,6 +397,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
   },
   {
     id: "effect-editor",
+    tourRoute: "/effects/edit/tutorial-maxa-acid",
     title: "The effect editor",
     icon: "edit",
     tab: "effects",
@@ -400,6 +407,28 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     screenshotClick: ".map-row",
     screenshotDemo: "effect",
     screenshotWaitMs: 2800,
+    steps: [
+      {
+        pane: "preview", target: ".fxedit-canvas", title: "Author effects on Resting Deer",
+        body: "This is the real editor, running the captured Acid Mode scene on the Resting Deer. Yellow bands move through space; pink floods follow the connected edges. No hardware or AI key is needed.",
+      },
+      {
+        pane: "code", target: ".fxedit-code", title: "Two ways to move light",
+        body: "In shade(), dot(led.pos, dir) places bands in 3D space. In update(), flood_from(curNode) sets a graph source; led.dist carries its distance along the edges. Edit this tutorial copy to try your own combination. Edits autosave.",
+      },
+      {
+        pane: "uniforms", target: ".uniform-panel", title: "Tune the live scene",
+        body: "These are the captured control positions, including the yellow and pink colors. Change speed, scale or sharpness for the spatial bands, or floodSpeed and floodTail for the topology pulse. The preview and device use the same values.",
+      },
+      {
+        pane: "chat", target: ".fxedit-chatbody", title: "Write it—or ask for a change",
+        body: "The AI assistant can draft changes to this same shader when you bring an API key. You can also author directly in Code; compilation and preview work without AI.",
+      },
+      {
+        pane: "diagnostics", target: ".fxedit-diagbody", title: "Take the effect to your fixture",
+        body: "With a controller connected, Send uploads the compiled effect and its live uniforms. The preview runs the same firmware VM. Your tutorial copy stays in Effects, and the original Resting Deer demo is available to duplicate again.",
+      },
+    ],
     gallery: [
       {
         id: "disassembly",

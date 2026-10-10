@@ -9,6 +9,7 @@
  */
 import { mapStore } from "./mapStore";
 import { SYNTHETIC_Y_JUNCTION_B64 } from "./seedMapData";
+import { migrateSampleMapNames, SAMPLE_DESCRIPTIONS } from "./sampleNames";
 
 const SEED_FLAG = "ledmapper.seededBuiltins.v1";
 
@@ -44,6 +45,7 @@ async function seedOriginalMap(): Promise<void> {
  * resurrecting deleted samples. Commit a flag only after the full import. */
 export async function seedBuiltinMaps(): Promise<void> {
   await seedOriginalMap();
+  await migrateSampleMapNames();
   const ids = ["sample-tenere", "sample-primitive-obsession", "sample-maxa"];
   try {
     if (ids.every(id => localStorage.getItem(`ledmapper.seededBuiltins.${id}.v1`))) return;
@@ -57,12 +59,7 @@ export async function seedBuiltinMaps(): Promise<void> {
       let id = (await mapStore.list()).find(m => m.deviceMapId === sample.map.mapId)?.id;
       if (!id) id = await mapStore.create({ ...sample, source: "import", deviceMapId: sample.map.mapId });
       await mapStore.setTags(id, ["sample", sample.map.mapId.includes("primitive") ? "volumetric" : "topology"]);
-      const description = sample.map.mapId.includes("primitive")
-        ? "Inspired by Wake and Make’s Primitive Obsession: a 20 × 20 × 20 LED volume in a 10-foot open frame. Explore spatial waves, shells and noise. Deliberately no topology. https://wakenmake.shop/projects/primitive_obsession/"
-        : sample.map.mapId.includes("maxa")
-          ? "A procedural interpretation of the Maxa Art Car: a crouching deer with edge-lit triangular facets. Compare spatial sweeps with pulses that follow the edges. Topology extracted offline; tune it in the topology editor."
-          : "A procedural interpretation inspired by Studio DRIFT’s Tree of Tenere: luminous leaves and a branching canopy above an unlit trunk. A gray digital twin gives the lights their context. Topology extracted offline; tune it in the topology editor. https://studiodrift.com/";
-      await mapStore.setDescription(id, description);
+      await mapStore.setDescription(id, SAMPLE_DESCRIPTIONS[sample.map.mapId] ?? "");
       localStorage.setItem(flag, "1");
     } catch (e) { console.warn(`Could not seed ${sample.name}`, e); }
   }
