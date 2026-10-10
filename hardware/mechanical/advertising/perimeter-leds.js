@@ -29,16 +29,14 @@ export class PerimeterLEDs {
   if(this.lastTime===time)return;this.lastTime=time;
   const c=this.ctx,n=this.points.length;c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,this.canvas.width,this.canvas.height);c.drawImage(this.base,0,0);
   c.setTransform(this.dpr,0,0,this.dpr,0,0);c.lineCap='round';
-  // Overlapping sub-pixel color steps read as one diffuser, with no diode dots.
-  for(const [width,alpha,lightness] of [[32,.07,60],[17,.12,65],[8,1,72]]){
-   c.lineWidth=width;
-   for(let i=0;i<n;i++){
-    const p=this.points[i],q=this.points[(i+1)%n],f=this.field(i/n,time);
-    if(width!==8&&f.brightness<.015)continue;
-    // Opaque color in the frosted core avoids brighter dots where strokes join.
-    c.strokeStyle=width===8?`hsl(${f.hue},${f.brightness*100}%,${53+f.brightness*19}%)`:`hsla(${f.hue},100%,${lightness}%,${f.brightness*alpha})`;
-    c.beginPath();c.moveTo(p.x,p.y);c.lineTo(q.x,q.y);c.stroke();
-   }
+  // Emit only from the diffuser surface. Product illumination is handled by
+  // PerimeterLighting; there is no surrounding haze/bloom in clear air.
+  c.lineWidth=8;
+  for(let i=0;i<n;i++){
+   const p=this.points[i],q=this.points[(i+1)%n],f=this.field(i/n,time);
+   // Opaque color avoids brighter dots where adjacent strokes join.
+   c.strokeStyle=`hsl(${f.hue},${f.brightness*100}%,${53+f.brightness*19}%)`;
+   c.beginPath();c.moveTo(p.x,p.y);c.lineTo(q.x,q.y);c.stroke();
   }
  }
  lights(time){

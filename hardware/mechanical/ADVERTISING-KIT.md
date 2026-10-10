@@ -250,3 +250,15 @@ with Content-Encoding, which fetch decodes automatically. The shared loader
 now checks the payload signature before decompression, then performs the same
 geometry bounds validation. Website Chrome checks cover opaque gzip; WebKit
 checks cover HTTP-decoded gzip. Missing decode support uses the poster.
+
+### Diffuser without halo — 9 October 2026
+
+Removed the 32px and 17px translucent strokes around the 8px emitting core.
+The housing, smooth color chase and inward product-only lighting remain.
+There is no new fog, bloom or ambient glow. Updated both the standalone kit
+and the website copy; refreshed runtime versions and the existing private kit.
+Desktop/mobile canvas checks found zero nontransparent pixels beyond the
+housing envelope while the colored core continued animating. Actually viewed
+website .preview.local/no-halo-website.png and no-halo-kit-mobile.png; sharp
+strip edges and colored illumination on modules are visible. Site hero videos
+now fill the entire hero with centered cover cropping on desktop/mobile.
