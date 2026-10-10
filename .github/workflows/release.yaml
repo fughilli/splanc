@@ -226,6 +226,16 @@ jobs:
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
+      # splanc.io/app consumes this exact release tree, including its version
+      # stamp and matching compiler/VM/solver bundles.
+      - name: Upload released webapp
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Deploy to GitHub Pages (main site)
         uses: JamesIves/github-pages-deploy-action@v4
         with:
