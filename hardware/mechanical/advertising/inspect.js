@@ -135,7 +135,7 @@ export class Inspector {
    }
   }
   this.shade.material.opacity=a.shade;
-  this.labels.update(a.object,a.phase==='inspecting'&&(!a.explodeTarget||a.explode>.9));
+  this.labels.update(a.object,a.phase==='inspecting'&&(!a.explodeTarget||a.explode>.9),dt,this.reduced.matches);
  }
  render(){
   if(!this.active)return;

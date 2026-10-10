@@ -1,7 +1,8 @@
 import * as T from './vendor/three.module.js';
+import {CalloutLayout} from './callout-layout.mjs';
 export class PortLabels {
  constructor(panel,camera){
-  this.camera=camera;this.root=document.createElement('div');this.root.id='port-labels';panel.append(this.root);
+  this.layout=new CalloutLayout();this.camera=camera;this.root=document.createElement('div');this.root.id='port-labels';panel.append(this.root);
   this.svg=document.createElementNS('http://www.w3.org/2000/svg','svg');this.svg.classList.add('port-leaders');this.root.append(this.svg);this.entries=[];
  }
  clear(){for(const e of this.entries){e.card.remove();e.line.remove();}this.entries=[];}
@@ -23,32 +24,30 @@ export class PortLabels {
    };
   }
  }
- update(object,show){
+ update(object,show,dt,reduced=false){
   this.root.hidden=!show;if(!show)return;
   if(this.lastWidth!==innerWidth){for(const e of this.entries)e.width=0;this.lastWidth=innerWidth;}
   object.updateMatrixWorld(true);this.svg.setAttribute('viewBox',`0 0 ${innerWidth} ${innerHeight}`);
-  const used=[];
+  const visibleEntries=[];
   for(const e of this.entries){
    const point=object.localToWorld(new T.Vector3(...e.port.position));
    const normal=new T.Vector3(...e.port.normal).applyQuaternion(object.quaternion);
-   const visible=normal.z>-.18;
+   // Hysteresis prevents the same edge-facing port blinking on/off during orbit.
+   const visible=normal.z>(e.visible?-.24:-.12);e.visible=visible;
    e.card.hidden=!visible;e.line.style.display=visible?'':'none';if(!visible)continue;
    point.project(this.camera);const x=(point.x+1)*innerWidth/2,y=(1-point.y)*innerHeight/2;
    if(!e.width){e.width=e.card.offsetWidth;e.height=e.card.offsetHeight;}
-   const w=e.width,h=e.height,side=normal.x<-.05?-1:normal.x>.05?1:x<innerWidth/2?-1:1;
-   let left=Math.max(26,Math.min(innerWidth-26-w,x+side*48-(side<0?w:0)));
-   let top=Math.max(164,Math.min(innerHeight-56-h,y-normal.y*50-h/2));
-   const desiredTop=top,desiredLeft=left;
-   const ys=[top,164,innerHeight-56-h,...used.flatMap(r=>[r.y-h-10,r.y+r.h+10])];
-   const xs=[left,26,innerWidth-26-w];let best=null;
-   for(const x of xs)for(const y of ys){
-    if(y<164||y+h>innerHeight-56||used.some(r=>x<r.x+r.w+8&&x+w+8>r.x&&y<r.y+r.h+8&&y+h+8>r.y))continue;
-    const score=(x-desiredLeft)**2+(y-desiredTop)**2;
-    if(!best||score<best.score)best={x,y,score};
-   }
-   if(best){left=best.x;top=best.y;}
-   used.push({x:left,y:top,w,h});e.card.style.transform=`translate(${left}px,${top}px)`;
-   for(const [k,v] of Object.entries({x1:x,y1:y,x2:left+e.button.offsetWidth/2,y2:top+e.button.offsetHeight/2}))e.line.setAttribute(k,v);
+   e.anchor={x,y};
+   const dx=normal.x+.35*(x-innerWidth/2)/(innerWidth/2);
+   const dy=-normal.y+.35*(y-innerHeight/2)/(innerHeight/2);
+   const length=Math.sqrt(dx*dx+dy*dy+.09);
+   e.preferred={x:x+72*dx/length,y:y+72*dy/length};
+   visibleEntries.push(e);
+  }
+  this.layout.update(visibleEntries,{left:26,right:innerWidth-26,top:164,bottom:innerHeight-56},dt,reduced);
+  for(const e of visibleEntries){
+   e.card.style.transform=`translate(${e.display.x-20}px,${e.display.y-20}px)`;
+   for(const [k,v] of Object.entries({x1:e.anchor.x,y1:e.anchor.y,x2:e.display.x,y2:e.display.y}))e.line.setAttribute(k,v);
   }
  }
 }

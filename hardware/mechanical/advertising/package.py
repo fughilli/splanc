@@ -5,7 +5,7 @@ from PIL import Image,ImageDraw
 R=Path.cwd();O=R/'output/advertising-kit-20261008';P=R/'output/mechanical-viewer/advertising-kit'
 P.mkdir(parents=True,exist_ok=True)
 source=R/'hardware/mechanical/advertising'
-scripts=['sim.js','physics.mjs','perimeter-leds.js','inspect.js','port-labels.js','perimeter-lighting.js','model-data.js']
+scripts=['sim.js','physics.mjs','perimeter-leds.js','inspect.js','port-labels.js','callout-layout.mjs','perimeter-lighting.js','model-data.js']
 code_version=hashlib.sha256(b''.join((source/f).read_bytes() for f in scripts)).hexdigest()[:16]
 markup=(source/'sim.html').read_text().replace('src="sim.js"',f'src="sim.js?v={code_version}"')
 (O/'sim/index.html').write_text(markup)
@@ -79,6 +79,9 @@ diffuser keeps chasing, unless already paused. Closing restores the prior
 playing/paused state. Reduced motion skips the transitions.
 Circular port and button markers track the CAD locations while orbiting; only
 facing features are shown. Tap a circle to reveal its name and description.
+A continuous placement solver spaces the circles and expanded cards, penalizes
+crossed dotted leaders, and glides bubbles into place with their leaders attached.
+Reduced motion bypasses the glide.
 In inspection, Sensors separates the case and reveals the saved board layout
 with sensor callouts. Close case reassembles it; X/background/Escape returns to
 flight, even while exploded. Component bodies are simplified display shapes,

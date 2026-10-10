@@ -262,3 +262,25 @@ housing envelope while the colored core continued animating. Actually viewed
 website .preview.local/no-halo-website.png and no-halo-kit-mobile.png; sharp
 strip edges and colored illumination on modules are visible. Site hero videos
 now fill the entire hero with centered cover cropping on desktop/mobile.
+
+### Continuous callout layout — 9 October 2026
+
+Replaced greedy discrete slots with a persistent screen-space solver. Costs
+cover distance to the port, overlapping expanded cards, crossed/nearby leaders,
+and displacement from the preceding layout. A bounded descent runs jointly over
+visible entries, with time-based interpolation and a speed cap on the displayed
+circles. Leaders follow the displayed center. Visibility has hysteresis at the
+back-facing threshold; reduced motion bypasses interpolation.
+
+`check_callout_layout.mjs` passes crossing reduction, eight-label crowding,
+expanded-card phone resize, settled stability, 30/60/120 Hz step response and
+reduced motion. Eight-label local p95 update cost was ~1.12ms; this is a local
+CPU benchmark, not a mobile performance claim. Chrome checked 18 states across
+three SKUs, desktop/phone, ports/sensors/expanded: zero settled overlaps,
+out-of-bounds cards or crossed leaders in those views. Arbitrary projections
+can still have crossings: this is a local optimizer, not a planarity guarantee.
+Chrome and WebKit orbit/expand/close tests passed with attached leaders and no
+script errors; observed maximum per-frame movement 11.26px desktop/3.05px phone.
+Actually viewed the Splanc/MAX desktop descriptions, Splanc phone description,
+and post-orbit desktop screenshot. Evidence: website `.preview.local/` JSON
+and images; kit `advertising/check_callout_motion.mjs` is the repeatable check.

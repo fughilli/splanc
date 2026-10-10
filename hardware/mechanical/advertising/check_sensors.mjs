@@ -43,6 +43,7 @@ try{
    const name=sku==='max'?'20-channel power telemetry':'Motion';await page.getByRole('button',{name:'About '+name,exact:true}).click();
    assert.equal(await page.getByRole('button',{name:'About '+name,exact:true}).getAttribute('aria-expanded'),'true');
    assert.equal(await page.locator('.port-callout p:not([hidden]) strong').textContent(),name);
+   await page.waitForTimeout(1200); // Allow the continuous callout layout to settle.
    await page.screenshot({path:out+`/review/sensor-detail-${sku}-${mobile?'mobile':'desktop'}${suffix}.png`});
    const boxes=await page.locator('.port-callout').evaluateAll(es=>es.filter(e=>!e.hidden).map(e=>{const b=e.getBoundingClientRect();return {x:b.x,y:b.y,w:b.width,h:b.height};}));
    const overlaps=boxes.some((a,i)=>boxes.slice(i+1).some(b=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y));
