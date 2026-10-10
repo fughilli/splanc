@@ -1,0 +1,22 @@
+{
+  "base": {
+    "violations_by_type": {
+      "lib_footprint_mismatch": 14
+    },
+    "native_connectivity_unconnected_count": 556,
+    "cli_report_unconnected_items": 499,
+    "cli_unconnected_report_truncated": true,
+    "zero_copper_short_clearance_and_hole_violations": true,
+    "zero_routes": true
+  },
+  "gps": {
+    "violations_by_type": {
+      "lib_footprint_mismatch": 16
+    },
+    "native_connectivity_unconnected_count": 578,
+    "cli_report_unconnected_items": 499,
+    "cli_unconnected_report_truncated": true,
+    "zero_copper_short_clearance_and_hole_violations": true,
+    "zero_routes": true
+  }
+}

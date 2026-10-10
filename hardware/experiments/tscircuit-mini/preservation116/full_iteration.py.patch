@@ -1,0 +1,14 @@
+--- full_iteration.py
++++ full_iteration.py
+@@ -53,6 +53,11 @@
+         run(['pnr.plane_access',board,'--out',board,'--fab-model',a.plane_fab,'--report',work/'plane-access.json',*annotations],'plane-access')
+     run(['pnr.planes',board,'--rules',rules,*(['--refill-only'] if a.incremental else [])],'planes')
+     capture(phases,'01-plane-access-fill',board,rules,a.cli)
++    if a.incremental:
++        run(['pnr.native_loop',p/'source.kicad_pcb','--worker','inspect','--rules',rules,'--report',work/'restoration-inventory.json',*annotations],'restoration-inventory')
++        policy=json.loads(rules.read_text())
++        policy['restoration_partition']=json.loads((work/'restoration-inventory.json').read_text())['partition']
++        rules=work/'restoration-rules.json';rules.write_text(json.dumps(policy,indent=2))
+     from pnr.native_loop import main as native
+     final=native([str(board),'--rules',str(rules),'--constraints',str(a.constraints.resolve()),'--out-dir',str(work/'native-loop'),'--kicad-python',a.python,'--kicad-cli',a.cli,'--electrical-fab',a.electrical_fab,'--early-pairs','--route-only','--cycles','12','--route-attempts','40','--placement-attempts','2','--search-seconds','90','--seconds',str(a.seconds),'--phase-dir',str(phases),*annotations])
+     rules=work/'native-loop/policy/prepare.json'

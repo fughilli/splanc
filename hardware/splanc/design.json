@@ -1,0 +1,6347 @@
+{
+  "boards": {
+    "base": {
+      "outline": {
+        "width_mm": 100,
+        "height_mm": 80,
+        "thickness_mm": 1.6
+      },
+      "components": [
+        {
+          "ref": "L1",
+          "address": "board.aferrite._p",
+          "part": "",
+          "position": [
+            74.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "L0805",
+          "nets": {
+            "1": "logic-hv",
+            "2": "hv"
+          }
+        },
+        {
+          "ref": "C1",
+          "address": "board.a_dec._p",
+          "part": "",
+          "position": [
+            58.5,
+            51.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "R38",
+          "address": "board.sda_pu._p",
+          "part": "",
+          "position": [
+            81.5,
+            51.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "sda",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "R37",
+          "address": "board.scl_pu._p",
+          "part": "",
+          "position": [
+            58.5,
+            38.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "scl",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U13",
+          "address": "board.esp.p4",
+          "part": "",
+          "position": [
+            46.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "ESP32P4",
+          "nets": {
+            "1": "board-data_in",
+            "2": "board.esp.p4-2",
+            "3": "3",
+            "4": "4",
+            "5": "5",
+            "6": "sda",
+            "7": "scl",
+            "8": "8",
+            "9": "logic-hv",
+            "10": "10",
+            "11": "neg",
+            "12": "en",
+            "13": "fault",
+            "14": "board-en",
+            "15": "board-fault",
+            "16": "16",
+            "17": "17",
+            "18": "18",
+            "19": "A",
+            "20": "board-A",
+            "21": "logic-hv",
+            "22": "B",
+            "23": "INT1_INT",
+            "24": "board-1-1",
+            "25": "board-1-2",
+            "26": "board.esp-1",
+            "27": "board.esp-1-2",
+            "28": "board.esp-2-1",
+            "29": "29",
+            "30": "FLASHV",
+            "31": "31",
+            "32": "32",
+            "33": "33",
+            "34": "34",
+            "35": "35",
+            "36": "36",
+            "37": "37",
+            "38": "38",
+            "39": "39",
+            "40": "40",
+            "41": "41",
+            "42": "42",
+            "43": "43",
+            "44": "44",
+            "45": "45",
+            "46": "46",
+            "47": "47",
+            "48": "48",
+            "49": "Dneg",
+            "50": "Dpos",
+            "51": "logic-hv",
+            "52": "52",
+            "53": "53",
+            "54": "board.esp-1",
+            "55": "55",
+            "56": "56",
+            "57": "11",
+            "58": "12",
+            "59": "board.esp-1-1",
+            "60": "board.esp-16",
+            "61": "board.esp-17",
+            "62": "logic-hv",
+            "63": "board.esp-18",
+            "64": "board.esp-19",
+            "65": "65",
+            "66": "board-1",
+            "67": "board.esp-1-1",
+            "68": "IO8",
+            "69": "19",
+            "70": "board-20",
+            "71": "FLASHV",
+            "72": "board.esp-1-1",
+            "73": "73",
+            "74": "74",
+            "75": "logic-hv",
+            "76": "board.esp-1",
+            "77": "logic-hv",
+            "78": "board.esp-2",
+            "79": "board.esp-EN-1",
+            "80": "board.esp-17-1",
+            "81": "board.esp-18-1",
+            "82": "board.esp-19-1",
+            "83": "board.esp-20",
+            "84": "board.esp-3",
+            "85": "logic-hv",
+            "86": "board.esp-22",
+            "87": "GPS_TX",
+            "88": "GPS_RX",
+            "89": "GPS_PPS",
+            "90": "GPS_RESET",
+            "91": "board.esp-1",
+            "92": "92",
+            "93": "93",
+            "94": "94",
+            "95": "95",
+            "96": "logic-hv",
+            "97": "97",
+            "98": "98",
+            "99": "board.esp-1-4",
+            "100": "board.esp-1-3",
+            "101": "logic-hv",
+            "102": "logic-hv",
+            "103": "EN",
+            "104": "data_in",
+            "105": "lv"
+          }
+        },
+        {
+          "ref": "U7",
+          "address": "board.esp.core_buck",
+          "part": "",
+          "position": [
+            53.5,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "board.esp-2",
+            "4": "logic-hv",
+            "3": "board.esp-SW",
+            "2": "lv",
+            "1": "board.esp-EN-1"
+          }
+        },
+        {
+          "ref": "U9",
+          "address": "board.esp.core_l",
+          "part": "",
+          "position": [
+            46.0,
+            44.0
+          ],
+          "rotation": 0.0,
+          "footprint": "L2U2",
+          "nets": {
+            "1": "board.esp-SW",
+            "2": "board.esp-1"
+          }
+        },
+        {
+          "ref": "U11",
+          "address": "board.esp.core_rtop",
+          "part": "",
+          "position": [
+            40.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R499K",
+          "nets": {
+            "1": "board.esp-1",
+            "2": "board.esp-2"
+          }
+        },
+        {
+          "ref": "U10",
+          "address": "board.esp.core_rbottom",
+          "part": "",
+          "position": [
+            52.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R499K",
+          "nets": {
+            "1": "board.esp-2",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U8",
+          "address": "board.esp.core_cff",
+          "part": "",
+          "position": [
+            50.5,
+            44.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1",
+            "2": "board.esp-2"
+          }
+        },
+        {
+          "ref": "C29",
+          "address": "board.esp.core_in._p",
+          "part": "",
+          "position": [
+            50.5,
+            42.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C30",
+          "address": "board.esp.core_out._p",
+          "part": "",
+          "position": [
+            54.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C48",
+          "address": "board.esp.flash_dec._p",
+          "part": "",
+          "position": [
+            55.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "FLASHV"
+          }
+        },
+        {
+          "ref": "C50",
+          "address": "board.esp.psram_dec._p",
+          "part": "",
+          "position": [
+            53.5,
+            43.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C49",
+          "address": "board.esp.input_bulk._p",
+          "part": "",
+          "position": [
+            41.0,
+            43.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C52",
+          "address": "board.esp.usb_4u7._p",
+          "part": "",
+          "position": [
+            38.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C53",
+          "address": "board.esp.usb_10n._p",
+          "part": "",
+          "position": [
+            35.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C31",
+          "address": "board.esp.dec0._p",
+          "part": "",
+          "position": [
+            35.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C32",
+          "address": "board.esp.dec1._p",
+          "part": "",
+          "position": [
+            57.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C33",
+          "address": "board.esp.dec2._p",
+          "part": "",
+          "position": [
+            37.5,
+            43.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C34",
+          "address": "board.esp.dec3._p",
+          "part": "",
+          "position": [
+            55.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C35",
+          "address": "board.esp.dec4._p",
+          "part": "",
+          "position": [
+            50.0,
+            46.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C36",
+          "address": "board.esp.dec5._p",
+          "part": "",
+          "position": [
+            34.5,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C37",
+          "address": "board.esp.dec6._p",
+          "part": "",
+          "position": [
+            46.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C38",
+          "address": "board.esp.dec7._p",
+          "part": "",
+          "position": [
+            57.5,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C39",
+          "address": "board.esp.dec8._p",
+          "part": "",
+          "position": [
+            38.5,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C40",
+          "address": "board.esp.dec9._p",
+          "part": "",
+          "position": [
+            43.5,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C41",
+          "address": "board.esp.dec10._p",
+          "part": "",
+          "position": [
+            40.5,
+            25.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C42",
+          "address": "board.esp.dec11._p",
+          "part": "",
+          "position": [
+            51.5,
+            25.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C43",
+          "address": "board.esp.dec12._p",
+          "part": "",
+          "position": [
+            37.0,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C44",
+          "address": "board.esp.dec13._p",
+          "part": "",
+          "position": [
+            55.0,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C45",
+          "address": "board.esp.dec14._p",
+          "part": "",
+          "position": [
+            53.5,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C46",
+          "address": "board.esp.dec15._p",
+          "part": "",
+          "position": [
+            57.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C47",
+          "address": "board.esp.dec16._p",
+          "part": "",
+          "position": [
+            46.0,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "FLASHV"
+          }
+        },
+        {
+          "ref": "U12",
+          "address": "board.esp.flash",
+          "part": "",
+          "position": [
+            46.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "QSPI",
+          "nets": {
+            "1": "board.esp-1-2",
+            "2": "board.esp-2-1",
+            "3": "29",
+            "4": "lv",
+            "5": "33",
+            "6": "32",
+            "7": "31",
+            "8": "FLASHV"
+          }
+        },
+        {
+          "ref": "U18",
+          "address": "board.esp.xtal",
+          "part": "",
+          "position": [
+            38.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "XTAL40",
+          "nets": {
+            "1": "board.esp-1-3",
+            "2": "lv",
+            "3": "board.esp-1-4",
+            "4": "lv"
+          }
+        },
+        {
+          "ref": "U16",
+          "address": "board.esp.xtal_c0",
+          "part": "",
+          "position": [
+            54.0,
+            41.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1-4",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U17",
+          "address": "board.esp.xtal_c1",
+          "part": "",
+          "position": [
+            37.0,
+            41.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1-3",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U15",
+          "address": "board.esp.wireless",
+          "part": "",
+          "position": [
+            17.0,
+            64.0
+          ],
+          "rotation": 180.0,
+          "footprint": "WIRELM-SMD_ESP32-C6-WROOM-1",
+          "nets": {
+            "1": "lv",
+            "2": "logic-hv",
+            "3": "board.esp-EN",
+            "4": "board.esp.wireless-4",
+            "5": "board.esp.wireless-5",
+            "6": "6",
+            "7": "7",
+            "8": "board.esp.wireless-8",
+            "9": "board.esp.wireless-9",
+            "10": "board.esp-10",
+            "11": "11",
+            "12": "12",
+            "13": "board.esp.wireless-13",
+            "14": "board.esp.wireless-14",
+            "15": "15",
+            "16": "board.esp-16",
+            "17": "board.esp-17",
+            "18": "board.esp-18",
+            "19": "board.esp-19",
+            "20": "board.esp.wireless-20",
+            "21": "21",
+            "22": "",
+            "23": "23",
+            "24": "24",
+            "25": "25",
+            "26": "26",
+            "27": "27",
+            "28": "lv",
+            "29": "lv",
+            "30": "lv",
+            "31": "lv",
+            "32": "lv",
+            "33": "lv",
+            "34": "lv",
+            "35": "lv",
+            "36": "lv",
+            "37": "lv"
+          }
+        },
+        {
+          "ref": "R16",
+          "address": "board.esp.radio_pu_EN._p",
+          "part": "",
+          "position": [
+            40.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board.esp-EN",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R17",
+          "address": "board.esp.radio_pu_IO8._p",
+          "part": "",
+          "position": [
+            52.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board.esp-10",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R18",
+          "address": "board.esp.radio_pu_IO9._p",
+          "part": "",
+          "position": [
+            41.5,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "15",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U6",
+          "address": "board.esp.c6_debug",
+          "part": "",
+          "position": [
+            35.0,
+            57.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C6DEBUG",
+          "nets": {
+            "1": "logic-hv",
+            "2": "lv",
+            "3": "25",
+            "4": "24",
+            "5": "board.esp-EN",
+            "6": "15"
+          }
+        },
+        {
+          "ref": "C51",
+          "address": "board.esp.radio_reset._p",
+          "part": "",
+          "position": [
+            41.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-EN"
+          }
+        },
+        {
+          "ref": "U14",
+          "address": "board.esp.uwb",
+          "part": "",
+          "position": [
+            77.0,
+            66.5
+          ],
+          "rotation": 180.0,
+          "footprint": "DWM3000",
+          "nets": {
+            "1": "board.esp.uwb-1",
+            "2": "lv",
+            "3": "board.esp-3",
+            "4": "board.esp.uwb-4",
+            "5": "logic-hv",
+            "6": "logic-hv",
+            "7": "logic-hv",
+            "8": "lv",
+            "9": "9",
+            "10": "board.esp.uwb-10",
+            "11": "board.esp.uwb-11",
+            "12": "board.esp.uwb-12",
+            "13": "13",
+            "14": "14",
+            "15": "board.esp.uwb-15",
+            "16": "lv",
+            "17": "board.esp-17-1",
+            "18": "board.esp-18-1",
+            "19": "board.esp-19-1",
+            "20": "board.esp-20",
+            "21": "lv",
+            "22": "board.esp-22",
+            "23": "lv",
+            "24": "lv"
+          }
+        },
+        {
+          "ref": "C54",
+          "address": "board.esp.uwb_bulk._p",
+          "part": "",
+          "position": [
+            54.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C55",
+          "address": "board.esp.uwb_dec._p",
+          "part": "",
+          "position": [
+            43.5,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R19",
+          "address": "board.esp.uwb_irq_pd._p",
+          "part": "",
+          "position": [
+            37.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-22"
+          }
+        },
+        {
+          "ref": "C28",
+          "address": "board.esp_dec._p",
+          "part": "",
+          "position": [
+            48.5,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C27",
+          "address": "board.esp_bulk._p",
+          "part": "",
+          "position": [
+            38.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R15",
+          "address": "board.en_pullup._p",
+          "part": "",
+          "position": [
+            58.0,
+            40.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "EN",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C26",
+          "address": "board.en_cap._p",
+          "part": "",
+          "position": [
+            67.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "EN"
+          }
+        },
+        {
+          "ref": "SW2",
+          "address": "board.btn_reset",
+          "part": "",
+          "position": [
+            32.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "EN",
+            "2": "board.btn_reset-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R14",
+          "address": "board.download_pullup._p",
+          "part": "",
+          "position": [
+            70.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "IO8",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R2",
+          "address": "board.boot_pullup._p",
+          "part": "",
+          "position": [
+            61.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW1",
+          "address": "board.btn_boot",
+          "part": "",
+          "position": [
+            44.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1",
+            "2": "2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R40",
+          "address": "board.u1_pullup._p",
+          "part": "",
+          "position": [
+            67.0,
+            57.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1-1",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW3",
+          "address": "board.btn_user1",
+          "part": "",
+          "position": [
+            82.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1-1",
+            "2": "board.btn_user1-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R41",
+          "address": "board.u2_pullup._p",
+          "part": "",
+          "position": [
+            82.0,
+            49.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1-2",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW4",
+          "address": "board.btn_user2",
+          "part": "",
+          "position": [
+            89.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1-2",
+            "2": "board.btn_user2-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "USB1",
+          "address": "board.usbc",
+          "part": "",
+          "position": [
+            18.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "USB-C-SMD_GT-USB-7010E-1",
+          "nets": {
+            "A1B12": "lv",
+            "A4B9": "raw_usb-hv",
+            "B8": "B8",
+            "A5": "A5",
+            "B7": "Dneg",
+            "A6": "Dpos",
+            "A7": "Dneg",
+            "B6": "Dpos",
+            "A8": "A8",
+            "B5": "B5",
+            "B4A9": "raw_usb-hv",
+            "B1A12": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "U31",
+          "address": "board.pd.ctrl",
+          "part": "",
+          "position": [
+            20.0,
+            17.0
+          ],
+          "rotation": 0.0,
+          "footprint": "QFN-38_L6.0-W4.0-P0.40-TL-EP_RJK",
+          "nets": {
+            "1": "board.pd-1",
+            "2": "lv",
+            "3": "board.pd-1",
+            "4": "board.pd-4",
+            "5": "board.pd-5",
+            "6": "capability_mismatch",
+            "7": "board.pd-1",
+            "8": "sda",
+            "9": "scl",
+            "10": "DBG_ACC",
+            "11": "lv",
+            "12": "lv",
+            "13": "PLUG_FLIP",
+            "14": "lv",
+            "15": "DRAIN",
+            "16": "lv",
+            "17": "lv",
+            "18": "nFAULT_IN",
+            "19": "sink_enabled_n",
+            "20": "negotiated-hv",
+            "21": "negotiated-hv",
+            "22": "negotiated-hv",
+            "23": "raw_usb-hv",
+            "24": "raw_usb-hv",
+            "25": "raw_usb-hv",
+            "26": "lv",
+            "27": "lv",
+            "28": "CC1",
+            "29": "CC2",
+            "30": "DRAIN",
+            "31": "lv",
+            "32": "raw_usb-hv",
+            "33": "raw_usb-hv",
+            "34": "lv",
+            "35": "lv",
+            "36": "lv",
+            "37": "PLUG_EVENT",
+            "38": "logic-hv",
+            "39": "lv",
+            "40": "DRAIN"
+          }
+        },
+        {
+          "ref": "U30",
+          "address": "board.pd.cc_protection",
+          "part": "",
+          "position": [
+            29.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "WQFN-20_L3.0-W3.0-P0.40-TL-EP1.7",
+          "nets": {
+            "21": "lv",
+            "20": "lv",
+            "19": "lv",
+            "18": "lv",
+            "17": "lv",
+            "16": "lv",
+            "15": "lv",
+            "14": "lv",
+            "13": "lv",
+            "12": "CC1",
+            "11": "CC2",
+            "10": "board.pd-1",
+            "9": "nFAULT_IN",
+            "8": "lv",
+            "7": "A5",
+            "6": "B5",
+            "5": "B5",
+            "4": "A5",
+            "3": "VBIAS",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R33",
+          "address": "board.pd.cc_fault_pullup._p",
+          "part": "",
+          "position": [
+            9.0,
+            17.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "nFAULT_IN",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C79",
+          "address": "board.pd.cc_supply_dec._p",
+          "part": "",
+          "position": [
+            14.0,
+            11.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C76",
+          "address": "board.pd.cc_bias_dec._p",
+          "part": "",
+          "position": [
+            10.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "VBIAS"
+          }
+        },
+        {
+          "ref": "D1",
+          "address": "board.pd.vbus_tvs",
+          "part": "",
+          "position": [
+            34.0,
+            22.0
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-BL-EP",
+          "nets": {
+            "7": "lv",
+            "6": "raw_usb-hv",
+            "5": "raw_usb-hv",
+            "4": "raw_usb-hv",
+            "3": "lv",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R35",
+          "address": "board.pd.current_top._p",
+          "part": "",
+          "position": [
+            16.5,
+            11.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.pd-5",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "R34",
+          "address": "board.pd.current_bottom._p",
+          "part": "",
+          "position": [
+            5.5,
+            23.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-5"
+          }
+        },
+        {
+          "ref": "C87",
+          "address": "board.pd.logic_dec._p",
+          "part": "",
+          "position": [
+            33.5,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C86",
+          "address": "board.pd.ldo3_dec._p",
+          "part": "",
+          "position": [
+            7.5,
+            19.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C85",
+          "address": "board.pd.ldo1_dec._p",
+          "part": "",
+          "position": [
+            25.5,
+            37.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-4"
+          }
+        },
+        {
+          "ref": "C80",
+          "address": "board.pd.input_dec_0",
+          "part": "",
+          "position": [
+            8.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C81",
+          "address": "board.pd.input_dec_1",
+          "part": "",
+          "position": [
+            31.5,
+            33.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C82",
+          "address": "board.pd.input_dec_2",
+          "part": "",
+          "position": [
+            20.0,
+            10.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C83",
+          "address": "board.pd.input_dec_3",
+          "part": "",
+          "position": [
+            9.0,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C84",
+          "address": "board.pd.input_dec_4",
+          "part": "",
+          "position": [
+            31.0,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C88",
+          "address": "board.pd.output_dec_0",
+          "part": "",
+          "position": [
+            26.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C89",
+          "address": "board.pd.output_dec_1",
+          "part": "",
+          "position": [
+            26.5,
+            18.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C90",
+          "address": "board.pd.output_dec_2",
+          "part": "",
+          "position": [
+            13.0,
+            18.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C91",
+          "address": "board.pd.output_dec_3",
+          "part": "",
+          "position": [
+            29.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C77",
+          "address": "board.pd.cc_dec_1",
+          "part": "",
+          "position": [
+            29.0,
+            37.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "CC1"
+          }
+        },
+        {
+          "ref": "C78",
+          "address": "board.pd.cc_dec_2",
+          "part": "",
+          "position": [
+            6.5,
+            17.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "CC2"
+          }
+        },
+        {
+          "ref": "U5",
+          "address": "board.converter.ic",
+          "part": "",
+          "position": [
+            14.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "VQFN-HR-26_L4.0-W3.5_TPS55288RPMR",
+          "nets": {
+            "1": "DR1L",
+            "2": "DR1H",
+            "3": "negotiated-hv",
+            "4": "EN_UVLO",
+            "5": "power_good",
+            "6": "nCC",
+            "7": "lv",
+            "8": "FSW",
+            "9": "lv",
+            "10": "lv",
+            "11": "board.converter-1-3",
+            "12": "board.converter-1-3",
+            "13": "p5v-hv",
+            "14": "board.converter-FB",
+            "15": "MODE",
+            "16": "CDC",
+            "17": "ILIM",
+            "18": "COMP",
+            "19": "VCC",
+            "20": "20",
+            "21": "board.converter-2",
+            "22": "22",
+            "23": "board.converter-1",
+            "24": "lv",
+            "25": "board.converter-2",
+            "26": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "R11",
+          "address": "board.converter.mode",
+          "part": "",
+          "position": [
+            5.5,
+            27.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "MODE"
+          }
+        },
+        {
+          "ref": "R6",
+          "address": "board.converter.enable_top._p",
+          "part": "",
+          "position": [
+            15.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "EN_UVLO",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "R5",
+          "address": "board.converter.enable_bottom._p",
+          "part": "",
+          "position": [
+            28.0,
+            12.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "EN_UVLO"
+          }
+        },
+        {
+          "ref": "R9",
+          "address": "board.converter.frequency1._p",
+          "part": "",
+          "position": [
+            30.5,
+            35.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "FSW"
+          }
+        },
+        {
+          "ref": "R10",
+          "address": "board.converter.frequency2._p",
+          "part": "",
+          "position": [
+            5.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "FSW"
+          }
+        },
+        {
+          "ref": "R4",
+          "address": "board.converter.current_limit._p",
+          "part": "",
+          "position": [
+            5.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "ILIM"
+          }
+        },
+        {
+          "ref": "Q1",
+          "address": "board.converter.high_fet",
+          "part": "",
+          "position": [
+            20.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "PQFN-8_L5.8-W4.9-P1.27-LS6.0-BL",
+          "nets": {
+            "1": "board.converter-1",
+            "2": "board.converter-1",
+            "3": "board.converter-1",
+            "4": "DR1H",
+            "5": "negotiated-hv",
+            "6": "negotiated-hv",
+            "7": "negotiated-hv",
+            "8": "negotiated-hv",
+            "9": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "Q2",
+          "address": "board.converter.low_fet",
+          "part": "",
+          "position": [
+            10.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "PQFN-8_L5.8-W4.9-P1.27-LS6.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "DR1L",
+            "5": "board.converter-1",
+            "6": "board.converter-1",
+            "7": "board.converter-1",
+            "8": "board.converter-1",
+            "9": "board.converter-1"
+          }
+        },
+        {
+          "ref": "L2",
+          "address": "board.converter.inductor",
+          "part": "",
+          "position": [
+            20.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "IND-SMD_L11.0-W10.0_SRP1038A",
+          "nets": {
+            "1": "board.converter-1",
+            "2": "board.converter-2"
+          }
+        },
+        {
+          "ref": "C8",
+          "address": "board.converter.bootstrap1._p",
+          "part": "",
+          "position": [
+            30.5,
+            13.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-1",
+            "1": "22"
+          }
+        },
+        {
+          "ref": "C9",
+          "address": "board.converter.bootstrap2._p",
+          "part": "",
+          "position": [
+            13.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-2",
+            "1": "20"
+          }
+        },
+        {
+          "ref": "C25",
+          "address": "board.converter.vcc_dec._p",
+          "part": "",
+          "position": [
+            11.0,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "VCC"
+          }
+        },
+        {
+          "ref": "R13",
+          "address": "board.converter.shunt._p",
+          "part": "",
+          "position": [
+            26.0,
+            15.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R1206",
+          "nets": {
+            "2": "p5v-hv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "R8",
+          "address": "board.converter.fb_top._p",
+          "part": "",
+          "position": [
+            23.5,
+            10.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.converter-FB",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "R7",
+          "address": "board.converter.fb_bottom._p",
+          "part": "",
+          "position": [
+            20.0,
+            40.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-FB"
+          }
+        },
+        {
+          "ref": "R3",
+          "address": "board.converter.compensation_r._p",
+          "part": "",
+          "position": [
+            24.5,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.converter-1-1",
+            "1": "COMP"
+          }
+        },
+        {
+          "ref": "C10",
+          "address": "board.converter.compensation_a._p",
+          "part": "",
+          "position": [
+            35.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-1-2",
+            "1": "board.converter-1-1"
+          }
+        },
+        {
+          "ref": "C11",
+          "address": "board.converter.compensation_b._p",
+          "part": "",
+          "position": [
+            5.0,
+            30.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-2"
+          }
+        },
+        {
+          "ref": "C12",
+          "address": "board.converter.compensation_pole",
+          "part": "",
+          "position": [
+            7.5,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "COMP"
+          }
+        },
+        {
+          "ref": "R12",
+          "address": "board.converter.pg_pullup._p",
+          "part": "",
+          "position": [
+            5.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "power_good",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C15",
+          "address": "board.converter.input_hf._p",
+          "part": "",
+          "position": [
+            34.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C24",
+          "address": "board.converter.output_hf._p",
+          "part": "",
+          "position": [
+            27.0,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C13",
+          "address": "board.converter.input_cap0",
+          "part": "",
+          "position": [
+            29.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C14",
+          "address": "board.converter.input_cap1",
+          "part": "",
+          "position": [
+            26.0,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C16",
+          "address": "board.converter.output_cap0._p",
+          "part": "",
+          "position": [
+            13.5,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C17",
+          "address": "board.converter.output_cap1._p",
+          "part": "",
+          "position": [
+            20.0,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C18",
+          "address": "board.converter.output_cap2._p",
+          "part": "",
+          "position": [
+            8.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C19",
+          "address": "board.converter.output_cap3._p",
+          "part": "",
+          "position": [
+            15.5,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C20",
+          "address": "board.converter.output_cap4._p",
+          "part": "",
+          "position": [
+            31.5,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C21",
+          "address": "board.converter.output_cap5._p",
+          "part": "",
+          "position": [
+            14.5,
+            37.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C22",
+          "address": "board.converter.output_cap6._p",
+          "part": "",
+          "position": [
+            24.5,
+            12.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C23",
+          "address": "board.converter.output_cap7._p",
+          "part": "",
+          "position": [
+            32.0,
+            19.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "D2",
+          "address": "board.usb_data_esd",
+          "part": "",
+          "position": [
+            75.0,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-9X3-3_L1.0-W0.8-P0.35-LS1.0-BR",
+          "nets": {
+            "1": "Dpos",
+            "2": "Dneg",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "U3",
+          "address": "board.buck",
+          "part": "",
+          "position": [
+            77.5,
+            40.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "FB",
+            "4": "p5v-hv",
+            "3": "SW",
+            "2": "lv",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U2",
+          "address": "board.buck_l._p",
+          "part": "",
+          "position": [
+            60.0,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "IND-SMD_L6.5-W6.5_IHLP-2525",
+          "nets": {
+            "1": "SW",
+            "2": "logic-hv"
+          }
+        },
+        {
+          "ref": "R21",
+          "address": "board.fb_top._p",
+          "part": "",
+          "position": [
+            70.0,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "FB",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R20",
+          "address": "board.fb_bot._p",
+          "part": "",
+          "position": [
+            58.0,
+            49.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "lv",
+            "1": "FB"
+          }
+        },
+        {
+          "ref": "C4",
+          "address": "board.buck_in._p",
+          "part": "",
+          "position": [
+            65.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "C5",
+          "address": "board.buck_out._p",
+          "part": "",
+          "position": [
+            62.0,
+            53.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "LED1",
+          "address": "board.power_led",
+          "part": "",
+          "position": [
+            27.0,
+            10.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LED0603-RD",
+          "nets": {
+            "2": "pos",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R36",
+          "address": "board.power_led_r._p",
+          "part": "",
+          "position": [
+            72.5,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "pos",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "LED2",
+          "address": "board.status_led",
+          "part": "",
+          "position": [
+            33.0,
+            10.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LED0603-RD",
+          "nets": {
+            "2": "board-pos",
+            "1": "neg"
+          }
+        },
+        {
+          "ref": "R39",
+          "address": "board.status_led_r._p",
+          "part": "",
+          "position": [
+            78.0,
+            37.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board-pos",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R25",
+          "address": "board.led0.shunt._p",
+          "part": "",
+          "position": [
+            82.0,
+            20.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0805",
+          "nets": {
+            "2": "IN",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U19",
+          "address": "board.led0.ina",
+          "part": "",
+          "position": [
+            82.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "fault",
+            "4": "sda",
+            "5": "scl",
+            "10": "p5v-hv",
+            "9": "IN",
+            "8": "IN",
+            "7": "lv",
+            "6": "logic-hv"
+          }
+        },
+        {
+          "ref": "R23",
+          "address": "board.led0.fault_pu._p",
+          "part": "",
+          "position": [
+            85.5,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "fault",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C57",
+          "address": "board.led0.ina_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U20",
+          "address": "board.led0.load_sw",
+          "part": "",
+          "position": [
+            82.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-TL-EP",
+          "nets": {
+            "1": "board-1-4",
+            "2": "board.led0-ILIM",
+            "3": "fault",
+            "4": "en",
+            "5": "lv",
+            "6": "IN",
+            "7": "lv"
+          }
+        },
+        {
+          "ref": "R24",
+          "address": "board.led0.load_ilim._p",
+          "part": "",
+          "position": [
+            78.5,
+            23.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.led0-ILIM"
+          }
+        },
+        {
+          "ref": "R22",
+          "address": "board.led0.en_pd._p",
+          "part": "",
+          "position": [
+            78.5,
+            27.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "en"
+          }
+        },
+        {
+          "ref": "U21",
+          "address": "board.led0.shifter",
+          "part": "",
+          "position": [
+            86.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "data_in",
+            "2": "lv",
+            "1": "logic-hv",
+            "6": "board-1-4",
+            "5": "logic-hv",
+            "4": "board.led0-B"
+          }
+        },
+        {
+          "ref": "R26",
+          "address": "board.led0.term._p",
+          "part": "",
+          "position": [
+            85.5,
+            22.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "data_out",
+            "1": "board.led0-B"
+          }
+        },
+        {
+          "ref": "C59",
+          "address": "board.led0.shifter_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-4"
+          }
+        },
+        {
+          "ref": "C58",
+          "address": "board.led0.shifter_a_dec._p",
+          "part": "",
+          "position": [
+            85.5,
+            20.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "CN1",
+          "address": "board.led0.conn",
+          "part": "",
+          "position": [
+            94.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "CONN-TH_B3B-PH-K-S",
+          "nets": {
+            "2": "data_out",
+            "1": "board-1-4",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "C56",
+          "address": "board.led0.chan_bulk._p",
+          "part": "",
+          "position": [
+            77.5,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-4"
+          }
+        },
+        {
+          "ref": "R30",
+          "address": "board.led1.shunt._p",
+          "part": "",
+          "position": [
+            83.5,
+            43.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0805",
+          "nets": {
+            "2": "board.led1-IN",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U22",
+          "address": "board.led1.ina",
+          "part": "",
+          "position": [
+            82.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "hv",
+            "3": "board-fault",
+            "4": "sda",
+            "5": "scl",
+            "10": "p5v-hv",
+            "9": "board.led1-IN",
+            "8": "board.led1-IN",
+            "7": "lv",
+            "6": "logic-hv"
+          }
+        },
+        {
+          "ref": "R28",
+          "address": "board.led1.fault_pu._p",
+          "part": "",
+          "position": [
+            87.5,
+            42.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-fault",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C61",
+          "address": "board.led1.ina_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U23",
+          "address": "board.led1.load_sw",
+          "part": "",
+          "position": [
+            86.5,
+            35.5
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-TL-EP",
+          "nets": {
+            "1": "board-1-3",
+            "2": "board.led1-ILIM",
+            "3": "board-fault",
+            "4": "board-en",
+            "5": "lv",
+            "6": "board.led1-IN",
+            "7": "lv"
+          }
+        },
+        {
+          "ref": "R29",
+          "address": "board.led1.load_ilim._p",
+          "part": "",
+          "position": [
+            78.5,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.led1-ILIM"
+          }
+        },
+        {
+          "ref": "R27",
+          "address": "board.led1.en_pd._p",
+          "part": "",
+          "position": [
+            82.0,
+            32.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-en"
+          }
+        },
+        {
+          "ref": "U24",
+          "address": "board.led1.shifter",
+          "part": "",
+          "position": [
+            86.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-data_in",
+            "2": "lv",
+            "1": "logic-hv",
+            "6": "board-1-3",
+            "5": "logic-hv",
+            "4": "board.led1-B"
+          }
+        },
+        {
+          "ref": "R31",
+          "address": "board.led1.term._p",
+          "part": "",
+          "position": [
+            83.0,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.led1-data_out",
+            "1": "board.led1-B"
+          }
+        },
+        {
+          "ref": "C63",
+          "address": "board.led1.shifter_dec._p",
+          "part": "",
+          "position": [
+            85.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-3"
+          }
+        },
+        {
+          "ref": "C62",
+          "address": "board.led1.shifter_a_dec._p",
+          "part": "",
+          "position": [
+            87.0,
+            44.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "CN2",
+          "address": "board.led1.conn",
+          "part": "",
+          "position": [
+            94.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "CONN-TH_B3B-PH-K-S",
+          "nets": {
+            "2": "board.led1-data_out",
+            "1": "board-1-3",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "C60",
+          "address": "board.led1.chan_bulk._p",
+          "part": "",
+          "position": [
+            82.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-3"
+          }
+        },
+        {
+          "ref": "U29",
+          "address": "board.mpu",
+          "part": "",
+          "position": [
+            62.5,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "LGA-14_L3.0-W2.5-P0.50-TL_QMI8658A",
+          "nets": {
+            "14": "sda",
+            "13": "scl",
+            "12": "hv",
+            "11": "lv",
+            "10": "lv",
+            "9": "board.mpu-9",
+            "8": "hv",
+            "7": "lv",
+            "6": "lv",
+            "5": "hv",
+            "4": "INT1_INT",
+            "3": "lv",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "C73",
+          "address": "board.mpu_dec._p",
+          "part": "",
+          "position": [
+            73.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C74",
+          "address": "board.mpu_io_dec._p",
+          "part": "",
+          "position": [
+            64.0,
+            57.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C75",
+          "address": "board.mpu_reservoir._p",
+          "part": "",
+          "position": [
+            66.0,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U1",
+          "address": "board.bmp",
+          "part": "",
+          "position": [
+            78.5,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LGA-10_L2.0-W2.0-P0.50-TL_BMP580",
+          "nets": {
+            "6": "1",
+            "7": "INT",
+            "8": "lv",
+            "9": "lv",
+            "10": "1",
+            "1": "1",
+            "2": "scl",
+            "3": "lv",
+            "4": "sda",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R1",
+          "address": "board.bmp_supply_r._p",
+          "part": "",
+          "position": [
+            63.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "1",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C2",
+          "address": "board.bmp_dec._p",
+          "part": "",
+          "position": [
+            70.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "1"
+          }
+        },
+        {
+          "ref": "C3",
+          "address": "board.bmp_io_dec._p",
+          "part": "",
+          "position": [
+            64.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "1"
+          }
+        },
+        {
+          "ref": "U4",
+          "address": "board.compass",
+          "part": "",
+          "position": [
+            56.5,
+            51.5
+          ],
+          "rotation": 0.0,
+          "footprint": "FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL",
+          "nets": {
+            "A1": "lv",
+            "A2": "scl",
+            "B1": "hv",
+            "B2": "sda"
+          }
+        },
+        {
+          "ref": "C6",
+          "address": "board.compass_dec._p",
+          "part": "",
+          "position": [
+            75.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C7",
+          "address": "board.compass_reservoir._p",
+          "part": "",
+          "position": [
+            74.0,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U27",
+          "address": "board.mic_supply",
+          "part": "",
+          "position": [
+            62.0,
+            50.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "board-1-5",
+            "4": "",
+            "3": "hv",
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C69",
+          "address": "board.mic_supply_in._p",
+          "part": "",
+          "position": [
+            60.5,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C70",
+          "address": "board.mic_supply_out._p",
+          "part": "",
+          "position": [
+            60.5,
+            55.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "MIC1",
+          "address": "board.mic",
+          "part": "",
+          "position": [
+            90.0,
+            55.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MIC-SMD_7P-L3.5-W2.7_MMICT5848-00-012",
+          "nets": {
+            "8": "board-A-1",
+            "4": "WAKE",
+            "5": "THSEL",
+            "3": "lv",
+            "1": "board-B",
+            "2": "lv",
+            "6": "board-B-1",
+            "7": "board-1-5"
+          }
+        },
+        {
+          "ref": "C64",
+          "address": "board.mic_dec._p",
+          "part": "",
+          "position": [
+            67.5,
+            59.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "R32",
+          "address": "board.mic_data_pd._p",
+          "part": "",
+          "position": [
+            63.0,
+            55.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-A-1"
+          }
+        },
+        {
+          "ref": "U25",
+          "address": "board.mic_sck_shift",
+          "part": "",
+          "position": [
+            70.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "A",
+            "2": "lv",
+            "1": "hv",
+            "6": "board-1-5",
+            "5": "hv",
+            "4": "board-B-1"
+          }
+        },
+        {
+          "ref": "C65",
+          "address": "board.mic_sck_shift_a_dec._p",
+          "part": "",
+          "position": [
+            58.5,
+            53.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C66",
+          "address": "board.mic_sck_shift_b_dec._p",
+          "part": "",
+          "position": [
+            67.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "U28",
+          "address": "board.mic_ws_shift",
+          "part": "",
+          "position": [
+            78.0,
+            50.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-A",
+            "2": "lv",
+            "1": "hv",
+            "6": "board-1-5",
+            "5": "hv",
+            "4": "board-B"
+          }
+        },
+        {
+          "ref": "C71",
+          "address": "board.mic_ws_shift_a_dec._p",
+          "part": "",
+          "position": [
+            72.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C72",
+          "address": "board.mic_ws_shift_b_dec._p",
+          "part": "",
+          "position": [
+            62.0,
+            32.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "U26",
+          "address": "board.mic_sd_shift",
+          "part": "",
+          "position": [
+            66.5,
+            54.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-A-1",
+            "2": "lv",
+            "1": "board-1-5",
+            "6": "hv",
+            "5": "board-1-5",
+            "4": "B"
+          }
+        },
+        {
+          "ref": "C67",
+          "address": "board.mic_sd_shift_a_dec._p",
+          "part": "",
+          "position": [
+            61.5,
+            57.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "C68",
+          "address": "board.mic_sd_shift_b_dec._p",
+          "part": "",
+          "position": [
+            85.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "TP1",
+          "address": "board.eol",
+          "part": "MINI-EOL-V1",
+          "position": [
+            70.0,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MINI-EOL-V1",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "lv",
+            "5": "p5v-hv",
+            "6": "logic-hv",
+            "7": "fault",
+            "8": "board-fault",
+            "9": "board-1-4",
+            "10": "board-1-3",
+            "11": "data_in",
+            "12": "board-data_in",
+            "13": "sda",
+            "14": "scl",
+            "15": "EN",
+            "16": "board-1",
+            "17": "board-1-1",
+            "18": "board-1-2",
+            "19": "19",
+            "20": "board-20"
+          }
+        }
+      ]
+    },
+    "gps": {
+      "outline": {
+        "width_mm": 100,
+        "height_mm": 80,
+        "thickness_mm": 1.6
+      },
+      "components": [
+        {
+          "ref": "L1",
+          "address": "board.aferrite._p",
+          "part": "",
+          "position": [
+            74.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "L0805",
+          "nets": {
+            "1": "logic-hv",
+            "2": "hv"
+          }
+        },
+        {
+          "ref": "C1",
+          "address": "board.a_dec._p",
+          "part": "",
+          "position": [
+            58.5,
+            51.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "R38",
+          "address": "board.sda_pu._p",
+          "part": "",
+          "position": [
+            81.5,
+            51.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "sda",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "R37",
+          "address": "board.scl_pu._p",
+          "part": "",
+          "position": [
+            58.5,
+            38.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "scl",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U13",
+          "address": "board.esp.p4",
+          "part": "",
+          "position": [
+            46.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "ESP32P4",
+          "nets": {
+            "1": "board-data_in",
+            "2": "board.esp.p4-2",
+            "3": "3",
+            "4": "4",
+            "5": "5",
+            "6": "sda",
+            "7": "scl",
+            "8": "8",
+            "9": "logic-hv",
+            "10": "10",
+            "11": "neg",
+            "12": "en",
+            "13": "fault",
+            "14": "board-en",
+            "15": "board-fault",
+            "16": "16",
+            "17": "17",
+            "18": "18",
+            "19": "A",
+            "20": "board-A",
+            "21": "logic-hv",
+            "22": "B",
+            "23": "INT1_INT",
+            "24": "board-1-1",
+            "25": "board-1-2",
+            "26": "board.esp-1",
+            "27": "board.esp-1-2",
+            "28": "board.esp-2-1",
+            "29": "29",
+            "30": "FLASHV",
+            "31": "31",
+            "32": "32",
+            "33": "33",
+            "34": "34",
+            "35": "35",
+            "36": "36",
+            "37": "37",
+            "38": "38",
+            "39": "39",
+            "40": "40",
+            "41": "41",
+            "42": "42",
+            "43": "43",
+            "44": "44",
+            "45": "45",
+            "46": "46",
+            "47": "47",
+            "48": "48",
+            "49": "Dneg",
+            "50": "Dpos",
+            "51": "logic-hv",
+            "52": "52",
+            "53": "53",
+            "54": "board.esp-1",
+            "55": "55",
+            "56": "56",
+            "57": "11",
+            "58": "12",
+            "59": "board.esp-1-1",
+            "60": "board.esp-16",
+            "61": "board.esp-17",
+            "62": "logic-hv",
+            "63": "board.esp-18",
+            "64": "board.esp-19",
+            "65": "65",
+            "66": "board-1",
+            "67": "board.esp-1-1",
+            "68": "IO8",
+            "69": "19",
+            "70": "board-20",
+            "71": "FLASHV",
+            "72": "board.esp-1-1",
+            "73": "73",
+            "74": "74",
+            "75": "logic-hv",
+            "76": "board.esp-1",
+            "77": "logic-hv",
+            "78": "board.esp-2",
+            "79": "board.esp-EN-1",
+            "80": "board.esp-17-1",
+            "81": "board.esp-18-1",
+            "82": "board.esp-19-1",
+            "83": "board.esp-20",
+            "84": "board.esp-3",
+            "85": "logic-hv",
+            "86": "board.esp-22",
+            "87": "TX",
+            "88": "RX",
+            "89": "PPS",
+            "90": "RESET",
+            "91": "board.esp-1",
+            "92": "92",
+            "93": "93",
+            "94": "94",
+            "95": "95",
+            "96": "logic-hv",
+            "97": "97",
+            "98": "98",
+            "99": "board.esp-1-4",
+            "100": "board.esp-1-3",
+            "101": "logic-hv",
+            "102": "logic-hv",
+            "103": "EN",
+            "104": "data_in",
+            "105": "lv"
+          }
+        },
+        {
+          "ref": "U7",
+          "address": "board.esp.core_buck",
+          "part": "",
+          "position": [
+            53.5,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "board.esp-2",
+            "4": "logic-hv",
+            "3": "board.esp-SW",
+            "2": "lv",
+            "1": "board.esp-EN-1"
+          }
+        },
+        {
+          "ref": "U9",
+          "address": "board.esp.core_l",
+          "part": "",
+          "position": [
+            46.0,
+            44.0
+          ],
+          "rotation": 0.0,
+          "footprint": "L2U2",
+          "nets": {
+            "1": "board.esp-SW",
+            "2": "board.esp-1"
+          }
+        },
+        {
+          "ref": "U11",
+          "address": "board.esp.core_rtop",
+          "part": "",
+          "position": [
+            40.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R499K",
+          "nets": {
+            "1": "board.esp-1",
+            "2": "board.esp-2"
+          }
+        },
+        {
+          "ref": "U10",
+          "address": "board.esp.core_rbottom",
+          "part": "",
+          "position": [
+            52.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R499K",
+          "nets": {
+            "1": "board.esp-2",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U8",
+          "address": "board.esp.core_cff",
+          "part": "",
+          "position": [
+            50.5,
+            44.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1",
+            "2": "board.esp-2"
+          }
+        },
+        {
+          "ref": "C29",
+          "address": "board.esp.core_in._p",
+          "part": "",
+          "position": [
+            50.5,
+            42.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C30",
+          "address": "board.esp.core_out._p",
+          "part": "",
+          "position": [
+            54.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C48",
+          "address": "board.esp.flash_dec._p",
+          "part": "",
+          "position": [
+            55.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "FLASHV"
+          }
+        },
+        {
+          "ref": "C50",
+          "address": "board.esp.psram_dec._p",
+          "part": "",
+          "position": [
+            53.5,
+            43.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C49",
+          "address": "board.esp.input_bulk._p",
+          "part": "",
+          "position": [
+            41.0,
+            43.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C52",
+          "address": "board.esp.usb_4u7._p",
+          "part": "",
+          "position": [
+            38.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C53",
+          "address": "board.esp.usb_10n._p",
+          "part": "",
+          "position": [
+            35.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C31",
+          "address": "board.esp.dec0._p",
+          "part": "",
+          "position": [
+            35.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C32",
+          "address": "board.esp.dec1._p",
+          "part": "",
+          "position": [
+            57.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C33",
+          "address": "board.esp.dec2._p",
+          "part": "",
+          "position": [
+            37.5,
+            43.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C34",
+          "address": "board.esp.dec3._p",
+          "part": "",
+          "position": [
+            55.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C35",
+          "address": "board.esp.dec4._p",
+          "part": "",
+          "position": [
+            50.0,
+            46.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C36",
+          "address": "board.esp.dec5._p",
+          "part": "",
+          "position": [
+            34.5,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C37",
+          "address": "board.esp.dec6._p",
+          "part": "",
+          "position": [
+            46.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C38",
+          "address": "board.esp.dec7._p",
+          "part": "",
+          "position": [
+            57.5,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C39",
+          "address": "board.esp.dec8._p",
+          "part": "",
+          "position": [
+            38.5,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C40",
+          "address": "board.esp.dec9._p",
+          "part": "",
+          "position": [
+            43.5,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C41",
+          "address": "board.esp.dec10._p",
+          "part": "",
+          "position": [
+            40.5,
+            25.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C42",
+          "address": "board.esp.dec11._p",
+          "part": "",
+          "position": [
+            51.5,
+            25.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C43",
+          "address": "board.esp.dec12._p",
+          "part": "",
+          "position": [
+            37.0,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C44",
+          "address": "board.esp.dec13._p",
+          "part": "",
+          "position": [
+            55.0,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1"
+          }
+        },
+        {
+          "ref": "C45",
+          "address": "board.esp.dec14._p",
+          "part": "",
+          "position": [
+            53.5,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C46",
+          "address": "board.esp.dec15._p",
+          "part": "",
+          "position": [
+            57.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-1-1"
+          }
+        },
+        {
+          "ref": "C47",
+          "address": "board.esp.dec16._p",
+          "part": "",
+          "position": [
+            46.0,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "FLASHV"
+          }
+        },
+        {
+          "ref": "U12",
+          "address": "board.esp.flash",
+          "part": "",
+          "position": [
+            46.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "QSPI",
+          "nets": {
+            "1": "board.esp-1-2",
+            "2": "board.esp-2-1",
+            "3": "29",
+            "4": "lv",
+            "5": "33",
+            "6": "32",
+            "7": "31",
+            "8": "FLASHV"
+          }
+        },
+        {
+          "ref": "U18",
+          "address": "board.esp.xtal",
+          "part": "",
+          "position": [
+            38.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "XTAL40",
+          "nets": {
+            "1": "board.esp-1-3",
+            "2": "lv",
+            "3": "board.esp-1-4",
+            "4": "lv"
+          }
+        },
+        {
+          "ref": "U16",
+          "address": "board.esp.xtal_c0",
+          "part": "",
+          "position": [
+            54.0,
+            41.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1-4",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U17",
+          "address": "board.esp.xtal_c1",
+          "part": "",
+          "position": [
+            37.0,
+            41.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C22P",
+          "nets": {
+            "1": "board.esp-1-3",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "U15",
+          "address": "board.esp.wireless",
+          "part": "",
+          "position": [
+            17.0,
+            64.0
+          ],
+          "rotation": 180.0,
+          "footprint": "WIRELM-SMD_ESP32-C6-WROOM-1",
+          "nets": {
+            "1": "lv",
+            "2": "logic-hv",
+            "3": "board.esp-EN",
+            "4": "board.esp.wireless-4",
+            "5": "board.esp.wireless-5",
+            "6": "6",
+            "7": "7",
+            "8": "board.esp.wireless-8",
+            "9": "board.esp.wireless-9",
+            "10": "board.esp-10",
+            "11": "11",
+            "12": "12",
+            "13": "board.esp.wireless-13",
+            "14": "board.esp.wireless-14",
+            "15": "15",
+            "16": "board.esp-16",
+            "17": "board.esp-17",
+            "18": "board.esp-18",
+            "19": "board.esp-19",
+            "20": "board.esp.wireless-20",
+            "21": "21",
+            "22": "",
+            "23": "23",
+            "24": "24",
+            "25": "25",
+            "26": "26",
+            "27": "27",
+            "28": "lv",
+            "29": "lv",
+            "30": "lv",
+            "31": "lv",
+            "32": "lv",
+            "33": "lv",
+            "34": "lv",
+            "35": "lv",
+            "36": "lv",
+            "37": "lv"
+          }
+        },
+        {
+          "ref": "R16",
+          "address": "board.esp.radio_pu_EN._p",
+          "part": "",
+          "position": [
+            40.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board.esp-EN",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R17",
+          "address": "board.esp.radio_pu_IO8._p",
+          "part": "",
+          "position": [
+            52.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board.esp-10",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R18",
+          "address": "board.esp.radio_pu_IO9._p",
+          "part": "",
+          "position": [
+            41.5,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "15",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U6",
+          "address": "board.esp.c6_debug",
+          "part": "",
+          "position": [
+            35.0,
+            57.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C6DEBUG",
+          "nets": {
+            "1": "logic-hv",
+            "2": "lv",
+            "3": "25",
+            "4": "24",
+            "5": "board.esp-EN",
+            "6": "15"
+          }
+        },
+        {
+          "ref": "C51",
+          "address": "board.esp.radio_reset._p",
+          "part": "",
+          "position": [
+            41.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-EN"
+          }
+        },
+        {
+          "ref": "U14",
+          "address": "board.esp.uwb",
+          "part": "",
+          "position": [
+            77.0,
+            66.5
+          ],
+          "rotation": 180.0,
+          "footprint": "DWM3000",
+          "nets": {
+            "1": "board.esp.uwb-1",
+            "2": "lv",
+            "3": "board.esp-3",
+            "4": "board.esp.uwb-4",
+            "5": "logic-hv",
+            "6": "logic-hv",
+            "7": "logic-hv",
+            "8": "lv",
+            "9": "9",
+            "10": "board.esp.uwb-10",
+            "11": "board.esp.uwb-11",
+            "12": "board.esp.uwb-12",
+            "13": "13",
+            "14": "14",
+            "15": "board.esp.uwb-15",
+            "16": "lv",
+            "17": "board.esp-17-1",
+            "18": "board.esp-18-1",
+            "19": "board.esp-19-1",
+            "20": "board.esp-20",
+            "21": "lv",
+            "22": "board.esp-22",
+            "23": "lv",
+            "24": "lv"
+          }
+        },
+        {
+          "ref": "C54",
+          "address": "board.esp.uwb_bulk._p",
+          "part": "",
+          "position": [
+            54.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C55",
+          "address": "board.esp.uwb_dec._p",
+          "part": "",
+          "position": [
+            43.5,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R19",
+          "address": "board.esp.uwb_irq_pd._p",
+          "part": "",
+          "position": [
+            37.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.esp-22"
+          }
+        },
+        {
+          "ref": "C28",
+          "address": "board.esp_dec._p",
+          "part": "",
+          "position": [
+            48.5,
+            23.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C27",
+          "address": "board.esp_bulk._p",
+          "part": "",
+          "position": [
+            38.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R15",
+          "address": "board.en_pullup._p",
+          "part": "",
+          "position": [
+            58.0,
+            40.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "EN",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C26",
+          "address": "board.en_cap._p",
+          "part": "",
+          "position": [
+            67.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "EN"
+          }
+        },
+        {
+          "ref": "SW2",
+          "address": "board.btn_reset",
+          "part": "",
+          "position": [
+            32.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "EN",
+            "2": "board.btn_reset-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R14",
+          "address": "board.download_pullup._p",
+          "part": "",
+          "position": [
+            70.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "IO8",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R2",
+          "address": "board.boot_pullup._p",
+          "part": "",
+          "position": [
+            61.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW1",
+          "address": "board.btn_boot",
+          "part": "",
+          "position": [
+            44.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1",
+            "2": "2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R40",
+          "address": "board.u1_pullup._p",
+          "part": "",
+          "position": [
+            67.0,
+            57.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1-1",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW3",
+          "address": "board.btn_user1",
+          "part": "",
+          "position": [
+            82.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1-1",
+            "2": "board.btn_user1-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R41",
+          "address": "board.u2_pullup._p",
+          "part": "",
+          "position": [
+            82.0,
+            49.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-1-2",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "SW4",
+          "address": "board.btn_user2",
+          "part": "",
+          "position": [
+            89.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SW-SMD_E-SWITCH_TL3340",
+          "nets": {
+            "1": "board-1-2",
+            "2": "board.btn_user2-2",
+            "3": "lv",
+            "4": "lv",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "USB1",
+          "address": "board.usbc",
+          "part": "",
+          "position": [
+            18.0,
+            3.5
+          ],
+          "rotation": 0.0,
+          "footprint": "USB-C-SMD_GT-USB-7010E-1",
+          "nets": {
+            "A1B12": "lv",
+            "A4B9": "raw_usb-hv",
+            "B8": "B8",
+            "A5": "A5",
+            "B7": "Dneg",
+            "A6": "Dpos",
+            "A7": "Dneg",
+            "B6": "Dpos",
+            "A8": "A8",
+            "B5": "B5",
+            "B4A9": "raw_usb-hv",
+            "B1A12": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "U31",
+          "address": "board.pd.ctrl",
+          "part": "",
+          "position": [
+            20.0,
+            17.0
+          ],
+          "rotation": 0.0,
+          "footprint": "QFN-38_L6.0-W4.0-P0.40-TL-EP_RJK",
+          "nets": {
+            "1": "board.pd-1",
+            "2": "lv",
+            "3": "board.pd-1",
+            "4": "board.pd-4",
+            "5": "board.pd-5",
+            "6": "capability_mismatch",
+            "7": "board.pd-1",
+            "8": "sda",
+            "9": "scl",
+            "10": "DBG_ACC",
+            "11": "lv",
+            "12": "lv",
+            "13": "PLUG_FLIP",
+            "14": "lv",
+            "15": "DRAIN",
+            "16": "lv",
+            "17": "lv",
+            "18": "nFAULT_IN",
+            "19": "sink_enabled_n",
+            "20": "negotiated-hv",
+            "21": "negotiated-hv",
+            "22": "negotiated-hv",
+            "23": "raw_usb-hv",
+            "24": "raw_usb-hv",
+            "25": "raw_usb-hv",
+            "26": "lv",
+            "27": "lv",
+            "28": "CC1",
+            "29": "CC2",
+            "30": "DRAIN",
+            "31": "lv",
+            "32": "raw_usb-hv",
+            "33": "raw_usb-hv",
+            "34": "lv",
+            "35": "lv",
+            "36": "lv",
+            "37": "PLUG_EVENT",
+            "38": "logic-hv",
+            "39": "lv",
+            "40": "DRAIN"
+          }
+        },
+        {
+          "ref": "U30",
+          "address": "board.pd.cc_protection",
+          "part": "",
+          "position": [
+            29.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "WQFN-20_L3.0-W3.0-P0.40-TL-EP1.7",
+          "nets": {
+            "21": "lv",
+            "20": "lv",
+            "19": "lv",
+            "18": "lv",
+            "17": "lv",
+            "16": "lv",
+            "15": "lv",
+            "14": "lv",
+            "13": "lv",
+            "12": "CC1",
+            "11": "CC2",
+            "10": "board.pd-1",
+            "9": "nFAULT_IN",
+            "8": "lv",
+            "7": "A5",
+            "6": "B5",
+            "5": "B5",
+            "4": "A5",
+            "3": "VBIAS",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R33",
+          "address": "board.pd.cc_fault_pullup._p",
+          "part": "",
+          "position": [
+            9.0,
+            17.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "nFAULT_IN",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C79",
+          "address": "board.pd.cc_supply_dec._p",
+          "part": "",
+          "position": [
+            14.0,
+            11.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C76",
+          "address": "board.pd.cc_bias_dec._p",
+          "part": "",
+          "position": [
+            10.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "VBIAS"
+          }
+        },
+        {
+          "ref": "D1",
+          "address": "board.pd.vbus_tvs",
+          "part": "",
+          "position": [
+            34.0,
+            22.0
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-BL-EP",
+          "nets": {
+            "7": "lv",
+            "6": "raw_usb-hv",
+            "5": "raw_usb-hv",
+            "4": "raw_usb-hv",
+            "3": "lv",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R35",
+          "address": "board.pd.current_top._p",
+          "part": "",
+          "position": [
+            16.5,
+            11.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.pd-5",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "R34",
+          "address": "board.pd.current_bottom._p",
+          "part": "",
+          "position": [
+            5.5,
+            23.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-5"
+          }
+        },
+        {
+          "ref": "C87",
+          "address": "board.pd.logic_dec._p",
+          "part": "",
+          "position": [
+            33.5,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C86",
+          "address": "board.pd.ldo3_dec._p",
+          "part": "",
+          "position": [
+            7.5,
+            19.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-1"
+          }
+        },
+        {
+          "ref": "C85",
+          "address": "board.pd.ldo1_dec._p",
+          "part": "",
+          "position": [
+            25.5,
+            37.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.pd-4"
+          }
+        },
+        {
+          "ref": "C80",
+          "address": "board.pd.input_dec_0",
+          "part": "",
+          "position": [
+            8.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C81",
+          "address": "board.pd.input_dec_1",
+          "part": "",
+          "position": [
+            31.5,
+            33.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C82",
+          "address": "board.pd.input_dec_2",
+          "part": "",
+          "position": [
+            20.0,
+            10.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C83",
+          "address": "board.pd.input_dec_3",
+          "part": "",
+          "position": [
+            9.0,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C84",
+          "address": "board.pd.input_dec_4",
+          "part": "",
+          "position": [
+            31.0,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "raw_usb-hv"
+          }
+        },
+        {
+          "ref": "C88",
+          "address": "board.pd.output_dec_0",
+          "part": "",
+          "position": [
+            26.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C89",
+          "address": "board.pd.output_dec_1",
+          "part": "",
+          "position": [
+            26.5,
+            18.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C90",
+          "address": "board.pd.output_dec_2",
+          "part": "",
+          "position": [
+            13.0,
+            18.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C91",
+          "address": "board.pd.output_dec_3",
+          "part": "",
+          "position": [
+            29.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C77",
+          "address": "board.pd.cc_dec_1",
+          "part": "",
+          "position": [
+            29.0,
+            37.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "CC1"
+          }
+        },
+        {
+          "ref": "C78",
+          "address": "board.pd.cc_dec_2",
+          "part": "",
+          "position": [
+            6.5,
+            17.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "CC2"
+          }
+        },
+        {
+          "ref": "U5",
+          "address": "board.converter.ic",
+          "part": "",
+          "position": [
+            14.0,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "VQFN-HR-26_L4.0-W3.5_TPS55288RPMR",
+          "nets": {
+            "1": "DR1L",
+            "2": "DR1H",
+            "3": "negotiated-hv",
+            "4": "EN_UVLO",
+            "5": "power_good",
+            "6": "nCC",
+            "7": "lv",
+            "8": "FSW",
+            "9": "lv",
+            "10": "lv",
+            "11": "board.converter-1-3",
+            "12": "board.converter-1-3",
+            "13": "p5v-hv",
+            "14": "board.converter-FB",
+            "15": "MODE",
+            "16": "CDC",
+            "17": "ILIM",
+            "18": "COMP",
+            "19": "VCC",
+            "20": "20",
+            "21": "board.converter-2",
+            "22": "22",
+            "23": "board.converter-1",
+            "24": "lv",
+            "25": "board.converter-2",
+            "26": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "R11",
+          "address": "board.converter.mode",
+          "part": "",
+          "position": [
+            5.5,
+            27.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "MODE"
+          }
+        },
+        {
+          "ref": "R6",
+          "address": "board.converter.enable_top._p",
+          "part": "",
+          "position": [
+            15.5,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "EN_UVLO",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "R5",
+          "address": "board.converter.enable_bottom._p",
+          "part": "",
+          "position": [
+            28.0,
+            12.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "EN_UVLO"
+          }
+        },
+        {
+          "ref": "R9",
+          "address": "board.converter.frequency1._p",
+          "part": "",
+          "position": [
+            30.5,
+            35.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "FSW"
+          }
+        },
+        {
+          "ref": "R10",
+          "address": "board.converter.frequency2._p",
+          "part": "",
+          "position": [
+            5.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "FSW"
+          }
+        },
+        {
+          "ref": "R4",
+          "address": "board.converter.current_limit._p",
+          "part": "",
+          "position": [
+            5.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "ILIM"
+          }
+        },
+        {
+          "ref": "Q1",
+          "address": "board.converter.high_fet",
+          "part": "",
+          "position": [
+            20.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "PQFN-8_L5.8-W4.9-P1.27-LS6.0-BL",
+          "nets": {
+            "1": "board.converter-1",
+            "2": "board.converter-1",
+            "3": "board.converter-1",
+            "4": "DR1H",
+            "5": "negotiated-hv",
+            "6": "negotiated-hv",
+            "7": "negotiated-hv",
+            "8": "negotiated-hv",
+            "9": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "Q2",
+          "address": "board.converter.low_fet",
+          "part": "",
+          "position": [
+            10.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "PQFN-8_L5.8-W4.9-P1.27-LS6.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "DR1L",
+            "5": "board.converter-1",
+            "6": "board.converter-1",
+            "7": "board.converter-1",
+            "8": "board.converter-1",
+            "9": "board.converter-1"
+          }
+        },
+        {
+          "ref": "L2",
+          "address": "board.converter.inductor",
+          "part": "",
+          "position": [
+            20.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "IND-SMD_L11.0-W10.0_SRP1038A",
+          "nets": {
+            "1": "board.converter-1",
+            "2": "board.converter-2"
+          }
+        },
+        {
+          "ref": "C8",
+          "address": "board.converter.bootstrap1._p",
+          "part": "",
+          "position": [
+            30.5,
+            13.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-1",
+            "1": "22"
+          }
+        },
+        {
+          "ref": "C9",
+          "address": "board.converter.bootstrap2._p",
+          "part": "",
+          "position": [
+            13.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-2",
+            "1": "20"
+          }
+        },
+        {
+          "ref": "C25",
+          "address": "board.converter.vcc_dec._p",
+          "part": "",
+          "position": [
+            11.0,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "VCC"
+          }
+        },
+        {
+          "ref": "R13",
+          "address": "board.converter.shunt._p",
+          "part": "",
+          "position": [
+            26.0,
+            15.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R1206",
+          "nets": {
+            "2": "p5v-hv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "R8",
+          "address": "board.converter.fb_top._p",
+          "part": "",
+          "position": [
+            23.5,
+            10.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.converter-FB",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "R7",
+          "address": "board.converter.fb_bottom._p",
+          "part": "",
+          "position": [
+            20.0,
+            40.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-FB"
+          }
+        },
+        {
+          "ref": "R3",
+          "address": "board.converter.compensation_r._p",
+          "part": "",
+          "position": [
+            24.5,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.converter-1-1",
+            "1": "COMP"
+          }
+        },
+        {
+          "ref": "C10",
+          "address": "board.converter.compensation_a._p",
+          "part": "",
+          "position": [
+            35.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "board.converter-1-2",
+            "1": "board.converter-1-1"
+          }
+        },
+        {
+          "ref": "C11",
+          "address": "board.converter.compensation_b._p",
+          "part": "",
+          "position": [
+            5.0,
+            30.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-2"
+          }
+        },
+        {
+          "ref": "C12",
+          "address": "board.converter.compensation_pole",
+          "part": "",
+          "position": [
+            7.5,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "COMP"
+          }
+        },
+        {
+          "ref": "R12",
+          "address": "board.converter.pg_pullup._p",
+          "part": "",
+          "position": [
+            5.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "power_good",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C15",
+          "address": "board.converter.input_hf._p",
+          "part": "",
+          "position": [
+            34.0,
+            27.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C24",
+          "address": "board.converter.output_hf._p",
+          "part": "",
+          "position": [
+            27.0,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C13",
+          "address": "board.converter.input_cap0",
+          "part": "",
+          "position": [
+            29.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C14",
+          "address": "board.converter.input_cap1",
+          "part": "",
+          "position": [
+            26.0,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C1206",
+          "nets": {
+            "2": "lv",
+            "1": "negotiated-hv"
+          }
+        },
+        {
+          "ref": "C16",
+          "address": "board.converter.output_cap0._p",
+          "part": "",
+          "position": [
+            13.5,
+            15.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C17",
+          "address": "board.converter.output_cap1._p",
+          "part": "",
+          "position": [
+            20.0,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C18",
+          "address": "board.converter.output_cap2._p",
+          "part": "",
+          "position": [
+            8.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C19",
+          "address": "board.converter.output_cap3._p",
+          "part": "",
+          "position": [
+            15.5,
+            13.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C20",
+          "address": "board.converter.output_cap4._p",
+          "part": "",
+          "position": [
+            31.5,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C21",
+          "address": "board.converter.output_cap5._p",
+          "part": "",
+          "position": [
+            14.5,
+            37.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C22",
+          "address": "board.converter.output_cap6._p",
+          "part": "",
+          "position": [
+            24.5,
+            12.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "C23",
+          "address": "board.converter.output_cap7._p",
+          "part": "",
+          "position": [
+            32.0,
+            19.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board.converter-1-3"
+          }
+        },
+        {
+          "ref": "D2",
+          "address": "board.usb_data_esd",
+          "part": "",
+          "position": [
+            75.0,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-9X3-3_L1.0-W0.8-P0.35-LS1.0-BR",
+          "nets": {
+            "1": "Dpos",
+            "2": "Dneg",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "U3",
+          "address": "board.buck",
+          "part": "",
+          "position": [
+            77.5,
+            40.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "FB",
+            "4": "p5v-hv",
+            "3": "SW",
+            "2": "lv",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U2",
+          "address": "board.buck_l._p",
+          "part": "",
+          "position": [
+            60.0,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "IND-SMD_L6.5-W6.5_IHLP-2525",
+          "nets": {
+            "1": "SW",
+            "2": "logic-hv"
+          }
+        },
+        {
+          "ref": "R21",
+          "address": "board.fb_top._p",
+          "part": "",
+          "position": [
+            70.0,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "FB",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R20",
+          "address": "board.fb_bot._p",
+          "part": "",
+          "position": [
+            58.0,
+            49.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "lv",
+            "1": "FB"
+          }
+        },
+        {
+          "ref": "C4",
+          "address": "board.buck_in._p",
+          "part": "",
+          "position": [
+            65.5,
+            36.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "C5",
+          "address": "board.buck_out._p",
+          "part": "",
+          "position": [
+            62.0,
+            53.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "LED1",
+          "address": "board.power_led",
+          "part": "",
+          "position": [
+            27.0,
+            10.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LED0603-RD",
+          "nets": {
+            "2": "pos",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "R36",
+          "address": "board.power_led_r._p",
+          "part": "",
+          "position": [
+            72.5,
+            52.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "pos",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "LED2",
+          "address": "board.status_led",
+          "part": "",
+          "position": [
+            33.0,
+            10.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LED0603-RD",
+          "nets": {
+            "2": "board-pos",
+            "1": "neg"
+          }
+        },
+        {
+          "ref": "R39",
+          "address": "board.status_led_r._p",
+          "part": "",
+          "position": [
+            78.0,
+            37.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board-pos",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "R25",
+          "address": "board.led0.shunt._p",
+          "part": "",
+          "position": [
+            82.0,
+            20.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0805",
+          "nets": {
+            "2": "IN",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U19",
+          "address": "board.led0.ina",
+          "part": "",
+          "position": [
+            82.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "fault",
+            "4": "sda",
+            "5": "scl",
+            "10": "p5v-hv",
+            "9": "IN",
+            "8": "IN",
+            "7": "lv",
+            "6": "logic-hv"
+          }
+        },
+        {
+          "ref": "R23",
+          "address": "board.led0.fault_pu._p",
+          "part": "",
+          "position": [
+            85.5,
+            28.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "fault",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C57",
+          "address": "board.led0.ina_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            21.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U20",
+          "address": "board.led0.load_sw",
+          "part": "",
+          "position": [
+            82.0,
+            29.5
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-TL-EP",
+          "nets": {
+            "1": "board-1-4",
+            "2": "board.led0-ILIM",
+            "3": "fault",
+            "4": "en",
+            "5": "lv",
+            "6": "IN",
+            "7": "lv"
+          }
+        },
+        {
+          "ref": "R24",
+          "address": "board.led0.load_ilim._p",
+          "part": "",
+          "position": [
+            78.5,
+            23.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.led0-ILIM"
+          }
+        },
+        {
+          "ref": "R22",
+          "address": "board.led0.en_pd._p",
+          "part": "",
+          "position": [
+            78.5,
+            27.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "en"
+          }
+        },
+        {
+          "ref": "U21",
+          "address": "board.led0.shifter",
+          "part": "",
+          "position": [
+            86.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "data_in",
+            "2": "lv",
+            "1": "logic-hv",
+            "6": "board-1-4",
+            "5": "logic-hv",
+            "4": "board.led0-B"
+          }
+        },
+        {
+          "ref": "R26",
+          "address": "board.led0.term._p",
+          "part": "",
+          "position": [
+            85.5,
+            22.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "data_out",
+            "1": "board.led0-B"
+          }
+        },
+        {
+          "ref": "C59",
+          "address": "board.led0.shifter_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            28.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-4"
+          }
+        },
+        {
+          "ref": "C58",
+          "address": "board.led0.shifter_a_dec._p",
+          "part": "",
+          "position": [
+            85.5,
+            20.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "CN1",
+          "address": "board.led0.conn",
+          "part": "",
+          "position": [
+            94.0,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "CONN-TH_B3B-PH-K-S",
+          "nets": {
+            "2": "data_out",
+            "1": "board-1-4",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "C56",
+          "address": "board.led0.chan_bulk._p",
+          "part": "",
+          "position": [
+            77.5,
+            25.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-4"
+          }
+        },
+        {
+          "ref": "R30",
+          "address": "board.led1.shunt._p",
+          "part": "",
+          "position": [
+            83.5,
+            43.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0805",
+          "nets": {
+            "2": "board.led1-IN",
+            "1": "p5v-hv"
+          }
+        },
+        {
+          "ref": "U22",
+          "address": "board.led1.ina",
+          "part": "",
+          "position": [
+            82.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+          "nets": {
+            "1": "lv",
+            "2": "hv",
+            "3": "board-fault",
+            "4": "sda",
+            "5": "scl",
+            "10": "p5v-hv",
+            "9": "board.led1-IN",
+            "8": "board.led1-IN",
+            "7": "lv",
+            "6": "logic-hv"
+          }
+        },
+        {
+          "ref": "R28",
+          "address": "board.led1.fault_pu._p",
+          "part": "",
+          "position": [
+            87.5,
+            42.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "board-fault",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "C61",
+          "address": "board.led1.ina_dec._p",
+          "part": "",
+          "position": [
+            78.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "U23",
+          "address": "board.led1.load_sw",
+          "part": "",
+          "position": [
+            86.5,
+            35.5
+          ],
+          "rotation": 0.0,
+          "footprint": "WSON-6_L2.0-W2.0-P0.65-TL-EP",
+          "nets": {
+            "1": "board-1-3",
+            "2": "board.led1-ILIM",
+            "3": "board-fault",
+            "4": "board-en",
+            "5": "lv",
+            "6": "board.led1-IN",
+            "7": "lv"
+          }
+        },
+        {
+          "ref": "R29",
+          "address": "board.led1.load_ilim._p",
+          "part": "",
+          "position": [
+            78.5,
+            35.0
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board.led1-ILIM"
+          }
+        },
+        {
+          "ref": "R27",
+          "address": "board.led1.en_pd._p",
+          "part": "",
+          "position": [
+            82.0,
+            32.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-en"
+          }
+        },
+        {
+          "ref": "U24",
+          "address": "board.led1.shifter",
+          "part": "",
+          "position": [
+            86.0,
+            39.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-data_in",
+            "2": "lv",
+            "1": "logic-hv",
+            "6": "board-1-3",
+            "5": "logic-hv",
+            "4": "board.led1-B"
+          }
+        },
+        {
+          "ref": "R31",
+          "address": "board.led1.term._p",
+          "part": "",
+          "position": [
+            83.0,
+            45.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "board.led1-data_out",
+            "1": "board.led1-B"
+          }
+        },
+        {
+          "ref": "C63",
+          "address": "board.led1.shifter_dec._p",
+          "part": "",
+          "position": [
+            85.5,
+            33.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-3"
+          }
+        },
+        {
+          "ref": "C62",
+          "address": "board.led1.shifter_a_dec._p",
+          "part": "",
+          "position": [
+            87.0,
+            44.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "logic-hv"
+          }
+        },
+        {
+          "ref": "CN2",
+          "address": "board.led1.conn",
+          "part": "",
+          "position": [
+            94.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "CONN-TH_B3B-PH-K-S",
+          "nets": {
+            "2": "board.led1-data_out",
+            "1": "board-1-3",
+            "3": "lv"
+          }
+        },
+        {
+          "ref": "C60",
+          "address": "board.led1.chan_bulk._p",
+          "part": "",
+          "position": [
+            82.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-3"
+          }
+        },
+        {
+          "ref": "U29",
+          "address": "board.mpu",
+          "part": "",
+          "position": [
+            62.5,
+            39.5
+          ],
+          "rotation": 0.0,
+          "footprint": "LGA-14_L3.0-W2.5-P0.50-TL_QMI8658A",
+          "nets": {
+            "14": "sda",
+            "13": "scl",
+            "12": "hv",
+            "11": "lv",
+            "10": "lv",
+            "9": "board.mpu-9",
+            "8": "hv",
+            "7": "lv",
+            "6": "lv",
+            "5": "hv",
+            "4": "INT1_INT",
+            "3": "lv",
+            "2": "lv",
+            "1": "lv"
+          }
+        },
+        {
+          "ref": "C73",
+          "address": "board.mpu_dec._p",
+          "part": "",
+          "position": [
+            73.0,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C74",
+          "address": "board.mpu_io_dec._p",
+          "part": "",
+          "position": [
+            64.0,
+            57.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C75",
+          "address": "board.mpu_reservoir._p",
+          "part": "",
+          "position": [
+            66.0,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U1",
+          "address": "board.bmp",
+          "part": "",
+          "position": [
+            78.5,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "LGA-10_L2.0-W2.0-P0.50-TL_BMP580",
+          "nets": {
+            "6": "1",
+            "7": "INT",
+            "8": "lv",
+            "9": "lv",
+            "10": "1",
+            "1": "1",
+            "2": "scl",
+            "3": "lv",
+            "4": "sda",
+            "5": "lv"
+          }
+        },
+        {
+          "ref": "R1",
+          "address": "board.bmp_supply_r._p",
+          "part": "",
+          "position": [
+            63.0,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "1",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C2",
+          "address": "board.bmp_dec._p",
+          "part": "",
+          "position": [
+            70.0,
+            31.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "1"
+          }
+        },
+        {
+          "ref": "C3",
+          "address": "board.bmp_io_dec._p",
+          "part": "",
+          "position": [
+            64.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "1"
+          }
+        },
+        {
+          "ref": "U4",
+          "address": "board.compass",
+          "part": "",
+          "position": [
+            56.5,
+            51.5
+          ],
+          "rotation": 0.0,
+          "footprint": "FLIPCHIP-4_L0.8-W0.8-R2-C2-P0.40-TL",
+          "nets": {
+            "A1": "lv",
+            "A2": "scl",
+            "B1": "hv",
+            "B2": "sda"
+          }
+        },
+        {
+          "ref": "C6",
+          "address": "board.compass_dec._p",
+          "part": "",
+          "position": [
+            75.5,
+            32.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C7",
+          "address": "board.compass_reservoir._p",
+          "part": "",
+          "position": [
+            74.0,
+            34.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0603",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "U27",
+          "address": "board.mic_supply",
+          "part": "",
+          "position": [
+            62.0,
+            50.5
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+          "nets": {
+            "5": "board-1-5",
+            "4": "",
+            "3": "hv",
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C69",
+          "address": "board.mic_supply_in._p",
+          "part": "",
+          "position": [
+            60.5,
+            34.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C70",
+          "address": "board.mic_supply_out._p",
+          "part": "",
+          "position": [
+            60.5,
+            55.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "MIC1",
+          "address": "board.mic",
+          "part": "",
+          "position": [
+            90.0,
+            55.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MIC-SMD_7P-L3.5-W2.7_MMICT5848-00-012",
+          "nets": {
+            "8": "board-A-1",
+            "4": "WAKE",
+            "5": "THSEL",
+            "3": "lv",
+            "1": "board-B",
+            "2": "lv",
+            "6": "board-B-1",
+            "7": "board-1-5"
+          }
+        },
+        {
+          "ref": "C64",
+          "address": "board.mic_dec._p",
+          "part": "",
+          "position": [
+            67.5,
+            59.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "R32",
+          "address": "board.mic_data_pd._p",
+          "part": "",
+          "position": [
+            63.0,
+            55.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-A-1"
+          }
+        },
+        {
+          "ref": "U25",
+          "address": "board.mic_sck_shift",
+          "part": "",
+          "position": [
+            70.0,
+            36.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "A",
+            "2": "lv",
+            "1": "hv",
+            "6": "board-1-5",
+            "5": "hv",
+            "4": "board-B-1"
+          }
+        },
+        {
+          "ref": "C65",
+          "address": "board.mic_sck_shift_a_dec._p",
+          "part": "",
+          "position": [
+            58.5,
+            53.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C66",
+          "address": "board.mic_sck_shift_b_dec._p",
+          "part": "",
+          "position": [
+            67.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "U28",
+          "address": "board.mic_ws_shift",
+          "part": "",
+          "position": [
+            78.0,
+            50.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-A",
+            "2": "lv",
+            "1": "hv",
+            "6": "board-1-5",
+            "5": "hv",
+            "4": "board-B"
+          }
+        },
+        {
+          "ref": "C71",
+          "address": "board.mic_ws_shift_a_dec._p",
+          "part": "",
+          "position": [
+            72.5,
+            30.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C72",
+          "address": "board.mic_ws_shift_b_dec._p",
+          "part": "",
+          "position": [
+            62.0,
+            32.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "U26",
+          "address": "board.mic_sd_shift",
+          "part": "",
+          "position": [
+            66.5,
+            54.0
+          ],
+          "rotation": 0.0,
+          "footprint": "SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+          "nets": {
+            "3": "board-A-1",
+            "2": "lv",
+            "1": "board-1-5",
+            "6": "hv",
+            "5": "board-1-5",
+            "4": "B"
+          }
+        },
+        {
+          "ref": "C67",
+          "address": "board.mic_sd_shift_a_dec._p",
+          "part": "",
+          "position": [
+            61.5,
+            57.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "board-1-5"
+          }
+        },
+        {
+          "ref": "C68",
+          "address": "board.mic_sd_shift_b_dec._p",
+          "part": "",
+          "position": [
+            85.0,
+            47.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "TP1",
+          "address": "board.eol",
+          "part": "MINI-EOL-V1",
+          "position": [
+            70.0,
+            45.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MINI-EOL-V1",
+          "nets": {
+            "1": "lv",
+            "2": "lv",
+            "3": "lv",
+            "4": "lv",
+            "5": "p5v-hv",
+            "6": "logic-hv",
+            "7": "fault",
+            "8": "board-fault",
+            "9": "board-1-4",
+            "10": "board-1-3",
+            "11": "data_in",
+            "12": "board-data_in",
+            "13": "sda",
+            "14": "scl",
+            "15": "EN",
+            "16": "board-1",
+            "17": "board-1-1",
+            "18": "board-1-2",
+            "19": "19",
+            "20": "board-20"
+          }
+        },
+        {
+          "ref": "U34",
+          "address": "gps.gnss",
+          "part": "",
+          "position": [
+            48.0,
+            57.0
+          ],
+          "rotation": 0.0,
+          "footprint": "MAXM10S",
+          "nets": {
+            "1": "lv",
+            "2": "RX",
+            "3": "TX",
+            "4": "PPS",
+            "5": "gps.gnss-5",
+            "6": "hv",
+            "7": "hv",
+            "8": "hv",
+            "9": "RESET",
+            "10": "lv",
+            "11": "gps-11",
+            "12": "lv",
+            "13": "gps.gnss-13",
+            "14": "gps-14",
+            "15": "gps.gnss-15",
+            "16": "gps.gnss-16",
+            "17": "gps.gnss-17",
+            "18": "gps.gnss-18"
+          }
+        },
+        {
+          "ref": "U32",
+          "address": "gps.antenna",
+          "part": "",
+          "position": [
+            49.0,
+            68.0
+          ],
+          "rotation": 0.0,
+          "footprint": "UFL",
+          "nets": {
+            "1": "gps-1",
+            "2": "lv"
+          }
+        },
+        {
+          "ref": "C93",
+          "address": "gps.dc_block._p",
+          "part": "",
+          "position": [
+            41.0,
+            55.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "gps-1",
+            "1": "gps-11"
+          }
+        },
+        {
+          "ref": "U33",
+          "address": "gps.bias",
+          "part": "",
+          "position": [
+            43.0,
+            50.5
+          ],
+          "rotation": 0.0,
+          "footprint": "L27N",
+          "nets": {
+            "1": "gps-1",
+            "2": "gps-14"
+          }
+        },
+        {
+          "ref": "C92",
+          "address": "gps.bulk._p",
+          "part": "",
+          "position": [
+            47.0,
+            50.5
+          ],
+          "rotation": 0.0,
+          "footprint": "C0805",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "C94",
+          "address": "gps.dec._p",
+          "part": "",
+          "position": [
+            41.0,
+            53.0
+          ],
+          "rotation": 0.0,
+          "footprint": "C0402",
+          "nets": {
+            "2": "lv",
+            "1": "hv"
+          }
+        },
+        {
+          "ref": "R42",
+          "address": "gps.reset_pu._p",
+          "part": "",
+          "position": [
+            51.0,
+            50.5
+          ],
+          "rotation": 0.0,
+          "footprint": "R0603",
+          "nets": {
+            "2": "RESET",
+            "1": "hv"
+          }
+        }
+      ]
+    }
+  }
+}

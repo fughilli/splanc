@@ -1,0 +1,133 @@
+{
+  "schema": "splanc-rough-placement-v1",
+  "units": "mm",
+  "coordinate_system": "same numeric coordinates as interface.json and native PCB",
+  "outline": [
+    100,
+    80
+  ],
+  "copper_layers": 4,
+  "fixed_components": {
+    "board.usbc": {
+      "position": [
+        18,
+        3.5
+      ],
+      "rotation": 0
+    },
+    "board.led0.conn": {
+      "position": [
+        94,
+        25
+      ],
+      "rotation": 0
+    },
+    "board.led1.conn": {
+      "position": [
+        94,
+        36
+      ],
+      "rotation": 0
+    },
+    "board.btn_reset": {
+      "position": [
+        32,
+        3.5
+      ],
+      "rotation": 0
+    },
+    "board.btn_boot": {
+      "position": [
+        44,
+        3.5
+      ],
+      "rotation": 0
+    },
+    "board.btn_user1": {
+      "position": [
+        82,
+        3.5
+      ],
+      "rotation": 0
+    },
+    "board.btn_user2": {
+      "position": [
+        89,
+        3.5
+      ],
+      "rotation": 0
+    },
+    "board.power_led": {
+      "position": [
+        27,
+        10
+      ],
+      "rotation": 0
+    },
+    "board.status_led": {
+      "position": [
+        33,
+        10
+      ],
+      "rotation": 0
+    },
+    "board.mic": {
+      "position": [
+        90,
+        55
+      ],
+      "rotation": 0
+    },
+    "board.esp.wireless": {
+      "position": [
+        17,
+        64
+      ],
+      "rotation": 180
+    },
+    "board.esp.uwb": {
+      "position": [
+        77,
+        66.5
+      ],
+      "rotation": 180
+    },
+    "gps.gnss": {
+      "position": [
+        48,
+        57
+      ],
+      "rotation": 0
+    },
+    "gps.antenna": {
+      "position": [
+        49,
+        68
+      ],
+      "rotation": 0
+    },
+    "board.esp.c6_debug": {
+      "position": [
+        35,
+        57
+      ],
+      "rotation": 0
+    }
+  },
+  "antenna_clearance_strips": [
+    [
+      5,
+      72,
+      30,
+      80
+    ],
+    [
+      62,
+      74,
+      90,
+      80
+    ]
+  ],
+  "placement_body_gap_mm": 0.35,
+  "status": "rough placement only; switching loops and RF clearances need detailed verification"
+}

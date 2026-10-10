@@ -1,0 +1,769 @@
+"""Algorithmic place-and-route for the atopile PCBs (FUG-138).
+
+Design + rationale: docs/hardware/pnr-system.md. Running handoff: WORKLOG.md.
+This package is the CPU-first Python engine; the differentiable placement core
+(a later phase) is PyTorch. The two interpreters in the flow are kept apart:
+
+- `pnr` (this py_library) is imported by the hermetic rules_python interpreter
+  that carries torch. `pnr.ingest`/`pnr.writeback` import KiCad's `pcbnew`
+  **lazily**, so the library imports fine here even though `pcbnew` is absent —
+  the `pcbnew` path runs out-of-band under `@kicad_python`, wired by the
+  `atopile_pnr` rule in `//hardware/pnr:pnr.bzl` (the `<board>.fab` flow).
+- `torch_smoke_test` is the Task 0 gate: torch imports + runs on CPU.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "channels_test",
+    size = "small",
+    srcs = ["tests/test_channels.py"],
+    main = "tests/test_channels.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+# The stdlib-only pnr sources the pcbnew steps (ingest, writeback) run under
+# @kicad_python — staged as plain files on PYTHONPATH, NOT the torch py_library
+# (KiCad's python has no torch and doesn't need it). See //hardware/pnr:pnr.bzl.
+filegroup(
+    name = "pnr_kicad_srcs",
+    srcs = [
+        "pnr/__init__.py",
+        "pnr/graph.py",
+        "pnr/ingest.py",
+        "pnr/source_footprints.py",
+        "pnr/library_table.py",
+        "pnr/planes.py",
+        "pnr/plane_access.py",
+        "pnr/plane_intent.py",
+        "pnr/electrical.py",
+        "pnr/electrical_audit.py",
+        "pnr/native_electrical.py",
+        "pnr/native_drc.py",
+        "pnr/fixed_copper.py",
+        "pnr/paired_bootstrap.py",
+        "pnr/placement_trials.py",
+        "pnr/placement_copper.py",
+        "pnr/staged_signal.py",
+        "pnr/electrical_repair.py",
+        "pnr/native_loop.py",
+        "pnr/route/__init__.py",
+        "pnr/route/detail/__init__.py",
+        "pnr/route/detail/keyhole.py",
+        "pnr/route/detail/regional.py",
+        "pnr/route/detail/layered.py",
+        "pnr/route/detail/joint.py",
+        "pnr/route/detail/coupled.py",
+        "pnr/pad_entry.py",
+        "pnr/pad_entry_neck.py",
+        "pnr/terminal_repair.py",
+        "pnr/reference_guard.py",
+        "pnr/pad_identity.py",
+        "pnr/via_coalesce.py",
+        "pnr/track_graph.py",
+        "pnr/quality.py",
+        "pnr/specctra.py",
+        "pnr/writeback.py",
+    ],
+)
+
+# Core: graph + constraints + ingest. No torch/numpy — the light path that the
+# KiCad pcbnew flow and the schema tests use.
+py_library(
+    name = "pnr",
+    srcs = glob(["pnr/*.py"]),  # top-level modules only, not pnr/place/
+    imports = ["."],
+    deps = [
+        requirement("pyyaml"),  # constraints.py parses the sidecar YAML
+    ],
+)
+
+# Placement engine (Phase 2): differentiable global placement (torch) + grid
+# legalization (numpy). Separated so the core/schema tests stay torch-free.
+py_library(
+    name = "pnr_place",
+    srcs = glob(
+        ["pnr/place/*.py"],
+        exclude = ["pnr/place/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        requirement("torch"),
+        requirement("numpy"),
+    ],
+)
+
+# Runnable placer: python -m pnr.place graph.json constraints.yaml [--dump-svg ...]
+py_binary(
+    name = "place",
+    srcs = ["pnr/place/__main__.py"],
+    imports = ["."],
+    main = "pnr/place/__main__.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Lookahead global router + place<->route feedback loop (Phase 4). Pure
+# python/numpy (no torch of its own) but the feedback loop calls the torch
+# placer, so it depends on :pnr_place.
+py_library(
+    name = "pnr_route",
+    srcs = glob(
+        ["pnr/route/*.py"],
+        exclude = ["pnr/route/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
+# Own detailed router (design §Detailed router, R2–R5): grid/obstacle model + a
+# multi-layer PathFinder maze router. Pure python/numpy; imports place.geometry
+# (torch-containing package, but the router logic is torch-free).
+py_library(
+    name = "pnr_detail",
+    srcs = glob(["pnr/route/detail/*.py"]),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
+# Runnable end-to-end place+route loop: emits the final placed graph JSON that
+# the writeback step turns back into a .kicad_pcb. This is the torch-side step
+# of the <board>.fab flow.
+py_binary(
+    name = "pnr_fab",
+    srcs = ["pnr/route/__main__.py"],
+    imports = ["."],
+    main = "pnr/route/__main__.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+        ":pnr_place",
+        ":pnr_route",
+        requirement("pyyaml"),
+    ],
+)
+
+# Task 0 acceptance: PyTorch is available and differentiable under Bazel.
+py_test(
+    name = "torch_smoke_test",
+    size = "small",  # imports torch; a few seconds even cold
+    srcs = ["tests/test_torch_smoke.py"],
+    legacy_create_init = False,
+    main = "tests/test_torch_smoke.py",
+    deps = [requirement("torch")],
+)
+
+# Phase 1 acceptance: internal graph, constraint schema, and ingestion.
+py_test(
+    name = "graph_test",
+    size = "small",
+    srcs = ["tests/test_graph.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_graph.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "constraints_test",
+    size = "small",
+    srcs = ["tests/test_constraints.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_constraints.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
+)
+
+py_test(
+    name = "ingest_test",
+    size = "small",
+    srcs = ["tests/test_ingest.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_ingest.py",
+    deps = [":pnr"],
+)
+
+# Write-back frame math (Phase 5); a pcbnew-gated live round-trip when KiCad's
+# python is present. Depends only on :pnr_kicad (stdlib), not torch.
+py_test(
+    name = "writeback_test",
+    size = "small",
+    srcs = ["tests/test_writeback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_writeback.py",
+    deps = [":pnr"],
+)
+
+# Phase 6: routing-rule compilation (net-class/diff-pair/length-match) + the pure
+# post-route quality analysis. No torch/pcbnew.
+py_test(
+    name = "quality_test",
+    size = "small",
+    srcs = ["tests/test_quality.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_quality.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 2 acceptance: placement MVP is legal + beats the ato-row HPWL baseline.
+py_test(
+    name = "placement_test",
+    size = "small",  # torch global placement + legalization; ~9s
+    srcs = ["tests/test_placement.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_placement.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 3 acceptance: orientation search yields legal discrete angles + better HPWL.
+py_test(
+    name = "orientation_test",
+    size = "small",  # runs the placer twice (orient on/off); ~14s
+    srcs = ["tests/test_orientation.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_orientation.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 4 unit tests: the routing primitives (Steiner, global router, inflation).
+py_test(
+    name = "route_test",
+    size = "small",
+    srcs = ["tests/test_route.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_route",
+        requirement("numpy"),
+    ],
+)
+
+# Connector edge-overhang + outline-exclusion geometry (pure).
+py_test(
+    name = "geometry_test",
+    size = "small",
+    srcs = ["tests/test_geometry.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_geometry.py",
+    deps = [":pnr_place"],
+)
+
+# R2 acceptance: the routing grid + obstacle + pin-access model.
+py_test(
+    name = "detail_grid_test",
+    size = "small",
+    srcs = ["tests/test_detail_grid.py", "tests/test_plane_access_intent.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = [".", "tests"],
+    legacy_create_init = False,
+    main = "tests/test_detail_grid.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# R4 acceptance: the multi-layer PathFinder maze router (routes, vias, negotiation).
+py_test(
+    name = "route_keepouts_test",
+    size = "small",
+    srcs = ["tests/test_route_keepouts.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_keepouts.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "plane_refill_test",
+    size = "small",
+    srcs = ["tests/test_plane_refill.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_plane_refill.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "detail_maze_test",
+    size = "small",
+    srcs = ["tests/test_detail_maze.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_maze.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# Escape planning (E2 via-in-pad / E3 dog-bone): per-pad escape selection.
+py_test(
+    name = "detail_escape_test",
+    size = "small",
+    srcs = ["tests/test_escape.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_escape.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# R5 acceptance: the detailed router on a real placed board (place -> route,
+# DRC-clean by construction). Places the fixture, so it needs torch.
+py_test(
+    name = "detail_route_test",
+    size = "large",  # places the fixture + 3 full 4-layer RRR routes
+    srcs = ["tests/test_detail_route.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
+py_test(
+    name = "route_feedback_test",
+    size = "medium",  # runs the placement loop up to several rounds; ~30-60s
+    srcs = ["tests/test_route_feedback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_feedback.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        ":pnr_route",
+        requirement("pyyaml"),
+    ],
+)
+
+py_test(
+    name = "specctra_test",
+    srcs = ["tests/test_specctra.py"],
+    main = "tests/test_specctra.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "library_table_test",
+    srcs = ["tests/test_library_table.py"],
+    main = "tests/test_library_table.py",
+    deps = [":pnr"],
+)
+
+# Regression: underside test copper and physical pad coordinates after a flip.
+py_test(
+    name = "two_sided_placement_test",
+    size = "small",
+    legacy_create_init = False,
+    srcs = ["tests/test_two_sided_placement.py"],
+    main = "tests/test_two_sided_placement.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "keyhole_test",
+    size = "small",
+    srcs = ["tests/test_keyhole.py"],
+    main = "tests/test_keyhole.py",
+    deps = [":pnr_detail"],
+)
+
+py_test(
+    name = "regional_test",
+    size = "small",
+    srcs = ["tests/test_regional.py"],
+    main = "tests/test_regional.py",
+    deps = [":pnr_detail"],
+)
+
+py_test(
+    name = "local_feedback_test",
+    size = "small",
+    srcs = ["tests/test_local_feedback.py"],
+    main = "tests/test_local_feedback.py",
+    deps = [":pnr_detail", ":pnr_route"],
+)
+
+py_test(
+    name = "layered_test",
+    size = "small",
+    srcs = ["tests/test_layered.py"],
+    main = "tests/test_layered.py",
+    deps = [":pnr_detail"],
+)
+
+py_test(
+    name = "joint_test",
+    size = "small",
+    srcs = ["tests/test_joint.py"],
+    main = "tests/test_joint.py",
+    deps = [":pnr_detail"],
+)
+
+py_test(
+    name = "plane_access_intent_test",
+    size = "small",
+    srcs = ["tests/test_plane_access_intent.py"],
+    main = "tests/test_plane_access_intent.py",
+    deps = [":pnr"],
+)
+
+# Native test also runs with KiCad Python; hermetic Python skips native cases.
+py_test(
+    name = "power_array_test",
+    size = "small",
+    srcs = ["tests/test_power_array.py", "tests/test_plane_access_intent.py"],
+    main = "tests/test_power_array.py",
+    imports = ["tests"],
+    deps = [":pnr"],
+)
+
+# Run with native KiCad Python where pcbnew is available.
+py_test(
+    name = "pad_entry_test",
+    srcs = ["tests/test_pad_entry.py"],
+    main = "tests/test_pad_entry.py",
+    deps = [":pnr"],
+)
+
+# Native transaction regression; also runnable with the KiCad Python interpreter.
+py_test(
+    name = "via_coalesce_test",
+    srcs = ["tests/test_via_coalesce.py"],
+    main = "tests/test_via_coalesce.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "track_graph_test",
+    srcs = ["tests/test_track_graph.py"],
+    main = "tests/test_track_graph.py",
+    deps = [":pnr"],
+)
+
+py_binary(
+    name = "native_loop",
+    srcs = ["pnr/native_loop.py"],
+    main = "pnr/native_loop.py",
+    deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail"],
+)
+
+py_test(
+    name = "native_loop_test",
+    srcs = ["tests/test_native_loop.py"],
+    main = "tests/test_native_loop.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "electrical_test",
+    size = "small",
+    srcs = ["tests/test_electrical.py"],
+    main = "tests/test_electrical.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+# Exercise with native KiCad Python; hermetic Python skips the native fixture.
+py_test(
+    name = "source_footprints_test",
+    srcs = ["tests/test_source_footprints.py"],
+    main = "tests/test_source_footprints.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "partial_connectivity_test",
+    size = "small",
+    srcs = ["tests/test_partial_connectivity.py"],
+    main = "tests/test_partial_connectivity.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [":pnr", ":pnr_detail", ":pnr_route"],
+)
+
+py_test(
+    name = "native_drc_test",
+    size = "small",
+    srcs = ["tests/test_native_drc.py"],
+    main = "tests/test_native_drc.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "placement_fallback_test",
+    size = "small",
+    srcs = ["tests/test_placement_fallback.py"],
+    main = "tests/test_placement_fallback.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [":pnr", ":pnr_detail", ":pnr_route"],
+)
+
+py_test(
+    name = "compact_pair_tuning_test",
+    size = "small",
+    srcs = ["tests/test_compact_pair_tuning.py"],
+    main = "tests/test_compact_pair_tuning.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+py_test(
+    name = "pair_offgrid_test",
+    size = "small",
+    srcs = ["tests/test_pair_offgrid.py"],
+    main = "tests/test_pair_offgrid.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+py_test(
+    name = "pair_placement_test",
+    size = "small",
+    srcs = ["tests/test_pair_placement.py"],
+    main = "tests/test_pair_placement.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+py_test(
+    name = "fixed_copper_test",
+    size = "small",
+    srcs = ["tests/test_fixed_copper.py"],
+    main = "tests/test_fixed_copper.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+py_test(
+    name = "feedback_tie_test",
+    size = "small",
+    srcs = ["tests/test_feedback_tie.py"],
+    main = "tests/test_feedback_tie.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+py_test(
+    name = "via_distance_cost_test",
+    size = "small",
+    srcs = ["tests/test_via_distance_cost.py"],
+    main = "tests/test_via_distance_cost.py",
+    deps = [":pnr", ":pnr_detail", ":pnr_route", ":pnr_place"],
+)
+
+# Coarse-first search must complete legal broad detours before fine-grid retries.
+py_test(
+    name = "coarse_search_test",
+    srcs = ["tests/test_coarse_search.py"],
+    main = "tests/test_coarse_search.py",
+    deps = [":pnr", ":pnr_place", ":pnr_detail"],
+)
+
+py_test(
+    name = "pair_pose_diversity_test",
+    srcs = ["tests/test_pair_pose_diversity.py"],
+    main = "tests/test_pair_pose_diversity.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "transition_ports_test",
+    srcs = ["tests/test_transition_ports.py"],
+    main = "tests/test_transition_ports.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "terminal_controller_test",
+    srcs = ["tests/test_terminal_controller.py"],
+    main = "tests/test_terminal_controller.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+# Run this entry point with KiCad Python for native geometry assertions.
+# Hermetic Python reports an explicit skip, never native validation.
+py_test(
+    name = "power_access_native_test",
+    srcs = [
+        "tests/test_power_access_native.py",
+        "tests/test_boundary_anchor.py",
+        "tests/test_native_electrical.py",
+        "tests/test_pad_entry.py",
+        "tests/test_reference_guard.py",
+        "tests/test_terminal_repair.py",
+        "tests/test_adaptive_neck.py",
+        "tests/test_connected_land.py",
+        "tests/test_pad_entry_neck.py",
+        "tests/test_land_neck.py",
+        "tests/test_power_tree_roots.py",
+        "tests/test_native_pad_angles.py",
+        "tests/test_qualified_tree_ports.py",
+        "tests/test_tree_dispatch.py",
+        "tests/test_native_full_land_access.py",
+        "tests/test_native_placement_copper.py",
+    ],
+    main = "tests/test_power_access_native.py",
+    data = ["//hardware/tools:keyhole_region.py"],
+    imports = ["tests"],
+    deps = [":pnr", ":pnr_detail", ":pnr_place"],
+)
+
+py_test(
+    name = "retry_controller_test",
+    srcs = ["tests/test_retry_controller.py"],
+    main = "tests/test_retry_controller.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "native_channel_poses_test",
+    srcs = ["tests/test_native_channel_poses.py"],
+    main = "tests/test_native_channel_poses.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "bridge_scale_test",
+    srcs = ["tests/test_bridge_scale.py"],
+    main = "tests/test_bridge_scale.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "joint_deadline_test",
+    srcs = ["tests/test_joint_deadline.py"],
+    main = "tests/test_joint_deadline.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "joint_complete_test",
+    srcs = ["tests/test_joint_complete.py"],
+    main = "tests/test_joint_complete.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "conflict_bounds_test",
+    srcs = ["tests/test_conflict_bounds.py"],
+    main = "tests/test_conflict_bounds.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "escape_budget_test",
+    srcs = ["tests/test_escape_budget.py"],
+    main = "tests/test_escape_budget.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "layer_budget_test",
+    srcs = ["tests/test_layer_budget.py"],
+    main = "tests/test_layer_budget.py",
+    deps = [":pnr", ":pnr_detail"],
+)
+
+py_test(
+    name = "progress_budget_test",
+    srcs = ["tests/test_progress_budget.py"],
+    main = "tests/test_progress_budget.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "placement_budget_test",
+    srcs = ["tests/test_placement_budget.py"],
+    main = "tests/test_placement_budget.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "congestion_diagnostics_test",
+    srcs = ["tests/test_congestion_diagnostics.py"],
+    main = "tests/test_congestion_diagnostics.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail", requirement("numpy")],
+)
+
+py_test(
+    name = "elastic_test",
+    srcs = ["tests/test_elastic.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_elastic.py",
+    deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail", requirement("numpy")],
+)
+
+py_test(
+    name = "pressure_test",
+    srcs = ["tests/test_pressure.py"],
+    main = "tests/test_pressure.py",
+    deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail", requirement("numpy")],
+)
+
+py_test(
+    name = "meridian_test",
+    srcs = ["tests/test_meridian.py"],
+    main = "tests/test_meridian.py",
+    deps = [":pnr", ":pnr_place"],
+)
+
+py_test(
+    name = "relocate_test",
+    srcs = ["tests/test_relocate.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_relocate.py",
+    deps = [":pnr", ":pnr_place", ":pnr_route", ":pnr_detail", requirement("numpy")],
+)

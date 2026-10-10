@@ -1,0 +1,21 @@
+{
+  "nets": [
+    "MODE",
+    "ILIM"
+  ],
+  "source_pad": "U5.15",
+  "target_pad": "R11.1",
+  "bounds": [
+    65,
+    40,
+    82,
+    55
+  ],
+  "pitch": 0.1,
+  "max_orders": 16,
+  "max_expansions": 100000,
+  "layers": true,
+  "relocate_vias": true,
+  "joint": true,
+  "max_seconds": 120
+}

@@ -1,0 +1,150 @@
+(footprint "Nexperia_PSMN4R2_80YSE:LFPAK56-5_L4.9-W4.0-P1.27-LS6.1-BR"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "152b2a60-136b-4b1b-aabf-ba3b94c87fd1")
+	(property "Reference" "REF**"
+		(at 0 -5.91)
+		(layer "F.SilkS")
+		(uuid "d806c71a-92e6-4acf-becc-f328b5943b4a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LFPAK56-5_L4.9-W4.0-P1.27-LS6.1-BR"
+		(at 0 5.91)
+		(layer "F.Fab")
+		(uuid "4364a535-2817-4564-bba5-9b64abd3ddbe")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center 2.02 2.44)
+		(end 2.05 2.44)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "fbee34ca-8bb3-4399-a69f-b281844d7c18")
+	)
+	(fp_circle
+		(center 2.68 1.9)
+		(end 2.81 1.9)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "Cmts.User")
+		(locked no)
+		(uuid "59076a1b-7b05-4a0d-883d-800b24a82a8f")
+	)
+	(fp_circle
+		(center 3.2 1.9)
+		(end 3.34 1.9)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(locked no)
+		(uuid "6c7a59e3-aacc-40a0-ae1b-3f1af661062e")
+	)
+	(fp_line
+		(start 1.01 2.5)
+		(end -2.62 2.5)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "f77846b7-8827-4aac-a939-54d974ad721b")
+	)
+	(fp_line
+		(start 1.01 -2.5)
+		(end -2.62 -2.5)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "a20b59b6-f3cc-483b-a5cb-3bc49d5ac484")
+	)
+	(fp_line
+		(start 1.01 -2.5)
+		(end 1.01 2.5)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "18785ba1-2226-46b2-bdfb-93b0db6443b2")
+	)
+	(pad "2" smd rect
+		(at 2.01 0.63 90)
+		(size 0.7 1.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "6de9b3c5-c969-4d3b-9bf3-3c7c3533eaa9")
+	)
+	(pad "1" smd rect
+		(at 2.01 1.91 90)
+		(size 0.7 1.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "4d5f15c7-efcf-49ec-8104-62823debb271")
+	)
+	(pad "3" smd rect
+		(at 2.01 -0.64 90)
+		(size 0.7 1.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "25619399-bdab-480c-8981-aad9b013c241")
+	)
+	(pad "4" smd rect
+		(at 2.01 -1.91 90)
+		(size 0.7 1.4)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "ba7041cd-c61d-45a6-a92c-5361dc77ef53")
+	)
+	(pad "5" smd custom
+		(at -2.01 -0.01 0)
+		(size 0.01 0.01)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "5646a9a2-7cc4-4d97-a3a9-f9eb000e4322")
+		(primitives
+			(gr_poly
+				(pts
+					(xy -2.34 -2.4) (xy -0.75 -2.4) (xy -0.74 -2.4) (xy -0.74 -2.16) (xy 2.36 -2.16) (xy 2.36 2.17)
+					(xy -0.71 2.17) (xy -0.71 2.42) (xy -2.35 2.42) (xy -2.35 -2.4) (xy -2.34 -2.4)
+				)
+			)
+		)
+	)
+	(model "${KIPRJMOD}/../../src/parts/Nexperia_PSMN4R2_80YSE/LFPAK56-5_L4.9-W4.0-H1.0-P1.27-LS6.1-BR.step"
+		(offset
+			(xyz 0 0 -0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+)

@@ -1,0 +1,22 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Samsung_CL05C331JB5NNNC_package:
+    """330pF (331) ±5% 50V"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C13533", date="2026-09-09T17:47:48.014197+00:00", checksum="9df64ded1b6e5cff17bbef4d1ebf5c37925dbea8eceab7f404e82cfe641914d3">
+
+    trait is_atomic_part<manufacturer="Samsung", partnumber="CL05C331JB5NNNC", footprint="C0402.kicad_mod", symbol="CL05C331JB5NNNC.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C13533", manufacturer="Samsung", partno="CL05C331JB5NNNC">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 1
+    pin 2
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

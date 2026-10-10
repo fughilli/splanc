@@ -1,0 +1,26 @@
+from "parts/R_56k1_/R_56k1_.ato" import R_56k1_
+from "parts/USBAP/USBAP.ato" import USBAP
+from "parts/USBCP/USBCP.ato" import USBCP
+
+module SplancMaxUSBBridge:
+    signal CC
+    signal USB_DM
+    signal USB_DP
+    signal USB_GND
+    signal USB_VBUS
+    J1 = new USBAP
+    J1.p1 ~ USB_VBUS
+    J1.p2 ~ USB_DM
+    J1.p3 ~ USB_DP
+    J1.p4 ~ USB_GND
+    J1.p5 ~ USB_GND
+    J2 = new USBCP
+    J2.p1 ~ USB_VBUS
+    J2.p2 ~ USB_DM
+    J2.p3 ~ USB_DP
+    J2.p4 ~ USB_GND
+    J2.p5 ~ CC
+    J2.p6 ~ USB_GND
+    R1 = new R_56k1_
+    R1.p1 ~ USB_VBUS
+    R1.p2 ~ CC

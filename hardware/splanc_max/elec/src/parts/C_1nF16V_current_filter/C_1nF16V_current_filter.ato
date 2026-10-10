@@ -1,0 +1,10 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component C_1nF16V_current_filter:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="1nF16V current filter C0603 engineering specification", footprint="C_1nF16V_current_filter.kicad_mod", symbol="C_1nF16V_current_filter.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="1nF16V current filter C0603 engineering specification">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

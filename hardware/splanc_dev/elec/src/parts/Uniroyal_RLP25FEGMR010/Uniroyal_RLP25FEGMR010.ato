@@ -1,0 +1,19 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Uniroyal_RLP25FEGMR010_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C393072", date="2026-09-09T17:35:13.275586+00:00", checksum="f9e6e260c87ad384c92d7fd52ef11e231a77c80fc9c546d2912204efb25bdd3d">
+
+    trait is_atomic_part<manufacturer="Uniroyal", partnumber="RLP25FEGMR010", footprint="R2512.kicad_mod", symbol="RLP25FEGMR010.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C393072", manufacturer="Uniroyal", partno="RLP25FEGMR010">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    pin 1
+    pin 2
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

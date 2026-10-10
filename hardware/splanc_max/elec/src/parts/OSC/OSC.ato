@@ -1,0 +1,12 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component OSC:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="27MHz CMOS3.3V oscillator", footprint="OSC.kicad_mod", symbol="OSC.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="27MHz CMOS3.3V oscillator">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4

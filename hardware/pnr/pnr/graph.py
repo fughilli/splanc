@@ -59,10 +59,14 @@ class Pad:
     offset: Tuple[float, float]
     size: Tuple[float, float] = (0.0, 0.0)
     through_hole: bool = False  # PTH/NPTH: copper (or a hole) on *every* layer
+    drill_size: Tuple[float, float] = (0.0, 0.0)  # native drill/slot dimensions, mm
+    plated: Optional[bool] = None  # None for legacy graphs that did not distinguish PTH/NPTH
+    plated_land_radius: float = 0.0  # native-confirmed inscribed copper radius; unknown/custom=0
 
     def __post_init__(self):
         self.offset = _fpair(self.offset)
         self.size = _fpair(self.size)
+        self.drill_size = _fpair(self.drill_size)
 
 
 @dataclass
@@ -72,8 +76,8 @@ class Component:
     ``pos``/``rot``/``side`` are the *current* placement (initially atopile's
     naive row); the placer overwrites them. ``courtyard`` is the axis-aligned
     (width, height) of the courtyard used for overlap/density; ``bbox`` is the
-    full graphical bounding box. Both are in mm and orientation-agnostic
-    (measured at ``rot`` as ingested — :mod:`pnr.ingest` records them as seen).
+    full graphical bounding box. Both are in mm in the unrotated frame and
+    symmetric around the footprint origin, including offset component bodies.
     """
 
     ref: str
@@ -85,6 +89,8 @@ class Component:
     bbox: Tuple[float, float]
     locked: bool = False
     pads: List[Pad] = field(default_factory=list)
+    address: str = ""  # Stable atopile path, independent of generated designators.
+    smd_body: bool = False  # Explicit native footprint attribute, never inferred from hole size.
 
     def __post_init__(self):
         self.pos = _fpair(self.pos)
@@ -168,6 +174,7 @@ class BoardGraph:
         components = [
             Component(
                 ref=c["ref"],
+                address=c.get("address", ""),
                 footprint=c["footprint"],
                 pos=c["pos"],
                 rot=float(c["rot"]),
@@ -175,6 +182,7 @@ class BoardGraph:
                 courtyard=c["courtyard"],
                 bbox=c["bbox"],
                 locked=bool(c.get("locked", False)),
+                smd_body=bool(c.get("smd_body", False)),
                 pads=[
                     Pad(
                         name=p["name"],
@@ -182,6 +190,9 @@ class BoardGraph:
                         offset=p["offset"],
                         size=p.get("size", (0.0, 0.0)),
                         through_hole=p.get("through_hole", False),
+                        drill_size=p.get("drill_size", (0.0, 0.0)),
+                        plated=p.get("plated"),
+                        plated_land_radius=float(p.get("plated_land_radius", 0.0)),
                     )
                     for p in c.get("pads", [])
                 ],

@@ -1,0 +1,12 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component XTAL40:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="40MHz crystal CL10pF", footprint="XTAL40.kicad_mod", symbol="XTAL40.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="40MHz crystal CL10pF">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4

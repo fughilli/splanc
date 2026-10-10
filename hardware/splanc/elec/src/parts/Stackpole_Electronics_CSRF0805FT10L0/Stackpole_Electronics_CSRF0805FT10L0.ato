@@ -1,0 +1,13 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component Stackpole_Electronics_CSRF0805FT10L0_package:
+
+    trait is_atomic_part<manufacturer="Stackpole Electronics", partnumber="CSRF0805FT10L0", footprint="R0805.kicad_mod", symbol="CSRF0805FT10L0.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C346480", manufacturer="Stackpole Electronics", partno="CSRF0805FT10L0">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

@@ -1,0 +1,9 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component LUG:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="M5 bolted copper busbar terminal", footprint="LUG.kicad_mod", symbol="LUG.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="M5 bolted copper busbar terminal">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1

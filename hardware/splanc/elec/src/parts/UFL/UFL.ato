@@ -1,0 +1,10 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component UFL:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="U.FL-R-SMT-1(10)", footprint="UFL.kicad_mod", symbol="UFL.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="U.FL-R-SMT-1(10)">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

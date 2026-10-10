@@ -1,0 +1,10 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component C22P:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="22pF C0G 0603", footprint="C22P.kicad_mod", symbol="C22P.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="22pF C0G 0603">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

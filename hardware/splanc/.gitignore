@@ -1,0 +1,8 @@
+.ato/
+build/
+elec/layout/
+__pycache__/
+*.pyc
+
+*.kicad_prl
+*.lck

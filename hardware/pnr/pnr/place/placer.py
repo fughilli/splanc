@@ -9,7 +9,7 @@ from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph, BoardOutline
 
 from . import metrics
-from .geometry import keepout_rects, outline_size, resolve_fixed_poses
+from .geometry import keepout_rects, outline_size, resolve_fixed_poses, hard_group_limits, set_component_side, apply_hard_sides
 from .legalize import legalize
 from .model import global_place
 
@@ -26,11 +26,13 @@ class PlacementReport:
     outside_outline: List[str] = field(default_factory=list)
     fixed_misplaced: List[str] = field(default_factory=list)
     keepout: List[str] = field(default_factory=list)
+    group_outside: List[str] = field(default_factory=list)
     rotated: int = 0
+    side_misplaced: List[str] = field(default_factory=list)
 
     @property
     def legal(self) -> bool:
-        return not (self.overlaps or self.outside_outline or self.fixed_misplaced or self.keepout)
+        return not (self.overlaps or self.outside_outline or self.fixed_misplaced or self.keepout or self.group_outside or self.side_misplaced)
 
     @property
     def hpwl_improvement(self) -> float:
@@ -48,7 +50,7 @@ class PlacementReport:
             f"(overlaps={len(self.overlaps)}, "
             f"outside={len(self.outside_outline)}, "
             f"fixed_off={len(self.fixed_misplaced)}, "
-            f"keepout={len(self.keepout)})"
+            f"keepout={len(self.keepout)}, group_outside={len(self.group_outside)}, side_off={len(self.side_misplaced)})"
         )
 
 
@@ -63,10 +65,13 @@ def place(
     *,
     seed: int = 0,
     iters: int = 800,
-    grid_mm: float = 0.5,
+    grid_mm: float = 0.25,
     orient: bool = True,
     inflation: Optional[Dict[str, float]] = None,
     spread: float = 1.0,
+    channel_rules: Optional[dict] = None,
+    initial_positions: Optional[Dict[str, Tuple[float, float]]] = None,
+    initial_rotations: Optional[Dict[str, float]] = None,
 ) -> Tuple[BoardGraph, PlacementReport]:
     """Place ``graph`` under ``constraints``; return the placed graph + report.
 
@@ -77,6 +82,15 @@ def place(
     footprint of congested parts so the next round spreads them. Deterministic
     under a fixed ``seed``.
     """
+    # The source compiler emits every footprint on top. Apply physical side
+    # constraints before any obstacle/HPWL calculations, including pad mirroring.
+    graph = BoardGraph.from_json(graph.to_json())
+    apply_hard_sides(graph, constraints)
+    if channel_rules and channel_rules.get("plane_access_intents"):
+        from pnr.plane_intent import reserve_array_space
+        reserve_array_space(graph, channel_rules["plane_access_intents"],
+                            channel_rules["plane_access_fab"],
+                            channel_rules.get("fab", {}).get("edge_clearance_mm", .2))
     width, height = outline_size(graph, constraints)
     baseline = metrics.hpwl(graph)
 
@@ -95,18 +109,27 @@ def place(
         orient=orient,
         inflation=inflation,
         spread=spread,
+        initial_positions=initial_positions,
+        initial_rotations=initial_rotations,
     )
     cont = BoardGraph.from_json(graph.to_json())
     for comp in cont.components:
         comp.pos = positions[comp.ref]
         comp.rot = rotations[comp.ref]
 
+    # Directional copper escape demand is part of production legalization.
+    from pnr.constraints import compile_routing_rules
+    from .channels import ChannelModel
+    channels=ChannelModel(cont,channel_rules or compile_routing_rules(constraints,[n.name for n in graph.nets]))
     # 2. Legalization (snap to a non-overlapping, in-outline layout).
     placed = legalize(
         cont,
         width,
         height,
         fixed=poses,
+        allow_rotation=orient,
+        channel_model=channels,
+        group_limits=hard_group_limits(constraints, poses),
         keepouts=keepouts,
         clearance=clearance,
         grid_mm=grid_mm,
@@ -133,7 +156,9 @@ def place(
         overlaps=v["overlaps"],
         outside_outline=v["outside_outline"],
         fixed_misplaced=v["fixed_misplaced"],
+        side_misplaced=v["side_misplaced"],
         keepout=v["keepout"],
+        group_outside=v["group_outside"],
         rotated=sum(1 for c in placed.components if int(round(c.rot)) % 360 != 0),
     )
     return placed, report

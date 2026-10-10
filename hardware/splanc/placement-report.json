@@ -1,0 +1,16 @@
+{
+  "base": {
+    "components": 180,
+    "footprints": 184,
+    "overlap_pairs": [],
+    "source_sha256": "06c50b3767b763a92e909d9a7b7e1d7eee80ee64f57a062c1215866dc992ed2c",
+    "routed": false
+  },
+  "gps": {
+    "components": 187,
+    "footprints": 191,
+    "overlap_pairs": [],
+    "source_sha256": "9b377b508e82a7f3d35efeb5efbe564d4b04a2a01f31222d5790b40700f97fba",
+    "routed": false
+  }
+}

@@ -1,0 +1,34 @@
+load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
+
+atopile_project(
+    name = "splanc_max_lv",
+    srcs = glob(["elec/src/**"]),
+    ato_yaml = "ato.yaml",
+    build = "lv",
+    autoroute = False,
+    picker = False,
+    frozen = False,
+    visibility = ["//visibility:public"],
+)
+
+atopile_project(
+    name = "splanc_max_power",
+    srcs = glob(["elec/src/**"]),
+    ato_yaml = "ato.yaml",
+    build = "power",
+    autoroute = False,
+    picker = False,
+    frozen = False,
+    visibility = ["//visibility:public"],
+)
+
+atopile_project(
+    name = "splanc_max_usb_bridge",
+    srcs = glob(["elec/src/**"]),
+    ato_yaml = "ato.yaml",
+    build = "usb_bridge",
+    autoroute = False,
+    picker = False,
+    frozen = False,
+    visibility = ["//visibility:public"],
+)

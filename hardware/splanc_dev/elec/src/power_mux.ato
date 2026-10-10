@@ -1,0 +1,219 @@
+import ElectricPower
+from "parts/Changjiang_MMBT3904_RANGE_100_300/Changjiang_MMBT3904_RANGE_100_300.ato" import Changjiang_MMBT3904_RANGE_100_300_package
+from "passives.ato" import R10k
+from "parts/Nexperia_PSMN3R7_100BSEJ/Nexperia_PSMN3R7_100BSEJ.ato" import Nexperia_PSMN3R7_100BSEJ_package
+from "parts/Analog_Devices_LTC4421HUHE_PBF/Analog_Devices_LTC4421HUHE_PBF.ato" import Analog_Devices_LTC4421HUHE_PBF_package
+from "parts/Nexperia_PSMN4R0_60YS_115/Nexperia_PSMN4R0_60YS_115.ato" import Nexperia_PSMN4R0_60YS_115_package
+from "parts/Samsung_CL31B106KBHNNNE/Samsung_CL31B106KBHNNNE.ato" import Samsung_CL31B106KBHNNNE_package
+from "passives.ato" import C1u
+from "passives.ato" import C4u7
+from "passives.ato" import C1n
+from "passives.ato" import C47n
+from "passives.ato" import C100n_50V
+from "passives.ato" import R10
+from "passives.ato" import R100k
+from "passives.ato" import R12k
+from "passives.ato" import R17k4
+from "passives.ato" import R1k
+from "passives.ato" import R2k
+from "passives.ato" import R2k2
+from "passives.ato" import RshuntUsb
+from "passives.ato" import RshuntBatteryMux
+
+module PowerMux:
+    """High-current source selection, USB priority, no charger BATFET in load path.
+    External factory resistors connect battery.hv to battery_uvr, battery_uvf,
+    battery_ov: all three 100k for 1S or 220k for 2S.
+    Firmware must enforce the actual USB contract and thermal power budget.
+    Current limits below are fault ceilings, not permissions to draw that current.
+    """
+    usb = new ElectricPower
+    battery = new ElectricPower
+    output = new ElectricPower
+    logic = new ElectricPower
+    signal battery_uvr
+    signal battery_uvf
+    signal battery_ov
+    signal hold_usb_off
+    signal usb_selected_n
+    signal battery_selected_n
+    usb.lv ~ battery.lv
+    usb.lv ~ output.lv
+    usb.lv ~ logic.lv
+    ic = new Analog_Devices_LTC4421HUHE_PBF_package
+    ic.GND ~ usb.lv
+    ic.EP ~ usb.lv
+    ic.EXTVCC ~ output.hv
+    ic.CPOREF ~ output.hv
+    ic.CASIN ~ ic.INTVCC
+    ic.nSHDN ~ ic.INTVCC
+    ic.RETRY ~ ic.INTVCC
+    # Default USB-enabled permits dead-battery startup. While running from
+    # battery, firmware asserts hold_usb_off BEFORE enabling a large LED load.
+    # To transfer to USB: turn LEDs/charger off, verify low current, release
+    # holdoff, wait for a valid source/PG, then restore the permitted load.
+    usb_enable_pullup = new R100k
+    usb_enable_pullup.p1 ~ ic.INTVCC
+    usb_enable_pullup.p2 ~ ic.nDISABLE1
+    usb_holdoff_q = new Changjiang_MMBT3904_RANGE_100_300_package
+    usb_holdoff_q.C ~ ic.nDISABLE1
+    usb_holdoff_q.E ~ usb.lv
+    usb_holdoff_base = new R10k
+    usb_holdoff_base.p1 ~ hold_usb_off
+    usb_holdoff_base.p2 ~ usb_holdoff_q.B
+    usb_holdoff_pd = new R100k
+    usb_holdoff_pd.p1 ~ usb_holdoff_q.B
+    usb_holdoff_pd.p2 ~ usb.lv
+    ic.nDISABLE2 ~ ic.INTVCC
+    usb_status_pullup = new R10k
+    usb_status_pullup.p1 ~ logic.hv
+    usb_status_pullup.p2 ~ usb_selected_n
+    ic.nCH1 ~ usb_selected_n
+    ic.nCH2 ~ battery_selected_n
+    int_dec = new C1u
+    int_dec.p1 ~ ic.INTVCC
+    int_dec.p2 ~ usb.lv
+    pump_dec = new C4u7
+    pump_dec.p1 ~ ic.CPO
+    pump_dec.p2 ~ ic.CPOREF
+    qualification = new C1n
+    qualification.p1 ~ ic.QUAL
+    qualification.p2 ~ usb.lv
+
+    # USB validity: UV rising 4.667V, falling 4.346V, OV rising 23.227V.
+    usb_uvr_top = new R100k
+    usb_uvr_bottom = new R12k
+    usb_uvr_top.p1 ~ usb.hv
+    usb_uvr_top.p2 ~ ic.UVR1
+    usb_uvr_bottom.p1 ~ ic.UVR1
+    usb_uvr_bottom.p2 ~ usb.lv
+    usb_uvf_top = new R100k
+    usb_uvf_bottom1 = new R12k
+    usb_uvf_bottom2 = new R1k
+    usb_uvf_top.p1 ~ usb.hv
+    usb_uvf_top.p2 ~ ic.UVF1
+    usb_uvf_bottom1.p1 ~ ic.UVF1
+    usb_uvf_bottom1.p2 ~ usb_uvf_bottom2.p1
+    usb_uvf_bottom2.p2 ~ usb.lv
+    usb_ov_top = new R100k
+    usb_ov_bottom = new R2k2
+    usb_ov_top.p1 ~ usb.hv
+    usb_ov_top.p2 ~ ic.OV1
+    usb_ov_bottom.p1 ~ ic.OV1
+    usb_ov_bottom.p2 ~ usb.lv
+
+    # Battery UVF: 3.129V (1S) / 6.222V (2S); UVR: 3.374V / 6.822V.
+    # These hardware cutoffs supplement the factory protected pack and firmware.
+    ic.UVR2 ~ battery_uvr
+    ic.OV2 ~ battery_ov
+    battery_uvr_bottom = new R17k4
+    battery_uvr_bottom.p1 ~ ic.UVR2
+    battery_uvr_bottom.p2 ~ usb.lv
+    battery_uvf_series = new R2k
+    battery_uvf_series.p1 ~ battery_uvf
+    battery_uvf_series.p2 ~ ic.UVF2
+    battery_uvf_bottom1 = new R17k4
+    battery_uvf_bottom2 = new R2k
+    battery_uvf_bottom1.p1 ~ ic.UVF2
+    battery_uvf_bottom1.p2 ~ battery_uvf_bottom2.p1
+    battery_uvf_bottom2.p2 ~ usb.lv
+    battery_ov_bottom = new R12k
+    battery_ov_bottom.p1 ~ ic.OV2
+    battery_ov_bottom.p2 ~ usb.lv
+
+    input_filter1 = new R10
+    input_filter1.p1 ~ usb.hv
+    input_filter1.p2 ~ ic.V1
+    input_dec1 = new C100n_50V
+    input_dec1.p1 ~ ic.V1
+    input_dec1.p2 ~ usb.lv
+    input_fet1 = new Nexperia_PSMN3R7_100BSEJ_package
+    output_fet1 = new Nexperia_PSMN4R0_60YS_115_package
+    input_fet1.D ~ usb.hv
+    input_fet1.S ~ output_fet1.S
+    input_fet1.S ~ ic.SOURCE1
+    input_fet1.G ~ ic.GATE1
+    output_fet1.G ~ ic.GATE1
+    output_fet1.D ~ ic.SENSE1
+    ic.OUT1 ~ output.hv
+    gate_comp1 = new C47n
+    gate_comp1.p1 ~ ic.GATE1
+    gate_comp1.p2 ~ ic.SOURCE1
+    # Two series 47nF capacitors: 23.5nF, about 1.95ms current-limit timeout.
+    fault_timer1a = new C47n
+    fault_timer1b = new C47n
+    fault_timer1a.p1 ~ ic.TMR1
+    fault_timer1a.p2 ~ fault_timer1b.p1
+    fault_timer1b.p2 ~ usb.lv
+
+    sense1_0 = new RshuntUsb
+    sense1_0.p1 ~ ic.SENSE1
+    sense1_0.p2 ~ output.hv
+
+
+    input_filter2 = new R10
+    input_filter2.p1 ~ battery.hv
+    input_filter2.p2 ~ ic.V2
+    input_dec2 = new C100n_50V
+    input_dec2.p1 ~ ic.V2
+    input_dec2.p2 ~ usb.lv
+    input_fet2 = new Nexperia_PSMN3R7_100BSEJ_package
+    output_fet2 = new Nexperia_PSMN4R0_60YS_115_package
+    input_fet2.D ~ battery.hv
+    input_fet2.S ~ output_fet2.S
+    input_fet2.S ~ ic.SOURCE2
+    input_fet2.G ~ ic.GATE2
+    output_fet2.G ~ ic.GATE2
+    output_fet2.D ~ ic.SENSE2
+    ic.OUT2 ~ output.hv
+    gate_comp2 = new C47n
+    gate_comp2.p1 ~ ic.GATE2
+    gate_comp2.p2 ~ ic.SOURCE2
+    # Two series 47nF capacitors: 23.5nF, about 1.95ms current-limit timeout.
+    fault_timer2a = new C47n
+    fault_timer2b = new C47n
+    fault_timer2a.p1 ~ ic.TMR2
+    fault_timer2a.p2 ~ fault_timer2b.p1
+    fault_timer2b.p2 ~ usb.lv
+
+    # 2mOhm, 1%: 9.90–15.15A at 25 C; include +/-275ppm/C TCR.
+    # Pack protection and firmware set the continuous discharge budget.
+    sense2_0 = new RshuntBatteryMux
+    sense2_0.p1 ~ ic.SENSE2
+    sense2_0.p2 ~ output.hv
+
+
+
+
+
+    # Nominal 100uF input hold-up; effective bias and switchover require validation.
+    hold0 = new Samsung_CL31B106KBHNNNE_package
+    hold0.p1 ~ output.hv
+    hold0.p2 ~ usb.lv
+    hold1 = new Samsung_CL31B106KBHNNNE_package
+    hold1.p1 ~ output.hv
+    hold1.p2 ~ usb.lv
+    hold2 = new Samsung_CL31B106KBHNNNE_package
+    hold2.p1 ~ output.hv
+    hold2.p2 ~ usb.lv
+    hold3 = new Samsung_CL31B106KBHNNNE_package
+    hold3.p1 ~ output.hv
+    hold3.p2 ~ usb.lv
+    hold4 = new Samsung_CL31B106KBHNNNE_package
+    hold4.p1 ~ output.hv
+    hold4.p2 ~ usb.lv
+    hold5 = new Samsung_CL31B106KBHNNNE_package
+    hold5.p1 ~ output.hv
+    hold5.p2 ~ usb.lv
+    hold6 = new Samsung_CL31B106KBHNNNE_package
+    hold6.p1 ~ output.hv
+    hold6.p2 ~ usb.lv
+    hold7 = new Samsung_CL31B106KBHNNNE_package
+    hold7.p1 ~ output.hv
+    hold7.p2 ~ usb.lv
+    hold8 = new Samsung_CL31B106KBHNNNE_package
+    hold8.p1 ~ output.hv
+    hold8.p2 ~ usb.lv
+    hold9 = new Samsung_CL31B106KBHNNNE_package
+    hold9.p1 ~ output.hv
+    hold9.p2 ~ usb.lv

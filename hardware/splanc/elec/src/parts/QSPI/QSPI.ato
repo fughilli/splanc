@@ -1,0 +1,16 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component QSPI:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="W25Q128JVSIQ", footprint="QSPI.kicad_mod", symbol="QSPI.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="W25Q128JVSIQ">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4
+    signal p5 ~ pin 5
+    signal p6 ~ pin 6
+    signal p7 ~ pin 7
+    signal p8 ~ pin 8

@@ -1,0 +1,14 @@
+requires-atopile: '>=0.15.0,<0.16.0'
+builds:
+  lv:
+    targets: [build-design]
+    exclude_targets: [default, picker]
+    entry: elec/src/lv.ato:SplancMaxLV
+  power:
+    targets: [build-design]
+    exclude_targets: [default, picker]
+    entry: elec/src/power.ato:SplancMaxPower
+  usb_bridge:
+    targets: [build-design]
+    exclude_targets: [default, picker]
+    entry: elec/src/usb_bridge.ato:SplancMaxUSBBridge

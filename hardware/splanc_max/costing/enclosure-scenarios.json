@@ -1,0 +1,46 @@
+{
+  "date": "2026-09-21",
+  "currency": "USD",
+  "quantity": 1000,
+  "basis": "engineering_allowance_not_quote",
+  "source_context": [
+    "https://www.xometry.com/resources/injection-molding/injection-molding-cost/",
+    "https://www.protolabs.com/resources/design-tips/11-tips-to-reduce-injection-molding-costs/"
+  ],
+  "scenarios": {
+    "mini": {
+      "recurring_per_set_low_mid_high": [
+        2,
+        3,
+        4
+      ],
+      "tooling_total_low_mid_high": [
+        4000,
+        8000,
+        12000
+      ],
+      "first_batch_per_set_low_mid_high": [
+        6.0,
+        11.0,
+        16.0
+      ]
+    },
+    "max": {
+      "recurring_per_set_low_mid_high": [
+        6,
+        9,
+        12
+      ],
+      "tooling_total_low_mid_high": [
+        12000,
+        22000,
+        35000
+      ],
+      "first_batch_per_set_low_mid_high": [
+        18.0,
+        31.0,
+        47.0
+      ]
+    }
+  }
+}

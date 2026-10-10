@@ -1,0 +1,10 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component R_4_7k_aggregate_open_drain_status_pullup:
+    trait is_atomic_part<manufacturer="Design selection", partnumber="4.7k aggregate open-drain status pullup R0603 engineering specification", footprint="R_4_7k_aggregate_open_drain_status_pullup.kicad_mod", symbol="R_4_7k_aggregate_open_drain_status_pullup.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Design selection", partno="4.7k aggregate open-drain status pullup R0603 engineering specification">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

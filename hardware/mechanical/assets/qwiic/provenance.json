@@ -1,0 +1,9 @@
+{
+  "part": "JST SM04B-SRSS-TB",
+  "cad_source": "KiCad 10 packaged Connector_JST.3dshapes/JST_SH_SM04B-SRSS-TB_1x04-1MP_P1.00mm_Horizontal.step",
+  "cad_sha256": "4b0f89a75d3758add0041ca9e5ded3a780c23ef4e3e99bcc398b41177dff5d0f",
+  "license": "CC-BY-SA 4.0 with KiCad electronic-design exception; full license header preserved in STEP",
+  "library_url": "https://gitlab.com/kicad/libraries/kicad-packages3D/-/tree/master/Connector_JST.3dshapes",
+  "manufacturer": "https://www.jst-mfg.com/product/index.php?lang=2&series=231",
+  "drawing": "https://www.jst-mfg.com/product/pdf/eng/eSH.pdf"
+}

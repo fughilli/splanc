@@ -1,0 +1,41 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPS552882RPMR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C3188898", date="2026-09-09T17:42:05.971706+00:00", checksum="b080ec5302466c2b983e5fede3b5c370b5c496097a58ef66d8635fee4de5e876">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPS552882RPMR", footprint="VQFN-HR-26_L4.0-W3.5_TPS55288RPMR.kicad_mod", symbol="TPS552882RPMR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C3188898", manufacturer="Texas Instruments", partno="TPS552882RPMR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal AGND ~ pin 10
+    signal BOOT1 ~ pin 22
+    signal BOOT2 ~ pin 20
+    signal CDC ~ pin 16
+    signal COMP ~ pin 18
+    signal DITH_SYNC ~ pin 7
+    signal DR1H ~ pin 2
+    signal DR1L ~ pin 1
+    signal EN_UVLO ~ pin 4
+    signal FB ~ pin 14
+    signal FSW ~ pin 8
+    signal ILIM ~ pin 17
+    signal ISN ~ pin 13
+    signal ISP ~ pin 12
+    signal MODE ~ pin 15
+    signal PG ~ pin 5
+    signal PGND ~ pin 9
+    PGND ~ pin 24
+    signal SW1 ~ pin 23
+    signal SW2 ~ pin 21
+    SW2 ~ pin 25
+    signal VCC ~ pin 19
+    signal VIN ~ pin 3
+    signal VOUT ~ pin 11
+    VOUT ~ pin 26
+    signal nCC ~ pin 6

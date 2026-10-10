@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {contact,resolve,step,random} from './physics.mjs';
+const body=(x,vx)=>({x,y:0,a:0,hx:.04,hy:.025,mass:1,vx,vy:0,w:0});
+let a=body(-.039,.1),b=body(.039,-.1);
+assert(resolve(a,b,contact(a,b)));assert(a.vx<0&&b.vx>0);assert(Math.abs(a.vx+b.vx)<1e-10);
+assert.equal(contact(body(-.2,0),body(.2,0)),null);
+a=body(0,0);a.a=Math.PI/4;b=body(.03,0);assert(contact(a,b));
+const rng=random(7),bs=Array.from({length:8},(_,i)=>({...body((i%4-.5)*.13,(rng()-.5)*.2),y:Math.floor(i/4)*.15-.1,a:rng()*6,w:(rng()-.5)*2}));
+let hits=0;for(let i=0;i<7200;i++)hits+=step(bs,1/120,{x:.6,y:.35});
+assert(hits>0);assert(bs.every(b=>Object.values(b).every(Number.isFinite)));assert(bs.every(b=>Math.abs(b.x)<.6&&Math.abs(b.y)<.35));
+console.log(JSON.stringify({tests:4,secondsSimulated:60,contacts:hits}));

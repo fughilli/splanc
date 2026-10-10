@@ -1,0 +1,34 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPS61088RHLR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C87357", date="2026-08-20T03:04:27.791888+00:00", checksum="900bdb3b2ae57cb1420a763ad9217150a2c1ceace732ca9ad0a8646a1cf971cb">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPS61088RHLR", footprint="VQFN-20_L4.6-W3.6-P0.50-BL.kicad_mod", symbol="TPS61088RHLR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C87357", manufacturer="Texas Instruments", partno="TPS61088RHLR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal AGND ~ pin 20
+    signal BOOT ~ pin 8
+    signal COMP ~ pin 18
+    signal EN ~ pin 2
+    signal FB ~ pin 17
+    signal FSW ~ pin 3
+    signal ILIM ~ pin 19
+    signal MODE ~ pin 13
+    signal PGND ~ pin 21
+    signal SS ~ pin 10
+    signal SW ~ pin 4
+    SW ~ pin 5
+    SW ~ pin 6
+    SW ~ pin 7
+    signal VCC ~ pin 1
+    signal VIN ~ pin 9
+    signal VOUT ~ pin 14
+    VOUT ~ pin 15
+    VOUT ~ pin 16

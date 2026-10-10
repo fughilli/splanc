@@ -1,0 +1,34 @@
+[
+  {
+    "id": "Plastic012B",
+    "source": "https://ambientcg.com/view?id=Plastic012B",
+    "download": "https://ambientcg.com/get?file=Plastic012B_2K-JPG.zip",
+    "sha256": "c49168dfd0a4cc2df8a08dbc4bcb027499d7bd87a2cb89c732162d3c388c32b9",
+    "license": "CC0",
+    "license_url": "https://docs.ambientcg.com/license/"
+  },
+  {
+    "id": "Plastic013A",
+    "source": "https://ambientcg.com/view?id=Plastic013A",
+    "download": "https://ambientcg.com/get?file=Plastic013A_2K-JPG.zip",
+    "sha256": "df2bd7a76a4f8269249f7dfeb5105fbc60ce4d462095fe0e81abe95824947c67",
+    "license": "CC0",
+    "license_url": "https://docs.ambientcg.com/license/"
+  },
+  {
+    "id": "Plastic016A",
+    "source": "https://ambientcg.com/view?id=Plastic016A",
+    "download": "https://ambientcg.com/get?file=Plastic016A_2K-JPG.zip",
+    "sha256": "8f6a4e095e764de6122886fe6473ee61adf3deab140a169e8daafd20b321a5d8",
+    "license": "CC0",
+    "license_url": "https://docs.ambientcg.com/license/"
+  },
+  {
+    "id": "IndoorEnvironmentHDRI002",
+    "source": "https://ambientcg.com/view?id=IndoorEnvironmentHDRI002",
+    "download": "https://ambientcg.com/get?file=IndoorEnvironmentHDRI002_4K.zip",
+    "sha256": "878c87a9ba6abcc31f487cc2ca37869bc2815bab80b0c688b061ad31729f2429",
+    "license": "CC0",
+    "license_url": "https://docs.ambientcg.com/license/"
+  }
+]

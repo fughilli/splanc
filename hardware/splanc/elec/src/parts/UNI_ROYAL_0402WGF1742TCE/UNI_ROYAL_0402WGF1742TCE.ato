@@ -1,0 +1,22 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component UNI_ROYAL_0402WGF1742TCE_package:
+    """17.4KΩ (1742) ±1%"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C26957", date="2026-09-09T18:35:07.357700+00:00", checksum="f2138e09a500a236a1636c647941df64c5f5e2b8d36495aaabcebdd140256771">
+
+    trait is_atomic_part<manufacturer="UNI-ROYAL", partnumber="0402WGF1742TCE", footprint="R0402.kicad_mod", symbol="0402WGF1742TCE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C26957", manufacturer="UNI-ROYAL", partno="0402WGF1742TCE">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    pin 2
+    pin 1
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

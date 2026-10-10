@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component BOURNS_SRP1038A_4R7M_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2041319", date="2026-09-09T18:42:11.627009+00:00", checksum="e233b8da44709c72eb22f4c8ea1e2e756a635982c0c3d787e6b2247141021921">
+
+    trait is_atomic_part<manufacturer="BOURNS", partnumber="SRP1038A-4R7M", footprint="IND-SMD_L11.0-W10.0_SRP1038A.kicad_mod", symbol="SRP1038A-4R7M.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2041319", manufacturer="BOURNS", partno="SRP1038A-4R7M">
+    trait has_designator_prefix<prefix="L">
+
+    # pins
+    pin 2
+    pin 1
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

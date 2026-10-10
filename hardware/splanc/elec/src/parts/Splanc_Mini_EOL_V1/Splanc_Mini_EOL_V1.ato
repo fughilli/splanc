@@ -1,0 +1,49 @@
+# Bare PCB copper; no fitted component and no procurement line.
+import has_designator_prefix
+import has_part_removed
+import is_atomic_part
+
+component MiniEolPads:
+    trait is_atomic_part<manufacturer="Splanc", partnumber="MINI-EOL-V1", footprint="MINI-EOL-V1.kicad_mod", symbol="MINI-EOL-V1.kicad_sym">
+    trait has_part_removed
+    trait has_designator_prefix<prefix="TP">
+    pin 1
+    signal p1 ~ pin 1
+    pin 2
+    signal p2 ~ pin 2
+    pin 3
+    signal p3 ~ pin 3
+    pin 4
+    signal p4 ~ pin 4
+    pin 5
+    signal p5 ~ pin 5
+    pin 6
+    signal p6 ~ pin 6
+    pin 7
+    signal p7 ~ pin 7
+    pin 8
+    signal p8 ~ pin 8
+    pin 9
+    signal p9 ~ pin 9
+    pin 10
+    signal p10 ~ pin 10
+    pin 11
+    signal p11 ~ pin 11
+    pin 12
+    signal p12 ~ pin 12
+    pin 13
+    signal p13 ~ pin 13
+    pin 14
+    signal p14 ~ pin 14
+    pin 15
+    signal p15 ~ pin 15
+    pin 16
+    signal p16 ~ pin 16
+    pin 17
+    signal p17 ~ pin 17
+    pin 18
+    signal p18 ~ pin 18
+    pin 19
+    signal p19 ~ pin 19
+    pin 20
+    signal p20 ~ pin 20

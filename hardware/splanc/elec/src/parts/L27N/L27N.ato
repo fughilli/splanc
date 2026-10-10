@@ -1,0 +1,10 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component L27N:
+    trait is_atomic_part<manufacturer="Engineering selection", partnumber="27nH RF choke 0603", footprint="L27N.kicad_mod", symbol="L27N.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="Engineering selection", partno="27nH RF choke 0603">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

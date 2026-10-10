@@ -1,0 +1,20 @@
+{
+  "nets": [
+    "B5"
+  ],
+  "source_pad": "U18.5",
+  "target_pad": "USB1.B5",
+  "bounds": [
+    37,
+    60,
+    57,
+    81
+  ],
+  "pitch": 0.1,
+  "max_expansions": 100000,
+  "max_orders": 1,
+  "max_seconds": 30,
+  "preserve_copper": true,
+  "layers": true,
+  "joint": true
+}

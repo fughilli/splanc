@@ -24,6 +24,34 @@
 load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
 load("//hardware/pnr:pnr.bzl", "atopile_pnr")
 
+# USB-only Mini uses the shared atomic libraries and its own entry/constraints.
+atopile_project(
+    name = "splanc_mini",
+    srcs = glob(["elec/**"]),
+    ato_yaml = "ato.yaml",
+    autoroute = False,
+    build = "mini",
+    frozen = False,
+    outline_margin_mm = 4,
+    picker = False,
+    visibility = ["//visibility:public"],
+)
+
+atopile_pnr(
+    name = "splanc_mini.fab",
+    # Exercise the outer placement/routing loop beyond the initial short jobs.
+    native_seconds = 5400,
+    annotation_sources = ["elec/src/splanc_mini.ato"],
+    plane_access_fab = "mini-plane-access-fab.json",
+    electrical_fab = "mini-routing-electrical-fab.json",
+    constraints = "mini-constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
+    layout = ":splanc_mini",
+    quality_gate = True,
+    visibility = ["//visibility:public"],
+)
+
 atopile_project(
     name = "splanc_dev",
     # All design sources: the .ato plus the atomic parts' committed footprints
@@ -53,8 +81,28 @@ atopile_project(
 atopile_pnr(
     name = "splanc_dev.fab",
     constraints = "constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
     layout = ":splanc_dev",
+    quality_gate = True,
     # The own detailed router routes the signals; the build fails unless every net
     # is routed (require_routed defaults True) — a partial route is not a board.
+    visibility = ["//visibility:public"],
+)
+
+# Bounded source-to-native experiment; identical completion/quality gates.
+# This target is diagnostic and does not replace the production board target.
+atopile_pnr(
+    name = "splanc_mini.mesh_experiment",
+    native_seconds = 600,
+    placement_rounds = 3,
+    annotation_sources = ["elec/src/splanc_mini.ato"],
+    plane_access_fab = "mini-plane-access-fab.json",
+    electrical_fab = "mini-routing-electrical-fab.json",
+    constraints = "mini-constraints.yaml",
+    drc_gate = True,
+    footprints = glob(["elec/src/parts/**/*.kicad_mod"]),
+    layout = ":splanc_mini",
+    quality_gate = True,
     visibility = ["//visibility:public"],
 )

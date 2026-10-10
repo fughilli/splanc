@@ -1,0 +1,28 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPS63070RNMR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C109322", date="2026-09-09T17:35:05.343925+00:00", checksum="7eb1c09fa20ca95a16bbe799452a5d86f088d73390dd2009b9dfd560487f30f1">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPS63070RNMR", footprint="VQFN-15_L3.0-W2.5-P0.50-BL.kicad_mod", symbol="TPS63070RNMR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C109322", manufacturer="Texas Instruments", partno="TPS63070RNMR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal EN ~ pin 14
+    signal FB ~ pin 5
+    signal FB2 ~ pin 6
+    signal GND ~ pin 4
+    signal L1 ~ pin 11
+    signal L2 ~ pin 9
+    signal PG ~ pin 2
+    signal PGND ~ pin 10
+    signal PS_SYNC ~ pin 1
+    signal Vaux ~ pin 3
+    signal Vin ~ pin 12
+    signal Vout ~ pin 7
+    signal Vsel ~ pin 15

@@ -1,0 +1,37 @@
+board,part,quantity,unit_usd,extended_usd,basis,source,note,low_unit_usd,high_unit_usd
+LV,GW1NR-LV9QN88PC6/I5,1,18.2529,18.2529,published100tier_carried_to1000,https://www.lcsc.com/product-image/C5799578.html,"182 stock snapshot; quantity 1,000 RFQ required",16,24
+LV,W25Q32JVSSIQ,1,1.1546,1.1546,published300tier_carried_to1000,https://www.lcsc.com/de/product-detail/C179173.html,"Conservative newest exposed tier applicable to 1,000; regional snapshots disagree",1,1.4
+LV,FT2232HL-REEL,1,10.4124,10.4124,published100tier_carried_to1000,https://www.lcsc.com/product-detail/usb%20converters_ftdi_ft2232hl-reel_C27882.html,Snapshot cached3months; RFQ needed,8,12
+LV,FPGA 1.2 V/3.3 V and USB 1.8 V regulation/support,1,2.5,2.5,engineering_allowance,,"Regulators, inductors, local bulk and power sequencing",2.0,3.25
+LV,27 MHz FPGA and 12 MHz USB clocks,1,0.6,0.6,engineering_allowance,,,0.48,0.78
+LV,USB descriptor EEPROM completion reserve (not fitted),1,0.2,0.2,engineering_allowance,,,0.16000000000000003,0.26
+LV,HAT identification EEPROM completion reserve (not fitted),1,0.18,0.18,engineering_allowance,,,0.144,0.23399999999999999
+LV,USB C receptacle/CC plus ESD completion reserve,1,0.9,0.9,engineering_allowance,,,0.7200000000000001,1.1700000000000002
+LV,40-pin Pi female stacking header,1,1.2,1.2,engineering_allowance,,,0.96,1.56
+LV,50-pin ribbon shrouded header,1,0.6,0.6,engineering_allowance,,,0.48,0.78
+LV,TXU0304PWR SPI level translator,1,0.45,0.45,engineering_allowance,,Added during final circuit reconciliation,0.36000000000000004,0.5850000000000001
+LV,Decoupling/bias/JTAG/reset/LED/testpoints,1,1.5,1.5,engineering_allowance,,"Concept passive package, not yet generated BOM",1.2000000000000002,1.9500000000000002
+power,TPS1H100AQPWPRQ1,20,0.726,14.52,published1000tier,https://www.lcsc.com/product-detail/C478465.html,Digital ST fault variant; stock1730 insufficient20000; RFQ required,0.65,1.1
+power,ISO7760FDWR,4,3,12,engineering_allowance,https://www.digikey.com/en/products/detail/texas-instruments/ISO7760FDWR/7604341,"No applicable 1,000 tier recovered; six forward channels; all four need RFQ",2,4.5
+power,ISO7761FDWR,1,3,3,engineering_allowance,https://www.ti.com/product/ISO7761,five forward / one reverse; CLK/MOSI/LATCH/CS0/CS1/MISO,2,4.5
+power,INA4180A2IPWR,5,0.5241,2.6205,published1000tier,https://www.lcsc.com/product-detail/C2058137.html,Stock80; 5000 required,0.5,0.9
+power,MCP3208-CI/SL,1,2.751,2.751,published1000tier,https://www.lcsc.com/product-detail/C16939.html,Stock452;1000 required,2.5,4
+power,CD74HC4051PWR,5,0.1929,0.9645,published4000tier,https://www.lcsc.com/product-detail/C352826.html,Stock2120;5000 required,0.18,0.35
+power,PE2512FKE070R02L,20,0.1,2.0,allowance_above_published4000tier,https://www.lcsc.com/product-detail/C4212250.html,Published0.0868 cachedlastyear;20mohm1percent1W50ppm;budget0.10 pendingRFQ,0.0868,0.18
+power,Additional telemetry dividers/filter/decoupling/control passives,1,2,2,engineering_allowance,,42 precision0.1percent divider resistors +21voltage filters +20current RC pairs +additional decoupling/pulls; explicit incremental reserve,1.3,3.5
+power,Reference and ADC input RC networks,1,1,1,engineering_allowance,,,0.8,1.3
+power,Latched enable shift registers/control decoding,1,0.65,0.65,engineering_allowance,,,0.52,0.8450000000000001
+power,R-78E5.0-0.5 and3.3Vlocal regulation/support,1,4,4,engineering_allowance,,12/24 V default; 5 V input needs bypass variant; module price allowance,3.2,5.2
+power,DEGSON2EDGRC-5.08-03P-14-100A(H) header,20,0.0759,1.518,published4800tier,https://www.lcsc.com/product-detail/C669315.html,1175stock;20000required; manufacturer pairedfamily verified,0.0759,0.16
+power,DEGSON2EDGKDF-5.08-03P-14-00A(H) mating plug,20,0.3327,6.654,published1000tier,https://www.lcsc.com/product-detail/C691852.html,401stock;20000required;10AUL reference,0.3327,0.65
+power,Per-channel TVS/protection/capacitors/data series/ILIM/sense,20,0.3,6.0,engineering_allowance,,,0.24,0.39
+power,Input fuse/fuseholder/reverse protection/TVS/bulk completion reserve (not fitted),1,3,3,engineering_allowance,,,2.4000000000000004,3.9000000000000004
+power,50-pin ribbon shrouded header,1,0.6,0.6,engineering_allowance,,,0.48,0.78
+power,Temperature/status/testpoint/control passives,1,0.5,0.5,engineering_allowance,,,0.4,0.65
+power,Copper busbar 160 x 8 x 2 mm fabricated/plated,2,2.5,5.0,engineering_allowance,,45.9 g pair; holes/plating/installation not commodity copper price,1.5,4
+power,M5 lug terminals/studs/insulators/fasteners,2,1,2,engineering_allowance,,40 A rating unqualified,0.5,2
+USB bridge,USB A male vertical PCB connector,1,0.6,0.6,engineering_allowance,,,0.48,0.78
+USB bridge,USB C male vertical PCB connector,1,0.65,0.65,engineering_allowance,,,0.52,0.8450000000000001
+USB bridge,USB bridge CC/strap plus ESD completion reserve,1,0.15,0.15,engineering_allowance,,,0.12,0.195
+interboard hardware,50-conductor IDC ribbon cable assembly,1,1.45,1.45,engineering_allowance,,,1.16,1.885
+interboard hardware,Board mounting screws and standoffs,1,1.2,1.2,engineering_allowance,,,0.96,1.56

@@ -147,6 +147,448 @@
       "manufacturer": "Cypress",
       "package": "QFN-56",
       "description": "FX2LP USB 24MHz logic analyzer core (fx2lafw)"
+    },
+    {
+      "lcsc": 976032,
+      "mpn": "QMC5883L",
+      "manufacturer": "QST",
+      "package": "LGA-16",
+      "description": "QMC5883L"
+    },
+    {
+      "lcsc": 5438445,
+      "mpn": "INMP441",
+      "manufacturer": "TDK InvenSense",
+      "package": "SMD-9",
+      "description": "INMP441"
+    },
+    {
+      "lcsc": 128401,
+      "mpn": "TPS25200DRVR",
+      "manufacturer": "Texas Instruments",
+      "package": "WSON-6",
+      "description": "TPS25200DRVR"
+    },
+    {
+      "lcsc": 109322,
+      "mpn": "TPS63070RNMR",
+      "manufacturer": "Texas Instruments",
+      "package": "VQFN-15",
+      "description": "TPS63070RNMR"
+    },
+    {
+      "lcsc": 2876593,
+      "mpn": "BQ25798RQMR",
+      "manufacturer": "Texas Instruments",
+      "package": "QFN-29",
+      "description": "BQ25798RQMR"
+    },
+    {
+      "lcsc": 3188898,
+      "mpn": "TPS552882RPMR",
+      "manufacturer": "Texas Instruments",
+      "package": "VQFN-26",
+      "description": "TPS552882RPMR"
+    },
+    {
+      "lcsc": 91302,
+      "mpn": "BQ34Z100PWR-G1",
+      "manufacturer": "Texas Instruments",
+      "package": "TSSOP-14",
+      "description": "BQ34Z100PWR-G1"
+    },
+    {
+      "lcsc": 22438973,
+      "mpn": "TPS25730DREFR",
+      "manufacturer": "Texas Instruments",
+      "package": "WQFN-38",
+      "description": "20V 5A sink-only USB PD controller"
+    },
+    {
+      "lcsc": 89632,
+      "mpn": "CL31B106KBHNNNE",
+      "manufacturer": "Samsung",
+      "package": "1206",
+      "description": "CL31B106KBHNNNE"
+    },
+    {
+      "lcsc": 13533,
+      "mpn": "CL05C331JB5NNNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "CL05C331JB5NNNC"
+    },
+    {
+      "lcsc": 28323,
+      "mpn": "CL21B105KBFNNNE",
+      "manufacturer": "Samsung",
+      "package": "0805",
+      "description": "CL21B105KBFNNNE"
+    },
+    {
+      "lcsc": 25913,
+      "mpn": "0402WGF6041TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF6041TCE"
+    },
+    {
+      "lcsc": 25784,
+      "mpn": "0402WGF3001TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF3001TCE"
+    },
+    {
+      "lcsc": 25076,
+      "mpn": "0402WGF1000TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF1000TCE"
+    },
+    {
+      "lcsc": 307441,
+      "mpn": "CL05C102JB5NNNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "CL05C102JB5NNNC"
+    },
+    {
+      "lcsc": 307434,
+      "mpn": "CL05B473KO5NNNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "CL05B473KO5NNNC"
+    },
+    {
+      "lcsc": 688531,
+      "mpn": "LTC4421HUHE#PBF",
+      "manufacturer": "Analog Devices",
+      "package": "QFN-36",
+      "description": "High power prioritized PowerPath controller"
+    },
+    {
+      "lcsc": 86513,
+      "mpn": "CSD18540Q5B",
+      "manufacturer": "Texas Instruments",
+      "package": "VSON-8",
+      "description": "60V low resistance N-channel power MOSFET"
+    },
+    {
+      "lcsc": 26957,
+      "mpn": "0402WGF1742TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF1742TCE"
+    },
+    {
+      "lcsc": 25752,
+      "mpn": "0402WGF1202TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF1202TCE"
+    },
+    {
+      "lcsc": 25767,
+      "mpn": "0402WGF2203TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF2203TCE"
+    },
+    {
+      "lcsc": 25879,
+      "mpn": "0402WGF2201TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF2201TCE"
+    },
+    {
+      "lcsc": 1591,
+      "mpn": "CL10B104KB8NNNC",
+      "manufacturer": "Samsung",
+      "package": "0603",
+      "description": "CL10B104KB8NNNC"
+    },
+    {
+      "lcsc": 2041319,
+      "mpn": "SRP1038A-4R7M",
+      "manufacturer": "BOURNS",
+      "package": "SMD-10x11mm",
+      "description": "SRP1038A-4R7M"
+    },
+    {
+      "lcsc": 25874,
+      "mpn": "0402WGF2492TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF2492TCE"
+    },
+    {
+      "lcsc": 89347,
+      "mpn": "TPS70933DBVR",
+      "manufacturer": "Texas Instruments",
+      "package": "SOT-23-5",
+      "description": "TPS70933DBVR"
+    },
+    {
+      "lcsc": 431092,
+      "mpn": "XT30PW-M",
+      "manufacturer": "Changzhou Amass Elec",
+      "package": "Through Hole",
+      "description": "XT30PW-M"
+    },
+    {
+      "lcsc": 728585,
+      "mpn": "RT0603BRD07200KL",
+      "manufacturer": "YAGEO",
+      "package": "0603",
+      "description": "RT0603BRD07200KL"
+    },
+    {
+      "lcsc": 723637,
+      "mpn": "RT0603BRD0720KL",
+      "manufacturer": "YAGEO",
+      "package": "0603",
+      "description": "RT0603BRD0720KL"
+    },
+    {
+      "lcsc": 21438296,
+      "mpn": "GRM1555C1H222JA01J",
+      "manufacturer": "muRata",
+      "package": "0402",
+      "description": "GRM1555C1H222JA01J"
+    },
+    {
+      "lcsc": 2987940,
+      "mpn": "GRM1555C1H222GA01D",
+      "manufacturer": "muRata",
+      "package": "0402",
+      "description": "2.2nF 50V C0G capacitor"
+    },
+    {
+      "lcsc": 2650411,
+      "mpn": "TPD2S300YFFR",
+      "manufacturer": "Texas Instruments",
+      "package": "DSBGA-9",
+      "description": "TPD2S300YFFR"
+    },
+    {
+      "lcsc": 94934,
+      "mpn": "TPD2EUSB30ADRTR",
+      "manufacturer": "Texas Instruments",
+      "package": "SOT-3",
+      "description": "TPD2EUSB30ADRTR"
+    },
+    {
+      "lcsc": 523793,
+      "mpn": "TVS2200DRVR",
+      "manufacturer": "Texas Instruments",
+      "package": "WSON-6",
+      "description": "TVS2200DRVR"
+    },
+    {
+      "lcsc": 278516,
+      "mpn": "EEHZK1V331P",
+      "manufacturer": "PANASONIC",
+      "package": "SMD,D10xL10.2mm",
+      "description": "330uF 35V hybrid, ESR20mOhm, 2.8Arms"
+    },
+    {
+      "lcsc": 2876380,
+      "mpn": "TPD6S300ARUKR",
+      "manufacturer": "Texas Instruments",
+      "package": "WQFN-20-EP(3x3)",
+      "description": "USB-C short-to-VBUS and ESD protection, routable QFN package"
+    },
+    {
+      "lcsc": 3025063,
+      "mpn": "USB4105-GF-A-060",
+      "manufacturer": "Global Connector Technology",
+      "package": "SMD",
+      "description": "USB-C USB2.0 receptacle, 5A 48V per manufacturer USB4105 specification A3"
+    },
+    {
+      "lcsc": 3278352,
+      "mpn": "PSMN4R2-80YSE",
+      "manufacturer": "Nexperia",
+      "package": "LFPAK56E",
+      "description": "80V enhanced-SOA hot-swap MOSFET; mux input FET linear operation"
+    },
+    {
+      "lcsc": 346480,
+      "mpn": "CSRF0805FT10L0",
+      "manufacturer": "Stackpole Electronics",
+      "package": "0805",
+      "description": "10mOhm 0.5W 1% LED current shunt"
+    },
+    {
+      "lcsc": 513611,
+      "mpn": "PA1206FRE470R01L",
+      "manufacturer": "YAGEO",
+      "package": "1206",
+      "description": "10mOhm 1W 1% converter current shunt"
+    },
+    {
+      "lcsc": 723548,
+      "mpn": "PA1206FRE470R005L",
+      "manufacturer": "YAGEO",
+      "package": "1206",
+      "description": "5mOhm 1W 1% USB mux current shunt"
+    },
+    {
+      "lcsc": 393074,
+      "mpn": "RLP25FEGMR005",
+      "manufacturer": "TA-I Tech",
+      "package": "2512",
+      "description": "5mOhm 3W 1% battery gauge current shunt"
+    },
+    {
+      "lcsc": 844899,
+      "mpn": "WSL25122L000FEA",
+      "manufacturer": "Vishay",
+      "package": "2512",
+      "description": "2mOhm 1W 1% battery mux current shunt"
+    },
+    {
+      "lcsc": 2886925,
+      "mpn": "TL3340AF160QG",
+      "manufacturer": "E-Switch",
+      "package": "SMD",
+      "description": "Side actuated tactile switch, 160gf, right angle"
+    },
+    {
+      "lcsc": 125094,
+      "mpn": "LTST-C190KGKT",
+      "manufacturer": "LITEON",
+      "package": "0603",
+      "description": "Yellow-green top emitting status LED"
+    },
+    {
+      "lcsc": 157740,
+      "mpn": "LTST-C190KFKT",
+      "manufacturer": "LITEON",
+      "package": "0603",
+      "description": "Orange top emitting status LED"
+    },
+    {
+      "lcsc": 3288646,
+      "mpn": "ICM-42670-P",
+      "manufacturer": "TDK InvenSense",
+      "package": "LGA-14(2.5x3)",
+      "description": "ICM-42670-P",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/826e0bd2b58f8a1f9105becd4b111f93.pdf?productCode=C3288646"
+    },
+    {
+      "lcsc": 404328,
+      "mpn": "MMC5603NJ",
+      "manufacturer": "MEMSIC",
+      "package": "WLP-4(0.8x0.8)",
+      "description": "MMC5603NJ",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/04cae59a31e0e5a1a28fd793c4cbc8bd.pdf?productCode=C404328"
+    },
+    {
+      "lcsc": 20344623,
+      "mpn": "MMICT5848-00-012",
+      "manufacturer": "TDK InvenSense",
+      "package": "SMD-8P,3.5x2.5mm",
+      "description": "MMICT5848-00-012",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/d238399e4bf2efa674db85db7a27f06b.pdf?productCode=C20344623"
+    },
+    {
+      "lcsc": 22391138,
+      "mpn": "BMP580",
+      "manufacturer": "Bosch",
+      "package": "LGA-10(2x2)",
+      "description": "BMP580",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/303124af4a2336172cdd9343ee718907.pdf?productCode=C22391138"
+    },
+    {
+      "lcsc": 138066,
+      "mpn": "RC0402FR-0710RL",
+      "manufacturer": "YAGEO",
+      "package": "0402",
+      "description": "RC0402FR-0710RL",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/b426be3ce22c6de3e0c3a2248e49159e.pdf?productCode=C138066"
+    },
+    {
+      "lcsc": 138002,
+      "mpn": "RC0402FR-0733RL",
+      "manufacturer": "YAGEO",
+      "package": "0402",
+      "description": "RC0402FR-0733RL",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/b426be3ce22c6de3e0c3a2248e49159e.pdf?productCode=C138002"
+    },
+    {
+      "lcsc": 201276,
+      "mpn": "STE1206M1W0R010F",
+      "manufacturer": "Walter Elec",
+      "package": "1206",
+      "description": "STE1206M1W0R010F",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/d69a625491d9454084fcedb1a8ae3e82.pdf?productCode=C201276"
+    },
+    {
+      "lcsc": 7419996,
+      "mpn": "FRM121WFR005TM",
+      "manufacturer": "FOJAN",
+      "package": "1206",
+      "description": "FRM121WFR005TM",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/a129741bf6e2c80df7be7029264e9e86.pdf?productCode=C7419996"
+    },
+    {
+      "lcsc": 79924,
+      "mpn": "TLV70018DDCR",
+      "manufacturer": "TI",
+      "package": "SOT-23-5",
+      "description": "1.8V Positive Fixed SOT-23-5 Voltage Regulators - Linear, Low Drop Out (LDO) Regulators RoHS",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/22bb42f516c2444685a37d872f316f88.pdf?productCode=C79924"
+    },
+    {
+      "lcsc": 41556732,
+      "mpn": "BLM21PG601SN1D",
+      "manufacturer": "muRata",
+      "package": "0805",
+      "description": "140m\u03a9 1 \u00b125% 600\u03a9@100MHz 0805 Ferrite Beads and Chips RoHS",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/cc3320cc5ae104a9a8bdc79a4d6b2654.pdf?productCode=C41556732"
+    },
+    {
+      "lcsc": 15195,
+      "mpn": "CL05B103KB5NNNC",
+      "manufacturer": "Samsung Electro-Mechanics",
+      "package": "0402",
+      "description": "10nF 50V X7R 0402",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/02336ea48ea44ca18c72517dd3cb7b47.pdf?productCode=C15195"
+    },
+    {
+      "lcsc": 478173,
+      "mpn": "PSMN4R0-60YS,115",
+      "manufacturer": "Nexperia",
+      "package": "LFPAK-56",
+      "description": "60V 100A 4V 130W 4m\u03a9@10V 1 N-channel LFPAK-56 Single FETs, MOSFETs RoHS",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/c465a0ad093f5bf5340cbe2a3f8ed9e0.pdf?productCode=C478173"
+    },
+    {
+      "lcsc": 2683366,
+      "mpn": "CSD18531Q5A",
+      "manufacturer": "TI",
+      "package": "VSONP-8(5x6)",
+      "description": "N-Channel 60V 134A 156W Surface Mount VSONP-8(5x6)",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/936c14765727c3a405a82c1a4fe38025.pdf?productCode=C2683366"
+    },
+    {
+      "lcsc": 503653,
+      "mpn": "PSMN3R7-100BSEJ",
+      "manufacturer": "Nexperia",
+      "package": "TO-263",
+      "description": "405W 100V 120A 2.66V 3.95m\u03a9@10V 1 N-channel N-Channel TO-263 Single FETs, MOSFETs RoHS",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/6d758564a027062a918b3731df311ae5.pdf?productCode=C503653"
+    },
+    {
+      "lcsc": 845018,
+      "mpn": "IHLP2525CZER1R0M01",
+      "manufacturer": "VISHAY",
+      "package": "SMD,6.9x6.5mm",
+      "description": "1uH shielded 11A 22A saturation",
+      "datasheet_url": "https://datasheet.lcsc.com/datasheet/pdf/8351d94385375f88426db52d94b6c4c2.pdf?productCode=C845018"
     }
   ],
   "passives": [
@@ -254,6 +696,48 @@
       "manufacturer": "Uniroyal",
       "package": "2512",
       "description": "10mohm 2W 1% current shunt"
+    },
+    {
+      "lcsc": 16772,
+      "mpn": "CL05B224KO5NNNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "CL05B224KO5NNNC"
+    },
+    {
+      "lcsc": 69335,
+      "mpn": "CL10A475KA8NQNC",
+      "manufacturer": "Samsung",
+      "package": "0603",
+      "description": "CL10A475KA8NQNC"
+    },
+    {
+      "lcsc": 2168449,
+      "mpn": "C0402C222J5RACTU",
+      "manufacturer": "KEMET",
+      "package": "0402",
+      "description": "C0402C222J5RACTU"
+    },
+    {
+      "lcsc": 11463,
+      "mpn": "0402WGF3162TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF3162TCE"
+    },
+    {
+      "lcsc": 26980,
+      "mpn": "0402WGF4532TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF4532TCE"
+    },
+    {
+      "lcsc": 26979,
+      "mpn": "0402WGF4222TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0402WGF4222TCE"
     }
   ]
 }

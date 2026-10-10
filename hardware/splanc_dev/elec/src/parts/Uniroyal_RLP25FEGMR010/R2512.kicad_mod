@@ -1,0 +1,138 @@
+(footprint "Uniroyal_RLP25FEGMR010:R2512"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "ec5ebfa7-e8bb-443d-a4e2-b2946587f5f7")
+	(property "Reference" "REF**"
+		(at 0 -4)
+		(layer "F.SilkS")
+		(uuid "0fcc7d2c-4012-4433-b297-5ae1e39d5312")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "R2512"
+		(at 0 4)
+		(layer "F.Fab")
+		(uuid "2f681cc1-a0ee-49f1-b6d3-d45a0fe864bf")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_circle
+		(center -3.18 1.6)
+		(end -3.15 1.6)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "e1a0b180-3150-42c0-a9b6-86f3482575ce")
+	)
+	(fp_line
+		(start 2.5 1.96)
+		(end 3.94 1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "8a0e497c-aa3b-45a8-8b69-aef7f2f449a2")
+	)
+	(fp_line
+		(start 3.94 1.96)
+		(end 3.94 -1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "f75a3929-5c4d-425d-b653-7ecf6b210770")
+	)
+	(fp_line
+		(start 3.94 -1.96)
+		(end 2.5 -1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "30af452b-0238-4338-8627-f6a394ef314b")
+	)
+	(fp_line
+		(start -2.5 1.96)
+		(end -3.94 1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "b0b2a8ed-b902-4319-844a-315ac9223687")
+	)
+	(fp_line
+		(start -3.94 1.96)
+		(end -3.94 -1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "e826d99d-de11-4d69-8764-fa7e36a24313")
+	)
+	(fp_line
+		(start -3.94 -1.96)
+		(end -2.5 -1.96)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(layers "F.SilkS")
+		(locked no)
+		(uuid "01658760-2451-415c-a673-3a11edb705ed")
+	)
+	(pad "2" smd rect
+		(at 3.07 0 0)
+		(size 1.28 3.46)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "2812e07e-bd15-4bc7-a020-c9eeb95b3252")
+	)
+	(pad "1" smd rect
+		(at -3.07 0 0)
+		(size 1.28 3.46)
+		(layers "F.Cu" "F.Paste" "F.Mask")
+		(uuid "1efef3b2-c2ec-4754-bb71-d858db5d8cfe")
+	)
+	(model "${KIPRJMOD}/../../src/parts/Uniroyal_RLP25FEGMR010/R2512_L6.3-W3.2-H0.6.step"
+		(offset
+			(xyz 0 0 -0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+)

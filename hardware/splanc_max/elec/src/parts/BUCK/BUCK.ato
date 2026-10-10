@@ -1,0 +1,11 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component BUCK:
+    trait is_atomic_part<manufacturer="RECOM", partnumber="R-78E5.0-0.5", footprint="BUCK.kicad_mod", symbol="BUCK.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="RECOM", partno="R-78E5.0-0.5">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3

@@ -1,0 +1,334 @@
+{
+  "revision": "qwiic-linked-r13",
+  "units": "mm",
+  "edge_chamfer": 0.5,
+  "handheld": {
+    "wall": 2.2,
+    "floor": 1.6,
+    "board_z": 4.2,
+    "board_clearance": 1.0,
+    "corner_radius": 3.0,
+    "button": {
+      "center_z": 9.1,
+      "rear_y": 1.45,
+      "rear_width": 5.2,
+      "rear_height": 2.4,
+      "depth": 6.0,
+      "draft_deg": 0.95,
+      "aperture": [
+        5.7,
+        2.9
+      ],
+      "spring_width": 0.8,
+      "spring_thickness": 0.3,
+      "rail_z": 16.0,
+      "rail_height": 1.8,
+      "raised_seam_z": 15.5,
+      "retainer_z": 16.1,
+      "retainer_depth": 0.8,
+      "land_z": 17.15,
+      "spring_path": [
+        [
+          2.7,
+          15.4
+        ],
+        [
+          2.7,
+          14
+        ],
+        [
+          0.9,
+          14
+        ],
+        [
+          0.9,
+          12.5
+        ],
+        [
+          2.7,
+          12.5
+        ],
+        [
+          2.7,
+          11
+        ],
+        [
+          0.7,
+          11
+        ],
+        [
+          0.7,
+          10.2
+        ]
+      ]
+    },
+    "mini": {
+      "board": [
+        70,
+        55
+      ],
+      "top": 12.9,
+      "split": 9,
+      "buttons": [
+        34,
+        42,
+        51,
+        59
+      ],
+      "led_ports": [
+        [
+          64,
+          20
+        ],
+        [
+          64,
+          31
+        ]
+      ],
+      "usb_x": 14,
+      "lightpipes": [
+        [
+          22,
+          4
+        ],
+        [
+          26,
+          4
+        ]
+      ],
+      "logo_width": 34,
+      "outside_height_mm": 11.3,
+      "side_margin": 2.8,
+      "rear_margin": 2.8,
+      "button_overrides": {
+        "retention": "linked",
+        "raised_seam_z": 11.2,
+        "link_width": 0.8,
+        "link_thickness": 0.3,
+        "stop_width": 1.2,
+        "stop_travel": 0.6
+      },
+      "qwiic": {
+        "part": "JST SM04B-SRSS-TB",
+        "origin_mm": [
+          1.975,
+          11,
+          7.4
+        ],
+        "rotation_deg": -90,
+        "mouth_mm": [
+          -0.5,
+          11,
+          8.88
+        ],
+        "normal": [
+          -1,
+          0,
+          0
+        ],
+        "opening_inner_mm": [
+          8,
+          4.8
+        ],
+        "opening_outer_mm": [
+          9.2,
+          6
+        ],
+        "pinout": [
+          "GND",
+          "3V3",
+          "SDA",
+          "SCL"
+        ],
+        "status": "mechanical provision; add and route in next electrical revision"
+      },
+      "roof": 1.4
+    },
+    "splanc": {
+      "board": [
+        100,
+        80
+      ],
+      "top": 18.8,
+      "split": 10,
+      "buttons": [
+        32,
+        44,
+        82,
+        89
+      ],
+      "led_ports": [
+        [
+          94,
+          25
+        ],
+        [
+          94,
+          36
+        ]
+      ],
+      "usb_x": 18,
+      "lightpipes": [
+        [
+          27,
+          10
+        ],
+        [
+          33,
+          10
+        ]
+      ],
+      "logo_width": 46,
+      "outside_height_mm": 17.2,
+      "qwiic": {
+        "part": "JST SM04B-SRSS-TB",
+        "origin_mm": [
+          1.975,
+          14,
+          7.4
+        ],
+        "rotation_deg": -90,
+        "mouth_mm": [
+          -0.5,
+          14,
+          8.88
+        ],
+        "normal": [
+          -1,
+          0,
+          0
+        ],
+        "opening_inner_mm": [
+          8,
+          4.8
+        ],
+        "opening_outer_mm": [
+          9.2,
+          6
+        ],
+        "pinout": [
+          "GND",
+          "3V3",
+          "SDA",
+          "SCL"
+        ],
+        "status": "mechanical provision; add and route in next electrical revision"
+      }
+    },
+    "roof": 1.6,
+    "assembly_z_shift_mm": -1.6
+  },
+  "max": {
+    "outside": [
+      330,
+      134,
+      43
+    ],
+    "wall": 2.8,
+    "floor": 2.5,
+    "split": 37,
+    "pi_origin": [
+      323,
+      28,
+      8
+    ],
+    "pi_rotation_deg": 90,
+    "hat_z": 28,
+    "power_origin": [
+      45,
+      7,
+      8
+    ],
+    "case_mounts": [
+      [
+        4,
+        4
+      ],
+      [
+        326,
+        4
+      ],
+      [
+        4,
+        130
+      ],
+      [
+        326,
+        130
+      ],
+      [
+        184,
+        4
+      ],
+      [
+        184,
+        130
+      ]
+    ],
+    "exposed_pi_ports": [],
+    "logo_width": 82,
+    "service_extension_mm": 38,
+    "network_origin": [
+      112,
+      37,
+      23.5
+    ],
+    "network_size": [
+      80,
+      60,
+      1.6
+    ],
+    "panel_ethernet_centers": [
+      [
+        25,
+        21
+      ],
+      [
+        106,
+        21
+      ]
+    ],
+    "dc_center": [
+      66.5,
+      29
+    ],
+    "smps_center": [
+      24,
+      67,
+      9.6
+    ]
+  },
+  "usb_c": {
+    "shell_width_mm": 8.94,
+    "shell_height_mm": 3.16,
+    "radial_clearance_mm": 0.3,
+    "web_thickness_mm": 0.8,
+    "web_back_mm": -0.9,
+    "well_inner_mm": [
+      18,
+      10
+    ],
+    "well_outer_mm": [
+      20,
+      12
+    ],
+    "well_corner_radius_mm": 2,
+    "opening_draft_deg": 1,
+    "cable_overmold_test_mm": [
+      16,
+      8
+    ],
+    "cable_overmold_corner_radius_mm": 1.5,
+    "cable_overmold_front_mm": 0.1,
+    "qualification": "Prototype envelope, not a universal cable or waterproof qualification. Shell clearance is nominal; cable mouldings vary.",
+    "back_relief_mm": [
+      12,
+      5.6
+    ]
+  },
+  "seam_seal": {
+    "method": "dispensed sealant in interrupted gland",
+    "connector_end_setback_mm": 0.8,
+    "qualification": "No unsupported seal spans across openings. Separate connector-to-case sealant and ingress testing required; MAX remains vented."
+  }
+}

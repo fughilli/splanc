@@ -1,0 +1,22 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component SHIFT4:
+    trait is_atomic_part<manufacturer="TI", partnumber="TXU0304PWR", footprint="SHIFT4.kicad_mod", symbol="SHIFT4.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="TI", partno="TXU0304PWR">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2
+    signal p3 ~ pin 3
+    signal p4 ~ pin 4
+    signal p5 ~ pin 5
+    signal p6 ~ pin 6
+    signal p7 ~ pin 7
+    signal p8 ~ pin 8
+    signal p9 ~ pin 9
+    signal p10 ~ pin 10
+    signal p11 ~ pin 11
+    signal p12 ~ pin 12
+    signal p13 ~ pin 13
+    signal p14 ~ pin 14

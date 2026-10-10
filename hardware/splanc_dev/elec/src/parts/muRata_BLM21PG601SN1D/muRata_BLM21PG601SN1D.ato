@@ -1,0 +1,18 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component muRata_BLM21PG601SN1D_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+
+    trait is_atomic_part<manufacturer="muRata", partnumber="BLM21PG601SN1D", footprint="L0805.kicad_mod", symbol="BLM21PG601SN1D.kicad_sym", model="R0805_L2.0-W1.3-H0.6.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C41556732", manufacturer="muRata", partno="BLM21PG601SN1D">
+    trait has_designator_prefix<prefix="L">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/cc3320cc5ae104a9a8bdc79a4d6b2654.pdf?productCode=C41556732">
+
+    # pins
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

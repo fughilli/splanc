@@ -1,0 +1,20 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component YAGEO_RT0603BRD07200KL_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C728585", date="2026-09-09T18:51:23.784910+00:00", checksum="122526c18e43c215ce12a816ab280b01d0c5b9ec60a2e66cea8038ec8b216f32">
+
+    trait is_atomic_part<manufacturer="YAGEO", partnumber="RT0603BRD07200KL", footprint="R0603.kicad_mod", symbol="RT0603BRD07200KL.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C728585", manufacturer="YAGEO", partno="RT0603BRD07200KL">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    pin 2
+    pin 1
+
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

@@ -1,0 +1,455 @@
+{
+  "summary": {
+    "date": "2026-09-21",
+    "currency": "USD",
+    "build_quantity": 1000,
+    "state": "concept_budget_not_supplier_quote",
+    "bom_subtotals": {
+      "LV": 37.9499,
+      "power": 102.4336,
+      "USB bridge": 1.4,
+      "interboard hardware": 2.65
+    },
+    "bom_per_set_low_mid_high": [
+      107.34,
+      144.43,
+      200.21
+    ],
+    "pcb_assembly_test_per_set_low_mid_high": [
+      14.35,
+      21.7,
+      31.9
+    ],
+    "pcba_set_low_mid_high": [
+      121.69,
+      166.13,
+      232.11
+    ],
+    "pcb_assembly_test": {
+      "LV": {
+        "pcb": [
+          2,
+          3,
+          4.5
+        ],
+        "assembly_test": [
+          2,
+          3.5,
+          5
+        ]
+      },
+      "power": {
+        "pcb": [
+          5,
+          7,
+          10
+        ],
+        "assembly_test": [
+          5,
+          7.5,
+          11
+        ]
+      },
+      "USB bridge": {
+        "pcb": [
+          0.15,
+          0.3,
+          0.6
+        ],
+        "assembly_test": [
+          0.2,
+          0.4,
+          0.8
+        ]
+      }
+    },
+    "bom_mid_1000": 144430.0,
+    "procurement_allowance_3percent_mid": 148762.9,
+    "excludes": [
+      "Pi",
+      "microSD",
+      "power supplies",
+      "LED strips/cables",
+      "enclosure",
+      "freight",
+      "tax/duty",
+      "NRE",
+      "compliance",
+      "scrap/rework over3 percent"
+    ]
+  },
+  "lines": [
+    {
+      "board": "LV",
+      "part": "GW1NR-LV9QN88PC6/I5",
+      "quantity": 1,
+      "unit_usd": 18.2529,
+      "extended_usd": 18.2529,
+      "basis": "published100tier_carried_to1000",
+      "source": "https://www.lcsc.com/product-image/C5799578.html",
+      "note": "182 stock snapshot; quantity 1,000 RFQ required",
+      "low_unit_usd": 16,
+      "high_unit_usd": 24
+    },
+    {
+      "board": "LV",
+      "part": "W25Q32JVSSIQ",
+      "quantity": 1,
+      "unit_usd": 1.1546,
+      "extended_usd": 1.1546,
+      "basis": "published300tier_carried_to1000",
+      "source": "https://www.lcsc.com/de/product-detail/C179173.html",
+      "note": "Conservative newest exposed tier applicable to 1,000; regional snapshots disagree",
+      "low_unit_usd": 1,
+      "high_unit_usd": 1.4
+    },
+    {
+      "board": "LV",
+      "part": "FT2232HL-REEL",
+      "quantity": 1,
+      "unit_usd": 10.4124,
+      "extended_usd": 10.4124,
+      "basis": "published100tier_carried_to1000",
+      "source": "https://www.lcsc.com/product-detail/usb%20converters_ftdi_ft2232hl-reel_C27882.html",
+      "note": "Snapshot cached3months; RFQ needed",
+      "low_unit_usd": 8,
+      "high_unit_usd": 12
+    },
+    {
+      "board": "LV",
+      "part": "FPGA 1.2 V/3.3 V and USB 1.8 V regulation/support",
+      "quantity": 1,
+      "unit_usd": 2.5,
+      "extended_usd": 2.5,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "Regulators, inductors, local bulk and power sequencing",
+      "low_unit_usd": 2.0,
+      "high_unit_usd": 3.25
+    },
+    {
+      "board": "LV",
+      "part": "27 MHz FPGA and 12 MHz USB clocks",
+      "quantity": 1,
+      "unit_usd": 0.6,
+      "extended_usd": 0.6,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.48,
+      "high_unit_usd": 0.78
+    },
+    {
+      "board": "LV",
+      "part": "USB descriptor EEPROM completion reserve (not fitted)",
+      "quantity": 1,
+      "unit_usd": 0.2,
+      "extended_usd": 0.2,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.16000000000000003,
+      "high_unit_usd": 0.26
+    },
+    {
+      "board": "LV",
+      "part": "HAT identification EEPROM completion reserve (not fitted)",
+      "quantity": 1,
+      "unit_usd": 0.18,
+      "extended_usd": 0.18,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.144,
+      "high_unit_usd": 0.23399999999999999
+    },
+    {
+      "board": "LV",
+      "part": "USB C receptacle/CC plus ESD completion reserve",
+      "quantity": 1,
+      "unit_usd": 0.9,
+      "extended_usd": 0.9,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.7200000000000001,
+      "high_unit_usd": 1.1700000000000002
+    },
+    {
+      "board": "LV",
+      "part": "40-pin Pi female stacking header",
+      "quantity": 1,
+      "unit_usd": 1.2,
+      "extended_usd": 1.2,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.96,
+      "high_unit_usd": 1.56
+    },
+    {
+      "board": "LV",
+      "part": "50-pin ribbon shrouded header",
+      "quantity": 1,
+      "unit_usd": 0.6,
+      "extended_usd": 0.6,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.48,
+      "high_unit_usd": 0.78
+    },
+    {
+      "board": "LV",
+      "part": "TXU0304PWR SPI level translator",
+      "quantity": 1,
+      "unit_usd": 0.45,
+      "extended_usd": 0.45,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "Added during final circuit reconciliation",
+      "low_unit_usd": 0.36000000000000004,
+      "high_unit_usd": 0.5850000000000001
+    },
+    {
+      "board": "LV",
+      "part": "Decoupling/bias/JTAG/reset/LED/testpoints",
+      "quantity": 1,
+      "unit_usd": 1.5,
+      "extended_usd": 1.5,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "Concept passive package, not yet generated BOM",
+      "low_unit_usd": 1.2000000000000002,
+      "high_unit_usd": 1.9500000000000002
+    },
+    {
+      "board": "power",
+      "part": "TPS1H100BQPWPRQ1",
+      "quantity": 20,
+      "unit_usd": 0.82,
+      "extended_usd": 16.4,
+      "basis": "engineering_allowance_above_exposed_price",
+      "source": "https://www.lcsc.com/fr/product-detail/power-distribution-switches_texas-instruments-tps1h100bqpwprq1_C475505.html",
+      "note": "Listed1000tier0.4597 but42stock;20,000 required;0.82 budgeting assumption",
+      "low_unit_usd": 0.6,
+      "high_unit_usd": 1.2
+    },
+    {
+      "board": "power",
+      "part": "ISO7760FDWR",
+      "quantity": 4,
+      "unit_usd": 3,
+      "extended_usd": 12,
+      "basis": "engineering_allowance",
+      "source": "https://www.digikey.com/en/products/detail/texas-instruments/ISO7760FDWR/7604341",
+      "note": "No applicable 1,000 tier recovered; six forward channels; all four need RFQ",
+      "low_unit_usd": 2,
+      "high_unit_usd": 4.5
+    },
+    {
+      "board": "power",
+      "part": "ISO7761FDWR",
+      "quantity": 1,
+      "unit_usd": 3,
+      "extended_usd": 3,
+      "basis": "engineering_allowance",
+      "source": "https://www.ti.com/product/ISO7761",
+      "note": "five forward / one reverse; CLK/MOSI/LATCH/CS0/CS1/MISO",
+      "low_unit_usd": 2,
+      "high_unit_usd": 4.5
+    },
+    {
+      "board": "power",
+      "part": "AD7490BRUZ-REEL7",
+      "quantity": 2,
+      "unit_usd": 13.1418,
+      "extended_usd": 26.2836,
+      "basis": "published100tier_carried_to1000",
+      "source": "https://www.lcsc.com/product-detail/Analog-to-Digital-Converters-ADC_Analog-Devices-AD7490BRUZ-REEL7_C36884.html",
+      "note": "2,000 required; 1,197 snapshot stock; lower quote not assumed",
+      "low_unit_usd": 10,
+      "high_unit_usd": 16
+    },
+    {
+      "board": "power",
+      "part": "Reference and ADC input RC networks",
+      "quantity": 1,
+      "unit_usd": 1,
+      "extended_usd": 1,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.8,
+      "high_unit_usd": 1.3
+    },
+    {
+      "board": "power",
+      "part": "Latched enable shift registers/control decoding",
+      "quantity": 1,
+      "unit_usd": 0.65,
+      "extended_usd": 0.65,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.52,
+      "high_unit_usd": 0.8450000000000001
+    },
+    {
+      "board": "power",
+      "part": "R-78E5.0-0.5 and3.3Vlocal regulation/support",
+      "quantity": 1,
+      "unit_usd": 4,
+      "extended_usd": 4,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "12/24 V default; 5 V input needs bypass variant; module price allowance",
+      "low_unit_usd": 3.2,
+      "high_unit_usd": 5.2
+    },
+    {
+      "board": "power",
+      "part": "3-way 5.08 mm pitch pluggable terminal pair",
+      "quantity": 20,
+      "unit_usd": 1.1,
+      "extended_usd": 22.0,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "Complete board header plus mating plug; MPN unselected",
+      "low_unit_usd": 0.7,
+      "high_unit_usd": 1.8
+    },
+    {
+      "board": "power",
+      "part": "Per-channel TVS/protection/capacitors/data series/ILIM/sense",
+      "quantity": 20,
+      "unit_usd": 0.3,
+      "extended_usd": 6.0,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.24,
+      "high_unit_usd": 0.39
+    },
+    {
+      "board": "power",
+      "part": "Input fuse/fuseholder/reverse protection/TVS/bulk completion reserve (not fitted)",
+      "quantity": 1,
+      "unit_usd": 3,
+      "extended_usd": 3,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 2.4000000000000004,
+      "high_unit_usd": 3.9000000000000004
+    },
+    {
+      "board": "power",
+      "part": "50-pin ribbon shrouded header",
+      "quantity": 1,
+      "unit_usd": 0.6,
+      "extended_usd": 0.6,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.48,
+      "high_unit_usd": 0.78
+    },
+    {
+      "board": "power",
+      "part": "Temperature/status/testpoint/control passives",
+      "quantity": 1,
+      "unit_usd": 0.5,
+      "extended_usd": 0.5,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.4,
+      "high_unit_usd": 0.65
+    },
+    {
+      "board": "power",
+      "part": "Copper busbar 160 x 8 x 2 mm fabricated/plated",
+      "quantity": 2,
+      "unit_usd": 2.5,
+      "extended_usd": 5.0,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "45.9 g pair; holes/plating/installation not commodity copper price",
+      "low_unit_usd": 1.5,
+      "high_unit_usd": 4
+    },
+    {
+      "board": "power",
+      "part": "M5 lug terminals/studs/insulators/fasteners",
+      "quantity": 2,
+      "unit_usd": 1,
+      "extended_usd": 2,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "40 A rating unqualified",
+      "low_unit_usd": 0.5,
+      "high_unit_usd": 2
+    },
+    {
+      "board": "USB bridge",
+      "part": "USB A male vertical PCB connector",
+      "quantity": 1,
+      "unit_usd": 0.6,
+      "extended_usd": 0.6,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.48,
+      "high_unit_usd": 0.78
+    },
+    {
+      "board": "USB bridge",
+      "part": "USB C male vertical PCB connector",
+      "quantity": 1,
+      "unit_usd": 0.65,
+      "extended_usd": 0.65,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.52,
+      "high_unit_usd": 0.8450000000000001
+    },
+    {
+      "board": "USB bridge",
+      "part": "USB bridge CC/strap plus ESD completion reserve",
+      "quantity": 1,
+      "unit_usd": 0.15,
+      "extended_usd": 0.15,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.12,
+      "high_unit_usd": 0.195
+    },
+    {
+      "board": "interboard hardware",
+      "part": "50-conductor IDC ribbon cable assembly",
+      "quantity": 1,
+      "unit_usd": 1.45,
+      "extended_usd": 1.45,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 1.16,
+      "high_unit_usd": 1.885
+    },
+    {
+      "board": "interboard hardware",
+      "part": "Board mounting screws and standoffs",
+      "quantity": 1,
+      "unit_usd": 1.2,
+      "extended_usd": 1.2,
+      "basis": "engineering_allowance",
+      "source": "",
+      "note": "",
+      "low_unit_usd": 0.96,
+      "high_unit_usd": 1.56
+    }
+  ]
+}

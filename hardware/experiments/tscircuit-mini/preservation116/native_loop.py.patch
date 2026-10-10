@@ -1,0 +1,46 @@
+--- native_loop.py
++++ native_loop.py
+@@ -69,6 +69,8 @@
+     if a.worker == 'inspect':
+         groups = partition(b)
+         membership = {p: i for i, g in enumerate(groups) for p in g}
++        from pnr.connectivity_restore import restoration_membership, restores_connection
++        restoration = restoration_membership(rules.get('restoration_partition', []), groups)
+         bynet = defaultdict(list)
+         for p in pads:
+             if p.GetNetCode() and (rules.get('electrical_fab') or p.GetNetname() not in excluded):
+@@ -86,7 +88,7 @@
+             def root(i):
+                 while roots[i]!=i:i=roots[i]
+                 return i
+-            for distance, _, _, p, q in sorted(choices):
++            for distance, _, _, p, q in sorted(choices, key=lambda c: (not restores_connection(restoration,c[1],c[2]),c[:3])):
+                 x,y=root(membership[uid(p)]),root(membership[uid(q)])
+                 if x==y:continue
+                 roots[x]=y
+@@ -96,7 +98,7 @@
+                 related=[]
+                 if policy['mode']=='pair':
+                     related=sorted({v.rsplit('.',1)[0] for t in policy['pair'].get('terminal_chain',[]) for v in t.values()})
+-                targets.append(dict(net=net, source=label(p), target=label(q), source_uuid=uid(p), target_uuid=uid(q), source_xy=xy(p.GetPosition()), target_xy=xy(q.GetPosition()), distance=distance, mode=policy['mode'], pair_name=policy.get('pair',{}).get('name'), related_refs=related))
++                targets.append(dict(restoration_required=restores_connection(restoration,uid(p),uid(q)), net=net, source=label(p), target=label(q), source_uuid=uid(p), target_uuid=uid(q), source_xy=xy(p.GetPosition()), target_xy=xy(q.GetPosition()), distance=distance, mode=policy['mode'], pair_name=policy.get('pair',{}).get('name'), related_refs=related))
+         g = build_graph(b)
+         physical_locks = sorted(c.ref for c in g.components if c.locked)
+         for c in g.components:
+@@ -198,6 +200,8 @@
+         before=read(a.spec); entries=snapshot(b,rules)
+         groups_now=partition(b)
+         result=dict(unconnected_targets=[pair for pair in before.get('required_connections',[]) if not any(set(pair)<=set(g) for g in groups_now)],preserved=preserved(before['partition'],groups_now), lost_pad_entries=[i for i,v in before['entries'].items() if v and not entries.get(i,False)])
++        from pnr.connectivity_restore import lost_connections
++        result['lost_connections']=lost_connections(before['partition'],groups_now)
+         from pnr.native_electrical import reference_failures
+         result['reference_failures']=reference_failures(b,rules)
+         result['new_bad_entries']=[i for i,v in entries.items() if not v and i not in before['entries']]
+@@ -249,6 +253,7 @@
+     """Untested terminal pairs precede repeat failures; keep shortest-first ties."""
+     return sorted(unique_route_jobs(targets),
+                   key=lambda t: (attempts.get(route_job_key(t), 0),
++                                 not t.get('restoration_required',False),
+                                  t.get('distance', 0), route_job_key(t)))
+ 
+ 

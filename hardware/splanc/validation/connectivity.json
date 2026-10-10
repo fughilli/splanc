@@ -1,0 +1,24 @@
+{
+  "base": {
+    "native_unconnected_count": 556,
+    "atopile_to_native_pad_net_assignments_checked": 800,
+    "components": 180,
+    "tracks": 0,
+    "pin54_is_core_power": true,
+    "separate_core_and_3v3": true,
+    "psram_from_vddo_psram": true,
+    "optional_gnss_correct": true,
+    "native_sha256": "006e610d0c067e2a4e3074a94c1ac39ba0b47cdbda2fd06196ab670338b637e5"
+  },
+  "gps": {
+    "native_unconnected_count": 578,
+    "atopile_to_native_pad_net_assignments_checked": 831,
+    "components": 187,
+    "tracks": 0,
+    "pin54_is_core_power": true,
+    "separate_core_and_3v3": true,
+    "psram_from_vddo_psram": true,
+    "optional_gnss_correct": true,
+    "native_sha256": "3adad2211d0988f6741a048b50fadb8a975ac71f4a6673f4ccd45b01c9bdca79"
+  }
+}

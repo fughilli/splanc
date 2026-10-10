@@ -1,0 +1,13 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+
+component TA_I_Tech_RLP25FEGMR005_package:
+
+    trait is_atomic_part<manufacturer="TA-I Tech", partnumber="RLP25FEGMR005", footprint="RES-SMD_L6.4-W3.2-1.kicad_mod", symbol="RLP25FEGMR005.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C393074", manufacturer="TA-I Tech", partno="RLP25FEGMR005">
+    trait has_designator_prefix<prefix="R">
+
+    # pins
+    signal p2 ~ pin 2
+    signal p1 ~ pin 1

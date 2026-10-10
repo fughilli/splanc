@@ -1,0 +1,29 @@
+[
+  {
+    "board": "lv",
+    "violations": {},
+    "native_unconnected_items": 226,
+    "cli_reported_unconnected_items": 226,
+    "routed": false,
+    "count_method": "BOARD.BuildConnectivity;GetConnectivity().RecalculateRatsnest;GetUnconnectedCount(False)",
+    "note": "CLI unconnected list caps at 499; native API used for complete counts."
+  },
+  {
+    "board": "power",
+    "violations": {},
+    "native_unconnected_items": 920,
+    "cli_reported_unconnected_items": 499,
+    "routed": false,
+    "count_method": "BOARD.BuildConnectivity;GetConnectivity().RecalculateRatsnest;GetUnconnectedCount(False)",
+    "note": "CLI unconnected list caps at 499; native API used for complete counts."
+  },
+  {
+    "board": "usb_bridge",
+    "violations": {},
+    "native_unconnected_items": 8,
+    "cli_reported_unconnected_items": 8,
+    "routed": false,
+    "count_method": "BOARD.BuildConnectivity;GetConnectivity().RecalculateRatsnest;GetUnconnectedCount(False)",
+    "note": "CLI unconnected list caps at 499; native API used for complete counts."
+  }
+]

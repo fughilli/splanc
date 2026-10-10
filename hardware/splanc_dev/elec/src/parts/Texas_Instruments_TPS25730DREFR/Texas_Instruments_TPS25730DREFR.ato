@@ -1,0 +1,55 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPS25730DREFR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C22438973", date="2026-09-09T17:46:41.890906+00:00", checksum="96e0b58f9b1b443538611d0a94acb4e7445d17158eebf42c0699008f9a5e1e32">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPS25730DREFR", footprint="QFN-38_L6.0-W4.0-P0.40-TL-EP_RJK.kicad_mod", symbol="TPS25730DREFR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C22438973", manufacturer="Texas Instruments", partno="TPS25730DREFR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal ADCIN1 ~ pin 2
+    signal ADCIN2 ~ pin 3
+    signal ADCIN3 ~ pin 5
+    signal ADCIN4 ~ pin 7
+    signal CAP_MIS ~ pin 6
+    signal CC1 ~ pin 28
+    signal CC2 ~ pin 29
+    signal DBG_ACC ~ pin 10
+    signal DRAIN ~ pin 40
+    DRAIN ~ pin 30
+    DRAIN ~ pin 15
+    signal GND ~ pin 39
+    GND ~ pin 35
+    GND ~ pin 34
+    GND ~ pin 31
+    GND ~ pin 17
+    GND ~ pin 16
+    GND ~ pin 14
+    GND ~ pin 12
+    GND ~ pin 11
+    signal I2Ct_SCL ~ pin 9
+    signal I2Ct_SDA ~ pin 8
+    signal LDO_1V5 ~ pin 4
+    signal LDO_3V3 ~ pin 1
+    signal PLUG_EVENT ~ pin 37
+    signal PLUG_FLIP ~ pin 13
+    signal PPHV ~ pin 22
+    PPHV ~ pin 21
+    PPHV ~ pin 20
+    signal RESERVED ~ pin 36
+    RESERVED ~ pin 27
+    RESERVED ~ pin 26
+    signal VBUS ~ pin 33
+    VBUS ~ pin 32
+    signal VBUS_IN ~ pin 25
+    VBUS_IN ~ pin 24
+    VBUS_IN ~ pin 23
+    signal VIN_3V3 ~ pin 38
+    signal nFAULT_IN ~ pin 18
+    signal nSINK_EN ~ pin 19

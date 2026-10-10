@@ -1,0 +1,29 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_BQ34Z100PWR_G1_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C91302", date="2026-09-09T17:42:16.852512+00:00", checksum="7432e8b4e25aa7f288df91b7ddac632a13ca56ee0e3af548f587b976ffcc4366">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="BQ34Z100PWR-G1", footprint="TSSOP-14_L5.0-W4.4-P0.65-LS6.4-BL.kicad_mod", symbol="BQ34Z100PWR-G1.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C91302", manufacturer="Texas Instruments", partno="BQ34Z100PWR-G1">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal BAT ~ pin 4
+    signal CE ~ pin 5
+    signal P1 ~ pin 3
+    signal P2 ~ pin 1
+    signal P3_SDA ~ pin 14
+    signal P4_SCL ~ pin 13
+    signal P5_HDQ ~ pin 12
+    signal P6_TS ~ pin 11
+    signal REG25 ~ pin 7
+    signal REGIN ~ pin 6
+    signal SRN ~ pin 10
+    signal SRP ~ pin 9
+    signal VEN ~ pin 2
+    signal VSS ~ pin 8

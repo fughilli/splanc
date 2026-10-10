@@ -1,68 +1,142 @@
-# PnR guidance for the Splanc dev module (FUG-138) — the spatial intent the
-# algorithmic place-and-route honors. Consumed by //hardware/splanc_dev:
-# splanc_dev.fab. Full schema + semantics: docs/hardware/pnr-inputs.md.
-#
-# Keyed by the real component references in the board. Coordinate frame: mm,
-# origin at the board-outline bottom-left, `rot` CCW degrees. (U5 = ESP32-C6-
-# WROOM module, USB1 = Type-C, SW1..4 = tactile buttons, U2/L2/L3 = boost stage.)
-#
-# First-cut mechanical intent, not a finalized layout — an EE should review.
-# The RF module U5 is fixed at the north edge so its integrated antenna faces
-# off-board and its keep-out is a well-defined region; the Type-C is fixed
-# overhanging the south edge for enclosure access.
-
+# Engineering placement study. @paths survive atopile reference renumbering.
+# Four-layer 85x65 outline is provisional pending enclosure/thermal review.
 schema: v0
-
 board:
-  outline: { w: 60, h: 50 } # approx target; the placer frames the real Edge.Cuts
-  layers: 4 # 4-layer stackup (design doc §12)
-  default_clearance_mm: 0.3
-
-fixed: # hard: locked pose, held out of the position gradient
-  # Type-C: overhang the south edge by 1.5 mm so the connector mouth clears an
-  # enclosure wall and a cable seats fully (overhang_mm; negative would inset).
-  USB1: { edge: south, align: center, rot: 0, side: top, overhang_mm: 1.5 }
-  U5: { edge: north, align: center, rot: 0, side: top } # ESP32-C6 module, antenna off the north edge
-
-edge_align: # soft: pull to a board edge, snap orientation
-  SW1: { edge: south, side: top } # user buttons, enclosure-accessible
-  SW2: { edge: south, side: top }
-  SW3: { edge: south, side: top }
-  SW4: { edge: south, side: top }
-  CN1: { edge: east, side: top } # JST LED/battery connectors on the east edge
-  CN2: { edge: east, side: top }
-  CN3: { edge: east, side: top }
-
-keepout: # hard: no parts/copper in region (relative to a fixed component)
-  - { name: esp32_antenna, ref: U5, extent: { edge: north, depth_mm: 6 } }
-
-side_pref: # soft: bias parts to a side (top = user-facing)
-  bottom: [C*, R*] # decouplers/passives to the back
-
-group: # soft: attract members together, near an anchor
-  - { members: [U2, L2, L3], anchor: U2, radius_mm: 8 } # boost converter stage
-
-# --- Routing rules (Phase 6, docs/hardware/pnr-inputs.md) --------------------
-# Net names come from the netlist (atopile lowercases most). These drive the
-# detailed router (widths) and the post-route quality report (skew / length).
-
-net_class: # per-class trace width + clearance / plane assignment
-  # High-fanout ground + power rails are hopeless to trace-route, so they go on
-  # copper planes on the 2 inner layers (split-plane: several rails share a layer,
-  # each getting the region around its own pads). In1 = ground; In2 = the power
-  # rails, split by pad cluster. Each pad reaches its plane with a short via.
+  outline: { w: 85, h: 65 }
+  layers: 4
+  references_on_fab: true
+  default_clearance_mm: 0.2
+fab:
+  track_width_mm: 0.2
+  clearance_mm: 0.15
+  via_diameter_mm: 0.6
+  via_drill_mm: 0.3
+fixed:
+  '@board.usbc': { at: [18, 3.5], rot: 0, side: top }
+  '@board.esp': { at: [66, 52], rot: 0, side: top }
+  '@board.bat_conn': { at: [8.5, 36], rot: 270, side: top }
+  '@board.compass': { at: [79, 52], rot: 0, side: top }
+  '@board.mpu': { at: [47.5, 50.5], rot: 270, side: top }
+  '@board.bmp': { at: [24.625, 3.125], rot: 0, side: top }
+  '@board.mic': { at: [74, 10], rot: 0, side: top }
+  '@board.mic_supply': { at: [48, 10], rot: 0, side: top }
+  '@board.mic_sck_shift': { at: [54, 10], rot: 0, side: top }
+  '@board.mic_ws_shift': { at: [60, 10], rot: 0, side: top }
+  '@board.mic_sd_shift': { at: [66, 10], rot: 0, side: top }
+  '@board.converter.ic': { at: [30, 33], rot: 0, side: top }
+  '@board.charger.ic': { at: [16, 19], rot: 0, side: top }
+  '@board.mux.ic': { at: [21, 46], rot: 0, side: top }
+  '@board.btn_reset': { at: [40, 3.5], rot: 0, side: top }
+  '@board.btn_boot': { at: [48, 3.5], rot: 0, side: top }
+  '@board.btn_user1': { at: [60, 3.5], rot: 0, side: top }
+  '@board.btn_user2': { at: [68, 3.5], rot: 0, side: top }
+  '@board.power_led': { at: [28, 4], rot: 0, side: top }
+  '@board.charge_led': { at: [32, 4], rot: 0, side: top }
+  '@board.power_led_r._p': { at: [28, 7], rot: 90, side: top }
+  '@board.charge_led_r._p': { at: [32, 7], rot: 90, side: top }
+  '@board.pd.ctrl': { at: [30, 13], rot: 0, side: top }
+# Identical LED port cells, 11 mm pitch along the east edge. Offsets are
+# shared by both instances; legalizer cannot scatter or rotate their members.
+layout_array:
+  - instances: [board.led0, board.led1]
+    origin: [79, 20]
+    step: [0, 11]
+    members:
+      conn: { at: [0, 0], rot: 90 }
+      load_sw: { at: [-7, 0], rot: 180 }
+      shunt._p: { at: [-12.5, 0], rot: 0 }
+      ina: { at: [-13, -4], rot: 90 }
+      ina_dec._p: { at: [-17, -4], rot: 90 }
+      fault_pu._p: { at: [-16, 0], rot: 90 }
+      shifter: { at: [-7, -4], rot: 180 }
+      shifter_dec._p: { at: [-4, -4.3], rot: 90 }
+      shifter_a_dec._p: { at: [-9.6, -0.5], rot: 90 }
+      term._p: { at: [-1, -5.5], rot: 0 }
+      load_ilim._p: { at: [-7, 2.5], rot: 0 }
+      en_pd._p: { at: [-17, 2.5], rot: 0 }
+      chan_bulk._p: { at: [-12, 3.5], rot: 0 }
+edge_align:
+  '@board.eol': { edge: north, side: top }
+mounting_hole:
+  - { name: MH1, at: [4, 4], drill_mm: 2.7, clearance_diameter_mm: 7 }
+  - { name: MH2, at: [81, 4], drill_mm: 2.7, clearance_diameter_mm: 7 }
+  - { name: MH3, at: [81, 61], drill_mm: 2.7, clearance_diameter_mm: 7 }
+  - { name: MH4, at: [4, 61], drill_mm: 2.7, clearance_diameter_mm: 7 }
+keepout:
+  # Component-free corridors for a two-channel bent light pipe to the south wall.
+  - { name: power_light_pipe, polygon: [[26.5, 0], [29.5, 0], [29.5, 2.5], [26.5, 2.5]] }
+  - { name: charge_light_pipe, polygon: [[30.5, 0], [33.5, 0], [33.5, 2.5], [30.5, 2.5]] }
+  - { name: esp32_antenna, ref: '@board.esp', extent: { edge: north, depth_mm: 6 } }
+# Critical decoupling belongs beside its IC, never blanket-moved to the back.
+group:
+  - { members: ['@board.mpu_dec*', '@board.mpu_io_dec*', '@board.mpu_reservoir*'], anchor: '@board.mpu', radius_mm: 5, hard: true }
+  - { members: ['@board.compass_dec*', '@board.compass_reservoir*'], anchor: '@board.compass', radius_mm: 4, hard: true }
+  - { members: ['@board.bmp_dec*', '@board.bmp_io_dec*', '@board.bmp_supply_r*'], anchor: '@board.bmp', radius_mm: 4, hard: true }
+  - { members: ['@board.mic_dec*', '@board.mic_data_pd*'], anchor: '@board.mic', radius_mm: 4, hard: true }
+  - { members: ['@board.mic_sck_shift_*'], anchor: '@board.mic_sck_shift', radius_mm: 4, hard: true }
+  - { members: ['@board.mic_ws_shift_*'], anchor: '@board.mic_ws_shift', radius_mm: 4, hard: true }
+  - { members: ['@board.mic_sd_shift_*'], anchor: '@board.mic_sd_shift', radius_mm: 4, hard: true }
+  - { members: ['@board.mic_supply_in*', '@board.mic_supply_out*'], anchor: '@board.mic_supply', radius_mm: 4, hard: true }
+  - { members: ['@board.pd.ldo*_dec*', '@board.pd.logic_dec*'], anchor: '@board.pd.ctrl', radius_mm: 5, hard: true }
+  # Hard proximity is retained by legalization. These are placement ceilings,
+  # not substitutes for pad-specific loop/return routing and bench validation.
+  - { members: ['@board.converter.bootstrap*', '@board.converter.vcc_dec*', '@board.converter.input_hf*', '@board.converter.output_hf*'], anchor: '@board.converter.ic', radius_mm: 5, hard: true }
+  - { members: ['@board.converter.high_fet', '@board.converter.low_fet', '@board.converter.inductor'], anchor: '@board.converter.ic', radius_mm: 12, hard: true }
+  - { members: ['@board.charger.bootstrap*', '@board.charger.input_hf*'], anchor: '@board.charger.ic', radius_mm: 5, hard: true }
+  - { members: ['@board.charger.inductor*'], anchor: '@board.charger.ic', radius_mm: 8, hard: true }
+  - { members: ['@board.converter.*'], anchor: '@board.converter.ic', radius_mm: 12 }
+  - { members: ['@board.charger.*'], anchor: '@board.charger.ic', radius_mm: 10 }
+  - { members: ['@board.pd.*'], anchor: '@board.pd.ctrl', radius_mm: 8 }
+  - { members: ['@board.mux.*'], anchor: '@board.mux.ic', radius_mm: 16 }
+  - { members: ['@board.gauge.*'], anchor: '@board.gauge.ic', radius_mm: 9 }
+  - { members: ['@board.led0.*'], anchor: '@board.led0.load_sw', radius_mm: 8 }
+  - { members: ['@board.led1.*'], anchor: '@board.led1.load_sw', radius_mm: 8 }
+net_class:
   gnd:
-    nets: [lv] # solid ground plane (75 pads, board-wide) — keep In1 unfragmented
+    nets: ['net@board.usbc:A1B12']
     plane_layer: In1.Cu
   power:
-    nets: [p3v3-hv, p5v-hv, vsys-hv, vbat-hv, hv] # 3V3 / 5V / vsys / vbat / boost
-    plane_layer: In2.Cu
-  # The connector grounds (GND, gauge/usbc-GND) are low fanout — trace-routed.
-# This module has no nets that require length-matching or a differential pair
-# (its USB is inside the WROOM module). For boards that do, the quality pass
-# checks them — see docs/hardware/pnr-inputs.md, e.g.:
-#
-#   length_match:
-#     - { name: rgmii, nets: [TXD0, TXD1, TXD2, TXD3], tolerance_mm: 1.0 }
-#   diff_pair:
-#     - { name: usb, p: USB_DP, n: USB_DM, width_mm: 0.2, gap_mm: 0.15, skew_mm: 0.3 }
+    # Width is a routing-study minimum, not an ampacity qualification. These
+    # paths need short copper regions, Kelvin branches and stackup review.
+    nets:
+      - 'net@board.buck:1'
+      - 'net@board.bat_conn:2'
+      - 'net@board.converter.ic:3'
+      - 'net@board.pd.ctrl:23'
+      - 'net@board.pd.ctrl:20'
+      - 'net@board.gauge.shunt_a._p:1'
+      - 'net@board.mux.input_fet1:3'
+      - 'net@board.mux.output_fet1:5'
+      - 'net@board.mux.input_fet2:3'
+      - 'net@board.mux.output_fet2:5'
+      - 'net@board.converter.shunt._p:1'
+      - 'net@board.converter.inductor:1'
+      - 'net@board.converter.inductor:2'
+      - 'net@board.charger.ic:29'
+      - 'net@board.charger.ic:28'
+      - 'net@board.charger.ic:26'
+      - 'net@board.charger.ic:25'
+      - 'net@board.led0.shunt._p:2'
+      - 'net@board.led0.conn:1'
+      - 'net@board.led1.shunt._p:2'
+      - 'net@board.led1.conn:1'
+    width_mm: 1.5
+    clearance_mm: 0.15
+  logic:
+    nets: ['net@board.esp:2', 'net@board.compass:B1']
+    width_mm: 0.5
+# Native USB runs from the connector to ESP32 IO12/IO13 on this PCB.
+# Width/gap below are placement-study values; impedance requires actual stackup.
+diff_pair:
+  - { name: usb, p: 'net@board.usbc:A6', n: 'net@board.usbc:A7', width_mm: 0.2, gap_mm: 0.15, skew_mm: 0.3 }
+
+copper_keepout:
+  - name: esp_antenna
+    ref: '@board.esp'
+    rect_mm: [-9.0, 9.73, 9.0, 15.75]
+
+  # Manufacturer's metal-case trace exclusion under side-actuated buttons.
+  - { name: reset_case, ref: '@board.btn_reset', rect_mm: [-1, -1.43, 1, -0.23] }
+  - { name: boot_case, ref: '@board.btn_boot', rect_mm: [-1, -1.43, 1, -0.23] }
+  - { name: user1_case, ref: '@board.btn_user1', rect_mm: [-1, -1.43, 1, -0.23] }
+  - { name: user2_case, ref: '@board.btn_user2', rect_mm: [-1, -1.43, 1, -0.23] }

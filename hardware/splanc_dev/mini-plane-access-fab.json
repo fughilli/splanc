@@ -1,0 +1,15 @@
+{
+  "via_drill_mm": 0.3,
+  "via_diameter_mm": 0.6,
+  "min_via_plating_um": 20,
+  "board_thickness_mm": 1.6,
+  "copper_resistivity_ohm_mm": 2.1e-05,
+  "via_barrel_loss_budget_w": 0.01,
+  "via_array_peak_drop_v": 0.01,
+  "hole_clearance_mm": 0.2,
+  "track_width_mm": 0.2,
+  "outer_copper_oz": 1,
+  "plane_access_delta_t_c": 40,
+  "power_bus_min_width_mm": 1.5,
+  "qualification": "Engineering assumptions: loss/drop screening, not a fabricated-board thermal qualification."
+}

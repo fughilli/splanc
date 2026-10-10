@@ -1,0 +1,58 @@
+{
+  "snapshot": "ae84ab54e5a04cd9be538ba1867bf725",
+  "board_sha256": "0459b8dfe5e5ecd3bee2d26a780f5b69ba0bd0066395c89f6b0ff133355a0922",
+  "annotations": [
+    {
+      "bounds": [
+        21.642540010773445,
+        17.802155792624955,
+        44.178483652647564,
+        38.90144218968448
+      ],
+      "text": "Here there are many long tracks that run from the radio footprint to the strip drive circuitry. They have many unnecessary bends in them, and they have large spaces between them, though they all run in the same direction. There should be some \"optimization\" pass that \"rubber-bands\" these and implements some kind of gravity to get them to route closer to one another so that they partition the routable area into as few sub-regions as possible (tracks wanting to hop over them can do all of them togther eficiently).",
+      "lane": "r01/candidate-00",
+      "phase": "live",
+      "board_sha256": "0459b8dfe5e5ecd3bee2d26a780f5b69ba0bd0066395c89f6b0ff133355a0922",
+      "event_id": "1790023945801276000-935d1769"
+    },
+    {
+      "bounds": [
+        52.86177362078291,
+        28.682847576327422,
+        58.74337852155386,
+        33.73760964886844
+      ],
+      "text": "In this location, the track connecting U11 p3, R23 p2, and TP1 p8 has a U shape, instead of a T shape (the two vias are close together--the routing should have chosen a path that doesn't result on having these two tracks of the same net running parallel to one another).",
+      "lane": "r01/candidate-00",
+      "phase": "live",
+      "board_sha256": "0459b8dfe5e5ecd3bee2d26a780f5b69ba0bd0066395c89f6b0ff133355a0922",
+      "event_id": "1790023945801276000-935d1769"
+    },
+    {
+      "bounds": [
+        56.062671837529855,
+        45.303049261878584,
+        60.33845913960565,
+        49.324824998137004
+      ],
+      "text": "Here, the A2 and B2 pads of U4 are unroutable because of this track between C7 p2 and U4 A1 wrapping tightly around and preventing escape. Can the router handle this? I'm thinking of some \"push mode\" where the router can smoothly displace tracks like this without breaking connectivity in order to fit a via in to escape (or to clear around the corner to empty space where a via can fit). Perhaps there can be some kind of cost field which represents how expensive it is to \"push\" nearby components/tracks (determined by how that pushing would create intersections or force other things to be displaced) that can be read by the router in that case to inform strategy. It would be great if the \"push\" router could also push components--there are probably transforms that can be applied to entire clusters of components/tracks together when they are sufficiently uncongested (there is space available to push them into, and the tracks from that cluster to their connections can be extended/pulled without intersections).",
+      "lane": "r01/candidate-00",
+      "phase": "live",
+      "board_sha256": "0459b8dfe5e5ecd3bee2d26a780f5b69ba0bd0066395c89f6b0ff133355a0922",
+      "event_id": "1790023945801276000-935d1769"
+    },
+    {
+      "bounds": [
+        6.210388231891557,
+        3.4280811359263916,
+        19.39267678818,
+        33.821382554466155
+      ],
+      "text": "Why did USB not get routed here? It seems like there's a clear path for it to have been achieved. Perhaps the track for USB1 A5 just needed to be pushed a bit to make room--see my other comment for suggestions on how to make that type of refinement possible if not already supported.",
+      "lane": "r01/candidate-00",
+      "phase": "live",
+      "board_sha256": "0459b8dfe5e5ecd3bee2d26a780f5b69ba0bd0066395c89f6b0ff133355a0922",
+      "event_id": "1790023945801276000-935d1769"
+    }
+  ]
+}

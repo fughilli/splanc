@@ -1,0 +1,20 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Nexperia_PSMN3R7_100BSEJ_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C503653", date="2026-09-09T22:57:21.867635+00:00", checksum="2f0f59e40604f49046b8144414cc41b55d799e6cff87d84e0e82de57456faf1a">
+
+    trait is_atomic_part<manufacturer="Nexperia", partnumber="PSMN3R7-100BSEJ", footprint="PG-TO263-3_L10.3-W9.4-P2.54-BR.kicad_mod", symbol="PSMN3R7-100BSEJ.kicad_sym", model="PG-TO263-3_L10.3-W9.4-H4.6-P2.54-BR.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C503653", manufacturer="Nexperia", partno="PSMN3R7-100BSEJ">
+    trait has_designator_prefix<prefix="Q">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/6d758564a027062a918b3731df311ae5.pdf?productCode=C503653">
+
+    # pins
+    signal D ~ pin 2
+    signal G ~ pin 1
+    signal S ~ pin 3

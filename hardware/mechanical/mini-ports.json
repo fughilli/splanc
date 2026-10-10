@@ -1,0 +1,106 @@
+{
+  "source": "Mini native reference poses plus manufacturer mating envelopes; dimensions provisional until prototype fit",
+  "ports": [
+    {
+      "ref": "USB1",
+      "edge": "south",
+      "opening": [
+        11,
+        6.5
+      ],
+      "center_z_above_pcb_mm": 3.6
+    },
+    {
+      "ref": "CN1",
+      "edge": "top",
+      "opening": [
+        8.5,
+        9
+      ],
+      "center_z_above_pcb_mm": 9.0
+    },
+    {
+      "ref": "CN2",
+      "edge": "top",
+      "opening": [
+        8.5,
+        9
+      ],
+      "center_z_above_pcb_mm": 9.0
+    },
+    {
+      "ref": "SW1",
+      "edge": "south",
+      "opening": [
+        3.8,
+        3.8
+      ],
+      "center_z_above_pcb_mm": 3.3
+    },
+    {
+      "ref": "SW2",
+      "edge": "south",
+      "opening": [
+        3.8,
+        3.8
+      ],
+      "center_z_above_pcb_mm": 3.3
+    },
+    {
+      "ref": "SW3",
+      "edge": "south",
+      "opening": [
+        3.8,
+        3.8
+      ],
+      "center_z_above_pcb_mm": 3.3
+    },
+    {
+      "ref": "SW4",
+      "edge": "south",
+      "opening": [
+        3.8,
+        3.8
+      ],
+      "center_z_above_pcb_mm": 3.3
+    },
+    {
+      "ref": "LED1",
+      "edge": "top",
+      "opening": [
+        2.2,
+        2.2
+      ],
+      "center_z_above_pcb_mm": 2.0
+    },
+    {
+      "ref": "LED2",
+      "edge": "top",
+      "opening": [
+        2.2,
+        2.2
+      ],
+      "center_z_above_pcb_mm": 2.0
+    },
+    {
+      "ref": "MIC1",
+      "edge": "bottom",
+      "opening": [
+        1.8,
+        1.8
+      ],
+      "center_z_above_pcb_mm": 0.0
+    },
+    {
+      "ref": "TP1",
+      "edge": "bottom",
+      "opening": [
+        11.0,
+        13.5
+      ],
+      "center_z_above_pcb_mm": 0.0,
+      "expose_in_enclosure": false,
+      "access_stage": "board-level EoL test before enclosure assembly"
+    }
+  ]
+}

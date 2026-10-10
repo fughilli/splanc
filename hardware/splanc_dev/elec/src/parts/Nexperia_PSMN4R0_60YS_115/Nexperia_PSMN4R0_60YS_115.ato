@@ -1,0 +1,22 @@
+import has_datasheet
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Nexperia_PSMN4R0_60YS_115_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C478173", date="2026-09-09T22:57:04.839199+00:00", checksum="72bb82c832e6f11b8467bf1599fd7398c6e5c38049bf60eb52987f2091367088">
+
+    trait is_atomic_part<manufacturer="Nexperia", partnumber="PSMN4R0-60YS,115", footprint="LFPAK56-4_L4.9-W4.2-P1.27-LS6.2-BL.kicad_mod", symbol="PSMN4R0-60YS,115.kicad_sym", model="LFPAK56-4_L4.9-W4.2-H1.1-LS6.2-P1.27.step">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C478173", manufacturer="Nexperia", partno="PSMN4R0-60YS,115">
+    trait has_designator_prefix<prefix="Q">
+    trait has_datasheet<datasheet="https://datasheet.lcsc.com/datasheet/pdf/c465a0ad093f5bf5340cbe2a3f8ed9e0.pdf?productCode=C478173">
+
+    # pins
+    signal D ~ pin 5
+    signal G ~ pin 4
+    signal S ~ pin 3
+    S ~ pin 2
+    S ~ pin 1

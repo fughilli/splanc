@@ -1,0 +1,211 @@
+{
+  "revision": "max-service-r11",
+  "status": "engineering specification and packaging prototype; new network board is NOT a pin-complete schematic",
+  "dc": {
+    "input_voltage_V": [
+      12,
+      24
+    ],
+    "minimum_design_voltage_V": 10.8,
+    "led_current_A": 40,
+    "control_power_budget_W": 35.2,
+    "efficiency_budget": 0.85,
+    "connector": "AMASS XT150-M.G2.R + XT150-M.G2.B in one keyed two-pole panel carrier; source cable uses female contacts",
+    "rated_current_A": 57,
+    "rating_conditions": "8 AWG; manufacturer rise <=30 K; final enclosure derating required",
+    "wire_AWG": 8,
+    "max_continuous_input_A": 45,
+    "input_fuse": "50 A DC-rated upstream harness fuse; coordination and cable protection to be qualified",
+    "hot_plug": false,
+    "parallel_input_connectors": false,
+    "busbars": "Existing 160x8x2 mm copper bars retained; internal bolted cable attachments replace exposed lugs",
+    "LED_logic_budget_W": 2.5,
+    "input_budget_note": "40 A load plus isolated-control supply and separate 2.5 W LED logic; round to 45 A for housekeeping margin"
+  },
+  "control_supply": {
+    "mpn": "THL 40-2411WI",
+    "manufacturer": "TRACO POWER",
+    "input_V": [
+      9,
+      36
+    ],
+    "output_V_nominal": 5,
+    "output_V_target": 5.1,
+    "rated_power_W": 40,
+    "rated_current_A": 8,
+    "current_limit_at_5p1V_A": 7.8431,
+    "body_mm": [
+      25.4,
+      25.4,
+      11.5
+    ],
+    "pins": {
+      "1": "LED_VIN_FUSED",
+      "2": "PGND",
+      "3": "SYS5V_RAW",
+      "4": "TRIM",
+      "5": "DGND",
+      "6": "REMOTE"
+    },
+    "input_fuse": "8 A slow-blow per manufacturer recommendation",
+    "output_protection": "5 A Pi branch + 1 A HAT branch + 1 A switch branch; reverse blocking and overvoltage protection required before external powering",
+    "isolation": "1500 VDC module rating; whole product functional isolation only, not a safety barrier claim",
+    "budget_A": {
+      "Pi5": 5,
+      "HAT": 0.8,
+      "switch": 1,
+      "reserve": 0.1
+    },
+    "trim": "Fit trim resistor from manufacturer THL40WI adjustment note; verify 5.1 V at supply and >=4.75 V at Pi under load; do not exceed 40 W when trimmed",
+    "pi_connection": "Internal fused harness to HAT power input, then both Pi header pins 2 and 4 and multiple ground pins; no Pi USB-C power input cable; qualify header/socket and copper for 5 A; do not power both paths",
+    "separate_LED_logic": "Existing R-78E5.0-0.5 supplies P5V/PGND only; never connect it to SYS5V/DGND"
+  },
+  "network": {
+    "name": "Splanc MAX NET3",
+    "board_mm": [
+      80,
+      60,
+      1.6
+    ],
+    "layers": 4,
+    "switch": "KSZ9896CTXI",
+    "physical_ports": 3,
+    "chip_integrated_PHY_ports": 5,
+    "chip_MAC_only_ports": 1,
+    "mapping": {
+      "1": "upstream panel RJ45",
+      "2": "downstream panel RJ45",
+      "3": "Pi Ethernet internal right-angle cable"
+    },
+    "unused": "PHY4, PHY5 and MAC6 disabled; follow manufacturer unused-pin termination guidance",
+    "speed_Mbps": [
+      10,
+      100,
+      1000
+    ],
+    "power_input": "SYS5V / DGND; 5.1 W envelope",
+    "rails": {
+      "VDDIO": 3.3,
+      "AVDDH": 3.3,
+      "AVDDL_DVDDL": 1.2
+    },
+    "magnetics": "Three 1000BASE-T integrated-magnetics RJ45 jacks, four pairs each, voltage-mode PHY compatible; PHY-side center taps per KSZ9896C section 8.1, NOT tied to 3.3 V; exact jack MPN/pin map pending",
+    "oscillator": "25 MHz crystal and load capacitors selected from crystal CL and stray capacitance",
+    "management": "Local small MCU boots switch independently of Pi; SPI 3.3V programming/debug header; disable unused ports and MAC, enable forwarding between ports1-3; Pi management optional, not on existing FPGA SPI CS",
+    "boot": "Do not depend on Pi/Linux to start forwarding; controller + reset supervisor required; MCU MPN/firmware pending",
+    "pairs": {
+      "count": 12,
+      "impedance_ohm": 100,
+      "intra_pair_skew_mm": 0.5,
+      "rule": "Continuous ground reference, symmetric transformer escape, no stubs, isolate cable-side copper from DGND"
+    },
+    "shield": "Dedicated chassis/shield network for panel shells, jack shields and ESD return; deliberate EMC coupling to DGND; no PGND short",
+    "PoE": false,
+    "daisy_chain": "Linear topology only; no passive forwarding when MAX is unpowered; avoid closed loop until RSTP is implemented/tested",
+    "placement": {
+      "J1": [
+        11,
+        10
+      ],
+      "J2": [
+        11,
+        30
+      ],
+      "J3": [
+        11,
+        50
+      ],
+      "U1": [
+        44,
+        30
+      ],
+      "Y1": [
+        59,
+        28
+      ],
+      "U2_3V3": [
+        66,
+        12
+      ],
+      "U3_1V2": [
+        66,
+        23
+      ],
+      "U4_boot_MCU": [
+        66,
+        43
+      ],
+      "J4_power": [
+        70,
+        53
+      ]
+    },
+    "mounts": [
+      [
+        4,
+        4
+      ],
+      [
+        76,
+        4
+      ],
+      [
+        4,
+        56
+      ],
+      [
+        76,
+        56
+      ]
+    ],
+    "qualification": "Pin-complete schematic, exact magnetics, ESD devices, regulator sizing, boot image, SI and EMC remain gates; this is a board specification with CAD placement envelopes"
+  },
+  "panel": {
+    "ethernet": "2x Neutrik NE8FDP CAT5e feedthrough, same west end as DC",
+    "power": "One mechanically keyed two-pole XT150 carrier, screw-retained from inside; split carrier prints as separate parts",
+    "pi_exposure": [],
+    "ports_mm": {
+      "ETH1": {
+        "y": 25,
+        "z": 21
+      },
+      "DC_IN": {
+        "y": 66.5,
+        "z": 29
+      },
+      "ETH2": {
+        "y": 106,
+        "z": 21
+      }
+    },
+    "outside_mm": [
+      330,
+      134,
+      43
+    ],
+    "growth_reason": "38 mm service bay houses Ethernet backshells, isolated supply on power-board tongue and protected DC wiring; height unchanged"
+  },
+  "sources": {
+    "xt150": "https://www.china-amass.net/xt150-f-2-product/",
+    "smps": "https://www.tracopower.com/products/thl40wi.pdf",
+    "switch": "https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/KSZ9896C-Data-Sheet-DS00002390C.pdf",
+    "panel": "https://www.neutrik.us/en-us/product/ne8fdp"
+  },
+  "remaining_gates": [
+    "Detailed power protection/trim circuit and module heat-rise test",
+    "Network pin-complete schematic and exact jack/MCU/regulator selections",
+    "Right-angle patch lead procurement and physical bend-radius/assembly test",
+    "XT150 keyed carrier dimensions against production samples and retention force",
+    "40 A LED load plus 35.2 W control thermal/EMC qualification",
+    "Power-board tongue and daughterboard support/copper keepouts into final electrical placement"
+  ],
+  "localization": {
+    "contract": "localization-options.json",
+    "optional": [
+      "Qorvo DWM3000 UWB",
+      "u-blox MAX-M10S GNSS"
+    ],
+    "domain": "LV/control DGND",
+    "status": "Specification and display envelopes only; not yet incorporated in the pin-level boards or base BOM"
+  }
+}

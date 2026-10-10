@@ -1,0 +1,10 @@
+import is_atomic_part
+import has_part_picked
+import has_designator_prefix
+
+component SHUNT:
+    trait is_atomic_part<manufacturer="YAGEO", partnumber="PE2512FKE070R02L", footprint="SHUNT.kicad_mod", symbol="SHUNT.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="", supplier_partno="", manufacturer="YAGEO", partno="PE2512FKE070R02L">
+    trait has_designator_prefix<prefix="U">
+    signal p1 ~ pin 1
+    signal p2 ~ pin 2

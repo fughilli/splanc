@@ -1,0 +1,19 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Samsung_CL21A226MOQNNNE_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C98190", date="2026-08-20T03:24:02.303393+00:00", checksum="6e8be078f99440b56cc88b72f34839f3ecadf57fa6f67b793eaccf7402d92a17">
+
+    trait is_atomic_part<manufacturer="Samsung", partnumber="CL21A226MOQNNNE", footprint="C0805.kicad_mod", symbol="CL21A226MOQNNNE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C98190", manufacturer="Samsung", partno="CL21A226MOQNNNE">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 1
+    signal p1 ~ pin 1
+    pin 2
+    signal p2 ~ pin 2

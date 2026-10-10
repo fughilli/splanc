@@ -1,0 +1,9 @@
+{
+  "nets": ["MODE", "ILIM"],
+  "source_pad": "U5.15",
+  "target_pad": "R11.1",
+  "bounds": [68, 42, 77, 51],
+  "pitch": 0.05,
+  "max_orders": 8,
+  "max_expansions": 20000
+}

@@ -1,0 +1,21 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_TPS70933DBVR_package:
+    """TPS70933DBVR"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C89347", date="2026-09-09T18:49:44.293957+00:00", checksum="eecbf994f35f1d68af1fb36eee2c107416e0b55d5116e9f7371c681a509f96ad">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="TPS70933DBVR", footprint="SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR.kicad_mod", symbol="TPS70933DBVR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C89347", manufacturer="Texas Instruments", partno="TPS70933DBVR">
+    trait has_designator_prefix<prefix="LDO">
+
+    # pins
+    signal EN ~ pin 3
+    signal GND ~ pin 2
+    signal IN ~ pin 1
+    signal OUT ~ pin 5

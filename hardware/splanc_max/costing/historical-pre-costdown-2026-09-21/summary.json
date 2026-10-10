@@ -1,0 +1,79 @@
+{
+  "date": "2026-09-21",
+  "currency": "USD",
+  "build_quantity": 1000,
+  "state": "concept_budget_not_supplier_quote",
+  "bom_subtotals": {
+    "LV": 37.9499,
+    "power": 102.4336,
+    "USB bridge": 1.4,
+    "interboard hardware": 2.65
+  },
+  "bom_per_set_low_mid_high": [
+    107.34,
+    144.43,
+    200.21
+  ],
+  "pcb_assembly_test_per_set_low_mid_high": [
+    14.35,
+    21.7,
+    31.9
+  ],
+  "pcba_set_low_mid_high": [
+    121.69,
+    166.13,
+    232.11
+  ],
+  "pcb_assembly_test": {
+    "LV": {
+      "pcb": [
+        2,
+        3,
+        4.5
+      ],
+      "assembly_test": [
+        2,
+        3.5,
+        5
+      ]
+    },
+    "power": {
+      "pcb": [
+        5,
+        7,
+        10
+      ],
+      "assembly_test": [
+        5,
+        7.5,
+        11
+      ]
+    },
+    "USB bridge": {
+      "pcb": [
+        0.15,
+        0.3,
+        0.6
+      ],
+      "assembly_test": [
+        0.2,
+        0.4,
+        0.8
+      ]
+    }
+  },
+  "bom_mid_1000": 144430.0,
+  "procurement_allowance_3percent_mid": 148762.9,
+  "excludes": [
+    "Pi",
+    "microSD",
+    "power supplies",
+    "LED strips/cables",
+    "enclosure",
+    "freight",
+    "tax/duty",
+    "NRE",
+    "compliance",
+    "scrap/rework over3 percent"
+  ]
+}

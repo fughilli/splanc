@@ -10,4 +10,8 @@ services:
 
 builds:
   default:
-    entry: elec/src/splanc_dev.ato:SplancDev
+    entry: elec/src/splanc_dev.ato:SplancDev1S
+  factory_2s:
+    entry: elec/src/splanc_dev.ato:SplancDev2S
+  mini:
+    entry: elec/src/splanc_mini.ato:SplancMini

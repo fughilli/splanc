@@ -1,0 +1,77 @@
+{
+  "status": "SPECIFICATION ONLY \u2014 no network PCB build target yet",
+  "board": {
+    "outline": {
+      "w": 80,
+      "h": 60
+    },
+    "thickness_mm": 1.6,
+    "layers": 4
+  },
+  "mounts": [
+    [
+      4,
+      4
+    ],
+    [
+      76,
+      4
+    ],
+    [
+      4,
+      56
+    ],
+    [
+      76,
+      56
+    ]
+  ],
+  "rough_placement": {
+    "J1": [
+      11,
+      10
+    ],
+    "J2": [
+      11,
+      30
+    ],
+    "J3": [
+      11,
+      50
+    ],
+    "U1": [
+      44,
+      30
+    ],
+    "Y1": [
+      59,
+      28
+    ],
+    "U2_3V3": [
+      66,
+      12
+    ],
+    "U3_1V2": [
+      66,
+      23
+    ],
+    "U4_boot_MCU": [
+      66,
+      43
+    ],
+    "J4_power": [
+      70,
+      53
+    ]
+  },
+  "connector_edge": "west",
+  "maximum_component_height_mm": 13.5,
+  "bottom_component_height_mm": 0,
+  "routing": {
+    "count": 12,
+    "impedance_ohm": 100,
+    "intra_pair_skew_mm": 0.5,
+    "rule": "Continuous ground reference, symmetric transformer escape, no stubs, isolate cable-side copper from DGND"
+  },
+  "note": "Pin-complete schematic and supplier footprints must replace envelopes before PnR."
+}

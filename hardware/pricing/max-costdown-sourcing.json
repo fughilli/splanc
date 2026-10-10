@@ -1,0 +1,84 @@
+{
+  "date": "2026-09-21",
+  "currency": "USD",
+  "status": "Selected parts implemented in unrouted engineering draft; budget prices, not purchase quotations or allocated stock",
+  "parts": [
+    {
+      "mpn": "DEGSON 2EDGRC-5.08-03P-14-100A(H)",
+      "lcsc": "C669315",
+      "quantity": 20,
+      "unit_usd": 0.0759,
+      "tier": 4800,
+      "stock_snapshot": 1175,
+      "source": "https://www.lcsc.com/product-detail/C669315.html",
+      "extended_usd": 1.518
+    },
+    {
+      "mpn": "DEGSON 2EDGKDF-5.08-03P-14-00A(H)",
+      "lcsc": "C691852",
+      "quantity": 20,
+      "unit_usd": 0.3327,
+      "tier": 1000,
+      "stock_snapshot": 401,
+      "source": "https://www.lcsc.com/product-detail/C691852.html",
+      "extended_usd": 6.654
+    },
+    {
+      "mpn": "INA4180A2IPWR",
+      "lcsc": "C2058137",
+      "quantity": 5,
+      "unit_usd": 0.5241,
+      "tier": 1000,
+      "stock_snapshot": 80,
+      "source": "https://www.lcsc.com/product-detail/C2058137.html",
+      "extended_usd": 2.6205
+    },
+    {
+      "mpn": "MCP3208-CI/SL",
+      "lcsc": "C16939",
+      "quantity": 1,
+      "unit_usd": 2.751,
+      "tier": 1000,
+      "stock_snapshot": 452,
+      "source": "https://www.lcsc.com/product-detail/C16939.html",
+      "extended_usd": 2.751
+    },
+    {
+      "mpn": "CD74HC4051PWR",
+      "lcsc": "C352826",
+      "quantity": 5,
+      "unit_usd": 0.1929,
+      "tier": 4000,
+      "stock_snapshot": 2120,
+      "source": "https://www.lcsc.com/product-detail/C352826.html",
+      "extended_usd": 0.9645
+    },
+    {
+      "mpn": "TPS1H100AQPWPRQ1",
+      "lcsc": "C478465",
+      "quantity": 20,
+      "unit_usd": 0.726,
+      "tier": 1000,
+      "stock_snapshot": 1730,
+      "source": "https://www.lcsc.com/product-detail/C478465.html",
+      "extended_usd": 14.52
+    },
+    {
+      "mpn": "PE2512FKE070R02L",
+      "lcsc": "C4212250",
+      "quantity": 20,
+      "unit_usd": 0.0868,
+      "tier": 4000,
+      "stock_snapshot": 7910,
+      "source": "https://www.lcsc.com/product-detail/C4212250.html",
+      "extended_usd": 1.736
+    }
+  ],
+  "connector_family_compatibility_source": "https://ja.degson.com/content/details_552_1957864.html?lang=ja",
+  "caveats": [
+    "Manufacturer 2EDGKDF matching-parts list includes2EDGRC5.08; exact3pin mechanical integration/CAD being verified separately.",
+    "All stock snapshots insufficient for1000products; no orders placed.",
+    "Shunt cachedprice is older than other references; conservative finalallowance0.10 recommended.",
+    "Support passives, current sense calibration, extraassembly and selected protection variant must be reconciled before finalcost saving is asserted."
+  ]
+}
