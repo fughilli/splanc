@@ -20,6 +20,7 @@ import {
   type ConflictMode,
   type LibraryBundleEntry,
 } from "./mapBundle";
+import { validateMesh, type MeshOverlay } from "../geom/mesh";
 import { MapView } from "../ui/mapview";
 
 /** Denormalized summary for the browser list (design doc §5.2). */
@@ -50,11 +51,13 @@ export interface StoredMapSummary {
 /** Full record = summary + payload. */
 export interface StoredMap extends StoredMapSummary {
   map: OutputMap;
+  mesh?: MeshOverlay;
   topology?: Topology;
 }
 
 export interface CreateInput {
   map: OutputMap;
+  mesh?: MeshOverlay;
   topology?: Topology;
   source?: StoredMapSummary["source"];
   name?: string;
@@ -248,13 +251,14 @@ class MapStore {
     const payload = await this.tx([PAYLOAD], "readonly", (tx) =>
       MapStore.req(
         tx.objectStore(PAYLOAD).get(id) as IDBRequest<
-          { id: string; map: OutputMap; topology?: Topology } | undefined
+          { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined
         >,
       ),
     );
     if (!payload) return undefined;
     const rec: StoredMap = { ...summary, map: payload.map };
     if (payload.topology) rec.topology = payload.topology;
+    if (payload.mesh) rec.mesh = payload.mesh;
     return rec;
   }
 
@@ -270,10 +274,11 @@ class MapStore {
     const summary = summaryFromMap(input, id, now);
     // Off-screen thumbnail render (design doc §5.4). Best-effort — a WebGL
     // failure just leaves an empty thumbnail (regenerated lazily on view).
-    summary.thumbnail = await renderThumbnail(input.map).catch(() => "");
+    summary.thumbnail = await renderThumbnail(input.map, 128, input.mesh).catch(() => "");
     if (summary.thumbnail) summary.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
-    const payload: { id: string; map: OutputMap; topology?: Topology } = { id, map: input.map };
+    const payload: { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } = { id, map: input.map };
     if (input.topology) payload.topology = input.topology;
+    if (input.mesh) payload.mesh = validateMesh(input.mesh);
     await this.tx([IDX, PAYLOAD], "readwrite", (tx) => {
       tx.objectStore(IDX).put(summary);
       tx.objectStore(PAYLOAD).put(payload);
@@ -317,12 +322,29 @@ class MapStore {
     return [...set].sort((a, b) => a.localeCompare(b));
   }
 
+  /** Save the digital twin separately from the device map/topology payload. */
+  async setMesh(id: string, mesh: MeshOverlay | null): Promise<void> {
+    if (mesh) validateMesh(mesh);
+    await this.tx([PAYLOAD, IDX], "readwrite", async tx => {
+      const store = tx.objectStore(PAYLOAD);
+      const cur = await MapStore.req(store.get(id));
+      if (!cur) throw new Error("no such map");
+      if (mesh) cur.mesh = mesh;
+      else delete cur.mesh;
+      store.put(cur);
+      const index = tx.objectStore(IDX);
+      const summary = await MapStore.req(index.get(id));
+      if (summary) index.put({ ...summary, thumbnail: "", thumbnailVersion: 0, updatedAt: new Date().toISOString() });
+    });
+    this.emit();
+  }
+
   /** Persist an updated topology for an existing map (from the cleanup panel). */
   async setTopology(id: string, topology: Topology): Promise<void> {
     await this.tx([IDX, PAYLOAD], "readwrite", async (tx) => {
       const pStore = tx.objectStore(PAYLOAD);
       const cur = await MapStore.req(
-        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; topology?: Topology } | undefined>,
+        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined>,
       );
       if (!cur) return;
       pStore.put({ ...cur, topology });
@@ -337,14 +359,15 @@ class MapStore {
    * the stored map, and the topology when one is passed, then regenerates the
    * thumbnail from the new geometry. */
   async setMap(id: string, map: OutputMap, topology?: Topology): Promise<void> {
-    const thumbnail = await renderThumbnail(map).catch(() => "");
+    const existing = await this.get(id);
+    const thumbnail = await renderThumbnail(map, 128, existing?.mesh).catch(() => "");
     await this.tx([IDX, PAYLOAD], "readwrite", async (tx) => {
       const pStore = tx.objectStore(PAYLOAD);
       const cur = await MapStore.req(
-        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; topology?: Topology } | undefined>,
+        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined>,
       );
       if (!cur) return;
-      const next: { id: string; map: OutputMap; topology?: Topology } = { ...cur, map };
+      const next: { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } = { ...cur, map };
       if (topology !== undefined) next.topology = topology;
       pStore.put(next);
       const iStore = tx.objectStore(IDX);
@@ -383,6 +406,7 @@ class MapStore {
       name: `${rec.name} (copy)`,
     };
     if (rec.topology) input.topology = rec.topology;
+    if (rec.mesh) input.mesh = rec.mesh;
     const newId = await this.create(input);
     // Copy over metadata the create() default wouldn't carry.
     await this.patchSummary(newId, { description: rec.description, tags: rec.tags });
@@ -424,7 +448,7 @@ class MapStore {
       }
     }
     const input: CreateInput = { map: bundle.map, source: opts.source ?? "import" };
-    if (bundle.topology && bundle.topology.segments.length > 0) input.topology = bundle.topology;
+    if (bundle.topology) input.topology = bundle.topology;
     if (deviceMapId) input.deviceMapId = deviceMapId;
     return this.create(input);
   }
@@ -457,6 +481,7 @@ class MapStore {
         tags: s.tags,
         bundle: bytesToBase64(binpb),
       };
+      if (rec.mesh) entry.mesh = rec.mesh;
       if (s.folder) entry.folder = s.folder;
       if (s.deviceMapId) entry.deviceMapId = s.deviceMapId;
       entries.push(entry);
@@ -495,6 +520,7 @@ class MapStore {
       if (p.overwriteId !== undefined) {
         // Full replace in place (topology too — even to empty), keeping the id.
         await this.setMap(p.overwriteId, decoded.map, topology);
+        await this.setMesh(p.overwriteId, p.entry.mesh ?? null);
         const patch: Partial<StoredMapSummary> = {
           name: p.name,
           description: p.entry.description,
@@ -508,7 +534,8 @@ class MapStore {
       }
 
       const input: CreateInput = { map: decoded.map, source: "import", name: p.name };
-      if (hasTopo) input.topology = topology;
+      input.topology = topology;
+      if (p.entry.mesh) input.mesh = p.entry.mesh;
       let dev = p.entry.deviceMapId;
       if (dev && usedDeviceIds.has(dev)) dev = undefined;
       if (dev) {
@@ -549,13 +576,14 @@ export function isThumbnailStale(m: Pick<StoredMapSummary, "thumbnailVersion">):
  * on black. Renders a couple frames so the scene settles, then reads back.
  * Thumbnail framing strips the grid/triad/stats overlays (regardless of the
  * user's Appearance defaults) and fits the fixture tight to the frame. */
-async function renderThumbnail(map: OutputMap, size = 128): Promise<string> {
+async function renderThumbnail(map: OutputMap, size = 128, mesh?: MeshOverlay): Promise<string> {
   if (map.leds.length === 0) return "";
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const view = new MapView(canvas, map).useThumbnailFraming();
-  view.setLedColors(new Uint8Array(map.leds.length * 3)); // emissive dots on black
+  view.setMesh(mesh ?? null);
+  view.setLedColors(new Uint8Array(map.leds.length * 3).fill(180)); // emissive dots on black
   view.start();
   await new Promise((r) => setTimeout(r, 120));
   let url = "";

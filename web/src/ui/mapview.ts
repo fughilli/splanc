@@ -13,6 +13,7 @@
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
 import type { TopologyDebug, TopologyStage } from "../topology/extract";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
+import { transformMeshVertex, type MeshOverlay } from "../geom/mesh";
 import { renderSettings } from "../store/appearance";
 
 /** Which diagnostic overlays to draw over the topology (all off by default —
@@ -76,6 +77,13 @@ export class MapView {
   // Extracted topology overlay: the segment polylines drawn over the LEDs, for
   // live preview while tuning the extraction (topology/extract.ts).
   private topology: Topology | null = null;
+  private mesh: MeshOverlay | null = null;
+  private meshVertices: Vec3[] = [];
+
+  setMesh(mesh: MeshOverlay | null): void {
+    this.mesh = mesh;
+    this.meshVertices = mesh?.visible ? mesh.vertices.map(p => transformMeshVertex(mesh, p)) : [];
+  }
 
   // Diagnostic overlay (topology/extract.ts debug report): (near-)coincident LED
   // pairs, the raw graph edges, and loop-chords — drawn only for the enabled
@@ -335,6 +343,7 @@ export class MapView {
     // Center + scale to fit (the camera path, when shown, is part of the
     // scene bounds — it extends meters beyond the fixture).
     const boundPts: Vec3[] = leds.map((l) => l.xyz);
+    for (const p of this.meshVertices) boundPts.push(p);
     if (this.showTrajectory && this.trajectory !== null) boundPts.push(...this.trajectory);
     let cx = 0, cy = 0, cz = 0;
     for (const p of boundPts) {
@@ -366,10 +375,10 @@ export class MapView {
     let fitR = maxR;
     if (this.fitTight) {
       let pr = 1e-6;
-      for (const l of leds) {
-        const x = l.xyz[0] - cx;
-        const y = l.xyz[1] - cy;
-        const z = l.xyz[2] - cz;
+      for (const p of boundPts) {
+        const x = p[0] - cx;
+        const y = p[1] - cy;
+        const z = p[2] - cz;
         const rx = x * cosA + z * sinA;
         const rz = -x * sinA + z * cosA;
         const ty = y * cosP - rz * sinP;
@@ -460,6 +469,25 @@ export class MapView {
       ctx.arc(last.sx, last.sy, 4, 0, Math.PI * 2);
       ctx.fillStyle = "rgb(80 200 255 / 0.9)";
       ctx.fill();
+    }
+
+    // Translucent, neutral geometry underneath the lights. Faces are sorted
+    // back to front; no imported material or texture can tint the digital twin.
+    if (this.mesh?.visible) {
+      const projected = this.meshVertices.map(proj);
+      const faces = this.mesh.triangles.map(t => ({ t, depth: t.reduce((s, i) => s + projected[i]!.depth, 0) / 3 }));
+      faces.sort((a, b) => a.depth - b.depth);
+      ctx.save();
+      ctx.lineWidth = 0.35;
+      for (const { t } of faces) {
+        const [a, b, c] = t.map(i => projected[i]!) as [typeof projected[number], typeof projected[number], typeof projected[number]];
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.lineTo(c.sx, c.sy); ctx.closePath();
+        ctx.fillStyle = "rgb(150 150 150 / 0.09)";
+        ctx.strokeStyle = "rgb(170 170 170 / 0.08)";
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
     }
 
     const pts = leds.map((l, i) => ({ ...proj(l.xyz), led: l, idx: i }));

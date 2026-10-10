@@ -1064,11 +1064,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       return;
     }
     const rec = await mapStore.get(id);
-    if (rec) loadMap(rec.map, rec.topology);
+    if (rec) {
+      loadMap(rec.map, rec.topology);
+      mapView?.setMesh(rec.mesh ?? null);
+    }
     else loadMap(generateFixture("tree", { count: 160, seed: 3, jitterFrac: 0.06 }));
   }
 
   function loadMap(map: OutputMap, topology?: Topology): void {
+    mapView?.setMesh(null);
     currentMap = map;
     positions = new Float32Array(map.leds.length * 3);
     for (let i = 0; i < map.leds.length; i++) {
@@ -1100,7 +1104,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   async function refreshTopology(map: OutputMap, topology?: Topology): Promise<void> {
     const token = ++topoToken;
     let topo = topology;
-    if (!topo || topo.segments.length === 0) {
+    if (topo === undefined) {
       topo = await extractTopology(map).catch(() => undefined);
     }
     if (token !== topoToken || disposed || currentMap !== map) return;

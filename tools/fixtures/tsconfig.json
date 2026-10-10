@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "rootDir": "../..",
+    "types": ["node"],
+    "typeRoots": ["../../web/node_modules/@types"]
+  },
+  "include": ["generate_showcase.ts"]
+}
