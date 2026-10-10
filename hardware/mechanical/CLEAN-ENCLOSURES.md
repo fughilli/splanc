@@ -1,3 +1,53 @@
+## Current: compact Mini and QWIIC provision, r13 (10 October 2026)
+
+The current source is `enclosure-spec.json`, revision `qwiic-linked-r13`.
+Mini's shell is **75.6 × 61.0 × 11.3 mm**, down from 76.4 × 61.4 × 17.2 mm.
+Its full occupied envelope, including button projection and the taller LED
+headers, is about **75.6 × 62.35 × 11.8 mm**. The headers project 0.5 mm above
+local lid openings; they no longer determine the height of the entire roof.
+The 1.4 mm roof has 1.1 mm nominal clearance above the saved radio envelope.
+The frozen 70 × 55 mm PCB and all its component poses are unchanged.
+
+Mini's four buttons connect directly through three 0.8 × 0.3 mm links at their
+rear face. There is no upper rail. Discrete roof-supported stops capture the
+links with 0.6 mm nominal inward travel. The strip is one solid with a flat
+print face and positive draw. The test checks each cap at 0/0.3/0.6 mm travel
+with ±0.2 mm X/Z offsets, insertion before the PCB, and a link swept envelope
+covering all 81 independent rest/half/full button combinations. This establishes
+geometric clearance, not spring force, adjacent-button coupling, overload
+safety or fatigue; those require a physical prototype. Splanc/GNSS retains its
+existing rail mechanism and 106.4 × 86.4 × 17.2 mm shell.
+
+Both handhelds now include a west-facing JST SM04B-SRSS-TB QWIIC socket,
+flared access opening and interrupted sealant gland. Reference CAD is the exact
+part from KiCad's bundled library, with attribution in `assets/qwiic/provenance.json`.
+The native JST mating face is −Y: a −90° placement rotation faces west. A
+clear probe between contacts and a positive socket-roof probe guard against
+accidentally presenting its solid rear wall. QWIIC is a mechanical provision: the electrical owner still needs to add the
+footprint and route GND/3V3/SDA/SCL. No board or PnR source is changed here.
+The USB-C exterior cable scallop and 0.8 mm conformal web remain; the interior
+relief is narrowed to 12 × 5.6 mm so it does not expose the nearby light pipe.
+Positive roof-surround checks guard that visual/retention requirement.
+
+Rebuild and verify:
+
+```sh
+output/mechanical-runtime/bin/python hardware/mechanical/build_clean_enclosures.py --out output/qwiic-linked-r13 --no-variants
+output/mechanical-runtime/bin/python hardware/mechanical/check_clean_enclosures.py --source output/qwiic-linked-r13
+output/mechanical-runtime/bin/python hardware/mechanical/check_button_dfa.py --source output/qwiic-linked-r13 --products mini splanc
+output/mechanical-runtime/bin/python hardware/mechanical/check_usb_c.py --source output/qwiic-linked-r13
+output/mechanical-runtime/bin/python hardware/mechanical/check_qwiic.py --source output/qwiic-linked-r13
+output/mechanical-runtime/bin/python hardware/mechanical/viewer/build.py --source output/qwiic-linked-r13 --output output/mechanical-viewer/compact-r13
+```
+
+The read-only board-outline screen is in `output/qwiic-compact-study`.
+A centered 68 × 53 mm crop of the frozen mechanical board would encounter
+8 footprint envelopes and 45 track/via boxes; the newer H8 board encounters
+12 and 51 respectively. Empty board area is not a free border. A smaller PCB
+needs placement/routing work by the electrical owner, with native DRC and the
+normal reviews; no cropping or change to the paused routing work was made.
+MAX retains its r11 service-end design. Sections below are historical context.
+
 ## MAX r11 service end
 
 Current source revision is `max-service-r11`. MAX is 330 × 134 × 43 mm,

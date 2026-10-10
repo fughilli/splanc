@@ -1,5 +1,5 @@
-"""HD campaign assets from frozen r11 family CAD. Run in Blender 4.5."""
-import argparse, json, math, sys, time
+"""HD campaign assets from the checked family CAD snapshot. Run in Blender 4.5."""
+import argparse, json, math, random, sys, time
 from pathlib import Path
 import bpy
 from mathutils import Vector, Quaternion
@@ -8,7 +8,9 @@ R = Path.cwd()
 ap = argparse.ArgumentParser()
 ap.add_argument('--mode', choices=['stills', 'videos', 'preview', 'web'], default='stills')
 ap.add_argument('--shot')
+ap.add_argument('--motion-seed', type=int, default=20261010, help='Reproducible variation of orbit start angles and sweep lengths')
 ap.add_argument('--output', default='output/advertising-kit-20261008')
+ap.add_argument('--source', default='output/qwiic-linked-r13', help='Validated mechanical scene directory')
 ap.add_argument('--engine', choices=['cycles','eevee'], default='cycles', help='Cycles is required for final recess/contact shadows; Eevee is an explicit draft option')
 ap.add_argument('--denoise-quality', choices=['fast','balanced','high'], default='high', help='Denoiser quality for motion studies versus final masters')
 ap.add_argument('--samples', type=int, help='Cycles samples; preview defaults to 16, videos to 32, stills to 64')
@@ -20,7 +22,7 @@ for d in ['stills', 'video', 'blender', 'review']:
     (O/d).mkdir(exist_ok=True)
 sys.path.insert(0, str(R/'hardware/mechanical'))
 from ambient_materials import physical_uvs
-cad = json.loads((R/'output/max-service-r11/scene.json').read_text())
+cad = json.loads((R/a.source/'scene.json').read_text())
 bpy.ops.wm.open_mainfile(filepath=str(R/'output/blender-motion-studio-r4/splanc-motion-studio.blend'))
 lib = bpy.data.scenes['03 · Family asset library']
 original = {o.name:o for o in lib.objects if o.type == 'MESH'}
@@ -34,6 +36,11 @@ bs = red.node_tree.nodes.get('Principled BSDF')
 bs.inputs['Base Color'].default_value=(.45,.007,.004,1)
 bs.inputs['Roughness'].default_value=.38
 mats['dc_red']=[red]
+if 'white_nylon' not in mats:
+    white=bpy.data.materials.new('QWIIC white nylon');white.use_nodes=True
+    white.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.78,.77,.72,1)
+    white.node_tree.nodes.get('Principled BSDF').inputs['Roughness'].default_value=.4
+    mats['white_nylon']=[white]
 world = lib.world.copy()
 s = bpy.data.scenes.new('Splanc campaign');s.world=world;bpy.context.window.scene=s
 for old in list(bpy.data.scenes):
@@ -158,6 +165,8 @@ if a.mode=='web':
         if sku in ['mini','splanc']:
             lo,hi=bounds('USB4105');p=(lo+hi)/2;p[1]=lo[1]
             add('usb','USB-C','USB-C power and USB data connection.',p,[0,-1,0])
+            lo,hi=bounds('QWIIC-');p=(lo+hi)/2;p[0]=lo[0]
+            add('qwiic','QWIIC','3.3 V I²C expansion for QWIIC sensors and accessories, using a 4-pin JST SH connector. Planned for Mini and Splanc / GNSS.',p,[-1,0,0])
             for n,prefix in enumerate(['JST-20','JST-31'] if sku=='mini' else ['board.led0.conn','board.led1.conn'],1):
                 lo,hi=bounds(prefix);p=(lo+hi)/2;p[2]=hi[2]
                 add(f'led-{n}',f'LED {n}',f'Addressable LED strip output {n}. Two strip outputs are provided on this module.',p,[0,0,1])
@@ -184,8 +193,8 @@ if a.mode=='web':
         bundles=defaultdict(list)
         for ob in objects:
             name=ob['source_name']
-            visible=(name in ['base','lid','logo-white-inlay','seam-sealant'] or name.startswith(('USB4105','JST-','board.led0.conn','board.led1.conn','case-screw','lightpipe','button-shuttle','DEGSON','ethernet-panel','ethernet-mount-screw','XT150','dc-carrier')))
-            interior=(name=='pcb' or name=='Pi-port-27' or name.startswith(('display-','flexure-','button-frame','power-pcb-','power-service-tongue','lv-pcb-','network-','busbar-','isolated-5V-')))
+            visible=(name in ['base','lid','logo-white-inlay','seam-sealant'] or name.startswith(('USB4105','QWIIC-','JST-','board.led0.conn','board.led1.conn','case-screw','lightpipe','button-shuttle','DEGSON','ethernet-panel','ethernet-mount-screw','XT150','dc-carrier')))
+            interior=(name=='pcb' or name=='Pi-port-27' or name.startswith(('display-','flexure-','button-frame','button-link-','power-pcb-','power-service-tongue','lv-pcb-','network-','busbar-','isolated-5V-')))
             if not (visible or interior):continue
             # CAD tessellation duplicates vertices at face boundaries. Weld seams
             # before simplifying, otherwise collapse can delete whole cap faces.
@@ -234,7 +243,7 @@ if a.mode=='web':
             lo=np.min(vs,axis=0);hi=np.max(vs,axis=0);point=(lo+hi)/2;point[1]=lo[1]
             buttons.append(dict(id=b['id'],label=b['label'],description=b['description'],position=list(Vector(point)*.001-centers[sku]),normal=[0,-1,0]))
         sensors=[dict(sensor,position=list(Vector(sensor['position'])*.001-centers[sku])) for sensor in details[sku]['sensors']]
-        manifest=dict(product=sku,revision='max-service-r11',size=list(sizes[sku]),ports=port_anchors(sku),buttons=buttons,sensors=sensors,inspection_note=details[sku]['note'],parts=parts,bytes=len(blob))
+        manifest=dict(product=sku,revision=cad['revision'],size=list(sizes[sku]),ports=port_anchors(sku),buttons=buttons,sensors=sensors,inspection_note=details[sku]['note'],parts=parts,bytes=len(blob))
         (dest/(sku+'.json')).write_text(json.dumps(manifest));report[sku]=manifest
     env=next(n.image for n in world.node_tree.nodes if n.type=='TEX_ENVIRONMENT')
     copy=env.copy();copy.scale(1024,512);s.render.image_settings.file_format='JPEG';copy.save_render(str(dest/'environment.jpg'),scene=s)
@@ -259,25 +268,47 @@ else:
     # Path-traced motion preserves the narrow connector recess occlusion.
     # Eevee is available only when explicitly requested for a geometry draft.
     s.render.engine='CYCLES' if a.engine=='cycles' else 'BLENDER_EEVEE_NEXT';s.eevee.taa_render_samples=16 if a.mode=='preview' else 48
-    shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',288),('family-pullback','family',120)]
+    shots=[(k+'-orbit',k,192) for k in groups]+[('mini-macro-roll','mini',288),('family-pullback','family',120)]
     def ease(t):return t*t*(3-2*t)
+    def mini_attitude(t):
+        return Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(65-20*ease(t)))
     def record(o):
         o.keyframe_insert('location',frame=f);o.keyframe_insert('rotation_euler',frame=f)
     for name,sku,frames in shots:
         if a.shot and a.shot!=name:continue
         reset();show(sku);s.frame_start=1;s.frame_end=frames
+        motion=None;poster_frame=round(frames*.5)
+        if name.endswith('orbit'):
+            # Different views, small seeded variation, one reverse direction.
+            # Fixed radius/elevation and linear azimuth keep speed constant,
+            # including the first and last frames (no ease-in/ease-out).
+            base,direction,elevation={'mini':(-145,1,.94),'splanc':(-40,-1,1.06),'max':(-115,1,.86)}[sku]
+            rng=random.Random(f'{a.motion_seed}:{sku}:orbit')
+            start=base+rng.uniform(-7,7);sweep=direction*rng.uniform(48,62)
+            motion=dict(kind='constant-speed-orbit',seed=a.motion_seed,start_degrees=start,end_degrees=start+sweep,direction=direction,elevation_ratio=elevation,duration_seconds=frames/s.render.fps,degrees_per_second=sweep*s.render.fps/(frames-1))
+        if name=='mini-macro-roll':
+            # Center the projected logo (not the enclosure's overall bounds)
+            # at the reveal, while preserving continuous slow object drift.
+            poster_frame=round(1+.72*(frames-1));reveal_t=(poster_frame-1)/(frames-1)
+            logo=next(i for i in cad['items'] if i['product']=='mini' and i['name']=='logo-white-inlay')
+            projected=[mini_attitude(reveal_t)@(Vector(v)*.001-centers['mini']) for v in logo['vertices']]
+            logo_center=Vector([(min(v[k] for v in projected)+max(v[k] for v in projected))/2 for k in range(2)]+[0])
+            drift_at_reveal=Vector((.036*(reveal_t-.5),.0135*(reveal_t-.5),0))
+            framing_offset=-logo_center-drift_at_reveal
+            s['shot_reveal_center_frame']=poster_frame
+            motion=dict(kind='centered-logo-drift',center_frame=poster_frame,duration_seconds=frames/s.render.fps,framing_offset=list(framing_offset))
         for f in range(1,frames+1):
             t=(f-1)/(frames-1)
             if name.endswith('orbit'):
-                w=sizes[sku].x;h=sizes[sku].y;theta=math.radians(-145+110*ease(t))
-                cam.location=(math.cos(theta)*w*1.9,math.sin(theta)*w*1.9,w*(.9+.15*math.sin(t*math.pi)))
+                w=sizes[sku].x;h=sizes[sku].y;theta=math.radians(start+sweep*t)
+                cam.location=(math.cos(theta)*w*1.9,math.sin(theta)*w*1.9,w*elevation)
                 aim(cam,(0,0,0));cd.ortho_scale=max(w*1.42,h*1.78*1.3)
                 reveal_light((0,0,0),t,max(w,h));record(key)
             elif name=='mini-macro-roll':
                 # Slow stage-separation drift: only 20 degrees of attitude change
                 # over twelve seconds. A small drift keeps it in frame for the reveal.
-                p=pivots['mini'];q=Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(65-20*ease(t)))
-                p.rotation_euler=q.to_euler();p.location=(.036*(t-.5),.0135*(t-.5),0);record(p)
+                p=pivots['mini'];q=mini_attitude(t)
+                p.rotation_euler=q.to_euler();p.location=Vector((.036*(t-.5),.0135*(t-.5),0))+framing_offset;record(p)
                 cam.location=(0,0,.2);aim(cam,(0,0,0));cd.ortho_scale=.12
                 reveal_light(p.location,min(1,t/.9),max(sizes['mini'].x,sizes['mini'].y));record(key)
             else:
@@ -293,11 +324,11 @@ else:
                 for fc in o.animation_data.action.fcurves:
                     for kp in fc.keyframe_points:kp.interpolation='LINEAR'
         lighting=[]
-        for f in [1,round(frames*.25),round(frames*.5),round(frames*.75),frames]:
+        for f in sorted({1,round(frames*.25),round(frames*.5),round(frames*.75),frames,poster_frame}):
             s.frame_set(f)
             lighting.append(dict(frame=f,camera=list(cam.location),source=list(key.location),watts=key.data.energy))
             still(O/'review'/f'{name}-{f:03}.png')
-        (O/'review'/f'{name}-lighting.json').write_text(json.dumps(dict(shot=name,denoise_quality=a.denoise_quality,engine=s.render.engine,samples=s.cycles.samples if s.render.engine=='CYCLES' else s.eevee.taa_render_samples,fps=s.render.fps,lights=[o.name for o in s.objects if o.type=='LIGHT'],world_strength=0,emission_enabled=False,floor=False,haze=False,frames=lighting),indent=2))
+        (O/'review'/f'{name}-lighting.json').write_text(json.dumps(dict(shot=name,motion=motion,poster_frame=poster_frame,denoise_quality=a.denoise_quality,engine=s.render.engine,samples=s.cycles.samples if s.render.engine=='CYCLES' else s.eevee.taa_render_samples,fps=s.render.fps,lights=[o.name for o in s.objects if o.type=='LIGHT'],world_strength=0,emission_enabled=False,floor=False,haze=False,frames=lighting),indent=2))
         if a.mode=='preview':continue
         bpy.ops.file.pack_all();bpy.ops.wm.save_as_mainfile(filepath=str(O/'blender'/f'{name}.blend'),compress=True)
         s.render.image_settings.file_format='FFMPEG';s.render.ffmpeg.format='MPEG4';s.render.ffmpeg.codec='H264';s.render.ffmpeg.constant_rate_factor='HIGH';s.render.ffmpeg.ffmpeg_preset='GOOD';s.render.filepath=str(O/'video'/f'{name}.mp4')

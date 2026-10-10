@@ -5,7 +5,10 @@ from PIL import Image,ImageDraw
 R=Path.cwd();O=R/'output/advertising-kit-20261008';P=R/'output/mechanical-viewer/advertising-kit'
 P.mkdir(parents=True,exist_ok=True)
 source=R/'hardware/mechanical/advertising'
-scripts=['sim.js','physics.mjs','perimeter-leds.js','inspect.js','port-labels.js','callout-layout.mjs','perimeter-lighting.js','model-data.js']
+attribution=O/'attribution/qwiic';attribution.mkdir(parents=True,exist_ok=True)
+for asset in (R/'hardware/mechanical/assets/qwiic').iterdir():
+    if asset.is_file():shutil.copy2(asset,attribution/asset.name)
+scripts=['sim.js','physics.mjs','perimeter-leds.js','inspect.js','port-labels.js','callout-layout.mjs','perimeter-lighting.js','model-data.js','scale-reference.js']
 code_version=hashlib.sha256(b''.join((source/f).read_bytes() for f in scripts)).hexdigest()[:16]
 markup=(source/'sim.html').read_text().replace('src="sim.js"',f'src="sim.js?v={code_version}"')
 (O/'sim/index.html').write_text(markup)
@@ -38,9 +41,8 @@ for sku,name in [('mini','Splanc Mini'),('splanc','Splanc / GNSS'),('max','Splan
     cards.append(f'<section id="{sku}"><h2>{name}</h2><div class="grid">'+''.join(angles)+'</div></section>')
 videos=[]
 for shot,name in [('mini-orbit','Mini · camera orbit'),('splanc-orbit','Splanc · camera orbit'),('max-orbit','MAX · camera orbit'),('mini-macro-roll','Mini · slow light reveal'),('family-pullback','Family · reverse crash zoom')]:
-    samples=json.loads((O/'review'/f'{shot}-lighting.json').read_text())['frames']
-    # The slower Mini reveal is deliberately still dark at its midpoint.
-    frame=samples[3 if shot=='mini-macro-roll' else len(samples)//2]['frame']
+    metadata=json.loads((O/'review'/f'{shot}-lighting.json').read_text());samples=metadata['frames']
+    frame=metadata.get('poster_frame',samples[len(samples)//2]['frame'])
     Image.open(O/'review'/f'{shot}-{frame:03}.png').convert('RGB').save(O/'video'/f'{shot}.jpg',quality=90)
     video_version=hashlib.sha256((O/'video'/f'{shot}.mp4').read_bytes()).hexdigest()[:12]
     videos.append(f'<article class="card"><video controls playsinline preload="metadata" poster="video/{shot}.jpg?v={video_version}" src="video/{shot}.mp4?v={video_version}"></video><div class="cap"><span>{name}</span><a href="video/{shot}.mp4" download>HD MP4 ↓</a></div></article>')
@@ -50,11 +52,12 @@ notes=''.join('<p>'+html.escape(t)+'</p>' for t in d['notes'])
 notes+='<p>MAX is now $599, adding $30 of headroom for optional UWB/GNSS. The base cost still excludes their modules and antenna/support circuits; the displayed margin is before those optional costs.</p>'
 bomrows=''.join(f'<tr><td>{html.escape(r["part"])}</td><td>{r["qty"]:g}</td><td>${r["mid"]:.4f}</td><td>${r["qty"]*r["mid"]:.2f}</td><td>{html.escape(r["basis"])}</td><td>'+ (f'<a href="{html.escape(r["source"])}">Source</a>' if r['source'] else 'Allowance')+'</td></tr>' for r in d['max_bom'])
 (O/'pricing/index.html').write_text(f'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc pricing</title><style>{css}</style><main><nav><a href="../">Advertising kit</a><a href="../outputs/pricing-20261008/splanc-pricing.xlsx">Editable workbook</a><a href="max-r11-bom.csv">MAX BOM CSV</a></nav><h1>Launch pricing</h1><p class="sub">Planning sheet · USD · 1,000 units per product · 9 October 2026. MAX rounded to $599; Mini and Splanc carry forward September estimates.</p>{prices}<h2>Scope and assumptions</h2>{notes}<h2>MAX component budget</h2><p>Components and internal hardware: ${d["max_components"][1]:.2f}. Increase over the previous component budget: ${d["max_component_delta"][1]:.2f}.</p><div class="scroll"><table><thead><tr><th>Part / allowance</th><th>Qty</th><th>Unit USD</th><th>Total USD</th><th>Basis</th><th>Reference</th></tr></thead><tbody>{bomrows}</tbody></table></div></main></html>')
-readme='''# Splanc advertising kit — 8 October 2026
+readme='''# Splanc advertising kit — 10 October 2026
 
 13 full-HD PNG stills, JPEG web copies, five H.264 MP4 motion clips at 24 fps,
 the browser simulation, a pricing workbook, HTML pricing sheet and BOM CSV.
-Mini and Splanc use the last mechanical r10 board snapshots; MAX uses r11.
+Mechanical r13 uses the last saved boards: Mini has the lower linked-button
+shell; Mini and Splanc include provisional QWIIC sockets; MAX retains r11.
 Splanc GNSS shares the Splanc exterior. These are CAD design renders, not
 photographs or proof of final production hardware. No waterproof, regulatory
 or shipment-readiness claim is implied. Prices remain planning proposals.
@@ -80,6 +83,13 @@ or pinch to zoom. Tap the background, press Escape, or use the X to ease it
 back into its saved flight state. Inspection freezes product flight while the
 diffuser keeps chasing, unless already paused. Closing restores the prior
 playing/paused state. Reduced motion skips the transitions.
+Detail view opens with a true-scale credit card (85.60 × 53.98 × 0.76 mm,
+ISO/IEC 7810 ID-1) and overall CAD width/depth/height labels. Size reference
+toggles both together; it resets to visible on each detail opening. The card
+shares the assembly's rotation and zoom and stays outside the product bounds.
+Card and dimension labels fade out as Sensors opens the case, then fade back
+in when it closes if Size reference is still enabled.
+Source: https://committee.iso.org/standard/31432.html?browse=ics
 Circular port and button markers track the CAD locations while orbiting; only
 facing features are shown. Tap a circle to reveal its name and description.
 A continuous placement solver spaces the circles and expanded cards, penalizes
@@ -111,17 +121,23 @@ may still be used for JS/HTML/JSON.
 
 Real CAD silhouettes and connector geometry; clean fine-grained black plastic,
 white logo inlay, yellow buttons, frosted light pipes. Stills use Cycles;
-the current Mini reveal uses Cycles at 32 samples with denoising. The other four
-camera studies retain their Eevee 48-sample renders. All motion is 1920×1080
+all five films use Cycles at 32 samples with denoising. All motion is 1920×1080
 at 24 fps with no audio. All images
 and films use a black world and one elevated area light: no HDRI, fill, rim,
 floor, fog or emissive lighting. Video lights arc from behind to in front of
 the product relative to the camera, producing the reveal through incidence.
 The live simulation retains its own environment and perimeter lighting. The Mini
 light reveal drifts only 36 mm horizontally over twelve seconds, with 20 degrees
-of attitude change, while its single light sweeps from behind to in front. The family shot pulls back while
+of attitude change, while its single light sweeps from behind to in front. The three eight-second camera orbits maintain constant speed through their
+first and last frames, with distinct seeded start/end angles; Splanc reverses
+direction. The Mini logo is centered when revealed. The family shot pulls back while
 the larger units slide into frame. Blender source scenes are supplied separately
 in the local blender folder, omitted from the lightweight advertising ZIP.
+
+The QWIIC reference CAD comes from KiCad’s bundled exact-part model, under
+CC-BY-SA 4.0 with the KiCad design exception; see attribution/qwiic/provenance.json
+and the license header retained in the accompanying compressed STEP.
+Electrical footprint and routing remain pending in the next board revision.
 
 Three.js vendor files retain their MIT LICENSE. The existing ambientCG PBR/HDRI
 assets are CC0 (Plastic013A, Plastic016A, IndoorEnvironmentHDRI002); shell grain
@@ -138,12 +154,12 @@ Network circuitry remains specification-stage. Cost allowances and retrieved
 price tiers are separated; obtain supplier/tooling quotes before committing.
 '''
 (O/'README.md').write_text(readme)
-(O/'index.html').write_text(f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc advertising kit</title><style>{css}</style><main><nav><strong>Splanc</strong><a href="#stills">Product shots</a><a href="#motion">Motion</a><a href="#live">Zero gravity</a><a href="pricing/">Pricing</a></nav><h1>The Splanc family.</h1><p class="sub">Full-HD product artwork, camera motion and an interactive playground. Latest enclosure design: Mini, Splanc with optional GNSS, and MAX with optional UWB and GNSS.</p><a class="pill" href="splanc-advertising-kit.zip" download>Download the kit ↓</a><a class="pill" href="sim/">Open live simulation ↗</a><img class="hero" src="sim/poster.jpg" alt="Splanc product family"><small>Design visualizations · 1920 × 1080 · 9 October 2026</small><div id="stills">{''.join(cards)}</div><section id="motion"><h2>Camera studies</h2><p class="sub">HD H.264 · 24 fps · silent · single-light orbits, a slow diagonal light reveal and a family reveal on black.</p><div class="grid">{''.join(videos)}</div></section><section id="live"><h2>Zero gravity, live.</h2><p class="sub">Drag, throw and watch the family collide inside a continuous chasing RGB diffuser. Double-tap a product to orbit and zoom, label its buttons, or explore its sensors. A self-contained animation for your website.</p><iframe src="sim/?embed=1" title="Splanc products in zero gravity" loading="lazy"></iframe><a class="pill" href="splanc-browser-sim.zip" download>Download standalone embed ↓</a><details><summary>Embed instructions</summary><p>Copy the sim directory to your website. No CDN or service required.</p><pre>&lt;iframe src="/splanc/sim/?embed=1"
+(O/'index.html').write_text(f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Splanc advertising kit</title><style>{css}</style><main><nav><strong>Splanc</strong><a href="#stills">Product shots</a><a href="#motion">Motion</a><a href="#live">Zero gravity</a><a href="pricing/">Pricing</a></nav><h1>The Splanc family.</h1><p class="sub">Full-HD product artwork, camera motion and an interactive playground. Latest enclosure design: Mini, Splanc with optional GNSS, and MAX with optional UWB and GNSS.</p><a class="pill" href="splanc-advertising-kit.zip" download>Download the kit ↓</a><a class="pill" href="sim/">Open live simulation ↗</a><img class="hero" src="sim/poster.jpg" alt="Splanc product family"><small>Design visualizations · 1920 × 1080 · 10 October 2026</small><div id="stills">{''.join(cards)}</div><section id="motion"><h2>Camera studies</h2><p class="sub">HD H.264 · 24 fps · silent · single-light orbits, a slow diagonal light reveal and a family reveal on black.</p><div class="grid">{''.join(videos)}</div></section><section id="live"><h2>Zero gravity, live.</h2><p class="sub">Drag, throw and watch the family collide inside a continuous chasing RGB diffuser. Double-tap a product to orbit and zoom, label its buttons, or explore its sensors. A self-contained animation for your website.</p><iframe src="sim/?embed=1" title="Splanc products in zero gravity" loading="lazy"></iframe><a class="pill" href="splanc-browser-sim.zip" download>Download standalone embed ↓</a><details><summary>Embed instructions</summary><p>Copy the sim directory to your website. No CDN or service required.</p><pre>&lt;iframe src="/splanc/sim/?embed=1"
   title="Splanc products in zero gravity"
   style="width:100%;height:560px;border:0"
   loading="lazy"&gt;&lt;/iframe&gt;</pre><a href="README.md">Full integration notes</a></details></section><section><h2>Planning prices</h2>{prices}<p class="sub">MAX excludes the Raspberry Pi. Launch prices are selected; the underlying costs include first-batch tooling allocations and remain estimates, not supplier quotes. Mini and Splanc estimates are carried forward; MAX reflects r11 hardware.</p><a class="pill" href="pricing/">Pricing and cost basis →</a><a class="pill" href="outputs/pricing-20261008/splanc-pricing.xlsx">Download editable workbook ↓</a></section><footer><p><small>CAD design renders, not production photography. Final electronics, thermal and tooling qualification remain in progress.</small></p></footer></main></html>''')
 files=[p for p in O.rglob('*') if p.is_file() and p.name!='manifest.json' and not any(x in p.relative_to(O).parts for x in ['authoring','blender','review']) and p.suffix not in ['.zip','.ndjson'] and (p.parent!=models or p.name in model_assets)]
-manifest={'revision':'max-service-r11','date':'2026-10-08','simulation_updated':'2026-10-09','render_treatment':'black-single-source-20261009','stills':13,'videos':5,'resolution':[1920,1080],'fps':24,'files':[{"path":str(p.relative_to(O)),"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
+manifest={'revision':json.loads((models/'mini.json').read_text())['revision'],'date':'2026-10-10','simulation_updated':'2026-10-10','render_treatment':'cycles-black-single-source-20261010','stills':13,'videos':5,'resolution':[1920,1080],'fps':24,'files':[{"path":str(p.relative_to(O)),"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in files]}
 (O/'manifest.json').write_text(json.dumps(manifest,indent=2));files.append(O/'manifest.json')
 with zipfile.ZipFile(O/'splanc-browser-sim.zip','w',zipfile.ZIP_DEFLATED) as z:
  for p in files:

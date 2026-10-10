@@ -3,7 +3,7 @@ from pathlib import Path
 import json,gzip,tempfile,argparse
 import cadquery as cq
 from build_clean_enclosures import box,cyl,HERE,REFERENCE
-ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/usb-conformal-r10'));R=ap.parse_args().source;report={}
+ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/qwiic-linked-r13'));R=ap.parse_args().source;report={}
 SPEC=json.loads((R/'design.json').read_text())['spec']
 def read(p,n):return cq.importers.importStep(str(R/p/(n+'.step')))
 def vol(q):return q.val().Volume()
@@ -46,13 +46,25 @@ for p in ('mini','splanc','max'):
   assert abs(l.val().BoundingBox().zmax-d['outside_height_mm'])<1e-5
   assert abs(b.val().BoundingBox().zmin)<1e-5
   assert 4.0+dz-SPEC['handheld']['floor']>=.7999, 'connector-pin clearance'
-  assert abs(read(p,'button-flexure-strip').val().BoundingBox().zmax-(16.9+dz))<.01
+  bt={**SPEC['handheld']['button'],**d.get('button_overrides',{})}
+  strip_top=(bt['center_z']+bt['rear_height']/2) if bt.get('retention')=='linked' else (bt['rail_z']+bt['rail_height']/2)
+  assert abs(read(p,'button-flexure-strip').val().BoundingBox().zmax-(strip_top+dz))<.01
   jst=cq.importers.importStep('hardware/splanc_dev/elec/src/parts/JST_B3B_PH_K_S_LF__SN/CONN-TH_B3B-PH-K-S.step')
   for x,y in d['led_ports']:
    expect_clear(checks,f'JST {y}',jst.rotate((0,0,0),(0,0,1),90).translate((x,y,7.4+dz)),shell)
    expect_clear(checks,f'JST plug {y}',box(x-4.3,y-4.6,13.5+dz,8.6,9.2,30),shell)
   usb=cq.importers.importStep('/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels/Connector_USB.3dshapes/USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal.step').translate((d['usb_x'],2.225,7.4+dz))
   expect_clear(checks,'USB body',usb,shell)
-  for j in (1,2):expect_clear(checks,f'lightpipe {j}',read(p,f'lightpipe-{j}'),shell)
+  for j,(x,y) in enumerate(d['lightpipes'],1):
+   expect_clear(checks,f'lightpipe {j}',read(p,f'lightpipe-{j}'),shell)
+   support=cyl(x,y,d['outside_height_mm']-.5,1.6,.4).cut(cyl(x,y,d['outside_height_mm']-.6,1.1,.6))
+   assert vol(support.cut(l))<1e-4,(p,'lightpipe has no roof surround',j)
+  # Saved component envelopes must still fit beneath the lowered roof.
+  details=json.loads((HERE/'advertising/board-details.json').read_text())['products'][p]
+  for component in details['components']:
+   w,h,height=component['size'];x,y,z=component['position']
+   envelope=box(-w/2,-h/2,0,w,h,height).rotate((0,0,0),(0,0,1),component['rotation']).translate((x,y,z))
+   v=vol(envelope.intersect(shell));assert v<1e-4,(p,'component body',component['ref'],v)
+  checks['saved_component_envelopes_checked']=len(details['components'])
  report[p]=checks;print(p,'PASS',checks,flush=True)
 (R/'fit-validation.json').write_text(json.dumps(report,indent=2))

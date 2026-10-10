@@ -47,7 +47,7 @@ function reset(){
  products.sort((a,b)=>models[b].size[0]-models[a].size[0]);
  for(const sku of products){
   const m=models[sku],object=m.root.clone(true);const hx=m.size[0]/2+.002,hy=(m.size[1]+m.size[2]*.3)/2+.002;
-  const b={sku,object,ports:m.ports,sensors:m.sensors,note:m.note,hx,hy,mass:{mini:1,splanc:1.8,max:6}[sku],vx:(rng()-.5)*.13,vy:(rng()-.5)*.10,w:(rng()-.5)*1.2,a:0,x:0,y:0,phase:rng()*6.28};
+  const b={sku,object,size:m.size,ports:m.ports,sensors:m.sensors,note:m.note,hx,hy,mass:{mini:1,splanc:1.8,max:6}[sku],vx:(rng()-.5)*.13,vy:(rng()-.5)*.10,w:(rng()-.5)*1.2,a:0,x:0,y:0,phase:rng()*6.28};
   let placed=false;
   for(let attempt=0;attempt<1000;attempt++){
    b.a=(rng()-.5)*6.28;const r=Math.hypot(hx,hy);
@@ -68,6 +68,8 @@ function sync(){
 $('pause').onclick=pause;$('restart').onclick=reset;$('count').onchange=reset;
 addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT','BUTTON'].includes(document.activeElement.tagName)){e.preventDefault();pause();}});
 reduced.addEventListener('change',e=>{if(e.matches){running=false;sync();}});
+let parentVisible=true;
+addEventListener('message',e=>{if(e.origin===location.origin&&e.source===parent&&e.data?.type==='splanc-visibility'){parentVisible=!!e.data.visible;}});
 document.addEventListener('visibilitychange',()=>visible=!document.hidden);
 new IntersectionObserver(entries=>visible=entries[0].isIntersecting&&!document.hidden).observe(renderer.domElement);
 addEventListener('resize',()=>{resize();if(ready)reset();});
@@ -109,7 +111,7 @@ Promise.all(['mini','splanc','max'].map(async k=>models[k]=await load(k))).then(
  ready=true;reset();$('message').textContent='';window.splancReady=true;
 }).catch(e=>{$('message').textContent='Unable to load the 3D models. Reload to retry.';$('fallback').style.display='block';console.error(e);});
 let prev=performance.now(),acc=0,frames=0,start=prev;
-function tick(now){requestAnimationFrame(tick);const dt=Math.min(.05,(now-prev)/1000);prev=now;if(!ready||!visible)return;
+function tick(now){requestAnimationFrame(tick);const dt=Math.min(.05,(now-prev)/1000);prev=now;if(!ready||!visible||!parentVisible)return;
  const flying=running&&!inspector.active;
  // Inspection freezes product flight, but keeps the diffuser and its spill moving.
  if(running)ledtime+=dt*Number($('speed').value);

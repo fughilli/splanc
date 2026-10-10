@@ -1,23 +1,56 @@
-# Advertising kit, 8 October 2026
+# Advertising kit, updated 10 October 2026
 
 Current local output: `output/advertising-kit-20261008`.
 Private gallery: `http://mac-mini.tail6b8ad3.ts.net:8767/advertising-kit/`.
 Standalone animation: gallery path plus `sim/` (add `?embed=1` for minimal controls).
 
 The kit contains 13 full-HD stills (four angles per enclosure plus family),
-five silent H.264 1920×1080/24 fps clips (three four-second camera orbits,
-four-second diagonal Mini roll, five-second family pullback), a self-contained
+five silent H.264 1920×1080/24 fps clips (three eight-second camera orbits,
+twelve-second slow Mini reveal, five-second family pullback), a self-contained
 Three.js animation and a formula-driven pricing workbook with MAX r11 BOM.
 GNSS is a stuffing option sharing the Splanc exterior. The original PNGs,
 web JPEGs, simulation, prices, BOM and integration instructions are in the
 advertising ZIP; packed Blender scenes stay separately in the output directory.
 Generated binaries are ignored by Git. No public hosting or release publication.
 
+## Current refresh, 10 October 2026
+
+The current generation is saved at `output/advertising-r13-20261010`, then
+copied into the existing kit directory after review. Mini's shell is
+75.6 × 61.0 × 11.3 mm, with directly connected button caps and no upper rail.
+The overall displayed height is 11.8 mm because the LED headers project locally.
+Both handhelds have outward-facing QWIIC sockets and cable openings; their
+PCB footprint and routing are explicitly pending. All PCB placements remain
+from the saved mechanical snapshot. See `CLEAN-ENCLOSURES.md` for the fit gates.
+
+A true-scale credit-card reference and overall dimensions default on when a
+product is inspected. Both fade out while Sensors opens the case, and return
+when it closes if the reference is enabled. Desktop and touch checks cover all
+three products, toggling, reduced motion, and exact restoration of flight.
+QWIIC callouts appear on Mini and Splanc/GNSS only. Mini's direct button links
+are included in the exploded browser model.
+
+The three orbits last eight seconds, keep a constant 6.25–7.32 degrees/second,
+and have distinct seeded start/end angles. Splanc runs in the reverse direction.
+The twelve-second Mini reveal has 20 degrees of attitude change and about
+38.45 mm total diagonal drift; its projected logo is centered at frame 208.
+`advertising/check_render_scenes.py` verifies the packed scene configuration,
+constant orbit speeds, and the reveal logo position. Final renders are HD Cycles.
+Source hashes, geometric reports, actual reviewed image hashes, scene audit and
+full movie decode evidence are kept in the generation's `authoring/` and `review/`.
+
+The website hero also includes four supplied installation photos and the fifth
+portrait installation video, all using a full-slot cover crop. Its two decoded
+media buffers support mixed image/video transitions without poster flashes.
+The portrait source is encoded at its native 1080 × 1920 resolution, silent H.264,
+with fast-start metadata; responsive photos use 960/1920-pixel WebP variants.
+Website source and deployment media are maintained in the separate splanc.io repo.
+
 ## Frozen geometry and reproducibility
 
-`render_advertising.py` reads the saved `output/max-service-r11/scene.json`,
-which incorporates handheld r10 and MAX r11, and retrieves approved material
-and HDRI data from `output/blender-motion-studio-r4/splanc-motion-studio.blend`.
+`render_advertising.py` reads the saved `output/qwiic-linked-r13/scene.json`,
+which incorporates the compact Mini, both QWIIC provisions and MAX r11, and retrieves approved material
+and simulation environment data from `output/blender-motion-studio-r4/splanc-motion-studio.blend`.
 It never rebuilds electrical boards or edits PnR work. Use Blender 4.5.9:
 
 ```
@@ -26,7 +59,7 @@ blender -b -t 4 --python hardware/mechanical/render_advertising.py -- --mode vid
 blender -b -t 2 --python hardware/mechanical/render_advertising.py -- --mode web
 ```
 
-Stills use Cycles/Metal, 64 samples, denoising; video uses Eevee, 48 samples.
+Stills use Cycles/Metal, 64 samples, denoising; all five videos use Cycles/Metal, 32 samples.
 Motion is deliberately editable via named product pivots, lights and camera
 keys in the separately packed scenes. All current shots use a black world with a single elevated reveal softbox;
 there is no HDRI, fill/rim light, emissive lighting, studio floor or haze. Camera clips are motion
@@ -35,8 +68,8 @@ masters for editing, not a claim of production photography.
 `advertising/package.py` assembles the gallery into a bounded subdirectory of
 the existing mechanical viewer, avoiding access to source, runtime or unrelated
 work. All browser dependencies are local. Binary geometry is grouped by
-material and gzipped; hidden PCBs and internal harnesses are omitted from the
-web model. The simulation retains relative dimensions and uses fixed-step
+material and gzipped; simplified PCB/component bodies and the button mechanism
+appear in the exploded Sensors view. The simulation retains relative dimensions and uses fixed-step
 planar oriented-box collision impulses with cosmetic tilt, not engineering
 impact physics. Density is a maximum; packing may reduce count to avoid overlap.
 
@@ -93,7 +126,7 @@ allocations, detailed circuit completion and tooling quotes are outstanding.
 Source URLs, dates, line quantities, assumptions and cost scenarios are in the
 machine-readable model, CSV, workbook and HTML sheet.
 
-## Validation recorded
+## Original validation (8 October, superseded media)
 
 `review/` contains browser checks, contact sheets, workbook image renders and
 formula scans. The 13 stills and three sampled frames from each of the five
@@ -367,3 +400,31 @@ in Cycles; the broad side lights before the face. Chrome confirms twelve-second
 HD decode, no poster and natural next-film handoff in both viewports, with no
 script errors. Website build/lint passed. Private preview and kit refreshed;
 the Mini poster now uses the revealed 75% sample rather than its dark midpoint.
+
+### Detail-view scale comparison — 10 October 2026
+
+Double-click/tap detail view opens with an ISO/IEC 7810 ID-1 credit-card
+reference, 85.60 × 53.98 × 0.76 mm, sharing the product's metre-based CAD
+coordinates, orbit and zoom. The `Size reference` toggle controls both card
+and width/depth/height labels and resets to visible on each new detail opening.
+The values are the saved model's overall bounds, including projecting parts:
+Mini 76.4 × 62.8 × 17.2 mm; Splanc 106.4 × 87.8 × 17.2 mm; MAX 339 × 134 × 43 mm.
+Source for ID-1 dimensions: https://committee.iso.org/standard/31432.html?browse=ics.
+
+As Sensors opens the case, the card and all dimension labels fade out with
+the explosion animation. They fade back in on closing only if their toggle
+remains enabled. Exploded framing excludes the hidden reference. The reference
+geometry and texture are disposed on return to flight; shared product meshes
+and the electrical/mechanical source snapshots are unchanged.
+
+`advertising/check_scale_reference.mjs` drives real double-click/tap entry for
+all three products on desktop and phone layouts, checks intermediate fade
+opacity, fully hidden/open and visible/closed states, retains a disabled toggle,
+and verifies default-on reset, exact flight restoration and the continuing LED
+chase. Chrome passes all six cases. The existing interaction check also passes
+orbit, wheel, pinch, background/X/Escape exit and reduced-motion behavior.
+Actually inspected the three desktop and phone closed-case compositions and
+six exploded compositions; the final requested fade removes the reference
+from the exploded view. Review evidence is under
+`output/advertising-kit-20261008/review/size-*` and
+`scale-reference-validation.json`.

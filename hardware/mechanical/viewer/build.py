@@ -4,14 +4,16 @@ import sys,json,gzip,shutil,argparse
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import cadquery as cq
 from generate_enclosures import box
-R=Path('output/mechanical-viewer');R.mkdir(exist_ok=True)
-ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/usb-conformal-r10'));args=ap.parse_args();S=args.source
+R=Path('output/mechanical-viewer')
+ap=argparse.ArgumentParser();ap.add_argument('--source',type=Path,default=Path('output/qwiic-linked-r13'));ap.add_argument('--output',type=Path,default=R);args=ap.parse_args();S=args.source;R=args.output;R.mkdir(parents=True,exist_ok=True)
 data=json.loads((S/'scene.json').read_text())
 saved_design=json.loads((S/'design.json').read_text()) if (S/'design.json').exists() else {}
 q=cq.importers.importStep('hardware/splanc_dev/elec/src/parts/E_Switch_TL3340AF160QG/SW-SMD_E-SWITCH_TL3340.step')
 reports={}
 for product in ('mini','splanc','max','splanc-weather'):
  items=[i for i in data['items'] if i['product']==product]
+ if not items and product.endswith('-weather'):
+  items=[dict(i,product=product) for i in data['items'] if i['product']==product.removesuffix('-weather')]
  if product in ('mini','splanc','splanc-weather'):
   poses=[('SW2',34,3.5),('SW1',42,3.5),('SW3',51,3.5),('SW4',59,3.5)] if product=='mini' else [(b['ref'],*b['position']) for b in json.load(open('hardware/mechanical/assets/frozen-r9/splanc/interface.json'))['boards']['splanc']['buttons']]
   for button_index,(name,x,y) in enumerate(sorted(poses,key=lambda p:p[1])):
