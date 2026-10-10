@@ -19,7 +19,7 @@ for(const [p,c,intensity] of [[[0,0,2],0xffffff,3],[[-1,1,1],0xb5d6ff,4],[[1,-1,
 const leds=new PerimeterLEDs($('stage'));
 const inspector=new Inspector({renderer,camera,scene,bounds:()=>bounds,reduced,onChange:sync});
 const lighting=new PerimeterLighting(renderer);
-const styles={shell_base:[0x14161a,.48,.05],shell_lid:[0x17191c,.48,.05],logo_white:[0xf6f4eb,.46,0],button:[0xffcf56,.55,0],nickel:[0xb4bec4,.28,.85],gold:[0xd6b75c,.32,.75],fastener:[0x87919b,.31,.85],nylon:[0x1a1d22,.55,0],white_nylon:[0xe9e7d8,.55,0],terminal:[0x223832,.55,0],lightpipe:[0x98d9c1,.35,.05],seal:[0x141414,.85,0],dc_red:[0xa81016,.4,0]};
+const styles={shell_base:[0x14161a,.48,.05],shell_lid:[0x17191c,.48,.05],logo_white:[0xf6f4eb,.46,0],button:[0xffcf56,.55,0],nickel:[0xb4bec4,.28,.85],gold:[0xd6b75c,.32,.75],fastener:[0x87919b,.31,.85],nylon:[0x1a1d22,.55,0],white_nylon:[0xe9e7d8,.55,0],terminal:[0x223832,.55,0],lightpipe:[0x98d9c1,.35,.05],seal:[0x141414,.85,0],dc_red:[0xa81016,.4,0],pcb:[0x125c45,.7,.05],copper:[0xc67b42,.4,.65],chip:[0x20242a,.65,0],ceramic:[0xa29c84,.7,0],sensor_package:[0x335765,.5,.15]};
 async function load(sku){
  const {meta,buffer}=await loadModelData(sku);
  const root=new T.Group();
@@ -28,9 +28,9 @@ async function load(sku){
   g.setAttribute('position',new T.InterleavedBufferAttribute(inter,3,0));g.setAttribute('normal',new T.InterleavedBufferAttribute(inter,3,3));g.setIndex(new T.BufferAttribute(new Uint32Array(buffer,p.indexOffset,p.indices),1));g.computeBoundingSphere();
   const [color,roughness,metalness]=styles[p.material]||styles.nylon;
   const m=new T.MeshStandardMaterial({color,roughness,metalness});if(p.material==='lightpipe'){m.emissive.setHex(0x193f2e);m.emissiveIntensity=.3;}
-  root.add(new T.Mesh(g,m));
+  const mesh=new T.Mesh(g,m);mesh.userData={assembly:p.assembly,interior:!!p.interior,explode:p.explode||[0,0,0]};mesh.visible=!p.interior;root.add(mesh);
  }
- return{root,size:meta.size,ports:meta.ports||[]};
+ return{root,size:meta.size,ports:[...(meta.ports||[]),...(meta.buttons||[])],sensors:meta.sensors||[],note:meta.inspection_note};
 }
 function resize(){
  const w=innerWidth,h=innerHeight,aspect=w/h;
@@ -47,7 +47,7 @@ function reset(){
  products.sort((a,b)=>models[b].size[0]-models[a].size[0]);
  for(const sku of products){
   const m=models[sku],object=m.root.clone(true);const hx=m.size[0]/2+.002,hy=(m.size[1]+m.size[2]*.3)/2+.002;
-  const b={sku,object,ports:m.ports,hx,hy,mass:{mini:1,splanc:1.8,max:6}[sku],vx:(rng()-.5)*.13,vy:(rng()-.5)*.10,w:(rng()-.5)*1.2,a:0,x:0,y:0,phase:rng()*6.28};
+  const b={sku,object,ports:m.ports,sensors:m.sensors,note:m.note,hx,hy,mass:{mini:1,splanc:1.8,max:6}[sku],vx:(rng()-.5)*.13,vy:(rng()-.5)*.10,w:(rng()-.5)*1.2,a:0,x:0,y:0,phase:rng()*6.28};
   let placed=false;
   for(let attempt=0;attempt<1000;attempt++){
    b.a=(rng()-.5)*6.28;const r=Math.hypot(hx,hy);
@@ -114,5 +114,5 @@ function tick(now){requestAnimationFrame(tick);const dt=Math.min(.05,(now-prev)/
  if(flying)ledtime+=dt*Number($('speed').value);
  if(flying&&!drag){acc+=dt*Number($('speed').value);while(acc>=1/120){collisions+=step(bodies,1/120,bounds);simtime+=1/120;acc-=1/120;}}
  renderBodies();inspector.update(dt);lighting.begin();renderer.render(scene,camera);inspector.render();lighting.finish(leds.lights(ledtime));leds.draw(ledtime);frames++;
- window.splancStats={products:bodies.length,collisions,time:simtime,ledTime:ledtime,ledCount:leds.points.length,fps:frames*1000/(now-start),drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,running:flying,inspection:inspector.stats(),bodies:bodies.map(b=>({sku:b.sku,x:b.x,y:b.y,a:b.a,vx:b.vx,vy:b.vy,screen:[(b.x/bounds.x+1)*innerWidth/2,(1-b.y/bounds.y)*innerHeight/2]}))};
+ window.splancStats={products:bodies.length,collisions,time:simtime,ledTime:ledtime,ledCount:leds.points.length,diffuser:true,fps:frames*1000/(now-start),drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,running:flying,inspection:inspector.stats(),bodies:bodies.map(b=>({sku:b.sku,x:b.x,y:b.y,a:b.a,vx:b.vx,vy:b.vy,screen:[(b.x/bounds.x+1)*innerWidth/2,(1-b.y/bounds.y)*innerHeight/2]}))};
 }requestAnimationFrame(tick);

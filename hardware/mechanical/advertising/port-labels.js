@@ -5,7 +5,7 @@ export class PortLabels {
   this.svg=document.createElementNS('http://www.w3.org/2000/svg','svg');this.svg.classList.add('port-leaders');this.root.append(this.svg);this.entries=[];
  }
  clear(){for(const e of this.entries){e.card.remove();e.line.remove();}this.entries=[];}
- open(ports){
+ open(ports,onSelect=()=>{}){
   this.clear();
   for(const port of ports){
    const card=document.createElement('div');card.className='port-callout';
@@ -17,7 +17,7 @@ export class PortLabels {
    button.onclick=()=>{
     const expand=detail.hidden;
     for(const e of this.entries){e.detail.hidden=true;e.button.setAttribute('aria-expanded','false');e.button.textContent=e.port.label+' +';e.width=0;}
-    detail.hidden=!expand;button.setAttribute('aria-expanded',String(expand));button.textContent=port.label+(expand?' −':' +');entry.width=0;
+    detail.hidden=!expand;button.setAttribute('aria-expanded',String(expand));button.textContent=port.label+(expand?' −':' +');entry.width=0;onSelect(expand?port.id:null);
    };
   }
  }
@@ -35,12 +35,12 @@ export class PortLabels {
    if(!e.width){e.width=e.card.offsetWidth;e.height=e.card.offsetHeight;}
    const w=e.width,h=e.height,side=normal.x<-.05?-1:normal.x>.05?1:x<innerWidth/2?-1:1;
    let left=Math.max(26,Math.min(innerWidth-26-w,x+side*48-(side<0?w:0)));
-   let top=Math.max(140,Math.min(innerHeight-30-h,y-normal.y*50-h/2));
+   let top=Math.max(164,Math.min(innerHeight-56-h,y-normal.y*50-h/2));
    const desiredTop=top,desiredLeft=left;
-   const ys=[top,140,innerHeight-30-h,...used.flatMap(r=>[r.y-h-10,r.y+r.h+10])];
+   const ys=[top,164,innerHeight-56-h,...used.flatMap(r=>[r.y-h-10,r.y+r.h+10])];
    const xs=[left,26,innerWidth-26-w];let best=null;
    for(const x of xs)for(const y of ys){
-    if(y<140||y+h>innerHeight-30||used.some(r=>x<r.x+r.w+8&&x+w+8>r.x&&y<r.y+r.h+8&&y+h+8>r.y))continue;
+    if(y<164||y+h>innerHeight-56||used.some(r=>x<r.x+r.w+8&&x+w+8>r.x&&y<r.y+r.h+8&&y+h+8>r.y))continue;
     const score=(x-desiredLeft)**2+(y-desiredTop)**2;
     if(!best||score<best.score)best={x,y,score};
    }

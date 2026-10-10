@@ -141,3 +141,44 @@ a backlog of 64 connections (previously 5) for parallel module/mesh loads and
 sets revalidation headers for current code/catalogs and immutable caching for
 hashed models. This is a loading reliability fix, not proof of the reported
 connector-only rendering cause. Both existing bind addresses are preserved.
+
+## Button labels, exploded sensors and diffuser — 9 October 2026
+
+Inspecting Mini or Splanc now labels Reset, Boot, User 1 and User 2 at the
+actual cap positions. User-button actions remain firmware-assigned. MAX has
+no exterior button array in the saved mechanical design.
+
+The Sensors control smoothly separates the lid, base and internal assemblies.
+Callouts and highlight rings follow the board during orbit/zoom. Mini shows
+motion, compass, pressure/temperature, microphone and two INA226 monitors;
+Splanc also shows DWM3000 ranging and explicitly optional MAX-M10S GNSS.
+MAX shows the five INA4180 current-sense banks and MCP3208 telemetry ADC.
+Close case reassembles; X/background/Escape restores the original flight state.
+Reduced-motion skips the transitions. The shared pause/speed behavior remains.
+
+The old visible diode packages are replaced by one continuous frosted diffuser
+bar with three smoothly chasing color regions; inward light directions and
+the lightweight screen-space spill remain. No external dependencies added.
+
+Internal package bodies are simplified display envelopes, not manufacturer
+CAD or final routing. Their placements are frozen in
+`advertising/board-details.json`, with source hashes: Mini and MAX power use
+`output/mechanical/*-board.json`; Splanc uses the saved rough design layout.
+The exporter adds these to the existing r11 CAD without writing source boards.
+The live electrical agent's board and routing work are untouched.
+
+Validation: `advertising/check_sensors.mjs` passed Chrome and WebKit at desktop
+1440×1000 and touch/mobile 390×844. All three models passed sensor count,
+button label, callout expansion, non-overlap, open/close, preserved paused
+flight state, Escape during explosion and reduced-motion checks. Review JSONs
+are `review/sensors-validation.json` and `review/sensors-validation-webkit.json`.
+Actually viewed Chrome desktop diffuser, buttons and all three exploded SKUs;
+Chrome mobile Mini/MAX exploded and Splanc expanded detail; final WebKit
+diffuser desktop, Mini expanded sensor detail and mobile buttons. Enclosure
+pieces, board, button faces and anchored callouts were visible. No script
+errors were reported. The final WebKit captures verify the smoother diffuser
+core (the earlier Chrome captures precede that minor visual adjustment).
+
+Outputs and both download ZIPs were refreshed at the existing private viewer.
+The old viewer listeners had stopped; restored loopback and tailnet on8767,
+with process identity recorded in `server-process-sensors-20261009.json`.

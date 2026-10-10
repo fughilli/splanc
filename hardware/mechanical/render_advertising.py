@@ -97,6 +97,31 @@ if a.mode=='web':
     from collections import defaultdict
     dest=O/'sim'/'models';dest.mkdir(parents=True,exist_ok=True)
     report={};topology=[]
+    details=json.loads((R/'hardware/mechanical/advertising/board-details.json').read_text())['products']
+    # Compact illustrative component bodies at the saved electrical placements.
+    # No invented copper; exact connector CAD remains in the exterior model.
+    for sku,detail in details.items():
+        for c in detail['components']:
+            w,h,t=c['size'];x,y,z=c['position'];angle=math.radians(c['rotation'])
+            vertices=[]
+            for zz in [0,t]:
+                for xx,yy in [(-w/2,-h/2),(w/2,-h/2),(w/2,h/2),(-w/2,h/2)]:
+                    vertices.append(((x+xx*math.cos(angle)-yy*math.sin(angle))*.001,(y+xx*math.sin(angle)+yy*math.cos(angle))*.001,(z+zz)*.001))
+            mesh=bpy.data.meshes.new('display-'+c['ref'])
+            mesh.from_pydata(vertices,[],[(3,2,1,0),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]);mesh.update()
+            ob=bpy.data.objects.new(sku+'/display-'+c['ref'],mesh);s.collection.objects.link(ob)
+            ob.parent=pivots[sku];ob.location=-centers[sku];ob['source_name']='display-'+c['ref'];ob['source_material']=c['material'];groups[sku].append(ob)
+    def assembly(name):
+        if name in ['lid','logo-white-inlay'] or name.startswith('lightpipe'):return 'lid'
+        if name.startswith('case-screw'):return 'screws'
+        if name in ['base','seam-sealant']:return 'base'
+        if name.startswith('network-'):return 'network'
+        if name.startswith(('button-','flexure-')):return 'buttons'
+        return 'board'
+    def explosion(sku,group):
+        h=float(sizes[sku].y)
+        factors={'lid':[0,1.2 if sku=='max' else .85,.35], 'screws':[0,1.2 if sku=='max' else .85,.5], 'base':[0,-.75,-.3], 'network':[0,.55,.2], 'buttons':[0,-.12,.08], 'board':[0,0,0]}
+        return [round(x*h,6) for x in factors[group]]
     def port_anchors(sku):
         items=[i for i in cad['items'] if i['product']==sku]
         def bounds(prefix):
@@ -135,7 +160,8 @@ if a.mode=='web':
         for ob in objects:
             name=ob['source_name']
             visible=(name in ['base','lid','logo-white-inlay','seam-sealant'] or name.startswith(('USB4105','JST-','board.led0.conn','board.led1.conn','case-screw','lightpipe','button-shuttle','DEGSON','ethernet-panel','ethernet-mount-screw','XT150','dc-carrier')))
-            if not visible:continue
+            interior=(name=='pcb' or name=='Pi-port-27' or name.startswith(('display-','flexure-','button-frame','power-pcb-','power-service-tongue','lv-pcb-','network-','busbar-','isolated-5V-')))
+            if not (visible or interior):continue
             # CAD tessellation duplicates vertices at face boundaries. Weld seams
             # before simplifying, otherwise collapse can delete whole cap faces.
             bm=bmesh.new();bm.from_mesh(ob.data)
@@ -168,16 +194,22 @@ if a.mode=='web':
             lv=np.array([l.vertex_index for l in me.loops],dtype=np.int32)
             normals=np.array([tuple(n.vector) for n in me.corner_normals],dtype='<f4')
             arr=np.concatenate((pos[lv[indices]],normals[indices]),axis=1)
-            key=ob['source_material']
+            key=(ob['source_material'],assembly(name),interior and not visible)
             bundles[key].append(arr);bpy.data.meshes.remove(me)
         blob=bytearray();parts=[]
-        for mat,arrays in bundles.items():
+        for (mat,group,interior),arrays in bundles.items():
             vertices,index=np.unique(np.round(np.concatenate(arrays),6),axis=0,return_inverse=True)
             vertices=np.asarray(vertices,dtype='<f4');index=np.asarray(index,dtype='<u4')
             offset=len(blob);blob.extend(vertices.tobytes());idxoffset=len(blob);blob.extend(index.tobytes())
-            parts.append(dict(material=mat,offset=offset,vertices=len(vertices),indexOffset=idxoffset,indices=len(index)))
+            parts.append(dict(material=mat,assembly=group,interior=interior,explode=explosion(sku,group),offset=offset,vertices=len(vertices),indexOffset=idxoffset,indices=len(index)))
         (dest/(sku+'.bin')).write_bytes(blob)
-        manifest=dict(product=sku,revision='max-service-r11',size=list(sizes[sku]),ports=port_anchors(sku),parts=parts,bytes=len(blob))
+        buttons=[]
+        for n,b in enumerate(details[sku]['buttons'],1):
+            vs=[v for i in cad['items'] if i['product']==sku and i['name']==f'button-shuttle-{n}' for v in i['vertices']]
+            lo=np.min(vs,axis=0);hi=np.max(vs,axis=0);point=(lo+hi)/2;point[1]=lo[1]
+            buttons.append(dict(id=b['id'],label=b['label'],description=b['description'],position=list(Vector(point)*.001-centers[sku]),normal=[0,-1,0]))
+        sensors=[dict(sensor,position=list(Vector(sensor['position'])*.001-centers[sku])) for sensor in details[sku]['sensors']]
+        manifest=dict(product=sku,revision='max-service-r11',size=list(sizes[sku]),ports=port_anchors(sku),buttons=buttons,sensors=sensors,inspection_note=details[sku]['note'],parts=parts,bytes=len(blob))
         (dest/(sku+'.json')).write_text(json.dumps(manifest));report[sku]=manifest
     env=next(n.image for n in world.node_tree.nodes if n.type=='TEX_ENVIRONMENT')
     copy=env.copy();copy.scale(1024,512);s.render.image_settings.file_format='JPEG';copy.save_render(str(dest/'environment.jpg'),scene=s)
