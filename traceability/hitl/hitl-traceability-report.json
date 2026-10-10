@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 16,
-    "gaps": 45
+    "gaps": 43
   },
   "levels": [
     {
@@ -1529,12 +1529,6 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:fx_bench_netstack",
       "message": "//pi/hitl/harness:fx_bench_netstack pi/hitl/harness/fx_bench_netstack error and traces to no requirement",
       "route": "autonomous"
@@ -1549,12 +1543,6 @@
       "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:led_capture_netstack",
       "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:map_upload_netstack",
-      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
