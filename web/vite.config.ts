@@ -78,6 +78,8 @@ export default defineConfig({
       // app bootstrap into the decorative hero. Append just this entry's assets.
       await build({
         configFile: false,
+        // The app build already copied public assets; Bazel makes them read-only.
+        publicDir: false,
         base: "./",
         build: {
           outDir: "dist", emptyOutDir: false,
