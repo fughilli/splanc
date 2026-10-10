@@ -9,7 +9,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--mode', choices=['stills', 'videos', 'preview', 'web'], default='stills')
 ap.add_argument('--shot')
 ap.add_argument('--output', default='output/advertising-kit-20261008')
-ap.add_argument('--engine', choices=['cycles','eevee'], help='Override motion renderer for verification')
+ap.add_argument('--engine', choices=['cycles','eevee'], default='cycles', help='Cycles is required for final recess/contact shadows; Eevee is an explicit draft option')
+ap.add_argument('--denoise-quality', choices=['fast','balanced','high'], default='high', help='Denoiser quality for motion studies versus final masters')
+ap.add_argument('--samples', type=int, help='Cycles samples; preview defaults to 16, videos to 32, stills to 64')
 ap.add_argument('--scale', type=int, help='Resolution percent; preview defaults to 33')
 a = ap.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
 O = R / a.output
@@ -82,10 +84,13 @@ if a.mode != 'web':
 s.render.resolution_x=1920;s.render.resolution_y=1080;s.render.resolution_percentage=a.scale or (33 if a.mode=='preview' else 100);s.render.fps=24
 s.view_settings.view_transform='AgX';s.view_settings.exposure=-.35
 s.render.threads_mode='FIXED';s.render.threads=4
-s.render.engine='CYCLES';s.cycles.samples=64;s.cycles.use_denoising=True;s.cycles.max_bounces=6;s.render.use_persistent_data=True
+s.render.engine='CYCLES';s.cycles.samples=a.samples or (16 if a.mode=='preview' else 32 if a.mode=='videos' else 64);s.cycles.use_denoising=True;s.cycles.max_bounces=6;s.render.use_persistent_data=True
 pref=bpy.context.preferences.addons['cycles'].preferences;pref.compute_device_type='METAL';pref.get_devices()
 for d in pref.devices:d.use=d.type=='METAL'
 s.cycles.device='GPU' if any(d.type=='METAL' for d in pref.devices) else 'CPU'
+s.cycles.denoising_use_gpu=s.cycles.device=='GPU'
+s.cycles.denoising_quality=a.denoise_quality.upper()
+s.cycles.denoising_prefilter='FAST' if a.denoise_quality=='fast' else 'ACCURATE'
 def show(sku):
     for prod,obs in groups.items():
         for o in obs:o.hide_render=sku!='family' and prod!=sku
@@ -251,9 +256,10 @@ elif a.mode=='stills':
     still(O/'stills'/'family.png')
     bpy.ops.file.pack_all();bpy.ops.wm.save_as_mainfile(filepath=str(O/'blender'/'family-studio.blend'),compress=True)
 else:
-    # Full-HD real-time masters; stills retain the path-traced treatment.
+    # Path-traced motion preserves the narrow connector recess occlusion.
+    # Eevee is available only when explicitly requested for a geometry draft.
     s.render.engine='CYCLES' if a.engine=='cycles' else 'BLENDER_EEVEE_NEXT';s.eevee.taa_render_samples=16 if a.mode=='preview' else 48
-    shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',192),('family-pullback','family',120)]
+    shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',288),('family-pullback','family',120)]
     def ease(t):return t*t*(3-2*t)
     def record(o):
         o.keyframe_insert('location',frame=f);o.keyframe_insert('rotation_euler',frame=f)
@@ -269,11 +275,11 @@ else:
                 reveal_light((0,0,0),t,max(w,h));record(key)
             elif name=='mini-macro-roll':
                 # Slow stage-separation drift: only 20 degrees of attitude change
-                # over eight seconds. The moving source carries the reveal.
+                # over twelve seconds. A small drift keeps it in frame for the reveal.
                 p=pivots['mini'];q=Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(65-20*ease(t)))
-                p.rotation_euler=q.to_euler();p.location=(.24*(t-.5),.09*(t-.5),0);record(p)
+                p.rotation_euler=q.to_euler();p.location=(.036*(t-.5),.0135*(t-.5),0);record(p)
                 cam.location=(0,0,.2);aim(cam,(0,0,0));cd.ortho_scale=.12
-                reveal_light(p.location,min(1,t/.58),max(sizes['mini'].x,sizes['mini'].y));record(key)
+                reveal_light(p.location,min(1,t/.9),max(sizes['mini'].x,sizes['mini'].y));record(key)
             else:
                 u=ease(min(1,max(0,(t-.12)/.60)))
                 for prod,final,sign in [('mini',(-.075,-.08),0),('splanc',(.065,-.08),1),('max',(0,.08),-1)]:
@@ -291,9 +297,10 @@ else:
             s.frame_set(f)
             lighting.append(dict(frame=f,camera=list(cam.location),source=list(key.location),watts=key.data.energy))
             still(O/'review'/f'{name}-{f:03}.png')
-        (O/'review'/f'{name}-lighting.json').write_text(json.dumps(dict(shot=name,lights=[o.name for o in s.objects if o.type=='LIGHT'],world_strength=0,emission_enabled=False,floor=False,haze=False,frames=lighting),indent=2))
+        (O/'review'/f'{name}-lighting.json').write_text(json.dumps(dict(shot=name,denoise_quality=a.denoise_quality,engine=s.render.engine,samples=s.cycles.samples if s.render.engine=='CYCLES' else s.eevee.taa_render_samples,fps=s.render.fps,lights=[o.name for o in s.objects if o.type=='LIGHT'],world_strength=0,emission_enabled=False,floor=False,haze=False,frames=lighting),indent=2))
         if a.mode=='preview':continue
         bpy.ops.file.pack_all();bpy.ops.wm.save_as_mainfile(filepath=str(O/'blender'/f'{name}.blend'),compress=True)
         s.render.image_settings.file_format='FFMPEG';s.render.ffmpeg.format='MPEG4';s.render.ffmpeg.codec='H264';s.render.ffmpeg.constant_rate_factor='HIGH';s.render.ffmpeg.ffmpeg_preset='GOOD';s.render.filepath=str(O/'video'/f'{name}.mp4')
-        bpy.ops.render.render(animation=True)
+        rendered=bpy.ops.render.render(animation=True)
+        if 'FINISHED' not in rendered:raise RuntimeError(f'Animation render did not finish: {rendered}')
         print('VIDEO COMPLETE',name,flush=True)

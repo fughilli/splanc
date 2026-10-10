@@ -332,3 +332,38 @@ change. Chrome verified the eight-second HD decode and automatic next-clip
 handoff in both layouts, without a poster or script errors. Website build/lint
 passed. Refreshed the existing private kit and site preview; the kit poster is
 now selected from the actual middle sample instead of a fixed frame number.
+
+
+### Ray-traced reveal and much slower drift
+
+Matched-camera/light comparison of old Mini frames 48, 72 and 96 isolated a
+renderer problem: Eevee illuminated connector-recess surfaces that Cycles
+correctly left occluded. Geometry and materials were held constant. The old
+light had shadows enabled and a 1 mm shadow maximum-resolution setting; the
+comparison does not isolate that individual setting from other Eevee shadow
+approximations. New motion renders now default to Cycles; Eevee requires an
+explicit draft override.
+
+The current Mini movie is twelve seconds, 1920×1080/24fps, Cycles 32 samples
+with the fast denoiser for motion iteration. Travel is now 36 mm horizontally
+and 13.5 mm vertically, down from 240/90 mm in eight seconds: approximately
+ten times slower. Roll remains 20° across the longer duration; the light arc
+now occupies 90% of the shot. The product stays in the macro composition while
+its edge, side, then logo emerge from darkness. No CAD changes, ambient fill,
+fog, emission, or additional lights. Other four films retain their prior
+Eevee renders; only the current Mini reveal was replaced this iteration.
+
+Master, editable Blender scene and diagnostics:
+`output/advertising-reveal-raytrace-20261009`. `render-final.log` completed
+288 frames; the earlier high-denoiser run was cancelled after a timing check
+and is not the delivered clip. Audit confirms peak drift 3.215 mm/s and peak
+roll 2.509°/s, one area light, black world, and zero material emission. Source
+now records renderer/sample quality and checks the animation operator result.
+
+Actually viewed the matched six-image renderer comparison, five new low-res
+samples, sample-count/denoiser HD comparisons, all five final HD samples, and
+desktop/phone hero screenshots. Early connector recess illumination disappears
+in Cycles; the broad side lights before the face. Chrome confirms twelve-second
+HD decode, no poster and natural next-film handoff in both viewports, with no
+script errors. Website build/lint passed. Private preview and kit refreshed;
+the Mini poster now uses the revealed 75% sample rather than its dark midpoint.

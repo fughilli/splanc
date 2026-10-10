@@ -34,14 +34,15 @@ for path in sorted((out/'blender').glob('*.blend')):
   assert angles[0]<0 and angles[1]>0,(path,angles)
  motion=None
  if path.stem=='mini-macro-roll':
-  rotations=[]
+  rotations=[];positions=[]
   for frame in range(s.frame_start,s.frame_end+1):
-   s.frame_set(frame);rotations.append(s.objects['Product / mini'].rotation_euler.to_quaternion())
+   s.frame_set(frame);pivot=s.objects['Product / mini'];rotations.append(pivot.rotation_euler.to_quaternion());positions.append(pivot.location.copy())
   steps=[]
   for before,after in zip(rotations,rotations[1:]):
    delta=before.rotation_difference(after)
    steps.append(math.degrees(2*math.atan2(math.sqrt(delta.x*delta.x+delta.y*delta.y+delta.z*delta.z),abs(delta.w))))
-  motion=dict(duration_seconds=len(rotations)/s.render.fps,attitude_travel_degrees=sum(steps),peak_degrees_per_second=max(steps)*s.render.fps)
- reports.append(dict(motion=motion,file=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),lights=1,world_strength=0,emitting_materials=0,checked_materials=len(checked),floor=False,resolution=[1920,1080],fps=24,engine=s.render.engine,camera_side_dot_start_end=angles))
+  distances=[(b-a).length*1000 for a,b in zip(positions,positions[1:])]
+  motion=dict(travel_mm=sum(distances),peak_mm_per_second=max(distances)*s.render.fps,duration_seconds=len(rotations)/s.render.fps,attitude_travel_degrees=sum(steps),peak_degrees_per_second=max(steps)*s.render.fps)
+ reports.append(dict(motion=motion,file=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),lights=1,world_strength=0,emitting_materials=0,checked_materials=len(checked),floor=False,resolution=[1920,1080],fps=24,engine=s.render.engine,samples=s.cycles.samples if s.render.engine=='CYCLES' else s.eevee.taa_render_samples,denoiser_quality=s.cycles.denoising_quality if s.render.engine=='CYCLES' else None,camera_side_dot_start_end=angles))
 assert len(reports)==6
 (out/'review/scene-audit.json').write_text(json.dumps(reports,indent=2));print('SINGLE SOURCE SCENE AUDIT PASSED',len(reports))

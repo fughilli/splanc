@@ -39,7 +39,8 @@ for sku,name in [('mini','Splanc Mini'),('splanc','Splanc / GNSS'),('max','Splan
 videos=[]
 for shot,name in [('mini-orbit','Mini · camera orbit'),('splanc-orbit','Splanc · camera orbit'),('max-orbit','MAX · camera orbit'),('mini-macro-roll','Mini · slow light reveal'),('family-pullback','Family · reverse crash zoom')]:
     samples=json.loads((O/'review'/f'{shot}-lighting.json').read_text())['frames']
-    frame=samples[len(samples)//2]['frame']
+    # The slower Mini reveal is deliberately still dark at its midpoint.
+    frame=samples[3 if shot=='mini-macro-roll' else len(samples)//2]['frame']
     Image.open(O/'review'/f'{shot}-{frame:03}.png').convert('RGB').save(O/'video'/f'{shot}.jpg',quality=90)
     video_version=hashlib.sha256((O/'video'/f'{shot}.mp4').read_bytes()).hexdigest()[:12]
     videos.append(f'<article class="card"><video controls playsinline preload="metadata" poster="video/{shot}.jpg?v={video_version}" src="video/{shot}.mp4?v={video_version}"></video><div class="cap"><span>{name}</span><a href="video/{shot}.mp4" download>HD MP4 ↓</a></div></article>')
@@ -110,13 +111,15 @@ may still be used for JS/HTML/JSON.
 
 Real CAD silhouettes and connector geometry; clean fine-grained black plastic,
 white logo inlay, yellow buttons, frosted light pipes. Stills use Cycles;
-motion clips use Eevee at 1920×1080, 24 fps, 48 samples. No audio. All images
+the current Mini reveal uses Cycles at 32 samples with denoising. The other four
+camera studies retain their Eevee 48-sample renders. All motion is 1920×1080
+at 24 fps with no audio. All images
 and films use a black world and one elevated area light: no HDRI, fill, rim,
 floor, fog or emissive lighting. Video lights arc from behind to in front of
 the product relative to the camera, producing the reveal through incidence.
 The live simulation retains its own environment and perimeter lighting. The Mini
-light reveal drifts diagonally over eight seconds with only 20 degrees of attitude
-change, while its single light sweeps from behind to in front. The family shot pulls back while
+light reveal drifts only 36 mm horizontally over twelve seconds, with 20 degrees
+of attitude change, while its single light sweeps from behind to in front. The family shot pulls back while
 the larger units slide into frame. Blender source scenes are supplied separately
 in the local blender folder, omitted from the lightweight advertising ZIP.
 
