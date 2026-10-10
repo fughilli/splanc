@@ -30,10 +30,17 @@ try{
     if(sku==='mini')await page.screenshot({path:out+`/review/buttons-${mobile?'mobile':'desktop'}${suffix}.png`});
    }
    await page.getByRole('button',{name:'Sensors',exact:true}).click();await page.waitForFunction(()=>window.splancStats.inspection.explosion===1);await page.waitForTimeout(200);
-   const s=await stats(page);assert.equal(s.inspection.sensorCount,sku==='splanc'?8:6);assert(s.inspection.sensors);
+   const s=await stats(page);assert.equal(s.inspection.sensorCount,sku==='max'?3:sku==='splanc'?8:6);assert(s.inspection.sensors);
+   if(sku==='max'){
+    assert.equal(await page.locator('.port-callout button').count(),3);
+    for(const label of ['UWB · optional','GNSS · optional']){
+     const button=page.getByRole('button',{name:'About '+label,exact:true});await button.click();assert.equal(await button.getAttribute('aria-expanded'),'true');
+     assert((await page.locator('.port-callout p:not([hidden])').textContent()).includes('Optional'));
+    }
+   }
    assert.equal(s.time,frozen.time);assert.equal(s.ledTime,frozen.ledTime);
    await page.screenshot({path:out+`/review/sensors-${sku}-${mobile?'mobile':'desktop'}${suffix}.png`});
-   const name=sku==='max'?'Telemetry ADC':'Motion';await page.getByRole('button',{name:'About '+name,exact:true}).click();
+   const name=sku==='max'?'20-channel power telemetry':'Motion';await page.getByRole('button',{name:'About '+name,exact:true}).click();
    assert.equal(await page.getByRole('button',{name:'About '+name,exact:true}).getAttribute('aria-expanded'),'true');
    assert.equal(await page.locator('.port-callout p:not([hidden]) strong').textContent(),name);
    await page.screenshot({path:out+`/review/sensor-detail-${sku}-${mobile?'mobile':'desktop'}${suffix}.png`});

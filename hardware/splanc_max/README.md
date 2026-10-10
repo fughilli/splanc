@@ -14,6 +14,17 @@ is a placement/specification study, not a pin-complete or routed design. The
 older two-board description below remains historical; its exposed lug and
 external Pi-power statements are superseded by r11.
 
+## Optional localization ground station
+
+MAX supports independently optional **Qorvo DWM3000 UWB** and **u-blox MAX-M10S
+GNSS** fitments in the product specification. The implementation contract is
+[localization-options.json](localization-options.json): UWB ranging/anchor service,
+GNSS position/time, LV-domain interfaces, RF placement and power-budget gates.
+The browser sensor view shows provisional module envelopes on the HAT; these
+are not additions to the frozen pin-level boards. The standard MAX price/BOM
+excludes these options. GNSS needs a separate antenna and sky visibility; anchor
+calibration and localization software remain to be implemented.
+
 # Splanc MAX — two-board engineering draft
 
 This project reserves 20 independently switched, sensed and isolated-data LED

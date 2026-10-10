@@ -3,12 +3,13 @@ Package bodies are illustrative envelopes; never writes an electrical design.
 """
 from pathlib import Path
 import json,hashlib,math,re
-R=Path.cwd(); result={'schema':1,'note':'Saved board placements; simplified component shapes. Optional GNSS shown on Splanc.','sources':{},'products':{}}
+R=Path.cwd(); result={'schema':1,'note':'Saved board placements; simplified component shapes. Splanc GNSS and MAX UWB/GNSS options shown; MAX option placements are display-only concepts.','sources':{},'products':{}}
 def read(path):
  p=R/path;result['sources'][path]=hashlib.sha256(p.read_bytes()).hexdigest();return json.loads(p.read_text())
 mini=read('output/mechanical/mini-board.json')
 splanc=read('hardware/splanc/design.json')['boards']['gps']
 maxpower=read('output/mechanical/max-power-board.json')
+localization=read('hardware/splanc_max/localization-options.json')
 roles={
  'board.mpu':('Motion','ICM-42670-P · six-axis accelerometer and gyroscope.',[3,2.5,1]),
  'board.compass':('Compass','MMC5603NJ · three-axis magnetic field sensor.',[.8,.8,.5]),
@@ -51,7 +52,15 @@ for sku,board in [('mini',mini),('splanc',splanc),('max',maxpower)]:
   if role:
    output['sensors'].append(dict(id=ref,label=role[0],description=role[1],position=[round(x,3),round(y,3),round(z+size[2]+.3,3)],normal=[0,0,1],optional=optional))
  output['buttons'].sort(key=lambda b:b['x'])
- if sku=='max':output['note']='Current and voltage telemetry · component shapes simplified.'
+ if sku=='max':
+  # One product-level callout, while retaining all the physical bank envelopes.
+  telemetry=next(sensor for sensor in output['sensors'] if sensor['id']=='U9')
+  output['sensors']=[dict(telemetry,id='power-telemetry',label='20-channel power telemetry',description='Current and voltage monitoring for all twenty LED outputs. Five quad current-sense banks feed multiplexers and a shared ADC.',members=['U50','U51','U52','U53','U54','U9'])]
+  for option in localization['options']:
+   display=option['display'];x,y,z=display['position_mm'];size=display['size_mm']
+   output['components'].append(dict(ref=option['ref'],position=[x,y,z],size=size,rotation=display['rotation_deg'],material='sensor_package',optional=True,placement_status='display-only concept'))
+   output['sensors'].append(dict(id=option['id'],label=option['label'],description=option['description'],position=[x,y,z+size[2]+.3],normal=[0,0,1],optional=True,placement_status='display-only concept'))
+  output['note']='Optional UWB / GNSS shown · module locations provisional.'
  else:output['note']='Saved board layout · component shapes simplified.'+(' Optional GNSS shown.' if sku=='splanc' else '')
 path=R/'hardware/mechanical/advertising/board-details.json';path.write_text(json.dumps(result,separators=(',',':'))+'\n')
 print({sku:{k:len(v) for k,v in p.items() if isinstance(v,list)} for sku,p in result['products'].items()})

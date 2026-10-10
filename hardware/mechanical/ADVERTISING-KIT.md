@@ -203,3 +203,36 @@ sensor-detail-splanc-mobile.png and inspection-chase-desktop-webkit.png. Circles
 remain small and descriptions readable; complete shells are visible.
 Both ZIPs and the existing private viewer were refreshed. CAD and boards are
 unchanged; no rendering/model export was needed.
+
+
+## MAX optional localization and grouped telemetry — 9 October 2026
+
+MAX's Sensors view now offers three product-level callouts: 20-channel power
+telemetry, optional UWB, and optional GNSS. Existing current-sense bank meshes
+remain in place; the five bank labels and separate ADC label are consolidated
+into one entry. Mini and Splanc display components and sensors are unchanged.
+
+The optional fitment contract is `../splanc_max/localization-options.json`,
+referenced by the MAX service-system contract and README. It uses Qorvo DWM3000
+and u-blox MAX-M10S to support a cooperative-localization ground-station role.
+It records independent DNP options, LV/DGND host interfaces, antenna and
+power-budget work, anchor calibration and timing limitations. Official primary
+references are linked in that contract. No new pin-level circuit or routed
+board is claimed. The advertising model places simplified optional envelopes
+on the saved HAT for inspection only; the on-screen note says their positions
+are provisional. GNSS still requires an antenna implementation. Existing MAX
+base BOM/price excludes these options; the kit and pricing page say so.
+
+Rebuilt only web meshes and both download ZIPs, preserving all frozen board
+snapshot hashes. Export topology check found no newly open/inverted closed
+solids. Chrome desktop/mobile checks pass, including exactly three MAX entries,
+both optional descriptions, titled grouped telemetry, non-overlap, state return
+and continuing diffuser. Evidence remains in review/sensors-validation.json.
+Actually viewed refreshed sensors-max-desktop.png and
+sensor-detail-max-desktop.png: complete exploded shells/boards, two small
+optional module envelopes at the Pi/HAT end, and one power telemetry marker.
+
+WebKit desktop/mobile checks also passed, with zero script errors and no callout
+overlap (review/sensors-validation-webkit.json). Additionally viewed Chrome
+sensors-max-mobile.png: all three markers and the GNSS description fit the
+phone viewport. Both optional-module descriptions are exercised by the check.

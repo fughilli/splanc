@@ -198,5 +198,14 @@
     "XT150 keyed carrier dimensions against production samples and retention force",
     "40 A LED load plus 35.2 W control thermal/EMC qualification",
     "Power-board tongue and daughterboard support/copper keepouts into final electrical placement"
-  ]
+  ],
+  "localization": {
+    "contract": "localization-options.json",
+    "optional": [
+      "Qorvo DWM3000 UWB",
+      "u-blox MAX-M10S GNSS"
+    ],
+    "domain": "LV/control DGND",
+    "status": "Specification and display envelopes only; not yet incorporated in the pin-level boards or base BOM"
+  }
 }

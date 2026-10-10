@@ -1,0 +1,82 @@
+{
+  "revision": "max-localization-options-20261009",
+  "status": "User-requested optional fitments; electrical integration and RF placement pending. Browser locations are display-only envelopes, not routed board placements.",
+  "purpose": "Cooperative-localization ground station: UWB ranging/anchor service, with optional GNSS position and time reference.",
+  "default_fitted": false,
+  "independently_optional": true,
+  "host": "Pi software through the LV/control domain; FPGA hardware timestamp capture where needed. Assign interfaces independently of existing FPGA configuration/application SPI and power telemetry.",
+  "supply": {
+    "domain": "DGND / local regulated 3.3 V, from protected control supply; never PGND",
+    "additional_5V_input_budget_W": 2.0,
+    "budget_status": "Provisional combined modules, regulator and antenna allowance, not a measured consumption. Recalculate THL40 thermal/total budget and HAT fuse/harness rating; do not consume the existing 0.1 A reserve silently."
+  },
+  "options": [
+    {
+      "id": "max-uwb",
+      "ref": "OPTION_UWB",
+      "label": "UWB \u00b7 optional",
+      "mpn": "Qorvo DWM3000",
+      "optional": true,
+      "description": "Optional Qorvo DWM3000 for two-way UWB ranging and cooperative-localization anchor service.",
+      "interfaces": [
+        "Dedicated 3.3 V SPI chip select / bus allocation",
+        "IRQ, reset and wake controls; exact GPIO assignments pending"
+      ],
+      "antenna": "Integrated antenna. Keep its radiating end toward plastic with manufacturer copper/metal clearance; Pi, busbars, Ethernet shields and DC wiring must remain outside the final RF exclusion region.",
+      "display": {
+        "position_mm": [
+          310,
+          47,
+          29.6
+        ],
+        "size_mm": [
+          23,
+          13,
+          2.9
+        ],
+        "rotation_deg": 0
+      },
+      "source": "https://www.qorvo.com/products/p/DWM3000"
+    },
+    {
+      "id": "max-gnss",
+      "ref": "OPTION_GNSS",
+      "label": "GNSS \u00b7 optional",
+      "mpn": "u-blox MAX-M10S",
+      "optional": true,
+      "description": "Optional u-blox MAX-M10S provides satellite position and a time reference for the ground station, with sky visibility.",
+      "interfaces": [
+        "UART to Pi; I2C is an alternative, exact pin allocation pending",
+        "TIMEPULSE to a hardware-capture input; backup supply policy pending"
+      ],
+      "antenna": "Requires a separate GNSS antenna and RF network; reserve a lid-facing patch or an optional external-antenna connection. Antenna part, ground plane, bias/protection and packaging remain to be designed; no external hole is implied by this display.",
+      "display": {
+        "position_mm": [
+          286,
+          91,
+          29.6
+        ],
+        "size_mm": [
+          9.7,
+          10,
+          2.5
+        ],
+        "rotation_deg": 0
+      },
+      "source": "https://content.u-blox.com/sites/default/files/MAX-M10S_DataSheet_UBX-20035208.pdf"
+    }
+  ],
+  "localization_requirements": [
+    "Baseline two-way ranging; establish/calibrate anchor coordinates and antenna delays.",
+    "GNSS position is standard precision; no RTK or surveyed-anchor precision claim.",
+    "PPS alone is not a qualified network-wide UWB timebase. TDoA requires a separate clock synchronization and timestamp error budget.",
+    "Implement ground-station service and distribute range/position/time observations over existing Ethernet."
+  ],
+  "pricing": "Base MAX BOM and launch estimate exclude both optional fitments and antenna/support circuitry. Option pricing pending detailed BOM.",
+  "remaining_gates": [
+    "Pin-complete optional circuits and BOM/DNP variants; host bus/GPIO allocation",
+    "Antenna selection, RF keepouts, enclosure tuning, coexistence and certification",
+    "Supply transient/thermal budget, revised branch protection and current ratings",
+    "Physical fit, wiring/service access, ranging calibration and software validation"
+  ]
+}
