@@ -80,8 +80,8 @@ builder. Read the spreadsheet skill before reauthoring. The workbook lives at
 
 First-batch central MAX component/internal-hardware budget is $245.09;
 finished-unit estimate is $336.64, including 3% component overage, board
-assembly/test, enclosure and tooling amortization over 1,000 units. Proposed
-$569 gives 40.8% gross margin; Pi/cooler/storage/external supply and cables are
+assembly/test, enclosure and tooling amortization over 1,000 units. Selected
+$599 gives 43.8% gross margin before optional UWB/GNSS costs; Pi/cooler/storage/external supply and cables are
 excluded. Previous $299 estimate is historical for the earlier configuration.
 Mini $52.99, Splanc $109 and GNSS option $139 retain September sourcing.
 
@@ -236,3 +236,17 @@ WebKit desktop/mobile checks also passed, with zero script errors and no callout
 overlap (review/sensors-validation-webkit.json). Additionally viewed Chrome
 sensors-max-mobile.png: all three markers and the GNSS description fit the
 phone viewport. Both optional-module descriptions are exercised by the check.
+
+### Website integration — 9 October 2026
+
+The website work lives in the separate `Studio-Fug/splanc.io` repository.
+MAX is rounded from $569 to $599 to provide $30 of headroom for optional
+localization sensors. The base cost model has not gained a quoted optional
+sensor BOM; its 43.8% margin is before that fitment. Other prices remain
+Mini $52.99, Splanc $109, and Splanc GNSS $139.
+
+Website preview validation found that some static servers advertise .gz meshes
+with Content-Encoding, which fetch decodes automatically. The shared loader
+now checks the payload signature before decompression, then performs the same
+geometry bounds validation. Website Chrome checks cover opaque gzip; WebKit
+checks cover HTTP-decoded gzip. Missing decode support uses the poster.

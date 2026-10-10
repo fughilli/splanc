@@ -19,6 +19,13 @@ export async function loadModelData(sku){
  const index=await catalog,meta=await json(`models/${index[sku]}`),compressed=typeof DecompressionStream==='function';
  const response=await fetch(`models/${meta.mesh_file}${compressed?'.gz':''}`);
  if(!response.ok)throw Error(`Model mesh: HTTP ${response.status}`);
- const buffer=compressed?await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer():await response.arrayBuffer();
+ // Static hosts may send .gz with Content-Encoding, which fetch already decodes.
+ // Sniff the payload to support both that case and an opaque gzip download.
+ let buffer=await response.arrayBuffer();
+ const signature=new Uint8Array(buffer,0,Math.min(2,buffer.byteLength));
+ if(signature[0]===0x1f&&signature[1]===0x8b){
+  if(typeof DecompressionStream!=='function')throw Error('This browser cannot decompress the 3D models.');
+  buffer=await new Response(new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+ }
  validateModel(meta,buffer);return {meta,buffer};
 }

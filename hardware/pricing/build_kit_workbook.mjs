@@ -10,7 +10,7 @@ function base(sh,last){sh.showGridLines=false;sh.getRange(last).format.font={nam
 function title(sh,text,subtitle){sh.getRange('A1').values=[[text]];sh.getRange('A1').format.font={size:19,bold:true};sh.getRange('A2').values=[[subtitle]];sh.getRange('A2').format.font={size:10,color:'#596571'};sh.getRange('A1:K1').format.rowHeight=32;}
 function header(sh,rng,values){sh.getRange(rng).values=[values];sh.getRange(rng).format={fill:'#253343',font:{bold:true,color:'#FFFFFF'},rowHeight:34,wrapText:true};}
 base(summary,'A1:I30');base(cost,'A1:F50');base(bom,`A1:L${d.max_bom.length+6}`);
-title(summary,'Splanc launch pricing','Planning estimates · USD · 1,000 units per product · 8 October 2026');
+title(summary,'Splanc launch pricing','Planning estimates · USD · 1,000 units per product · 9 October 2026');
 summary.getRange('A:A').format.columnWidth=21;summary.getRange('B:I').format.columnWidth=16;
 header(summary,'A5:I5',['Product','Unit cost','Launch price','Target margin','Gross margin','Target price','Low cost','High cost','After 8% fee']);
 title(cost,'Unit cost model','Low / central / high estimates. Yellow cells are editable assumptions.');
@@ -44,14 +44,18 @@ for(let i=0;i<d.products.length;i++){
 for(const c of ['B','C','F','G','H'])summary.getRange(`${c}6:${c}9`).setNumberFormat(usd);
 summary.getRange('D6:E9').setNumberFormat('0.0%');summary.getRange('I6:I9').setNumberFormat('0.0%');summary.getRange('C6:D9').format.fill='#FFF2CE';
 summary.getRange('A12:B14').values=[['Fixed volume basis',1000],['Component overage',.03],['Illustrative fee',.08]];summary.getRange('B13:B14').format.fill='#FFF2CE';summary.getRange('B13:B14').setNumberFormat('0.0%');
-summary.getRange('D12').values=[['Prices are proposals; not advertised or committed.']];summary.getRange('D13').values=[['MAX excludes Pi, cooler, storage and external power supply.']];summary.getRange('D14').values=[['GNSS is a Splanc option; it shares the same exterior.']];
+summary.getRange('D12').values=[['Selected launch prices; costs remain estimates.']];summary.getRange('D13').values=[['MAX excludes Pi, cooler, storage and external power supply.']];summary.getRange('D14').values=[['GNSS is a Splanc option; it shares the same exterior.']];
 for(let i=0;i<d.notes.length;i++){summary.getRange(`A${17+i}:I${17+i}`).merge();summary.getRange(`A${17+i}`).values=[[d.notes[i]]];summary.getRange(`A${17+i}:I${17+i}`).format.wrapText=true;summary.getRange(`A${17+i}:I${17+i}`).format.rowHeight=34;}
+wb.recalculate();
 const inspect=await wb.inspect({kind:'table',range:'Launch pricing!A5:I9',include:'values,formulas',tableMaxRows:5,tableMaxCols:9,maxChars:3000});
 await fs.writeFile(path.join(out,'review/workbook-values.json'),inspect.ndjson);
-for(let i=0;i<d.products.length;i++){const v=summary.getRange(`B${i+6}`).values[0][0];if(Math.abs(v-d.products[i].cost[1])>.0001)throw Error(`Cost mismatch ${v}`);}
+for(let i=0;i<d.products.length;i++){const v=summary.getRange(`B${i+6}`).values[0][0];if(Math.abs(v-d.products[i].cost[1])>.0001)throw Error(`Cost mismatch ${v}`);
+ const actualMargin=summary.getRange(`E${i+6}`).values[0][0];
+ if(Math.abs(actualMargin-d.products[i].margin)>.0001)throw Error(`Margin mismatch ${actualMargin}`);}
 const errs=await wb.inspect({kind:'match',searchTerm:'#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A|#NUM!|#NULL!|#SPILL!|#CALC!',options:{useRegex:true,maxResults:30},summary:'Formula error scan'});
 await fs.writeFile(path.join(out,'review/workbook-errors.json'),errs.ndjson);
-for(const [sheet,range,name] of [['Launch pricing','A1:I25','pricing'],['Cost model',`A1:F${cr-1}`,'cost-model'],['MAX BOM',`A1:I${total}`,'max-bom'],['MAX BOM',`J5:L${total-1}`,'sources']]){
+const previews=[['Launch pricing','A1:I26','pricing'],['Cost model',`A1:F${cr-1}`,'cost-model'],['MAX BOM',`A1:I${total}`,'max-bom'],['MAX BOM',`J5:L${total-1}`,'sources']];
+for(const [sheet,range,name] of (process.argv.includes('--summary-only')?previews.slice(0,1):previews)){
  const png=await wb.render({sheetName:sheet,range,scale:1});await fs.writeFile(path.join(out,`review/${name}.png`),new Uint8Array(await png.arrayBuffer()));
 }
 const dir=path.join(out,'outputs/pricing-20261008');await fs.mkdir(dir,{recursive:true});await(await SpreadsheetFile.exportXlsx(wb)).save(path.join(dir,'splanc-pricing.xlsx'));

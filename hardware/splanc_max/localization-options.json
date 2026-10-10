@@ -72,7 +72,7 @@
     "PPS alone is not a qualified network-wide UWB timebase. TDoA requires a separate clock synchronization and timestamp error budget.",
     "Implement ground-station service and distribute range/position/time observations over existing Ethernet."
   ],
-  "pricing": "Base MAX BOM and launch estimate exclude both optional fitments and antenna/support circuitry. Option pricing pending detailed BOM.",
+  "pricing": "Selected MAX launch price is $599, $30 above the prior $569 estimate to provide optional-sensor headroom. The base cost model excludes both optional fitments and antenna/support circuitry; final option costs/pricing remain pending the detailed BOM.",
   "remaining_gates": [
     "Pin-complete optional circuits and BOM/DNP variants; host bus/GPIO allocation",
     "Antenna selection, RF keepouts, enclosure tuning, coexistence and certification",

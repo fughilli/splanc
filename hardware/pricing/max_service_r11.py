@@ -35,16 +35,17 @@ for name,p in old['products'].items():
         lines=[dict(label='Components and internal hardware',cost=components),dict(label='Component overage (3%)',cost=[x*.03 for x in components]),dict(label='Existing PCB/assembly/test',cost=[18.35,27.7,41.9]),dict(label='Power tongue PCB area increment',cost=[.5,1,2]),dict(label='NET3 4-layer 80 x 60 PCB',cost=[1.8,3,4.5]),dict(label='NET3 assembly, boot and link test',cost=[3,5,8]),dict(label='New harness integration and load test',cost=[2,4,7]),dict(label='Shells, tray, carrier, fasteners and assembly',cost=[8,12,17]),dict(label='Tooling amortized over 1,000',cost=[16,28,42]),dict(label='Packaging',cost=[2.5,3.5,5.5])]
     cost=[sum(l['cost'][i] for l in lines) for i in range(3)]
     target=p['target_margin'];exact=cost[1]/(1-target)
-    price=math.ceil((exact-9)/10)*10+9 if name=='MAX' else p['launch_price']
+    price=math.ceil((exact-99)/100)*100+99 if name=='MAX' else p['launch_price']
     products.append(dict(name=name,lines=lines,cost=cost,price=price,target=target,margin=1-cost[1]/price,exact_target_price=exact,scope='No Raspberry Pi, cooler, storage, external supply or cables' if name=='MAX' else p['scope'],freshness='r11 additions checked 2026-10-08; retained baseline 2026-09-21' if name=='MAX' else 'Carried forward 2026-09-21; not a fresh supplier quote'))
-data=dict(date='2026-10-08',currency='USD',quantity=1000,component_reserve=.03,illustrative_fee=.08,products=products,max_bom=rows,max_old_components=baseline,max_components=components,max_component_delta=[components[i]-baseline[i] for i in range(3)],notes=[
+data=dict(date='2026-10-09',currency='USD',quantity=1000,component_reserve=.03,illustrative_fee=.08,products=products,max_bom=rows,max_old_components=baseline,max_components=components,max_component_delta=[components[i]-baseline[i] for i in range(3)],notes=[
  'Three product enclosures; Splanc GNSS is a stuffing option sharing the Splanc renders.',
- 'Planning prices, not supplier quotes or confirmed campaign prices. NET3 schematic and supply protection are incomplete.',
+ 'Launch prices selected 2026-10-09; costs remain planning estimates, not supplier quotes. NET3 schematic and supply protection are incomplete.',
  'Central MAX carries applicable published tiers with no invented 1,000-unit discount; low/high scenarios are engineering sensitivities, not confidence intervals.',
  'Mini and Splanc sourcing carried forward. Current mould geometry, two-shot logo, flexures and gasket details need DFM and mould quotations; shell/tool allowances are not quotes.',
  'BOM includes internal ribbon/USB bridge, DC and network harnesses, both panel Ethernet sockets, 20 LED mating plugs and switch electronics. Pi/cooler/storage, external PSU, cable-side XT150 pair and external cables excluded.',
  'Includes 3% component overage, PCB assembly/test, shell, first-batch tooling allocation and packaging. Excludes freight/duty, taxes, fulfillment, channel fees, returns, certification and engineering NRE.',
  'At 1,000 products, quantity is 2,000 panel Ethernet sockets and 3,000 network magnetics jacks; RFQ/allocation required.',
+ 'MAX is rounded to the next price ending in 99: $599, providing $30 over the prior $569 estimate for optional UWB/GNSS. The base cost excludes those modules and antenna/support circuits; the displayed margin is before those optional costs.',
  'Previous MAX $299 price is superseded for this r11 configuration. Existing LED logic regulator, internal USB data bridge and busbars remain, so no removal credit was taken.' ])
 (O/'pricing-model.json').write_text(json.dumps(data,indent=2))
 with (O/'max-r11-bom.csv').open('w') as f:
