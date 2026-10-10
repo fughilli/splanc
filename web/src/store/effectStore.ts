@@ -11,11 +11,15 @@
  * deletion-respecting like store/seedMaps.ts) so the library is never empty.
  */
 
+import type { EffectScene } from "../effects/scene";
+
 export interface StoredEffect {
   id: string;
   name: string;
   /** GLSL-ish effect source (the same string the fx_compiler compiles). */
   source: string;
+  /** Optional canned preview scene, including its exact live uniform values. */
+  scene?: EffectScene;
   tags: string[];
   /** Optional folder for organizing the library; "" / absent = ungrouped. */
   folder?: string;
@@ -33,6 +37,7 @@ export interface CreateEffectInput {
   name?: string;
   source?: string;
   tags?: string[];
+  scene?: EffectScene;
 }
 
 const DB_NAME = "ledmapper";
@@ -186,6 +191,7 @@ class EffectStore {
       tags: normTags(input.tags ?? []),
       createdAt: now,
       updatedAt: now,
+      ...(input.scene ? { scene: structuredClone(input.scene) } : {}),
     };
     await this.tx("readwrite", (s) => s.put(rec));
     this.emit();
@@ -237,7 +243,8 @@ class EffectStore {
   async duplicate(id: string): Promise<string | undefined> {
     const rec = await this.get(id);
     if (!rec) return undefined;
-    return this.create({ name: `${rec.name} (copy)`, source: rec.source, tags: rec.tags });
+    return this.create({ name: `${rec.name} (copy)`, source: rec.source, tags: rec.tags,
+      ...(rec.scene ? { scene: rec.scene } : {}) });
   }
 
   async delete(id: string): Promise<void> {

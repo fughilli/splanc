@@ -33,6 +33,7 @@ import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
+import { sceneUniformValues, type EffectScene } from "../../effects/scene";
 import { highlight } from "../../effects/editor/highlight";
 import { formatFx } from "../../effects/editor/format";
 import { complete, type CompletionItem } from "../../effects/editor/completions";
@@ -545,6 +546,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // Latest compiled uniform manifest, cached so the MIDI tools/panel can list
   // the effect's drivable uniforms without recompiling.
   let lastUniforms: FxUniform[] = [];
+  let initialScene: EffectScene | undefined;
+  let sceneUniformsApplied = false;
   const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
   midiRouter.setEffect(effectId);
   const midiPanel = new MidiMapPanel(effectId, { onRemap: () => runRemap() });
@@ -1158,6 +1161,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);
+    if (initialScene && !sceneUniformsApplied) {
+      panel.hydrate(sceneUniformValues(r.uniforms, initialScene.uniforms));
+      sceneUniformsApplied = true;
+    }
     lastUniforms = r.uniforms;
     // Auto-push: a clean compile goes straight to the connected device — but only
     // when the .fxb actually changed, so a whitespace-only edit doesn't re-flash.
@@ -1619,6 +1626,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // Assemble the drawer bar (left → right) and pin it above the workspace.
   drawer.append(backBtn, nameLabel, nameInput, menuWrap, collapseBtn);
   el.append(layout.root, drawer);
+  el.addEventListener("tutorial:reveal-pane", (event) => {
+    const pane = (event as CustomEvent<unknown>).detail;
+    if (typeof pane === "string") layout.revealPane(pane);
+  });
   // Restore the persisted collapsed state (defaults to expanded on first visit).
   try {
     if (localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");
@@ -1641,6 +1652,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
     setNameText(rec.name);
     codeEl.value = rec.source;
+    initialScene = rec.scene;
     paintHighlight();
 
     // Built-in starter effects are IMMUTABLE: show them read-only and offer a
@@ -1679,7 +1691,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     try {
       const defaultMapId = await populateMapPicker();
-      await selectMap(defaultMapId ?? "__fixture__");
+      const sceneMapId = initialScene
+        ? (await mapStore.list()).find(map => map.deviceMapId === initialScene!.mapId)?.id
+        : undefined;
+      await selectMap(sceneMapId ?? defaultMapId ?? "__fixture__");
     } catch (e) {
       // A preview/map hiccup must not disable the rest of the editor.
       console.error("effect editor: preview/map init failed", e);

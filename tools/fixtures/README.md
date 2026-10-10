@@ -48,3 +48,26 @@ are limited to 20 MB / 30,000 triangles / 90,000 vertices; simplify large scans
 before import. OBJ polygons are fan-triangulated, so concave polygons should be
 triangulated in the model exporter. GLTF/GLB and automatic alignment are not yet
 supported. Reality capture of unlit structure remains future work.
+
+## Captured Maxa demo
+
+`web/src/demo/maxaScene.ts` holds the captured Acid Mode shader and all eleven
+live uniform values. Color values are normalized RGB channels, including
+`#fcff52` and `#ff66e6`. The Effects library seeds a read-only canned scene;
+starting the tutorial creates an editable copy and opens the real authoring
+workspace. Existing tutorial edits are preserved when restarting the tour.
+
+The shell-free `/scene.html` entry renders the same effect on the Maxa fixture
+with the same firmware VM. It pauses offscreen or in a hidden document, and
+renders a static frame when reduced motion is requested. `vite build` bundles
+this entry separately to keep app bootstrap code out of the hero.
+
+To export it for the website after building the app:
+
+```sh
+python3 tools/fixtures/export_hero.py /path/to/splanc.io/public/scenes/maxa --runtime /path/to/wasm/bundles
+```
+
+The runtime directory must contain matching `fx-compiler` and `fx-vm` bundles.
+The website receives only the isolated scene bundle and those two runtimes;
+it does not depend on a deployed app or run a separate approximation of the shader.

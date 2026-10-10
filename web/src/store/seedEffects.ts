@@ -11,6 +11,7 @@
 
 import { effectStore, type StoredEffect } from "./effectStore";
 import { COLOR_TEST_ID, COLOR_TEST_NAME, COLOR_TEST_SOURCE } from "../color/colorTestEffect";
+import { MAXA_DEMO_ID, MAXA_DEMO_NAME, MAXA_DEMO_SOURCE, MAXA_DEMO_SCENE } from "../demo/maxaScene";
 
 // Bumped v5 -> v6 to seed the built-in "Color test" gradient (FUG-75).
 const SEED_FLAG = "ledmapper.seededEffects.v6";
@@ -282,6 +283,7 @@ vec3 shade(Led led) { return sample(tex, led.uv); }
 
 /** Seed the built-in starter effects once. Cheap no-op after the first run. */
 export async function seedBuiltinEffects(): Promise<void> {
+  await seedMaxaDemo();
   try {
     if (localStorage.getItem(SEED_FLAG)) return;
     const now = new Date().toISOString();
@@ -307,4 +309,20 @@ export async function seedBuiltinEffects(): Promise<void> {
     // Never let seeding block app startup.
     console.warn("seedBuiltinEffects failed", e);
   }
+}
+
+async function seedMaxaDemo(): Promise<void> {
+  const flag = "ledmapper.seededEffects.maxa.v1";
+  try {
+    if (localStorage.getItem(flag)) return;
+    if (!(await effectStore.get(MAXA_DEMO_ID))) {
+      const now = new Date().toISOString();
+      await effectStore.createWithId({
+        id: MAXA_DEMO_ID, name: MAXA_DEMO_NAME, source: MAXA_DEMO_SOURCE,
+        scene: structuredClone(MAXA_DEMO_SCENE), tags: ["demo", "topology", "spatial"],
+        createdAt: now, updatedAt: now,
+      });
+    }
+    localStorage.setItem(flag, "1");
+  } catch (error) { console.warn("Could not seed the Maxa demo", error); }
 }

@@ -316,6 +316,7 @@ vite_bin.vite(
     srcs = SRCS + CSS + glob(["public/**"]) + [
         "effects.html",
         "index.html",
+        "scene.html",
         "package.json",
         "vite.config.ts",
         "wall.html",
@@ -447,6 +448,7 @@ js_run_devserver(
         "index.html",
         "wall.html",
         "effects.html",
+        "scene.html",
         "vite.config.ts",
         "package.json",
         "tsconfig.json",

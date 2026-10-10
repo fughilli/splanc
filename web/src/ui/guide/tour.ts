@@ -29,7 +29,7 @@ interface FlatStep {
  * (Topics' catalog `route` is the canonical "where it lives" for the docs; the
  * tour only needs a chrome-visible screen to point at.) */
 function tourRouteFor(topic: GuideTopic): string {
-  return topic.tab === "effects" ? "/effects" : "/maps";
+  return topic.tourRoute ?? (topic.tab === "effects" ? "/effects" : "/maps");
 }
 
 function flattenSteps(): FlatStep[] {
@@ -56,20 +56,41 @@ export function startTour(router: Router): void {
 
   const overlay = new TourOverlay();
   let i = 0;
+  let generation = 0;
+  let preparation: Promise<void> | undefined;
 
   const finish = (): void => {
+    generation++;
     running = false;
     overlay.destroy();
     dismissTour();
   };
 
   const show = async (): Promise<void> => {
+    const request = ++generation;
     const { topic, step } = steps[i]!;
+    if (topic.id === "effect-editor") {
+      preparation ??= import("../../demo/tutorialScene").then(module => module.prepareTutorialScene());
+      try { await preparation; }
+      catch (error) {
+        console.warn("Could not prepare tutorial scene", error);
+        if (request === generation && running) finish();
+        return;
+      }
+      if (request !== generation || !running) return;
+    }
     // Get to a screen that shows this topic's chrome before we point at it.
-    const wantRoute = tourRouteFor(topic);
+    const wantRoute = step.route ?? tourRouteFor(topic);
     if (router.path() !== wantRoute) router.navigate(wantRoute);
 
+    if (step.pane) {
+      const editor = await waitForTarget(".screen--fxedit");
+      if (request !== generation || !running) return;
+      editor?.dispatchEvent(new CustomEvent("tutorial:reveal-pane", { detail: step.pane }));
+    }
+
     const target = step.target ? await waitForTarget(step.target) : null;
+    if (request !== generation || !running) return;
     const view: CoachView = {
       title: step.title,
       body: step.body,

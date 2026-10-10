@@ -358,6 +358,18 @@ export class FxLayout {
     this.render();
   }
 
+  /** Reveal and front a pane, including one already open behind another tab. */
+  revealPane(id: string): void {
+    if (!this.panes.has(id)) return;
+    this.state.hidden = this.state.hidden.filter((pane) => pane !== id);
+    const region = this.state.ndock[id];
+    if (region) this.state.nactive[region] = id;
+    const edge = EDGES.find((dock) => this.state.docks[dock].includes(id));
+    if (edge) this.state.active[edge] = id;
+    this.persist();
+    this.render();
+  }
+
   private persist(): void {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));

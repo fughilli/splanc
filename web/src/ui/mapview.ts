@@ -208,6 +208,12 @@ export class MapView {
     loop();
   }
 
+  /** Render once for externally driven effects and static reduced-motion scenes. */
+  renderFrame(): void {
+    this.resizeToDisplay();
+    this.draw();
+  }
+
   stop(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
