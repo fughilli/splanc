@@ -311,3 +311,24 @@ at that crossing; the orbits open nearly black with isolated edge glints before
 the top face appears. The family shot finishes centered on the three products.
 Source geometry, existing trajectories and hardware state are unchanged.
 `advertising/check_render_scenes.py` repeats the saved-scene audit in Blender.
+
+
+### Slow Mini reveal — 9 October 2026
+
+Revised the diagonal Mini shot to follow the user's stage-separation reference:
+slow deliberate drift, with the moving light providing the reveal. The transit
+now lasts eight seconds (192 frames at 24 fps), twice the preceding duration.
+The roll is only 65° to 45° instead of 125° to −15°; the pose at the center
+crossing and the existing behind-to-front light timing remain aligned. Camera
+framing, frozen CAD and the other four films are unchanged.
+
+HD master and editable scene: `output/advertising-slow-reveal-20261009`.
+The saved-scene audit measures 20.000° total attitude change and a peak rate of
+3.770°/second, with one light, zero ambient/emission and 1920×1080 output.
+Actually viewed the five low-resolution samples, five HD samples as a contact
+sheet, the full-resolution center frame, and desktop/phone hero screenshots.
+The logo catches the light near the center crossing with only a small attitude
+change. Chrome verified the eight-second HD decode and automatic next-clip
+handoff in both layouts, without a poster or script errors. Website build/lint
+passed. Refreshed the existing private kit and site preview; the kit poster is
+now selected from the actual middle sample instead of a fixed frame number.

@@ -253,7 +253,7 @@ elif a.mode=='stills':
 else:
     # Full-HD real-time masters; stills retain the path-traced treatment.
     s.render.engine='CYCLES' if a.engine=='cycles' else 'BLENDER_EEVEE_NEXT';s.eevee.taa_render_samples=16 if a.mode=='preview' else 48
-    shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',96),('family-pullback','family',120)]
+    shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',192),('family-pullback','family',120)]
     def ease(t):return t*t*(3-2*t)
     def record(o):
         o.keyframe_insert('location',frame=f);o.keyframe_insert('rotation_euler',frame=f)
@@ -268,7 +268,9 @@ else:
                 aim(cam,(0,0,0));cd.ortho_scale=max(w*1.42,h*1.78*1.3)
                 reveal_light((0,0,0),t,max(w,h));record(key)
             elif name=='mini-macro-roll':
-                p=pivots['mini'];q=Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(125-140*ease(t)))
+                # Slow stage-separation drift: only 20 degrees of attitude change
+                # over eight seconds. The moving source carries the reveal.
+                p=pivots['mini'];q=Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(65-20*ease(t)))
                 p.rotation_euler=q.to_euler();p.location=(.24*(t-.5),.09*(t-.5),0);record(p)
                 cam.location=(0,0,.2);aim(cam,(0,0,0));cd.ortho_scale=.12
                 reveal_light(p.location,min(1,t/.58),max(sizes['mini'].x,sizes['mini'].y));record(key)

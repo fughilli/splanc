@@ -1,4 +1,4 @@
-import bpy,json,hashlib,argparse,sys
+import bpy,json,hashlib,argparse,sys,math
 from pathlib import Path
 from mathutils import Vector
 parser=argparse.ArgumentParser();parser.add_argument('--output',default='output/advertising-kit-20261008')
@@ -32,6 +32,16 @@ for path in sorted((out/'blender').glob('*.blend')):
    target=Vector((0,.01,.014)) if path.stem=='family-pullback' else s.objects['Product / mini'].location if path.stem=='mini-macro-roll' else Vector()
    dot=(lights[0].location-target).normalized().dot((s.camera.location-target).normalized());angles.append(dot)
   assert angles[0]<0 and angles[1]>0,(path,angles)
- reports.append(dict(file=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),lights=1,world_strength=0,emitting_materials=0,checked_materials=len(checked),floor=False,resolution=[1920,1080],fps=24,engine=s.render.engine,camera_side_dot_start_end=angles))
+ motion=None
+ if path.stem=='mini-macro-roll':
+  rotations=[]
+  for frame in range(s.frame_start,s.frame_end+1):
+   s.frame_set(frame);rotations.append(s.objects['Product / mini'].rotation_euler.to_quaternion())
+  steps=[]
+  for before,after in zip(rotations,rotations[1:]):
+   delta=before.rotation_difference(after)
+   steps.append(math.degrees(2*math.atan2(math.sqrt(delta.x*delta.x+delta.y*delta.y+delta.z*delta.z),abs(delta.w))))
+  motion=dict(duration_seconds=len(rotations)/s.render.fps,attitude_travel_degrees=sum(steps),peak_degrees_per_second=max(steps)*s.render.fps)
+ reports.append(dict(motion=motion,file=path.name,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),lights=1,world_strength=0,emitting_materials=0,checked_materials=len(checked),floor=False,resolution=[1920,1080],fps=24,engine=s.render.engine,camera_side_dot_start_end=angles))
 assert len(reports)==6
 (out/'review/scene-audit.json').write_text(json.dumps(reports,indent=2));print('SINGLE SOURCE SCENE AUDIT PASSED',len(reports))
