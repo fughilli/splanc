@@ -73,10 +73,11 @@ on the product surfaces without shadow-map lights. Its motion shares the
 simulation speed, pause and reduced-motion controls.
 Double-click or double-tap any product to inspect it: drag to orbit and scroll
 or pinch to zoom. Tap the background, press Escape, or use the X to ease it
-back into its saved flight state. Inspection freezes the simulation; closing
-restores its prior playing/paused state. Reduced motion skips the transitions.
-Tappable port and button bubbles track the CAD locations while orbiting; only
-the facing features are labeled. Tap a bubble to expand its description.
+back into its saved flight state. Inspection freezes product flight while the
+diffuser keeps chasing, unless already paused. Closing restores the prior
+playing/paused state. Reduced motion skips the transitions.
+Circular port and button markers track the CAD locations while orbiting; only
+facing features are shown. Tap a circle to reveal its name and description.
 In inspection, Sensors separates the case and reveals the saved board layout
 with sensor callouts. Close case reassembles it; X/background/Escape returns to
 flight, even while exploded. Component bodies are simplified display shapes,

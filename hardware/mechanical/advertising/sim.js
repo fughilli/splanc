@@ -111,7 +111,8 @@ Promise.all(['mini','splanc','max'].map(async k=>models[k]=await load(k))).then(
 let prev=performance.now(),acc=0,frames=0,start=prev;
 function tick(now){requestAnimationFrame(tick);const dt=Math.min(.05,(now-prev)/1000);prev=now;if(!ready||!visible)return;
  const flying=running&&!inspector.active;
- if(flying)ledtime+=dt*Number($('speed').value);
+ // Inspection freezes product flight, but keeps the diffuser and its spill moving.
+ if(running)ledtime+=dt*Number($('speed').value);
  if(flying&&!drag){acc+=dt*Number($('speed').value);while(acc>=1/120){collisions+=step(bodies,1/120,bounds);simtime+=1/120;acc-=1/120;}}
  renderBodies();inspector.update(dt);lighting.begin();renderer.render(scene,camera);inspector.render();lighting.finish(leds.lights(ledtime));leds.draw(ledtime);frames++;
  window.splancStats={products:bodies.length,collisions,time:simtime,ledTime:ledtime,ledCount:leds.points.length,diffuser:true,fps:frames*1000/(now-start),drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,running:flying,inspection:inspector.stats(),bodies:bodies.map(b=>({sku:b.sku,x:b.x,y:b.y,a:b.a,vx:b.vx,vy:b.vy,screen:[(b.x/bounds.x+1)*innerWidth/2,(1-b.y/bounds.y)*innerHeight/2]}))};

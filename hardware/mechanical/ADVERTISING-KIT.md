@@ -182,3 +182,24 @@ core (the earlier Chrome captures precede that minor visual adjustment).
 Outputs and both download ZIPs were refreshed at the existing private viewer.
 The old viewer listeners had stopped; restored loopback and tailnet on8767,
 with process identity recorded in `server-process-sensors-20261009.json`.
+
+
+## Inspection chase and circular markers — 9 October 2026
+
+Inspection now freezes product flight without pausing the diffuser clock or
+its colored spill. Explicit Pause and reduced-motion still stop both clocks.
+Collapsed port, button and sensor callouts are text-free 24px circles within
+40px touch targets. Tapping reveals a title and description, with the selected
+circle highlighted. Accessible feature names and keyboard focus remain.
+
+Extended the existing interaction check to verify changing diffuser pixels
+and time while inspected product positions remain frozen, then resumption of
+flight. Chrome and WebKit passed desktop and touch/mobile checks for all three
+SKUs, empty circular marker labels, accessible names, titled descriptions,
+non-overlap, paused state preservation and reduced motion; no script errors.
+Evidence: output/advertising-kit-20261008/review/sensors-validation{,-webkit}.json.
+Actually viewed refreshed buttons-desktop.png, buttons-mobile.png,
+sensor-detail-splanc-mobile.png and inspection-chase-desktop-webkit.png. Circles
+remain small and descriptions readable; complete shells are visible.
+Both ZIPs and the existing private viewer were refreshed. CAD and boards are
+unchanged; no rendering/model export was needed.

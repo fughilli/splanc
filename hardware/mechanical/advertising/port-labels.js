@@ -9,15 +9,17 @@ export class PortLabels {
   this.clear();
   for(const port of ports){
    const card=document.createElement('div');card.className='port-callout';
-   const button=document.createElement('button');button.textContent=port.label+' +';button.setAttribute('aria-expanded','false');button.setAttribute('aria-label','About '+port.label);
-   const detail=document.createElement('p');detail.textContent=port.description;detail.hidden=true;detail.id='port-detail-'+port.id;button.setAttribute('aria-controls',detail.id);
+   const button=document.createElement('button');button.setAttribute('aria-expanded','false');button.setAttribute('aria-label','About '+port.label);
+   const detail=document.createElement('p');
+   const title=document.createElement('strong');title.textContent=port.label;
+   const description=document.createElement('span');description.textContent=port.description;detail.append(title,description);detail.hidden=true;detail.id='port-detail-'+port.id;button.setAttribute('aria-controls',detail.id);
    card.append(button,detail);this.root.append(card);
    const line=document.createElementNS('http://www.w3.org/2000/svg','line');this.svg.append(line);
    const entry={port,card,button,detail,line,width:0,height:0};this.entries.push(entry);
    button.onclick=()=>{
     const expand=detail.hidden;
-    for(const e of this.entries){e.detail.hidden=true;e.button.setAttribute('aria-expanded','false');e.button.textContent=e.port.label+' +';e.width=0;}
-    detail.hidden=!expand;button.setAttribute('aria-expanded',String(expand));button.textContent=port.label+(expand?' −':' +');entry.width=0;onSelect(expand?port.id:null);
+    for(const e of this.entries){e.detail.hidden=true;e.button.setAttribute('aria-expanded','false');e.width=0;}
+    detail.hidden=!expand;button.setAttribute('aria-expanded',String(expand));entry.width=0;onSelect(expand?port.id:null);
    };
   }
  }
@@ -46,7 +48,7 @@ export class PortLabels {
    }
    if(best){left=best.x;top=best.y;}
    used.push({x:left,y:top,w,h});e.card.style.transform=`translate(${left}px,${top}px)`;
-   for(const [k,v] of Object.entries({x1:x,y1:y,x2:Math.max(left,Math.min(left+w,x)),y2:Math.max(top,Math.min(top+h,y))}))e.line.setAttribute(k,v);
+   for(const [k,v] of Object.entries({x1:x,y1:y,x2:left+e.button.offsetWidth/2,y2:top+e.button.offsetHeight/2}))e.line.setAttribute(k,v);
   }
  }
 }

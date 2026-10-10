@@ -23,6 +23,8 @@ try{
   for(const sku of mobile?['mini','splanc','max']:['mini','splanc','max']){
    console.log('Checking',mobile?'mobile':'desktop',sku);
    await focus(page,sku,mobile);await page.waitForTimeout(150);
+   const markers=await page.locator('.port-callout button').evaluateAll(es=>es.map(e=>({text:e.textContent,w:e.offsetWidth,h:e.offsetHeight,radius:getComputedStyle(e).borderRadius,label:e.getAttribute('aria-label')})));
+   assert(markers.length>0);for(const m of markers){assert.equal(m.text,'');assert.equal(m.w,m.h);assert.equal(m.radius,'50%');assert(m.label.startsWith('About '));}
    if(sku!=='max'){
     for(const label of ['Reset','Boot','User 1','User 2'])assert.equal(await page.getByRole('button',{name:'About '+label,exact:true}).count(),1);
     if(sku==='mini')await page.screenshot({path:out+`/review/buttons-${mobile?'mobile':'desktop'}${suffix}.png`});
@@ -33,6 +35,7 @@ try{
    await page.screenshot({path:out+`/review/sensors-${sku}-${mobile?'mobile':'desktop'}${suffix}.png`});
    const name=sku==='max'?'Telemetry ADC':'Motion';await page.getByRole('button',{name:'About '+name,exact:true}).click();
    assert.equal(await page.getByRole('button',{name:'About '+name,exact:true}).getAttribute('aria-expanded'),'true');
+   assert.equal(await page.locator('.port-callout p:not([hidden]) strong').textContent(),name);
    await page.screenshot({path:out+`/review/sensor-detail-${sku}-${mobile?'mobile':'desktop'}${suffix}.png`});
    const boxes=await page.locator('.port-callout').evaluateAll(es=>es.filter(e=>!e.hidden).map(e=>{const b=e.getBoundingClientRect();return {x:b.x,y:b.y,w:b.width,h:b.height};}));
    const overlaps=boxes.some((a,i)=>boxes.slice(i+1).some(b=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y));
@@ -42,6 +45,17 @@ try{
    await page.keyboard.press('Escape');await page.waitForFunction(()=>!window.splancStats.inspection);
    const restored=await stats(page);assert.deepEqual(restored.bodies,frozen.bodies);assert.equal(restored.running,false);
   }
+  await page.getByRole('button',{name:'Play',exact:true}).click();
+  await focus(page,'mini',mobile);const inspecting=await stats(page);
+  const stripBefore=await page.locator('#perimeter-leds').evaluate(c=>c.toDataURL());
+  await page.waitForTimeout(650);const chasing=await stats(page);
+  assert.equal(chasing.time,inspecting.time);assert.deepEqual(chasing.bodies,inspecting.bodies);
+  assert(chasing.ledTime>inspecting.ledTime,'diffuser must keep chasing during playing inspection');
+  assert.notEqual(await page.locator('#perimeter-leds').evaluate(c=>c.toDataURL()),stripBefore,'diffuser pixels must animate');
+  await page.screenshot({path:out+`/review/inspection-chase-${mobile?'mobile':'desktop'}${suffix}.png`});
+  results.push({mobile,inspectionChase:true,flightFrozen:true,ledAdvance:chasing.ledTime-inspecting.ledTime});
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!window.splancStats.inspection);
+  await page.waitForFunction(()=>window.splancStats.running===true);
   await page.emulateMedia({reducedMotion:'reduce'});await page.reload();await page.waitForFunction(()=>window.splancReady);await page.waitForTimeout(100);
   await focus(page,'mini',mobile);await page.getByRole('button',{name:'Sensors',exact:true}).click();await page.waitForFunction(()=>window.splancStats.inspection.explosion===1);
   assert.equal((await stats(page)).running,false);await context.close();
