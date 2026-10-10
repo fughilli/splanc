@@ -14,6 +14,7 @@
  */
 
 import type { FxCompiled, FxDiagnostic, FxUniform } from "../../fx/preview";
+import { compilerAssetBase } from "./workerAssets";
 
 /** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
  * `kind`; the untagged legacy `{id, src}` shape is treated as a compile. */
@@ -46,7 +47,7 @@ let modP: Promise<CompilerModule> | null = null;
 // Resolving against self.location makes the compiler load whether the app is at
 // an origin root or a subpath (GitHub Pages project site + per-PR previews).
 function fxCompilerBase(): string {
-  return new URL("../fx-compiler", self.location.href).href.replace(/\/+$/, "");
+  return compilerAssetBase(self.location.href);
 }
 
 function loadCompiler(base = fxCompilerBase()): Promise<CompilerModule> {

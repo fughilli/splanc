@@ -23,6 +23,7 @@ import {
   transformMap,
   type MapXform,
 } from "../../geom/mapTransform";
+import { MeshPanel } from "./meshPanel";
 import { MapView } from "../mapview";
 import { Button, Card, Slider, toast, icon, type IconName } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
@@ -256,6 +257,7 @@ export function MapDetailScreen(
     const map: OutputMap = rec.map;
     view = new MapView(canvas, map);
     view.setTrajectory(map.trajectory ?? null);
+    view.setMesh(rec.mesh ?? null);
     view.start();
     metaStrip.textContent =
       `${map.ledCount} LEDs · rms ${(rec.rmsReprojPx || 0).toFixed(1)} px · ${new Date(rec.updatedAt).toLocaleDateString()}`;
@@ -285,7 +287,7 @@ export function MapDetailScreen(
       actionTile("map-to-device", "Push", () => void sendToDevice()),
       actionTile("map-from-device", "Pull", () => void pullFromDevice()),
     );
-    actions.append(grid);
+    actions.append(grid, MeshPanel(mapId, rec.mesh ?? null, mesh => view?.setMesh(mesh)));
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
     // re-extraction, matching §4.3 "skip re-extraction unless the user opts to".

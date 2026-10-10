@@ -397,7 +397,7 @@ export function MapBrowserScreen(router: Router): Screen {
 async function lazyThumb(id: string, thumb: HTMLElement): Promise<void> {
   const rec = await mapStore.get(id);
   if (!rec) return;
-  const url = await renderThumbnail(rec.map).catch(() => "");
+  const url = await renderThumbnail(rec.map, 128, rec.mesh).catch(() => "");
   if (!url) return;
   await mapStore.setThumbnail(id, url);
   thumb.innerHTML = "";
