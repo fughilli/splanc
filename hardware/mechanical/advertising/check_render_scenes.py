@@ -55,7 +55,12 @@ for path in sorted((out/'blender').glob('*.blend')):
    steps.append(math.degrees(2*math.atan2(math.sqrt(delta.x*delta.x+delta.y*delta.y+delta.z*delta.z),abs(delta.w))))
   distances=[(b-a).length*1000 for a,b in zip(positions,positions[1:])]
   motion=dict(travel_mm=sum(distances),peak_mm_per_second=max(distances)*s.render.fps,duration_seconds=len(rotations)/s.render.fps,attitude_travel_degrees=sum(steps),peak_degrees_per_second=max(steps)*s.render.fps)
-  s.frame_set(s['shot_reveal_center_frame']);logo=s.objects['mini/logo-white-inlay']
+  s.frame_set(s['shot_reveal_center_frame'])
+  # Blender adds suffixes when the material-library objects retain a name.
+  # Match the exported CAD identity and product parent, not its display name.
+  logos=[o for o in s.objects if o.parent==s.objects['Product / mini'] and o.get('source_name')=='logo-white-inlay']
+  assert len(logos)==1,(path,'ambiguous Mini logo',len(logos))
+  logo=logos[0]
   points=[world_to_camera_view(s,s.camera,logo.matrix_world@v.co) for v in logo.data.vertices]
   center=[(min(v[k] for v in points)+max(v[k] for v in points))/2 for k in range(2)]
   offset_px=[(center[0]-.5)*1920,(center[1]-.5)*1080]

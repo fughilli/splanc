@@ -46,6 +46,12 @@ The portrait source is encoded at its native 1080 × 1920 resolution, silent H.2
 with fast-start metadata; responsive photos use 960/1920-pixel WebP variants.
 Website source and deployment media are maintained in the separate splanc.io repo.
 
+The final r13 scene audit reopened all six packed Blender files and passed.
+All thirteen stills and all 26 sampled film frames were actually viewed. Mini's
+USB roof/lightpipe support and outward-facing QWIIC cavity were also inspected
+in the section viewer. `review/visual-review.json` identifies the exact images
+and their hashes; no unseen review page is marked complete.
+
 ## Frozen geometry and reproducibility
 
 `render_advertising.py` reads the saved `output/qwiic-linked-r13/scene.json`,
