@@ -5,12 +5,15 @@ import bpy
 from mathutils import Vector, Quaternion
 
 R = Path.cwd()
-O = R / 'output/advertising-kit-20261008'
 ap = argparse.ArgumentParser()
 ap.add_argument('--mode', choices=['stills', 'videos', 'preview', 'web'], default='stills')
 ap.add_argument('--shot')
+ap.add_argument('--output', default='output/advertising-kit-20261008')
+ap.add_argument('--engine', choices=['cycles','eevee'], help='Override motion renderer for verification')
+ap.add_argument('--scale', type=int, help='Resolution percent; preview defaults to 33')
 a = ap.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
-O.mkdir(exist_ok=True)
+O = R / a.output
+O.mkdir(parents=True, exist_ok=True)
 for d in ['stills', 'video', 'blender', 'review']:
     (O/d).mkdir(exist_ok=True)
 sys.path.insert(0, str(R/'hardware/mechanical'))
@@ -57,24 +60,27 @@ def aim(o,target):o.rotation_euler=(Vector(target)-o.location).to_track_quat('-Z
 def area(name,loc,power,size):
     d=bpy.data.lights.new(name,'AREA');d.energy=power;d.shape='RECTANGLE';d.size=size;d.size_y=size*1.7
     o=bpy.data.objects.new(name,d);s.collection.objects.link(o);o.location=loc;aim(o,(0,0,0));return o
-key=area('Key softbox',(-.2,-.3,.45),18,.35)
-rim=area('Cool rim',(.2,.25,.4),20,.3);rim.data.color=(.74,.84,1)
-fill=area('Service fill',(-.3,.1,.18),7,.25)
+key=area('Single reveal softbox',(0,0,.4),18,.08)
 cd=bpy.data.cameras.new('Camera');cam=bpy.data.objects.new('Camera',cd);s.collection.objects.link(cam);s.camera=cam
 cd.clip_start=.001;cd.clip_end=20;cd.type='ORTHO'
-# HDRI illuminates and reflects; camera sees black beyond the studio surface.
-n=world.node_tree.nodes;l=world.node_tree.links
-out=next(v for v in n if v.type=='OUTPUT_WORLD')
-bg=next(v for v in n if v.type=='BACKGROUND' and v.inputs['Color'].is_linked);bg.inputs['Strength'].default_value=.12
-black=n.new('ShaderNodeBackground');black.inputs['Color'].default_value=(.004,.005,.008,1);black.inputs['Strength'].default_value=.3
-lp=n.new('ShaderNodeLightPath');mix=n.new('ShaderNodeMixShader')
-l.new(lp.outputs['Is Camera Ray'],mix.inputs[0]);l.new(bg.outputs[0],mix.inputs[1]);l.new(black.outputs[0],mix.inputs[2]);l.new(mix.outputs[0],out.inputs['Surface'])
-bpy.ops.mesh.primitive_plane_add(size=20,location=(0,0,-.03));floor=bpy.context.object;floor.name='Charcoal velvet'
-velvet=bpy.data.materials.new('Charcoal velvet');velvet.use_nodes=True
-bs=velvet.node_tree.nodes.get('Principled BSDF');bs.inputs['Base Color'].default_value=(.008,.011,.016,1);bs.inputs['Roughness'].default_value=.94;bs.inputs['Sheen Weight'].default_value=.4
-floor.data.materials.append(velvet)
-s.render.resolution_x=1920;s.render.resolution_y=1080;s.render.resolution_percentage=100;s.render.fps=24
-s.view_settings.view_transform='AgX';s.view_settings.exposure=-.65
+# The web exporter still uses the saved environment texture. Campaign renders
+# have exactly one light: no world illumination/reflections, floor or haze.
+if a.mode != 'web':
+    world.node_tree.nodes.clear()
+    black=world.node_tree.nodes.new('ShaderNodeBackground')
+    black.inputs['Color'].default_value=(0,0,0,1)
+    black.inputs['Strength'].default_value=0
+    output=world.node_tree.nodes.new('ShaderNodeOutputWorld')
+    world.node_tree.links.new(black.outputs[0],output.inputs['Surface'])
+    for material in bpy.data.materials:
+        if not material.use_nodes:continue
+        for node in material.node_tree.nodes:
+            if node.type=='BSDF_PRINCIPLED' and 'Emission Strength' in node.inputs:node.inputs['Emission Strength'].default_value=0
+            if node.type=='EMISSION':node.inputs['Strength'].default_value=0
+    s.render.film_transparent=False
+    s.render.use_compositing=False
+s.render.resolution_x=1920;s.render.resolution_y=1080;s.render.resolution_percentage=a.scale or (33 if a.mode=='preview' else 100);s.render.fps=24
+s.view_settings.view_transform='AgX';s.view_settings.exposure=-.35
 s.render.threads_mode='FIXED';s.render.threads=4
 s.render.engine='CYCLES';s.cycles.samples=64;s.cycles.use_denoising=True;s.cycles.max_bounces=6;s.render.use_persistent_data=True
 pref=bpy.context.preferences.addons['cycles'].preferences;pref.compute_device_type='METAL';pref.get_devices()
@@ -84,9 +90,23 @@ def show(sku):
     for prod,obs in groups.items():
         for o in obs:o.hide_render=sku!='family' and prod!=sku
 def reset():
-    for o in list(pivots.values())+[cam,key,rim,fill]:o.animation_data_clear()
+    for o in list(pivots.values())+[cam,key]:o.animation_data_clear()
     for p in pivots.values():p.location=(0,0,0);p.rotation_euler=(0,0,0)
     key.data.animation_data_clear();cd.animation_data_clear()
+def reveal_light(target,t,extent):
+    target=Vector(target)
+    view=(cam.location-target).normalized()
+    up=cam.rotation_euler.to_quaternion()@Vector((0,1,0))
+    right=cam.rotation_euler.to_quaternion()@Vector((1,0,0))
+    # A continuous overhead arc from the far side to the camera side. Brightness
+    # comes from the real incidence angle, never an ambient fade or exposure key.
+    angle=math.radians(178-158*(t*t*(3-2*t)))
+    direction=(view*math.cos(angle)+up*math.sin(angle)+right*(-.18+.30*t)).normalized()
+    key.location=target+direction*extent*2.8
+    key.data.size=extent*.48;key.data.size_y=extent*.8
+    key.data.energy=3*(extent/.1)**2
+    aim(key,target)
+
 def still(path):
     s.render.image_settings.file_format='PNG';s.render.filepath=str(path)
     t=time.monotonic();bpy.ops.render.render(write_still=True)
@@ -217,20 +237,22 @@ if a.mode=='web':
     (O/'review'/'web-topology.json').write_text(json.dumps(topology,indent=2))
 elif a.mode=='stills':
     for sku in groups:
+        if a.shot and a.shot!=sku:continue
         show(sku);reset();w=sizes[sku].x;h=sizes[sku].y
-        floor.hide_render=False;floor.location.z=-sizes[sku].z/2-.0002
         for angle,loc in [('hero',(-1,-1.35,1.05)),('ports',(1.2,-1.4,.60)),('reverse',(1,1.3,.9)),('top',(0,-.001,2))]:
             if sku=='max' and angle=='ports':loc=(-1.5,-.45,.55)
             cam.location=Vector(loc)*w;aim(cam,(0,0,0));cd.ortho_scale=max(w*1.32,h*1.78*1.22)
+            reveal_light((0,0,0),.85,max(w,h))
             still(O/'stills'/f'{sku}-{angle}.png')
-    show('family');reset();floor.location.z=-.0002
+    show('family');reset()
     for sku,pos in [('mini',(-.075,-.08)),('splanc',(.065,-.08)),('max',(0,.08))]:pivots[sku].location=(*pos,sizes[sku].z/2)
     cam.location=(.05,-.65,.6);aim(cam,(0,.015,.01));cd.ortho_scale=.57
+    reveal_light((0,.015,.01),.85,.32)
     still(O/'stills'/'family.png')
     bpy.ops.file.pack_all();bpy.ops.wm.save_as_mainfile(filepath=str(O/'blender'/'family-studio.blend'),compress=True)
 else:
     # Full-HD real-time masters; stills retain the path-traced treatment.
-    s.render.engine='BLENDER_EEVEE_NEXT';s.eevee.taa_render_samples=48
+    s.render.engine='CYCLES' if a.engine=='cycles' else 'BLENDER_EEVEE_NEXT';s.eevee.taa_render_samples=16 if a.mode=='preview' else 48
     shots=[(k+'-orbit',k,96) for k in groups]+[('mini-macro-roll','mini',96),('family-pullback','family',120)]
     def ease(t):return t*t*(3-2*t)
     def record(o):
@@ -238,34 +260,36 @@ else:
     for name,sku,frames in shots:
         if a.shot and a.shot!=name:continue
         reset();show(sku);s.frame_start=1;s.frame_end=frames
-        floor.hide_render=name=='mini-macro-roll';floor.location.z=-sizes.get(sku,Vector((0,0,0))).z/2-.0002
         for f in range(1,frames+1):
             t=(f-1)/(frames-1)
             if name.endswith('orbit'):
                 w=sizes[sku].x;h=sizes[sku].y;theta=math.radians(-145+110*ease(t))
                 cam.location=(math.cos(theta)*w*1.9,math.sin(theta)*w*1.9,w*(.9+.15*math.sin(t*math.pi)))
                 aim(cam,(0,0,0));cd.ortho_scale=max(w*1.42,h*1.78*1.3)
-                key.location=(-.25+.5*t,-.2,.4);aim(key,(0,0,0));record(key)
+                reveal_light((0,0,0),t,max(w,h));record(key)
             elif name=='mini-macro-roll':
                 p=pivots['mini'];q=Quaternion((0,0,1),math.radians(60))@Quaternion((0,1,0),math.radians(35))@Quaternion((1,0,0),math.radians(125-140*ease(t)))
                 p.rotation_euler=q.to_euler();p.location=(.24*(t-.5),.09*(t-.5),0);record(p)
                 cam.location=(0,0,.2);aim(cam,(0,0,0));cd.ortho_scale=.12
-                normal=q@Vector((0,0,1));v=Vector((0,0,1));reflection=2*normal.dot(v)*normal-v
-                key.location=p.location+.2*(Quaternion(normal,math.radians(80*(t-.5)))@reflection);aim(key,p.location);record(key)
-                key.data.energy=.7+1.8*math.exp(-((t-.5)/.12)**2);key.data.keyframe_insert('energy',frame=f)
+                reveal_light(p.location,min(1,t/.58),max(sizes['mini'].x,sizes['mini'].y));record(key)
             else:
-                floor.location.z=-.0002;u=ease(min(1,max(0,(t-.12)/.60)))
+                u=ease(min(1,max(0,(t-.12)/.60)))
                 for prod,final,sign in [('mini',(-.075,-.08),0),('splanc',(.065,-.08),1),('max',(0,.08),-1)]:
                     p=pivots[prod];p.location=(final[0]+sign*.60*(1-u),final[1],sizes[prod].z/2);p.rotation_euler=(0,0,math.radians(sign*26*(1-u)));record(p)
                 target=Vector((-.075,-.08,.012)).lerp(Vector((0,.01,.014)),u)
                 cam.location=target+Vector((0,-.65,.6));aim(cam,target);cd.ortho_scale=.052+(.57-.052)*u
+                reveal_light((0,.01,.014),t,.32);record(key)
             record(cam);cd.keyframe_insert('ortho_scale',frame=f)
         for o in list(pivots.values())+[cam,key,cd,key.data]:
             if o.animation_data and o.animation_data.action:
                 for fc in o.animation_data.action.fcurves:
                     for kp in fc.keyframe_points:kp.interpolation='LINEAR'
-        for f in [round(frames*.25),round(frames*.5),round(frames*.75)]:
-            s.frame_set(f);still(O/'review'/f'{name}-{f:03}.png')
+        lighting=[]
+        for f in [1,round(frames*.25),round(frames*.5),round(frames*.75),frames]:
+            s.frame_set(f)
+            lighting.append(dict(frame=f,camera=list(cam.location),source=list(key.location),watts=key.data.energy))
+            still(O/'review'/f'{name}-{f:03}.png')
+        (O/'review'/f'{name}-lighting.json').write_text(json.dumps(dict(shot=name,lights=[o.name for o in s.objects if o.type=='LIGHT'],world_strength=0,emission_enabled=False,floor=False,haze=False,frames=lighting),indent=2))
         if a.mode=='preview':continue
         bpy.ops.file.pack_all();bpy.ops.wm.save_as_mainfile(filepath=str(O/'blender'/f'{name}.blend'),compress=True)
         s.render.image_settings.file_format='FFMPEG';s.render.ffmpeg.format='MPEG4';s.render.ffmpeg.codec='H264';s.render.ffmpeg.constant_rate_factor='HIGH';s.render.ffmpeg.ffmpeg_preset='GOOD';s.render.filepath=str(O/'video'/f'{name}.mp4')

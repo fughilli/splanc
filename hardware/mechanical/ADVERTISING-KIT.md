@@ -28,8 +28,8 @@ blender -b -t 2 --python hardware/mechanical/render_advertising.py -- --mode web
 
 Stills use Cycles/Metal, 64 samples, denoising; video uses Eevee, 48 samples.
 Motion is deliberately editable via named product pivots, lights and camera
-keys in the separately packed scenes. The macro shot has no visible backdrop;
-the other shots use the charcoal studio surface. Camera clips are motion
+keys in the separately packed scenes. All current shots use a black world with a single elevated reveal softbox;
+there is no HDRI, fill/rim light, emissive lighting, studio floor or haze. Camera clips are motion
 masters for editing, not a claim of production photography.
 
 `advertising/package.py` assembles the gallery into a bounded subdirectory of
@@ -284,3 +284,30 @@ script errors; observed maximum per-frame movement 11.26px desktop/3.05px phone.
 Actually viewed the Splanc/MAX desktop descriptions, Splanc phone description,
 and post-orbit desktop screenshot. Evidence: website `.preview.local/` JSON
 and images; kit `advertising/check_callout_motion.mjs` is the repeatable check.
+
+### Black single-source campaign renders — 9 October 2026
+
+Re-rendered the complete current kit: thirteen 1920×1080 stills and five
+1920×1080/24fps clips, using the same frozen r11 CAD and existing camera motion.
+The single rectangular light travels in an overhead arc from behind the object
+to the camera side; intensity and exposure stay constant within each shot. The
+Mini diagonal shot advances the light arc so the face is lit around the center
+crossing. Stills use one light at the revealed angle. The browser zero-gravity
+simulation keeps its own environment and perimeter illumination.
+
+Masters, logs, sampled frames and six packed editable Blender scenes are in
+`output/advertising-black-20261009`; delivered copies are in the existing kit.
+Low-resolution previews showed early light spill from the tall source, so its
+height and start angle were corrected before HD rendering. Reopened all six
+scenes and verified exactly one AREA light, zero world/mesh emission, no floor,
+HD resolution and negative-to-positive camera-side light position for each
+film. Evidence: `review/scene-audit.json`. The referenced YouTube tutorial could
+not be loaded; implementation follows the user's explicit lighting description.
+
+Actually reviewed all thirteen final stills (twelve-angle contact sheet plus
+family), all twenty-five sampled HD film frames in the final contact sheet,
+and the corrected Mini center-crossing frame at full size. The logo is readable
+at that crossing; the orbits open nearly black with isolated edge glints before
+the top face appears. The family shot finishes centered on the three products.
+Source geometry, existing trajectories and hardware state are unchanged.
+`advertising/check_render_scenes.py` repeats the saved-scene audit in Blender.
