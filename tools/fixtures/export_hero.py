@@ -39,19 +39,23 @@ def main() -> None:
         shutil.copytree(args.runtime / bundle, args.destination / bundle, dirs_exist_ok=True)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     (args.destination / "README.md").write_text(
-        "# Maxa live scene\n\n"
+        "# Live fixture showcase\n\n"
         "Generated from the Splanc application, using its MapView, firmware VM, "
-        "Maxa mesh and prebaked topology. The shader and all 11 control positions "
-        "come from `web/src/demo/maxaScene.ts`. Colors are normalized RGB values.\n\n"
+        "Maxa, Tree of Tenere and Primitive Obsession meshes and prebaked topology. "
+        "The captured shader and all 11 Maxa control positions come from "
+        "`web/src/demo/maxaScene.ts`; `showcaseScenes.ts` defines the gallery. "
+        "Primitive Obsession uses the spatial bands with the topology flood disabled. "
+        "Colors are normalized RGB values. The gallery cycles every 12 seconds, "
+        "with gently orbiting views and smoothed mouse parallax.\n\n"
         f"Source repository: https://github.com/fughilli/splanc/tree/{commit}\n\n"
         "To refresh after building Splanc:\n\n```sh\n"
         "python3 tools/fixtures/export_hero.py /path/to/splanc.io/public/scenes/maxa "
         "--runtime /path/to/built/wasm/bundles\n```\n\n"
         "The runtime directory must contain matching `fx-compiler` and `fx-vm` "
-        "bundles (including their JS, WASM and snippets). The exported hero is "
+        "bundles (including their JS, WASM and snippets). The exported scene is "
         "self-contained and does not depend on an app deployment or external server.\n"
     )
-    print(f"Exported Maxa hero to {args.destination}")
+    print(f"Exported fixture showcase to {args.destination}")
 
 
 if __name__ == "__main__":

@@ -214,6 +214,12 @@ export class MapView {
     this.draw();
   }
 
+  /** Camera pose for externally animated previews; fixture coordinates stay fixed. */
+  setOrbit(yaw: number, pitch: number): void {
+    if (Number.isFinite(yaw)) this.yaw = yaw;
+    if (Number.isFinite(pitch)) this.pitch = clamp(pitch, -1.55, 1.55);
+  }
+
   stop(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;

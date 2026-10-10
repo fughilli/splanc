@@ -57,10 +57,12 @@ live uniform values. Color values are normalized RGB channels, including
 starting the tutorial creates an editable copy and opens the real authoring
 workspace. Existing tutorial edits are preserved when restarting the tour.
 
-The shell-free `/scene.html` entry renders the same effect on the Maxa fixture
-with the same firmware VM. It pauses offscreen or in a hidden document, and
+The shell-free `/scene.html` entry cycles through Maxa, Tree of Tenere, and
+Primitive Obsession every twelve seconds, with gentle rotation and mouse-driven
+camera phase/elevation. Each uses the captured effect; the topology flood is
+disabled for the volume. The scene pauses offscreen or in a hidden document, and
 renders a static frame when reduced motion is requested. `vite build` bundles
-this entry separately to keep app bootstrap code out of the hero.
+this entry separately to keep app bootstrap code out of the embedded viewport.
 
 To export it for the website after building the app:
 

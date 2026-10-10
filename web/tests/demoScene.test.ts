@@ -6,6 +6,7 @@ import { mapStore, type StoredMapSummary } from "../src/store/mapStore";
 import { prepareTutorialScene } from "../src/demo/tutorialScene";
 import { seedBuiltinEffects } from "../src/store/seedEffects";
 import { MAXA_DEMO_ID, MAXA_TUTORIAL_ID, MAXA_DEMO_SCENE } from "../src/demo/maxaScene";
+import { SHOWCASE_SCENES } from "../src/demo/showcaseScenes";
 
 installFakeDom();
 
@@ -33,6 +34,20 @@ test("tutorial creates an editable Maxa scene, restores a deleted fixture, and p
   } finally { mock.restoreAll(); }
 });
 
+test("an installation with Maxa already seeded receives the other two scenes", async () => {
+  localStorage.clear();
+  localStorage.setItem("ledmapper.seededEffects.v6", "1");
+  localStorage.setItem("ledmapper.seededEffects.maxa.v1", "1");
+  const created: StoredEffect[] = [];
+  mock.method(effectStore, "get", async () => undefined);
+  mock.method(effectStore, "createWithId", async (effect: StoredEffect) => { created.push(effect); });
+  try {
+    await seedBuiltinEffects();
+    assert.deepEqual(created.map(effect => effect.scene?.mapId), ["sample-tenere", "sample-primitive-obsession"]);
+    assert.equal(SHOWCASE_SCENES[2]!.scene.uniforms.floodTint!.every(channel => channel === 0), true);
+  } finally { mock.restoreAll(); localStorage.clear(); }
+});
+
 test("existing installs get the canned scene once, and deletion stays respected", async () => {
   localStorage.clear();
   localStorage.setItem("ledmapper.seededEffects.v6", "1");
@@ -44,10 +59,10 @@ test("existing installs get the canned scene once, and deletion stays respected"
   });
   try {
     await seedBuiltinEffects();
-    assert.equal(creates, 1);
+    assert.equal(creates, 3);
     assert.deepEqual(effects.get(MAXA_DEMO_ID)!.scene, MAXA_DEMO_SCENE);
     effects.delete(MAXA_DEMO_ID);
     await seedBuiltinEffects();
-    assert.equal(creates, 1);
+    assert.equal(creates, 3);
   } finally { mock.restoreAll(); localStorage.clear(); }
 });
