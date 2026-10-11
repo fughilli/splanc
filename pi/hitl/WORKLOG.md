@@ -3,6 +3,71 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-11 — C6 provisioning address bug and unavailable analyzer rig
+
+Investigated HITL run `38152878072` against main `9a5501fa`. The two LED-capture
+lanes never activated: each queued at position zero for 2400 seconds per attempt.
+The online inventories on rig-1 and rig-3 have no ESP32-C6 with
+`logic-analyzer-led-strip`. The station wiring record puts the C6 taps on rig-2
+(`c6-003f08` / D6 and `c6-fa0324` / D7), which is offline and did not answer a
+Tailscale ping. Rig-1's analyzer taps the Pi FPGA player; its default D6 map is
+not evidence of a C6 connection. Restore rig-2 or physically verify new wiring
+before advertising a C6 analyzer capability.
+
+The Python reservation client previously fell back to any reachable rig when
+none could satisfy a request. It now fails immediately with the requested
+device, SKU, capabilities, and available inventories, including when a server
+is explicitly pinned. Device pins are respected during routing, and queue
+timeout errors retain their reservation ID after releasing the request.
+
+Found a separate firmware bug in netstack BLE initialization:
+`esp_efuse_mac_get_default()` was given a six-byte stack buffer. The pinned C6
+SDK enables `CONFIG_SOC_IEEE802154_SUPPORTED` and documents an eight-byte EUI-64
+result for that configuration. The observed address `d2:fe:ff:49:fd:8c` contains
+the inserted FF:FE bytes and loses the unique factory-MAC suffix. Initialization
+now requests the six-byte `ESP_MAC_BT` interface address, reverses it into HCI
+byte order, and sets the static-random address bits. On reserved `c6-123170`,
+corrected firmware advertises `cc:fd:49:12:31:72`.
+
+Serial capture also encountered an invalid UTF-8 byte that previously discarded
+the entire captured log with `UnicodeDecodeError`; SSH capture now replaces
+invalid bytes while preserving the usable boot banner.
+
+The BLE-only fix did not eliminate disconnects: the JIT sweep dropped at
+`sweep256`, while a three-effect reproduction with continuous serial capture
+passed. That capture then exposed a separate netstack DHCP bug: after just 85
+seconds, a 3600-second lease changed from `10.42.0.162` to `10.42.0.228`, without
+a reset or a renewal request. The receive handler accepted every broadcast
+DHCP ACK on the AP without checking its transaction ID or client MAC. This lets
+another station's reply replace our lease and listener binding, dropping a live
+socket and stranding its tunnel. It also explains why two running DUTs can claim
+one IP. A later connection attempt saw another `02:0c:6a:*` station ARPing for
+the DUT's newly assigned address.
+
+DHCP receive now checks the BOOTREPLY header, Ethernet address length, magic
+cookie, transaction ID, and client MAC before parsing lease options. It validates
+the entire option stream before changing state, handles padding, and checks
+IPv4/UDP lengths. Host cases cover an accepted matching ACK, a different
+transaction/client, and truncated or malformed replies.
+
+Validation: 26 reservation/pool/AP-lock/reachability tests, two C++ BLE address
+cases, three DHCP cases, formatting hooks, and the C6 netstack flash-bundle
+build pass.
+The full interpreter benchmark on rig-1 completed all 65 calibration and seven
+held-out effects with zero drops, reconnect failures, reprovisions, or IP
+changes (`--no-golden-check --fail-on-reboot`). Golden timing margins were not
+checked. This supports the firmware fix but does not prove that every historical
+CI disconnect was caused by this bug; CI concurrency and runner path differ.
+
+After the DHCP fix, a full JIT sweep on `c6-123170` also completed all 72 effects
+with zero drops, reconnect failures, reprovisions, or IP changes. Provisioned
+the second rig-1 C6 (`c6-2ce684`) onto the same AP during this sweep. Both boards
+ran corrected firmware: the first kept `10.42.0.130` while the second acquired
+`10.42.0.235`. Continuous serial showed only the first board's own OFFER/ACK,
+with no unexpected lease changes, rejoining, or reboot. Reservations released.
+Rig-2 remains unreachable over Tailscale and its `.local` hostname; hardware
+restoration is still required for the C6 analyzer lanes.
+
 ## 2026-08-28 — fpga_ws281x E2E green (ws2812) — wrong DUT + a musl crash-loop
 
 Resolved the previous entry's "DUT WSS never completes the handshake" block. It was

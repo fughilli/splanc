@@ -28,6 +28,7 @@
 #include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
 #include "improv_codec.h"    // IMPROV_STATE_* constants
 #include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
+#include "dhcp_reply.h"
 
 extern "C" {
 void ns_mac_rx_install();
@@ -717,14 +718,22 @@ void handle_l3(const uint8_t *pt, int pl) {
       Serial.printf("*** PING REPLY from %u.%u.%u.%u seq=%u — IP round-trip over heapless WiFi ***\n",
                     ip[12], ip[13], ip[14], ip[15], (ic[6] << 8) | ic[7]);
   } else if (pl > 8 + 28 && ip[9] == 17) { // UDP
-    const uint8_t *udp = ip + ((ip[0] & 0x0f) * 4);
+    const int ihl = (ip[0] & 0x0f) * 4;
+    const int iplen = (ip[2] << 8) | ip[3];
+    if (ihl < 20 || iplen < ihl + 8 || 8 + iplen > pl) return;
+    const uint8_t *udp = ip + ihl;
+    const int udplen = (udp[4] << 8) | udp[5];
+    if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
     if (sport == 67 && dport == 68) { // DHCP server -> client
       const uint8_t *dh = udp + 8;
+      // A different DUT's broadcast ACK must never replace our IP or server ID.
+      if (!dhcp_reply_for_client(dh, udplen - 8, OUR_MAC, g_dhcp_xid)) return;
       uint8_t mt = 0;
       const uint8_t *o = dh + 240;
-      const uint8_t *end = pt + pl;
+      const uint8_t *end = udp + udplen;
       while (o + 1 < end && *o != 255) {
+        if (*o == 0) { ++o; continue; } // DHCP padding has no length byte
         if (*o == 53) mt = o[2];
         else if (*o == 54) memcpy(g_server_id, o + 2, 4);
         else if (*o == 51 && o[1] == 4) // lease time (seconds), for T1 renewal

@@ -12,6 +12,7 @@
 // improv_ble_poll(), so the heapless host state is single-threaded (no locks).
 
 #include "firmware/player_app/improv_ble.h"
+#include "firmware/player_app/ble_address.h"
 
 #include <Arduino.h>
 
@@ -193,8 +194,8 @@ void improv_ble_begin(const char *device_name, uint8_t /*initial_state*/) {
 
   ns_ble_setup();
   // Advertise the player's device name (so the provisioner's name scan + humans see
-  // it) and a per-boot static-random address (top two bits set) so boards don't
-  // collide and no stale GATT cache is served.
+  // it) and a stable static-random address (top two bits set) so boards retain
+  // distinct identities across provisioning retries.
   if (device_name && device_name[0]) {
     ns_ble_set_name(reinterpret_cast<const uint8_t *>(device_name), strlen(device_name));
   }
@@ -202,9 +203,13 @@ void improv_ble_begin(const char *device_name, uint8_t /*initial_state*/) {
   // identical across reboots — the provisioner resets the DUT between retries and
   // rescans for the same address, so a per-boot random one makes retries fail
   // ("no Improv device found"). Force the top two bits (static random) on the MSB.
+  // The C6's raw default efuse MAC is EUI-64: reading it into six bytes
+  // overruns the stack and truncates the unique suffix behind the inserted
+  // FF:FE bytes. Request the six-byte BT interface address explicitly.
+  uint8_t factory_mac[6];
+  ESP_ERROR_CHECK(esp_read_mac(factory_mac, ESP_MAC_BT));
   uint8_t mac[6];
-  esp_efuse_mac_get_default(mac);  // 6-byte base MAC, on-air LE order (mac[5]=human MSB)
-  mac[5] |= 0xc0;
+  ble_static_random_address(factory_mac, mac);
   ns_ble_set_addr(mac);
 
   uint8_t buf[64];

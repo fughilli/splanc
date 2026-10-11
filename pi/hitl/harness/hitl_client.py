@@ -245,29 +245,33 @@ class Reservation:
 
     def _pick_server(self) -> str:
         """Pick a host to reserve on. Prefer a host with the MOST free matching units
-        (spreads load), else one with a matching busy unit (to queue on), else any
-        reachable — breaking ties RANDOMLY so a burst of concurrent reservations (the
+        (spreads load), else one with a matching busy unit (to queue on), else fail
+        immediately. Break ties RANDOMLY so a burst of concurrent reservations (the
         CI suite fires the whole set at once) fans out across the fleet instead of all
         piling onto the first rig."""
-        if self.server:
-            return self.server
-        pool = _pool()
+        pool = [self.server] if self.server else _pool()
         if not pool:
             raise ReserveError(
                 "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
                 f"with rigs tagged {os.environ.get('HITL_TAG') or DEFAULT_TAG}"
             )
         free: list[tuple[str, int]] = []  # (host, free-matching-unit count)
-        queueable, reachable, errs = [], [], []
+        queueable, inventories, errs = [], [], []
         for base in pool:
             try:
                 st = _get(base + "/status")
             except Exception as e:  # noqa: BLE001
                 errs.append(f"{base}: {e}")
                 continue
-            reachable.append(base)
             units = st.get("units") or []
-            n = sum(1 for u in units if _unit_serves(u, self.sku or "", self.require_caps))
+            inventories.append(
+                f"{base}: "
+                + ", ".join(
+                    f"{u.get('name', '?')} ({u.get('type', '?')}: {','.join(u.get('capabilities') or [])})"
+                    for u in units
+                )
+            )
+            n = sum(1 for u in units if self._unit_matches(u) and u.get("active") is None)
             if n:
                 free.append((base, n))
             elif any(self._unit_matches(u) for u in units):
@@ -277,17 +281,23 @@ class Reservation:
             return random.choice([b for b, n in free if n == most])
         if queueable:
             return random.choice(queueable)
-        if reachable:
-            return random.choice(reachable)
-        raise ReserveError("no reachable host with a matching unit: " + "; ".join(errs))
+        requested = (
+            f"device={self.device or 'any'}, sku={self.sku or 'any'}, caps={self.require_caps}"
+        )
+        raise ReserveError(
+            f"no reachable host with a matching unit ({requested}); "
+            + "; ".join(inventories + errs)
+        )
 
     def _unit_matches(self, u: dict) -> bool:
         """Like _unit_serves but ignoring free/busy — for routing to a queueable host."""
+        if self.device and u.get("name") != self.device:
+            return False
         if self.sku and u.get("type") != self.sku:
             return False
         if not set(self.require_caps).issubset(set(u.get("capabilities") or [])):
             return False
-        if not self.sku and u.get("pin_only"):
+        if not self.sku and not self.device and u.get("pin_only"):
             return False
         return True
 
@@ -325,11 +335,12 @@ class Reservation:
                 print(f"queued: position {pos}", flush=True)
                 last_pos = pos
             time.sleep(2)
+        reservation_id = self.id
         try:
             self.release()
         except Exception:  # noqa: BLE001
             pass
-        raise ReserveError(f"reservation {self.id} did not activate within {timeout:.0f}s")
+        raise ReserveError(f"reservation {reservation_id} did not activate within {timeout:.0f}s")
 
     def _start_heartbeat(self) -> None:
         self._hb_stop = threading.Event()
@@ -411,7 +422,13 @@ class Reservation:
             remote_cmd = shlex.join(remote_cmd)
         argv = self._ssh_base() + [f"{self.user}@{self.host}", "sh", "-c", shlex.quote(remote_cmd)]
         return subprocess.run(
-            argv, check=False, timeout=timeout, capture_output=capture, text=capture or None
+            argv,
+            check=False,
+            timeout=timeout,
+            capture_output=capture,
+            text=capture or None,
+            encoding="utf-8" if capture else None,
+            errors="replace" if capture else None,
         )
 
     # Well-known container path of the per-rig "serialize the USB-serial device ops"
