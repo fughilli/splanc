@@ -3,6 +3,22 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-12 — analyzer rig restored; capture and video checks pass
+
+Rig-2 is back online at `100.107.245.18:8087`. Both `c6-003f08` and
+`c6-fa0324` advertise `logic-analyzer-led-strip` and were idle at inspection.
+With the fixes in PR #249, the previously blocked `led_capture_netstack` and
+`led_capture_jit_netstack` both pass on `c6-003f08`: eight driven pixels match
+the wire, RGB/BGR color order is configurable, and the JIT/interpreter pixels
+are bit-identical. Both reservations released normally.
+
+The PR's initial CI run also failed `video_stream_netstack` on connection setup,
+independently of the offline analyzer rig. A fresh run pinned to restored rig-2
+passes: 24x24 texture streaming sustained 43.4 FPS (150 frames in 3.45 seconds),
+above the 10 FPS gate. Its reservation released normally. These local passes
+remove the hardware blocker; the full CI rerun still needs to confirm behavior
+under runner latency and fleet contention.
+
 ## 2026-10-11 — C6 provisioning address bug and unavailable analyzer rig
 
 Investigated HITL run `38152878072` against main `9a5501fa`. The two LED-capture
