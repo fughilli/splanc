@@ -1,6 +1,6 @@
 ---
 name: bazel-polyglot-nix
-description: Set up or extend a Bazel (bzlmod) project — writing MODULE.bazel for a polyglot Python/JS/TS repo, combining Nix with Bazel (Determinate nix-installer in a container overlay + rules_nixpkgs registration), and hermetic Python with lockfile management via rules_uv or compile_pip_requirements. Use when asked to add Bazel to a repo, add a language/toolchain/dependency to an existing MODULE.bazel, wire Nix-built packages into a Bazel build, set up/regenerate a Python lockfile the Bazel way, or make Bazel's disk/repository cache persist across container restarts.
+description: Set up or extend a Bazel (bzlmod) project — writing MODULE.bazel for a polyglot Python/JS/TS repo, combining Nix with Bazel (this skill INSTALLS Nix into the container image via its own overlay.Dockerfile, plus rules_nixpkgs registration), and hermetic Python with lockfile management via rules_uv or compile_pip_requirements. Use when asked to add Bazel to a repo, add a language/toolchain/dependency to an existing MODULE.bazel, wire Nix-built packages into a Bazel build, set up/regenerate a Python lockfile the Bazel way, or make Bazel's disk/repository cache persist across container restarts.
 ---
 
 # Bazel for polyglot projects, with Nix and hermetic Python
@@ -192,6 +192,10 @@ build --incompatible_strict_action_env
 build  --disk_cache=.bazel-disk-cache        # action outputs
 common --repository_cache=.bazel-repo-cache  # downloaded external archives
 
+# Keep the JVM off SVE: mandatory on aarch64 containers (SIGILL at server
+# startup otherwise), no-op everywhere else. See the aarch64 gotcha below.
+startup --host_jvm_args=-XX:UseSVE=0
+
 test --test_output=errors
 ```
 
@@ -251,11 +255,43 @@ defaults — the volume persists on its own. The in-tree approach is preferred h
 because it needs no launcher/volume config, travels with the repo, and keeps each
 branch/worktree's cache next to its sources.
 
-**Gotcha — aarch64 SIGILL on startup:** some Bazel/bundled-JDK combos emit SVE
-instructions that crash the JVM with `SIGILL` on certain aarch64 hosts (a symptom
-is a zombie `[java] <defunct>` server the launcher keeps failing to kill). If you
-hit it, add `startup --host_jvm_args=-XX:UseSVE=0` to `.bazelrc`; it's harmless
-on hosts without SVE, so it can be set unconditionally.
+**aarch64 SIGILL on startup — set this pre-emptively, it is not a rare edge
+case.** Some Bazel/bundled-JDK combos emit SVE instructions that crash the JVM
+with `SIGILL` before Bazel loads anything. On an **aarch64 (Apple-silicon)
+`claude-container` it is not intermittent — it reproduces on every invocation**,
+so a repo that builds fine on the macOS host dies instantly inside the container:
+
+```
+Server crashed during startup. Now printing .../server/jvm.out
+#  SIGILL (0x4) at pc=0x..., pid=20, tid=21
+#  Problematic frame:
+#  j  java.lang.System.registerNatives()V+0 java.base
+```
+
+On the host the symptom instead looks like a zombie `[java] <defunct>` server the
+launcher keeps failing to kill. Put this in `.bazelrc` **when you first set the
+repo up**, not after you hit the crash:
+
+```
+startup --host_jvm_args=-XX:UseSVE=0
+```
+
+It is safe to set unconditionally: it is a no-op on hosts without SVE, and the
+**macOS aarch64 JVM accepts it** (verified — it does not trip
+`Unrecognized VM option`, which is the obvious fear when adding a Linux-looking
+`-XX` flag to a file the host also reads).
+
+**Gotcha — removed `--incompatible_*` flags.** An `--incompatible_*` flag that
+has graduated to default-on is *deleted* from later Bazel, and a stale one left
+in `.bazelrc` is a hard `Unrecognized option` error that fails **every**
+`build`/`info` invocation before anything loads (`bazel query` can survive it,
+which makes it look like a build-graph problem rather than an rc-file problem).
+Copying a `.bazelrc` from an older repo is the usual way this arrives — e.g.
+`--incompatible_enable_platform_specific_config`, valid on Bazel 6, removed in
+Bazel 7. Check any inherited `--incompatible_*` line against
+`bazel help build | grep <flag>` on the **pinned** version and delete the ones it
+no longer knows; the behavior they gated is on by default, so deleting is
+behavior-preserving.
 
 ---
 
@@ -264,57 +300,110 @@ on hosts without SVE, so it can be set unconditionally.
 Two independent concerns — don't conflate them:
 
 - **(a) Install the `nix` binary in the environment** so tools/targets that shell
-  out to `nix` work. For a `claude-container` this belongs in the container
-  overlay Dockerfile (below), *not* in the repo.
+  out to `nix` work. For a `claude-container` this skill's own
+  `overlay.Dockerfile` does it (below) — nothing goes in the repo.
 - **(b) Register `rules_nixpkgs`** in `MODULE.bazel` so Bazel *can* import
   Nix-built derivations as Bazel targets — but keep it registration-only until
   something actually needs it.
 
-### (a) Determinate nix-installer in a container overlay layer
+### (a) Nix in the container: this skill installs it
 
-In a container, the stock nix-installer's single-user path shells out to `sudo`
-(often absent) and its multi-user path wants systemd. The **Determinate Systems**
-installer needs no `sudo` and offers `--init none` to skip daemon setup — ideal
-for an image build that already runs as root. Add this to
-`.claude-container-overlay/Dockerfile` (see the `container-overlay` skill for the
-overlay mechanics):
+**This skill ships the install.** `overlay.Dockerfile` sits next to this
+SKILL.md, and the `claude-container` launcher concatenates it into the effective
+overlay Dockerfile ahead of the workspace's own. Accepting this skill for a
+project therefore *does* put `nix` in that project's image — the launcher
+prompts once to confirm the rebuild, and from then on `nix`, `nix-build` and
+`nix-instantiate` are on PATH for the runtime user.
 
-```dockerfile
-# Nix with flakes. Determinate's installer needs no sudo and --init none skips
-# the systemd daemon that has no place in a container. build-users-group is
-# cleared so builds run as the calling user (no nixbld group); sandbox is off
-# because the container can't set up build-sandbox user namespaces unprivileged.
-RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
-        -o /tmp/nix-installer.sh \
-    && sh /tmp/nix-installer.sh install linux \
-        --init none \
-        --no-confirm \
-        --extra-conf "experimental-features = nix-command flakes" \
-        --extra-conf "build-users-group =" \
-        --extra-conf "sandbox = false" \
-    && rm /tmp/nix-installer.sh
-ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
+**So the setup step is: accept the skill, confirm the rebuild, verify.** Do not
+copy the Nix install into the repo's own
+`.claude-container-overlay/Dockerfile` — that duplicates a multi-minute install
+in a second layer stack and drifts from the fragment. The repo's overlay is for
+things only that repo needs.
+
+```bash
+claude-container --skills-fragments   # on the host: exactly what gets baked in
 ```
 
-**Runtime-user gotcha (single-user store, dynamic UID).** If the container's
-build runs as root but the *runtime* user is created at start with a
-host-mapped UID (as `claude-container` does), daemon-less Nix run by that user
-fails trying to `chmod` root-owned `/nix/var/nix/profiles/per-user`
-(`Operation not permitted`), which blocks every `nix` call. You can't `chown` to
-a UID that doesn't exist at build time, so make the store writable by any UID and
-delete the per-user dirs (Nix recreates+owns them on first use):
+**When the overlay is load-bearing rather than a convenience.** Grep the module
+file:
 
-```dockerfile
-# Any runtime uid can then manage profiles/DB/gcroots without a daemon. Nix
-# re-chmods per-user dirs to 0755 every call and EPERMs if it doesn't own them,
-# so delete them here; the runtime user recreates and owns them on first `nix`.
-RUN chmod -R go+rwX /nix \
-    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user
+```bash
+grep -nE '^(nix_repo|nix_pkg)\.' MODULE.bazel   # any hit => nix required to BUILD
 ```
 
-Install Nix **once** at the bottom of the overlay and never edit that block
-(editing invalidates the Docker layer cache). Per-package additions belong in a
-`flake.nix` checked into the repo, not the overlay.
+Those are *fetch-time* extension usages: Bazel shells out to `nix-build` while
+resolving the module graph, so without `nix` the build dies during fetch, before
+a single action runs. A bare `bazel_dep(name = "rules_nixpkgs_core", ...)` with
+no extension calls (see §3(b)) needs nothing.
+
+**Verify, as the runtime user.** The failure modes below are silent at build
+time and surface only as `nix: command not found`, which reads like "the overlay
+never ran". Check from inside the container:
+
+```bash
+readlink -f /nix/var/nix/profiles/default   # must resolve into /nix/store/...
+nix --version
+nix-build --version
+nix-instantiate --eval -E "1 + 1"
+```
+
+From the host, against an arbitrary uid (the point is that *any* uid works). The
+stock entrypoint runs `groupadd` and fails for a non-root `-u`, so bypass it —
+and set `HOME`/`USER`, or Bazelisk aborts with `FATAL: $USER is not set` (an
+artifact of the bypass, not a container defect):
+
+```bash
+docker run --rm --entrypoint bash -u 501:20 -e HOME=/tmp/h -e USER=claude <image> -lc '
+  mkdir -p /tmp/h
+  nix --version
+  nix build --impure --no-link --print-out-paths --expr "(import <nixpkgs> {}).hello"
+'
+```
+
+### What the fragment does, and why
+
+Read this before editing `overlay.Dockerfile` — every block in it is load-bearing
+and was arrived at by hitting the failure it prevents. Editing it prompts a
+rebuild in **every** project that accepted this skill, so change it only to fix a
+real defect.
+
+1. **Determinate Systems nix-installer, not the upstream one.** Upstream's
+   single-user path shells out to `sudo` (absent from the base image), so it
+   fails even though the build already runs as root. Determinate's needs no sudo
+   and has `--init none` to skip systemd daemon setup. `build-users-group` is
+   cleared so builds run as the calling user; `sandbox = false` because the
+   container can't set up build-sandbox user namespaces unprivileged.
+
+2. **Store made writable by any uid.** The runtime user is created at container
+   start with a host-mapped UID, so its uid/gid — and even its group name — vary
+   per host and are unknown at build time. Daemon-less Nix run by that user fails
+   trying to `chmod` root-owned `/nix/var/nix/profiles/per-user`
+   (`Operation not permitted`), blocking every `nix` call. You can't `chown` to a
+   uid that doesn't exist yet, so the fragment makes the single-user store
+   group/other-writable and deletes the per-user dirs; Nix recreates and owns
+   them on first use.
+
+   The subtlety: deleting `per-user` also severs the `default` profile, because
+   the installer makes `/nix/var/nix/profiles/default` a symlink *into*
+   `per-user/root/profile`. After the `rm -rf`, `ENV PATH` points through a
+   dangling link and **no `nix` is callable at all**. The fragment resolves
+   `default` to its store path and re-points it *before* the delete.
+
+3. **Symlinks into `/usr/local/bin`, plus a build-time assertion.**
+   `rules_nixpkgs` resolves `nix-build` with `repository_ctx.which()` from a
+   subprocess environment that isn't guaranteed to carry the `ENV PATH` (a login
+   shell, a re-exec, or a strict-action-env flag can drop it). The `nix --version`
+   / `nix-build --version` calls at the end fail the *image build* if the profile
+   relink ever regresses, instead of letting it surface days later.
+
+4. **`git config --system --add safe.directory /workspace`.** The bind mount is
+   owned by the host uid, which can differ from the runtime user's, tripping
+   git's dubious-ownership check. `--system` is required: `--global` at build
+   time writes `/root/.gitconfig`, which the runtime user never sees.
+
+Per-package additions belong in the repo's `flake.nix` / `MODULE.bazel`, never in
+the fragment.
 
 ### (b) Register rules_nixpkgs without breaking `bazel build //...`
 
