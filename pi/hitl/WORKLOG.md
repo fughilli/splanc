@@ -3,6 +3,23 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-12 — Android journeys blocked by missing phone PIN
+
+Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.
+The phone served the app and connected its driver in the background; the native
+view still showed the secure PIN pad (`Emergency call`, digits, `OK`). Bluetooth
+and certificate taps therefore could not reach Chrome, and `wait_connected`
+timed out. The run's `HITL_ANDROID_PIN` was empty; GitHub's HITL environment
+secret list confirms that secret is absent.
+
+AndroidDeviceTarget now waits for the keyguard to dismiss after wake/unlock,
+before setting up port reverses or launching the app. A still-locked phone gives
+an explicit missing/ineffective PIN error rather than a misleading device
+connection timeout. Fifteen target tests pass, including lock-state parsing,
+failure before reverse/launch, and an unlock animation transitioning to ready.
+An unattended journey rerun requires configuring `HITL_ANDROID_PIN` in the HITL
+GitHub environment (the PIN itself must not be committed or logged).
+
 ## 2026-10-12 — analyzer rig restored; capture and video checks pass
 
 Rig-2 is back online at `100.107.245.18:8087`. Both `c6-003f08` and

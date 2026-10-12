@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import abc
 import os
+import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 
 
@@ -228,11 +230,47 @@ class AndroidDeviceTarget(PhoneTarget):
     def setup(self, ports: StationPorts) -> None:
         for argv in self._unlock_argv():
             subprocess.run(_adb_prefix() + argv, check=False)
+        self._wait_unlocked()
         for p in (ports.http, ports.driver, ports.device):
             if not p:
                 continue
             subprocess.run(_adb_prefix() + ["reverse", f"tcp:{p}", f"tcp:{p}"], check=True)
             self._reversed.append(p)
+
+    @staticmethod
+    def _keyguard_locked(window_state: str) -> bool | None:
+        states = re.findall(
+            r"\b(?:mDreamingLockscreen|mShowingLockscreen|mKeyguardShowing|isStatusBarKeyguard)"
+            r"\s*=\s*(true|false)\b",
+            window_state,
+        )
+        return "true" in states if states else None
+
+    def _wait_unlocked(self, timeout: float = 10.0) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            proc = subprocess.run(
+                _adb_prefix() + ["shell", "dumpsys", "window"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            locked = self._keyguard_locked(proc.stdout)
+            if locked is False:
+                return
+            if locked is None:
+                raise RuntimeError(
+                    "Cannot verify Android unlock: dumpsys window has no keyguard state"
+                )
+            if time.monotonic() >= deadline:
+                reason = (
+                    "Verify HITL_ANDROID_PIN and the phone's unlock screen."
+                    if os.environ.get("HITL_ANDROID_PIN")
+                    else "Set HITL_ANDROID_PIN in the GitHub HITL environment secrets."
+                )
+                raise RuntimeError(f"Android phone remains locked after wake/unlock. {reason}")
+            time.sleep(0.2)
 
     async def launch(self, ports: StationPorts) -> None:
         url = self.app_url(ports)
