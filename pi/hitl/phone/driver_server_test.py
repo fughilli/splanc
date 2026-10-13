@@ -7,6 +7,28 @@ from driver_server import AppDriver
 
 
 class ReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reload_holds_commands_while_old_page_socket_is_still_open(self):
+        server = AppDriver.serve(0, host="127.0.0.1")
+        async with server as driver:
+            port = server._server.sockets[0].getsockname()[1]
+            url = f"ws://127.0.0.1:{port}"
+            async with websockets.connect(url) as old:
+                await old.send(json.dumps({"kind": "event", "event": "ready"}))
+                await driver.wait_ready(timeout=1)
+                driver.prepare_reload()
+                query = asyncio.create_task(driver.query("appState", timeout=2))
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(old.recv(), timeout=0.03)
+                async with websockets.connect(url) as fresh:
+                    await fresh.send(json.dumps({"kind": "event", "event": "ready"}))
+                    command = json.loads(await asyncio.wait_for(fresh.recv(), timeout=1))
+                    await fresh.send(
+                        json.dumps(
+                            {"kind": "result", "id": command["id"], "ok": True, "value": "fresh"}
+                        )
+                    )
+                    self.assertEqual(await query, "fresh")
+
     async def test_command_waits_for_reloaded_app_to_be_ready(self):
         server = AppDriver.serve(0, host="127.0.0.1")
         async with server as driver:

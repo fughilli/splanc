@@ -48,7 +48,13 @@ async def _do(drv: AppDriver, target: Any, cmd: str, timeout: float, params: dic
     if target is not None and getattr(target, "ble_mode", "") == "real":
         meth = getattr(target, _GESTURE_HANDLERS.get(cmd, ""), None)
         if meth is not None:
-            return await asyncio.to_thread(meth, **params)  # sync adb work off the loop
+            reloads = cmd == "trustCert" and getattr(target, "reloads_after_trust", False)
+            if reloads:
+                drv.prepare_reload()
+            result = await asyncio.to_thread(meth, **params)  # sync adb work off the loop
+            if reloads:
+                await drv.wait_ready(timeout=timeout)
+            return result
     if cmd == "trustCert":
         return {"skipped": True}  # browser uses --ignore-certificate-errors; mock BLE has no TLS
     return await drv.command(cmd, timeout=timeout, **params)

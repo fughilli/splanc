@@ -57,10 +57,12 @@ class AppDriver:
         # One app at a time — the station drives a single phone.
         self._ws = ws
         self._ready.clear()
+        self._events = asyncio.Queue()
         self._connected.set()
         try:
             async for raw in ws:
-                self._dispatch_incoming(json.loads(raw))
+                if self._ws is ws:
+                    self._dispatch_incoming(json.loads(raw))
         except websockets.ConnectionClosed:
             pass
         finally:
@@ -86,6 +88,11 @@ class AppDriver:
     async def wait_ready(self, timeout: float = 60.0) -> None:
         await asyncio.wait_for(self._connected.wait(), timeout)
         await asyncio.wait_for(self._ready.wait(), timeout)
+
+    def prepare_reload(self) -> None:
+        """Require a new page's ready event even while the old socket is still open."""
+        self._ready.clear()
+        self._events = asyncio.Queue()
 
     # --- driving ---------------------------------------------------------
     async def _rpc(self, kind: str, method: str, params: dict[str, Any], timeout: float) -> Any:
