@@ -1,9 +1,61 @@
 import asyncio
 import json
 import unittest
+from unittest.mock import AsyncMock
 
 import websockets
-from driver_server import AppDriver
+from driver_server import AppDriver, DriverError
+from journey_runner import run_journey
+
+
+class ConnectFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_connection_to_requested_device_does_not_repair_or_retrust(self):
+        driver = AppDriver()
+        driver.query = AsyncMock(
+            return_value={
+                "status": {"state": "connected"},
+                "wssUrl": "wss://device/ws",
+                "welcome": {"mac": "AA:BB"},
+            }
+        )
+        driver.command = AsyncMock()
+        result = await run_journey(
+            driver,
+            {"name": "connect", "steps": [{"do": "connect"}]},
+            {},
+            {"device_ws": "wss://device/ws"},
+        )
+        self.assertEqual(result[0]["step"], "already connected to requested device")
+        driver.command.assert_not_awaited()
+
+    async def test_connection_to_another_device_does_not_skip_connect(self):
+        driver = AppDriver()
+        driver.query = AsyncMock(
+            return_value={
+                "status": {"state": "connected"},
+                "wssUrl": "wss://other/ws",
+                "welcome": {"mac": "AA:BB"},
+            }
+        )
+        driver.command = AsyncMock(return_value={"connecting": True})
+        journey = {
+            "name": "connect",
+            "steps": [{"do": "connect", "with": {"wssUrl": "${device_ws}"}}],
+        }
+        await run_journey(driver, journey, {}, {"device_ws": "wss://device/ws"})
+        driver.command.assert_awaited_once_with("connect", timeout=60.0, wssUrl="wss://device/ws")
+
+    async def test_existing_connection_still_requires_hardware_identity(self):
+        driver = AppDriver()
+        driver.query = AsyncMock(
+            return_value={
+                "status": {"state": "connected"},
+                "wssUrl": "wss://device/ws",
+                "welcome": {},
+            }
+        )
+        with self.assertRaises(DriverError):
+            await run_journey(driver, {"name": "connect"}, {}, {"device_ws": "wss://device/ws"})
 
 
 class ReloadTests(unittest.IsolatedAsyncioTestCase):

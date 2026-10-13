@@ -55,6 +55,7 @@ function appStateSnapshot(): Json {
     selectedMapId: appState.selectedMapId,
     hasClient: appState.client !== null,
     isConnected: appState.client?.isConnected ?? false,
+    wssUrl: appState.client?.url ?? null,
     welcome: w ? { deviceName: w.deviceName, mac: w.mac } : null,
   };
 }
