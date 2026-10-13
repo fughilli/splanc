@@ -463,6 +463,11 @@ impl TcpConn {
         let payload = &tcp[data_off..];
 
         if flags & RST != 0 {
+            // RFC 793: resets reaching LISTEN are ignored. A delayed reset
+            // from an abandoned connection must not tear down the new listener.
+            if self.state == State::Listen {
+                return 0;
+            }
             self.state = State::Done;
             return 0;
         }
@@ -962,6 +967,20 @@ mod tests {
     // it reconnects immediately instead of hanging until its own timeout, and a legitimate new
     // SYN (the reconnect) still latches normally. (Regression guard for the dominant "timed
     // out during opening handshake" HITL flake.)
+    #[test]
+    fn listener_ignores_delayed_reset_then_accepts_syn() {
+        let mut cli = TcpConn::new([10, 0, 0, 1], [10, 0, 0, 2], 5000, 443, 1000);
+        let mut srv = TcpConn::listen([10, 0, 0, 2], 443, 9000);
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let n = cli.build(RST | ACK, 1000, &[], &mut a);
+        assert_eq!(srv.on_ip(1, &a[..n], &mut b), 0);
+        assert_eq!(srv.state, State::Listen);
+        let n = cli.connect(&mut a);
+        assert!(srv.on_ip(2, &a[..n], &mut b) > 0);
+        assert_eq!(srv.state, State::SynRcvd);
+    }
+
     #[test]
     fn listener_rsts_a_stale_peer() {
         let cli_ip = [10, 0, 0, 1];

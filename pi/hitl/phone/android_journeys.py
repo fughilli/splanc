@@ -215,7 +215,8 @@ journey_status=$?
 kill "$serial_pid" 2>/dev/null || true
 python3 - <<'PY_SERIAL'
 from pathlib import Path
-for line in Path("/tmp/android-dut.log").read_text(errors="replace").splitlines():
+lines = Path("/tmp/android-dut.log").read_text(errors="replace").splitlines()
+for line in (lines if len(lines) <= 200 else lines[:100] + ["... serial log truncated ..."] + lines[-100:]):
     print("[dut] " + line)
 PY_SERIAL
 exit "$journey_status"
