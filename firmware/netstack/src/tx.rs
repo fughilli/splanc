@@ -217,28 +217,6 @@ impl<const N: usize> TxRing<N> {
         }
     }
 
-    /// Whether a hardware queue still owns its submitted descriptor.
-    /// The C6 clears PLCP0 enable/valid after consuming it; descriptor OWN stays set.
-    ///
-    /// # Safety
-    /// MMIO; the MAC must be initialized and clocked.
-    pub unsafe fn hardware_busy(ac: usize) -> bool {
-        let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, ac, mac::TXQ_STRIDE);
-        mmio::read32(plcp) & 0xC000_0000 != 0
-    }
-
-    /// Release only slots whose hardware queue has finished consuming the frame.
-    ///
-    /// # Safety
-    /// MMIO; the MAC must be initialized and clocked.
-    pub unsafe fn reap_completed(&mut self) {
-        for i in 0..N {
-            if self.slots[i].owned_by_hw && !Self::hardware_busy(self.slots[i].queue) {
-                self.on_complete(i);
-            }
-        }
-    }
-
     /// Number of slots currently owned by hardware (in flight).
     pub fn in_flight(&self) -> usize {
         self.slots.iter().filter(|s| s.owned_by_hw).count()
@@ -406,25 +384,6 @@ pub fn frame_bytes<const M: usize>(pdu: &Buf<M>) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dma_buffer_is_retained_until_hardware_consumes_descriptor() {
-        let mut ring: TxRing<1> = TxRing::new();
-        let idx = ring.load_frame(&[0xaa; 64], 0).unwrap();
-        unsafe {
-            ring.arm(idx);
-            ring.reap_completed();
-        }
-        assert_eq!(ring.in_flight(), 1);
-        assert!(ring.load_frame(&[0xbb; 64], 0).is_err());
-        unsafe {
-            let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, 0, mac::TXQ_STRIDE);
-            mmio::write32(plcp, mmio::read32(plcp) & !0xC000_0000);
-            ring.reap_completed();
-        }
-        assert_eq!(ring.in_flight(), 0);
-        assert!(ring.load_frame(&[0xbb; 64], 0).is_ok());
-    }
 
     #[test]
     fn enqueue_is_bounded_backpressure() {
