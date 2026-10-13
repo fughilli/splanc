@@ -341,6 +341,7 @@ jobs:
               --flaky_test_attempts=2 \
               --test_env=HITL_ANDROID_SERVER \
               --test_env=HITL_ANDROID_PIN \
+              --test_env=HITL_WIRE_PROV_TIMEOUT=60 \
               --test_env=HITL_OWNER \
               --test_env=GITHUB_SHA
             echo "::endgroup::"
