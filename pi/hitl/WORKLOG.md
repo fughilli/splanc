@@ -3,6 +3,26 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-12 — restore the Android app after certificate approval
+
+With the PIN configured, run `38278559392` passed certificate acceptance but
+still timed out waiting for the app's device connection. Inspection of the
+reserved phone's Chrome DevTools log confirmed that the app entered back-forward
+cache, closing both its driver and device WebSockets. Every failed run left a
+separate certificate tab foreground; the harness never returned to the app.
+
+Certificate handling now selects the exact app tab for this run via Chrome's
+ADB-forwarded DevTools endpoint and reloads that tab to recreate its closed
+driver. The temporary debug forward is removed even on failure. The station
+clears stale readiness when a driver disconnects and waits for the refreshed app
+before sending RPCs. The connect journey explicitly reconnects the device after
+approval, mirroring the user's return-and-connect step. Certificate rejection
+now reports that step directly. No TLS bypass is used.
+
+Eighteen target/driver tests pass, including original-tab selection among old
+runs, missing-tab cleanup, and a real loopback WebSocket disconnect/reload with
+commands held until the refreshed app is ready. Hardware CI validation follows.
+
 ## 2026-10-12 — Android journeys blocked by missing phone PIN
 
 Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.

@@ -6,7 +6,10 @@ CI/in-container and pins the adb/simctl/devicectl invocations each station will 
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -119,6 +122,53 @@ class CommandPlanTests(unittest.TestCase):
         ):
             AndroidDeviceTarget()._wait_unlocked()
         self.assertEqual(replies, [])
+
+    def test_cert_return_activates_original_app_not_an_old_run(self) -> None:
+        target = AndroidDeviceTarget()
+        target._app_url = "http://127.0.0.1:8000/?driver=ws://127.0.0.1:9000/&ble=real"
+        tabs = [
+            {"id": "certificate", "url": "https://192.168.60.53/"},
+            {"id": "old-run", "url": "http://127.0.0.1:7000/?driver=ws://old/"},
+            {
+                "id": "app",
+                "url": target._app_url + "#/maps",
+                "webSocketDebuggerUrl": "ws://debug/app",
+            },
+        ]
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="9222\n"),
+            ) as adb,
+            patch(
+                "phone_target.urllib.request.urlopen",
+                side_effect=[
+                    io.BytesIO(json.dumps(tabs).encode()),
+                    io.BytesIO(b"Target activated"),
+                ],
+            ) as http,
+            patch.object(target, "_reload_app_tab") as reload,
+        ):
+            target._foreground_app()
+        self.assertEqual(http.call_args_list[1].args[0], "http://127.0.0.1:9222/json/activate/app")
+        reload.assert_called_once_with("ws://debug/app")
+        self.assertEqual(adb.call_args_list[-1].args[0], ["adb", "forward", "--remove", "tcp:9222"])
+
+    def test_missing_app_tab_fails_and_removes_debug_forward(self) -> None:
+        target = AndroidDeviceTarget()
+        target._app_url = "http://127.0.0.1:8000/?driver=ws://127.0.0.1:9000/"
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="9222\n"),
+            ) as adb,
+            patch("phone_target.urllib.request.urlopen", return_value=io.BytesIO(b"[]")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "lost the app tab"):
+                target._foreground_app()
+        self.assertIn("--remove", adb.call_args_list[-1].args[0])
 
     def test_ios_sim_launches_then_openurl_loopback(self) -> None:
         t = IosSimulatorTarget()

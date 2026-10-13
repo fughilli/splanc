@@ -56,12 +56,18 @@ class AppDriver:
     async def _on_conn(self, ws: websockets.WebSocketServerProtocol) -> None:
         # One app at a time — the station drives a single phone.
         self._ws = ws
+        self._ready.clear()
         self._connected.set()
         try:
             async for raw in ws:
                 self._dispatch_incoming(json.loads(raw))
         except websockets.ConnectionClosed:
             pass
+        finally:
+            if self._ws is ws:
+                self._ws = None
+                self._connected.clear()
+                self._ready.clear()
 
     def _dispatch_incoming(self, msg: dict[str, Any]) -> None:
         kind = msg.get("kind")
@@ -83,6 +89,7 @@ class AppDriver:
 
     # --- driving ---------------------------------------------------------
     async def _rpc(self, kind: str, method: str, params: dict[str, Any], timeout: float) -> Any:
+        await self.wait_ready(timeout=timeout)
         if self._ws is None:
             raise DriverError("app not connected")
         mid = f"m{next(self._ids)}"
