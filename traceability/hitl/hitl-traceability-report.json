@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 3,
     "test_cases": 17,
-    "gaps": 41
+    "gaps": 40
   },
   "levels": [
     {
@@ -1526,12 +1526,6 @@
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:android_journeys",
-      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
