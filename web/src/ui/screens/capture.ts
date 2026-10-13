@@ -962,6 +962,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (driverActive()) {
         registerDriverCapture({
           stats: () => driverDecodeStats,
+          cancel,
           finish: () =>
             new Promise<DriverCaptureResult>((resolve, reject) => {
               driverSolveResolve = resolve;

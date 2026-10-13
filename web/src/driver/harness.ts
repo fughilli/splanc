@@ -152,10 +152,16 @@ async function handle(msg: Incoming): Promise<unknown> {
         await new Promise((r) => setTimeout(r, 250));
       }
     }
+    case "cancelCapture": {
+      await driverCapture()?.cancel();
+      return { cancelled: true };
+    }
     case "finishCapture": {
       // Give the ~6 s synthetic arc time to render enough parallax before solving.
       const dwellMs = Number(p.captureMs ?? 7000);
       await new Promise((r) => setTimeout(r, dwellMs));
+      const error = driverCaptureError();
+      if (error) throw new Error(`capture startup failed: ${error}`);
       const ctrl = driverCapture();
       if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
       // Bound the solve: the VIO solver can stall on a synthetic scene that lacks

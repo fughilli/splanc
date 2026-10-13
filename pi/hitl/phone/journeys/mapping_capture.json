@@ -15,6 +15,7 @@
       "with": { "minIds": "${min_ids}", "timeoutMs": 40000 },
       "timeout": 60,
       "expect": { "ids": "present", "observations": "present" }
-    }
+    },
+    { "description": "stop the decode-only capture before the next journey", "do": "cancelCapture" }
   ]
 }

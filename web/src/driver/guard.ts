@@ -73,6 +73,7 @@ export interface DriverCaptureResult {
 export interface DriverCaptureController {
   stats(): DriverDecodeStats;
   finish(): Promise<DriverCaptureResult>;
+  cancel(): Promise<void>;
 }
 
 let captureController: DriverCaptureController | null = null;

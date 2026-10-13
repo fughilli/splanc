@@ -213,7 +213,11 @@ serial_pid=$!
 {cmd}
 journey_status=$?
 kill "$serial_pid" 2>/dev/null || true
-sed 's/^/[dut] /' /tmp/android-dut.log
+python3 - <<'PY_SERIAL'
+from pathlib import Path
+for line in Path("/tmp/android-dut.log").read_text(errors="replace").splitlines():
+    print("[dut] " + line)
+PY_SERIAL
 exit "$journey_status"
 """
     proc = res.ssh(cmd, capture=True, timeout=600)
