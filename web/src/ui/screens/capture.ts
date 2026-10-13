@@ -32,6 +32,7 @@ import {
   type DriverDecodeStats,
   driverActive,
   registerDriverCapture,
+  setDriverCaptureError,
 } from "../../driver/guard";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
@@ -295,8 +296,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   }
 
   async function startCapture(): Promise<void> {
+    if (driverActive()) setDriverCaptureError(null);
     const c = client();
     if (c === null || !c.isConnected) {
+      if (driverActive()) setDriverCaptureError("device disconnected before capture");
       toast("Connect a device to capture", { error: true });
       router.navigate("/maps");
       return;
@@ -698,6 +701,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         syncManualSliders(params.brightness ?? 1, servoedExposure);
       }, 2000);
     } catch (e) {
+      if (driverActive()) {
+        setDriverCaptureError(e instanceof Error ? e.message : String(e));
+        console.error("capture startup failed", e);
+      }
       manualHooks = null;
       capturing = false;
       stopTimer();
