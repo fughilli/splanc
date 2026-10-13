@@ -44,6 +44,14 @@ approval. Approval is successful only after the certificate landing page is
 observed, not merely after a tap. Thirty-seven phone/driver/provisioner tests
 pass, including rejection of a tap that leaves the warning on screen.
 
+Run `38336457500` verified the real phone's initial connect in both attempts
+(welcome reached in about five seconds after trust). It then exposed repeated
+trust in `config`'s nested connect flow. Connect is now idempotent only when the
+live app reports connected to the exact requested URL and has a hardware MAC.
+Config and mapping reuse that established session instead of repeating pairing
+and certificate UI. Different-device and missing-identity regressions remain
+failures. Forty phone/provisioner/driver tests pass.
+
 ## 2026-10-12 — Android journeys blocked by missing phone PIN
 
 Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.

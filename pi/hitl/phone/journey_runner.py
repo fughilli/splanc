@@ -141,6 +141,15 @@ async def run_journey(
     real taps on a real-BLE device instead of the driver RPC."""
     ctx: dict[str, Any] = dict(journey.get("inputs") or {})
     ctx.update(context or {})
+    if journey.get("name") == "connect" and ctx.get("device_ws"):
+        snapshot = await drv.query("appState")
+        if (
+            isinstance(snapshot, dict)
+            and (snapshot.get("status") or {}).get("state") == "connected"
+            and snapshot.get("wssUrl") == ctx["device_ws"]
+        ):
+            _check(snapshot.get("welcome"), {"mac": "present"})
+            return [{"step": "already connected to requested device", "result": snapshot}]
     out: list[dict[str, Any]] = []
     for i, step in enumerate(journey.get("steps") or []):
         if "runFlow" in step:
