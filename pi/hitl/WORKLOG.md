@@ -3,6 +3,22 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-13 — capture cleanup stalled behind unsupported telemetry
+
+Android diagnostic run 38445899746 reached all LED IDs in `awaitDecode`, then
+stalled in `cancelCapture`. The full PR run 38445953157 reproduced that exact
+failure on both attempts. DUT serial logs showed repeated 6485-byte TLS
+allocation failures (largest free block 5108 bytes) during capture. Embedded
+players discard detections and IMU batches and cannot provide host live-map or
+coverage queries, but the screen still sent all of that traffic.
+
+Capture now retains observations and IMU locally without streaming them to a
+player whose welcome has no host solver benchmark. Host-capable devices keep
+their existing streams and polls. The three capture/device-drop regression
+cases pass, including retaining all 9000 observations for a phone solve while
+sending zero to a player with no host solver. App TypeScript checking passes.
+Android run 38455045649 validates the complete capture and solve journeys.
+
 ## 2026-10-12 — Android failures caused by a neighboring C6 stealing DHCP leases
 
 AP-side packet capture on amd-rig confirmed two different source MACs answering
