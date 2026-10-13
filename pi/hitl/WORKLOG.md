@@ -3,6 +3,220 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-10-13 — capture cleanup stalled behind unsupported telemetry
+
+Android diagnostic run 38445899746 reached all LED IDs in `awaitDecode`, then
+stalled in `cancelCapture`. The full PR run 38445953157 reproduced that exact
+failure on both attempts. DUT serial logs showed repeated 6485-byte TLS
+allocation failures (largest free block 5108 bytes) during capture. Embedded
+players discard detections and IMU batches and cannot provide host live-map or
+coverage queries, but the screen still sent all of that traffic.
+
+Capture now retains observations and IMU locally without streaming them to a
+player whose welcome has no host solver benchmark. Host-capable devices keep
+their existing streams and polls. The three capture/device-drop regression
+cases pass, including retaining all 9000 observations for a phone solve while
+sending zero to a player with no host solver. App TypeScript checking passes.
+Android run 38455045649 validates the complete capture and solve journeys.
+
+## 2026-10-12 — Android failures caused by a neighboring C6 stealing DHCP leases
+
+AP-side packet capture on amd-rig confirmed two different source MACs answering
+for one DUT IP. The intended board served TLS while the other sent valid TCP
+resets into its connections. A neighboring SDR C6 still ran the old firmware that accepted another client's
+broadcast DHCP ACK. Updating the phone and emulator C6s alone did not eliminate
+the original DHCP bug: the additional radio at 02:0c:6a:95:10:f2 kept adopting
+each new test lease and sending TCP resets.
+
+First flashed both `android-phone` and `android-emu` under their own reservations with
+the corrected DHCP validator. Provisioned both onto `amd-rig-ap`: they retained
+distinct addresses (192.168.60.50 and .88). Eight consecutive full certificate-page
+HTTPS responses then passed in 0.77–0.83 seconds, with exactly one responding MAC
+for the phone DUT's IP, but a later broadcast made the remaining SDR neighbor
+collide again. Subsequently flashed both physical SDR boards under an SDR lease,
+verifying BASE MACs 58:E6:C5:11:FC:B0 and 58:E6:C5:11:FC:D8 before writing.
+The rogue station stopped transmitting. The two corrected SDR boards acquired
+distinct leases (.100 and .93) while Android CI used the same AP.
+
+The deployed SDR container is still privileged: it exposes host tty numbers,
+so its default /dev/ttyACM0 addresses the phone board rather than its reserved
+SDR board. Stable by-id paths are not mounted there. For this update, verified
+host ttyACM2/ttyACM4 identities explicitly; never assume the default port is
+the reserved DUT in this old deployment. The repository already defaults
+reservation containers to unprivileged device isolation.
+
+Experimental DMA, window-scaling, and AES changes were
+removed; the firmware fix remains DHCP reply identity validation.
+
+Use `//pi/hitl:hitl_sdr.ssh` for host diagnostics, with the existing deploy-key
+directory supplied through `SBC_DEPLOY_KEY_DIR` when working in a fresh worktree.
+Remote commands go after a second `--`: `bazel run //pi/hitl:hitl_sdr.ssh -- amd-rig
+-- <command>`. Do not generate replacement keys for an already provisioned host.
+
+Android harness fixes also release the device connection before certificate
+approval, wait for the reloaded driver, reuse an already verified connection in
+nested journeys, close old local HITL app tabs, and cancel the decode-only capture
+before starting the solve journey. Capture startup errors now reach the driver
+instead of becoming a misleading 0/30 decode timeout. Serial diagnostics are
+bounded and use Python because the phone environment has no `sed`.
+
+Local validation: 43 phone harness tests, TypeScript checking, and the C6 firmware
+build pass. Full CI run 38345324673 passed the firmware suite before its Android
+phase encountered the mixed-firmware neighbor. Run 38356282724 still failed
+with the remaining SDR neighbor active. Run 38359525629 validates the Android
+journeys after updating all four attached C6 boards: connection and configuration
+passed on both attempts, but mapping capture timed out. Eight full HTTPS
+responses from the two SDR boards passed with exactly one responding MAC for
+each IP. Driver diagnostics now identify the timed-out command and fail pending
+RPCs immediately on disconnect instead of waiting for an unlabelled timeout.
+
+## 2026-10-12 — restore the Android app after certificate approval
+
+With the PIN configured, run `38278559392` passed certificate acceptance but
+still timed out waiting for the app's device connection. Inspection of the
+reserved phone's Chrome DevTools log confirmed that the app entered back-forward
+cache, closing both its driver and device WebSockets. Every failed run left a
+separate certificate tab foreground; the harness never returned to the app.
+
+Certificate handling now selects the exact app tab for this run via Chrome's
+ADB-forwarded DevTools endpoint and reloads that tab to recreate its closed
+driver. The temporary debug forward is removed even on failure. The station
+clears stale readiness when a driver disconnects and waits for the refreshed app
+before sending RPCs. The connect journey explicitly reconnects the device after
+approval, mirroring the user's return-and-connect step. Certificate rejection
+now reports that step directly. No TLS bypass is used.
+
+Eighteen target/driver tests pass, including original-tab selection among old
+runs, missing-tab cleanup, and a real loopback WebSocket disconnect/reload with
+commands held until the refreshed app is ready. Hardware CI validation follows.
+
+The first hardware run with tab restoration (`38329881654`) passed the firmware
+suite but exposed a reload handoff race: a query could reach the still-open old
+page before the refreshed page reported ready, then time out when that old page
+went away. Trust handling now clears readiness before triggering the reload and
+waits for a fresh ready event afterward. New connections discard old-page events
+and superseded sockets cannot dispatch replies into the new session. Nineteen
+tests pass, including a regression with the old socket held open throughout the
+reload. An isolated Android-only diagnostic run avoids waiting behind firmware
+benchmark recovery when validating this handoff.
+
+Run `38333578911` confirmed the driver now survives the handoff, but the device
+connection still failed. It also caught a false-positive trust result: the helper
+returned success even while Chrome still displayed its certificate interstitial.
+The production trust UI disconnects the device first to release its single TLS
+slot; the native harness had skipped that step and left background retries
+competing with the certificate page. The harness now calls the production
+disconnect method and gives the slot the same 800ms settle window before native
+approval. Approval is successful only after the certificate landing page is
+observed, not merely after a tap. Thirty-seven phone/driver/provisioner tests
+pass, including rejection of a tap that leaves the warning on screen.
+
+Run `38336457500` verified the real phone's initial connect in both attempts
+(welcome reached in about five seconds after trust). It then exposed repeated
+trust in `config`'s nested connect flow. Connect is now idempotent only when the
+live app reports connected to the exact requested URL and has a hardware MAC.
+Config and mapping reuse that established session instead of repeating pairing
+and certificate UI. Different-device and missing-identity regressions remain
+failures. Forty phone/provisioner/driver tests pass.
+
+## 2026-10-12 — Android journeys blocked by missing phone PIN
+
+Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.
+The phone served the app and connected its driver in the background; the native
+view still showed the secure PIN pad (`Emergency call`, digits, `OK`). Bluetooth
+and certificate taps therefore could not reach Chrome, and `wait_connected`
+timed out. The run's `HITL_ANDROID_PIN` was empty; GitHub's HITL environment
+secret list confirms that secret is absent.
+
+AndroidDeviceTarget now waits for the keyguard to dismiss after wake/unlock,
+before setting up port reverses or launching the app. A still-locked phone gives
+an explicit missing/ineffective PIN error rather than a misleading device
+connection timeout. Fifteen target tests pass, including lock-state parsing,
+failure before reverse/launch, and an unlock animation transitioning to ready.
+An unattended journey rerun requires configuring `HITL_ANDROID_PIN` in the HITL
+GitHub environment (the PIN itself must not be committed or logged).
+
+## 2026-10-12 — analyzer rig restored; capture and video checks pass
+
+Rig-2 is back online at `100.107.245.18:8087`. Both `c6-003f08` and
+`c6-fa0324` advertise `logic-analyzer-led-strip` and were idle at inspection.
+With the fixes in PR #249, the previously blocked `led_capture_netstack` and
+`led_capture_jit_netstack` both pass on `c6-003f08`: eight driven pixels match
+the wire, RGB/BGR color order is configurable, and the JIT/interpreter pixels
+are bit-identical. Both reservations released normally.
+
+The PR's initial CI run also failed `video_stream_netstack` on connection setup,
+independently of the offline analyzer rig. A fresh run pinned to restored rig-2
+passes: 24x24 texture streaming sustained 43.4 FPS (150 frames in 3.45 seconds),
+above the 10 FPS gate. Its reservation released normally. These local passes
+remove the hardware blocker; the full CI rerun still needs to confirm behavior
+under runner latency and fleet contention.
+
+## 2026-10-11 — C6 provisioning address bug and unavailable analyzer rig
+
+Investigated HITL run `38152878072` against main `9a5501fa`. The two LED-capture
+lanes never activated: each queued at position zero for 2400 seconds per attempt.
+The online inventories on rig-1 and rig-3 have no ESP32-C6 with
+`logic-analyzer-led-strip`. The station wiring record puts the C6 taps on rig-2
+(`c6-003f08` / D6 and `c6-fa0324` / D7), which is offline and did not answer a
+Tailscale ping. Rig-1's analyzer taps the Pi FPGA player; its default D6 map is
+not evidence of a C6 connection. Restore rig-2 or physically verify new wiring
+before advertising a C6 analyzer capability.
+
+The Python reservation client previously fell back to any reachable rig when
+none could satisfy a request. It now fails immediately with the requested
+device, SKU, capabilities, and available inventories, including when a server
+is explicitly pinned. Device pins are respected during routing, and queue
+timeout errors retain their reservation ID after releasing the request.
+
+Found a separate firmware bug in netstack BLE initialization:
+`esp_efuse_mac_get_default()` was given a six-byte stack buffer. The pinned C6
+SDK enables `CONFIG_SOC_IEEE802154_SUPPORTED` and documents an eight-byte EUI-64
+result for that configuration. The observed address `d2:fe:ff:49:fd:8c` contains
+the inserted FF:FE bytes and loses the unique factory-MAC suffix. Initialization
+now requests the six-byte `ESP_MAC_BT` interface address, reverses it into HCI
+byte order, and sets the static-random address bits. On reserved `c6-123170`,
+corrected firmware advertises `cc:fd:49:12:31:72`.
+
+Serial capture also encountered an invalid UTF-8 byte that previously discarded
+the entire captured log with `UnicodeDecodeError`; SSH capture now replaces
+invalid bytes while preserving the usable boot banner.
+
+The BLE-only fix did not eliminate disconnects: the JIT sweep dropped at
+`sweep256`, while a three-effect reproduction with continuous serial capture
+passed. That capture then exposed a separate netstack DHCP bug: after just 85
+seconds, a 3600-second lease changed from `10.42.0.162` to `10.42.0.228`, without
+a reset or a renewal request. The receive handler accepted every broadcast
+DHCP ACK on the AP without checking its transaction ID or client MAC. This lets
+another station's reply replace our lease and listener binding, dropping a live
+socket and stranding its tunnel. It also explains why two running DUTs can claim
+one IP. A later connection attempt saw another `02:0c:6a:*` station ARPing for
+the DUT's newly assigned address.
+
+DHCP receive now checks the BOOTREPLY header, Ethernet address length, magic
+cookie, transaction ID, and client MAC before parsing lease options. It validates
+the entire option stream before changing state, handles padding, and checks
+IPv4/UDP lengths. Host cases cover an accepted matching ACK, a different
+transaction/client, and truncated or malformed replies.
+
+Validation: 26 reservation/pool/AP-lock/reachability tests, two C++ BLE address
+cases, three DHCP cases, formatting hooks, and the C6 netstack flash-bundle
+build pass.
+The full interpreter benchmark on rig-1 completed all 65 calibration and seven
+held-out effects with zero drops, reconnect failures, reprovisions, or IP
+changes (`--no-golden-check --fail-on-reboot`). Golden timing margins were not
+checked. This supports the firmware fix but does not prove that every historical
+CI disconnect was caused by this bug; CI concurrency and runner path differ.
+
+After the DHCP fix, a full JIT sweep on `c6-123170` also completed all 72 effects
+with zero drops, reconnect failures, reprovisions, or IP changes. Provisioned
+the second rig-1 C6 (`c6-2ce684`) onto the same AP during this sweep. Both boards
+ran corrected firmware: the first kept `10.42.0.130` while the second acquired
+`10.42.0.235`. Continuous serial showed only the first board's own OFFER/ACK,
+with no unexpected lease changes, rejoining, or reboot. Reservations released.
+Rig-2 remains unreachable over Tailscale and its `.local` hostname; hardware
+restoration is still required for the C6 analyzer lanes.
+
 ## 2026-08-28 — fpga_ws281x E2E green (ws2812) — wrong DUT + a musl crash-loop
 
 Resolved the previous entry's "DUT WSS never completes the handshake" block. It was

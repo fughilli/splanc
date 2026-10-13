@@ -48,7 +48,17 @@ async def _do(drv: AppDriver, target: Any, cmd: str, timeout: float, params: dic
     if target is not None and getattr(target, "ble_mode", "") == "real":
         meth = getattr(target, _GESTURE_HANDLERS.get(cmd, ""), None)
         if meth is not None:
-            return await asyncio.to_thread(meth, **params)  # sync adb work off the loop
+            reloads = cmd == "trustCert" and getattr(target, "reloads_after_trust", False)
+            if reloads:
+                # Match the production trust UI: release the single C6 TLS slot
+                # before the certificate page connects, and stop background retries.
+                await drv.command("disconnect", timeout=timeout)
+                await asyncio.sleep(0.8)
+                drv.prepare_reload()
+            result = await asyncio.to_thread(meth, **params)  # sync adb work off the loop
+            if reloads:
+                await drv.wait_ready(timeout=timeout)
+            return result
     if cmd == "trustCert":
         return {"skipped": True}  # browser uses --ignore-certificate-errors; mock BLE has no TLS
     return await drv.command(cmd, timeout=timeout, **params)
@@ -131,6 +141,15 @@ async def run_journey(
     real taps on a real-BLE device instead of the driver RPC."""
     ctx: dict[str, Any] = dict(journey.get("inputs") or {})
     ctx.update(context or {})
+    if journey.get("name") == "connect" and ctx.get("device_ws"):
+        snapshot = await drv.query("appState")
+        if (
+            isinstance(snapshot, dict)
+            and (snapshot.get("status") or {}).get("state") == "connected"
+            and snapshot.get("wssUrl") == ctx["device_ws"]
+        ):
+            _check(snapshot.get("welcome"), {"mac": "present"})
+            return [{"step": "already connected to requested device", "result": snapshot}]
     out: list[dict[str, Any]] = []
     for i, step in enumerate(journey.get("steps") or []):
         if "runFlow" in step:
@@ -140,6 +159,7 @@ async def run_journey(
             out.extend(await run_journey(drv, sub, registry, ctx, target))
             continue
         if "do" in step:
+            print(f"[journey] {journey.get('name', '?')} step {i + 1}: {step['do']}", flush=True)
             params = _interp(step.get("with") or {}, ctx)
             res = await _do(drv, target, step["do"], step.get("timeout", 60.0), params)
             _check(res, step.get("expect"))

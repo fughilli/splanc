@@ -204,6 +204,23 @@ def _run_journeys(
         f"--journeys {shlex.quote(journeys)}"
     )
     _log(f"[journeys] running in-env: {journeys} (ble={ble_mode}) against {device_ws}")
+    # Read the existing USB serial stream without toggling DTR/RTS (pyserial
+    # would reset the DUT). Keep firmware faults alongside the phone failure.
+    cmd = f"""
+stty -F /dev/ttyACM0 115200 raw -echo
+(timeout 590 cat /dev/ttyACM0 > /tmp/android-dut.log) &
+serial_pid=$!
+{cmd}
+journey_status=$?
+kill "$serial_pid" 2>/dev/null || true
+python3 - <<'PY_SERIAL'
+from pathlib import Path
+lines = Path("/tmp/android-dut.log").read_text(errors="replace").splitlines()
+for line in (lines if len(lines) <= 200 else lines[:100] + ["... serial log truncated ..."] + lines[-100:]):
+    print("[dut] " + line)
+PY_SERIAL
+exit "$journey_status"
+"""
     proc = res.ssh(cmd, capture=True, timeout=600)
     out = (proc.stdout or "") + (proc.stderr or "")
     passed: list[str] = []

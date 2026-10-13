@@ -22,7 +22,7 @@ import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
 import type { Router } from "../ui/app/router";
-import { driverCapture, setDriverActive } from "./guard";
+import { driverCapture, driverCaptureError, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
 
@@ -55,6 +55,7 @@ function appStateSnapshot(): Json {
     selectedMapId: appState.selectedMapId,
     hasClient: appState.client !== null,
     isConnected: appState.client?.isConnected ?? false,
+    wssUrl: appState.client?.url ?? null,
     welcome: w ? { deviceName: w.deviceName, mac: w.mac } : null,
   };
 }
@@ -77,6 +78,10 @@ async function handle(msg: Incoming): Promise<unknown> {
         coldRetryLimit: 6,
       });
       return { connecting: true };
+
+    case "disconnect":
+      appState.disconnect();
+      return { disconnected: true };
 
     case "provisionBle": {
       const dev = await requestImprovDevice();
@@ -133,6 +138,8 @@ async function handle(msg: Incoming): Promise<unknown> {
       const minIds = Number(p.minIds ?? 0);
       const deadline = Date.now() + Number(p.timeoutMs ?? 30000);
       for (;;) {
+        const error = driverCaptureError();
+        if (error) throw new Error(`capture startup failed: ${error}`);
         const ctrl = driverCapture();
         const st = ctrl?.stats() ?? { ids: 0, total: 0, tracks: 0, observations: 0 };
         if (st.ids >= minIds && st.total > 0) {
@@ -145,10 +152,16 @@ async function handle(msg: Incoming): Promise<unknown> {
         await new Promise((r) => setTimeout(r, 250));
       }
     }
+    case "cancelCapture": {
+      await driverCapture()?.cancel();
+      return { cancelled: true };
+    }
     case "finishCapture": {
       // Give the ~6 s synthetic arc time to render enough parallax before solving.
       const dwellMs = Number(p.captureMs ?? 7000);
       await new Promise((r) => setTimeout(r, dwellMs));
+      const error = driverCaptureError();
+      if (error) throw new Error(`capture startup failed: ${error}`);
       const ctrl = driverCapture();
       if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
       // Bound the solve: the VIO solver can stall on a synthetic scene that lacks

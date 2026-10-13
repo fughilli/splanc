@@ -6,8 +6,12 @@ CI/in-container and pins the adb/simctl/devicectl invocations each station will 
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import subprocess
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("HITL_ANDROID_SERIAL", "")  # keep _adb_base() deterministic
 
@@ -78,6 +82,119 @@ class CommandPlanTests(unittest.TestCase):
         pin_i = next(i for i, c in enumerate(joined) if "input text 1234" in c)
         rev_i = next(i for i, c in enumerate(joined) if "reverse" in c)
         self.assertLess(pin_i, rev_i)  # unlock happens before the reverses
+
+    def test_keyguard_state_parses_samsung_and_android_flags(self) -> None:
+        parse = AndroidDeviceTarget._keyguard_locked
+        self.assertTrue(parse("mDreamingLockscreen=true"))
+        self.assertFalse(parse("mDreamingLockscreen=false"))
+        self.assertTrue(parse("mShowingLockscreen=false mKeyguardShowing=true"))
+        self.assertIsNone(parse("unrecognized window dump"))
+
+    def test_locked_phone_fails_before_reverse_or_launch(self) -> None:
+        import subprocess
+
+        def run(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, stdout="mDreamingLockscreen=true")
+
+        with (
+            patch.dict(os.environ, {"HITL_ANDROID_PIN": ""}),
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch("phone_target.subprocess.run", side_effect=run) as calls,
+            patch("phone_target.time.monotonic", side_effect=[0, 11]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Set HITL_ANDROID_PIN"):
+                AndroidDeviceTarget().setup(PORTS)
+        self.assertFalse(any("reverse" in c.args[0] for c in calls.call_args_list))
+
+    def test_unlock_waits_for_keyguard_to_dismiss(self) -> None:
+        import subprocess
+
+        replies = ["mDreamingLockscreen=true", "mDreamingLockscreen=false"]
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                side_effect=lambda argv, **kwargs: subprocess.CompletedProcess(
+                    argv, 0, stdout=replies.pop(0)
+                ),
+            ),
+            patch("phone_target.time.sleep"),
+        ):
+            AndroidDeviceTarget()._wait_unlocked()
+        self.assertEqual(replies, [])
+
+    def test_cert_return_activates_original_app_not_an_old_run(self) -> None:
+        target = AndroidDeviceTarget()
+        target._app_url = "http://127.0.0.1:8000/?driver=ws://127.0.0.1:9000/&ble=real"
+        tabs = [
+            {"id": "certificate", "url": "https://192.168.60.53/"},
+            {"id": "old-run", "url": "http://127.0.0.1:7000/?driver=ws://old/"},
+            {
+                "id": "app",
+                "url": target._app_url + "#/maps",
+                "webSocketDebuggerUrl": "ws://debug/app",
+            },
+        ]
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="9222\n"),
+            ) as adb,
+            patch(
+                "phone_target.urllib.request.urlopen",
+                side_effect=[
+                    io.BytesIO(json.dumps(tabs).encode()),
+                    io.BytesIO(b"Target activated"),
+                ],
+            ) as http,
+            patch.object(target, "_reload_app_tab") as reload,
+        ):
+            target._foreground_app()
+        self.assertEqual(http.call_args_list[1].args[0], "http://127.0.0.1:9222/json/activate/app")
+        reload.assert_called_once_with("ws://debug/app")
+        self.assertEqual(adb.call_args_list[-1].args[0], ["adb", "forward", "--remove", "tcp:9222"])
+
+    def test_previous_run_cleanup_closes_only_local_driver_tabs(self) -> None:
+        tabs = [
+            {"id": "old", "url": "http://127.0.0.1:7000/?driver=ws://old/#/maps"},
+            {"id": "personal", "url": "https://example.com/?driver=normal"},
+            {"id": "local", "url": "http://localhost:7000/"},
+            {"id": "cert", "url": "https://192.168.60.53/"},
+        ]
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="9222\n"),
+            ) as adb,
+            patch(
+                "phone_target.urllib.request.urlopen",
+                side_effect=[
+                    io.BytesIO(json.dumps(tabs).encode()),
+                    io.BytesIO(b"Target closed"),
+                ],
+            ) as http,
+        ):
+            AndroidDeviceTarget()._close_previous_driver_tabs()
+        self.assertEqual(http.call_args_list[1].args[0], "http://127.0.0.1:9222/json/close/old")
+        self.assertEqual(http.call_count, 2)
+        self.assertIn("--remove", adb.call_args_list[-1].args[0])
+
+    def test_missing_app_tab_fails_and_removes_debug_forward(self) -> None:
+        target = AndroidDeviceTarget()
+        target._app_url = "http://127.0.0.1:8000/?driver=ws://127.0.0.1:9000/"
+        with (
+            patch("phone_target._adb_prefix", return_value=["adb"]),
+            patch(
+                "phone_target.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, stdout="9222\n"),
+            ) as adb,
+            patch("phone_target.urllib.request.urlopen", return_value=io.BytesIO(b"[]")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "lost the app tab"):
+                target._foreground_app()
+        self.assertIn("--remove", adb.call_args_list[-1].args[0])
 
     def test_ios_sim_launches_then_openurl_loopback(self) -> None:
         t = IosSimulatorTarget()

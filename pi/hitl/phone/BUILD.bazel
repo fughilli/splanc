@@ -102,6 +102,13 @@ py_test(
     deps = [":phone"],
 )
 
+py_test(
+    name = "driver_server_test",
+    srcs = ["driver_server_test.py"],
+    imports = ["."],
+    deps = [":phone"],
+)
+
 # Dry-run tests for the real-Android-BLE UI provisioner: the view-tree parse + the
 # crowded-chooser disambiguation, on captured uiautomator XML. No hardware.
 py_test(

@@ -23,9 +23,15 @@ unit-tested by dry-run without any hardware; only the run path shells out.
 from __future__ import annotations
 
 import abc
+import asyncio
+import json
 import os
+import re
 import subprocess
 import sys
+import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 
 
@@ -177,9 +183,11 @@ class AndroidDeviceTarget(PhoneTarget):
 
     name = "android-phone"
     ble_mode = "real"
+    reloads_after_trust = True
 
     def __init__(self) -> None:
         self._reversed: list[int] = []
+        self._app_url: str | None = None
 
     @property
     def host_alias(self) -> str:
@@ -228,14 +236,55 @@ class AndroidDeviceTarget(PhoneTarget):
     def setup(self, ports: StationPorts) -> None:
         for argv in self._unlock_argv():
             subprocess.run(_adb_prefix() + argv, check=False)
+        self._wait_unlocked()
         for p in (ports.http, ports.driver, ports.device):
             if not p:
                 continue
             subprocess.run(_adb_prefix() + ["reverse", f"tcp:{p}", f"tcp:{p}"], check=True)
             self._reversed.append(p)
 
+    @staticmethod
+    def _keyguard_locked(window_state: str) -> bool | None:
+        states = re.findall(
+            r"\b(?:mDreamingLockscreen|mShowingLockscreen|mKeyguardShowing|isStatusBarKeyguard)"
+            r"\s*=\s*(true|false)\b",
+            window_state,
+        )
+        return "true" in states if states else None
+
+    def _wait_unlocked(self, timeout: float = 10.0) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            proc = subprocess.run(
+                _adb_prefix() + ["shell", "dumpsys", "window"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            locked = self._keyguard_locked(proc.stdout)
+            if locked is False:
+                return
+            if locked is None:
+                raise RuntimeError(
+                    "Cannot verify Android unlock: dumpsys window has no keyguard state"
+                )
+            if time.monotonic() >= deadline:
+                reason = (
+                    "Verify HITL_ANDROID_PIN and the phone's unlock screen."
+                    if os.environ.get("HITL_ANDROID_PIN")
+                    else "Set HITL_ANDROID_PIN in the GitHub HITL environment secrets."
+                )
+                raise RuntimeError(f"Android phone remains locked after wake/unlock. {reason}")
+            time.sleep(0.2)
+
     async def launch(self, ports: StationPorts) -> None:
         url = self.app_url(ports)
+        self._app_url = url
+        try:
+            self._close_previous_driver_tabs()
+        except Exception as e:  # noqa: BLE001 — Chrome may not be running yet
+            print(f"[chrome] previous-run cleanup unavailable: {e}", file=sys.stderr)
         subprocess.run(_adb_prefix() + self._launch_argv(url), check=True)
         # The debloated bench phone shows Chrome's welcome / ToS / sign-in / sync /
         # notification walls on the first run; the launched tab sits BEHIND them, so
@@ -299,7 +348,94 @@ class AndroidDeviceTarget(PhoneTarget):
             print(f"[cert] host={host} accepted={ok} view-texts={texts!r}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[cert] host={host} accepted={ok} (view dump failed: {e})", flush=True)
+        self._foreground_app()
+        if not ok:
+            raise RuntimeError(f"Chrome did not accept the device certificate for {host}")
         return {"trusted": bool(ok), "host": host}
+
+    def _close_previous_driver_tabs(self) -> None:
+        """Close bench-owned app tabs before starting a fresh device session.
+
+        Old driven pages keep retrying their last WSS IP, competing with later
+        runs when DHCP reuses that address. Preserve all ordinary browser tabs.
+        """
+        proc = subprocess.run(
+            _adb_prefix() + ["forward", "tcp:0", "localabstract:chrome_devtools_remote"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        port = int(proc.stdout.strip())
+        base = f"http://127.0.0.1:{port}"
+        closed = 0
+        try:
+            with urllib.request.urlopen(base + "/json/list", timeout=10) as response:
+                tabs = json.load(response)
+            for tab in tabs:
+                url = urllib.parse.urlsplit(tab.get("url", ""))
+                if url.hostname not in ("127.0.0.1", "localhost"):
+                    continue
+                if not urllib.parse.parse_qs(url.query).get("driver"):
+                    continue
+                target_id = urllib.parse.quote(str(tab["id"]), safe="")
+                with urllib.request.urlopen(base + "/json/close/" + target_id, timeout=10):
+                    closed += 1
+            print(f"[chrome] closed {closed} previous HITL app tabs", flush=True)
+        finally:
+            subprocess.run(_adb_prefix() + ["forward", "--remove", f"tcp:{port}"], check=False)
+
+    def _foreground_app(self) -> None:
+        """Return to the original Chrome tab and reconnect its driver.
+
+        An external VIEW intent opens a separate certificate tab. Leaving it
+        foreground freezes the app's socket retries. Chrome can also put the app
+        in back-forward cache and close its driver socket, so reload that same
+        tab before the journey explicitly resumes the device connection.
+        """
+        if not self._app_url:
+            raise RuntimeError("Cannot return from certificate approval: no launched app URL")
+        proc = subprocess.run(
+            _adb_prefix() + ["forward", "tcp:0", "localabstract:chrome_devtools_remote"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        port = int(proc.stdout.strip())
+        base = f"http://127.0.0.1:{port}"
+        try:
+            with urllib.request.urlopen(base + "/json/list", timeout=10) as response:
+                tabs = json.load(response)
+            tab = next(
+                (t for t in tabs if t.get("url", "").split("#", 1)[0] == self._app_url),
+                None,
+            )
+            if tab is None:
+                raise RuntimeError("Chrome lost the app tab during certificate approval")
+            target_id = urllib.parse.quote(str(tab["id"]), safe="")
+            with urllib.request.urlopen(base + f"/json/activate/{target_id}", timeout=10):
+                pass
+            self._reload_app_tab(str(tab["webSocketDebuggerUrl"]))
+            print("[cert] returned to original app tab", flush=True)
+        finally:
+            subprocess.run(_adb_prefix() + ["forward", "--remove", f"tcp:{port}"], check=False)
+
+    @staticmethod
+    def _reload_app_tab(debugger_url: str) -> None:
+        import websockets
+
+        async def reload():
+            async with websockets.connect(debugger_url, open_timeout=10) as ws:
+                await ws.send(json.dumps({"id": 1, "method": "Page.reload"}))
+                while True:
+                    reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                    if reply.get("id") == 1:
+                        if "error" in reply:
+                            raise RuntimeError(f"Chrome app reload failed: {reply['error']}")
+                        return
+
+        asyncio.run(reload())
 
     async def close(self) -> None:
         for p in self._reversed:

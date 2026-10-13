@@ -32,6 +32,7 @@ import {
   type DriverDecodeStats,
   driverActive,
   registerDriverCapture,
+  setDriverCaptureError,
 } from "../../driver/guard";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
@@ -295,8 +296,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   }
 
   async function startCapture(): Promise<void> {
+    if (driverActive()) setDriverCaptureError(null);
     const c = client();
     if (c === null || !c.isConnected) {
+      if (driverActive()) setDriverCaptureError("device disconnected before capture");
       toast("Connect a device to capture", { error: true });
       router.navigate("/maps");
       return;
@@ -435,7 +438,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
         pl.onDetections((records: DetectionRecord[]) => {
-          c.sendDetections(records);
+          // Embedded players discard capture telemetry and have no host solver.
+          // Keep their observations local rather than filling the TLS receive
+          // buffers with data that only the phone's solver can use.
+          if (c.hostSolverBenchMs !== null) c.sendDetections(records);
           localDetections.push(...records);
         });
         return pl;
@@ -541,6 +547,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           clearInterval(statusPoll);
           return;
         }
+        if (c.hostSolverBenchMs === null) return;
         c.getStatus()
           .then((st) => {
             if (st.total > 0) {
@@ -560,6 +567,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           clearInterval(livePoll);
           return;
         }
+        if (c.hostSolverBenchMs === null) return;
         c.getLiveMap()
           .then((lm) => {
             if (!capturing || lm.map === null) return;
@@ -588,7 +596,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           }
           const samples = rec.flush();
           localImu.push(...samples);
-          c.sendImuBatch(samples);
+          if (c.hostSolverBenchMs !== null) c.sendImuBatch(samples);
         }, 1000);
       }
 
@@ -698,6 +706,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         syncManualSliders(params.brightness ?? 1, servoedExposure);
       }, 2000);
     } catch (e) {
+      if (driverActive()) {
+        setDriverCaptureError(e instanceof Error ? e.message : String(e));
+        console.error("capture startup failed", e);
+      }
       manualHooks = null;
       capturing = false;
       stopTimer();
@@ -955,6 +967,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (driverActive()) {
         registerDriverCapture({
           stats: () => driverDecodeStats,
+          cancel,
           finish: () =>
             new Promise<DriverCaptureResult>((resolve, reject) => {
               driverSolveResolve = resolve;

@@ -38,8 +38,10 @@ Notes:
 
 Auto-discovered from `/dev/serial/by-id/*`; the DUT name is `c6-<serial-suffix>`,
 sku `esp32c6`. Each advertises Improv-over-BLE as `Led Widget <suffix>`; the BLE
-MAC is the board's base MAC + 2 and is read from serial at flash time (not static
-config). An FX2-tapped C6 additionally advertises `logic-analyzer-led-strip`.
+MAC is read from serial at flash time (not static config). The netstack firmware
+derives a stable static-random address from the six-byte factory BT address,
+setting the first displayed octet's top two bits. An FX2-tapped C6 additionally advertises
+`logic-analyzer-led-strip`.
 
 | Rig   | DUT         | FX2 tap (channel)   |
 | ----- | ----------- | ------------------- |

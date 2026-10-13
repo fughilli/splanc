@@ -56,12 +56,26 @@ class AppDriver:
     async def _on_conn(self, ws: websockets.WebSocketServerProtocol) -> None:
         # One app at a time — the station drives a single phone.
         self._ws = ws
+        self._ready.clear()
+        self._events = asyncio.Queue()
         self._connected.set()
         try:
             async for raw in ws:
-                self._dispatch_incoming(json.loads(raw))
+                if self._ws is ws:
+                    self._dispatch_incoming(json.loads(raw))
         except websockets.ConnectionClosed:
             pass
+        finally:
+            if self._ws is ws:
+                self._ws = None
+                self._connected.clear()
+                self._ready.clear()
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(
+                            DriverError("app driver disconnected while awaiting a reply")
+                        )
+                self._pending.clear()
 
     def _dispatch_incoming(self, msg: dict[str, Any]) -> None:
         kind = msg.get("kind")
@@ -73,6 +87,8 @@ class AppDriver:
                 else:
                     fut.set_exception(DriverError(str(msg.get("error"))))
         elif kind == "event":
+            if msg.get("event") == "error":
+                print(f"[driver] app error: {msg}", flush=True)
             if msg.get("event") == "ready":
                 self._ready.set()
             self._events.put_nowait(msg)
@@ -81,8 +97,14 @@ class AppDriver:
         await asyncio.wait_for(self._connected.wait(), timeout)
         await asyncio.wait_for(self._ready.wait(), timeout)
 
+    def prepare_reload(self) -> None:
+        """Require a new page's ready event even while the old socket is still open."""
+        self._ready.clear()
+        self._events = asyncio.Queue()
+
     # --- driving ---------------------------------------------------------
     async def _rpc(self, kind: str, method: str, params: dict[str, Any], timeout: float) -> Any:
+        await self.wait_ready(timeout=timeout)
         if self._ws is None:
             raise DriverError("app not connected")
         mid = f"m{next(self._ids)}"
@@ -91,7 +113,12 @@ class AppDriver:
         await self._ws.send(
             json.dumps({"id": mid, "kind": kind, "method": method, "params": params})
         )
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError as exc:
+            raise DriverError(f"app driver {kind} {method} timed out after {timeout:g}s") from exc
+        finally:
+            self._pending.pop(mid, None)
 
     async def command(self, method: str, timeout: float = 60.0, **params: Any) -> Any:
         return await self._rpc("command", method, params, timeout)

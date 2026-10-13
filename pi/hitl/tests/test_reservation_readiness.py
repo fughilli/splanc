@@ -11,7 +11,7 @@ spreads load under contention, so a flaky/contended bench doesn't erode trust:
     instead of the heartbeat pinning it).
   * ``Reservation._pick_server`` is contention-aware: among the pool it prefers a
     host with a FREE matching unit, else one with a matching BUSY unit (to queue
-    on) over a blind fallback, and errors only when nothing is reachable — so a
+    on), and fails immediately when no reachable unit can satisfy the request — so a
     burst of CI reservations fans out instead of piling onto one rig.
 
 Pure logic: the daemon HTTP + the readiness socket probe are stubbed, no network,
@@ -104,7 +104,7 @@ def test_await_active_releases_the_slot_if_it_never_activates(monkeypatch):
     r = _mk_res()
     with pytest.raises(ReserveError) as e:
         r._await_active(timeout=0.0)  # deadline already passed -> straight to release+raise
-    assert "did not activate" in str(e.value)
+    assert "reservation res-1 did not activate" in str(e.value)
     assert any(u.endswith("/reservation/res-1/release") for u in posts)
 
 
@@ -174,3 +174,71 @@ def test_pick_errors_when_no_host_is_reachable(monkeypatch):
     with pytest.raises(ReserveError) as e:
         r._pick_server()
     assert "no reachable host" in str(e.value)
+
+
+def test_pick_rejects_c6_analyzer_request_when_only_pi_has_tap(monkeypatch):
+    _set_pool(monkeypatch, "h1")
+    monkeypatch.setattr(
+        hitl_client,
+        "_get",
+        _pool_get(
+            {
+                "http://h1:8087": {
+                    "units": [
+                        _unit(caps=CAPS),
+                        _unit(
+                            type_="led-mapper-pi", caps=["logic-analyzer-led-strip"], pin_only=True
+                        ),
+                    ]
+                }
+            }
+        ),
+    )
+    with pytest.raises(ReserveError, match="logic-analyzer-led-strip"):
+        Reservation(sku="esp32c6", require="analyzer")._pick_server()
+
+
+def test_explicit_server_cannot_queue_an_impossible_request(monkeypatch):
+    monkeypatch.setattr(hitl_client, "_get", _pool_get({"http://h1:8087": {"units": [_unit()]}}))
+    with pytest.raises(ReserveError, match="no reachable host with a matching unit"):
+        Reservation(server="http://h1:8087", require="analyzer")._pick_server()
+
+
+def test_pick_honors_device_pin_even_when_another_host_has_more_free_units(monkeypatch):
+    _set_pool(monkeypatch, "h1 h2")
+    pinned = {**_unit(pin_only=True), "name": "my-device"}
+    monkeypatch.setattr(
+        hitl_client,
+        "_get",
+        _pool_get(
+            {
+                "http://h1:8087": {"units": [_unit(), _unit()]},
+                "http://h2:8087": {"units": [pinned]},
+            }
+        ),
+    )
+    assert Reservation(device="my-device")._pick_server() == "http://h2:8087"
+
+
+def test_serial_noise_does_not_destroy_captured_diagnostics(monkeypatch):
+    import subprocess
+    import sys
+
+    real_run = subprocess.run
+    monkeypatch.setattr(
+        hitl_client.subprocess,
+        "run",
+        lambda argv, **kw: real_run(
+            [
+                sys.executable,
+                "-c",
+                "import sys;sys.stdout.buffer.write(b'noise\\xc0\\n[ble] advertising')",
+            ],
+            **kw
+        ),
+    )
+    r = _mk_res()
+    r.host, r.port, r.user, r._keyfile = "h1", 2222, "agent", "unused"
+    result = r.ssh("hitl-monitor", capture=True)
+    assert "[ble] advertising" in result.stdout
+    assert "\ufffd" in result.stdout

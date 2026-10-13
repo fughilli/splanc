@@ -280,6 +280,8 @@ cc_binary(
         # onboarding costs no heap churn and the TLS server survives many reconnects.
         "improv_ble.h",
         "improv_ble_netstack.cpp",
+        "ble_address.h",
+        "dhcp_reply.h",
         "led_config.h",
         "main.cpp",
         "netstack_transport.cpp",
@@ -704,5 +706,33 @@ rr_rust_test(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         "@rules_requirements//rust:rr",
+    ],
+)
+
+cc_library(
+    name = "ble_address",
+    hdrs = ["ble_address.h"],
+)
+
+cc_library(
+    name = "dhcp_reply",
+    hdrs = ["dhcp_reply.h"],
+)
+
+cc_test(
+    name = "dhcp_reply_test",
+    srcs = ["dhcp_reply_test.cc"],
+    deps = [
+        ":dhcp_reply",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+cc_test(
+    name = "ble_address_test",
+    srcs = ["ble_address_test.cc"],
+    deps = [
+        ":ble_address",
+        "@rules_requirements//cc:case",
     ],
 )

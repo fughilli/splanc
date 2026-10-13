@@ -21,6 +21,11 @@
       "with": { "host": "${device_host}" },
       "timeout": 90
     },
+    {
+      "description": "resume connection after certificate approval releases the device TLS slot",
+      "do": "connect",
+      "with": { "wssUrl": "${device_ws}", "label": "device" }
+    },
     { "await": "connected", "timeout": 60 },
     {
       "description": "the device's welcome must carry a hardware MAC",
