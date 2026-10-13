@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1311,
+    "test_cases": 1321,
     "gaps": 34
   },
   "levels": [
@@ -6296,7 +6296,19 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_explicit_server_cannot_queue_an_impossible_request",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_reservation_readiness::test_pick_errors_when_no_host_is_reachable",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_pick_honors_device_pin_even_when_another_host_has_more_free_units",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -6309,6 +6321,18 @@
         },
         {
           "name": "pi.hitl.tests.test_reservation_readiness::test_pick_queues_on_a_matching_busy_host_over_a_blind_fallback",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_pick_rejects_c6_analyzer_request_when_only_pi_has_tap",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_serial_noise_does_not_destroy_captured_diagnostics",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
