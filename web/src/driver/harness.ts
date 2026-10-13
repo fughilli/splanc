@@ -78,6 +78,10 @@ async function handle(msg: Incoming): Promise<unknown> {
       });
       return { connecting: true };
 
+    case "disconnect":
+      appState.disconnect();
+      return { disconnected: true };
+
     case "provisionBle": {
       const dev = await requestImprovDevice();
       const urls = await provisionViaBle(

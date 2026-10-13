@@ -4,8 +4,10 @@ chooser-row disambiguation, exercised on captured uiautomator XML, no hardware."
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from android_ble_provision import (
+    AndroidBleProvisioner,
     find_chooser_row,
     find_first_run_button,
     find_network_row,
@@ -13,6 +15,40 @@ from android_ble_provision import (
     parse_nodes,
     parse_wifi_ssid,
 )
+
+
+class CertificateTests(unittest.TestCase):
+    def _provisioner(self, advances):
+        warning = parse_nodes(
+            '<node text="Proceed to 192.168.60.1 (unsafe)" bounds="[10,10][200,80]" />'
+        )
+        accepted = parse_nodes('<node text="Certificate accepted ✓" bounds="[10,10][200,80]" />')
+
+        class Fake(AndroidBleProvisioner):
+            def __init__(self):
+                self.taps = 0
+
+            def _shell(self, *args, **kwargs):
+                return ""
+
+            def dump(self):
+                return accepted if advances and self.taps else warning
+
+            def tap_node(self, node):
+                self.taps += 1
+
+        return Fake()
+
+    def test_tapping_proceed_without_leaving_warning_is_not_success(self):
+        with patch("android_ble_provision.time.sleep"):
+            self.assertFalse(self._provisioner(False).accept_cert("192.168.60.1"))
+
+    def test_acceptance_requires_observed_landing_page(self):
+        phone = self._provisioner(True)
+        with patch("android_ble_provision.time.sleep"):
+            self.assertTrue(phone.accept_cert("192.168.60.1"))
+        self.assertEqual(phone.taps, 1)
+
 
 # A trimmed real dump of the app's in-app BLE form (SSID + password + scan button).
 FORM_XML = """<hierarchy rotation="0">

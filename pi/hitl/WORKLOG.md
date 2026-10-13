@@ -33,6 +33,17 @@ tests pass, including a regression with the old socket held open throughout the
 reload. An isolated Android-only diagnostic run avoids waiting behind firmware
 benchmark recovery when validating this handoff.
 
+Run `38333578911` confirmed the driver now survives the handoff, but the device
+connection still failed. It also caught a false-positive trust result: the helper
+returned success even while Chrome still displayed its certificate interstitial.
+The production trust UI disconnects the device first to release its single TLS
+slot; the native harness had skipped that step and left background retries
+competing with the certificate page. The harness now calls the production
+disconnect method and gives the slot the same 800ms settle window before native
+approval. Approval is successful only after the certificate landing page is
+observed, not merely after a tap. Thirty-seven phone/driver/provisioner tests
+pass, including rejection of a tap that leaves the warning on screen.
+
 ## 2026-10-12 — Android journeys blocked by missing phone PIN
 
 Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.
