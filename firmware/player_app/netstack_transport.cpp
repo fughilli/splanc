@@ -847,6 +847,12 @@ static int bio_send(void *, const unsigned char *buf, size_t len) {
 static int bio_recv(void *, unsigned char *buf, size_t len) {
   uint32_t n = ns_tcp_recv(buf, (uint32_t)len);
   if (n == 0) return MBEDTLS_ERR_SSL_WANT_READ;
+  // Re-open the receive window during TLS too, before ws_pump exists. Otherwise
+  // a large ClientHello/Finished can wait on a zero window until the handshake
+  // watchdog reclaims a live connection.
+  uint8_t ack[80];
+  uint32_t an = ns_tcp_window_ack(ack, sizeof ack);
+  if (an > 0) send_ip(ack, an);
   if (g_bio_rx++ < 24) Serial.printf("  bio_recv want=%u got=%u\n", (unsigned)len, n);
   return (int)n;
 }
