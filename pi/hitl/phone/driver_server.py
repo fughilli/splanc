@@ -70,6 +70,12 @@ class AppDriver:
                 self._ws = None
                 self._connected.clear()
                 self._ready.clear()
+                for fut in self._pending.values():
+                    if not fut.done():
+                        fut.set_exception(
+                            DriverError("app driver disconnected while awaiting a reply")
+                        )
+                self._pending.clear()
 
     def _dispatch_incoming(self, msg: dict[str, Any]) -> None:
         kind = msg.get("kind")
@@ -81,6 +87,8 @@ class AppDriver:
                 else:
                     fut.set_exception(DriverError(str(msg.get("error"))))
         elif kind == "event":
+            if msg.get("event") == "error":
+                print(f"[driver] app error: {msg}", flush=True)
             if msg.get("event") == "ready":
                 self._ready.set()
             self._events.put_nowait(msg)
@@ -105,7 +113,12 @@ class AppDriver:
         await self._ws.send(
             json.dumps({"id": mid, "kind": kind, "method": method, "params": params})
         )
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except asyncio.TimeoutError as exc:
+            raise DriverError(f"app driver {kind} {method} timed out after {timeout:g}s") from exc
+        finally:
+            self._pending.pop(mid, None)
 
     async def command(self, method: str, timeout: float = 60.0, **params: Any) -> Any:
         return await self._rpc("command", method, params, timeout)
