@@ -430,7 +430,7 @@ class AndroidBleProvisioner:
         )
         time.sleep(8)
         # Already trusted? the landing page says "Certificate accepted".
-        if any("accepted" in n.text.lower() for n in self.dump()):
+        if any(n.text.strip().lower().startswith("certificate accepted") for n in self.dump()):
             return True
 
         # Chrome's interstitial renders "Advanced" then a "Proceed to <host> (unsafe)"
@@ -438,7 +438,14 @@ class AndroidBleProvisioner:
         # WebView), so match by TEXT and tap the node center. Expand Advanced only if the
         # Proceed link isn't already showing (the interstitial may open expanded).
         def by_text(prefix: str):
-            return next((n for n in self.dump() if n.text.strip().lower().startswith(prefix)), None)
+            return next(
+                (
+                    n
+                    for n in self.dump()
+                    if n.area > 0 and n.text.strip().lower().startswith(prefix)
+                ),
+                None,
+            )
 
         for _ in range(5):
             if by_text("proceed"):
@@ -452,8 +459,17 @@ class AndroidBleProvisioner:
             print("[cert] no 'Proceed' link on the interstitial", file=sys.stderr)
             return False
         self.tap_node(proc)
-        time.sleep(5)
-        return True
+        # A tap is not proof of trust: a stale/zero-sized node can leave Chrome
+        # on the interstitial, and a contended device can refuse the page load.
+        for _ in range(12):
+            time.sleep(1)
+            if any(n.text.strip().lower().startswith("certificate accepted") for n in self.dump()):
+                return True
+            proc = by_text("proceed")
+            if proc:
+                self.tap_node(proc)
+        print("[cert] certificate landing page did not confirm acceptance", file=sys.stderr)
+        return False
 
     def dismiss_dialogs(self) -> None:
         """Cancel any Bluetooth chooser / dialog left open by a prior run — it's a modal

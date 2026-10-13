@@ -50,6 +50,10 @@ async def _do(drv: AppDriver, target: Any, cmd: str, timeout: float, params: dic
         if meth is not None:
             reloads = cmd == "trustCert" and getattr(target, "reloads_after_trust", False)
             if reloads:
+                # Match the production trust UI: release the single C6 TLS slot
+                # before the certificate page connects, and stop background retries.
+                await drv.command("disconnect", timeout=timeout)
+                await asyncio.sleep(0.8)
                 drv.prepare_reload()
             result = await asyncio.to_thread(meth, **params)  # sync adb work off the loop
             if reloads:
