@@ -40,6 +40,11 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      suite:
+        description: 'Hardware suite to run'
+        type: choice
+        options: [full, android]
+        default: full
       server:
         description: 'Target a specific rig base URL (else pick a free one from HITL_SERVERS)'
         required: false
@@ -73,6 +78,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   hitl_tests:
+    name: ${{ github.event.inputs.suite == 'android' && 'android_journeys' || 'hitl_tests' }}
     # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
     # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
     # manual runs) only fire on this repo, so they're always allowed; PRs are gated
@@ -101,6 +107,7 @@ jobs:
       HITL_ANDROID_SERVER: ${{ vars.HITL_ANDROID_SERVER || 'http://amd-rig:8088' }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
+      HITL_SUITE: ${{ github.event.inputs.suite || 'full' }}
       # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
       # in the HITL environment = the push step no-ops; see
       # pi/hitl/observability/README.md ("Reporting from GitHub").
@@ -300,7 +307,11 @@ jobs:
           # _pick_server never routes a netstack reservation there (confirmed live:
           # curl amd-rig:8087/status -> c6-sdr pin_only=true).
           echo "::group::HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
+          if [ "$HITL_SUITE" != "android" ]; then
+            HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
+          else
+            echo "Manual Android-only run: pool firmware tests omitted."
+          fi
           echo "::endgroup::"
 
           # The Android phone-HITL journeys (amd-rig's `android-phone` unit, the :8088
