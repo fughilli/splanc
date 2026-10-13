@@ -85,3 +85,12 @@ export function registerDriverCapture(c: DriverCaptureController | null): void {
 export function driverCapture(): DriverCaptureController | null {
   return captureController;
 }
+
+/** Preserve startup failures after the capture screen unmounts. */
+let captureError: string | null = null;
+export function setDriverCaptureError(error: string | null): void {
+  captureError = error;
+}
+export function driverCaptureError(): string | null {
+  return captureError;
+}

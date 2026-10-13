@@ -22,7 +22,7 @@ import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
 import type { Router } from "../ui/app/router";
-import { driverCapture, setDriverActive } from "./guard";
+import { driverCapture, driverCaptureError, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
 
@@ -138,6 +138,8 @@ async function handle(msg: Incoming): Promise<unknown> {
       const minIds = Number(p.minIds ?? 0);
       const deadline = Date.now() + Number(p.timeoutMs ?? 30000);
       for (;;) {
+        const error = driverCaptureError();
+        if (error) throw new Error(`capture startup failed: ${error}`);
         const ctrl = driverCapture();
         const st = ctrl?.stats() ?? { ids: 0, total: 0, tracks: 0, observations: 0 };
         if (st.ids >= minIds && st.total > 0) {
