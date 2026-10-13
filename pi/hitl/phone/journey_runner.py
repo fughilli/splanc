@@ -159,6 +159,7 @@ async def run_journey(
             out.extend(await run_journey(drv, sub, registry, ctx, target))
             continue
         if "do" in step:
+            print(f"[journey] {journey.get('name', '?')} step {i + 1}: {step['do']}", flush=True)
             params = _interp(step.get("with") or {}, ctx)
             res = await _do(drv, target, step["do"], step.get("timeout", 60.0), params)
             _check(res, step.get("expect"))

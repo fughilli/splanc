@@ -7,15 +7,29 @@ rig's networking — there's live runtime state that isn't fully declarative yet
 
 AP-side packet capture on amd-rig confirmed two different source MACs answering
 for one DUT IP. The intended board served TLS while the other sent valid TCP
-resets into its connections. The neighboring emulator C6 still ran the old
-firmware that accepted another client's broadcast DHCP ACK. Updating only the
-reserved phone C6 therefore did not eliminate the original DHCP bug on the bench.
+resets into its connections. A neighboring SDR C6 still ran the old firmware that accepted another client's
+broadcast DHCP ACK. Updating the phone and emulator C6s alone did not eliminate
+the original DHCP bug: the additional radio at 02:0c:6a:95:10:f2 kept adopting
+each new test lease and sending TCP resets.
 
-Flashed both `android-phone` and `android-emu` under their own reservations with
+First flashed both `android-phone` and `android-emu` under their own reservations with
 the corrected DHCP validator. Provisioned both onto `amd-rig-ap`: they retained
 distinct addresses (192.168.60.50 and .88). Eight consecutive full certificate-page
 HTTPS responses then passed in 0.77–0.83 seconds, with exactly one responding MAC
-for the phone DUT's IP. Experimental DMA, window-scaling, and AES changes were
+for the phone DUT's IP, but a later broadcast made the remaining SDR neighbor
+collide again. Subsequently flashed both physical SDR boards under an SDR lease,
+verifying BASE MACs 58:E6:C5:11:FC:B0 and 58:E6:C5:11:FC:D8 before writing.
+The rogue station stopped transmitting. The two corrected SDR boards acquired
+distinct leases (.100 and .93) while Android CI used the same AP.
+
+The deployed SDR container is still privileged: it exposes host tty numbers,
+so its default /dev/ttyACM0 addresses the phone board rather than its reserved
+SDR board. Stable by-id paths are not mounted there. For this update, verified
+host ttyACM2/ttyACM4 identities explicitly; never assume the default port is
+the reserved DUT in this old deployment. The repository already defaults
+reservation containers to unprivileged device isolation.
+
+Experimental DMA, window-scaling, and AES changes were
 removed; the firmware fix remains DHCP reply identity validation.
 
 Use `//pi/hitl:hitl_sdr.ssh` for host diagnostics, with the existing deploy-key
@@ -30,10 +44,15 @@ before starting the solve journey. Capture startup errors now reach the driver
 instead of becoming a misleading 0/30 decode timeout. Serial diagnostics are
 bounded and use Python because the phone environment has no `sed`.
 
-Local validation: 41 phone harness tests, TypeScript checking, and the C6 firmware
+Local validation: 43 phone harness tests, TypeScript checking, and the C6 firmware
 build pass. Full CI run 38345324673 passed the firmware suite before its Android
-phase encountered the mixed-firmware neighbor. Run 38356282724 validates the
-Android journeys after updating both bench boards.
+phase encountered the mixed-firmware neighbor. Run 38356282724 still failed
+with the remaining SDR neighbor active. Run 38359525629 validates the Android
+journeys after updating all four attached C6 boards: connection and configuration
+passed on both attempts, but mapping capture timed out. Eight full HTTPS
+responses from the two SDR boards passed with exactly one responding MAC for
+each IP. Driver diagnostics now identify the timed-out command and fail pending
+RPCs immediately on disconnect instead of waiting for an unlabelled timeout.
 
 ## 2026-10-12 — restore the Android app after certificate approval
 

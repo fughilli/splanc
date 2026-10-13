@@ -59,6 +59,31 @@ class ConnectFlowTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReloadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disconnect_fails_pending_rpc_without_waiting_for_timeout(self):
+        server = AppDriver.serve(0, host="127.0.0.1")
+        async with server as driver:
+            port = server._server.sockets[0].getsockname()[1]
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as app:
+                await app.send(json.dumps({"kind": "event", "event": "ready"}))
+                await driver.wait_ready(timeout=1)
+                command = asyncio.create_task(driver.command("awaitDecode", timeout=10))
+                await app.recv()
+                await app.close()
+                with self.assertRaisesRegex(DriverError, "driver disconnected"):
+                    await asyncio.wait_for(command, timeout=1)
+                self.assertEqual(driver._pending, {})
+
+    async def test_rpc_timeout_names_command_and_cleans_pending_reply(self):
+        server = AppDriver.serve(0, host="127.0.0.1")
+        async with server as driver:
+            port = server._server.sockets[0].getsockname()[1]
+            async with websockets.connect(f"ws://127.0.0.1:{port}") as app:
+                await app.send(json.dumps({"kind": "event", "event": "ready"}))
+                await driver.wait_ready(timeout=1)
+                with self.assertRaisesRegex(DriverError, "command openCapture timed out"):
+                    await driver.command("openCapture", timeout=0.03)
+                self.assertEqual(driver._pending, {})
+
     async def test_reload_holds_commands_while_old_page_socket_is_still_open(self):
         server = AppDriver.serve(0, host="127.0.0.1")
         async with server as driver:
