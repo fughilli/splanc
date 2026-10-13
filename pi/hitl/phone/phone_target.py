@@ -281,6 +281,10 @@ class AndroidDeviceTarget(PhoneTarget):
     async def launch(self, ports: StationPorts) -> None:
         url = self.app_url(ports)
         self._app_url = url
+        try:
+            self._close_previous_driver_tabs()
+        except Exception as e:  # noqa: BLE001 — Chrome may not be running yet
+            print(f"[chrome] previous-run cleanup unavailable: {e}", file=sys.stderr)
         subprocess.run(_adb_prefix() + self._launch_argv(url), check=True)
         # The debloated bench phone shows Chrome's welcome / ToS / sign-in / sync /
         # notification walls on the first run; the launched tab sits BEHIND them, so
@@ -348,6 +352,38 @@ class AndroidDeviceTarget(PhoneTarget):
         if not ok:
             raise RuntimeError(f"Chrome did not accept the device certificate for {host}")
         return {"trusted": bool(ok), "host": host}
+
+    def _close_previous_driver_tabs(self) -> None:
+        """Close bench-owned app tabs before starting a fresh device session.
+
+        Old driven pages keep retrying their last WSS IP, competing with later
+        runs when DHCP reuses that address. Preserve all ordinary browser tabs.
+        """
+        proc = subprocess.run(
+            _adb_prefix() + ["forward", "tcp:0", "localabstract:chrome_devtools_remote"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        port = int(proc.stdout.strip())
+        base = f"http://127.0.0.1:{port}"
+        closed = 0
+        try:
+            with urllib.request.urlopen(base + "/json/list", timeout=10) as response:
+                tabs = json.load(response)
+            for tab in tabs:
+                url = urllib.parse.urlsplit(tab.get("url", ""))
+                if url.hostname not in ("127.0.0.1", "localhost"):
+                    continue
+                if not urllib.parse.parse_qs(url.query).get("driver"):
+                    continue
+                target_id = urllib.parse.quote(str(tab["id"]), safe="")
+                with urllib.request.urlopen(base + "/json/close/" + target_id, timeout=10):
+                    closed += 1
+            print(f"[chrome] closed {closed} previous HITL app tabs", flush=True)
+        finally:
+            subprocess.run(_adb_prefix() + ["forward", "--remove", f"tcp:{port}"], check=False)
 
     def _foreground_app(self) -> None:
         """Return to the original Chrome tab and reconnect its driver.
