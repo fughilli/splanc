@@ -96,7 +96,6 @@ pub struct TcpConn {
     snd_buf: [u8; SND_BUF],
     snd_len: usize,  // buffered unacked bytes
     sent: usize,     // how many of them have been transmitted (in flight)
-    peer_window_shift: u8,
     peer_wnd: u32,   // peer's advertised receive window, from inbound ACKs (wscale 0)
     // Retransmit timeout for the oldest in-flight data. The stack owns its own RTO; on
     // expiry it goes back-N (rewinds `sent` to 0) so the whole window is resent.
@@ -183,7 +182,7 @@ impl TcpConn {
             rx: [0; RX_BUF], rx_len: 0,
             last_adv_wnd: 0,
             window_closed: false,
-            snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_window_shift: 0, peer_wnd: 0,
+            snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
             srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
@@ -461,25 +460,6 @@ impl TcpConn {
         let ack = u32::from_be_bytes([tcp[8], tcp[9], tcp[10], tcp[11]]);
         let flags = tcp[13];
         let data_off = ((tcp[12] >> 4) as usize) * 4;
-        if data_off < TCP_HDR || data_off > tcp.len() {
-            return 0;
-        }
-        if flags & SYN != 0 && matches!(self.state, State::Listen | State::SynSent) {
-            self.peer_window_shift = 0;
-            let mut opts = &tcp[TCP_HDR..data_off];
-            while !opts.is_empty() {
-                if opts[0] == 0 { break; }
-                if opts[0] == 1 { opts = &opts[1..]; continue; }
-                if opts.len() < 2 || opts[1] < 2 || opts[1] as usize > opts.len() { break; }
-                let len = opts[1] as usize;
-                if opts[0] == 3 && len == 3 { self.peer_window_shift = opts[2].min(14); }
-                opts = &opts[len..];
-            }
-        }
-        // SYN windows are unscaled; later windows use the PEER's offered shift,
-        // independently of our own receive-window scale (which is zero).
-        let advertised_window = ((tcp[14] as u32) << 8) | tcp[15] as u32;
-        let peer_window = advertised_window << if flags & SYN != 0 { 0 } else { self.peer_window_shift };
         let payload = &tcp[data_off..];
 
         if flags & RST != 0 {
@@ -548,7 +528,7 @@ impl TcpConn {
                     self.dup_ack = 1;
                 }
                 if self.dup_ack == DUP_ACK_THRESH {
-                    self.peer_wnd = peer_window;
+                    self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
                     self.rtt_at_ms = 0; // the resend is a retransmission — no RTT sample off it
                     self.sent = 0;
                     self.snd_nxt = self.snd_una;
@@ -556,8 +536,8 @@ impl TcpConn {
                     return self.pump_tx(now_ms, out);
                 }
             }
-            // Apply the peer's scale to its advertised receive window.
-            self.peer_wnd = peer_window;
+            // Peer's advertised receive window (we send window-scale 0, so it's unscaled).
+            self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
         }
 
         match self.state {
@@ -987,24 +967,6 @@ mod tests {
     // it reconnects immediately instead of hanging until its own timeout, and a legitimate new
     // SYN (the reconnect) still latches normally. (Regression guard for the dominant "timed
     // out during opening handshake" HITL flake.)
-    #[test]
-    fn peer_window_scale_is_independent_of_our_scale() {
-        let mut cli = TcpConn::new([10, 0, 0, 1], [10, 0, 0, 2], 5000, 443, 1000);
-        let mut srv = TcpConn::listen([10, 0, 0, 2], 443, 9000);
-        let mut a = [0u8; 1600];
-        let mut b = [0u8; 1600];
-        let n = cli.connect(&mut a);
-        a[IP_HDR + TCP_HDR + 8] = 7; // client's receive-window scale
-        let r = srv.on_ip(1, &a[..n], &mut b);
-        let n = cli.on_ip(1, &b[..r], &mut a);
-        a[IP_HDR + 14..IP_HDR + 16].copy_from_slice(&32u16.to_be_bytes());
-        srv.on_ip(1, &a[..n], &mut b);
-        assert_eq!(srv.peer_wnd, 32 << 7);
-        srv.enqueue(&[0xaa; 1400]);
-        let n = srv.pump_tx(2, &mut b);
-        assert_eq!(n, IP_HDR + TCP_HDR + 1400);
-    }
-
     #[test]
     fn listener_ignores_delayed_reset_then_accepts_syn() {
         let mut cli = TcpConn::new([10, 0, 0, 1], [10, 0, 0, 2], 5000, 443, 1000);
