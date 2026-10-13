@@ -400,39 +400,19 @@ pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
-extern "C" {
-    fn esp_timer_get_time() -> i64;
-}
-
-// Never recycle a buffer while DMA may still be reading it. In particular the
-// TLS certificate flight submits several records back-to-back on the same queue.
-unsafe fn finish_tx(idx: usize, queue: usize) {
-    let started = esp_timer_get_time();
-    while TxRing::<4>::hardware_busy(queue) {
-        if esp_timer_get_time() - started >= 20_000 {
-            return; // retain ownership; a later call reaps it when hardware finishes
-        }
-        core::hint::spin_loop();
-    }
-    TX.on_complete(idx);
-}
-
 /// Transmit an 802.11 `frame` on access category `queue` via our TX recipe
 /// (load_frame -> set_rate -> arm). Returns 1 on submit, 0 if the pool is full.
 #[no_mangle]
 pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
     unsafe {
         let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
-        TX.reap_completed();
-        if TxRing::<4>::hardware_busy(queue as usize) {
-            return 0;
-        }
         stamp_tx_seq(f);
         match TX.load_frame(f, queue as usize) {
             Ok(idx) => {
                 TX.set_rate(idx);
                 TX.arm(idx);
-                finish_tx(idx, queue as usize);
+                // A single-frame pool churns fast; free the slot for reuse next call.
+                TX.on_complete(idx);
                 1
             }
             Err(_) => 0,
@@ -447,17 +427,13 @@ pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
 pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32 {
     unsafe {
         let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
-        TX.reap_completed();
-        if TxRing::<4>::hardware_busy(queue as usize) {
-            return 0;
-        }
         stamp_tx_seq(f);
         match TX.load_frame(f, queue as usize) {
             Ok(idx) => {
                 TX.mark_secure(idx);
                 TX.set_rate(idx);
                 TX.arm(idx);
-                finish_tx(idx, queue as usize);
+                TX.on_complete(idx);
                 1
             }
             Err(_) => 0,
