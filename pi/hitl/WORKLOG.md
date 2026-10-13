@@ -23,6 +23,16 @@ Eighteen target/driver tests pass, including original-tab selection among old
 runs, missing-tab cleanup, and a real loopback WebSocket disconnect/reload with
 commands held until the refreshed app is ready. Hardware CI validation follows.
 
+The first hardware run with tab restoration (`38329881654`) passed the firmware
+suite but exposed a reload handoff race: a query could reach the still-open old
+page before the refreshed page reported ready, then time out when that old page
+went away. Trust handling now clears readiness before triggering the reload and
+waits for a fresh ready event afterward. New connections discard old-page events
+and superseded sockets cannot dispatch replies into the new session. Nineteen
+tests pass, including a regression with the old socket held open throughout the
+reload. An isolated Android-only diagnostic run avoids waiting behind firmware
+benchmark recovery when validating this handoff.
+
 ## 2026-10-12 — Android journeys blocked by missing phone PIN
 
 Run `38221983497` passed the firmware lanes but failed `android_journeys` twice.

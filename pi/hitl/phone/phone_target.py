@@ -183,6 +183,7 @@ class AndroidDeviceTarget(PhoneTarget):
 
     name = "android-phone"
     ble_mode = "real"
+    reloads_after_trust = True
 
     def __init__(self) -> None:
         self._reversed: list[int] = []
