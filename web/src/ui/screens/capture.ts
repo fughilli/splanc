@@ -438,7 +438,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
         pl.onDetections((records: DetectionRecord[]) => {
-          c.sendDetections(records);
+          // Embedded players discard capture telemetry and have no host solver.
+          // Keep their observations local rather than filling the TLS receive
+          // buffers with data that only the phone's solver can use.
+          if (c.hostSolverBenchMs !== null) c.sendDetections(records);
           localDetections.push(...records);
         });
         return pl;
@@ -544,6 +547,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           clearInterval(statusPoll);
           return;
         }
+        if (c.hostSolverBenchMs === null) return;
         c.getStatus()
           .then((st) => {
             if (st.total > 0) {
@@ -563,6 +567,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           clearInterval(livePoll);
           return;
         }
+        if (c.hostSolverBenchMs === null) return;
         c.getLiveMap()
           .then((lm) => {
             if (!capturing || lm.map === null) return;
@@ -591,7 +596,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           }
           const samples = rec.flush();
           localImu.push(...samples);
-          c.sendImuBatch(samples);
+          if (c.hostSolverBenchMs !== null) c.sendImuBatch(samples);
         }, 1000);
       }
 

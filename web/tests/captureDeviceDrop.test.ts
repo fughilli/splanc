@@ -361,7 +361,7 @@ test("a long walk is retained whole: every one of thousands of detections reache
   const run = await captureWithDeviceDrop({ phoneBenchMs: 50, hostBenchMs: null, frames: 4500 });
 
   assert.equal(ScriptedDecoder.decoded.length, 9000);
-  assert.equal(run.device.received.length, 4500, "the device saw only the first half");
+  assert.equal(run.device.received.length, 0, "a player without a host solver receives no observations");
   assert.equal(SolverWorkerStub.problems.length, 1);
   const solved = SolverWorkerStub.problems[0]!.detections;
   assert.equal(solved.length, 9000);
