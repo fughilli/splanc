@@ -171,6 +171,9 @@ function solvedFrom(problem: SolveProblem): OutputMap {
  * request fails the way a closed socket fails. */
 class DroppingDevice {
   up = true;
+  /** A wedged player: the socket stays open but stop_mapping is never answered
+   * (its receive path stalled). Everything else still works. */
+  silentStop = false;
   readonly isConnected = true;
   readonly welcome = { codeParams: CODE_PARAMS };
   readonly pendingBatchCount = 0;
@@ -207,9 +210,17 @@ class DroppingDevice {
     return this.gone("stopMapping");
   }
   stopMappingNoSolve(): Promise<never> {
+    if (this.silentStop) {
+      this.calls.push("stopMappingNoSolve");
+      return new Promise(() => undefined);
+    }
     return this.gone("stopMappingNoSolve");
   }
-  submitMap(): Promise<never> {
+  submitMap(): Promise<unknown> {
+    if (this.silentStop) {
+      this.calls.push("submitMap");
+      return Promise.resolve({ type: "result_ready", mapId: "pushed" });
+    }
     return this.gone("submitMap");
   }
 }
@@ -266,6 +277,8 @@ async function captureWithDeviceDrop(opts: {
   phoneBenchMs: number;
   hostBenchMs: number | null;
   frames?: number;
+  /** Keep the device up but never answer stop_mapping (instead of dropping it). */
+  silentStop?: boolean;
 }): Promise<Run> {
   const frames = opts.frames ?? 24;
   mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
@@ -276,6 +289,7 @@ async function captureWithDeviceDrop(opts: {
   SolverWorkerStub.problems = [];
   SolverWorkerStub.benchMs = opts.phoneBenchMs;
   const device = new DroppingDevice(opts.hostBenchMs);
+  device.silentStop = opts.silentStop ?? false;
   appState.client = device as unknown as typeof appState.client;
   const saved: CreateInput[] = [];
   const store = mapStore as unknown as Record<string, unknown>;
@@ -299,7 +313,7 @@ async function captureWithDeviceDrop(opts: {
 
     for (let i = 0; i < frames; i++) cam.emit(2000 + i * 33); // device still up
     const decodedWhileUp = ScriptedDecoder.decoded.length;
-    device.up = false; // TLS heap exhausted: the player's socket dies mid-walk
+    if (!device.silentStop) device.up = false; // TLS heap exhausted: the player's socket dies mid-walk
     for (let i = 0; i < frames; i++) cam.emit(2000 + (frames + i) * 33);
 
     fire(asFake(screen.el.querySelector(".capture-stop")), "click");
@@ -366,6 +380,20 @@ test("a long walk is retained whole: every one of thousands of detections reache
   const solved = SolverWorkerStub.problems[0]!.detections;
   assert.equal(solved.length, 9000);
   assert.deepEqual(solved, ScriptedDecoder.decoded);
+  assert.equal(run.saved.length, 1);
+  assert.deepEqual(run.navigations, ["/map/lib-1"]);
+});
+
+test("a player that never acknowledges stop does not hold the phone solve hostage [rr:PR-31]", async () => {
+  // Regression: "Stop & finish" awaited the device's mapping_stopped reply BEFORE
+  // starting the phone solve, with no bound. A player whose receive path stalled
+  // (socket still open) never answers, so the solve only ran once the socket
+  // finally died. The phone already holds every detection: it must solve now.
+  const run = await captureWithDeviceDrop({ phoneBenchMs: 50, hostBenchMs: null, silentStop: true });
+
+  assert.equal(run.device.calls[0], "stopMappingNoSolve", "the stop is still sent, first");
+  assert.equal(SolverWorkerStub.problems.length, 1, "the phone solved without the stop ack");
+  assert.deepEqual(SolverWorkerStub.problems[0]!.detections, ScriptedDecoder.decoded);
   assert.equal(run.saved.length, 1);
   assert.deepEqual(run.navigations, ["/map/lib-1"]);
 });

@@ -645,7 +645,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         }
         const report = monitor.report(performance.now(), detector.threshold, lastAmbient);
         if (report === null) return;
-        c.sendExposureReport(report);
+        // Embedded players drop exposure telemetry (no host-side servo), so like
+        // detections/IMU it only adds load to their receive path — keep it for
+        // host-capable devices.
+        if (c.hostSolverBenchMs !== null) c.sendExposureReport(report);
         if (!forcedThreshold) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
           nativeSource?.setDetectParams({ threshold: detector.threshold });
@@ -893,8 +896,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let pushedToDevice = false;
       if (solveOnPhone) {
         // Best-effort device bookkeeping only — tell it to stop and hand it the
-        // result if the socket is still up, but never fail the solve on it.
-        await c.stopMappingNoSolve().catch(() => undefined);
+        // result if the socket is still up, but never fail OR DELAY the solve on
+        // it. The stop goes out first (the transport is ordered, so the device
+        // sees it before the map upload), but its reply is NOT awaited: a player
+        // whose link has stalled never answers, and the solve used to sit behind
+        // that round trip until the socket finally died. The client bounds the
+        // wait itself and re-delivers an unacknowledged stop on reconnect, so
+        // the pattern still stops on the device.
+        void c.stopMappingNoSolve().catch((e: unknown) => {
+          nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
+        });
         nativeLog("[solve] phone solve starting");
         map = await solveOnPhoneNow();
         nativeLog(`[solve] phone solve done: ${map.leds.length} leds`);
