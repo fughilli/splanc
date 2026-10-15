@@ -97,7 +97,7 @@ pub fn max_parallax_deg(dirs: &[Vec3]) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// Frame grouping + segment filtering (vio_api.py)
+// Frame grouping (vio_api.py)
 // ---------------------------------------------------------------------------
 
 pub fn frames_from_records(
@@ -130,60 +130,6 @@ pub fn frames_from_records(
             }
         })
         .collect()
-}
-
-/// Two-stage dominant-segment filter (stub drop at `stub_gap_s`, coarse
-/// regroup at `gap_split_s`) — see vio_api.keep_dominant_segment.
-pub fn keep_dominant_segment(
-    frames: &[FrameObservations],
-    gap_split_s: f64,
-    stub_gap_s: f64,
-) -> (Vec<FrameObservations>, usize) {
-    if frames.len() < 2 {
-        return (frames.to_vec(), 0);
-    }
-    let total_obs: usize = frames.iter().map(|f| f.obs.len()).sum();
-
-    let split = |gap: f64| -> Vec<Vec<&FrameObservations>> {
-        let mut segs: Vec<Vec<&FrameObservations>> = vec![vec![&frames[0]]];
-        for w in frames.windows(2) {
-            if w[1].t - w[0].t > gap {
-                segs.push(Vec::new());
-            }
-            segs.last_mut().unwrap().push(&w[1]);
-        }
-        segs
-    };
-
-    let fine = split(stub_gap_s);
-    let min_obs = 10.max((0.02 * total_obs as f64) as usize);
-    let seg_obs = |seg: &[&FrameObservations]| seg.iter().map(|f| f.obs.len()).sum::<usize>();
-    let mut substantial: Vec<Vec<&FrameObservations>> = fine
-        .iter()
-        .filter(|seg| seg_obs(seg) >= min_obs && seg.len() >= 5)
-        .cloned()
-        .collect();
-    if substantial.is_empty() {
-        let best = fine
-            .iter()
-            .max_by_key(|seg| seg_obs(seg))
-            .cloned()
-            .unwrap_or_default();
-        substantial = vec![best];
-    }
-
-    let mut groups: Vec<Vec<&FrameObservations>> = vec![substantial[0].clone()];
-    for w in substantial.windows(2) {
-        let (prev_seg, seg) = (&w[0], &w[1]);
-        if seg[0].t - prev_seg.last().unwrap().t > gap_split_s {
-            groups.push(Vec::new());
-        }
-        groups.last_mut().unwrap().extend(seg.iter().copied());
-    }
-    let best = groups.into_iter().max_by_key(|g| seg_obs(g)).unwrap();
-    let kept: Vec<FrameObservations> = best.into_iter().cloned().collect();
-    let dropped = total_obs - kept.iter().map(|f| f.obs.len()).sum::<usize>();
-    (kept, dropped)
 }
 
 // ---------------------------------------------------------------------------
@@ -449,8 +395,11 @@ pub fn decimate_path(positions: &[Vec3], max_points: usize) -> Vec<[f64; 3]> {
 }
 
 /// The production entry point — port of vio_api.reconstruct_vio (frames →
-/// dominant segment → solve → divergence retry → iterative outlier
-/// rejection with best-state rollback → gravity-leveled OutputMap).
+/// solve → iterative outlier rejection with best-state rollback →
+/// gravity-leveled OutputMap). Every observation is kept, however the
+/// timeline is interrupted: a gap only loosens the inertial link across it
+/// (vio::interval_sigmas), and bad observations are the robust loss's and
+/// the rejection loop's job.
 pub fn reconstruct_vio(
     problem: &Problem,
     mut progress: Option<ProgressFn>,
@@ -485,14 +434,6 @@ pub fn reconstruct_vio(
         .collect();
     imu.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
 
-    let (kept, gap_dropped) = keep_dominant_segment(&frames, opts.gap_split_s, 1.0);
-    frames = kept;
-    if gap_dropped > 0 && !frames.is_empty() {
-        // Trim the IMU to the kept span (bad pre-segment data poisons the
-        // gravity anchor; small lead-in keeps held-rate semantics intact).
-        let (t0, t1) = (frames[0].t - 0.25, frames.last().unwrap().t + 0.05);
-        imu.retain(|s| t0 <= s.t && s.t <= t1);
-    }
     if frames.len() < 8 {
         return Err(format!(
             "too few observation frames for a VIO solve ({})",
@@ -512,18 +453,6 @@ pub fn reconstruct_vio(
         ..SolveOptions::default()
     };
     let mut result = solve_vio(&frames, &imu, &solve_opts, None, prog!());
-
-    // Divergence gate: retry once with stricter segmentation.
-    if result.rms_reproj_px > 100.0 && opts.gap_split_s > 1.2 {
-        let (strict, extra) = keep_dominant_segment(&frames, 1.2, 0.8);
-        if extra > 0 && strict.len() >= 8 {
-            let retry = solve_vio(&strict, &imu, &solve_opts, None, prog!());
-            if retry.rms_reproj_px < result.rms_reproj_px {
-                frames = strict;
-                result = retry;
-            }
-        }
-    }
 
     if opts.reject_outliers {
         let score = |res: &VioResult, frs: &[FrameObservations]| -> (usize, f64) {
@@ -678,27 +607,6 @@ mod tests {
         assert_eq!(median(&[4.0, 1.0, 2.0, 3.0]), 2.5);
         assert_eq!(percentile(&[1.0, 2.0, 3.0, 4.0], 75.0), 3.25);
         assert_eq!(percentile(&[1.0, 2.0], 90.0), 1.9);
-    }
-
-    #[test]
-    fn dominant_segment_drops_leading_stub() {
-        // 2-observation stub at t=0, then a substantial segment after 2.6 s.
-        let mut frames = vec![FrameObservations {
-            t: 0.0,
-            k: [800.0, 800.0, 640.0, 360.0],
-            obs: vec![(0, 1.0, 1.0), (1, 2.0, 2.0)],
-        }];
-        for i in 0..40 {
-            frames.push(FrameObservations {
-                t: 2.6 + i as f64 * 0.125,
-                k: [800.0, 800.0, 640.0, 360.0],
-                obs: (0..8).map(|j| (j, j as f64, j as f64)).collect(),
-            });
-        }
-        let (kept, dropped) = keep_dominant_segment(&frames, 3.0, 1.0);
-        assert_eq!(dropped, 2);
-        assert_eq!(kept.len(), 40);
-        assert!(kept[0].t > 2.0);
     }
 
     #[test]

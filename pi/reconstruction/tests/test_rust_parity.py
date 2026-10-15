@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -99,9 +100,8 @@ def _aligned_rms(src: np.ndarray, dst: np.ndarray):
     return rms, abs(s - 1.0)
 
 
-def test_rust_solver_matches_python_reference():
-    leds = wall_leds()
-    detections, imu = synth_session(leds)
+def _solve_both(detections, imu, leds):
+    """(rust map, python map) for the same wire-shaped session."""
     problem = {
         "detections": detections,
         "imu": imu,
@@ -121,6 +121,13 @@ def test_rust_solver_matches_python_reference():
     rust_map = json.loads(proc.stdout)
 
     py_map = reconstruct_vio(detections, imu, led_count=len(leds)).model_dump()
+    return rust_map, py_map
+
+
+def test_rust_solver_matches_python_reference():
+    leds = wall_leds()
+    detections, imu = synth_session(leds)
+    rust_map, py_map = _solve_both(detections, imu, leds)
 
     # Both solved essentially the whole wall.
     rust_ids = {led["id"] for led in rust_map["leds"]}
@@ -154,6 +161,46 @@ def test_rust_solver_matches_python_reference():
     # Wire-shape parity: same §7.5 fields.
     assert set(rust_map.keys()) == set(py_map.keys())
     assert rust_map["units"] == "meters" and rust_map["frame"] == "gravity_leveled"
+
+
+def _stride_lit(led: int, phase: int, spacing: int, anchor: int) -> bool:
+    """web/src/code/stride.ts strideLit (S coverage phases + S-1 bridges)."""
+    n = 2 * spacing - 1
+    ph = phase % n
+    if ph < spacing:
+        return led % spacing == ph
+    j = ph - spacing + 1
+    m = led % (anchor * spacing)
+    return m == 0 or m == (anchor // 2) * spacing + j
+
+
+def test_rust_solver_fuses_a_strided_capture_like_python(monkeypatch):
+    # The phone solves with the Rust port, so the interrupted-timeline handling
+    # (vio_api / test_interrupted_capture.py) must hold there too: a strided
+    # diffuse capture — disjoint LED phases, each followed by a 3.5 s
+    # decode-lock dead time — fuses every phase in both implementations.
+    monkeypatch.setattr(sys.modules[__name__], "DURATION", 36.0)
+    leds = wall_leds()
+    detections, imu = synth_session(leds)
+    period = 3.0 + 3.5
+    strided = []
+    for d in detections:
+        phase, into = divmod(d["tCaptureMs"] / 1000.0, period)
+        if into < 3.0 and _stride_lit(d["ledId"], int(phase), 3, 3):
+            strided.append(d)
+
+    rust_map, py_map = _solve_both(strided, imu, leds)
+
+    for name, out in (("rust", rust_map), ("python", py_map)):
+        assert len(out["leds"]) == len(leds), f"{name} solved only {len(out['leds'])}"
+        ids = sorted(led["id"] for led in out["leds"])
+        est = np.array([next(led["xyz"] for led in out["leds"] if led["id"] == i) for i in ids])
+        rms, _scale_err = _aligned_rms(est, leds[ids])
+        assert rms < 0.005, f"{name} map rms {rms * 1000:.2f} mm"
+    rust_xyz = np.array([led["xyz"] for led in sorted(rust_map["leds"], key=lambda e: e["id"])])
+    py_xyz = np.array([led["xyz"] for led in sorted(py_map["leds"], key=lambda e: e["id"])])
+    rms_cross, _ = _aligned_rms(rust_xyz, py_xyz)
+    assert rms_cross < 0.003, f"cross-solver rms {rms_cross * 1000:.2f} mm"
 
 
 def test_rust_benchmark_mode_reports_score():
