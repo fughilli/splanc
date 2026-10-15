@@ -191,11 +191,20 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "stale",
       "entity": "PR-35",
-      "message": "no test evidence",
+      "message": "only passing evidence is against an older build",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-35",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -204,12 +213,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:e2e_netstack",
-      "message": "//pi/hitl/harness:e2e_netstack hitl_e2e::rig error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",

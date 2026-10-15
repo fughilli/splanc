@@ -85,11 +85,12 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-13",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -141,18 +142,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-21",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hil"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-22",
-      "message": "no test evidence",
+      "message": "demands hil but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
-      "demanded_level": "simulation"
+      "demanded_level": "hil",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -176,11 +171,12 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-26",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -197,11 +193,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-29",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -239,11 +236,12 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-35",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -260,18 +258,6 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:e2e_netstack",
-      "message": "//pi/hitl/harness:e2e_netstack hitl_e2e::rig error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-1",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is OPEN",
@@ -280,12 +266,6 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-4",
       "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     },
