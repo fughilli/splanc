@@ -101,6 +101,12 @@ export class RequestTimeoutError extends Error {
   }
 }
 
+/** How long {@link LedMapperClient.stopMappingNoSolve} waits for the device's
+ * mapping_stopped. A player answers it straight away (no solve runs); a reply
+ * this late means the link has stalled (e.g. the player's receive path wedged
+ * with the socket still open), and nobody should wait on it. */
+export const STOP_ACK_TIMEOUT_MS = 3000;
+
 export interface ClientOptions {
   socketFactory?: SocketFactory;
   /** Local monotonic clock, ms (performance.now in the browser). */
@@ -249,6 +255,13 @@ export class LedMapperClient {
   // can't be a single-flight waiter. The panel subscribes here for live frames.
   private perfSubs = new Set<(r: PerfReportMessage) => void>();
 
+  /**
+   * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
+   * out on a stalled link, or the socket was down). Re-sent after the next
+   * welcome so the player's mapping pattern really stops; cleared by an ack, a
+   * `no_session` error (nothing left to stop), or a new {@link startMapping}.
+   */
+  stopPending = false;
   readonly clock: ServerClock;
   events: ClientEvents = {};
 
@@ -329,6 +342,7 @@ export class LedMapperClient {
           this.everWelcomed = true;
           this.failsSinceWelcome = 0;
           welcomed = true;
+          this.redeliverOwedStop();
           this.flushBatches();
           this.events.onConnected?.(msg);
           if (!settled) {
@@ -416,6 +430,9 @@ export class LedMapperClient {
     ledCount: number,
     config: Omit<StartMappingOptions, "ledCount"> = {},
   ): Promise<MappingStartedMessage> {
+    // A new capture supersedes an owed stop from the previous one: re-sending it
+    // later would kill THIS capture's pattern.
+    this.stopPending = false;
     const reply = await this.request(
       { type: "start_mapping", options: { ledCount, ...config } },
       "mapping_started",
@@ -466,13 +483,58 @@ export class LedMapperClient {
    * Stop the capture WITHOUT a host solve (solver placement chose the
    * phone): the server persists the session log and replies immediately;
    * the caller solves locally and uploads via {@link submitMap}.
+   *
+   * Bounded: the reply is awaited at most `timeoutMs`. A device that has not
+   * answered by then has a stalled link (socket open, nothing read) — the stop
+   * rejects, the wedged socket is recycled (the normal reconnect follows), and
+   * the stop is re-sent after the next welcome ({@link stopPending}) so the
+   * pattern stops once the player is reachable again. Callers that solve on the
+   * phone must not gate the solve on this.
    */
-  async stopMappingNoSolve(): Promise<MappingStoppedMessage> {
-    const reply = await this.request(
-      { type: "stop_mapping", solveOnHost: false },
-      "mapping_stopped",
-    );
-    return reply as MappingStoppedMessage;
+  async stopMappingNoSolve(timeoutMs = STOP_ACK_TIMEOUT_MS): Promise<MappingStoppedMessage> {
+    this.stopPending = true;
+    try {
+      const reply = await this.request(
+        { type: "stop_mapping", solveOnHost: false },
+        "mapping_stopped",
+        timeoutMs,
+      );
+      this.stopPending = false;
+      return reply as MappingStoppedMessage;
+    } catch (e) {
+      this.settleOwedStop(e);
+      if (e instanceof RequestTimeoutError) this.recycleStalledSocket();
+      throw e;
+    }
+  }
+
+  /** A server error reply means the device processed the stop (e.g.
+   * `no_session`: it has no capture to stop) — nothing is owed any more. A
+   * transport failure / timeout leaves the stop owed. */
+  private settleOwedStop(e: unknown): void {
+    if (e instanceof ServerErrorReply) this.stopPending = false;
+  }
+
+  /** Close a socket that stopped answering so the reconnect path replaces it
+   * (onclose fails the remaining waiters and schedules the backoff retry). */
+  private recycleStalledSocket(): void {
+    const sock = this.sock;
+    if (sock === null || sock.readyState !== SOCKET_OPEN) return;
+    try {
+      sock.close();
+    } catch {
+      // already closing — onclose will still run
+    }
+  }
+
+  /** After a (re)welcome: deliver a stop the device never acknowledged. */
+  private redeliverOwedStop(): void {
+    if (!this.stopPending) return;
+    this.request({ type: "stop_mapping", solveOnHost: false }, "mapping_stopped", STOP_ACK_TIMEOUT_MS)
+      .then(() => {
+        this.stopPending = false;
+      })
+      .catch((e: unknown) => this.settleOwedStop(e));
   }
 
   /** Upload a phone-solved OutputMap; the server persists it and acks. Large
@@ -860,7 +922,7 @@ export class LedMapperClient {
       if (!first.done) {
         const [key, waiter] = first.value;
         this.waiters.delete(key);
-        waiter.reject(new Error(`${msg.code}: ${msg.message}`));
+        waiter.reject(new ServerErrorReply(msg.code, msg.message));
         return;
       }
       this.events.onServerError?.(msg.code, msg.message);
@@ -979,6 +1041,17 @@ export class LedMapperClient {
     this.waiters.clear();
     for (const w of this.pingWaiters.values()) w.reject(err);
     this.pingWaiters.clear();
+  }
+}
+
+/** The device answered a request with a protocol `error` message. */
+export class ServerErrorReply extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "ServerErrorReply";
   }
 }
 
