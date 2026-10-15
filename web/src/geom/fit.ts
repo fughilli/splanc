@@ -82,14 +82,21 @@ export function fitSimilarity(src: readonly Vec3[], dst: readonly Vec3[]): Simil
   for (let k = 0; k < 4; k++) N[k]![k]! += shift;
 
   let q = [1, 0.31, -0.24, 0.17]; // arbitrary non-symmetric start
-  for (let it = 0; it < 100; it++) {
+  // Iterate to convergence, not a fixed count: the shift makes the eigenvalue
+  // ratio close to 1 when the point set is thin (e.g. a near-collinear row of
+  // anchor LEDs), and 100 steps then left mm-level rotation error that the
+  // FUG-112 registration extrapolated across the fixture. 4×4 steps are cheap.
+  for (let it = 0; it < 20000; it++) {
     const next = [0, 0, 0, 0];
     for (let r = 0; r < 4; r++) {
       for (let cc = 0; cc < 4; cc++) next[r]! += N[r]![cc]! * q[cc]!;
     }
     const len = Math.hypot(...next);
     if (len < 1e-12) return null;
-    q = next.map((v) => v / len);
+    const nq = next.map((v) => v / len);
+    const step = Math.hypot(nq[0]! - q[0]!, nq[1]! - q[1]!, nq[2]! - q[2]!, nq[3]! - q[3]!);
+    q = nq;
+    if (step < 1e-15) break;
   }
   const [w, x, y, z] = q as [number, number, number, number];
 

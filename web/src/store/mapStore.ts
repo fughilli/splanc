@@ -25,10 +25,11 @@ import { MapView } from "../ui/mapview";
 
 /**
  * The raw observations behind a captured map (FUG-112). Persisted so a later
- * "supplemental capture" can re-solve *its own* session and register it into
- * this map — the merge happens in geom/fuseMaps, not by re-solving the union
- * (the VIO segment selector won't stitch two disjoint camera arcs). Only maps
- * that carry this can be supplemented.
+ * "supplemental capture" can accumulate its measurements with these and
+ * re-solve the map's low-confidence LEDs jointly (geom/fuseMaps). After a
+ * supplement is accepted this holds every session concatenated on ONE
+ * monotonic timeline (fuseMaps.concatObservations), so it stays a valid solver
+ * input. Only maps that carry this can be supplemented.
  */
 export interface CaptureObservations {
   detections: DetectionRecord[];
