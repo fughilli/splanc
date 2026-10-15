@@ -16,116 +16,29 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from reconstruction.api import reconstruct
-from reconstruction.camera import look_at_quat, project, quat_to_rotmat
 from reconstruction.vio import (
     G_WORLD,
     FrameObservations,
-    ImuSample,
     preintegrate,
     similarity_align,
     so3_exp,
     so3_log,
     solve_vio,
 )
+from testsupport import vio_synth
+from testsupport.vio_synth import (
+    IMG_H,
+    IMG_W,
+    RNG,
+    K,
+    synth_frames,
+    synth_imu,
+    true_states,
+    wall_leds,
+)
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
 pytestmark = pytest.mark.requirements("PR-11")
-
-RNG = np.random.default_rng(11)
-
-IMG_W, IMG_H = 1280, 720
-K = (800.0, 800.0, 640.0, 360.0)
-DURATION = 12.0
-FRAME_HZ = 8.0
-IMU_HZ = 60.0
-
-
-def wall_leds(cols: int = 6, rows: int = 6, pitch: float = 0.12) -> np.ndarray:
-    pts = []
-    for i in range(cols * rows):
-        r, c = divmod(i, cols)
-        pts.append([(c - (cols - 1) / 2) * pitch, ((rows - 1) / 2 - r) * pitch, 0.0])
-    return np.array(pts)
-
-
-# -- analytic trajectory (smooth, with real acceleration for observability) --
-
-
-# Radial (toward/away) excitation, settable per test: focal length is only
-# strongly observable when the wall DISTANCE varies (with metric baseline
-# from the IMU, depth change separates fx from scene scale; a constant-radius
-# arc leaves fx pinned only by weak perspective nonlinearity). The no-XR
-# capture guidance must therefore include moving closer/farther.
-RADIAL_AMP = 0.0
-
-
-def cam_pos(t: float) -> np.ndarray:
-    theta = -0.5 + 1.0 * (t / DURATION) + 0.12 * np.sin(1.7 * t)
-    radius = 1.8 + RADIAL_AMP * np.sin(0.9 * t)
-    return np.array(
-        [
-            radius * np.sin(theta),
-            0.12 + 0.15 * np.sin(2.1 * t),
-            radius * np.cos(theta),
-        ]
-    )
-
-
-def cam_rot(t: float) -> np.ndarray:
-    q = look_at_quat(cam_pos(t), np.array([0.0, 0.0, 0.0]))
-    return quat_to_rotmat(q)
-
-
-def true_states(times: np.ndarray):
-    h = 1e-4
-    rots = [cam_rot(t) for t in times]
-    ps = np.array([cam_pos(t) for t in times])
-    vs = np.array([(cam_pos(t + h) - cam_pos(t - h)) / (2 * h) for t in times])
-    return rots, ps, vs
-
-
-def synth_imu(noise: bool = True) -> list[ImuSample]:
-    h = 1e-4
-    gyro_bias = np.array([2e-3, -1e-3, 1.5e-3])
-    accel_bias = np.array([0.03, -0.02, 0.04])
-    samples = []
-    n = int(DURATION * IMU_HZ)
-    for i in range(n):
-        t = i / IMU_HZ
-        r = cam_rot(t)
-        omega = so3_log(cam_rot(t).T @ cam_rot(t + h)) / h
-        a_world = (cam_pos(t + h) - 2 * cam_pos(t) + cam_pos(t - h)) / (h * h)
-        f_body = r.T @ (a_world - G_WORLD)
-        ts = t
-        if noise:
-            omega = omega + gyro_bias + RNG.normal(0, 2e-3, 3)
-            f_body = f_body + accel_bias + RNG.normal(0, 5e-2, 3)
-            ts = t + RNG.normal(0, 1.5e-3)  # DeviceMotion timestamp jitter
-        samples.append(ImuSample(t=ts, gyro=omega, accel=f_body))
-    samples.sort(key=lambda s: s.t)
-    return samples
-
-
-def synth_frames(leds: np.ndarray, px_noise: float = 0.3, drop_p: float = 0.05):
-    times = np.arange(0.0, DURATION, 1.0 / FRAME_HZ)
-    frames = []
-    for t in times:
-        p = cam_pos(t)
-        q = look_at_quat(p, np.array([0.0, 0.0, 0.0]))
-        uv, depth = project(p, q, K, leds)
-        obs = []
-        for j in range(len(leds)):
-            if depth[j] <= 0:
-                continue
-            u, v = uv[j]
-            if not (0 <= u < IMG_W and 0 <= v < IMG_H):
-                continue
-            if RNG.uniform() < drop_p:
-                continue
-            obs.append((j, float(u + RNG.normal(0, px_noise)), float(v + RNG.normal(0, px_noise))))
-        frames.append(FrameObservations(t=float(t), k=K, obs=obs))
-    return frames, times
-
 
 # ---------------------------------------------------------------------------
 
@@ -257,14 +170,13 @@ def test_wrong_focal_preserves_shape_and_scale_tracks_fx_error():
     or a known-pitch wall) restores metric accuracy. refine_intrinsics
     exists as a polish, not a discovery mechanism.
     """
-    global RADIAL_AMP
-    RADIAL_AMP = 0.35
+    vio_synth.RADIAL_AMP = 0.35
     try:
         leds = wall_leds()
         frames, _times = synth_frames(leds)
         imu = synth_imu()
     finally:
-        RADIAL_AMP = 0.0
+        vio_synth.RADIAL_AMP = 0.0
     fx_true = K[0]
     k_guess = (fx_true * 1.08, fx_true * 1.08, K[2] + 15.0, K[3] - 12.0)
     frames_wrong_k = [FrameObservations(t=f.t, k=k_guess, obs=f.obs) for f in frames]
@@ -386,58 +298,6 @@ def test_pose_trusting_solver_rejects_poseless_records():
         )
 
 
-def test_gap_segment_filter_solves_dominant_segment():
-    # A short stray prefix + a long observation gap (user walked away), then
-    # the real capture: the solver must keep the dominant segment and solve
-    # it cleanly (dead-reckoning across the gap would warp everything).
-    from reconstruction.vio_api import reconstruct_vio
-
-    leds = wall_leds()
-    frames, _times = synth_frames(leds)
-    imu = synth_imu()
-
-    # Prefix: reuse the first 2 s of frames shifted to start at t=-14 s with
-    # a 12 s gap before the main segment (IMU covers everything).
-    prefix = [FrameObservations(t=f.t - 14.0, k=f.k, obs=f.obs) for f in frames if f.t < 2.0]
-    imu_prefix = [ImuSample(t=s.t - 14.0, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.05]
-    all_frames = prefix + list(frames)
-    all_imu = sorted(imu_prefix + list(imu), key=lambda s: s.t)
-
-    records = []
-    for fr in all_frames:
-        for j, u, v in fr.obs:
-            records.append(
-                {
-                    "ledId": int(j),
-                    "tCaptureMs": fr.t * 1000.0,
-                    "u": u,
-                    "v": v,
-                    "imgW": IMG_W,
-                    "imgH": IMG_H,
-                    "K": list(K),
-                    "pose": None,
-                    "confidence": 1.0,
-                }
-            )
-    imu_wire = [
-        {
-            "t": s.t * 1000.0,
-            "gyro": [float(x) for x in s.gyro],
-            "accel": [float(x) for x in s.accel],
-        }
-        for s in all_imu
-    ]
-    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
-    assert len(out.leds) == len(leds), f"solved only {len(out.leds)}"
-    assert out.stats.rmsReprojPxGlobal < 1.5
-
-    est = np.array([e.xyz for e in sorted(out.leds, key=lambda e: e.id)])
-    s, rot, t = similarity_align(est, leds[sorted(e.id for e in out.leds)])
-    aligned = (s * (rot @ est.T)).T + t
-    rms = float(np.sqrt(np.mean(np.sum((aligned - leds) ** 2, axis=1))))
-    assert rms < 0.005, f"map rms {rms*1000:.2f} mm"
-
-
 def test_outlier_rejection_unsticks_a_contaminated_led():
     # The user-observed failure: mislabeled dense-stream samples bias one
     # LED's estimate; more good passes never fix it (the robust loss only
@@ -506,48 +366,6 @@ def test_outlier_rejection_unsticks_a_contaminated_led():
     assert biased_mm > 0.003, "contamination should visibly bias the estimate"
     assert clean_mm < 0.001, f"led 0 still off by {clean_mm*1000:.2f} mm after rejection"
     assert clean_rms < 1.0
-
-
-def test_leading_stub_is_dropped_regardless_of_gap_length():
-    # The 2026-07-08 explosion: TWO stray records at t=0, a 2.6 s decode gap
-    # (under the coarse 3 s split), then the real capture. The gauge anchor
-    # (pose 0) sat on the stub island and the solve diverged to 469k px.
-    # Segment filtering must weigh observation MASS, not just gap duration.
-    from reconstruction.vio_api import keep_dominant_segment, reconstruct_vio
-
-    leds = wall_leds()
-    frames, _times = synth_frames(leds)
-    imu = synth_imu()
-
-    stub = [FrameObservations(t=-2.6, k=K, obs=frames[0].obs[:2])]
-    all_frames = stub + list(frames)
-    kept, dropped = keep_dominant_segment(all_frames)
-    assert dropped == 2 and kept[0].t == frames[0].t
-
-    imu_prefix = [ImuSample(t=s.t - 2.65, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.7]
-    records = []
-    for fr in all_frames:
-        for j, u, v in fr.obs:
-            records.append(
-                {
-                    "ledId": int(j),
-                    "tCaptureMs": fr.t * 1000.0,
-                    "u": u,
-                    "v": v,
-                    "imgW": IMG_W,
-                    "imgH": IMG_H,
-                    "K": list(K),
-                    "pose": None,
-                    "confidence": 1.0,
-                }
-            )
-    imu_wire = [
-        {"t": s.t * 1000.0, "gyro": list(map(float, s.gyro)), "accel": list(map(float, s.accel))}
-        for s in sorted(imu_prefix + list(imu), key=lambda s: s.t)
-    ]
-    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
-    assert len(out.leds) == len(leds)
-    assert out.stats.rmsReprojPxGlobal < 1.5
 
 
 def test_solved_led_count_gates_on_quality():

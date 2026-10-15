@@ -25,6 +25,78 @@ use crate::sparse::{lsmr, Csc};
 pub const GRAVITY: f64 = 9.81;
 pub const G_WORLD: Vec3 = [0.0, -GRAVITY, 0.0];
 
+/// IMU sample noise at the sample rate (the SolveOptions defaults).
+pub const GYRO_NOISE: f64 = 2e-3; // rad/s
+pub const ACCEL_NOISE: f64 = 5e-2; // m/s²
+/// Dead-reckoning drift the white-noise model omits: bias instability and
+/// the attitude error that leaks gravity into the specific force. Both grow
+/// with the interval length, so a long observation gap (decode-lock dead
+/// time, a walk-away) is still IMU-linked — just as loosely as the physics
+/// allows.
+pub const GYRO_DRIFT: f64 = 1e-3; // rad/s
+pub const ACCEL_DRIFT: f64 = 2e-2; // m/s²
+/// An interval whose IMU stream has a hole longer than this carries no
+/// inertial information at all (zero-order hold across it would be
+/// fabricated data).
+pub const IMU_HOLE_S: f64 = 0.25;
+/// Weight for an interval the IMU does not cover: effectively unconstrained,
+/// while keeping the residual layout fixed.
+const HOLE_SIGMA: f64 = 1e6;
+
+/// (σ_rot, σ_vel, σ_pos, hole) for the IMU factor over [t0, t1] — port of
+/// vio.interval_sigmas. `imu_t` is the sorted IMU sample times. White sample
+/// noise (per-sample σ, ∝ √count) plus the drift terms that grow with the
+/// interval length. `hole`: the stream has a gap > IMU_HOLE_S inside the
+/// interval (including the lead-in from the held sample before t0) — no
+/// inertial information.
+pub fn interval_sigmas(
+    imu_t: &[f64],
+    t0: f64,
+    t1: f64,
+    gyro_noise: f64,
+    accel_noise: f64,
+) -> (f64, f64, f64, bool) {
+    let lo = imu_t.partition_point(|&t| t <= t0);
+    let hi = imu_t.partition_point(|&t| t < t1);
+    let span = t1 - t0;
+    // Coverage points: the held sample at/before t0 (else t0 itself), every
+    // sample inside, and t1. No sample at all ⇒ nothing to integrate.
+    let mut prev = if lo > 0 { imu_t[lo - 1] } else { t0 };
+    let mut max_gap: f64 = 0.0;
+    for &t in imu_t[lo..hi.max(lo)].iter().chain(std::iter::once(&t1)) {
+        max_gap = max_gap.max(t - prev);
+        prev = t;
+    }
+    if (lo == 0 && hi == 0) || max_gap > IMU_HOLE_S {
+        return (HOLE_SIGMA, HOLE_SIGMA, HOLE_SIGMA, true);
+    }
+    let cnt = imu_t.iter().filter(|&&t| t0 <= t && t < t1).count().max(1) as f64;
+    let dt = span / cnt;
+    let sr = gyro_noise * cnt.sqrt() * dt + GYRO_DRIFT * span;
+    let sv = accel_noise * cnt.sqrt() * dt + ACCEL_DRIFT * span;
+    let sp = 0.5 * accel_noise * cnt.sqrt() * dt * span + 0.5 * ACCEL_DRIFT * span * span;
+    (sr.max(1e-6), sv.max(1e-6), sp.max(1e-7), false)
+}
+
+/// The frame whose pose fixes the gauge: the best-observed one (first on
+/// ties). Pinning frame 0 made a stray 2-record leading frame the anchor of
+/// the whole solve (the 2026-07-08 469k-px divergence).
+pub fn gauge_frame(frames: &[FrameObservations]) -> usize {
+    let mut best = 0;
+    for (i, fr) in frames.iter().enumerate() {
+        if fr.obs.len() > frames[best].obs.len() {
+            best = i;
+        }
+    }
+    best
+}
+
+fn imu_times(imu: &[ImuSample]) -> Vec<f64> {
+    let mut t: Vec<f64> = imu.iter().map(|s| s.t).collect();
+    t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    t
+}
+
 #[derive(Clone, Debug)]
 pub struct FrameObservations {
     pub t: f64,
@@ -69,8 +141,8 @@ impl Default for SolveOptions {
     fn default() -> Self {
         SolveOptions {
             px_sigma: 0.5,
-            gyro_noise: 2e-3,
-            accel_noise: 5e-2,
+            gyro_noise: GYRO_NOISE,
+            accel_noise: ACCEL_NOISE,
             huber_px: 4.0,
             max_nfev: 60,
             ftol: 1e-6,
@@ -86,16 +158,30 @@ pub type ProgressFn<'a> = &'a mut dyn FnMut(f64, f64, &[u32], &[Vec3], &[Vec3]);
 // Initialization stages
 // ---------------------------------------------------------------------------
 
+/// Camera-to-world rotation seed per frame: gyro-integrated increments, with
+/// roll/pitch anchored by the accelerometer mean around the first frame. Across
+/// an IMU hole the rotation is held (no information).
 fn rotation_seeds(frames: &[FrameObservations], imu: &[ImuSample]) -> Vec<Mat3> {
     let t_start = frames[0].t;
+    // A window AROUND the first frame: pre-capture walking must not leak into
+    // the gravity direction.
     let early: Vec<Vec3> = {
         let e: Vec<Vec3> = imu
             .iter()
-            .filter(|s| s.t <= t_start + 0.5)
+            .filter(|s| (s.t - t_start).abs() <= 0.5)
             .map(|s| s.accel)
             .collect();
         if e.is_empty() {
-            vec![imu[0].accel]
+            let nearest = imu
+                .iter()
+                .min_by(|a, b| {
+                    (a.t - t_start)
+                        .abs()
+                        .partial_cmp(&(b.t - t_start).abs())
+                        .unwrap()
+                })
+                .unwrap();
+            vec![nearest.accel]
         } else {
             e
         }
@@ -118,8 +204,21 @@ fn rotation_seeds(frames: &[FrameObservations], imu: &[ImuSample]) -> Vec<Mat3> 
     } else {
         so3_exp(scale(axis, s.atan2(c) / s))
     };
+    let imu_t = imu_times(imu);
     let mut seeds = vec![r0];
     for i in 1..frames.len() {
+        let hole = interval_sigmas(
+            &imu_t,
+            frames[i - 1].t,
+            frames[i].t,
+            GYRO_NOISE,
+            ACCEL_NOISE,
+        )
+        .3;
+        if hole {
+            seeds.push(*seeds.last().unwrap());
+            continue;
+        }
         let (d_rot, _dv, _dp, _dt) = preintegrate(imu, frames[i - 1].t, frames[i].t, ZERO3, ZERO3);
         seeds.push(mat_mul(seeds.last().unwrap(), &d_rot));
     }
@@ -133,6 +232,7 @@ fn known_rotation_linear_init(
     frames: &[FrameObservations],
     rotations: &[Mat3],
     led_ids: &[u32],
+    gauge: usize,
 ) -> (Vec<Vec3>, Vec<Vec3>) {
     const SCALE_PINS: usize = 64;
     const W_PIN: f64 = 0.05;
@@ -141,11 +241,12 @@ fn known_rotation_linear_init(
     let n_unknowns = 3 * (n_frames - 1) + 3 * n_leds;
     let id_index = |led: u32| led_ids.binary_search(&led).unwrap();
 
+    // Gauge: c_gauge = 0.
     let col_c = |i: usize| -> Option<usize> {
-        if i == 0 {
-            None
-        } else {
-            Some(3 * (i - 1))
+        match i.cmp(&gauge) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some(3 * i),
+            std::cmp::Ordering::Greater => Some(3 * (i - 1)),
         }
     };
     let col_x = |j: usize| 3 * (n_frames - 1) + 3 * j;
@@ -199,8 +300,10 @@ fn known_rotation_linear_init(
     let sol = lsmr(&a, None, &rhs, 0.0, 1e-10, 1e-10, 8000);
 
     let mut centers = vec![ZERO3; n_frames];
-    for i in 1..n_frames {
-        centers[i] = [sol[3 * (i - 1)], sol[3 * (i - 1) + 1], sol[3 * (i - 1) + 2]];
+    for (i, c) in centers.iter_mut().enumerate() {
+        if let Some(ci) = col_c(i) {
+            *c = [sol[ci], sol[ci + 1], sol[ci + 2]];
+        }
     }
     let leds: Vec<Vec3> = (0..n_leds)
         .map(|j| [sol[col_x(j)], sol[col_x(j) + 1], sol[col_x(j) + 2]])
@@ -210,7 +313,10 @@ fn known_rotation_linear_init(
 
 /// Linear visual-inertial alignment: scale, gravity, per-frame velocities
 /// from zero-bias preintegration deltas, then the gravity-magnitude-
-/// constrained re-solve (2 iterations). Port of vio._inertial_alignment.
+/// constrained re-solve (2 iterations). Port of vio._inertial_alignment:
+/// each interval's rows are weighted by its IMU uncertainty relative to the
+/// session's typical interval (a regular session is unchanged; one long
+/// dead-reckoned gap cannot dominate), and IMU holes contribute nothing.
 pub fn inertial_alignment(
     frames: &[FrameObservations],
     rotations: &[Mat3],
@@ -221,9 +327,40 @@ pub fn inertial_alignment(
     let n_unknowns = 1 + 3 + 3 * n;
     let mut rows: Vec<Vec<(usize, f64)>> = Vec::with_capacity(6 * (n - 1));
     let mut rhs: Vec<f64> = Vec::with_capacity(6 * (n - 1));
+    let imu_t = imu_times(imu);
+    let sig: Vec<(f64, f64, f64, bool)> = (0..n - 1)
+        .map(|i| {
+            interval_sigmas(
+                &imu_t,
+                frames[i].t,
+                frames[i + 1].t,
+                GYRO_NOISE,
+                ACCEL_NOISE,
+            )
+        })
+        .collect();
+    let covered_median = |pick: fn(&(f64, f64, f64, bool)) -> f64| -> f64 {
+        let mut v: Vec<f64> = sig.iter().filter(|s| !s.3).map(pick).collect();
+        if v.is_empty() {
+            return 1.0;
+        }
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let h = v.len() / 2;
+        if v.len() % 2 == 1 {
+            v[h]
+        } else {
+            0.5 * (v[h - 1] + v[h])
+        }
+    };
+    let ref_v = covered_median(|s| s.1);
+    let ref_p = covered_median(|s| s.2);
     // Keep the raw g-block coefficients per row for the constrained re-solve:
     // (row triplets excluding g, g-coeff 3-row block, rhs).
     for i in 0..n - 1 {
+        if sig[i].3 {
+            continue;
+        }
+        let (w_v, w_p) = (ref_v / sig[i].1, ref_p / sig[i].2);
         let (d_rot, d_vel, d_pos, dt) =
             preintegrate(imu, frames[i].t, frames[i + 1].t, ZERO3, ZERO3);
         let _ = d_rot;
@@ -236,14 +373,14 @@ pub fn inertial_alignment(
         for r in 0..3 {
             // R_i^T (s·Δc − v_i·dt − ½·g·dt²) = Δp
             let mut row: Vec<(usize, f64)> = Vec::with_capacity(7);
-            row.push((0, rit_dc[r]));
+            row.push((0, w_p * rit_dc[r]));
             for c in 0..3 {
                 let rit_rc = rotations[i][c][r]; // (R^T)[r][c]
-                row.push((1 + c, -0.5 * dt * dt * rit_rc));
-                row.push((4 + 3 * i + c, -dt * rit_rc));
+                row.push((1 + c, -w_p * 0.5 * dt * dt * rit_rc));
+                row.push((4 + 3 * i + c, -w_p * dt * rit_rc));
             }
             rows.push(row);
-            rhs.push(d_pos[r]);
+            rhs.push(w_p * d_pos[r]);
         }
         // `r` is a matrix row (transposes `rotations[i][c][r]`, indexes `d_vel`).
         #[allow(clippy::needless_range_loop)]
@@ -252,12 +389,12 @@ pub fn inertial_alignment(
             let mut row: Vec<(usize, f64)> = Vec::with_capacity(9);
             for c in 0..3 {
                 let rit_rc = rotations[i][c][r];
-                row.push((1 + c, -dt * rit_rc));
-                row.push((4 + 3 * i + c, -rit_rc));
-                row.push((4 + 3 * (i + 1) + c, rit_rc));
+                row.push((1 + c, -w_v * dt * rit_rc));
+                row.push((4 + 3 * i + c, -w_v * rit_rc));
+                row.push((4 + 3 * (i + 1) + c, w_v * rit_rc));
             }
             rows.push(row);
-            rhs.push(d_vel[r]);
+            rhs.push(w_v * d_vel[r]);
         }
     }
     let sol = lstsq_rows(&rows, &rhs, n_unknowns);
@@ -339,6 +476,7 @@ pub fn solve_vio(
     let n = frames.len();
     let m = led_ids.len();
     let id_index = |led: u32| led_ids.binary_search(&led).unwrap();
+    let g_idx = gauge_frame(frames);
 
     // ---- Stages 1–3: seeds (or warm start) --------------------------------
     let (rotations, centers, v_seed, led_seed, g_seed, bg_seed, ba_seed) = match warm_start {
@@ -377,7 +515,7 @@ pub fn solve_vio(
         None => {
             let rotations = rotation_seeds(frames, imu);
             let (mut centers, mut led_seed) =
-                known_rotation_linear_init(frames, &rotations, &led_ids);
+                known_rotation_linear_init(frames, &rotations, &led_ids, g_idx);
             let (s, g_seed, v_seed) = inertial_alignment(frames, &rotations, &centers, imu);
             for c in centers.iter_mut() {
                 *c = scale(*c, s);
@@ -408,7 +546,8 @@ pub fn solve_vio(
     x0[off_bias..off_bias + 3].copy_from_slice(&bg_seed);
     x0[off_bias + 3..off_bias + 6].copy_from_slice(&ba_seed);
     x0[off_bias + 6..off_bias + 9].copy_from_slice(&g_seed);
-    let rot0_seed = so3_log(&rotations[0]);
+    let gauge_rot_seed = so3_log(&rotations[g_idx]);
+    let gauge_pos_seed = centers[g_idx];
 
     // Flattened observations.
     struct Obs {
@@ -434,16 +573,21 @@ pub fn solve_vio(
     let n_int = n - 1;
 
     // Interval noise scaling (counts from the RAW imu stream, like Python).
+    let imu_t = imu_times(imu);
     let mut sig_r = vec![0.0; n_int];
     let mut sig_v = vec![0.0; n_int];
     let mut sig_p = vec![0.0; n_int];
     for i in 0..n_int {
-        let (t0, t1) = (frames[i].t, frames[i + 1].t);
-        let cnt = imu.iter().filter(|s| t0 <= s.t && s.t < t1).count().max(1) as f64;
-        let dt = (t1 - t0) / cnt;
-        sig_r[i] = (opts.gyro_noise * cnt.sqrt() * dt).max(1e-6);
-        sig_v[i] = (opts.accel_noise * cnt.sqrt() * dt).max(1e-6);
-        sig_p[i] = (0.5 * opts.accel_noise * cnt.sqrt() * dt * (t1 - t0)).max(1e-7);
+        let (sr, sv, sp, _hole) = interval_sigmas(
+            &imu_t,
+            frames[i].t,
+            frames[i + 1].t,
+            opts.gyro_noise,
+            opts.accel_noise,
+        );
+        sig_r[i] = sr;
+        sig_v[i] = sv;
+        sig_p[i] = sp;
     }
 
     let frame_times: Vec<f64> = frames.iter().map(|f| f.t).collect();
@@ -478,7 +622,7 @@ pub fn solve_vio(
         k += 6;
         spar.block(k, k + 1, off_bias + 6, off_bias + 9);
         k += 1;
-        spar.block(k, k + 6, 0, 6);
+        spar.block(k, k + 6, 9 * g_idx, 9 * g_idx + 6);
     }
 
     // Shared snapshot for the progress hook (single-threaded interleaving:
@@ -574,10 +718,11 @@ pub fn solve_vio(
         // Gravity magnitude prior.
         out[k] = (norm(g) - GRAVITY) / 1e-3;
         k += 1;
-        // Gauge: pin pose 0.
+        // Gauge: pin the best-observed pose (gauge_frame) at its seed.
+        let gi = 9 * g_idx;
         for r in 0..3 {
-            out[k + r] = (x[r] - rot0_seed[r]) / 1e-6;
-            out[k + 3 + r] = x[3 + r] / 1e-6;
+            out[k + r] = (x[gi + r] - gauge_rot_seed[r]) / 1e-6;
+            out[k + 3 + r] = (x[gi + 3 + r] - gauge_pos_seed[r]) / 1e-6;
         }
 
         // Snapshot for progress reporting.

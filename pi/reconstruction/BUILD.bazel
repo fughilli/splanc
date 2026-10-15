@@ -26,6 +26,18 @@ py_library(
     ],
 )
 
+# Synthetic visual-inertial sessions shared by the solver test suites.
+py_library(
+    name = "vio_synth",
+    testonly = True,
+    srcs = ["testsupport/vio_synth.py"],
+    imports = ["."],
+    deps = [
+        ":reconstruction",
+        requirement("numpy"),
+    ],
+)
+
 py_binary(
     name = "reconstruct",
     srcs = ["reconstruction/__main__.py"],
@@ -48,7 +60,6 @@ py_test(
     name = "reconstruct_test",
     srcs = [
         "tests/pytest_main.py",
-        "tests/test_interrupted_capture.py",
         "tests/test_reconstruct.py",
         "tests/test_reconstruct_scale.py",
     ],
@@ -95,6 +106,7 @@ py_test(
     size = "large",
     srcs = [
         "tests/pytest_main.py",
+        "tests/test_interrupted_capture.py",
         "tests/test_vio.py",
     ],
     imports = ["."],
@@ -102,6 +114,7 @@ py_test(
     main = "tests/pytest_main.py",
     deps = [
         ":reconstruction",
+        ":vio_synth",
         requirement("numpy"),
         "@rules_requirements//python",
         requirement("pytest"),
