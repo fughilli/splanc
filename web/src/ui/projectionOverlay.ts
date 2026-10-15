@@ -5,6 +5,10 @@
  * that draws the *solved* LED positions projected into the live viewport, so
  * the user sees the reconstructed map registered against what the camera sees —
  * both the 2D tracks and where the solve currently places each LED, together.
+ * It runs concurrently with every scan: the drawn set is the base map (in a
+ * supplemental scan) ∪ the live solve so far (geom/liveUnion), each mark coded
+ * for provenance (hue + shape) and 1-σ position uncertainty (fill + projected
+ * ring) — see ui/overlayStyle.
  *
  * There is no per-frame pose on the WebXR-free capture path, so each frame we
  * recover one via client-side PnP (geom/pnp) from the decoded-LED ↔ centroid
@@ -17,11 +21,13 @@
  * runs only when there is no lock and only every SEARCH_STRIDE frames.
  */
 
-import type { Intrinsics, LedEntry, Pose, Vec3 } from "@ledmapper/protocol";
+import type { Intrinsics, Pose, Vec3 } from "@ledmapper/protocol";
 import type { BlobStatus } from "../cv/pipeline";
+import type { OverlayLed } from "../geom/liveUnion";
 import { estimatePose, type Correspondence, type PnpResult } from "../geom/pnp";
 import { project } from "../geom/pinhole";
 import { imageToView } from "./markers";
+import { drawMarker, markerStyle, sigmaRadiusPx } from "./overlayStyle";
 
 export type RegistrationTone = "locked" | "weak" | "lost";
 
@@ -101,12 +107,13 @@ const SEARCH_STRIDE = 5;
 
 export class ProjectionOverlay {
   private readonly ctx: CanvasRenderingContext2D;
-  private solvedById = new Map<number, { xyz: Vec3; confidence: number }>();
+  private solvedById = new Map<number, OverlayLed>();
+  private spacingM: number | null = null;
   private lastPose: Pose | null = null;
   private sinceLock = Infinity;
   private frame = 0;
-  /** Draw the numeric confidence next to each dot (busier, but the point of a
-   * supplemental scan is to see which LEDs are weak). */
+  /** Label each mark with its id and 1-σ (busier, but the point of watching
+   * the solve live is to see which LEDs are still loose). */
   showScores = true;
   /** Registering against a prior map (supplement) vs the live solve (fresh) —
    * only changes the chip wording. */
@@ -116,12 +123,14 @@ export class ProjectionOverlay {
     this.ctx = canvas.getContext("2d")!;
   }
 
-  /** Replace the solved map the overlay registers against (live-map poll, or
-   * the prior map seeded at the start of a supplemental scan). */
-  setSolved(leds: readonly LedEntry[]): void {
-    const m = new Map<number, { xyz: Vec3; confidence: number }>();
-    for (const l of leds) m.set(l.id, { xyz: l.xyz, confidence: l.confidence });
+  /** Replace the LED set the overlay registers against and draws — the union
+   * of the base map and the live solve (geom/liveUnion), each LED with its
+   * provenance and σ. `spacingM` is the LED pitch the variance tiers use. */
+  setSolved(leds: readonly OverlayLed[], spacingM: number | null = null): void {
+    const m = new Map<number, OverlayLed>();
+    for (const l of leds) m.set(l.id, l);
     this.solvedById = m;
+    this.spacingM = spacingM;
   }
 
   get solvedCount(): number {
@@ -196,30 +205,41 @@ export class ProjectionOverlay {
     const viewH = this.canvas.height;
     ctx.font = `${11 * dpr}px system-ui`;
     ctx.textBaseline = "middle";
-    for (const [id, led] of this.solvedById) {
+    // object-fit: cover — image px → view px.
+    const viewScale = Math.max(viewW / imgW, viewH / imgH);
+    // Loose LEDs first so the confident marks paint on top of them.
+    const order = [...this.solvedById.values()].sort((a, b) => b.sigmaM - a.sigmaM);
+    for (const led of order) {
       const pr = project(pose, K, led.xyz);
       if (pr.depth <= 0) continue;
       const { x, y } = imageToView(pr.u, pr.v, imgW, imgH, viewW, viewH);
       if (x < -20 || x > viewW + 20 || y < -20 || y > viewH + 20) continue;
-      const c = Math.max(0, Math.min(1, led.confidence));
-      const hue = Math.round(c * 120); // red (low) -> green (high)
-      const r = (3 + 3 * c) * dpr;
-      // Low-confidence LEDs get a hollow warning ring so the gaps to fill pop.
-      if (c < 0.5) {
-        ctx.strokeStyle = `hsl(${hue} 95% 60% / 0.95)`;
-        ctx.lineWidth = 1.5 * dpr;
+      const st = markerStyle(led.provenance, led.sigmaM, this.spacingM);
+      // 1-σ ring at its projected on-screen size, when bigger than the mark;
+      // capped so a hopeless LED doesn't paint over the whole view.
+      const ringPx = sigmaRadiusPx(led.sigmaM, pr.depth, K[0]) * viewScale;
+      if (ringPx > st.sizePx * dpr * 1.6) {
         ctx.beginPath();
-        ctx.arc(x, y, r + 3 * dpr, 0, Math.PI * 2);
+        ctx.arc(x, y, Math.min(ringPx, 80 * dpr), 0, Math.PI * 2);
+        ctx.lineWidth = dpr;
+        ctx.strokeStyle = st.color;
+        ctx.globalAlpha = 0.55;
         ctx.stroke();
+        ctx.globalAlpha = 1;
       }
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = `hsl(${hue} 90% 55% / 0.85)`;
-      ctx.fill();
+      drawMarker(ctx, st, x, y, dpr);
       if (this.showScores) {
         ctx.fillStyle = "rgb(255 255 255 / 0.85)";
-        ctx.fillText(`${id}·${Math.round(c * 100)}`, x + r + 2 * dpr, y);
+        ctx.fillText(`${led.id} ±${formatSigma(led.sigmaM)}`, x + (st.sizePx + 4) * dpr, y);
       }
     }
   }
+}
+
+/** Compact σ label: millimetres below 10 cm, else centimetres. */
+export function formatSigma(sigmaM: number): string {
+  if (!Number.isFinite(sigmaM)) return "∞";
+  const mm = sigmaM * 1000;
+  if (mm < 100) return `${mm < 10 ? mm.toFixed(1) : Math.round(mm)}mm`;
+  return `${Math.round(mm / 10)}cm`;
 }

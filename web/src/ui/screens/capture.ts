@@ -49,12 +49,15 @@ import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
+import { overlayLegend } from "../overlayStyle";
+import { LIVE_SOLVE_OPTIONS, LiveSolveScheduler } from "../../solver/liveSolve";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
 import { deviceStore, DEFAULT_CAPTURE_STRIDE } from "../../store/deviceStore";
 import { mapStore, type CaptureObservations } from "../../store/mapStore";
 import { recenterToCentroid } from "../../geom/mapTransform";
-import { fuseMaps } from "../../geom/fuseMaps";
+import { concatObservations, fuseMaps } from "../../geom/fuseMaps";
+import { liveUnion } from "../../geom/liveUnion";
 import { appState } from "../app/state";
 import { Button, IconButton, Slider, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
@@ -135,6 +138,9 @@ const forcedBrightness = ((): number | null => {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
 const servoExposure = qs.get("exposure") === "servo";
+// Interim phone solves during capture feed the live overlay on devices without
+// a host solver (FUG-112); `?livesolve=0` turns them off.
+const liveSolveEnabled = qs.get("livesolve") !== "0";
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -256,9 +262,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       showSolved = v;
       projCanvas.style.display = v ? "" : "none";
       if (!v) projOverlay.clear();
+      syncLegend();
     }),
     regChip,
   );
+  // Legend for the solved layer's encoding (provenance = hue+shape, variance =
+  // fill+ring). A first-time capture only has "this scan" LEDs.
+  const legendEl = overlayLegend(supplementId !== null ? ["base", "scan", "updated"] : ["scan"]);
+  legendEl.style.display = "none";
+  function syncLegend(): void {
+    legendEl.style.display = showSolved && projOverlay.solvedCount > 0 ? "" : "none";
+  }
 
   // -- supplemental review panel (FUG-112): after the fused solve, the user
   // sees the result in the live inset and Accepts or Rejects it.
@@ -312,6 +326,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     projCanvas,
     topBar,
     layerBar,
+    legendEl,
     liveCanvas,
     advWrap,
     hudStats,
@@ -425,6 +440,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let liveView: MapView | null = null;
   let liveLeds: readonly LedEntry[] = [];
   let liveSolvedText = "";
+  // The overlay's current display map: the base map ∪ this session's live
+  // solve (geom/liveUnion), in the base frame (supplement) or a stabilized live
+  // frame (first capture). Also what the live inset shows.
+  let displayMap: OutputMap | null = null;
+  // Camera focal length (px) from the latest frame — for the σ model.
+  let focalPx: number | undefined;
+  // Interim phone solves (no host solver), see solver/liveSolve.
+  let liveSolver: LiveSolveScheduler | null = null;
   let localDetections: DetectionRecord[] = [];
   let localImu: ImuSample[] = [];
   let lastLedCount = 64;
@@ -446,10 +469,47 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     liveView = null;
     liveLeds = [];
     liveSolvedText = "";
+    displayMap = null;
+    void liveSolver?.stop();
+    liveSolver = null;
     liveCanvas.style.display = "none";
     labels.clear();
     projOverlay.clear();
+    projOverlay.setSolved([]);
     regChip.style.display = "none";
+    syncLegend();
+  }
+
+  /**
+   * Feed the overlay (and the live inset) with the union of the base map and
+   * this session's latest live solve (FUG-112). `live` is null to show the base
+   * map alone (start of a supplemental scan). Runs on every live update, from
+   * the host's continuous solver or the phone's interim solves alike.
+   */
+  function applyLiveSolve(live: OutputMap | null): void {
+    const u = liveUnion(priorMap, live, displayMap, focalPx);
+    if (u.frameReset) projOverlay.reset();
+    projOverlay.setSolved(u.leds, u.spacingM);
+    displayMap = u.map;
+    syncLegend();
+    if (live !== null) {
+      liveSolvedText =
+        priorMap !== null
+          ? ` · scan solved ${live.leds.length}`
+          : ` · solved ${live.leds.length}/${live.ledCount}`;
+      // Supplement: say whether the new scan has registered into the map yet,
+      // and what it is adding.
+      if (priorMap !== null && u.note) guideEl.textContent = u.note;
+    }
+    if (u.map !== null && u.map.leds.length > 0) {
+      liveCanvas.style.display = "block";
+      if (liveView === null) {
+        liveView = new MapView(liveCanvas, u.map);
+        liveView.start();
+      } else {
+        liveView.update(u.map);
+      }
+    }
   }
 
   /** Reflect the pose-reacquisition state in the HUD chip (FUG-112). */
@@ -483,7 +543,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       priorMap = rec.map;
       priorObs = obs;
       projOverlay.supplement = true;
-      projOverlay.setSolved(priorMap.leds);
+      applyLiveSolve(null); // base map alone until the live solve registers
       guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
     }
     const ledCount = Math.max(
@@ -689,11 +749,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         });
 
         if (showTracks) labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
+        focalPx = f.K[0];
         // Registered 3D layer: recover the pose from the decoded-LED
-        // correspondences and project the solved map into the viewport. Also
-        // drives the reacquisition chip. Only meaningful once we have a solved
-        // set to register against (prior map in supplement mode, or the live
-        // solve otherwise).
+        // correspondences and project the solved set — base map ∪ live solve —
+        // into the viewport. Also drives the reacquisition chip. Only
+        // meaningful once there is a solved set to register against.
         if (projOverlay.solvedCount > 0) {
           const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
           updateRegChip(reg);
@@ -778,22 +838,45 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             if (!capturing || lm.map === null) return;
             liveLeds = lm.map.leds;
             pipeline.updateSolved(liveLeds);
-            // A first-time capture registers against its own live solve; a
-            // supplemental scan keeps registering against the prior map (seeded
-            // at start, a different frame), so don't overwrite it here.
-            if (supplementId === null) projOverlay.setSolved(liveLeds);
-            liveSolvedText = ` · solved ${lm.map.leds.length}/${lm.map.ledCount}`;
-            liveCanvas.style.display = "block";
-            if (liveView === null) {
-              const v = new MapView(liveCanvas, lm.map);
-              liveView = v;
-              v.start();
-            } else {
-              liveView.update(lm.map);
-            }
+            applyLiveSolve(lm.map);
           })
           .catch(() => undefined);
       }, 400);
+
+      // No host solver (embedded players): run interim solves on the phone so
+      // the overlay still renders concurrently with scanning (FUG-112). They
+      // share the worker with the final solve (SolverAgent queues), and Stop
+      // waits out an in-flight one.
+      if (c.hostSolverBenchMs === null && liveSolveEnabled) {
+        void solverReady.then((ok) => {
+          if (!ok || !capturing) return;
+          const sched = new LiveSolveScheduler(
+            () =>
+              solverAgent.solve({
+                detections: localDetections.slice(),
+                imu: localImu.slice(),
+                ledCount: lastLedCount,
+                mapId: "live",
+                createdAt: new Date().toISOString(),
+                options: { ...LIVE_SOLVE_OPTIONS },
+              }),
+            (map) => {
+              if (!capturing) return;
+              liveLeds = map.leds;
+              pipeline.updateSolved(liveLeds);
+              applyLiveSolve(map);
+            },
+          );
+          liveSolver = sched;
+          const liveSolveTick = setInterval(() => {
+            if (!capturing || liveSolver !== sched) {
+              clearInterval(liveSolveTick);
+              return;
+            }
+            sched.tick(localDetections.length);
+          }, 1000);
+        });
+      }
 
       // Inertial batches for the joint solver.
       if (imuFlusher !== null) {
@@ -1006,6 +1089,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     restorePageBackground();
     if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
     capture = null;
+    // Let an in-flight interim solve finish so the final solve has the worker.
+    await liveSolver?.stop();
     resetLiveFeedback();
 
     await solverReady.catch(() => false);
@@ -1126,6 +1211,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // longer hinges on it: a dropped device socket (e.g. TLS heap exhaustion
       // on a long capture, FUG-69) must not lose a capture we already hold.
       let pushedToDevice = false;
+      if (solveOnPhone && supplementId !== null && priorObs !== null) {
+        // Supplemental scan solved on the phone. A short scan aimed at a few
+        // weak LEDs may be too thin to solve ON ITS OWN, yet still add the rays
+        // those LEDs need to the joint re-solve — so a failed standalone solve
+        // is not fatal here; reviewSupplement decides what is usable.
+        await c.stopMappingNoSolve().catch(() => undefined);
+        const supp = await solveOnPhoneNow().catch((e: unknown) => {
+          nativeLog(`[solve] supplemental standalone solve failed: ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
+        preview.view?.stop();
+        if (solvePoll !== null) clearInterval(solvePoll);
+        await reviewSupplement(supp);
+        return;
+      }
       if (solveOnPhone) {
         // Best-effort device bookkeeping only — tell it to stop and hand it the
         // result if the socket is still up, but never fail OR DELAY the solve on
@@ -1227,14 +1327,60 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
    * On accept the prior library map is replaced in place and its observations
    * are extended so it can be supplemented again; on reject nothing changes.
    */
-  async function reviewSupplement(newMap: OutputMap): Promise<void> {
+  async function reviewSupplement(newMap: OutputMap | null): Promise<void> {
     const prior = priorMap;
     const obs = priorObs;
     if (prior === null || obs === null || supplementId === null) {
       router.navigate("/maps");
       return;
     }
-    const fusion = fuseMaps(prior, newMap);
+    // The base capture's observations + this session's on one timeline: the
+    // joint re-solve input now, and what the map persists on Accept (so it can
+    // be supplemented again).
+    const mergedObs: CaptureObservations = concatObservations(obs, {
+      detections: localDetections,
+      imu: localImu,
+    });
+    // Joint re-solve (FUG-112 D): accumulate the supplemental measurements with
+    // the base ones and solve them together, so low-confidence base LEDs get a
+    // new solution from all their rays. Needs the in-browser solver; fuseMaps
+    // validates the result (a solver that keeps only one arc of an interrupted
+    // timeline drops a session) and falls back to estimate-level fusion.
+    let joint: OutputMap | null = null;
+    if (solverAgent.available && localDetections.length > 0) {
+      progWrap.style.display = "";
+      progFill.style.width = "0%";
+      progText.textContent = "re-solving with the original capture…";
+      joint = await solverAgent
+        .solve(
+          {
+            detections: mergedObs.detections,
+            imu: mergedObs.imu,
+            ledCount: mergedObs.ledCount,
+            mapId: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+          },
+          (snap) => {
+            progFill.style.width = `${Math.round(snap.progress * 100)}%`;
+            progText.textContent = `re-solving with the original capture… ${Math.round(snap.progress * 100)} %`;
+          },
+        )
+        .then((m) => recenterToCentroid(m).map)
+        .catch((e: unknown) => {
+          nativeLog(`[solve] joint re-solve failed: ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
+    }
+    // LEDs this session decoded at least a few times — what the joint solve
+    // must show new views on (validateJoint).
+    const decodes = new Map<number, number>();
+    for (const d of localDetections) decodes.set(d.ledId, (decodes.get(d.ledId) ?? 0) + 1);
+    const observedIds = new Set([...decodes].filter(([, n]) => n >= 3).map(([id]) => id));
+    const fusion = fuseMaps(prior, newMap, { joint, observedIds });
+    nativeLog(
+      `[solve] supplement fusion: method=${fusion.report.method} registered=${fusion.report.registered} ` +
+        `jointRejected=${fusion.report.jointRejected ?? "-"} — ${fusion.report.summary}`,
+    );
     progWrap.style.display = "none";
     guideEl.style.display = "none";
     layerBar.style.display = "none";
@@ -1247,8 +1393,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     reviewView.start();
 
     const choice = await new Promise<"accept" | "reject">((resolve) => {
+      const how =
+        fusion.report.method === "joint"
+          ? " Low-confidence LEDs were re-solved jointly from both captures."
+          : joint !== null || fusion.report.jointRejected !== null
+            ? ` Joint re-solve not used (${fusion.report.jointRejected ?? "unavailable"}) — low-confidence LEDs fused from the separate solves.`
+            : "";
       reviewText.textContent = fusion.report.registered
-        ? fusion.report.summary
+        ? fusion.report.summary + how
         : `Couldn't register this scan into the map — ${fusion.report.summary} ` +
           `The fixture's orientation may have changed since the original capture. Try again from a different arc.`;
       reviewBtns.replaceChildren();
@@ -1270,14 +1422,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     el.classList.remove("capture--livebig");
 
     if (choice === "accept" && fusion.report.registered) {
-      const merged: CaptureObservations = {
-        detections: obs.detections.concat(localDetections),
-        imu: obs.imu.concat(localImu),
-        ledCount: obs.ledCount,
-      };
-      await mapStore.setMap(supplementId, fusion.map, undefined, merged);
+      // Persist the fused map in place (still in the base frame — anchored LEDs
+      // didn't move) and the time-shifted union of observations, so the next
+      // supplement's joint re-solve sees both sessions on one valid timeline.
+      await mapStore.setMap(supplementId, fusion.map, undefined, mergedObs);
       appState.setSelectedMap(supplementId);
-      toast(`Merged — +${fusion.report.added} LEDs, ${fusion.report.improved} improved`);
+      // Best-effort: the device should play the map the library now holds.
+      const pushed = await client()
+        ?.submitMap(fusion.map)
+        .then(() => true)
+        .catch(() => false);
+      toast(
+        `Merged — +${fusion.report.added} LEDs, ${fusion.report.resolved} re-solved` +
+          (pushed ? "" : " — device offline, not pushed"),
+      );
     } else {
       toast("Supplemental scan discarded — map unchanged");
     }

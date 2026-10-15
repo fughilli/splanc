@@ -22,6 +22,14 @@ export interface SolveProblem {
   ledCount: number;
   mapId: string;
   createdAt: string;
+  /** reconstruct_vio options (solver/src/types.rs ProblemOptions) — e.g. a
+   * cheaper budget for the interim solves that drive the live overlay. */
+  options?: {
+    maxKeyframes?: number;
+    maxNfev?: number;
+    rejectOutliers?: boolean;
+    minViews?: number;
+  };
 }
 
 /** One progress snapshot — the shape of §7 solve_status content. */
@@ -78,8 +86,23 @@ export class SolverAgent {
     return this.worker !== null && this.benchMs !== null;
   }
 
-  /** Solve a full problem in the worker; progress streams to `onProgress`. */
+  /** Tail of the solve queue: the worker runs one solve at a time and its
+   * replies carry no request id, so overlapping solves (a live interim solve
+   * still running when the user hits Stop) must be serialized here. */
+  private queue: Promise<unknown> = Promise.resolve();
+
+  /** Solve a full problem in the worker; progress streams to `onProgress`.
+   * Calls are queued: each starts after the previous one has finished. */
   solve(problem: SolveProblem, onProgress?: (snap: SolveSnapshot) => void): Promise<OutputMap> {
+    const run = this.queue.then(
+      () => this.solveNow(problem, onProgress),
+      () => this.solveNow(problem, onProgress),
+    );
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private solveNow(problem: SolveProblem, onProgress?: (snap: SolveSnapshot) => void): Promise<OutputMap> {
     const worker = this.worker;
     if (worker === null) return Promise.reject(new Error("solver not initialized"));
     return new Promise<OutputMap>((resolve, reject) => {
