@@ -8,12 +8,14 @@
  *
  * The flow mirrors what `bazel run //firmware/player_app:flash_esp32c6` does on
  * a host, so a webapp-commissioned board is byte-identical to a bench-flashed
- * one: connect → detect the chip from the ROM self-report → write each image at
- * the offsets from flash.json (flash params passed through as "keep", exactly
- * like the esptool_flash rule) → hard-reset into the app.
+ * one: connect (retried across USB re-enumeration, see reconnect.ts) → detect
+ * the chip from the ROM self-report → write each image at the offsets from
+ * flash.json (flash params passed through as "keep", exactly like the
+ * esptool_flash rule) → hard-reset into the app.
  *
  * Browser-only (excluded from the node test build): it imports esptool-js and
- * touches WebSerial. The pure manifest/usb logic is unit-tested separately.
+ * touches WebSerial. The pure manifest/usb/reconnect logic is unit-tested
+ * separately.
  */
 
 import { ESPLoader, Transport } from "esptool-js";
@@ -24,6 +26,7 @@ import type {
   IEspLoaderTerminal,
 } from "esptool-js";
 import type { Flasher, FlashHooks, FlashRequest, FlashResult } from "./flasher";
+import { appResetSequence, connectWithReconnect, errMessage } from "./reconnect";
 
 // esptool-js renegotiates the baud only when baudrate !== romBaudrate (115200),
 // and that renegotiation CLOSES and REOPENS the port (Transport.disconnect() then
@@ -69,19 +72,48 @@ export function createEspFlasher(): Flasher {
         writeLine: (s) => hooks.log(s),
       };
 
-      const transport = new Transport(port, false);
-      const baudrate = flashBaud(port);
-      if (baudrate === ROM_BAUD) {
+      if (flashBaud(port) === ROM_BAUD) {
         hooks.log("Native USB-Serial/JTAG: flashing at 115200 (skipping the baud-change reopen).");
       }
-      const loader = new ESPLoader({ transport, baudrate, terminal });
+
+      // The current attempt's transport; a failed attempt's is closed before the
+      // next one reopens the (possibly re-enumerated) port.
+      let transport: Transport | null = null;
+      const closeTransport = async (): Promise<void> => {
+        const t = transport;
+        transport = null;
+        if (!t) return;
+        try {
+          await t.disconnect();
+        } catch {
+          /* the port may already be closed by a reset / re-enumeration */
+        }
+      };
 
       try {
         // Connect + detect the chip from the ROM bootloader (the "self-report"
-        // the issue asks for — authoritative over the ambiguous USB VID/PID).
-        hooks.progress({ phase: "Connecting", written: 0, total: 1 });
-        const detected = await loader.main();
-        hooks.log(`Detected: ${detected}`);
+        // the issue asks for — authoritative over the ambiguous USB VID/PID),
+        // retried across the USB drop-off that the reset into the bootloader
+        // causes on the native USB-Serial-JTAG.
+        const { port: livePort, session: loader } = await connectWithReconnect({
+          port,
+          serial: typeof navigator !== "undefined" && "serial" in navigator ? navigator.serial : null,
+          connect: async (p, mode, lost) => {
+            const t = new Transport(p, false);
+            transport = t;
+            t.setDeviceLostCallback(lost);
+            // debugLogging routes esptool-js's reset/sync trace ("bootMode:…",
+            // "Error at sync …") into the flash log, so a failed connect says
+            // why instead of just "Failed to connect with the device".
+            const l = new ESPLoader({ transport: t, baudrate: flashBaud(p), terminal, debugLogging: true });
+            const detected = await l.main(mode);
+            hooks.log(`Detected: ${detected}`);
+            return l;
+          },
+          cleanup: closeTransport,
+          log: (s) => hooks.log(s),
+          status: (phase) => hooks.progress({ phase, written: 0, total: 1 }),
+        });
 
         const want = normChip(req.manifest.chip);
         const got = normChip(loader.chip.CHIP_NAME);
@@ -113,15 +145,19 @@ export function createEspFlasher(): Flasher {
           reportProgress: overallProgress(req, hooks),
         });
 
+        // Everything is written and MD5-verified by now; the reset only boots
+        // the app. A real EN pulse (esptool-js's "hard_reset" never asserts it),
+        // and on the native USB-Serial-JTAG the chip reset drops the USB device,
+        // so the port going away mid-reset is the expected outcome, not a failure.
         hooks.log("Resetting into the application…");
-        await loader.after("hard_reset");
+        try {
+          await loader.after("custom_reset", undefined, appResetSequence(livePort.getInfo()));
+        } catch (err) {
+          hooks.log(`Port closed during the reset (expected — the board is rebooting): ${errMessage(err)}`);
+        }
         return mac ? { chipDescription, mac } : { chipDescription };
       } finally {
-        try {
-          await transport.disconnect();
-        } catch {
-          /* the port may already be closed by a hard reset */
-        }
+        await closeTransport();
       }
     },
   };
