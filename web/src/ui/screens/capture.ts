@@ -25,6 +25,7 @@ import {
   planSymbolSwitch,
   recommendConfig,
 } from "../../cv/exposure";
+import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
@@ -45,7 +46,7 @@ import {
   nativeLog,
   saveSessionLog,
 } from "../../xr/nativeCaptureSource";
-import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
+import { SolverAgent, type SolveSnapshot, type SolveStats } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
@@ -448,6 +449,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let focalPx: number | undefined;
   // Interim phone solves (no host solver), see solver/liveSolve.
   let liveSolver: LiveSolveScheduler | null = null;
+  // Hot-loop + live-solver perf counters for the current capture (cv/capturePerf).
+  let perf: CapturePerf | null = null;
   let localDetections: DetectionRecord[] = [];
   let localImu: ImuSample[] = [];
   let lastLedCount = 64;
@@ -710,6 +713,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capturing = true;
       startedAt = performance.now();
+      const loopPerf = new CapturePerf();
+      perf = loopPerf;
+      // Reachable from a remote devtools console mid-capture.
+      (globalThis as { __capturePerf?: () => unknown }).__capturePerf = () => loopPerf.snapshot();
       startTimer();
       let frameCount = 0;
       // Frames the capture source had to clip (see the onFrame handler). Counted
@@ -718,7 +725,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capture.onFrame((f) => {
         if (!capturing || !capture) return;
+        const tStart = performance.now();
         const blobs = detector.detectFrame(f, {});
+        const tDetected = performance.now();
         // A truncated frame is one the capture source had to clip: too much of it
         // was above threshold to encode (a bright scene before exposure settles).
         // Its detections are incomplete AND spatially biased — the encoder fills
@@ -738,6 +747,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
         if (clipped) {
           truncatedFrames++;
+          const t = performance.now();
+          loopPerf.frame({
+            tCaptureMs: f.tCaptureMs,
+            seq: f.seq,
+            prepMs: f.prepMs,
+            latencyMs: tStart - f.tCaptureMs,
+            detectMs: tDetected - tStart,
+            decodeMs: 0,
+            overlayMs: 0,
+            totalMs: t - tStart,
+          });
           return;
         }
         pipeline.step(blobs, {
@@ -748,6 +768,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           imgH: f.imgH,
         });
 
+        const tDecoded = performance.now();
         if (showTracks) labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
         focalPx = f.K[0];
         // Registered 3D layer: recover the pose from the decoded-LED
@@ -758,9 +779,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
           updateRegChip(reg);
         }
+        const tOverlaid = performance.now();
 
         if (++frameCount % 15 === 0) {
           const s = pipeline.stats;
+          const ps = loopPerf.snapshot();
           const pop = monitor.blobPopulation();
           const scn = monitor.scene();
           const br = Math.round((params.brightness ?? 1) * 100);
@@ -777,12 +800,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             total: params.ledCount,
             tracks: s.tracks,
             observations: localDetections.length,
+            perf: ps,
           };
           hudStats.textContent =
             `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
             `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
             `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
-            servoLine;
+            servoLine +
+            `\n${formatPerfLine(ps)}`;
           // Live count chip reads observations · solved, so the user sees more
           // recording only helps (design doc §4.2).
           countEl.textContent = `${localDetections.length} obs${liveSolvedText}`;
@@ -798,8 +823,29 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
             console.info(diag);
             nativeLog(diag);
+            const perfDiag =
+              `[perf] ${formatPerfLine(ps)}` +
+              (liveSolver !== null
+                ? ` gov duty ${Math.round(liveSolver.dutyCycle * 100)}% impacted ${liveSolver.impacted}` +
+                  (liveSolver.suspended ? " SUSPENDED" : "")
+                : "") +
+              `\n[perf] ${formatPhaseLine(ps)}`;
+            console.info(perfDiag);
+            nativeLog(perfDiag);
           }
         }
+        // Everything above is this frame's main-thread cost, HUD included.
+        const tEnd = performance.now();
+        loopPerf.frame({
+          tCaptureMs: f.tCaptureMs,
+          seq: f.seq,
+          prepMs: f.prepMs,
+          latencyMs: tStart - f.tCaptureMs,
+          detectMs: tDetected - tStart,
+          decodeMs: tDecoded - tDetected,
+          overlayMs: tOverlaid - tDecoded,
+          totalMs: tEnd - tStart,
+        });
       });
 
       capture.onEnd(() => {
@@ -850,21 +896,66 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (c.hostSolverBenchMs === null && liveSolveEnabled) {
         void solverReady.then((ok) => {
           if (!ok || !capturing) return;
+          // The worker keeps this capture's records between live solves; each
+          // solve ships only what arrived since the last one, so the clone on
+          // this (camera) thread stays small however long the capture runs.
+          let sentDetections = 0;
+          let sentImu = 0;
+          // Per-solve accounting, completed in `settled` (after onResult).
+          let pending: { records: number; uploaded: number; stats: SolveStats | null; applyMs: number } | null =
+            null;
           const sched = new LiveSolveScheduler(
-            () =>
-              solverAgent.solve({
-                detections: localDetections.slice(),
-                imu: localImu.slice(),
-                ledCount: lastLedCount,
-                mapId: "live",
-                createdAt: new Date().toISOString(),
-                options: { ...LIVE_SOLVE_OPTIONS },
-              }),
+            (recordCount) => {
+              const detections = localDetections.slice(sentDetections);
+              const imu = localImu.slice(sentImu);
+              const reset = sentDetections === 0 && sentImu === 0;
+              sentDetections += detections.length;
+              sentImu += imu.length;
+              pending = { records: recordCount, uploaded: detections.length, stats: null, applyMs: 0 };
+              const p = pending;
+              loopPerf.solveBegin();
+              return solverAgent
+                .solveLive({
+                  reset,
+                  detections,
+                  imu,
+                  ledCount: lastLedCount,
+                  mapId: "live",
+                  createdAt: new Date().toISOString(),
+                  options: { ...LIVE_SOLVE_OPTIONS },
+                })
+                .then((r) => {
+                  p.stats = r.stats;
+                  return r.map;
+                });
+            },
             (map) => {
               if (!capturing) return;
+              const t0 = performance.now();
               liveLeds = map.leds;
               pipeline.updateSolved(liveLeds);
               applyLiveSolve(map);
+              if (pending !== null) pending.applyMs = performance.now() - t0;
+            },
+            {
+              settled: (ok) => {
+                const p = pending;
+                pending = null;
+                if (p === null) return null;
+                const st = p.stats;
+                return loopPerf.solveEnd({
+                  records: p.records,
+                  uploadedRecords: p.uploaded,
+                  queueMs: st?.queueMs ?? 0,
+                  postMs: st?.postMs ?? 0,
+                  roundTripMs: st?.roundTripMs ?? 0,
+                  workerSerializeMs: st?.worker?.serializeMs ?? null,
+                  workerSolveMs: st?.worker?.solveMs ?? null,
+                  workerParseMs: st?.worker?.parseMs ?? null,
+                  applyMs: p.applyMs,
+                  ok,
+                });
+              },
             },
           );
           liveSolver = sched;
@@ -1091,6 +1182,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     capture = null;
     // Let an in-flight interim solve finish so the final solve has the worker.
     await liveSolver?.stop();
+    if (perf !== null) {
+      // Whole-capture CPU-sharing summary: the hot loop with the live solver
+      // idle vs running, and what the live solves cost.
+      const ps = perf.snapshot();
+      const summary =
+        `[perf] capture summary: ${formatPerfLine(ps)}` +
+        (liveSolver !== null
+          ? ` gov duty ${Math.round(liveSolver.dutyCycle * 100)}% impacted ${liveSolver.impacted}` +
+            (liveSolver.suspended ? " SUSPENDED" : "")
+          : "") +
+        `\n[perf] ${formatPhaseLine(ps)}`;
+      console.info(summary);
+      nativeLog(summary);
+      perf = null;
+    }
     resetLiveFeedback();
 
     await solverReady.catch(() => false);
@@ -1191,7 +1297,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         );
       }
       let lastProg = -1;
-      const solved = await solverAgent.solve(problem, (snap: SolveSnapshot) => {
+      const { map: solved, stats } = await solverAgent.solveWithStats(problem, (snap: SolveSnapshot) => {
         renderSolveSnapshot(snap);
         if (driverActive() && snap.progress - lastProg >= 0.2) {
           lastProg = snap.progress;
@@ -1200,6 +1306,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           );
         }
       });
+      const solveLine =
+        `[solve] final ${problem.detections.length} records: ${stats.roundTripMs.toFixed(0)} ms ` +
+        `(queue ${stats.queueMs.toFixed(0)} post ${stats.postMs.toFixed(1)}` +
+        (stats.worker
+          ? ` serialize ${stats.worker.serializeMs.toFixed(0)} wasm ${stats.worker.solveMs.toFixed(0)} ` +
+            `parse ${stats.worker.parseMs.toFixed(0)}`
+          : "") +
+        `)`;
+      console.info(solveLine);
+      nativeLog(solveLine);
       // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
       // on the LED centroid — the natural fixture origin — before the device
       // and the library both take it, so they agree.

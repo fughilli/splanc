@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { OutputMap } from "@ledmapper/protocol";
-import { LiveSolveScheduler } from "../src/solver/liveSolve";
+import { LiveSolveScheduler, MIN_DUTY_CYCLE, SUSPEND_AFTER } from "../src/solver/liveSolve";
 
 const MAP: OutputMap = {
   mapId: "live",
@@ -94,4 +94,94 @@ test("stop() waits out the in-flight solve and drops its result", async () => {
   await p;
   assert.equal(h.results.length, 0);
   assert.equal(h.sched.tick(10_000), false);
+});
+
+/** Run one solve to completion at a chosen duration, with a chosen camera
+ * throughput reported by the `settled` hook. */
+async function solveOnce(h: ReturnType<typeof harness>, at: number, records: number) {
+  h.setClock(at);
+  assert.equal(h.sched.tick(records), true, `solve due at ${at}`);
+  h.setClock(at + 100);
+  h.pending[h.pending.length - 1]!.resolve(MAP);
+  await flush();
+}
+
+test("governor: a solve that cost camera frames halves the duty cycle; clean ones win it back", async () => {
+  const ratios: (number | null)[] = [];
+  const h = harness({ settled: () => ratios.shift() ?? null });
+  ratios.push(0.8);
+  await solveOnce(h, 0, 120);
+  assert.equal(h.sched.dutyCycle, 0.125);
+  assert.equal(h.sched.impacted, 1);
+  ratios.push(1);
+  await solveOnce(h, 10_000, 200);
+  assert.equal(h.sched.dutyCycle, 0.125 * 1.25);
+  ratios.push(0.97); // neither costly nor clean: hold
+  await solveOnce(h, 20_000, 300);
+  assert.equal(h.sched.dutyCycle, 0.125 * 1.25);
+  for (let i = 0; i < 10; i++) {
+    ratios.push(1);
+    await solveOnce(h, 30_000 + i * 10_000, 400 + i * 100);
+  }
+  assert.equal(h.sched.dutyCycle, 0.25, "never above the configured duty cycle");
+});
+
+test("governor: a backed-off duty cycle spaces solves further apart", async () => {
+  const h = harness({ settled: () => 0.5 });
+  h.sched.tick(120);
+  h.setClock(1000); // 1 s solve
+  h.pending[0]!.resolve(MAP);
+  await flush();
+  // 12.5% duty -> idle 7 s after a 1 s solve (was 3 s at 25%).
+  h.setClock(1000 + 6_900);
+  assert.equal(h.sched.tick(1000), false);
+  h.setClock(1000 + 7_000);
+  assert.equal(h.sched.tick(1000), true);
+});
+
+test("governor: live solving suspends if it still costs frames at the floor", async () => {
+  const h = harness({ settled: () => 0.5 });
+  let t = 0;
+  let records = 120;
+  while (h.sched.dutyCycle > MIN_DUTY_CYCLE) {
+    await solveOnce(h, t, records);
+    t += 100_000;
+    records += 100;
+  }
+  for (let i = 0; i < SUSPEND_AFTER; i++) {
+    assert.equal(h.sched.suspended, false);
+    await solveOnce(h, t, records);
+    t += 100_000;
+    records += 100;
+  }
+  assert.equal(h.sched.suspended, true);
+  h.setClock(t + 1e6);
+  assert.equal(h.sched.tick(records + 10_000), false, "no more live solves this capture");
+});
+
+test("governor: a throwing settled hook doesn't break scheduling", async () => {
+  const h = harness({
+    settled: () => {
+      throw new Error("instrumentation bug");
+    },
+  });
+  h.sched.tick(120);
+  h.setClock(100);
+  h.pending[0]!.resolve(MAP);
+  await flush();
+  h.setClock(10_000);
+  assert.equal(h.sched.tick(500), true);
+});
+
+test("governor: the settled hook sees whether the solve succeeded", async () => {
+  const seen: boolean[] = [];
+  const h = harness({ settled: (ok: boolean) => (seen.push(ok), null) });
+  h.sched.tick(120);
+  h.pending[0]!.reject(new Error("diverged"));
+  await flush();
+  h.setClock(10_000);
+  h.sched.tick(500);
+  h.pending[1]!.resolve(MAP);
+  await flush();
+  assert.deepEqual(seen, [false, true]);
 });

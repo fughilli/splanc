@@ -32,6 +32,37 @@ export interface SolveProblem {
   };
 }
 
+/** An interim solve during capture. The worker keeps the capture's records
+ * between live solves, so each call carries only what arrived since the
+ * previous one (solver/worker.js): `reset` starts a new capture. */
+export interface LiveSolveRequest {
+  reset: boolean;
+  detections: DetectionRecord[];
+  imu: ImuSample[];
+  ledCount: number;
+  mapId: string;
+  createdAt: string;
+  options?: SolveProblem["options"];
+}
+
+/** The worker's own per-solve costs (ms); absent from an older worker. */
+export interface WorkerSolveTiming {
+  serializeMs: number;
+  solveMs: number;
+  parseMs: number;
+}
+
+/** Where one solve's time went, for the capture perf counters. */
+export interface SolveStats {
+  /** Waiting behind an earlier queued solve. */
+  queueMs: number;
+  /** Main thread: postMessage (structured clone of the request). */
+  postMs: number;
+  /** Posted → result received. */
+  roundTripMs: number;
+  worker: WorkerSolveTiming | null;
+}
+
 /** One progress snapshot — the shape of §7 solve_status content. */
 export interface SolveSnapshot {
   progress: number;
@@ -44,7 +75,7 @@ type WorkerMsg =
   | { kind: "ready"; version: string }
   | { kind: "bench"; ms: number; rms: number }
   | { kind: "progress"; snap: SolveSnapshot }
-  | { kind: "map"; map: OutputMap }
+  | { kind: "map"; map: OutputMap; timing?: WorkerSolveTiming }
   | { kind: "error"; message: string };
 
 export class SolverAgent {
@@ -94,18 +125,43 @@ export class SolverAgent {
   /** Solve a full problem in the worker; progress streams to `onProgress`.
    * Calls are queued: each starts after the previous one has finished. */
   solve(problem: SolveProblem, onProgress?: (snap: SolveSnapshot) => void): Promise<OutputMap> {
-    const run = this.queue.then(
-      () => this.solveNow(problem, onProgress),
-      () => this.solveNow(problem, onProgress),
-    );
+    return this.enqueue({ cmd: "solve", problem }, onProgress).then((r) => r.map);
+  }
+
+  /** Same as solve(), with where the time went. */
+  solveWithStats(
+    problem: SolveProblem,
+    onProgress?: (snap: SolveSnapshot) => void,
+  ): Promise<{ map: OutputMap; stats: SolveStats }> {
+    return this.enqueue({ cmd: "solve", problem }, onProgress);
+  }
+
+  /** An interim solve on the worker-held live session (no progress stream). */
+  solveLive(req: LiveSolveRequest): Promise<{ map: OutputMap; stats: SolveStats }> {
+    return this.enqueue({ cmd: "solve", live: { ...req, progress: false } });
+  }
+
+  private enqueue(
+    msg: object,
+    onProgress?: (snap: SolveSnapshot) => void,
+  ): Promise<{ map: OutputMap; stats: SolveStats }> {
+    const queuedAt = performance.now();
+    const go = () => this.solveNow(msg, queuedAt, onProgress);
+    const run = this.queue.then(go, go);
     this.queue = run.catch(() => undefined);
     return run;
   }
 
-  private solveNow(problem: SolveProblem, onProgress?: (snap: SolveSnapshot) => void): Promise<OutputMap> {
+  private solveNow(
+    cmd: object,
+    queuedAt: number,
+    onProgress?: (snap: SolveSnapshot) => void,
+  ): Promise<{ map: OutputMap; stats: SolveStats }> {
     const worker = this.worker;
     if (worker === null) return Promise.reject(new Error("solver not initialized"));
-    return new Promise<OutputMap>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
+      let postedAt = 0;
+      let postMs = 0;
       const onMsg = (ev: MessageEvent): void => {
         const msg = ev.data as WorkerMsg;
         if (msg.kind === "progress") {
@@ -113,11 +169,22 @@ export class SolverAgent {
           return;
         }
         worker.removeEventListener("message", onMsg);
-        if (msg.kind === "map") resolve(msg.map);
-        else reject(new Error(msg.kind === "error" ? msg.message : `unexpected ${msg.kind}`));
+        if (msg.kind === "map") {
+          resolve({
+            map: msg.map,
+            stats: {
+              queueMs: postedAt - queuedAt,
+              postMs,
+              roundTripMs: performance.now() - postedAt,
+              worker: msg.timing ?? null,
+            },
+          });
+        } else reject(new Error(msg.kind === "error" ? msg.message : `unexpected ${msg.kind}`));
       };
       worker.addEventListener("message", onMsg);
-      worker.postMessage({ cmd: "solve", problem });
+      postedAt = performance.now();
+      worker.postMessage(cmd);
+      postMs = performance.now() - postedAt;
     });
   }
 
