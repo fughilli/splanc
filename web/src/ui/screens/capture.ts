@@ -355,6 +355,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     applyBrightness: (b01: number) => void;
     applyExposure: (e01: number) => void;
   } | null = null;
+  // Set while capturing: switch the RUNNING capture between strided (diffuse)
+  // and dense capture (the inline toggle below).
+  let diffuseHook: ((on: boolean) => void) | null = null;
   const brightSlider = Slider({
     label: "LED brightness",
     min: 5,
@@ -383,8 +386,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // persists to Behavior Settings so re-mapping a diffused fixture never needs
   // the ?diffuse=1 URL param again; the stride comes from the device's Hardware
   // Setup, the other engine params from Behavior Settings. A ?diffuse=1 URL param
-  // still force-enables it regardless of this toggle. Saved immediately; a flip
-  // before the map starts applies to this run too, otherwise to the next map.
+  // still force-enables it at the start of a run. Saved immediately; a flip
+  // before the map starts applies to this run, and a flip mid-capture switches
+  // the running capture live (device stride + phase rotation + detector).
   let mappingStarted = false;
   const diffuseLabel = (): string => `Diffuse capture: ${prefs.getDiffuseEnabled() ? "On" : "Off"}`;
   const diffuseBtn = Button({
@@ -393,12 +397,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     onClick: () => {
       const on = !prefs.getDiffuseEnabled();
       prefs.setDiffuseEnabled(on);
-      // Re-resolve so a pre-map flip takes effect on this run as well.
-      ({ diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
-        resolveCaptureConfig());
       const span = diffuseBtn.querySelector("span");
       if (span) span.textContent = diffuseLabel();
-      toast(mappingStarted ? `Diffuse capture ${on ? "on" : "off"} — applies on the next map` : `Diffuse capture ${on ? "on" : "off"}`);
+      if (diffuseHook !== null) {
+        // Mid-capture: the running capture owns its config — switch it live
+        // rather than re-resolving the variables out from under it (which
+        // used to stop the phase rotation while the device stayed strided).
+        diffuseHook(on);
+        toast(`Switching to ${on ? "strided (diffuse)" : "dense"} capture…`);
+        return;
+      }
+      // Before the map starts: re-resolve so the flip applies to this run.
+      ({ diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
+        resolveCaptureConfig());
+      toast(`Diffuse capture ${on ? "on" : "off"}`);
     },
   });
 
@@ -714,7 +726,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
       // Diffuse phase rotation state (a no-op when !diffuse: phaseTotal === 1).
-      const phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
+      let phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
       let phaseIdx = 0;
       let lastPhaseAt = performance.now();
       guideEl.textContent = diffuse
@@ -998,16 +1010,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let pendingSymbols: 2 | 4 | null = null;
       let pendingBrightness: number | null = null;
       let renegotiating = false;
-      const applyReconfigure = (opts: {
-        bitPeriodMs?: number;
-        symbols?: 2 | 4;
-        brightness?: number;
-        stridePhase?: number;
-      }): void => {
+      const applyReconfigure = (
+        opts: {
+          bitPeriodMs?: number;
+          symbols?: 2 | 4;
+          brightness?: number;
+          strideSpacing?: number;
+          anchorDensity?: number;
+          stridePhase?: number;
+        },
+        onApplied?: () => void,
+      ): void => {
         renegotiating = true;
         c.configure(opts)
           .then((ps) => {
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
+            onApplied?.();
             params = ps.codeParams;
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
@@ -1035,6 +1053,42 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // (FUG-62). The auto servo below keeps the Nyquist cap.
           void exposureTarget.setExposure(e01, prefs.getManualExposureCeilingMs());
         },
+      };
+
+      // Live strided ⇄ dense switch (the inline diffuse toggle while capturing).
+      // `wantDiffuse` is what the user asked for; `diffuse` flips only once the
+      // device has confirmed the new stride, so the pattern, the phase rotation
+      // and the detector change together. A switch that can't go out right now
+      // (another reconfigure in flight) is retried on the next tick.
+      let wantDiffuse = diffuse;
+      const applyDiffuseSwitch = (): void => {
+        if (wantDiffuse === diffuse || renegotiating) return;
+        const target = wantDiffuse;
+        const bp = prefs.getDiffuseParams();
+        if (target) {
+          const cfg = resolveCaptureConfig();
+          strideSpacing = cfg.strideSpacing;
+          anchorDensity = cfg.anchorDensity;
+        }
+        const threshold = numParam("threshold", target ? bp.threshold : 0.6);
+        const gain = target ? numParam("lcgain", bp.lcGain) : 0;
+        applyReconfigure(
+          target ? { strideSpacing, anchorDensity, stridePhase: 0 } : { strideSpacing: 0 },
+          () => {
+            diffuse = target;
+            phaseTotal = target ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
+            phaseIdx = 0;
+            lastPhaseAt = performance.now();
+            if (!forcedThreshold) detector.threshold = threshold;
+            detector.setLocalContrast(gain);
+            nativeSource?.setDetectParams({ threshold: detector.threshold });
+            nativeLog(`[capture] switched to ${target ? `strided (stride ${strideSpacing})` : "dense"} capture`);
+          },
+        );
+      };
+      diffuseHook = (on) => {
+        wantDiffuse = on;
+        applyDiffuseSwitch();
       };
 
       const exposureTick = setInterval(() => {
@@ -1114,7 +1168,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
         // cycles per phase; skip if a servo reconfig just fired (they share the
         // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
-        if (diffuse && !renegotiating) {
+        applyDiffuseSwitch();
+        if (diffuse && wantDiffuse && !renegotiating) {
           const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
           if (performance.now() - lastPhaseAt > dwellMs) {
             phaseIdx = (phaseIdx + 1) % phaseTotal;
@@ -1130,6 +1185,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         console.error("capture startup failed", e);
       }
       manualHooks = null;
+      diffuseHook = null;
       capturing = false;
       stopTimer();
       imuRecorder?.stop();
@@ -1162,6 +1218,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   async function cancel(): Promise<void> {
     if (capturing) {
       capturing = false;
+      diffuseHook = null;
       stopTimer();
       imuRecorder?.stop();
       previewVideo?.remove();
@@ -1181,6 +1238,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (c === null) return;
     capturing = false;
     manualHooks = null;
+    diffuseHook = null;
     stopBtn.disabled = true;
     stopTimer();
     imuRecorder?.stop();
