@@ -140,7 +140,9 @@ async def run_journey(
     PhoneTarget) lets gesture-gated commands (provisionBle/trustCert) be driven via
     real taps on a real-BLE device instead of the driver RPC."""
     ctx: dict[str, Any] = dict(journey.get("inputs") or {})
-    ctx.update(context or {})
+    # An unset context value (None / "") must not clobber the journey's own default
+    # input: phone_e2e always passes ssid/password/improv_name, empty when no creds.
+    ctx.update({k: v for k, v in (context or {}).items() if v is not None and v != ""})
     if journey.get("name") == "connect" and ctx.get("device_ws"):
         snapshot = await drv.query("appState")
         if (

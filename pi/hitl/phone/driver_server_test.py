@@ -58,6 +58,33 @@ class ConnectFlowTests(unittest.IsolatedAsyncioTestCase):
             await run_journey(driver, {"name": "connect"}, {}, {"device_ws": "wss://device/ws"})
 
 
+class ContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unset_context_keeps_journey_defaults_and_real_creds_override(self):
+        journey = {
+            "name": "smoke",
+            "inputs": {"ssid": "FugLink", "password": "smoke-pass", "improv_name": None},
+            "steps": [
+                {
+                    "do": "provisionBle",
+                    "with": {"ssid": "${ssid}", "password": "${password}"},
+                }
+            ],
+        }
+        driver = AppDriver()
+        driver.command = AsyncMock(return_value={})
+        # Virtual lane: phone_e2e passes no creds -> the journey's mock creds stand.
+        await run_journey(driver, journey, {}, {"ssid": None, "password": ""})
+        driver.command.assert_awaited_once_with(
+            "provisionBle", timeout=60.0, ssid="FugLink", password="smoke-pass"
+        )
+        # Real-BLE lane: the reservation env's AP creds win.
+        driver.command.reset_mock()
+        await run_journey(driver, journey, {}, {"ssid": "bench-ap", "password": "pw"})
+        driver.command.assert_awaited_once_with(
+            "provisionBle", timeout=60.0, ssid="bench-ap", password="pw"
+        )
+
+
 class ReloadTests(unittest.IsolatedAsyncioTestCase):
     async def test_disconnect_fails_pending_rpc_without_waiting_for_timeout(self):
         server = AppDriver.serve(0, host="127.0.0.1")

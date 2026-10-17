@@ -507,14 +507,48 @@ void send_ping(const uint8_t *src, uint16_t seq) {
 
 // CCMP-encrypt + transmit an IPv4 packet to the gateway (the AP), wrapping it in
 // LLC/SNAP. Used for the TCP segments the tcp module produces.
+// IPv4 -> L2 source address of the frames that carried it, learned from inbound FromDS
+// data frames (A3 = SA). Replies MUST be addressed (A3 = DA) to the peer's own MAC: an AP
+// that is also a host (the Mac's Internet Sharing AP) takes a DA=BSSID frame for ITSELF
+// and never forwards it to the phone, so the C6's SYN-ACKs went nowhere (the iOS bench
+// connect wedge). The Linux rig APs only worked by hairpin-routing those frames back out.
+// An off-subnet peer's packets arrive with SA = the gateway's MAC, which is exactly the
+// right next hop, so no netmask check is needed. Unknown -> BSSID (the old behaviour).
+struct Neighbor { uint8_t ip[4]; uint8_t mac[6]; };
+static Neighbor g_neigh[4];
+static uint8_t g_neigh_next = 0;
+static uint8_t g_rx_sa[6];
+static bool g_rx_sa_ok = false;
+
+// Record the SA of the frame about to be handed to handle_l3 (FromDS: A3 = SA).
+static void note_rx_sa(const uint8_t *frame) {
+  g_rx_sa_ok = (frame[1] & 0x03) == 0x02 && memcmp(frame + 16, OUR_MAC, 6) != 0;
+  if (g_rx_sa_ok) memcpy(g_rx_sa, frame + 16, 6);
+}
+
+static void learn_neighbor(const uint8_t *src_ip) {
+  if (!g_rx_sa_ok) return;
+  for (Neighbor &n : g_neigh)
+    if (memcmp(n.ip, src_ip, 4) == 0) { memcpy(n.mac, g_rx_sa, 6); return; }
+  Neighbor &n = g_neigh[g_neigh_next++ % (sizeof g_neigh / sizeof g_neigh[0])];
+  memcpy(n.ip, src_ip, 4);
+  memcpy(n.mac, g_rx_sa, 6);
+}
+
+static const uint8_t *neighbor_mac(const uint8_t *dst_ip) {
+  for (const Neighbor &n : g_neigh)
+    if (memcmp(n.ip, dst_ip, 4) == 0) return n.mac;
+  return g_bssid;
+}
+
 void send_ip(const uint8_t *ip, int iplen) {
   uint8_t payload[1600];
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
   memcpy(payload, llc, 8);
   memcpy(payload + 8, ip, iplen);
-  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=DA (peer's MAC, else BSSID)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, neighbor_mac(ip + 16), 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   tx_l2(hdr, payload, 8 + iplen, nullptr);
 }
@@ -676,6 +710,7 @@ void handle_l3(const uint8_t *pt, int pl) {
   if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
   if (pt[7] != 0x00) return;            // only IPv4 past here
   const uint8_t *ip = pt + 8;
+  if (pl >= 8 + 20) learn_neighbor(ip + 12);
   // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
   // data segment never arrives amid a flood of large frames.
   {
@@ -914,7 +949,7 @@ static void pump_link_once() {
     uint32_t pl = 0;
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
       if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
-    if (pl) handle_l3(pt, pl);
+    if (pl) { note_rx_sa(rxb); handle_l3(pt, pl); }
   }
   // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
   // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
@@ -1363,11 +1398,11 @@ void netstack_loop() {
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
-      if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; Serial.println("auth ok -> assoc"); }
+      if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis(); Serial.println("auth ok -> assoc"); }
     } else if (rx[0] == 0x10 && st == ASSOC) { // assoc resp
       uint16_t status = rx[26] | (rx[27] << 8);
       Serial.printf("assoc status=%u\n", status);
-      if (status == 0) { st = FOURWAY; Serial.println("ASSOCIATED -> 4-way"); }
+      if (status == 0) { st = FOURWAY; t = millis(); Serial.println("ASSOCIATED -> 4-way"); }
     } else if ((rx[0] == 0xc0 || rx[0] == 0xa0) && st != AUTH) { // deauth / disassoc from our AP
       // The AP dropped us mid-session (missed beacons under heavy FULL-perf render load,
       // an AP inactivity/keepalive timeout, roaming, or RF). Nothing used to handle this:
@@ -1456,6 +1491,7 @@ void netstack_loop() {
       if (pf++ < 8)
         Serial.printf("  prot AP->us fc=%02x%02x len=%u ccmp@24=[%02x %02x %02x %02x] decrypt=%u\n",
                       rx[0], rx[1], n, rx[24], rx[25], rx[26], rx[27], pl);
+      note_rx_sa(rx);
       handle_l3(pt, pl);
     } else if ((rx[0] & 0x0c) == 0x08 && !(rx[1] & 0x40) && st == DONE && g_hwkey && n > 32) {
       // HW-decrypted data frame from the AP (Protected bit cleared, CCMP header
@@ -1463,6 +1499,7 @@ void netstack_loop() {
       static uint32_t hwf = 0;
       if (hwf++ < 6) Serial.printf("  HW-DECRYPTED fc=%02x%02x len=%u llc=[%02x %02x .. %02x %02x]\n",
                                    rx[0], rx[1], n, rx[24], rx[25], rx[30], rx[31]);
+      note_rx_sa(rx);
       handle_l3(rx + 24, n - 24);
     }
   }
@@ -1537,6 +1574,17 @@ void netstack_loop() {
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
     t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
+  }
+  // Join watchdog: auth is re-sent every 200ms above, but the Association Request and the
+  // 4-way go out ONCE. A single lost Association Request/Response (seen on the Mac Internet
+  // Sharing AP: "auth ok -> assoc" then silence) or a stalled 4-way used to park the join in
+  // ASSOC/FOURWAY forever. Re-drive it from AUTH (the PMK is cached, so it's quick).
+  if ((st == ASSOC && millis() - t > 1000) || (st == FOURWAY && millis() - t > 4000)) {
+    Serial.printf("[t=%lu] join stalled in %s — re-joining from auth\n", (unsigned long)millis(),
+                  st == ASSOC ? "assoc" : "4-way");
+    st = AUTH;
+    inited = false;
+    t = 0;
   }
   // Stream out any send-window segments the just-processed ACKs now allow (the send
   // window pipelines many segments in flight rather than one-per-RTT).

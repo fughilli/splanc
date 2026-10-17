@@ -70,7 +70,8 @@ def payload_manifest() -> list[tuple[str, str]]:
         ("pi/hitl/phone/journeys", "journeys"),
         # Dynamic C6 serial-port discovery (run in-session for flashing).
         ("pi/hitl/harness/serial_discovery.py", "serial_discovery.py"),
-        # Optional wired serial capture (watch the C6 during a phone BLE provision).
+        # C6 console reader: the Improv-name readback (pins the phone to THIS board)
+        # and the optional wired capture during a phone BLE provision.
         ("pi/hitl/phone/ios_serial_diag.py", "ios_serial_diag.py"),
         # The built web app + solver deployment the station serves, and the firmware
         # bundle for flashing the C6 (connect+ journeys).
@@ -83,11 +84,36 @@ def payload_manifest() -> list[tuple[str, str]]:
     ]
 
 
-def stage_payload(dest_tar: str, resolve=_runfile, manifest=None) -> list[str]:
+# Payload entries the iOS lane can't run correctly without. A missing one is a BUILD
+# `data` bug in whichever target staged the payload (seen: :ios_journeys lacked
+# ios_serial_diag.py, so the Improv-name readback silently came back empty and the
+# phone fell back to strongest-RSSI) — fail at staging instead of degrading on the Mac.
+REQUIRED_ARCS = frozenset(
+    {
+        "phone_e2e.py",
+        "driver_server.py",
+        "journey_runner.py",
+        "phone_target.py",
+        "launcher.py",
+        "journeys",
+        "serial_discovery.py",
+        "ios_serial_diag.py",
+        "web/dist",
+    }
+)
+
+
+def stage_payload(
+    dest_tar: str, resolve=_runfile, manifest=None, required=REQUIRED_ARCS
+) -> list[str]:
     """Tar the payload into dest_tar. Returns the arcnames actually included (a
-    missing optional artifact — e.g. the solver bundle — is skipped, not fatal).
-    Directories are added recursively; scp can't recurse, so we ship one tar."""
+    missing optional artifact — e.g. the solver bundle — is skipped, not fatal; a
+    missing `required` one raises). Directories are added recursively; scp can't
+    recurse, so we ship one tar."""
     manifest = manifest if manifest is not None else payload_manifest()
+    missing = [arc for rel, arc in manifest if arc in required and not resolve(rel)]
+    if missing:
+        raise SystemExit(f"[ios-res] payload is missing required runfiles: {', '.join(missing)}")
     included: list[str] = []
     # dereference: the payload is resolved from bazel runfiles, where the journey
     # JSONs (and other data) are SYMLINKS into the container's tree. Without following
@@ -166,8 +192,12 @@ def remote_run_cmd(
 # keeps phone->station intra-subnet, which is required once the NAT-isolation pf rules
 # drop bench->off-subnet traffic (see pi/hitl/nix/hitl-darwin.nix). bridge100 only
 # exists while Internet Sharing is up; otherwise fall through to the wired/Wi-Fi IPs.
+# `ipconfig getifaddr bridge100` prints NOTHING even while bridge100 is up with
+# 192.168.2.1 (seen on macOS 27), so read the bridge's address from ifconfig instead;
+# the awk END exit status keeps the `||` fallthrough working when it has no inet.
 STATION_IP_EXPR = " || ".join(
-    f"ipconfig getifaddr {i} 2>/dev/null" for i in ("bridge100", "en0", "en1", "en2")
+    ["ifconfig bridge100 2>/dev/null | awk '/inet /{print $2; f=1; exit} END{exit !f}'"]
+    + [f"ipconfig getifaddr {i} 2>/dev/null" for i in ("en0", "en1", "en2")]
 )
 
 
@@ -198,6 +228,12 @@ def resolve_improv_name(res) -> str:
     # Take the LAST match: if the board rebooted more than once in the window, the most
     # recent banner reflects the current NVS name.
     matches = re.findall(r'advertising "([^"]+)"', out)
+    if not matches:
+        # Say WHY: a silent miss (e.g. the diag script missing from the payload) used to
+        # look exactly like a board that just didn't print its banner.
+        tail = "\n".join(out.strip().splitlines()[-8:])
+        rc = getattr(r, "returncode", "?")
+        print(f"[ios-res] no Improv banner in the C6 console (rc={rc}):\n{tail}", flush=True)
     return matches[-1] if matches else ""
 
 
@@ -293,10 +329,10 @@ def _run(args: argparse.Namespace) -> int:
                 raise SystemExit(f"C6 flash failed (rc {fc.returncode})")
 
         # 3a. Resolve the reserved C6's advertised Improv name so the phone pins its BLE
-        #     pick to OUR board (not a stray C6 on the shared bench). Real-BLE journeys
-        #     only; smoke provisions virtually and needs no pin.
+        #     pick to OUR board (not a stray C6 on the shared bench). Real-BLE only —
+        #     including smoke, which provisions the REAL C6 in real mode.
         improv_name = args.improv_name
-        if not improv_name and args.ble_mode == "real" and args.journeys != "smoke":
+        if not improv_name and args.ble_mode == "real":
             improv_name = resolve_improv_name(res)
             print(f"[ios-res] reserved C6 Improv name: {improv_name!r}", flush=True)
             if not improv_name:
@@ -339,7 +375,14 @@ def _run(args: argparse.Namespace) -> int:
 
         # 4b. Retrieve the concurrent serial capture (if any) for the coex diagnosis.
         if args.serial_monitor > 0:
-            log = res.ssh(f"cat {monitor_log} 2>/dev/null", capture=True, timeout=30)
+            # Stop the capture first: it runs for a fixed --serial-monitor window and,
+            # left behind, holds the C6's port past the reservation — the NEXT run's
+            # flash then fails ("device reports readiness to read but returned no data").
+            log = res.ssh(
+                f"pkill -f {REMOTE_ROOT}/ios_serial_diag.py; sleep 1; cat {monitor_log} 2>/dev/null",
+                capture=True,
+                timeout=30,
+            )
             print("[ios-res] ===== C6 serial during BLE provision =====", flush=True)
             sys.stdout.write(log.stdout or "")
             print("[ios-res] ===== end serial capture =====", flush=True)

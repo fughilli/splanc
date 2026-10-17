@@ -1,13 +1,14 @@
 {
   "name": "smoke",
-  "description": "Device-free: prove the app-driver loop + virtual BLE with no backend.",
+  "description": "Prove the app-driver loop + Improv provisioning. Virtual BLE: no backend (the in-app mock answers). Real BLE (iOS bench): provisions the reserved C6 onto the bench AP, so the creds must be the real ones from the reservation env.",
+  "inputs": { "ssid": "FugLink", "password": "smoke-pass", "improv_name": null },
   "steps": [
     { "do": "navigate", "with": { "path": "/onboard" } },
     { "query": "appState", "as": "state", "expect": { "status.state": "present" } },
     {
-      "description": "virtual Improv provisioning answers the RPC in-app (no radio)",
+      "description": "Improv provisioning (virtual: answered in-app, no radio; real: the reserved C6)",
       "do": "provisionBle",
-      "with": { "ssid": "FugLink", "password": "smoke-pass" },
+      "with": { "ssid": "${ssid}", "password": "${password}", "deviceName": "${improv_name}" },
       "timeout": 90,
       "expect": { "urls": "nonempty" }
     }
