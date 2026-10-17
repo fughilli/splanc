@@ -89,6 +89,53 @@ py_binary(
     ],
 )
 
+# Automated iOS phone-HITL journeys — the unattended CI rep on the Mac mini's
+# `ios-phone` unit (real iPhone + real C6). A thin env-configured wrapper over
+# :ios_reservation (reserve, ship the harness, run phone_e2e ON THE MAC). See
+# ios_journeys.py.
+#
+# Tagged `hitl_ios` (NOT `hitl`), exactly like :android_journeys: only ONE iOS unit
+# exists, so it must stay out of the per-PR `\bhitl\b` query. The periodic run always
+# includes it and a PR opts in (label / tag / path) — the lane collects it with
+# `attr(tags, "hitl_ios", tests(//...))`. See .github/workflows/hitl.yaml.
+py_test(
+    name = "ios_journeys",
+    timeout = "eternal",  # reserve + ship + sign/install/launch on the iPhone + journeys
+    srcs = [
+        "ios_journeys.py",
+        "ios_reservation.py",
+    ],
+    data = [
+        "phone_e2e.py",  # shipped into the reserved session (see :ios_reservation)
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//solver:solver_web",
+        "//web:dist",
+    ],
+    imports = ["."],
+    main = "ios_journeys.py",
+    tags = [
+        "hitl_ios",
+        "manual",
+    ],
+    deps = [
+        ":phone",
+        "//pi/hitl/harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+py_test(
+    name = "ios_journeys_test",
+    srcs = [
+        "ios_journeys.py",
+        "ios_journeys_test.py",
+        "ios_reservation.py",
+    ],
+    imports = ["."],
+    main = "ios_journeys_test.py",
+    deps = ["@rules_python//python/runfiles"],
+)
+
 # Automated Android phone-HITL journeys — the unattended CI rep on amd-rig's
 # `android-phone` unit (real Samsung phone + real C6, :8088 phone daemon). Reserves
 # the unit BY NAME on a PINNED server (tailnet discovery only reaches :8087), ships

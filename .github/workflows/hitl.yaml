@@ -99,6 +99,13 @@ jobs:
       # :8088 — tailnet discovery only reaches :8087). Overridable via the HITL env var
       # if the host/port ever changes; the android_journeys test defaults to it.
       HITL_ANDROID_SERVER: ${{ vars.HITL_ANDROID_SERVER || 'http://amd-rig:8088' }}
+      # The Mac mini iOS bench daemon (the `ios-phone` unit: real iPhone + c6-c) and the
+      # journeys its rep runs. Overridable via HITL environment vars; see
+      # //pi/hitl/phone:ios_journeys.
+      HITL_IOS_SERVER: ${{ vars.HITL_IOS_SERVER || 'http://mac-mini:8087' }}
+      HITL_IOS_JOURNEYS: ${{ vars.HITL_IOS_JOURNEYS || 'smoke' }}
+      HITL_IOS_BLE_MODE: ${{ vars.HITL_IOS_BLE_MODE || 'virtual' }}
+      HITL_IOS_FLASH_C6: ${{ vars.HITL_IOS_FLASH_C6 || '' }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
       # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
@@ -165,6 +172,43 @@ jobs:
           fi
           echo "run_android=$run" >> "$GITHUB_OUTPUT"
           echo "Android phone-HITL journeys will run this execution: $run"
+
+      # Same policy for the iOS phone-HITL journeys (//pi/hitl/phone:ios_journeys, the
+      # `hitl_ios`-tagged lane on the Mac mini's single `ios-phone` unit): ALWAYS on the
+      # periodic workflow_dispatch runs; opt-in on PR/push via the `hitl-ios` LABEL, a
+      # `[hitl-ios]` tag in the PR body / head commit message, or an iOS-affecting path.
+      - name: Decide whether to run the iOS journeys
+        id: ios_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run=true
+          else
+            if printf '%s' "$PR_LABELS" | grep -q '"hitl-ios"'; then run=true; fi
+            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-ios]'; then
+              run=true
+            fi
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              files=$(gh api --paginate \
+                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+                -q '.[].filename' 2>/dev/null || true)
+            else
+              files=$(gh api \
+                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
+                -q '.files[].filename' 2>/dev/null || true)
+            fi
+            if printf '%s\n' "$files" | grep -Eq \
+              '^(pi/hitl/phone/(ios_|phone_e2e|phone_target|driver_server|journey_runner|launcher|journeys/)|pi/hitl/reserve/catalog-mac\.json|pi/hitl/nix/hitl-darwin\.nix|tools/ios_build_server\.py|web/ios-config/|web/capacitor\.config\.ts|web/native-plugins/|web/src/driver/|web/src/net/capacitorImprov\.ts)'; then
+              run=true
+            fi
+          fi
+          echo "run_ios=$run" >> "$GITHUB_OUTPUT"
+          echo "iOS phone-HITL journeys will run this execution: $run"
 
       # Free ~20-30GB of runner disk before the heavy Nix/Bazel build (FUG-76):
       # ubuntu-latest gives only ~14GB free on /, but the flash-bundle build pulls
@@ -299,8 +343,12 @@ jobs:
           # caps-only requests on both selection paths (_unit_serves + _unit_matches), so
           # _pick_server never routes a netstack reservation there (confirmed live:
           # curl amd-rig:8087/status -> c6-sdr pin_only=true).
+          # Each lane records its failure instead of exiting, so one lane failing never
+          # hides the others' results (the periodic run reports pool + Android + iOS);
+          # the step still fails at the end if any lane failed.
+          rc=0
           echo "::group::HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all"
+          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" || rc=1
           echo "::endgroup::"
 
           # The Android phone-HITL journeys (amd-rig's `android-phone` unit, the :8088
@@ -331,11 +379,43 @@ jobs:
               --test_env=HITL_ANDROID_SERVER \
               --test_env=HITL_ANDROID_PIN \
               --test_env=HITL_OWNER \
-              --test_env=GITHUB_SHA
+              --test_env=GITHUB_SHA || rc=1
             echo "::endgroup::"
           else
             echo "Android phone-HITL journeys skipped this run (see the android_gate step)."
           fi
+
+          # The iOS phone-HITL journeys (the Mac mini's `ios-phone` unit). Like Android:
+          # one named unit on a PINNED server (HITL_IOS_SERVER), gated by ios_gate, and
+          # tagged `hitl_ios` so the `\bhitl\b` pool query above never collects it.
+          if [ "${{ steps.ios_gate.outputs.run_ios }}" = "true" ]; then
+            echo "::group::iOS phone-HITL journeys (mac-mini :8087, GATING when run)"
+            ios=$(bazel query 'attr(tags, "hitl_ios", tests(//...))')
+            echo "collected iOS tests:"; echo "$ios"
+            if [ -z "$ios" ]; then echo "no hitl_ios-tagged tests found"; exit 1; fi
+            ni=$(echo "$ios" | wc -w)
+            # --flaky_test_attempts=2: one retry absorbs a transient sign/install/launch
+            #   or reservation hiccup; a real regression fails both attempts and gates.
+            bazel test $ios \
+              -c opt \
+              --experimental_worker_for_repo_fetching=off \
+              --loading_phase_threads=1 \
+              --disk_cache="$HOME/.cache/bazel-disk" \
+              --test_output=all \
+              --jobs="$ni" \
+              --local_test_jobs="$ni" \
+              --flaky_test_attempts=2 \
+              --test_env=HITL_IOS_SERVER \
+              --test_env=HITL_IOS_JOURNEYS \
+              --test_env=HITL_IOS_BLE_MODE \
+              --test_env=HITL_IOS_FLASH_C6 \
+              --test_env=HITL_OWNER \
+              --test_env=GITHUB_SHA || rc=1
+            echo "::endgroup::"
+          else
+            echo "iOS phone-HITL journeys skipped this run (see the ios_gate step)."
+          fi
+          exit $rc
 
       # The raw JUnit evidence (each test's final attempt, test.xml only) for the
       # published combined report (traceability-site.yaml). Resolved here, once:
