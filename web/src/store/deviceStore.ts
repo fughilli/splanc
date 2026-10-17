@@ -35,9 +35,19 @@ export interface KnownDevice {
    * tag, e.g. "1.2.0"); absent/"" until seen or on older firmware. Shown on the
    * device card alongside the commit. */
   fwVersion?: string;
+  /** Diffuse-capture stride length (LED spacing between lit pixels per phase),
+   * a PER-DEVICE setting — it depends on this fixture's physical LED pitch and
+   * diffuser, so it's persisted with the device and reused on every re-map.
+   * Set on the Hardware Setup page; absent = the capture default. */
+  captureStride?: number;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
+
+/** Bounds for the per-device diffuse-capture stride (matches capture.ts). */
+export const MIN_CAPTURE_STRIDE = 1;
+export const MAX_CAPTURE_STRIDE = 16;
+export const DEFAULT_CAPTURE_STRIDE = 4;
 
 const KEY = "ledmapper.devices";
 const ACTIVE_KEY = "ledmapper.activeDevice";
@@ -71,8 +81,17 @@ function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): Kn
     ...(d.fwGitCommit !== undefined ? { fwGitCommit: d.fwGitCommit } : {}),
     ...(d.fwGitDirty !== undefined ? { fwGitDirty: d.fwGitDirty } : {}),
     ...(d.fwVersion !== undefined ? { fwVersion: d.fwVersion } : {}),
+    ...(d.captureStride !== undefined ? { captureStride: d.captureStride } : {}),
     lastSeen: d.lastSeen ?? new Date(0).toISOString(),
   };
+}
+
+/** Clamp a stride to the supported per-device range, or undefined if not a
+ * usable number (so a bad value falls back to the capture default). */
+export function clampCaptureStride(n: unknown): number | undefined {
+  const v = typeof n === "number" ? n : parseInt(String(n), 10);
+  if (!Number.isFinite(v)) return undefined;
+  return Math.min(MAX_CAPTURE_STRIDE, Math.max(MIN_CAPTURE_STRIDE, Math.round(v)));
 }
 
 function read(): KnownDevice[] {
@@ -266,6 +285,21 @@ class DeviceStore {
       delete d.pendingName;
     });
     return pending;
+  }
+
+  /** The diffuse-capture stride persisted for a device, or undefined if unset. */
+  getCaptureStride(id: string): number | undefined {
+    return this.get(id)?.captureStride;
+  }
+
+  /** Persist a device's diffuse-capture stride (per-device — it tracks this
+   * fixture's LED pitch/diffuser). Pass undefined to clear back to the default. */
+  setCaptureStride(id: string, stride: number | undefined): void {
+    const v = stride === undefined ? undefined : clampCaptureStride(stride);
+    this.mutate(id, (d) => {
+      if (v === undefined) delete d.captureStride;
+      else d.captureStride = v;
+    });
   }
 
   /** Assign a folder (empty string = ungrouped). */

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, type SocketLike } from "../src/net/client";
+import { certApprovalUrl, LedMapperClient, RequestTimeoutError, type SocketLike } from "../src/net/client";
 import { decodeClient, encodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
@@ -579,6 +579,72 @@ test("stopMappingNoSolve stops without a host solve (solver placement)", async (
   assert.equal(stopped.imuSamples, 360);
 });
 
+test("an unacknowledged stop is bounded, recycles the wedged link, and is re-delivered on reconnect", async () => {
+  // Regression ("stop & finish" stuck until the device disconnects): a player
+  // whose receive path has stalled keeps the socket OPEN but never answers. The
+  // stop must not wait on that forever — it rejects after a bounded wait, the
+  // wedged link is recycled, and the stop is re-sent once the device welcomes us
+  // again so its mapping pattern actually stops.
+  const { client, sockets, scheduled } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  const before = scheduled.length;
+
+  const stopP = client.stopMappingNoSolve();
+  assert.deepEqual(s.lastSent(), { type: "stop_mapping", solveOnHost: false });
+  assert.equal(scheduled.length, before + 1, "the stop arms a bounded wait");
+  scheduled[before]!(); // the device never answered within the bound
+  await assert.rejects(stopP, /timed out/);
+  assert.equal(s.readyState, 3, "the silent link is recycled");
+  assert.ok(client.stopPending, "the stop is still owed to the device");
+
+  // The reconnect (scheduled by onclose) re-sends the stop after the welcome.
+  scheduled[scheduled.length - 1]!();
+  const s2 = sockets[1]!;
+  s2.open();
+  s2.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  assert.deepEqual(s2.lastSent(), { type: "stop_mapping", solveOnHost: false });
+  s2.receive({ type: "mapping_stopped", detections: 0, imuSamples: 0 });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(!client.stopPending, "delivered: nothing owed any more");
+});
+
+test("a re-delivered stop the device no longer needs (no_session) settles; a new capture cancels it", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  const stopP = client.stopMappingNoSolve();
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(stopP, /timed out/);
+  scheduled[scheduled.length - 1]!();
+  const s2 = sockets[1]!;
+  s2.open();
+  s2.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  assert.equal(s2.lastSent().type, "stop_mapping");
+  s2.receive({ type: "error", code: "no_session", message: "no active capture session" });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(!client.stopPending, "the device has no capture to stop");
+
+  // A pending stop is dropped by a new capture (it must not kill the new one).
+  const stop2 = client.stopMappingNoSolve();
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(stop2, /timed out/);
+  assert.ok(client.stopPending);
+  scheduled[scheduled.length - 1]!();
+  const s3 = sockets[2]!;
+  s3.open();
+  // startMapping before the welcome lands is not possible; emulate the user
+  // starting a fresh capture right after reconnect instead.
+  void client.startMapping(64).catch(() => undefined);
+  assert.ok(!client.stopPending, "a new capture supersedes the owed stop");
+});
+
 test("submitMap uploads a phone-solved map and resolves on result_ready", async () => {
   const { client, sockets } = makeClient();
   const p = client.connect();
@@ -773,4 +839,43 @@ test("certApprovalUrl points cross-origin wss targets at the player origin", () 
   // Non-wss targets have no certificate to approve; garbage is not a URL.
   assert.equal(certApprovalUrl("ws://esp32.local/ws", page), null);
   assert.equal(certApprovalUrl("not a url", page), null);
+});
+
+test("getHardwareConfig rejects with RequestTimeoutError when the firmware never answers", async () => {
+  // Re-investigation of the "firmware doesn't report hardware config" note: a
+  // matching c6/c3 build ALWAYS replies to get_hardware_config, so no reply means
+  // firmware too old for the protocol (or a wedged link). Without a deadline the
+  // request hangs forever and the empty-state note sticks silently; the timeout
+  // turns that into a distinguishable rejection.
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const p = client.getHardwareConfig();
+  p.catch(() => undefined); // avoid an unhandled rejection before we fire the timer
+  assert.ok(scheduled.length >= 1, "the request scheduled a timeout");
+  // The request timeout is the most-recently scheduled callback.
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(p, (e: unknown) => e instanceof RequestTimeoutError);
+});
+
+test("a reply before the deadline resolves; the later timeout fires harmlessly", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const p = client.getHardwareConfig();
+  s.receive({
+    type: "hardware_config_state",
+    channels: [{ channel: 0, gpio: 20, ledType: "ws281x", colorOrder: "GRB" }],
+  });
+  const st = (await p) as unknown as { channels: unknown[] };
+  assert.equal(st.channels.length, 1);
+  // Firing the now-stale timeout must be a no-op (first settle wins): no throw,
+  // no second rejection.
+  scheduled[scheduled.length - 1]!();
 });

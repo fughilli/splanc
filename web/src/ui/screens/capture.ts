@@ -34,6 +34,7 @@ import {
   registerDriverCapture,
   setDriverCaptureError,
 } from "../../driver/guard";
+import { phaseCount as stridePhaseCount } from "../../code/stride";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
@@ -49,6 +50,7 @@ import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
+import { deviceStore, DEFAULT_CAPTURE_STRIDE } from "../../store/deviceStore";
 import { mapStore } from "../../store/mapStore";
 import { recenterToCentroid } from "../../geom/mapTransform";
 import { appState } from "../app/state";
@@ -62,13 +64,57 @@ function numParam(name: string, dflt: number): number {
   return Number.isFinite(n) ? n : dflt;
 }
 
-// URL-param power-user overrides (unchanged from main.ts; no longer primary UI).
-const forcedThreshold = qs.get("threshold") !== null;
-const detectorOpts = {
-  threshold: numParam("threshold", 0.6),
-  downscale: numParam("downscale", 2),
-  flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : false,
-};
+// Diffuse-capture mode (design: diffuse_capture): the fixture is behind a
+// diffuser, so blink LEDs on a spatial STRIDE (only a sparse, non-overlapping
+// subset per epoch; the phone rotates the phase to cover all LEDs) AND run the
+// detector's local-contrast prefilter with a LOW threshold (local adaptive
+// detection) to recover the diffuser-dimmed, low-derivative spots.
+//
+// The mode and its knobs are now PERSISTED settings, not just URL params: the
+// diffuse toggle + capture-engine params live in Behavior Settings (app-global)
+// and the stride lives on the device (per-fixture), so re-mapping never requires
+// re-typing them. The URL power-user params remain as per-run overrides on top.
+interface CaptureEngineConfig {
+  diffuse: boolean;
+  /** Threshold was pinned on the URL -> keep the servo from moving it. */
+  forcedThreshold: boolean;
+  strideSpacing: number;
+  anchorDensity: number;
+  detectorOpts: {
+    threshold: number;
+    downscale: number;
+    flipV: boolean;
+    localContrast?: { gain: number };
+  };
+}
+
+/** Resolve the effective capture-engine config for a run: persisted settings
+ * (per-device stride from the active device; the rest from Behavior Settings)
+ * with the URL params overriding on top. Recomputed per capture so a settings
+ * change takes effect on the next map without a reload. */
+function resolveCaptureConfig(): CaptureEngineConfig {
+  const bp = prefs.getDiffuseParams();
+  // Diffuse mode: ?diffuse=1 forces it on; otherwise the persisted toggle.
+  const diffuse = qs.get("diffuse") === "1" || prefs.getDiffuseEnabled();
+  const forcedThreshold = qs.get("threshold") !== null;
+  // Stride is per-device (Hardware Setup); URL ?stride= overrides, else default.
+  const activeId = deviceStore.activeId();
+  const deviceStride = activeId ? deviceStore.getCaptureStride(activeId) : undefined;
+  const strideSpacing = Math.max(
+    1,
+    Math.floor(numParam("stride", deviceStride ?? DEFAULT_CAPTURE_STRIDE)),
+  );
+  const anchorDensity = Math.max(3, Math.floor(numParam("anchor", bp.anchorDensity)));
+  const detectorOpts = {
+    // Non-diffuse capture keeps its 0.6 default + servo; the persisted diffuse
+    // threshold only steers diffuse mode.
+    threshold: numParam("threshold", diffuse ? bp.threshold : 0.6),
+    downscale: numParam("downscale", bp.downscale),
+    flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : bp.flipV,
+    ...(diffuse ? { localContrast: { gain: numParam("lcgain", bp.lcGain) } } : {}),
+  };
+  return { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts };
+}
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
@@ -115,6 +161,12 @@ function restorePageBackground(): void {
 export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--capture";
+
+  // Effective capture-engine config for this run: persisted settings (per-device
+  // stride + app-global diffuse params) with URL params overriding. The inline
+  // diffuse toggle below re-reads this if the user flips it before starting.
+  let { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
+    resolveCaptureConfig();
 
   // The New-map dialog passes the chosen strip length in the hash query
   // (#/capture?leds=N); it wins over the location.search power-user override,
@@ -223,7 +275,31 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     variant: "quiet",
     onClick: () => setManualMode(!manualMode),
   });
-  advBody.append(modeBtn, brightSlider.el, expSlider.el, hudStats);
+
+  // Inline diffuse/strided-capture toggle (design: diffuse_capture). Flipping it
+  // persists to Behavior Settings so re-mapping a diffused fixture never needs
+  // the ?diffuse=1 URL param again; the stride comes from the device's Hardware
+  // Setup, the other engine params from Behavior Settings. A ?diffuse=1 URL param
+  // still force-enables it regardless of this toggle. Saved immediately; a flip
+  // before the map starts applies to this run too, otherwise to the next map.
+  let mappingStarted = false;
+  const diffuseLabel = (): string => `Diffuse capture: ${prefs.getDiffuseEnabled() ? "On" : "Off"}`;
+  const diffuseBtn = Button({
+    label: diffuseLabel(),
+    variant: "quiet",
+    onClick: () => {
+      const on = !prefs.getDiffuseEnabled();
+      prefs.setDiffuseEnabled(on);
+      // Re-resolve so a pre-map flip takes effect on this run as well.
+      ({ diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
+        resolveCaptureConfig());
+      const span = diffuseBtn.querySelector("span");
+      if (span) span.textContent = diffuseLabel();
+      toast(mappingStarted ? `Diffuse capture ${on ? "on" : "off"} — applies on the next map` : `Diffuse capture ${on ? "on" : "off"}`);
+    },
+  });
+
+  advBody.append(diffuseBtn, modeBtn, brightSlider.el, expSlider.el, hudStats);
   brightSlider.input.addEventListener("change", () => {
     if (manualMode) manualHooks?.applyBrightness(parseInt(brightSlider.input.value, 10) / 100);
   });
@@ -426,10 +502,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             ? { bitPeriodMs: recommended.bitPeriodMs }
             : {}),
         ...(forcedBrightness !== null ? { brightness: forcedBrightness } : {}),
+        // Diffuse mode: start on phase 0 of the stride schedule; the tick below
+        // rotates the phase. Firmware masks all but the phase's sparse subset.
+        ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
       };
 
       await c.syncClock(4);
       const started = await c.startMapping(ledCount, config);
+      mappingStarted = true;
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       if (initialExposure !== null) {
@@ -450,7 +530,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Hand the synthetic scene the negotiated code-book so it renders the exact
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
-      guideEl.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
+      // Diffuse phase rotation state (a no-op when !diffuse: phaseTotal === 1).
+      const phaseTotal = diffuse ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
+      let phaseIdx = 0;
+      let lastPhaseAt = performance.now();
+      guideEl.textContent = diffuse
+        ? `diffuse: phase 1/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+        : `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
       capturing = true;
       startedAt = performance.now();
@@ -605,7 +691,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let pendingSymbols: 2 | 4 | null = null;
       let pendingBrightness: number | null = null;
       let renegotiating = false;
-      const applyReconfigure = (opts: { bitPeriodMs?: number; symbols?: 2 | 4; brightness?: number }): void => {
+      const applyReconfigure = (opts: {
+        bitPeriodMs?: number;
+        symbols?: 2 | 4;
+        brightness?: number;
+        stridePhase?: number;
+      }): void => {
         renegotiating = true;
         c.configure(opts)
           .then((ps) => {
@@ -614,9 +705,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);
-            guideEl.textContent =
-              `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
-              ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
+            guideEl.textContent = diffuse
+              ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
+              : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
+                ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
           })
           .catch(() => undefined)
           .finally(() => {
@@ -645,8 +737,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         }
         const report = monitor.report(performance.now(), detector.threshold, lastAmbient);
         if (report === null) return;
-        c.sendExposureReport(report);
-        if (!forcedThreshold) {
+        // Embedded players drop exposure telemetry (no host-side servo), so like
+        // detections/IMU it only adds load to their receive path — keep it for
+        // host-capable devices.
+        if (c.hostSolverBenchMs !== null) c.sendExposureReport(report);
+        // In diffuse mode the top-hat prefilter makes detection LOCAL, so the
+        // threshold reads residual contrast at a fixed low value — the absolute-
+        // brightness servo would fight it. Leave it pinned there.
+        if (!forcedThreshold && !diffuse) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
           nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
@@ -704,6 +802,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           pendingBrightness = wantBright;
         }
         syncManualSliders(params.brightness ?? 1, servoedExposure);
+
+        // Diffuse capture: rotate the stride phase so every LED eventually lands
+        // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
+        // cycles per phase; skip if a servo reconfig just fired (they share the
+        // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
+        if (diffuse && !renegotiating) {
+          const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
+          if (performance.now() - lastPhaseAt > dwellMs) {
+            phaseIdx = (phaseIdx + 1) % phaseTotal;
+            lastPhaseAt = performance.now();
+            applyReconfigure({ stridePhase: phaseIdx });
+            guideEl.textContent = `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
+          }
+        }
       }, 2000);
     } catch (e) {
       if (driverActive()) {
@@ -893,8 +1005,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let pushedToDevice = false;
       if (solveOnPhone) {
         // Best-effort device bookkeeping only — tell it to stop and hand it the
-        // result if the socket is still up, but never fail the solve on it.
-        await c.stopMappingNoSolve().catch(() => undefined);
+        // result if the socket is still up, but never fail OR DELAY the solve on
+        // it. The stop goes out first (the transport is ordered, so the device
+        // sees it before the map upload), but its reply is NOT awaited: a player
+        // whose link has stalled never answers, and the solve used to sit behind
+        // that round trip until the socket finally died. The client bounds the
+        // wait itself and re-delivers an unacknowledged stop on reconnect, so
+        // the pattern still stops on the device.
+        void c.stopMappingNoSolve().catch((e: unknown) => {
+          nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
+        });
         nativeLog("[solve] phone solve starting");
         map = await solveOnPhoneNow();
         nativeLog(`[solve] phone solve done: ${map.leds.length} leds`);

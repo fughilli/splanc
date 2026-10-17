@@ -28,7 +28,14 @@ class MemStorage {
 const mem = new MemStorage();
 (globalThis as { localStorage?: unknown }).localStorage = mem;
 
-import { deviceStore, deviceDisambiguator } from "../src/store/deviceStore";
+import {
+  deviceStore,
+  deviceDisambiguator,
+  clampCaptureStride,
+  DEFAULT_CAPTURE_STRIDE,
+  MIN_CAPTURE_STRIDE,
+  MAX_CAPTURE_STRIDE,
+} from "../src/store/deviceStore";
 
 beforeEach(() => {
   mem.clear();
@@ -133,4 +140,37 @@ test("two BLE devices sharing a display name stay distinct (keyed on identity, n
     deviceDisambiguator({ bleMac: "BB:BB:BB:BB:BB:BB" }),
   );
   assert.equal(deviceDisambiguator({ bleMac: "" }), ""); // unknown until connected
+});
+
+test("per-device capture stride persists, clamps, and clears back to the default", () => {
+  const d = deviceStore.upsert("wss://192.168.4.7");
+  // Unset -> undefined (callers fall back to DEFAULT_CAPTURE_STRIDE).
+  assert.equal(deviceStore.getCaptureStride(d.id), undefined);
+
+  deviceStore.setCaptureStride(d.id, 6);
+  assert.equal(deviceStore.getCaptureStride(d.id), 6);
+
+  // Survives a fresh read of the record (normalize() must carry the field).
+  assert.equal(deviceStore.get(d.id)?.captureStride, 6);
+
+  // Out-of-range values are clamped on write.
+  deviceStore.setCaptureStride(d.id, 999);
+  assert.equal(deviceStore.getCaptureStride(d.id), MAX_CAPTURE_STRIDE);
+  deviceStore.setCaptureStride(d.id, 0);
+  assert.equal(deviceStore.getCaptureStride(d.id), MIN_CAPTURE_STRIDE);
+
+  // Clearing removes it (back to the capture default).
+  deviceStore.setCaptureStride(d.id, undefined);
+  assert.equal(deviceStore.getCaptureStride(d.id), undefined);
+});
+
+test("clampCaptureStride rounds, bounds, and rejects non-numbers", () => {
+  assert.equal(clampCaptureStride(4), 4);
+  assert.equal(clampCaptureStride(4.6), 5);
+  assert.equal(clampCaptureStride(-3), MIN_CAPTURE_STRIDE);
+  assert.equal(clampCaptureStride(1000), MAX_CAPTURE_STRIDE);
+  assert.equal(clampCaptureStride("7"), 7);
+  assert.equal(clampCaptureStride("nope"), undefined);
+  assert.equal(clampCaptureStride(NaN), undefined);
+  assert.ok(DEFAULT_CAPTURE_STRIDE >= MIN_CAPTURE_STRIDE && DEFAULT_CAPTURE_STRIDE <= MAX_CAPTURE_STRIDE);
 });

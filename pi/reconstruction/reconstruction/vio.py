@@ -58,6 +58,22 @@ ProgressCb = Callable[[float, Dict[int, "np.ndarray"], float, "np.ndarray"], Non
 GRAVITY = 9.81
 G_WORLD = np.array([0.0, -GRAVITY, 0.0])
 
+# IMU sample noise at the sample rate (the solve_vio defaults).
+GYRO_NOISE = 2e-3  # rad/s
+ACCEL_NOISE = 5e-2  # m/s²
+# Dead-reckoning drift the white-noise model omits: bias instability and the
+# attitude error that leaks gravity into the specific force. Both grow with
+# the interval length, so a long observation gap (decode-lock dead time, a
+# walk-away) is still IMU-linked — just as loosely as the physics allows.
+GYRO_DRIFT = 1e-3  # rad/s
+ACCEL_DRIFT = 2e-2  # m/s²
+# An interval whose IMU stream has a hole longer than this carries no inertial
+# information at all (zero-order hold across it would be fabricated data).
+IMU_HOLE_S = 0.25
+# Weight for an interval the IMU does not cover: effectively unconstrained,
+# while keeping the residual layout fixed.
+_HOLE_SIGMA = 1e6
+
 
 # ---------------------------------------------------------------------------
 # SO(3) helpers (Rodrigues exp/log). Kept local and dependency-free.
@@ -244,6 +260,43 @@ def preintegrate(
     return d_rot, d_vel, d_pos, t1 - t0
 
 
+def interval_sigmas(
+    imu_t: np.ndarray,
+    t0: float,
+    t1: float,
+    gyro_noise: float = GYRO_NOISE,
+    accel_noise: float = ACCEL_NOISE,
+) -> Tuple[float, float, float, bool]:
+    """(σ_rot, σ_vel, σ_pos, hole) for the IMU factor over [t0, t1].
+
+    ``imu_t`` is the sorted IMU sample times. White sample noise (per-sample
+    σ, ∝ √count) plus the drift terms that grow with the interval length.
+    ``hole``: the stream has a gap > IMU_HOLE_S inside the interval (including
+    the lead-in from the held sample before t0) — no inertial information.
+    """
+    lo = int(np.searchsorted(imu_t, t0, side="right"))
+    hi = int(np.searchsorted(imu_t, t1, side="left"))
+    span = t1 - t0
+    # Coverage points: the held sample at/before t0 (else t0 itself), every
+    # sample inside, and t1. No sample at all ⇒ nothing to integrate.
+    pts = ([imu_t[lo - 1]] if lo > 0 else [t0]) + list(imu_t[lo:hi]) + [t1]
+    if (lo == 0 and hi == 0) or float(np.max(np.diff(pts))) > IMU_HOLE_S:
+        return _HOLE_SIGMA, _HOLE_SIGMA, _HOLE_SIGMA, True
+    cnt = max(1, int(np.sum((imu_t >= t0) & (imu_t < t1))))
+    dt = span / cnt
+    sr = gyro_noise * np.sqrt(cnt) * dt + GYRO_DRIFT * span
+    sv = accel_noise * np.sqrt(cnt) * dt + ACCEL_DRIFT * span
+    sp = 0.5 * accel_noise * np.sqrt(cnt) * dt * span + 0.5 * ACCEL_DRIFT * span * span
+    return max(sr, 1e-6), max(sv, 1e-6), max(sp, 1e-7), False
+
+
+def gauge_frame(frames: Sequence[FrameObservations]) -> int:
+    """The frame whose pose fixes the gauge: the best-observed one (first on
+    ties). Pinning frame 0 made a stray 2-record leading frame the anchor of
+    the whole solve (the 2026-07-08 469k-px divergence)."""
+    return int(np.argmax([len(fr.obs) for fr in frames]))
+
+
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
@@ -253,10 +306,15 @@ def _rotation_seeds(
     frames: Sequence[FrameObservations], imu: Sequence[ImuSample]
 ) -> List[np.ndarray]:
     """Camera-to-world rotation seed per frame: gyro-integrated increments,
-    with roll/pitch anchored by the early-capture accelerometer mean (gravity
-    dominates handheld motion accelerations ~30:1). Yaw is a gauge freedom."""
+    with roll/pitch anchored by the accelerometer mean around the first frame
+    (gravity dominates handheld motion accelerations ~30:1). Yaw is a gauge
+    freedom. Across an IMU hole the rotation is held (no information)."""
     t_start = frames[0].t
-    early = [s.accel for s in imu if s.t <= t_start + 0.5] or [imu[0].accel]
+    # A window AROUND the first frame: pre-capture walking (20 s of it on the
+    # 2026-07-08 session) must not leak into the gravity direction.
+    early = [s.accel for s in imu if abs(s.t - t_start) <= 0.5] or [
+        min(imu, key=lambda s: abs(s.t - t_start)).accel
+    ]
     f_dir = np.mean(early, axis=0)
     f_dir = f_dir / np.linalg.norm(f_dir)
     up_world = np.array([0.0, 1.0, 0.0])
@@ -270,8 +328,12 @@ def _rotation_seeds(
     else:
         r0 = so3_exp(axis / s * np.arctan2(s, c))
     zero = np.zeros(3)
+    imu_t = np.array(sorted(s.t for s in imu))
     seeds = [r0]
     for i in range(1, len(frames)):
+        if interval_sigmas(imu_t, frames[i - 1].t, frames[i].t)[3]:
+            seeds.append(seeds[-1])
+            continue
         d_rot, _dv, _dp, _dt = preintegrate(imu, frames[i - 1].t, frames[i].t, zero, zero)
         seeds.append(seeds[-1] @ d_rot)
     return seeds
@@ -282,12 +344,13 @@ def _known_rotation_linear_init(
     rotations: Sequence[np.ndarray],
     led_ids: Sequence[int],
     scale_pins: int = 64,
+    gauge: int = 0,
 ) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
     """Solve camera centers + LED positions with rotations held fixed.
 
     Every observation constrains its LED to lie on a known world-direction ray
     through the (unknown) camera center: (I − ww^T)(X_j − c_i) = 0 — linear.
-    Gauge: c_0 = 0; scale is fixed by pinning the MEAN depth of ~64
+    Gauge: c_gauge = 0; scale is fixed by pinning the MEAN depth of ~64
     observations spread across the session to 1 (metric scale comes later
     from the IMU alignment). The spread matters: pinning a single
     observation made the gauge hostage to that observation being an inlier —
@@ -297,13 +360,15 @@ def _known_rotation_linear_init(
     id_index = {led: j for j, led in enumerate(led_ids)}
     n_frames = len(frames)
     n_leds = len(led_ids)
-    n_unknowns = 3 * (n_frames - 1) + 3 * n_leds  # c_0 fixed at origin
+    n_unknowns = 3 * (n_frames - 1) + 3 * n_leds  # c_gauge fixed at origin
 
     triplets: List[Tuple[int, int, float]] = []
     row = 0
 
     def col_c(i: int) -> Optional[int]:
-        return None if i == 0 else 3 * (i - 1)
+        if i == gauge:
+            return None
+        return 3 * (i if i < gauge else i - 1)
 
     def col_x(j: int) -> int:
         return 3 * (n_frames - 1) + 3 * j
@@ -363,7 +428,8 @@ def _known_rotation_linear_init(
     sol = lsqr(a.tocsr(), rhs_vec, atol=1e-10, btol=1e-10, iter_lim=8000)[0]
 
     centers = np.zeros((n_frames, 3))
-    centers[1:] = sol[: 3 * (n_frames - 1)].reshape(-1, 3)
+    others = [i for i in range(n_frames) if i != gauge]
+    centers[others] = sol[: 3 * (n_frames - 1)].reshape(-1, 3)
     leds = {led: sol[col_x(j) : col_x(j) + 3].copy() for led, j in id_index.items()}
     return centers, leds
 
@@ -378,14 +444,25 @@ def _inertial_alignment(
     the zero-bias preintegration deltas (VINS-Mono-style initialization).
 
     Unknowns [s, g(3), v_0..v_{N-1}(3N)]; each consecutive-frame interval
-    contributes the Δp and Δv preintegration equations.
+    contributes the Δp and Δv preintegration equations, weighted by that
+    interval's IMU uncertainty relative to the session's typical interval (so
+    a regular session is unchanged, while one long dead-reckoned gap cannot
+    dominate the fit). Intervals the IMU does not cover contribute nothing.
     """
     n = len(frames)
     zero = np.zeros(3)
     n_unknowns = 1 + 3 + 3 * n
+    imu_t = np.array(sorted(s.t for s in imu))
+    sig = [interval_sigmas(imu_t, frames[i].t, frames[i + 1].t) for i in range(n - 1)]
+    covered = [sg for sg in sig if not sg[3]]
+    ref_v = float(np.median([sg[1] for sg in covered])) if covered else 1.0
+    ref_p = float(np.median([sg[2] for sg in covered])) if covered else 1.0
     rows = []
     rhs = []
     for i in range(n - 1):
+        if sig[i][3]:
+            continue
+        w_v, w_p = ref_v / sig[i][1], ref_p / sig[i][2]
         d_rot, d_vel, d_pos, dt = preintegrate(imu, frames[i].t, frames[i + 1].t, zero, zero)
         ri = rotations[i]
         rit = ri.T
@@ -394,15 +471,15 @@ def _inertial_alignment(
         row_p[:, 0] = rit @ (centers[i + 1] - centers[i])
         row_p[:, 1:4] = -0.5 * dt * dt * rit
         row_p[:, 4 + 3 * i : 7 + 3 * i] = -dt * rit
-        rows.append(row_p)
-        rhs.append(d_pos)
+        rows.append(w_p * row_p)
+        rhs.append(w_p * d_pos)
         # R_i^T (v_j − v_i − g·dt) = Δv
         row_v = np.zeros((3, n_unknowns))
         row_v[:, 1:4] = -dt * rit
         row_v[:, 4 + 3 * i : 7 + 3 * i] = -rit
         row_v[:, 4 + 3 * (i + 1) : 7 + 3 * (i + 1)] = rit
-        rows.append(row_v)
-        rhs.append(d_vel)
+        rows.append(w_v * row_v)
+        rhs.append(w_v * d_vel)
     a = np.vstack(rows)
     b = np.concatenate(rhs)
     sol, *_ = np.linalg.lstsq(a, b, rcond=None)
@@ -453,8 +530,8 @@ def solve_vio(
     imu: Sequence[ImuSample],
     *,
     px_sigma: float = 0.5,
-    gyro_noise: float = 2e-3,  # rad/s at the sample rate
-    accel_noise: float = 5e-2,  # m/s² at the sample rate
+    gyro_noise: float = GYRO_NOISE,  # rad/s at the sample rate
+    accel_noise: float = ACCEL_NOISE,  # m/s² at the sample rate
     huber_px: float = 4.0,
     max_nfev: int = 60,
     refine_intrinsics: bool = False,
@@ -466,7 +543,7 @@ def solve_vio(
 
     `frames` must be time-ordered; `imu` must cover the frame time span.
     Returns a metric, gravity-consistent solution in an arbitrary yaw/origin
-    gauge (pose 0 pinned at its seed).
+    gauge (the best-observed pose pinned at its seed — see gauge_frame).
 
     ``refine_intrinsics`` adds a SHARED camera model [fx (=fy), cx, cy] to the
     unknowns, seeded from frames[0].k with loose priors — for the WebXR-free
@@ -480,6 +557,7 @@ def solve_vio(
     n = len(frames)
     m = len(led_ids)
     id_index = {led: j for j, led in enumerate(led_ids)}
+    g_idx = gauge_frame(frames)
 
     # ---- Stages 1–3: seeds (or a warm start from a previous solution) -------
     if warm_start is not None and warm_start.frame_times is not None:
@@ -508,7 +586,7 @@ def solve_vio(
             )
     else:
         rotations = _rotation_seeds(frames, imu)
-        centers, led_seed = _known_rotation_linear_init(frames, rotations, led_ids)
+        centers, led_seed = _known_rotation_linear_init(frames, rotations, led_ids, gauge=g_idx)
         scale, g_seed, v_seed = _inertial_alignment(frames, rotations, centers, imu)
         centers = centers * scale
         led_seed = {led: x * scale for led, x in led_seed.items()}
@@ -561,22 +639,18 @@ def solve_vio(
         ba_seed,
         g_seed,
     )
-    rot0_seed = so3_log(rotations[0])
+    gauge_rot_seed = so3_log(rotations[g_idx])
+    gauge_pos_seed = np.array(centers[g_idx], dtype=float)
 
     # Interval sample counts drive the preintegration noise scaling.
     obs_flat = [(i, id_index[led], u, v) for i, fr in enumerate(frames) for led, u, v in fr.obs]
     intervals = list(range(n - 1))
 
-    def interval_sigmas(i: int) -> Tuple[float, float, float]:
-        t0, t1 = frames[i].t, frames[i + 1].t
-        cnt = max(1, sum(1 for s in imu if t0 <= s.t < t1))
-        dt = (t1 - t0) / cnt
-        sr = gyro_noise * np.sqrt(cnt) * dt
-        sv = accel_noise * np.sqrt(cnt) * dt
-        sp = 0.5 * accel_noise * np.sqrt(cnt) * dt * (t1 - t0)
-        return max(sr, 1e-6), max(sv, 1e-6), max(sp, 1e-7)
-
-    sigmas = [interval_sigmas(i) for i in intervals]
+    imu_t_all = np.array(sorted(s.t for s in imu))
+    sigmas = [
+        interval_sigmas(imu_t_all, frames[i].t, frames[i + 1].t, gyro_noise, accel_noise)
+        for i in intervals
+    ]
     sig_r = np.array([s[0] for s in sigmas]).reshape(-1, 1)
     sig_v = np.array([s[1] for s in sigmas]).reshape(-1, 1)
     sig_p = np.array([s[2] for s in sigmas]).reshape(-1, 1)
@@ -797,13 +871,14 @@ def solve_vio(
         out[k + 3 : k + 6] = ba / 5e-2
         k += 6
         # Gravity magnitude prior (direction is free — it absorbs the seed
-        # attitude error left by pinning pose 0).
+        # attitude error left by pinning the gauge pose).
         out[k] = (np.linalg.norm(g) - GRAVITY) / 1e-3
         k += 1
-        # Gauge: pin pose 0 (position + full attitude seed; yaw is arbitrary
-        # and roll/pitch error transfers into the gravity estimate).
-        out[k : k + 3] = (x[0:3] - rot0_seed) / 1e-6
-        out[k + 3 : k + 6] = x[3:6] / 1e-6
+        # Gauge: pin the gauge pose (position + full attitude seed; yaw is
+        # arbitrary and roll/pitch error transfers into the gravity estimate).
+        gi = 9 * g_idx
+        out[k : k + 3] = (x[gi : gi + 3] - gauge_rot_seed) / 1e-6
+        out[k + 3 : k + 6] = (x[gi + 3 : gi + 6] - gauge_pos_seed) / 1e-6
         k += 6
         if kk is not None:
             # Loose intrinsics priors: the seed is a FOV guess, not truth.
@@ -831,7 +906,7 @@ def solve_vio(
     k += 6
     spar[k, off_bias + 6 : off_bias + 9] = 1
     k += 1
-    spar[k : k + 6, 0:6] = 1
+    spar[k : k + 6, 9 * g_idx : 9 * g_idx + 6] = 1
     k += 6
     if refine_intrinsics:
         spar[k : k + 3, off_k : off_k + 3] = 1

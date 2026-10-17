@@ -225,7 +225,7 @@ def diagnose_conventions(trace_path: Path) -> None:
 
 
 def solve_session_log(
-    log_path: Path, profile: bool, max_nfev: int = 80, reject: bool = True, gap_split_s: float = 3.0
+    log_path: Path, profile: bool, max_nfev: int = 80, reject: bool = True
 ) -> int:
     import logging
 
@@ -249,7 +249,6 @@ def solve_session_log(
             led_count=log.get("ledCount"),
             max_nfev=max_nfev,
             reject_outliers=reject,
-            gap_split_s=gap_split_s,
         )
         dt = time.perf_counter() - t0
         print(
@@ -349,9 +348,6 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--no-reject", action="store_true", help="skip outlier rejection (with --session-log)"
     )
-    ap.add_argument(
-        "--gap-split", type=float, default=3.0, help="segment split threshold, s (1e9 disables)"
-    )
     args = ap.parse_args(argv)
 
     if args.session_log:
@@ -360,7 +356,6 @@ def main(argv=None) -> int:
             args.profile,
             max_nfev=args.max_nfev,
             reject=not args.no_reject,
-            gap_split_s=args.gap_split,
         )
     if args.diagnose:
         diagnose_conventions(args.trace)

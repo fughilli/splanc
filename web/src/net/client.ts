@@ -79,6 +79,34 @@ const SOCKET_OPEN = 1; // WebSocket.OPEN
 // that OOMs the C6's handshake. A whole frame <= this is sent as one window.
 const CHUNK_BYTES = 4096;
 
+/** Default deadline (ms) for a short request/reply RPC that opts into a timeout
+ * (get/set hardware config). A firmware too old to know a request type, or one
+ * on a wedged link, otherwise never answers and leaves the promise — and the UI
+ * waiting on it — pending forever. Long-running calls (map solve -> result_ready)
+ * pass NO timeout and keep the wait-forever behavior. Sized to comfortably clear
+ * a heap-tight C6's worst-case post-welcome round trip. */
+const REQUEST_TIMEOUT_MS = 8000;
+
+/** A {@link LedMapperClient} request that opted into a deadline got no reply in
+ * time. Distinct from a generic failure so callers (e.g. Hardware Setup) can
+ * tell "the firmware never answered this request" (likely too old to implement
+ * it) apart from "the firmware answered, with nothing to report". */
+export class RequestTimeoutError extends Error {
+  constructor(
+    readonly replyType: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`timed out after ${timeoutMs} ms waiting for ${replyType}`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+/** How long {@link LedMapperClient.stopMappingNoSolve} waits for the device's
+ * mapping_stopped. A player answers it straight away (no solve runs); a reply
+ * this late means the link has stalled (e.g. the player's receive path wedged
+ * with the socket still open), and nobody should wait on it. */
+export const STOP_ACK_TIMEOUT_MS = 3000;
+
 export interface ClientOptions {
   socketFactory?: SocketFactory;
   /** Local monotonic clock, ms (performance.now in the browser). */
@@ -131,6 +159,10 @@ export interface ClientOptions {
    * cap (esp. the heapless netstack build). Only affects windowing, not
    * correctness: the device reassembles any window size. */
   uploadChunkBytes?: number;
+  /** Deadline (ms) for short RPCs that opt into a timeout (get/set hardware
+   * config). Callers that may legitimately run long (map solve) never pass it.
+   * Default {@link REQUEST_TIMEOUT_MS}. */
+  requestTimeoutMs?: number;
 }
 
 export interface ClientEvents {
@@ -211,6 +243,8 @@ export class LedMapperClient {
   private uploadSeq = 0;
   // Upload window size (see ClientOptions.uploadChunkBytes).
   private readonly chunkBytes: number;
+  // Deadline for short RPCs that opt into a timeout (see requestTimeoutMs).
+  private readonly requestTimeoutMs: number;
 
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
@@ -221,6 +255,13 @@ export class LedMapperClient {
   // can't be a single-flight waiter. The panel subscribes here for live frames.
   private perfSubs = new Set<(r: PerfReportMessage) => void>();
 
+  /**
+   * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
+   * out on a stalled link, or the socket was down). Re-sent after the next
+   * welcome so the player's mapping pattern really stops; cleared by an ack, a
+   * `no_session` error (nothing left to stop), or a new {@link startMapping}.
+   */
+  stopPending = false;
   readonly clock: ServerClock;
   events: ClientEvents = {};
 
@@ -234,6 +275,7 @@ export class LedMapperClient {
     // cert-approval page load. Spacing retries out (1–8 s) keeps a slot free for
     // it and still reconnects within ~8 s once the cert is trusted.
     this.chunkBytes = opts.uploadChunkBytes && opts.uploadChunkBytes > 0 ? opts.uploadChunkBytes : CHUNK_BYTES;
+    this.requestTimeoutMs = opts.requestTimeoutMs && opts.requestTimeoutMs > 0 ? opts.requestTimeoutMs : REQUEST_TIMEOUT_MS;
     this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
@@ -300,6 +342,7 @@ export class LedMapperClient {
           this.everWelcomed = true;
           this.failsSinceWelcome = 0;
           welcomed = true;
+          this.redeliverOwedStop();
           this.flushBatches();
           this.events.onConnected?.(msg);
           if (!settled) {
@@ -387,6 +430,9 @@ export class LedMapperClient {
     ledCount: number,
     config: Omit<StartMappingOptions, "ledCount"> = {},
   ): Promise<MappingStartedMessage> {
+    // A new capture supersedes an owed stop from the previous one: re-sending it
+    // later would kill THIS capture's pattern.
+    this.stopPending = false;
     const reply = await this.request(
       { type: "start_mapping", options: { ledCount, ...config } },
       "mapping_started",
@@ -437,13 +483,58 @@ export class LedMapperClient {
    * Stop the capture WITHOUT a host solve (solver placement chose the
    * phone): the server persists the session log and replies immediately;
    * the caller solves locally and uploads via {@link submitMap}.
+   *
+   * Bounded: the reply is awaited at most `timeoutMs`. A device that has not
+   * answered by then has a stalled link (socket open, nothing read) — the stop
+   * rejects, the wedged socket is recycled (the normal reconnect follows), and
+   * the stop is re-sent after the next welcome ({@link stopPending}) so the
+   * pattern stops once the player is reachable again. Callers that solve on the
+   * phone must not gate the solve on this.
    */
-  async stopMappingNoSolve(): Promise<MappingStoppedMessage> {
-    const reply = await this.request(
-      { type: "stop_mapping", solveOnHost: false },
-      "mapping_stopped",
-    );
-    return reply as MappingStoppedMessage;
+  async stopMappingNoSolve(timeoutMs = STOP_ACK_TIMEOUT_MS): Promise<MappingStoppedMessage> {
+    this.stopPending = true;
+    try {
+      const reply = await this.request(
+        { type: "stop_mapping", solveOnHost: false },
+        "mapping_stopped",
+        timeoutMs,
+      );
+      this.stopPending = false;
+      return reply as MappingStoppedMessage;
+    } catch (e) {
+      this.settleOwedStop(e);
+      if (e instanceof RequestTimeoutError) this.recycleStalledSocket();
+      throw e;
+    }
+  }
+
+  /** A server error reply means the device processed the stop (e.g.
+   * `no_session`: it has no capture to stop) — nothing is owed any more. A
+   * transport failure / timeout leaves the stop owed. */
+  private settleOwedStop(e: unknown): void {
+    if (e instanceof ServerErrorReply) this.stopPending = false;
+  }
+
+  /** Close a socket that stopped answering so the reconnect path replaces it
+   * (onclose fails the remaining waiters and schedules the backoff retry). */
+  private recycleStalledSocket(): void {
+    const sock = this.sock;
+    if (sock === null || sock.readyState !== SOCKET_OPEN) return;
+    try {
+      sock.close();
+    } catch {
+      // already closing — onclose will still run
+    }
+  }
+
+  /** After a (re)welcome: deliver a stop the device never acknowledged. */
+  private redeliverOwedStop(): void {
+    if (!this.stopPending) return;
+    this.request({ type: "stop_mapping", solveOnHost: false }, "mapping_stopped", STOP_ACK_TIMEOUT_MS)
+      .then(() => {
+        this.stopPending = false;
+      })
+      .catch((e: unknown) => this.settleOwedStop(e));
   }
 
   /** Upload a phone-solved OutputMap; the server persists it and acks. Large
@@ -592,16 +683,20 @@ export class LedMapperClient {
     return (await this.request(
       msg as unknown as ClientMessage,
       "hardware_config_state",
+      this.requestTimeoutMs,
     )) as unknown as HardwareConfigStateMessage;
   }
 
   /** Fetch the device's per-channel hardware config (GPIO, LED type, wire color
-   * order) for the Hardware Setup page to hydrate. Reply: hardware_config_state
-   * (channels empty on older firmware / the Pi profile). */
+   * order) for the Hardware Setup page to hydrate. Reply: hardware_config_state.
+   * A firmware too old to know `get_hardware_config` never replies, so this opts
+   * into a timeout and rejects with {@link RequestTimeoutError} rather than
+   * hanging — the caller tells that apart from an answered-but-empty config. */
   async getHardwareConfig(): Promise<HardwareConfigStateMessage> {
     return (await this.request(
       { type: "get_hardware_config" } as unknown as ClientMessage,
       "hardware_config_state",
+      this.requestTimeoutMs,
     )) as unknown as HardwareConfigStateMessage;
   }
 
@@ -827,7 +922,7 @@ export class LedMapperClient {
       if (!first.done) {
         const [key, waiter] = first.value;
         this.waiters.delete(key);
-        waiter.reject(new Error(`${msg.code}: ${msg.message}`));
+        waiter.reject(new ServerErrorReply(msg.code, msg.message));
         return;
       }
       this.events.onServerError?.(msg.code, msg.message);
@@ -899,7 +994,13 @@ export class LedMapperClient {
     throw new Error("chunked upload produced no final frame");
   }
 
-  private request(msg: ClientMessage, replyType: string): Promise<ServerMessage> {
+  /** Single-flight request keyed by the reply message type. `timeoutMs > 0` opts
+   * into a deadline: if no matching reply arrives in time the promise rejects
+   * with a {@link RequestTimeoutError} and the waiter is reaped — otherwise a
+   * firmware that never answers (too old to know the request, or a wedged link)
+   * would leave it pending forever. Callers that may legitimately take a long
+   * time (map solve -> result_ready) pass no timeout and keep that behavior. */
+  private request(msg: ClientMessage, replyType: string, timeoutMs = 0): Promise<ServerMessage> {
     return new Promise((resolve, reject) => {
       if (this.waiters.has(replyType)) {
         reject(new Error(`request already pending for ${replyType}`));
@@ -909,7 +1010,29 @@ export class LedMapperClient {
         reject(new Error("not connected"));
         return;
       }
-      this.waiters.set(replyType, { resolve, reject });
+      // Wrap resolve/reject so the first of {reply, timeout, disconnect} wins and
+      // the timer firing after a resolve is a harmless no-op.
+      let settled = false;
+      const waiter = {
+        resolve: (m: ServerMessage) => {
+          if (settled) return;
+          settled = true;
+          resolve(m);
+        },
+        reject: (e: Error) => {
+          if (settled) return;
+          settled = true;
+          reject(e);
+        },
+      };
+      this.waiters.set(replyType, waiter);
+      if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+        this.schedule(() => {
+          // A later same-type request may have replaced our waiter; only reap ours.
+          if (this.waiters.get(replyType) === waiter) this.waiters.delete(replyType);
+          waiter.reject(new RequestTimeoutError(replyType, timeoutMs));
+        }, timeoutMs);
+      }
     });
   }
 
@@ -918,6 +1041,17 @@ export class LedMapperClient {
     this.waiters.clear();
     for (const w of this.pingWaiters.values()) w.reject(err);
     this.pingWaiters.clear();
+  }
+}
+
+/** The device answered a request with a protocol `error` message. */
+export class ServerErrorReply extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "ServerErrorReply";
   }
 }
 

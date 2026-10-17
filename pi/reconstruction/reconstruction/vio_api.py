@@ -75,59 +75,6 @@ def frames_from_records(
     return frames
 
 
-def keep_dominant_segment(
-    frames: List[FrameObservations],
-    gap_split_s: float = 3.0,
-    stub_gap_s: float = 1.0,
-) -> Tuple[List[FrameObservations], int]:
-    """Keep the observation timeline's dominant, SUBSTANTIAL segments.
-
-    Two-stage, both by observation MASS rather than duration alone:
-
-    1. Fine split at ``stub_gap_s``: segments carrying almost nothing
-       (< max(10, 2%) observations or < 5 frames) are STUBS — e.g. two stray
-       records at t=0 followed by a 2.6 s decode gap. A stub bridged only by
-       dead reckoning poisons the solve far beyond its information content
-       (the 2026-07-08 explosion: the gauge anchor — pose 0 — sat on a
-       2-record island and the first solve diverged to 469k px).
-    2. Coarse regroup at ``gap_split_s``: the surviving substantial segments
-       merge unless separated by a long dead-reckoning-only stretch, in
-       which case only the observation-richest group is kept (the earlier
-       17 s walk-away case).
-
-    Returns (kept frames, dropped observation count).
-    """
-    if len(frames) < 2:
-        return frames, 0
-    total_obs = sum(len(f.obs) for f in frames)
-
-    def split(seq: List[FrameObservations], gap: float) -> List[List[FrameObservations]]:
-        segs: List[List[FrameObservations]] = [[seq[0]]]
-        for prev, cur in zip(seq, seq[1:]):
-            if cur.t - prev.t > gap:
-                segs.append([])
-            segs[-1].append(cur)
-        return segs
-
-    fine = split(frames, stub_gap_s)
-    min_obs = max(10, int(0.02 * total_obs))
-    substantial = [seg for seg in fine if sum(len(f.obs) for f in seg) >= min_obs and len(seg) >= 5]
-    if not substantial:
-        substantial = [max(fine, key=lambda seg: sum(len(f.obs) for f in seg))]
-
-    # Regroup the survivors: consecutive substantial segments belong together
-    # unless the dead-reckoning-only stretch between them exceeds the coarse
-    # threshold.
-    groups: List[List[FrameObservations]] = [list(substantial[0])]
-    for prev_seg, seg in zip(substantial, substantial[1:]):
-        if seg[0].t - prev_seg[-1].t > gap_split_s:
-            groups.append([])
-        groups[-1].extend(seg)
-    best = max(groups, key=lambda g: sum(len(f.obs) for f in g))
-    dropped = total_obs - sum(len(f.obs) for f in best)
-    return best, dropped
-
-
 def solved_led_count(
     frames: Sequence[FrameObservations], result: VioResult, ceiling_px: float = 8.0
 ) -> int:
@@ -336,7 +283,6 @@ def reconstruct_vio(
     refine_intrinsics: bool = False,
     min_views: int = 2,
     progress_cb: Optional[ProgressCb] = None,
-    gap_split_s: float = 3.0,
     reject_outliers: bool = True,
     outlier_sigma: float = 4.0,
 ) -> OutputMap:
@@ -347,25 +293,9 @@ def reconstruct_vio(
     vio.ProgressCb; called from the solver thread."""
     frames = frames_from_records(detections, max_keyframes=max_keyframes)
     imu = imu_from_wire(imu_samples)
-    # Dead-reckoning-only stretches make observation segments effectively
-    # independent — keep the dominant one instead of stitching across.
-    frames, gap_dropped = keep_dominant_segment(frames, gap_split_s=gap_split_s)
-    if gap_dropped:
-        _log.info("vio: dropped %d observations outside the dominant segment", gap_dropped)
-        # Trim the IMU to the kept span: samples outside it are dead weight,
-        # and the rotation seeds anchor gravity on the accel average around
-        # the FIRST frame — 20 s of pre-segment walking data in that window
-        # produced a bad attitude seed and a collapsed solve on the
-        # 2026-07-08 gap session. (A small lead-in keeps preintegrate()'s
-        # held-rate semantics at the first interval intact.)
-        t0, t1 = frames[0].t - 0.25, frames[-1].t + 0.05
-        imu = [s for s in imu if t0 <= s.t <= t1]
-        _log.info(
-            "vio: kept segment %.2f..%.2f s with %d IMU samples",
-            frames[0].t,
-            frames[-1].t,
-            len(imu),
-        )
+    # Every observation is kept, however the timeline is interrupted: a gap
+    # only loosens the inertial link across it (vio.interval_sigmas), and bad
+    # observations are the robust loss's and the rejection loop's job.
     if len(frames) < 8:
         raise ValueError(f"too few observation frames for a VIO solve ({len(frames)})")
     if len(imu) < 30:
@@ -379,29 +309,6 @@ def reconstruct_vio(
         refine_intrinsics=refine_intrinsics,
         progress_cb=progress_cb,
     )
-
-    # Divergence gate: a first solve this far gone (an unhandled degenerate
-    # init) cannot seed rejection statistics or warm starts — retry once with
-    # stricter segmentation (drops marginal segments the default kept).
-    if result.rms_reproj_px > 100.0 and gap_split_s > 1.2:
-        strict, extra = keep_dominant_segment(frames, gap_split_s=1.2, stub_gap_s=0.8)
-        if extra > 0 and len(strict) >= 8:
-            _log.warning(
-                "vio: first solve diverged (%.0f px); retrying with stricter "
-                "segmentation (-%d observations)",
-                result.rms_reproj_px,
-                extra,
-            )
-            retry = solve_vio(
-                strict,
-                imu,
-                px_sigma=px_sigma,
-                max_nfev=max_nfev,
-                refine_intrinsics=refine_intrinsics,
-                progress_cb=progress_cb,
-            )
-            if retry.rms_reproj_px < result.rms_reproj_px:
-                frames, result = strict, retry
 
     # Outlier prune + re-solve: mislabeled dense-stream samples bias LED
     # estimates through the robust loss forever; one MAD-thresholded rejection

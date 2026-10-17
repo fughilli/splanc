@@ -36,9 +36,6 @@ fn default_px_sigma() -> f64 {
 fn default_true() -> bool {
     true
 }
-fn default_gap_split_s() -> f64 {
-    3.0
-}
 fn default_outlier_sigma() -> f64 {
     4.0
 }
@@ -58,8 +55,6 @@ pub struct ProblemOptions {
     pub px_sigma: f64,
     #[serde(rename = "rejectOutliers")]
     pub reject_outliers: bool,
-    #[serde(rename = "gapSplitS")]
-    pub gap_split_s: f64,
     #[serde(rename = "outlierSigma")]
     pub outlier_sigma: f64,
     #[serde(rename = "minViews")]
@@ -73,7 +68,6 @@ impl Default for ProblemOptions {
             max_nfev: default_max_nfev(),
             px_sigma: default_px_sigma(),
             reject_outliers: default_true(),
-            gap_split_s: default_gap_split_s(),
             outlier_sigma: default_outlier_sigma(),
             min_views: default_min_views(),
         }
