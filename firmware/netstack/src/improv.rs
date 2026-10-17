@@ -265,6 +265,7 @@ pub struct ImprovOutcome {
 pub struct ImprovService {
     pub db: GattDb<32>,
     pub improv: Improv,
+    h_device_name: u16,
     h_current: u16,
     h_error: u16,
     h_rpc_cmd: u16,
@@ -273,10 +274,26 @@ pub struct ImprovService {
     h_player_tx: u16,
 }
 
+/// Fallback GAP Device Name until the firmware calls `set_device_name` with the
+/// live NVS name. A central that connects before the name is applied still reads
+/// something sane rather than an empty value.
+const DEFAULT_DEVICE_NAME: &[u8] = b"splanc-device";
+
 impl ImprovService {
     pub fn new() -> Self {
         let improv = Improv::new();
         let mut db: GattDb<32> = GattDb::new();
+        // Generic Access Profile service (0x1800) with the Device Name (0x2A00)
+        // characteristic. This exposes the board's name over GATT, readable after a
+        // plain connect — INDEPENDENT of the scan-response Complete-Local-Name, whose
+        // SCAN_RSP TX reply window BLE/WiFi coex starves on a busy unprovisioned board
+        // (the name then never reaches a scanning iOS central, which surfaces the board
+        // UNNAMED). iOS/CoreBluetooth also reads 0x2A00 on connect to populate
+        // `CBPeripheral.name`, so a connect-and-read fallback resolves the name here.
+        let _ = db.add_primary_service(Uuid::U16(0x1800));
+        let h_device_name = db
+            .add_characteristic(Uuid::U16(0x2A00), PROP_READ, DEFAULT_DEVICE_NAME)
+            .unwrap_or(0);
         // Standard GATT Service (0x1801) with the feature characteristics a central
         // probes during robust-caching setup: Server (0x2B3A) + Client (0x2B29)
         // Supported Features. Without a GATT service, BlueZ's probe gets Attribute
@@ -315,6 +332,7 @@ impl ImprovService {
         ImprovService {
             db,
             improv,
+            h_device_name,
             h_current,
             h_error,
             h_rpc_cmd,
@@ -322,6 +340,21 @@ impl ImprovService {
             h_player_rx,
             h_player_tx,
         }
+    }
+
+    /// Set the GAP Device Name (0x2A00) value so a central reading it over GATT
+    /// gets the board's live name. The firmware calls this with the current NVS
+    /// device name (the same name it puts in the scan response), and re-applies it
+    /// whenever the service is rebuilt on a fresh connection.
+    pub fn set_device_name(&mut self, name: &[u8]) {
+        if !name.is_empty() {
+            self.db.set_value(self.h_device_name, name);
+        }
+    }
+
+    /// Value handle of the GAP Device Name (0x2A00) characteristic.
+    pub fn device_name_handle(&self) -> u16 {
+        self.h_device_name
     }
 
     /// Copy the current Improv state into the characteristic values.
@@ -565,6 +598,36 @@ mod tests {
             }
         }
         assert_eq!(char_count, 7, "5 Improv + 2 player-transport characteristics discoverable");
+    }
+
+    #[test]
+    fn gap_device_name_readable_and_updatable() {
+        use crate::gatt::GATT_RSP_MAX;
+        let mut svc = ImprovService::new();
+        let h = svc.device_name_handle();
+        assert_ne!(h, 0, "GAP device-name handle assigned");
+        let mut out: Buf<GATT_RSP_MAX> = Buf::new();
+        // Negotiate a large MTU so the full name fits in one read response.
+        svc.db.handle_att(0x02, &[0xff, 0x00], &mut out);
+        // Default name is readable before the firmware sets one.
+        svc.db.handle_att(0x0a /*READ_REQ*/, &h.to_le_bytes(), &mut out);
+        assert_eq!(out.as_slice()[0], 0x0b /*READ_RSP*/);
+        assert_eq!(&out.as_slice()[1..], DEFAULT_DEVICE_NAME);
+        // After set_device_name the live name reads back over GATT.
+        svc.set_device_name(b"HITL Test 96804");
+        svc.db.handle_att(0x0a, &h.to_le_bytes(), &mut out);
+        assert_eq!(&out.as_slice()[1..], b"HITL Test 96804");
+        // An empty name is ignored (keeps the previous value).
+        svc.set_device_name(b"");
+        svc.db.handle_att(0x0a, &h.to_le_bytes(), &mut out);
+        assert_eq!(&out.as_slice()[1..], b"HITL Test 96804");
+        // The GAP service (0x1800) is discoverable as a primary service.
+        let params = [0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
+        svc.db.handle_att(0x10 /*READ_BY_GROUP_TYPE*/, &params, &mut out);
+        let s = out.as_slice();
+        assert_eq!(s[0], 0x11 /*READ_BY_GROUP_TYPE_RSP*/);
+        // First 16-bit primary service is GAP (0x1800).
+        assert_eq!(u16::from_le_bytes([s[6], s[7]]), 0x1800);
     }
 
     #[test]

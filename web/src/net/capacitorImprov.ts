@@ -106,9 +106,13 @@ function toImprovDevice(ble: typeof BleClientType, dev: BleDevice): ImprovDevice
 /** One device sighting from a native BLE scan. */
 export interface ImprovScanHit {
   deviceId: string;
-  /** Advertised name. On iOS this is the scan-response local name — the piece
-   * the plugin's built-in `requestDevice` picker can't show (it labels devices
-   * "Unknown"), which is why we scan ourselves. Falls back to a generic label. */
+  /** Advertised name, or "" when this sighting carried none yet. On iOS the name is
+   * the scan-response local name (the primary ADV holds only Flags + the Improv
+   * service UUID, so it fills the 31-byte PDU and the name MUST go in the scan
+   * response) — and CoreBluetooth often delivers the first discovery callback for a
+   * peripheral BEFORE its scan response arrives, so `name` is empty on that sighting
+   * and populated on a later one. Callers keep the best name seen and supply their own
+   * display fallback; they must NOT treat "" as the device's real name. */
   name: string;
   rssi?: number;
 }
@@ -127,12 +131,25 @@ export interface ImprovScan {
 export async function scanImprovNative(onHit: (hit: ImprovScanHit) => void): Promise<ImprovScan> {
   const { BleClient } = await import("@capacitor-community/bluetooth-le");
   await BleClient.initialize();
-  await BleClient.requestLEScan({ services: [IMPROV_SERVICE] }, (result) => {
+  // `allowDuplicates: true` is LOAD-BEARING on iOS. The Improv boards advertise the
+  // service UUID in the primary ADV and the NAME in the scan response (the 128-bit
+  // UUID + flags already fill the 31-byte legacy ADV). With the default
+  // `allowDuplicates: false`, CoreBluetooth reports each peripheral exactly ONCE — and
+  // that single callback often fires before the scan response is received, so
+  // `localName` is empty and the board surfaces WITHOUT its name. On a crowded bench
+  // that made our reserved "Led Widget <hex>" board appear nameless most scans, so the
+  // name-pinned pick (harness.ts) missed it (~1 in 5 scans it happened to coalesce the
+  // name in time — the reported flakiness). Allowing duplicates re-reports each
+  // peripheral on later advertising events, which DO carry the merged scan-response
+  // name, so the real name arrives within the scan window. (A short HITL/provisioning
+  // scan, not a background one — the extra callbacks are cheap and we stop promptly.)
+  await BleClient.requestLEScan({ services: [IMPROV_SERVICE], allowDuplicates: true }, (result) => {
     onHit({
       deviceId: result.device.deviceId,
-      // localName is the advertisement/scan-response name; device.name matches it
-      // on first sighting (iOS), then becomes the cached GAP name after connect.
-      name: result.localName || result.device.name || "Splanc device",
+      // localName is the scan-response name; device.name is the cached GAP name after a
+      // prior connect. Either may be absent on an early sighting — report "" then, and
+      // let the caller keep the best name seen (never overwrite a real name with "").
+      name: result.localName || result.device.name || "",
       ...(result.rssi !== undefined ? { rssi: result.rssi } : {}),
     });
   });
@@ -152,4 +169,69 @@ export async function scanImprovNative(onHit: (hit: ImprovScanHit) => void): Pro
 export async function improvDeviceById(deviceId: string, name?: string): Promise<ImprovDevice> {
   const { BleClient } = await import("@capacitor-community/bluetooth-le");
   return toImprovDevice(BleClient, { deviceId, ...(name !== undefined ? { name } : {}) });
+}
+
+/** GAP Generic Access service (0x1800) + Device Name characteristic (0x2A00),
+ * as full 128-bit UUIDs (the 16-bit assigned number expanded against the Bluetooth
+ * base UUID). The netstack firmware exposes the board's name here so it is readable
+ * over GATT independent of the scan-response Complete-Local-Name. */
+export const GAP_SERVICE = "00001800-0000-1000-8000-00805f9b34fb";
+export const GAP_DEVICE_NAME_CHAR = "00002a00-0000-1000-8000-00805f9b34fb";
+
+/**
+ * Connect to a surfaced-but-UNNAMED Improv peripheral and resolve its name.
+ *
+ * A board can surface over BLE carrying no name: iOS delivers the scan-response
+ * Complete-Local-Name on a LATER advertising callback than the first sighting, and on
+ * a busy unprovisioned board BLE/WiFi coex can starve the scan-response TX window so
+ * that name never arrives in the scan at all. The firmware therefore ALSO exposes the
+ * name over GATT as GAP Device Name (0x2A00); connecting and reading it resolves the
+ * name independent of the fragile scan response.
+ *
+ * Reads 0x2A00 directly where the platform permits (Android/Web Bluetooth). iOS
+ * reserves the GAP service and refuses a direct app read, but CoreBluetooth reads
+ * 0x2A00 ITSELF on connect to populate the peripheral name, so we recover it from the
+ * connected-device list as a fallback. Returns "" on any failure, and always
+ * disconnects so the subsequent provisioning connect starts clean.
+ */
+export async function readGapDeviceName(deviceId: string): Promise<string> {
+  const { BleClient } = await import("@capacitor-community/bluetooth-le");
+  try {
+    await BleClient.connect(deviceId);
+  } catch {
+    return "";
+  }
+  const decode = (view: DataView): string =>
+    new TextDecoder()
+      .decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+      .replace(/\0+$/, "");
+  let name = "";
+  // iOS reads GAP 0x2A00 ITSELF on connect and populates CBPeripheral.name LAZILY
+  // (it refuses an app read of the reserved GAP service), so a single immediate read
+  // comes back empty. Poll briefly: attempt the direct 0x2A00 read (works on
+  // Android/Web Bluetooth and also triggers iOS service discovery, which makes iOS
+  // fetch the GAP name), then read the cached connected-device name (iOS), giving
+  // CoreBluetooth a few hundred ms per round to surface it.
+  for (let i = 0; i < 8 && !name; i++) {
+    try {
+      name = decode(await BleClient.read(deviceId, GAP_SERVICE, GAP_DEVICE_NAME_CHAR));
+    } catch {
+      // GAP service not app-readable (iOS) — fall through to the cached name.
+    }
+    if (!name) {
+      try {
+        const connected = await BleClient.getConnectedDevices([IMPROV_SERVICE]);
+        name = connected.find((d) => d.deviceId === deviceId)?.name ?? "";
+      } catch {
+        // not available yet — retry after a short settle
+      }
+    }
+    if (!name) await new Promise((r) => setTimeout(r, 500));
+  }
+  try {
+    await BleClient.disconnect(deviceId);
+  } catch {
+    // already disconnected — nothing to clean up
+  }
+  return name;
 }

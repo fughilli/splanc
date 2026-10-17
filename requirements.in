@@ -46,6 +46,12 @@ jinja2
 simplepyble
 playwright
 
+# Dynamic USB-serial port discovery by VID/PID (pi/hitl/harness/serial_discovery.py):
+# resolve the ESP32-C6's renumbering /dev/cu.usbmodem* (macOS) / /dev/ttyACM* (Linux)
+# from its stable USB identity instead of hardcoding a path. Ships with esptool too,
+# but pin it here so the discovery CLI + its unit tests are hermetic on every host.
+pyserial
+
 # Software BLE peripheral for the phone-HITL real-BLE lane (pi/hitl/phone): a
 # Bumble Improv GATT server the app pairs with over a real BLE stack (the Android
 # emulator's Netsim, or a LocalLink peer in the in-container GATT test) instead of

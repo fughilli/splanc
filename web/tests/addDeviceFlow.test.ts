@@ -187,8 +187,16 @@ test("the native app provisions through the Capacitor Bluetooth plugin with the 
     await advance(1000);
 
     assert.deepEqual(await outcome(result), { state: "fulfilled", value: ["http://192.168.1.88/"] });
-    // Subscribe to RPC_RESULT + ERROR_STATE before writing the RPC command.
-    assert.deepEqual(plugin.calls, ["connect:ios-peripheral-7", "notify:8004", "notify:8002", "write:8003"]);
+    // Subscribe to RPC_RESULT + ERROR_STATE before writing the RPC command, and drop
+    // the BLE link once the redirect arrives (frees the player's shared radio for the
+    // wss TLS handshake that follows — net/improv.ts provisionViaBle).
+    assert.deepEqual(plugin.calls, [
+      "connect:ios-peripheral-7",
+      "notify:8004",
+      "notify:8002",
+      "write:8003",
+      "disconnect:ios-peripheral-7",
+    ]);
     assert.equal(plugin.writes.length, 1);
     assert.deepEqual(Array.from(plugin.writes[0]!.bytes), Array.from(buildWifiSettings("HomeNet", "hunter22")));
   } finally {
