@@ -196,6 +196,28 @@ class CommandPlanTests(unittest.TestCase):
                 target._foreground_app()
         self.assertIn("--remove", adb.call_args_list[-1].args[0])
 
+    def test_android_provision_ble_takes_the_journeys_device_name(self) -> None:
+        # connect.json passes `deviceName` (None when unresolved); the Android
+        # tap-driven handler must accept it and pin the chooser to it when set.
+        import sys
+        import types
+
+        seen = []
+
+        class FakeProvisioner:
+            def provision(self, ssid, password, name, timeout):
+                seen.append(name)
+                return True
+
+        fake = types.ModuleType("android_ble_provision")
+        fake.AndroidBleProvisioner = FakeProvisioner
+        with patch.dict(sys.modules, {"android_ble_provision": fake}):
+            t = AndroidDeviceTarget()
+            r = t.provision_ble(ssid="ap", password="pw", deviceName=None)
+            self.assertTrue(r["provisioned"])
+            t.provision_ble(ssid="ap", password="pw", deviceName="Led Widget ED4555")
+        self.assertEqual(seen[1], "Led Widget ED4555")
+
     def test_ios_sim_serverurl_via_run_endpoint_loopback(self) -> None:
         t = IosSimulatorTarget()
         plan = t.command_plan(PORTS)

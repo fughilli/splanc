@@ -302,7 +302,14 @@ class AndroidDeviceTarget(PhoneTarget):
     # --- real-gesture handlers (Chrome forbids Web Bluetooth requestDevice() and the
     #     cert-trust window.open() without a user activation, so the driver RPC can't
     #     do them; drive the real UI via adb taps + uiautomator instead) -----------
-    def provision_ble(self, ssid: str, password: str, ble_name: str = "", timeout: float = 90.0):
+    def provision_ble(
+        self,
+        ssid: str,
+        password: str,
+        ble_name: str = "",
+        timeout: float = 90.0,
+        deviceName: str | None = None,  # noqa: N803 — the journey step's param name
+    ):
         """Fulfil a `provisionBle` step with a REAL tap-driven Web-Bluetooth flow
         (Add device → fill creds → Scan → OS chooser → Pair). Never raises: the DUT is
         already rig-provisioned + reachable, so a flaky chooser must not block the
@@ -310,7 +317,9 @@ class AndroidDeviceTarget(PhoneTarget):
         `expect: {urls: nonempty}` needs, plus a `provisioned` flag noting the truth."""
         from android_ble_provision import AndroidBleProvisioner
 
-        name = ble_name or os.environ.get("HITL_DUT_BLE_NAME", "Led Widget")
+        # connect.json pins the board by `deviceName` (the iOS lane resolves it from the
+        # reserved C6); it's None when the run didn't resolve one.
+        name = ble_name or deviceName or os.environ.get("HITL_DUT_BLE_NAME", "Led Widget")
         try:
             ok = AndroidBleProvisioner().provision(ssid, password, name, timeout=timeout)
         except Exception as e:  # noqa: BLE001 — a tap/chooser hiccup shouldn't abort the run
