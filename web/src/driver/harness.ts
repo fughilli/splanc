@@ -29,7 +29,7 @@ import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
 import type { Router } from "../ui/app/router";
-import { driverCapture, driverCaptureError, setDriverActive } from "./guard";
+import { driverCapture, driverCaptureError, driverUsesVirtualBle, setDriverActive } from "./guard";
 
 type Json = Record<string, unknown>;
 
@@ -192,8 +192,11 @@ async function handle(msg: Incoming): Promise<unknown> {
       // iOS (native) has no Web Bluetooth: provision over the Capacitor BLE plugin,
       // headlessly (no UI chooser) — scan for Improv and take the strongest-signal
       // device, which on the bench is the DUT inches from the phone. The browser/
-      // emulator lane keeps the Web Bluetooth path.
-      const dev = isNativePlatform()
+      // emulator lane keeps the Web Bluetooth path. Virtual-BLE mode (no `&ble=real`)
+      // takes the virtual Improv board on EVERY platform: on iOS a real scan would
+      // provision whatever board is loudest on the shared bench, which is not this
+      // run's DUT (the device-free `smoke` journey runs virtual).
+      const dev = isNativePlatform() && !driverUsesVirtualBle()
         ? await pickImprovDeviceHeadless(
             (s) => emit("status", { where: "provision", message: s }),
             5000,
