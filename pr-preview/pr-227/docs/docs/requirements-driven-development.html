@@ -449,7 +449,11 @@ run on <code class="docutils literal notranslate"><span class="pre">main</span><
 the page is the combined report (the latest main Test run’s software evidence
 and the latest main HITL run’s hardware evidence against the model), with each
 run’s own report under <code class="docutils literal notranslate"><span class="pre">software/</span></code> and <code class="docutils literal notranslate"><span class="pre">hitl/</span></code>, and the JSON report and gap
-queue next to them.</p>
+queue next to them. Hardware evidence stamped with a different commit than the
+published one counts as STALE there, so right after a push (the Test run lands
+before that commit’s HITL run) requirements that only hardware verifies read
+under-verified until the HITL run for the same commit finishes; the banner says
+when this is the case.</p>
 <p>HITL tests only run where the rigs are reachable, so the HITL workflow
 (<a class="reference internal" href="#../.github/workflows/hitl.yaml"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">.github/workflows/hitl.yaml</span></code></span></a>) publishes its
 own <code class="docutils literal notranslate"><span class="pre">hitl-traceability-report</span></code> from the on-hardware run: each harness phase is a

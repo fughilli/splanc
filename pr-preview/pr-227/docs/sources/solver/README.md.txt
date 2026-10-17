@@ -19,7 +19,7 @@ JSON in, JSON out — both carriers stay trivial:
 ```text
 stdin/solve_json  {detections, imu, ledCount, mapId, createdAt,
                    options{maxKeyframes, maxNfev, pxSigma, rejectOutliers,
-                           gapSplitS, outlierSigma, minViews}}
+                           outlierSigma, minViews}}
 stdout/return     §7.5 OutputMap JSON
 stderr/progress   solve_status-shaped snapshots (JSON per line / JS callback)
 ```
