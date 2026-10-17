@@ -1331,8 +1331,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Supplemental scan solved on the phone. A short scan aimed at a few
         // weak LEDs may be too thin to solve ON ITS OWN, yet still add the rays
         // those LEDs need to the joint re-solve — so a failed standalone solve
-        // is not fatal here; reviewSupplement decides what is usable.
-        await c.stopMappingNoSolve().catch(() => undefined);
+        // is not fatal here; reviewSupplement decides what is usable. Like the
+        // plain phone solve below, the stop is sent but its reply is not
+        // awaited (a stalled player would otherwise hold up the solve).
+        void c.stopMappingNoSolve().catch((e: unknown) => {
+          nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
+        });
         const supp = await solveOnPhoneNow().catch((e: unknown) => {
           nativeLog(`[solve] supplemental standalone solve failed: ${e instanceof Error ? e.message : String(e)}`);
           return null;
