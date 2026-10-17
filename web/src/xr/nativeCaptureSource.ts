@@ -294,6 +294,7 @@ export class NativeCaptureSource implements CaptureSource {
       imgW: e.imgW,
       imgH: e.imgH,
       tCaptureMs,
+      prepMs: performance.now() - arrivalMs,
     });
   }
 

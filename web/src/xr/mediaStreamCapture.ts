@@ -167,16 +167,17 @@ export class MediaStreamCaptureSource implements CaptureSource {
     if ("requestVideoFrameCallback" in this.video) {
       this.rvfcHandle = (
         this.video as HTMLVideoElement & {
-          requestVideoFrameCallback(cb: () => void): number;
+          requestVideoFrameCallback(cb: (now: number, meta: { presentedFrames?: number }) => void): number;
         }
-      ).requestVideoFrameCallback(() => this.emitFrame());
+      ).requestVideoFrameCallback((_now, meta) => this.emitFrame(meta.presentedFrames));
     } else {
       this.rafHandle = requestAnimationFrame(() => this.emitFrame());
     }
   }
 
-  private emitFrame(): void {
+  private emitFrame(seq?: number): void {
     if (!this.running || !this.texture) return;
+    const t0 = performance.now();
     const gl = this.gl;
     const w = this.video.videoWidth;
     const h = this.video.videoHeight;
@@ -201,13 +202,16 @@ export class MediaStreamCaptureSource implements CaptureSource {
       k = heuristicK(w, h);
     }
 
+    const tEmit = performance.now();
     this.frameCb?.({
       texture: this.texture,
       pose: null,
       K: k,
       imgW: w,
       imgH: h,
-      tCaptureMs: performance.now(),
+      tCaptureMs: tEmit,
+      seq,
+      prepMs: tEmit - t0,
     });
     this.scheduleNext();
   }

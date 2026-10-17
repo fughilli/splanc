@@ -528,4 +528,36 @@ fn diffuse_striding_masks_and_rotates_phase() {
     assert_eq!(state.r#code_params.r#stride_spacing().copied(), Some(spacing as i32));
     assert_eq!(state.r#code_params.r#stride_phase().copied(), Some(1));
     check_phase(&player, 1);
+    // Turning striding OFF mid-session (the capture screen's live diffuse
+    // toggle: Configure{stride_spacing: 0}) returns to dense capture — every
+    // LED lit with its code color, and no stride echoed on CodeParams.
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_stride_spacing(0);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(state)) = send(&mut player, CMsg::Configure(configure), 3000.0)
+    else {
+        panic!("configure must produce pattern_state");
+    };
+    assert_eq!(state.r#code_params.r#stride_spacing().copied(), None);
+    for frame in [pat::FRAME_ALL_OFF, pat::DATA_FRAME_OFFSET] {
+        for led in 0..led_count {
+            let got = player.pattern_color(led, frame).expect("active");
+            assert_eq!(got, pat::color_for_frame(led, frame, &spec), "dense led {led} f{frame}");
+        }
+    }
+
+    // ...and back ON again, restarting at phase 0.
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_stride_spacing(spacing as i32);
+    copts.set_anchor_density(anchor as i32);
+    copts.set_stride_phase(0);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(state)) = send(&mut player, CMsg::Configure(configure), 4000.0)
+    else {
+        panic!("configure must produce pattern_state");
+    };
+    assert_eq!(state.r#code_params.r#stride_spacing().copied(), Some(spacing as i32));
+    check_phase(&player, 0);
 }

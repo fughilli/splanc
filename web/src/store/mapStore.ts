@@ -9,7 +9,7 @@
  * can change later (OPFS/export sync) without touching the UI.
  */
 
-import type { OutputMap, Topology } from "@ledmapper/protocol";
+import type { DetectionRecord, ImuSample, OutputMap, Topology } from "@ledmapper/protocol";
 import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
 import {
   base64ToBytes,
@@ -22,6 +22,20 @@ import {
 } from "./mapBundle";
 import { validateMesh, type MeshOverlay } from "../geom/mesh";
 import { MapView } from "../ui/mapview";
+
+/**
+ * The raw observations behind a captured map (FUG-112). Persisted so a later
+ * "supplemental capture" can accumulate its measurements with these and
+ * re-solve the map's low-confidence LEDs jointly (geom/fuseMaps). After a
+ * supplement is accepted this holds every session concatenated on ONE
+ * monotonic timeline (fuseMaps.concatObservations), so it stays a valid solver
+ * input. Only maps that carry this can be supplemented.
+ */
+export interface CaptureObservations {
+  detections: DetectionRecord[];
+  imu: ImuSample[];
+  ledCount: number;
+}
 
 /** Denormalized summary for the browser list (design doc §5.2). */
 export interface StoredMapSummary {
@@ -40,6 +54,9 @@ export interface StoredMapSummary {
   deviceMapId?: string;
   /** Optional folder for organizing the library; "" / absent = ungrouped. */
   folder?: string;
+  /** True when the payload carries the raw capture observations, so a
+   * supplemental capture can fuse into this map (FUG-112). */
+  supplementable?: boolean;
   /** dataURL — small MapView snapshot; may be "" until first browser view. */
   thumbnail: string;
   /** Which thumbnail engine rendered `thumbnail` (see THUMBNAIL_ENGINE_VERSION).
@@ -62,6 +79,8 @@ export interface CreateInput {
   source?: StoredMapSummary["source"];
   name?: string;
   deviceMapId?: string;
+  /** Raw observations to persist for later supplemental captures (FUG-112). */
+  observations?: CaptureObservations;
 }
 
 export interface ListQuery {
@@ -118,7 +137,17 @@ function summaryFromMap(input: CreateInput, id: string, now: string): StoredMapS
     thumbnail: "",
   };
   if (input.deviceMapId !== undefined) s.deviceMapId = input.deviceMapId;
+  if (input.observations !== undefined) s.supplementable = true;
   return s;
+}
+
+/** The payload row stored in `maps_payload` (heavy, lazy-loaded). */
+interface MapPayload {
+  id: string;
+  map: OutputMap;
+  mesh?: MeshOverlay;
+  topology?: Topology;
+  observations?: CaptureObservations;
 }
 
 class MapStore {
@@ -249,17 +278,22 @@ class MapStore {
     const summary = await this.getSummary(id);
     if (!summary) return undefined;
     const payload = await this.tx([PAYLOAD], "readonly", (tx) =>
-      MapStore.req(
-        tx.objectStore(PAYLOAD).get(id) as IDBRequest<
-          { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined
-        >,
-      ),
+      MapStore.req(tx.objectStore(PAYLOAD).get(id) as IDBRequest<MapPayload | undefined>),
     );
     if (!payload) return undefined;
     const rec: StoredMap = { ...summary, map: payload.map };
     if (payload.topology) rec.topology = payload.topology;
     if (payload.mesh) rec.mesh = payload.mesh;
     return rec;
+  }
+
+  /** Load the raw observations behind a captured map, if it kept them — the
+   * input to a supplemental capture (FUG-112). */
+  async getObservations(id: string): Promise<CaptureObservations | undefined> {
+    const payload = await this.tx([PAYLOAD], "readonly", (tx) =>
+      MapStore.req(tx.objectStore(PAYLOAD).get(id) as IDBRequest<MapPayload | undefined>),
+    );
+    return payload?.observations;
   }
 
   /** All known device map ids (dedup on pull). */
@@ -276,9 +310,10 @@ class MapStore {
     // failure just leaves an empty thumbnail (regenerated lazily on view).
     summary.thumbnail = await renderThumbnail(input.map, 128, input.mesh).catch(() => "");
     if (summary.thumbnail) summary.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
-    const payload: { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } = { id, map: input.map };
+    const payload: MapPayload = { id, map: input.map };
     if (input.topology) payload.topology = input.topology;
     if (input.mesh) payload.mesh = validateMesh(input.mesh);
+    if (input.observations) payload.observations = input.observations;
     await this.tx([IDX, PAYLOAD], "readwrite", (tx) => {
       tx.objectStore(IDX).put(summary);
       tx.objectStore(PAYLOAD).put(payload);
@@ -343,9 +378,7 @@ class MapStore {
   async setTopology(id: string, topology: Topology): Promise<void> {
     await this.tx([IDX, PAYLOAD], "readwrite", async (tx) => {
       const pStore = tx.objectStore(PAYLOAD);
-      const cur = await MapStore.req(
-        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined>,
-      );
+      const cur = await MapStore.req(pStore.get(id) as IDBRequest<MapPayload | undefined>);
       if (!cur) return;
       pStore.put({ ...cur, topology });
       const iStore = tx.objectStore(IDX);
@@ -358,17 +391,21 @@ class MapStore {
   /** Persist an edited map geometry (the editor's transform tools) — replaces
    * the stored map, and the topology when one is passed, then regenerates the
    * thumbnail from the new geometry. */
-  async setMap(id: string, map: OutputMap, topology?: Topology): Promise<void> {
+  async setMap(
+    id: string,
+    map: OutputMap,
+    topology?: Topology,
+    observations?: CaptureObservations,
+  ): Promise<void> {
     const existing = await this.get(id);
     const thumbnail = await renderThumbnail(map, 128, existing?.mesh).catch(() => "");
     await this.tx([IDX, PAYLOAD], "readwrite", async (tx) => {
       const pStore = tx.objectStore(PAYLOAD);
-      const cur = await MapStore.req(
-        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } | undefined>,
-      );
+      const cur = await MapStore.req(pStore.get(id) as IDBRequest<MapPayload | undefined>);
       if (!cur) return;
-      const next: { id: string; map: OutputMap; mesh?: MeshOverlay; topology?: Topology } = { ...cur, map };
+      const next: MapPayload = { ...cur, map };
       if (topology !== undefined) next.topology = topology;
+      if (observations !== undefined) next.observations = observations;
       pStore.put(next);
       const iStore = tx.objectStore(IDX);
       const s = await MapStore.req(iStore.get(id) as IDBRequest<StoredMapSummary | undefined>);
@@ -379,6 +416,7 @@ class MapStore {
           ns.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
         }
         if (topology !== undefined) ns.hasTopology = topology.segments.length > 0;
+        if (observations !== undefined) ns.supplementable = true;
         iStore.put(ns);
       }
     });

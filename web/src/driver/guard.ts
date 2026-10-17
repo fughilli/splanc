@@ -12,6 +12,8 @@
  * handlers and nothing else.
  */
 
+import type { CapturePerfSnapshot } from "../cv/capturePerf";
+
 let active = false;
 
 /** True when the app is being driven by the HITL harness (virtual BLE + synthetic
@@ -56,6 +58,8 @@ export interface DriverDecodeStats {
   total: number;
   tracks: number;
   observations: number;
+  /** Hot-loop / live-solver perf counters (cv/capturePerf), once capturing. */
+  perf?: CapturePerfSnapshot;
 }
 
 /** A solved-map summary the HITL capture journey asserts on (target LED count vs
