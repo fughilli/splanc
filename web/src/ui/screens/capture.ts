@@ -231,6 +231,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // scan; the chip reports whether client-side PnP has locked onto the map.
   let showTracks = true;
   let showSolved = true;
+  // 1-σ rings on the solved layer (ProjectionOverlay.showRings) — opt-in.
+  let showRings = false;
   const layerBar = document.createElement("div");
   layerBar.className = "capture-layers";
   const layerToggle = (label: string, on: boolean, onChange: (v: boolean) => void): HTMLButtonElement => {
@@ -265,6 +267,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (!v) projOverlay.clear();
       syncLegend();
     }),
+    layerToggle("Error rings", showRings, (v) => {
+      showRings = v;
+      projOverlay.showRings = v;
+      syncLegend();
+    }),
     regChip,
   );
   // Legend for the solved layer's encoding (provenance = hue+shape, variance =
@@ -273,6 +280,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   legendEl.style.display = "none";
   function syncLegend(): void {
     legendEl.style.display = showSolved && projOverlay.solvedCount > 0 ? "" : "none";
+    const ringNote = legendEl.querySelector<HTMLElement>(".capture-legend-note");
+    if (ringNote) ringNote.style.display = showRings ? "" : "none";
   }
 
   // -- supplemental review panel (FUG-112): after the fused solve, the user
@@ -424,6 +433,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // -- session state ---------------------------------------------------------
   const labels = new LabelOverlay(labelsCanvas);
   const projOverlay = new ProjectionOverlay(projCanvas);
+  projOverlay.showRings = showRings;
   const solverAgent = new SolverAgent();
   const solverReady: Promise<boolean> = solverAgent.init().then((ok) => {
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);

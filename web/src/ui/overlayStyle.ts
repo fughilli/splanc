@@ -11,13 +11,15 @@
  *     re-solved — reddish purple #CC79A7, square   (a low-confidence base LED
  *                 the supplemental evidence gave a new position)
  *
- *   VARIANCE → fill AND a 1-σ ring (geom/ledVariance):
+ *   VARIANCE → fill, plus an optional 1-σ ring (geom/ledVariance):
  *     tight    — solid fill
  *     moderate — half-transparent fill + outline
  *     loose    — hollow outline, dashed
- *   plus a thin ring at the LED's 1-σ radius projected into the image (drawn
- *   when it is larger than the marker), so the uncertainty reads at its true
- *   on-screen size. Tiers are relative to the LED pitch (varianceTier).
+ *   and, when the capture screen's "Error rings" layer is on, a thin ring at
+ *   the LED's 1-σ radius projected into the image (drawn when it is larger
+ *   than the marker), so the uncertainty reads at its true on-screen size. Off
+ *   by default — rings around every loose interim-solve LED clutter the view.
+ *   Tiers are relative to the LED pitch (varianceTier).
  */
 
 import type { Provenance } from "../geom/fuseMaps";

@@ -115,6 +115,10 @@ export class ProjectionOverlay {
   /** Label each mark with its id and 1-σ (busier, but the point of watching
    * the solve live is to see which LEDs are still loose). */
   showScores = true;
+  /** Draw each LED's projected 1-σ ring. Off by default: the interim live
+   * solves are loose, so nearly every LED gets a large ring and the view
+   * clutters — the marker fill already encodes the variance tier. */
+  showRings = false;
   /** Registering against a prior map (supplement) vs the live solve (fresh) —
    * only changes the chip wording. */
   supplement = false;
@@ -218,7 +222,7 @@ export class ProjectionOverlay {
       // 1-σ ring at its projected on-screen size, when bigger than the mark;
       // capped so a hopeless LED doesn't paint over the whole view.
       const ringPx = sigmaRadiusPx(led.sigmaM, pr.depth, K[0]) * viewScale;
-      if (ringPx > st.sizePx * dpr * 1.6) {
+      if (this.showRings && ringPx > st.sizePx * dpr * 1.6) {
         ctx.beginPath();
         ctx.arc(x, y, Math.min(ringPx, 80 * dpr), 0, Math.PI * 2);
         ctx.lineWidth = dpr;
