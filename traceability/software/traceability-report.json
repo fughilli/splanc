@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1316,
+    "test_cases": 1338,
     "gaps": 32
   },
   "levels": [
@@ -944,22 +944,16 @@
           "target": "//pi/reconstruction:rust_parity_test"
         },
         {
-          "name": "pi.reconstruction.tests.test_rust_parity::test_rust_solver_matches_python_reference",
+          "name": "pi.reconstruction.tests.test_rust_parity::test_rust_solver_fuses_a_strided_capture_like_python",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/reconstruction:rust_parity_test"
         },
         {
-          "name": "pi.reconstruction.tests.test_vio::test_gap_segment_filter_solves_dominant_segment",
+          "name": "pi.reconstruction.tests.test_rust_parity::test_rust_solver_matches_python_reference",
           "status": "passed",
           "level": "simulation",
-          "target": "//pi/reconstruction:vio_test"
-        },
-        {
-          "name": "pi.reconstruction.tests.test_vio::test_leading_stub_is_dropped_regardless_of_gap_length",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/reconstruction:vio_test"
+          "target": "//pi/reconstruction:rust_parity_test"
         },
         {
           "name": "pi.reconstruction.tests.test_vio::test_outlier_rejection_unsticks_a_contaminated_led",
@@ -1837,7 +1831,7 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_rust_parity.py",
-          "line": 25
+          "line": 26
         },
         {
           "ids": [
@@ -1845,7 +1839,7 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_vio.py",
-          "line": 32
+          "line": 41
         },
         {
           "ids": [
@@ -5135,24 +5129,6 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
-          "name": "pi.reconstruction.tests.test_interrupted_capture::test_brief_pauses_in_a_capture_lose_no_observations",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/reconstruction:reconstruct_test"
-        },
-        {
-          "name": "pi.reconstruction.tests.test_interrupted_capture::test_walk_away_mid_capture_keeps_the_richer_earlier_stretch",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/reconstruction:reconstruct_test"
-        },
-        {
-          "name": "pi.reconstruction.tests.test_interrupted_capture::test_walk_away_mid_capture_keeps_the_richer_later_stretch",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/reconstruction:reconstruct_test"
-        },
-        {
           "name": "pi.reconstruction.tests.test_reconstruct::test_low_view_led_is_unmapped",
           "status": "passed",
           "level": "simulation",
@@ -5193,6 +5169,36 @@
           "status": "passed",
           "level": "simulation",
           "target": "//pi/reconstruction:reconstruct_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_interrupted_capture::test_brief_pauses_in_a_capture_lose_no_observations",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_interrupted_capture::test_imu_dropout_across_a_walk_away_keeps_both_stretches",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_interrupted_capture::test_leading_stray_records_do_not_derail_the_solve",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_interrupted_capture::test_strided_capture_fuses_every_phase_across_decode_gaps",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_interrupted_capture::test_walk_away_mid_capture_keeps_both_stretches",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
         },
         {
           "name": "pi.server.tests.test_capture_recovery::test_capture_left_by_a_failed_solve_reconstructs_offline_from_its_log",
@@ -5344,7 +5350,7 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_interrupted_capture.py",
-          "line": 39,
+          "line": 72,
           "symbol": "def test_brief_pauses_in_a_capture_lose_no_observations"
         },
         {
@@ -5353,8 +5359,8 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_interrupted_capture.py",
-          "line": 55,
-          "symbol": "def test_walk_away_mid_capture_keeps_the_richer_later_stretch"
+          "line": 84,
+          "symbol": "def test_walk_away_mid_capture_keeps_both_stretches"
         },
         {
           "ids": [
@@ -5362,8 +5368,26 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_interrupted_capture.py",
-          "line": 67,
-          "symbol": "def test_walk_away_mid_capture_keeps_the_richer_earlier_stretch"
+          "line": 98,
+          "symbol": "def test_imu_dropout_across_a_walk_away_keeps_both_stretches"
+        },
+        {
+          "ids": [
+            "PR-31"
+          ],
+          "relation": "verifies",
+          "path": "pi/reconstruction/tests/test_interrupted_capture.py",
+          "line": 115,
+          "symbol": "def test_leading_stray_records_do_not_derail_the_solve"
+        },
+        {
+          "ids": [
+            "PR-31"
+          ],
+          "relation": "verifies",
+          "path": "pi/reconstruction/tests/test_interrupted_capture.py",
+          "line": 145,
+          "symbol": "def test_strided_capture_fuses_every_phase_across_decode_gaps"
         },
         {
           "ids": [
@@ -5670,6 +5694,12 @@
         },
         {
           "name": "pi.reconstruction.tests.test_rust_parity::test_rust_benchmark_mode_reports_score",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:rust_parity_test"
+        },
+        {
+          "name": "pi.reconstruction.tests.test_rust_parity::test_rust_solver_fuses_a_strided_capture_like_python",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/reconstruction:rust_parity_test"
@@ -6095,7 +6125,7 @@
           ],
           "relation": "verifies",
           "path": "pi/reconstruction/tests/test_rust_parity.py",
-          "line": 25
+          "line": 26
         },
         {
           "ids": [
