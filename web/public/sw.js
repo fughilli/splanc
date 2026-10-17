@@ -5,11 +5,13 @@
  * Strategy, same-origin GET only (everything else passes straight through, so
  * the wss control plane and any dynamic API are untouched):
  *   - navigations: network-first, falling back to the cached app shell offline;
- *   - the wasm bundles under /solver, /fx-vm, /fx-compiler, /pulse: network-first
- *     too. These have FIXED (non-content-hashed) filenames whose bytes change on
- *     every deploy, so stale-while-revalidate would serve last deploy's wasm to
- *     the current session (e.g. an old fx_vm that doesn't know new opcodes) —
- *     keep them in lockstep with the app that references them;
+ *   - the wasm bundles under /solver, /fx-vm, /fx-compiler, /pulse, and the
+ *     bundled flash images under /firmware: network-first too. These have FIXED
+ *     (non-content-hashed) filenames whose bytes change on every deploy, so
+ *     stale-while-revalidate would serve last deploy's copy to the current
+ *     session (e.g. an old fx_vm that doesn't know new opcodes, or — for
+ *     /firmware — the "This build (dev)" source flashing a weeks-old image after
+ *     the preview stopped bundling one) — keep them in lockstep with the app;
  *   - other static assets (Vite content-hashed assets/*): stale-while-revalidate.
  * The dynamic API paths below are never cached.
  *
@@ -29,7 +31,9 @@ const BASE = new URL(self.registration.scope).pathname;
 // v5: rebranded the raster icons (apple-touch-icon + icon-*.png) to the splash
 // mark — they had been left as the old "tree" art. Bumping evicts the cached
 // manifest + icons so updated clients re-fetch the new brand.
-const VERSION = "v5";
+// v6: /firmware/ moved to network-first; evicts the stale-while-revalidate copies
+// that kept serving an old "This build (dev)" image.
+const VERSION = "v6";
 const CACHE = `ledmapper-${VERSION}`;
 const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/app-icon.svg"];
 
@@ -43,7 +47,7 @@ function relPath(pathname) {
 const NO_CACHE = [/^maps(\/|$)/, /^healthz$/, /^ws(\/|$)/, /^api(\/|$)/];
 // Fixed-name, version-coupled bundles: serve network-first (fresh online, cache
 // only as the offline fallback) so a deploy's new wasm is never shadowed.
-const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse)\//];
+const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

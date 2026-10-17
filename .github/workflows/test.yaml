@@ -128,10 +128,11 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      # Build the self-describing flash bundles (flash.json + bins) for BOTH
-      # variants — vendor Wi-Fi and the heapless netstack — so CI validates the
-      # netstack image compiles too, and the site can bundle both as the "This
-      # build (dev)" flash source (build-site downloads these + stages /firmware/).
+      # Build the self-describing flash bundle (flash.json + bins) for the
+      # heapless netstack player — the only shipping variant since the vendor
+      # Wi-Fi player was deprecated (#171) — so the site can bundle it as the
+      # "This build (dev)" flash source (build-site downloads it + stages
+      # /firmware/).
       # The heavy ESP toolchain lives only in this job.
       - name: Build firmware flash bundles (esp32c6 netstack)
         run: |
@@ -151,9 +152,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: esp32c6-flashbundle
-          path: |
-            bazel-bin/firmware/player_app/esp32c6_flashbundle.tar
-            bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar
+          path: bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar
           retention-days: 3
           if-no-files-found: error
 
@@ -404,7 +403,6 @@ jobs:
         # build (dev)" flash source (FUG-60); LEDMAPPER_DOCS_SITE points it at the
         # docs built above so they're staged under /docs/.
         env:
-          LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
           LEDMAPPER_FLASHBUNDLE_NETSTACK: ${{ github.workspace }}/_flashbundle/esp32c6_netstack_flashbundle.tar
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
