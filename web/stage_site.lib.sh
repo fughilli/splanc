@@ -42,11 +42,28 @@ stage_site() {
   # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/
   # (the webapp fetches /firmware/manifest.json) — the "This build (dev)" flash
   # source. The flash bundles are NOT built here; CI's firmware job builds them and
-  # hands the tar paths in $LEDMAPPER_FLASHBUNDLE (vendor) and, optionally,
-  # $LEDMAPPER_FLASHBUNDLE_NETSTACK. When both are absent (a plain dev/site build,
-  # or a production app release that ships firmware via GitHub Releases instead) we
-  # skip firmware and the app reports "no bundled firmware".
-  if [[ -n "${LEDMAPPER_FLASHBUNDLE:-}" && -f "${LEDMAPPER_FLASHBUNDLE}" ]]; then
+  # hands the tar paths in $LEDMAPPER_FLASHBUNDLE_NETSTACK (the shipping netstack
+  # player) and, optionally, $LEDMAPPER_FLASHBUNDLE (the vendor-WiFi player,
+  # deprecated in #171 and no longer built by CI). Each is staged independently:
+  # gating the whole tree on the vendor bundle silently dropped /firmware/ from
+  # every site build once CI stopped producing it. A path that is SET but missing
+  # is an error — CI asked for firmware and must not ship a preview without it.
+  # When neither is set (a plain dev/site build, or a production app release that
+  # ships firmware via GitHub Releases instead) we skip firmware and the app
+  # reports "no bundled firmware".
+  local -a images=()
+  local var id
+  for var in LEDMAPPER_FLASHBUNDLE LEDMAPPER_FLASHBUNDLE_NETSTACK; do
+    [[ -n "${!var:-}" ]] || continue
+    if [[ ! -f "${!var}" ]]; then
+      echo "stage_site: \$$var=${!var} does not exist" >&2
+      return 1
+    fi
+    id=esp32c6
+    [[ "$var" == LEDMAPPER_FLASHBUNDLE_NETSTACK ]] && id=esp32c6_netstack
+    images+=(--image "$id=${!var}")
+  done
+  if ((${#images[@]})); then
     local rev="${LEDMAPPER_FLASHBUNDLE_REV:-}"
     local commit="" fwver=""
     if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
@@ -57,10 +74,6 @@ stage_site() {
       fwver="$(git -C "$BUILD_WORKSPACE_DIRECTORY" describe --tags --match 'firmware-v*' 2>/dev/null || true)"
       fwver="${fwver#firmware-v}"
       [[ -z "$fwver" ]] && fwver="0.0.0-dev"
-    fi
-    local -a images=(--image "esp32c6=${LEDMAPPER_FLASHBUNDLE}")
-    if [[ -n "${LEDMAPPER_FLASHBUNDLE_NETSTACK:-}" && -f "${LEDMAPPER_FLASHBUNDLE_NETSTACK}" ]]; then
-      images+=(--image "esp32c6_netstack=${LEDMAPPER_FLASHBUNDLE_NETSTACK}")
     fi
     tools/stage_firmware --out "$out/firmware" \
       ${rev:+--revision "$rev"} \
