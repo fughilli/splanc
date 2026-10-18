@@ -28,14 +28,18 @@ import os
 import random
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+
+import serial_capture
 
 
 def _host_of(base_url: str) -> str:
@@ -220,6 +224,11 @@ class Reservation:
         self._hb_thread: threading.Thread | None = None
         self._keydir: str | None = None
         self._keyfile: str | None = None
+        # Always-on DUT serial capture (see serial_capture). On unless
+        # HITL_SERIAL_CAPTURE=0; `serial_logs` holds {log name: text} after release().
+        self.serial_capture = os.environ.get("HITL_SERIAL_CAPTURE", "1") != "0"
+        self._serial_on = False
+        self.serial_logs: dict[str, str] = {}
 
     # --- lifecycle -------------------------------------------------------
     def acquire(self) -> None:
@@ -242,6 +251,7 @@ class Reservation:
         self._start_heartbeat()
         self._await_active()
         print(f"reserved: id={self.id} on {self.server} unit={self._unit}", flush=True)
+        self._serial_start()
 
     def _pick_server(self) -> str:
         """Pick a host to reserve on. Prefer a host with the MOST free matching units
@@ -356,6 +366,12 @@ class Reservation:
         self._hb_thread.start()
 
     def release(self) -> None:
+        # Fetch the DUT serial log BEFORE releasing (the container goes with the lease),
+        # and dump its tail right away if we're unwinding from a failure.
+        failing = _exc_is_failure(sys.exc_info()[1])
+        self._serial_fetch()
+        if failing:
+            _dump_serial_logs()
         if self._hb_stop:
             self._hb_stop.set()
         if self.id and self.server:
@@ -375,6 +391,59 @@ class Reservation:
 
     def __exit__(self, *exc) -> None:
         self.release()
+
+    # --- DUT serial capture (serial_capture) -------------------------------
+    def _serial_start(self) -> None:
+        if not self.serial_capture or not self.user:
+            return
+        try:
+            p = self.ssh(serial_capture.install_cmd(), capture=True, timeout=60, _raw=True)
+            out = ((p.stdout or "") + (p.stderr or "")).strip().splitlines()
+            line = out[-1] if out else f"rc={p.returncode}"
+            self._serial_on = (
+                p.returncode == 0
+                and line.startswith("serial-capture: ")
+                and not line.endswith((": none", "pyserial"))
+            )
+            print(f"[serial] {line}", flush=True)
+        except Exception as e:  # noqa: BLE001 — capture must never fail the test
+            print(f"[serial] capture unavailable: {e}", flush=True)
+
+    def _serial_fetch(self) -> None:
+        if not self._serial_on:
+            return
+        self._serial_on = False
+        try:
+            p = self.ssh(serial_capture.fetch_cmd(), capture=True, timeout=90, _raw=True)
+            logs = serial_capture.parse_fetch(p.stdout or "")
+        except Exception as e:  # noqa: BLE001
+            print(f"[serial] could not fetch the DUT serial log: {e}", flush=True)
+            return
+        out_dir = (
+            os.environ.get("HITL_SERIAL_LOG_DIR")
+            or os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
+            or tempfile.gettempdir()
+        )
+        target = os.environ.get("TEST_TARGET") or os.path.basename(sys.argv[0])
+        for name, text in logs.items():
+            self.serial_logs[name] = text
+            label = f"{self._unit} {name} (reservation {self.id})"
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+                path = os.path.join(
+                    out_dir,
+                    serial_capture.log_filename(target, self._unit or "", self.id or "", name),
+                )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            except OSError as e:
+                path = f"(not saved: {e})"
+            _SERIAL_LOGS.append([label, text, False])
+            print(f"[serial] {label}: {len(text.splitlines())} lines -> {path}", flush=True)
+
+    def serial_tail(self, n: int = serial_capture.TAIL_LINES) -> str:
+        """The last `n` lines of every DUT serial log fetched at release()."""
+        return "\n".join(serial_capture.format_tail(k, v, n) for k, v in self.serial_logs.items())
 
     # --- ssh key ---------------------------------------------------------
     def _gen_key(self) -> None:
@@ -415,11 +484,19 @@ class Reservation:
 
     # --- operations ------------------------------------------------------
     def ssh(
-        self, remote_cmd: list[str] | str, capture: bool = False, timeout: float | None = None
+        self,
+        remote_cmd: list[str] | str,
+        capture: bool = False,
+        timeout: float | None = None,
+        _raw: bool = False,
     ) -> subprocess.CompletedProcess:
-        """Run a shell command in the reservation's container."""
+        """Run a shell command in the reservation's container. A command that opens
+        the DUT's serial port itself (serial_capture.needs_port) runs with the
+        background serial capture paused around it."""
         if isinstance(remote_cmd, list):
             remote_cmd = shlex.join(remote_cmd)
+        if not _raw and self._serial_on and serial_capture.needs_port(remote_cmd):
+            remote_cmd = serial_capture.wrap_port_cmd(remote_cmd)
         argv = self._ssh_base() + [f"{self.user}@{self.host}", "sh", "-c", shlex.quote(remote_cmd)]
         return subprocess.run(
             argv,
@@ -463,6 +540,9 @@ class Reservation:
         lock_dir = lock_dir or self.SERIALIZE_LOCK_DIR
         if isinstance(remote_cmd, list):
             remote_cmd = shlex.join(remote_cmd)
+        # Pause the serial capture INSIDE the base64'd command (ssh() can't see it).
+        if self._serial_on and serial_capture.needs_port(remote_cmd):
+            remote_cmd = serial_capture.wrap_port_cmd(remote_cmd)
         b64 = base64.b64encode(remote_cmd.encode()).decode()
         py = (
             "import base64,fcntl,os,subprocess,sys;"
@@ -472,7 +552,7 @@ class Reservation:
             "sys.exit(subprocess.call(['sh','-c',base64.b64decode(sys.argv[1]).decode()]))"
         )
         wrapped = f"python3 -c {shlex.quote(py)} {b64}"
-        return self.ssh(wrapped, capture=capture, timeout=timeout)
+        return self.ssh(wrapped, capture=capture, timeout=timeout, _raw=True)
 
     # Well-known container path of the per-rig "AP-exclusive bandwidth" lock dir — the
     # airtime twin of the flash/BLE-adapter locks. Every DUT on a rig shares ONE AP on
@@ -723,6 +803,65 @@ class Reservation:
                 proc.kill()
 
 
+# --- failure hooks: print the DUT serial tail when the test is failing ------------
+# [label, text, dumped] for every log fetched in this process.
+_SERIAL_LOGS: list[list] = []
+_HOOKS_INSTALLED = False
+
+
+def _exc_is_failure(exc: BaseException | None) -> bool:
+    if exc is None:
+        return False
+    if isinstance(exc, SystemExit):
+        return exc.code not in (0, None)
+    return True
+
+
+def _dump_serial_logs() -> None:
+    for entry in _SERIAL_LOGS:
+        label, text, dumped = entry
+        if not dumped:
+            entry[2] = True
+            print(serial_capture.format_tail(label, text), flush=True)
+
+
+def _install_failure_hooks() -> None:
+    """Make "failing" visible to the serial dump however a test fails: a non-zero
+    sys.exit(), an uncaught exception, or bazel's SIGTERM on a test timeout (turned
+    into SystemExit so `finally: res.release()` still fetches the log). Idempotent.
+
+    Installed at IMPORT, not at acquire(): `sys.exit(main())` looks up `sys.exit`
+    BEFORE calling main(), so patching it from inside main() is too late. With no
+    captured logs the hooks are no-ops."""
+    global _HOOKS_INSTALLED
+    if _HOOKS_INSTALLED:
+        return
+    _HOOKS_INSTALLED = True
+    orig_exit, orig_hook = sys.exit, sys.excepthook
+
+    def _exit(code=0):
+        if code not in (0, None):
+            _dump_serial_logs()
+        orig_exit(code)
+
+    def _hook(tp, val, tb):
+        orig_hook(tp, val, tb)
+        _dump_serial_logs()
+
+    sys.exit, sys.excepthook = _exit, _hook
+    if threading.current_thread() is threading.main_thread():
+        try:
+            if signal.getsignal(signal.SIGTERM) in (signal.SIG_DFL, None):
+
+                def _term(signum, _frame):
+                    print("[serial] SIGTERM (test timeout?) — releasing", flush=True)
+                    raise SystemExit(128 + signum)
+
+                signal.signal(signal.SIGTERM, _term)
+        except (ValueError, OSError):
+            pass
+
+
 def _ap_holder_script(lock_dir: str, hb_timeout: float) -> str:
     """The in-container AP-lock holder that Reservation.ap_lock runs over ssh.
 
@@ -774,3 +913,6 @@ def _wait_port(host: str, port: int, timeout: float) -> bool:
 
 def _wait_listen(port: int, timeout: float) -> bool:
     return _wait_port("127.0.0.1", port, timeout)
+
+
+_install_failure_hooks()
