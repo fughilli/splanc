@@ -129,6 +129,14 @@ pub struct OutputMapStats {
     pub rms_reproj_px_global: f64,
     #[serde(rename = "medianParallaxDeg")]
     pub median_parallax_deg: f64,
+    #[serde(
+        rename = "scaleRelStdErr",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scale_rel_std_err: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

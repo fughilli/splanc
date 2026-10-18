@@ -116,6 +116,13 @@ pub struct VioResult {
     pub accel_bias: Vec3,
     pub rms_reproj_px: f64,
     pub frame_times: Vec<f64>,
+    /// Relative standard error of the metric scale from the a-posteriori
+    /// inertial re-anchor (see `inertial_alignment`); infinite when there
+    /// was no inertial data or the scale was unobservable. A rough
+    /// excitation gauge, not a calibrated interval: it understates the true
+    /// error a few-fold (preintegrated noise is correlated), but it climbs
+    /// steeply as the capture motion gets gentler.
+    pub scale_rel_se: f64,
 }
 
 impl VioResult {
@@ -331,7 +338,9 @@ pub fn inertial_alignment(
     rotations: &[Mat3],
     centers: &[Vec3],
     imu: &[ImuSample],
-) -> (f64, Vec3, Vec<Vec3>) {
+    gyro_bias: Vec3,
+    accel_bias: Vec3,
+) -> (f64, Vec3, Vec<Vec3>, f64) {
     let n = frames.len();
     let n_unknowns = 1 + 3 + 3 * n;
     let mut rows: Vec<Vec<(usize, f64)>> = Vec::with_capacity(6 * (n - 1));
@@ -371,7 +380,7 @@ pub fn inertial_alignment(
         }
         let (w_v, w_p) = (ref_v / sig[i].1, ref_p / sig[i].2);
         let (d_rot, d_vel, d_pos, dt) =
-            preintegrate(imu, frames[i].t, frames[i + 1].t, ZERO3, ZERO3);
+            preintegrate(imu, frames[i].t, frames[i + 1].t, gyro_bias, accel_bias);
         let _ = d_rot;
         let rit_rows = rotations[i]; // use columns of R as rows of R^T
         let dc = sub(centers[i + 1], centers[i]);
@@ -407,6 +416,7 @@ pub fn inertial_alignment(
         }
     }
     let sol = lstsq_rows(&rows, &rhs, n_unknowns);
+    let mut s_se = scale_std_err(&rows, &rhs, &sol, n_unknowns);
     let mut s = sol[0];
     let mut g = [sol[1], sol[2], sol[3]];
     let mut v: Vec<Vec3> = (0..n)
@@ -451,6 +461,7 @@ pub fn inertial_alignment(
             rhs2.push(b_adj);
         }
         let sol2 = lstsq_rows(&rows2, &rhs2, n2);
+        s_se = scale_std_err(&rows2, &rhs2, &sol2, n2);
         s = sol2[0];
         let delta = [sol2[1], sol2[2]];
         g = scale(
@@ -462,7 +473,48 @@ pub fn inertial_alignment(
             .map(|i| [sol2[3 + 3 * i], sol2[3 + 3 * i + 1], sol2[3 + 3 * i + 2]])
             .collect();
     }
-    (s, g, v)
+    (s, g, v, s_se)
+}
+
+/// Standard error of unknown 0 (the metric scale) of the weighted linear
+/// system `rows · x = rhs` solved as `sol`, via `[(AᵀA)⁻¹]₀₀ = 1/‖(I − P)a₀‖²`
+/// (`P` projects onto the other columns): one extra regression of the scale
+/// column on the rest. The residual variance comes from the fit itself, so
+/// the row weighting's absolute units cancel. Infinite when the scale is not
+/// determined.
+fn scale_std_err(rows: &[Vec<(usize, f64)>], rhs: &[f64], sol: &[f64], n_cols: usize) -> f64 {
+    let dof = rows.len().saturating_sub(n_cols);
+    if dof == 0 || n_cols < 2 {
+        return f64::INFINITY;
+    }
+    let rss: f64 = rows
+        .iter()
+        .zip(rhs)
+        .map(|(row, b)| (row.iter().map(|&(c, v)| v * sol[c]).sum::<f64>() - b).powi(2))
+        .sum();
+    let a0: Vec<f64> = rows
+        .iter()
+        .map(|row| row.iter().filter(|e| e.0 == 0).map(|e| e.1).sum())
+        .collect();
+    let rest: Vec<Vec<(usize, f64)>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .filter(|e| e.0 != 0)
+                .map(|&(c, v)| (c - 1, v))
+                .collect()
+        })
+        .collect();
+    let beta = lstsq_rows(&rest, &a0, n_cols - 1);
+    let r0: f64 = rest
+        .iter()
+        .zip(&a0)
+        .map(|(row, a)| (a - row.iter().map(|&(c, v)| v * beta[c]).sum::<f64>()).powi(2))
+        .sum();
+    if r0 <= 0.0 || !r0.is_finite() {
+        return f64::INFINITY;
+    }
+    (rss / dof as f64 / r0).sqrt()
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +577,8 @@ pub fn solve_vio(
             let rotations = rotation_seeds(frames, imu);
             let (mut centers, mut led_seed) =
                 known_rotation_linear_init(frames, &rotations, &led_ids, g_idx);
-            let (s, g_seed, v_seed) = inertial_alignment(frames, &rotations, &centers, imu);
+            let (s, g_seed, v_seed, _) =
+                inertial_alignment(frames, &rotations, &centers, imu, ZERO3, ZERO3);
             for c in centers.iter_mut() {
                 *c = scale(*c, s);
             }
@@ -839,9 +892,16 @@ pub fn solve_vio(
     let g = [x[off_bias + 6], x[off_bias + 7], x[off_bias + 8]];
 
     // A-posteriori metric re-anchor (see vio.py: accel-bias freedom can
-    // drift the global scale on low-excitation sessions).
+    // drift the global scale on low-excitation sessions). Preintegrate with
+    // the biases the BA just estimated: with zero biases a typical phone
+    // accel bias alone pulls the scale ~15% low even on a well-excited
+    // capture.
+    let mut scale_rel_se = f64::INFINITY;
     if n_int > 0 {
-        let (s_post, _g_post, v_post) = inertial_alignment(frames, &rots, &ps, imu);
+        let (s_post, _g_post, v_post, s_se) = inertial_alignment(frames, &rots, &ps, imu, bg, ba);
+        if s_post.is_finite() && s_post > 1e-3 {
+            scale_rel_se = s_se / s_post;
+        }
         if s_post.is_finite() && s_post > 1e-3 && (s_post - 1.0).abs() > 0.02 {
             for p in ps.iter_mut() {
                 *p = scale(*p, s_post);
@@ -867,6 +927,7 @@ pub fn solve_vio(
         accel_bias: ba,
         rms_reproj_px: rms,
         frame_times,
+        scale_rel_se,
     }
 }
 
@@ -948,4 +1009,96 @@ pub fn similarity_align(src: &[Vec3], dst: &[Vec3]) -> (f64, Mat3, Vec3) {
     let s = (d[0] * sgn[0][0] + d[1] * sgn[1][1] + d[2] * sgn[2][2]) / var;
     let t = sub(mu_d, mat_vec(&rot, scale(mu_s, s)));
     (s, rot, t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::camera::{look_at, project};
+    use crate::linalg::{add, mat_mul, mat_tvec, scale, sub, transpose};
+    use crate::synth::Rng;
+
+    /// A 60-LED coil (7 cm radius, 16 cm tall) watched from a camera orbiting
+    /// at 0.75 m: `sweep` rad of arc over `dur` s plus a `bob` m vertical bob.
+    /// Smaller sweep/bob over a longer time = gentler motion = less inertial
+    /// excitation, the regime where a diffuse capture loses metric scale.
+    fn coil_session(dur: f64, sweep: f64, bob: f64, seed: u64) -> (Vec<FrameObservations>, Vec<ImuSample>, Vec<Vec3>) {
+        let leds: Vec<Vec3> = (0..60)
+            .map(|i| {
+                let f = i as f64 / 59.0;
+                let th = f * 2.5 * std::f64::consts::TAU;
+                [0.07 * th.cos(), -0.08 + 0.16 * f, 0.07 * th.sin()]
+            })
+            .collect();
+        let pos = |t: f64| -> Vec3 {
+            let th = -0.5 * sweep + sweep * (t / dur);
+            [0.75 * th.sin(), 0.1 + bob * (0.7 * t).sin(), 0.75 * th.cos()]
+        };
+        let rot = |t: f64| look_at(pos(t), ZERO3);
+        let mut rng = Rng::new(seed);
+        let (imu_hz, h) = (100.0, 1e-4);
+        let (gyro_bias, accel_bias) = ([2e-3, -1e-3, 1.5e-3], [0.03, -0.02, 0.04]);
+        let imu: Vec<ImuSample> = (0..(dur * imu_hz) as usize)
+            .map(|i| {
+                let t = i as f64 / imu_hz;
+                let r = rot(t);
+                let mut gyro = scale(so3_log(&mat_mul(&transpose(&r), &rot(t + h))), 1.0 / h);
+                let a = scale(sub(add(pos(t + h), pos(t - h)), scale(pos(t), 2.0)), 1.0 / (h * h));
+                let mut accel = mat_tvec(&r, sub(a, G_WORLD));
+                for k in 0..3 {
+                    gyro[k] += gyro_bias[k] + 2e-3 * rng.normal();
+                    accel[k] += accel_bias[k] + 5e-2 * rng.normal();
+                }
+                ImuSample { t, gyro, accel }
+            })
+            .collect();
+        let k = [800.0, 800.0, 640.0, 360.0];
+        let frames: Vec<FrameObservations> = (0..(dur * 3.0) as usize)
+            .map(|i| {
+                let t = i as f64 / 3.0;
+                let (p, r) = (pos(t), rot(t));
+                let obs = leds
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, l)| {
+                        let (u, v, d) = project(&r, p, k, *l);
+                        (d > 0.0 && (0.0..1280.0).contains(&u) && (0.0..720.0).contains(&v))
+                            .then(|| (j as u32, u + 0.5 * rng.normal(), v + 0.5 * rng.normal()))
+                    })
+                    .collect();
+                FrameObservations { t, k, obs }
+            })
+            .collect();
+        (frames, imu, leds)
+    }
+
+    /// Solved size relative to truth (1 = metric).
+    fn solved_size(res: &VioResult, leds: &[Vec3]) -> f64 {
+        let truth: Vec<Vec3> = res.led_ids.iter().map(|&id| leds[id as usize]).collect();
+        1.0 / similarity_align(&res.led_positions, &truth).0
+    }
+
+    #[test]
+    fn reanchor_uses_the_estimated_biases() {
+        // A well-excited capture. Re-anchoring with zero biases let the
+        // accel bias pull these to 0.87 / 0.84 of true size; with the BA's
+        // biases they land within 10%.
+        for seed in [1, 2] {
+            let (frames, imu, leds) = coil_session(10.0, 1.0, 0.15, seed);
+            let res = solve_vio(&frames, &imu, &SolveOptions::default(), None, None);
+            let size = solved_size(&res, &leds);
+            assert!((size - 1.0).abs() < 0.1, "seed {seed}: size {size:.3} of true");
+            assert!(res.scale_rel_se < 0.1, "seed {seed}: rel se {:.3}", res.scale_rel_se);
+        }
+    }
+
+    #[test]
+    fn a_near_static_capture_reports_an_undetermined_scale() {
+        // A minute of barely-moving phone: the BA shrinks this coil to ~1/5
+        // of its size and no inertial estimator can recover it. The scale's
+        // standard error must say so (the pipeline turns it into a warning).
+        let (frames, imu, _) = coil_session(60.0, 0.5, 0.005, 2);
+        let res = solve_vio(&frames, &imu, &SolveOptions::default(), None, None);
+        assert!(res.scale_rel_se > 0.3, "rel se {:.3}", res.scale_rel_se);
+    }
 }

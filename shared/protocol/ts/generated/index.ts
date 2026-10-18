@@ -101,6 +101,10 @@ export interface LedEntry {
 export interface OutputMapStats {
   rmsReprojPxGlobal: number;
   medianParallaxDeg: number;
+  /** Relative standard error of the metric scale (visual-inertial solves). */
+  scaleRelStdErr?: number | undefined;
+  /** Human-readable solve-quality warnings; absent/empty = none. */
+  warnings?: string[] | undefined;
 }
 
 export interface OutputMap {

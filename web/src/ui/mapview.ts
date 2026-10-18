@@ -814,7 +814,8 @@ export class MapView {
       // console; see FUG-56.)
       const s = this.map.stats;
       const solveSummary = s
-        ? ` · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · median parallax ${s.medianParallaxDeg.toFixed(1)}°`
+        ? ` · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · median parallax ${s.medianParallaxDeg.toFixed(1)}°` +
+          ((s.warnings?.length ?? 0) > 0 ? " · ⚠ size suspect" : "")
         : "";
       // Strip-prior placements (geom/inferred) are positions, not solves.
       const { measured, inferred } = countPlacement(leds);

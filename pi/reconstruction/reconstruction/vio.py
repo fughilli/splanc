@@ -439,9 +439,13 @@ def _inertial_alignment(
     rotations: Sequence[np.ndarray],
     centers: np.ndarray,
     imu: Sequence[ImuSample],
+    gyro_bias: Optional[np.ndarray] = None,
+    accel_bias: Optional[np.ndarray] = None,
 ) -> Tuple[float, np.ndarray, np.ndarray]:
     """Linear solve for metric scale, gravity and per-frame velocities from
-    the zero-bias preintegration deltas (VINS-Mono-style initialization).
+    the preintegration deltas (VINS-Mono-style initialization). Biases
+    default to zero (the initialization has no estimate yet); the
+    a-posteriori re-anchor passes the BA's.
 
     Unknowns [s, g(3), v_0..v_{N-1}(3N)]; each consecutive-frame interval
     contributes the Δp and Δv preintegration equations, weighted by that
@@ -451,6 +455,8 @@ def _inertial_alignment(
     """
     n = len(frames)
     zero = np.zeros(3)
+    bg = zero if gyro_bias is None else gyro_bias
+    ba = zero if accel_bias is None else accel_bias
     n_unknowns = 1 + 3 + 3 * n
     imu_t = np.array(sorted(s.t for s in imu))
     sig = [interval_sigmas(imu_t, frames[i].t, frames[i + 1].t) for i in range(n - 1)]
@@ -463,7 +469,7 @@ def _inertial_alignment(
         if sig[i][3]:
             continue
         w_v, w_p = ref_v / sig[i][1], ref_p / sig[i][2]
-        d_rot, d_vel, d_pos, dt = preintegrate(imu, frames[i].t, frames[i + 1].t, zero, zero)
+        d_rot, d_vel, d_pos, dt = preintegrate(imu, frames[i].t, frames[i + 1].t, bg, ba)
         ri = rotations[i]
         rit = ri.T
         # R_i^T (s·(c_j − c_i) − v_i·dt − ½·g·dt²) = Δp
@@ -940,9 +946,11 @@ def solve_vio(
     # scale-invariant; observed as a map at 1/4 to 1/400 of true size).
     # The gravity-constrained inertial alignment against the SOLVED
     # trajectory is exactly the metric estimator for a fixed shape — re-fit
-    # scale and apply it to the whole solution.
+    # scale and apply it to the whole solution. Preintegrate with the BA's
+    # biases: with zero biases a typical phone accel bias alone pulls the
+    # scale ~15% low even on a well-excited capture (solver/src/vio.rs).
     if intervals:
-        s_post, _g_post, v_post = _inertial_alignment(frames, rots, ps, imu)
+        s_post, _g_post, v_post = _inertial_alignment(frames, rots, ps, imu, bg, ba)
         if np.isfinite(s_post) and s_post > 1e-3 and abs(s_post - 1.0) > 0.02:
             ps = ps * s_post
             vs = v_post

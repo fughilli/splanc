@@ -42,6 +42,14 @@ fn main() -> std::io::Result<()> {
 
     // Human-facing error text gets more room than identifier strings.
     g.configure(".ledmapper.v1.Error.message", Config::new().max_bytes(128));
+    // Solver quality warnings are sentences, not identifiers. The firmware
+    // store skips OutputMap.stats on upload, so the device never holds them.
+    g.configure(
+        ".ledmapper.v1.OutputMapStats.warnings",
+        Config::new()
+            .max_len(if firmware { 1 } else { 8 })
+            .max_bytes(if firmware { 1 } else { 512 }),
+    );
 
     // Stored-map dump chunk: the player streams its map+topology back to the
     // phone a slice at a time; the payload holds a control-frame-sized chunk (the

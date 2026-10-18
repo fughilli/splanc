@@ -109,6 +109,8 @@ class LedEntry(_StrictModel):
 class OutputMapStats(_StrictModel):
     rmsReprojPxGlobal: float = Field(ge=0.0)
     medianParallaxDeg: float = Field(ge=0.0)
+    scaleRelStdErr: Union[float, None] = Field(default=None, ge=0.0)
+    warnings: Union[List[str], None] = None
 
 
 class OutputMap(_StrictModel):

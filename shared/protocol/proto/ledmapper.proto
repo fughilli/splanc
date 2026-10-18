@@ -146,6 +146,11 @@ message LedEntry {
 message OutputMapStats {
   double rms_reproj_px_global = 1;
   double median_parallax_deg = 2;
+  // Relative standard error of the metric scale from the inertial re-anchor
+  // (visual-inertial solves). Unset = not computed.
+  optional double scale_rel_std_err = 3;
+  // Human-readable solve-quality warnings (weak/implausible metric scale).
+  repeated string warnings = 4;
 }
 
 // A reconstructed LED map (§7.5).

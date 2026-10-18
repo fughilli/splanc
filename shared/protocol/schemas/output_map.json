@@ -60,6 +60,16 @@
           "type": "number",
           "minimum": 0,
           "description": "Median per-LED maximum parallax angle, in degrees."
+        },
+        "scaleRelStdErr": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "OPTIONAL relative standard error of the metric scale from the inertial re-anchor (visual-inertial solves). A rough capture-excitation gauge: it understates the true error a few-fold but climbs steeply when the capture motion was too gentle to observe scale."
+        },
+        "warnings": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "OPTIONAL human-readable solve-quality warnings (e.g. a metric scale that is weakly determined or implausible). Absent or empty = none."
         }
       }
     }
