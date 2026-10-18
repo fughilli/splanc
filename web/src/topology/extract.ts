@@ -79,6 +79,15 @@ export interface ExtractOptions {
   relaxRate?: number;
 }
 
+/** The plain wire `Topology` without the client-only `debug` report. Anything
+ * stored, exported or sent to a device must go through this: protobuf's JSON
+ * decoder rejects the unknown `debug` key ("key \"debug\" is unknown"). */
+export function stripTopologyDebug(t: Topology & { debug?: TopologyDebug }): Topology {
+  const { debug, ...topo } = t;
+  void debug;
+  return topo;
+}
+
 /** Diagnostic view of the raw graph the topology was extracted from, to reveal
  * degeneracies (a solve that collapsed distant LEDs onto one point makes a
  * zero-length shortcut → a false geodesic "bridge"; a stray loop-chord fuses two
