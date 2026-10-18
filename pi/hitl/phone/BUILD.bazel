@@ -106,6 +106,7 @@ py_test(
         "ios_reservation.py",
     ],
     data = [
+        "ios_serial_diag.py",  # reads the C6's Improv name so the phone pins THIS board
         "phone_e2e.py",  # shipped into the reserved session (see :ios_reservation)
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//solver:solver_web",

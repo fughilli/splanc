@@ -59,6 +59,15 @@ class StageTests(unittest.TestCase):
             self.assertIn("web/dist/index.html", names)
             self.assertNotIn("firmware/x.tar", names)
 
+    def test_stage_payload_fails_on_missing_required(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            manifest = [("pi/hitl/phone/ios_serial_diag.py", "ios_serial_diag.py")]
+            with self.assertRaises(SystemExit) as cm:
+                ir.stage_payload(
+                    os.path.join(td, "out.tar"), resolve=lambda _rel: None, manifest=manifest
+                )
+            self.assertIn("ios_serial_diag.py", str(cm.exception))
+
 
 class RemoteCmdTests(unittest.TestCase):
     def test_remote_run_cmd_has_env_and_flags(self) -> None:
@@ -76,7 +85,7 @@ class RemoteCmdTests(unittest.TestCase):
         self.assertIn("PATH=/run/current-system/sw/bin:$PATH", cmd)
         # The station IP prefers the Internet Sharing bridge (intra-subnet with the
         # phone, so it survives the NAT-isolation pf rules), then falls back to en*.
-        self.assertIn('HITL_STATION_IP="$(ipconfig getifaddr bridge100', cmd)
+        self.assertIn('HITL_STATION_IP="$(ifconfig bridge100', cmd)
         self.assertIn("ipconfig getifaddr en0", cmd)
         self.assertIn("IOS_BUILD_SERVER=http://127.0.0.1:8099", cmd)
         self.assertIn(f"HITL_WEB_DIST={ir.REMOTE_ROOT}/web/dist", cmd)
