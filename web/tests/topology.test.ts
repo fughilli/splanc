@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
-import { extractTopology } from "../src/topology/extract";
+import { encodeClient } from "../src/net/proto";
+import { extractTopology, stripTopologyDebug } from "../src/topology/extract";
 
 function led(id: number, xyz: Vec3): LedEntry {
   return { id, xyz, confidence: 1, nViews: 3, rmsReprojPx: 0.5, parallaxDeg: 20 };
@@ -294,6 +295,18 @@ test("debug report flags coincident LEDs (solve degeneracy)", async () => {
   // Without debug, no report (and existing callers keep the plain Topology).
   const plain = await extractTopology(map(pts));
   assert.equal((plain as { debug?: unknown }).debug, undefined);
+});
+
+test("a debug-run topology encodes for submit_topology once stripped", async () => {
+  // Regression: Map detail kept the debug report on the topology it sends, and
+  // the encoder's fromJson rejected it ('key "debug" is unknown').
+  const t = await extractTopology(map(line(12)), { debug: true });
+  assert.ok(t.debug);
+  assert.throws(() => encodeClient({ type: "submit_topology", topology: t }), /debug/);
+  const clean = stripTopologyDebug(t);
+  assert.equal((clean as { debug?: unknown }).debug, undefined);
+  assert.ok(t.debug, "stripping doesn't mutate the original (the overlay still reads it)");
+  assert.ok(encodeClient({ type: "submit_topology", topology: clean }).length > 0);
 });
 
 test("a folded strand gets NO false mid-loop chord (only strand ends can close)", async () => {

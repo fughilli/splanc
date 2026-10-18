@@ -12,6 +12,7 @@
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import {
   extractTopology,
+  stripTopologyDebug,
   type ExtractOptions,
   type TopologyDebug,
 } from "../../topology/extract";
@@ -302,7 +303,8 @@ export function MapDetailScreen(
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
     // re-extraction, matching §4.3 "skip re-extraction unless the user opts to".
     if (rec.topology && rec.topology.segments.length > 0) {
-      currentTopology = rec.topology;
+      // Strip a debug report a pre-fix save may have persisted alongside it.
+      currentTopology = stripTopologyDebug(rec.topology);
       view.setTopology(currentTopology);
     }
     storedTopoSig = topoSig(rec.topology ?? null);
@@ -780,8 +782,10 @@ export function MapDetailScreen(
       });
       if (ac.signal.aborted) return;
       topo.mapId = map.mapId;
-      currentTopology = topo;
-      view.setTopology(topo);
+      // The debug report only feeds the overlay below; the working topology is
+      // what gets saved and sent, so it must be the plain wire message.
+      currentTopology = stripTopologyDebug(topo);
+      view.setTopology(currentTopology);
       // Refresh the diagnostics report + overlay (or clear it when Diagnostics
       // is off), then update the Debug section's summary + coincident list.
       lastDebug = diagnostics ? (topo.debug ?? null) : null;
