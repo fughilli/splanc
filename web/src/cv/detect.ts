@@ -216,8 +216,9 @@ export class DetectorGL {
   private readonly uCam: WebGLUniformLocation;
   private readonly uBgGain: WebGLUniformLocation;
   private readonly uBgStep: WebGLUniformLocation;
-  /** Diffuse-mode prefilter gain (0 = off) and background radius (detection px). */
-  private readonly bgGain: number;
+  /** Diffuse-mode prefilter gain (0 = off) and background radius (detection px).
+   * The gain changes when a capture switches diffuse mode live (setLocalContrast). */
+  private bgGain: number;
   private readonly bgRadiusPx: number;
   private targetW = 0;
   private targetH = 0;
@@ -275,6 +276,12 @@ export class DetectorGL {
 
     this.targetTex = gl.createTexture()!;
     this.fbo = gl.createFramebuffer()!;
+  }
+
+  /** Turn the diffuse-mode local-contrast prefilter on (gain > 0) or off (0)
+   * mid-capture — the capture screen's live diffuse toggle. */
+  setLocalContrast(gain: number): void {
+    this.bgGain = Math.max(0, gain);
   }
 
   /**

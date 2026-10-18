@@ -9,10 +9,11 @@
  *    red = matched nothing this frame (spawned a fresh track). Mapped with
  *    the camera image's aspect-fill crop — these annotate the *image*.
  *
- * (The 3D-composited per-LED id labels left with the M6 WebXR removal —
- * there is no per-frame pose to project through. Client-side PnP against
- * the solved map is the phase-4.5 follow-up that brings registered
- * overlays back — docs/vio-exploration.md.)
+ * The registered 3D layer — the solved LED positions composited back into the
+ * viewport — is its sibling ProjectionOverlay (projectionOverlay.ts), which
+ * recovers the missing per-frame pose via client-side PnP against the solved
+ * map (FUG-112). The capture screen layers the two and toggles them
+ * independently.
  */
 
 import type { BlobStatus } from "../cv/pipeline";

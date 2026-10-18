@@ -48,6 +48,12 @@ export interface CaptureFrame {
    * exposure telemetry. Unset on the getUserMedia path.
    */
   ambientIntensity?: number | undefined;
+  /** Camera frame counter when the source has one (rVFC presentedFrames), so
+   * the perf counters can count dropped frames exactly (cv/capturePerf). */
+  seq?: number | undefined;
+  /** The source's own main-thread work for this frame before the callback
+   * (texture upload, native unpack), ms — for the perf counters. */
+  prepMs?: number | undefined;
 }
 
 export interface CaptureSource {
