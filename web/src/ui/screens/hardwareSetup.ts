@@ -15,6 +15,13 @@
  * IS the wire order. Committing it makes the same on-device pattern snap to a
  * correct R/G/B — instant confirmation.
  *
+ * Each channel also records how many LEDs are wired to it. The channels form ONE
+ * global LED index space in channel order (channel 0's LEDs first, then channel
+ * 1's), which is what mapping and effects address — so a two-output fixture maps
+ * as a single strip of n0 + n1 LEDs, and the device splits each frame across its
+ * outputs at the channel boundary. The color-order probe is per channel: its
+ * blocks start at THAT channel's first LED.
+ *
  * The config round-trips through set_hardware_config; the device persists it to
  * NVS and replies hardware_config_state, and get_hardware_config hydrates this
  * page on open.
@@ -31,6 +38,7 @@ import {
   MAX_CAPTURE_STRIDE,
 } from "../../store/deviceStore";
 import { RequestTimeoutError } from "../../net/client";
+import { prefs } from "../../store/prefs";
 import {
   COLOR_ORDERS,
   type BoardCapabilitiesFlat,
@@ -326,6 +334,30 @@ export function HardwareSetupScreen(_router: Router): Screen {
     }
   }
 
+  /** Total LEDs across the configured channels (the mapping strip length). */
+  function totalLeds(): number {
+    return channels.reduce((sum, x) => sum + Math.max(0, x.ledCount || 0), 0);
+  }
+
+  async function setLedCount(ch: number, ledCount: number): Promise<boolean> {
+    const c = connectedClient();
+    if (!c) return false;
+    try {
+      const st = await c.setHardwareConfig({ channel: ch, ledCount, commit: true });
+      channels = st.channels.map((x) => ({ ...x }));
+      if (st.board) boardCaps = st.board;
+      // The next "New map" should cover every channel's LEDs.
+      const total = totalLeds();
+      if (total > 0) prefs.setCaptureLedCount(total);
+      render();
+      toast(ledCount > 0 ? `Channel ${ch} → ${ledCount} LEDs` : `Channel ${ch} LED count cleared`);
+      return true;
+    } catch {
+      toast("Failed to set LED count", { error: true });
+      return false;
+    }
+  }
+
   async function setLedType(ch: number, ledType: string): Promise<void> {
     const c = connectedClient();
     if (!c) return;
@@ -423,7 +455,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
   function render(): void {
     const parts: HTMLElement[] = [];
     if (channels.length === 0) parts.push(emptyNote());
-    else parts.push(...channels.map(channelCard));
+    else {
+      parts.push(...channels.map(channelCard));
+      parts.push(layoutGroup());
+    }
     // The per-device stride is local (persisted with the device), so surface it
     // whenever a device is selected — even if its firmware didn't report channels.
     const sg = strideGroup();
@@ -520,6 +555,62 @@ export function HardwareSetupScreen(_router: Router): Screen {
     return g;
   }
 
+  /** How the channels' LEDs combine into the one strip mapping + effects use. */
+  function layoutGroup(): HTMLElement {
+    const g = group("LED layout");
+    const note = document.createElement("div");
+    note.className = "hw-hint";
+    const max = boardCaps?.maxLeds ?? 0;
+    const total = totalLeds();
+    const ranges: string[] = [];
+    let start = 0;
+    for (const x of [...channels].sort((a, b) => a.channel - b.channel)) {
+      const n = Math.max(0, x.ledCount || 0);
+      ranges.push(
+        n > 0 ? `channel ${x.channel} = LEDs ${start}–${start + n - 1}` : `channel ${x.channel} not set`,
+      );
+      start += n;
+    }
+    note.textContent =
+      total > 0
+        ? `Mapping and effects treat the channels as one strip of ${total} LEDs` +
+          (max > 0 ? ` (this board drives up to ${max})` : "") +
+          `: ${ranges.join(", ")}. Map with ${total} LEDs to cover every channel.`
+        : "Set each channel's LED count so mapping covers every channel. " +
+          "Channels are numbered in order: channel 0's LEDs first, then channel 1's.";
+    g.append(note);
+    return g;
+  }
+
+  /** Number input for a channel's LED count; commits on change (0/empty clears). */
+  function ledCountInput(cfg: HardwareChannel): HTMLElement {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "hw-select";
+    input.min = "0";
+    input.step = "1";
+    input.inputMode = "numeric";
+    input.placeholder = "not set";
+    const max = boardCaps?.maxLeds ?? 0;
+    if (max > 0) input.max = String(max);
+    input.value = cfg.ledCount > 0 ? String(cfg.ledCount) : "";
+    input.addEventListener("change", () => {
+      const raw = input.value.trim();
+      const n = raw === "" ? 0 : Math.round(Number(raw));
+      if (!Number.isFinite(n) || n < 0 || (max > 0 && n > max)) {
+        toast(max > 0 ? `LED count must be 0–${max}` : "LED count must be 0 or more", {
+          error: true,
+        });
+        input.value = cfg.ledCount > 0 ? String(cfg.ledCount) : "";
+        return;
+      }
+      void setLedCount(cfg.channel, n).then((ok) => {
+        if (!ok) input.value = cfg.ledCount > 0 ? String(cfg.ledCount) : "";
+      });
+    });
+    return input;
+  }
+
   function channelCard(cfg: HardwareChannel): HTMLElement {
     const g = group(`Channel ${cfg.channel}`);
 
@@ -530,6 +621,12 @@ export function HardwareSetupScreen(_router: Router): Screen {
         : "The LED chip family. Only WS281x (WS2811/2812/2812B/SK6812) is supported today.";
     g.append(
       row("Data GPIO", "Which pin drives this channel's WS281x data line.", gpioSelect(cfg)),
+      row(
+        "LED count",
+        "How many LEDs are wired to this channel. Saved on the device; mapping covers " +
+          "every channel's LEDs.",
+        ledCountInput(cfg),
+      ),
       row(
         "LED type",
         ledHint,
@@ -570,8 +667,9 @@ export function HardwareSetupScreen(_router: Router): Screen {
       const testHint = document.createElement("div");
       testHint.className = "hw-hint";
       testHint.textContent =
-        `The strip now lights ${testCount} red, then ${testCount} green, then ` +
-        `${testCount} blue pixel${testCount === 1 ? "" : "s"} at its start. Tap the ` +
+        `Channel ${cfg.channel}'s strip now lights ${testCount} red, then ${testCount} ` +
+        `green, then ${testCount} blue pixel${testCount === 1 ? "" : "s"} at its start ` +
+        "(other channels are dark). Tap the " +
         "swatch whose dots match what you physically see, from the beginning of " +
         "the strip toward the end — that's your wire order.";
       g.append(testHint, permGrid(cfg.channel, cfg.colorOrder));

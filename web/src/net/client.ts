@@ -666,12 +666,15 @@ export class LedMapperClient {
    * LED type ("ws281x"), and the wire color order ("GRB" etc). Every field is
    * optional — nudge one at a time; an unset field is left unchanged. `commit`
    * false applies from RAM only (the color-order test previews without wearing
-   * flash). Reply: hardware_config_state (the resulting per-channel config). */
+   * flash). `ledCount` is how many LEDs are wired to the channel (0 clears it);
+   * the channels' LEDs form one global index space in channel order. Reply:
+   * hardware_config_state (the resulting per-channel config). */
   async setHardwareConfig(cfg: {
     channel?: number;
     gpio?: number;
     ledType?: string;
     colorOrder?: ColorOrder;
+    ledCount?: number;
     commit?: boolean;
   }): Promise<HardwareConfigStateMessage> {
     const msg: Record<string, unknown> = { type: "set_hardware_config" };
@@ -679,6 +682,7 @@ export class LedMapperClient {
     if (cfg.gpio !== undefined) msg.gpio = cfg.gpio;
     if (cfg.ledType !== undefined) msg.ledType = cfg.ledType;
     if (cfg.colorOrder !== undefined) msg.colorOrder = cfg.colorOrder;
+    if (cfg.ledCount !== undefined) msg.ledCount = cfg.ledCount;
     if (cfg.commit !== undefined) msg.commit = cfg.commit;
     return (await this.request(
       msg as unknown as ClientMessage,
@@ -714,8 +718,9 @@ export class LedMapperClient {
   }
 
   /** Paint a static color-block pattern on a channel (proto SetCountingPattern):
-   * each block lights [start, start+count) a solid [r,g,b] in [0,1], everything
-   * else off. Used by the Hardware Setup color-order test to drive three R/G/B
+   * each block lights [start, start+count) — relative to THAT channel's strip
+   * start — a solid [r,g,b] in [0,1]; everything else (incl. the other
+   * channels) is off. Used by the Hardware Setup color-order test to drive three R/G/B
    * segments. Reply: counting_state. Pass empty `blocks` to clear.
    *
    * `colorOrder` (a permutation of "RGB") drives the probe through its OWN wire

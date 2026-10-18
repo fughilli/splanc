@@ -125,6 +125,9 @@ fn full_phone_session() {
     };
     assert!(cs.r#active);
     assert_eq!(cs.r#epoch_ms().copied(), Some(3000.0));
+    // ...on the channel it named (the firmware routes the blocks, relative to
+    // that channel's strip start, to that output)...
+    assert_eq!(player.counting_channel(), 1);
     // ...the driver-facing colors paint the blocks and nothing else (past
     // the last block IS the probe region — off).
     assert_eq!(player.counting_color(10), Some((255, 0, 0)));
@@ -140,6 +143,15 @@ fn full_phone_session() {
     assert!(!cs.r#active);
     assert!(cs.r#epoch_ms().is_none());
     assert_eq!(player.counting_color(10), None);
+    assert_eq!(player.counting_channel(), 0);
+    // A channel the player doesn't drive is refused, leaving no pattern latched.
+    let mut bad = pb::SetCountingPattern::default();
+    let mut b = pb::ColorBlock { r#start: 0, r#count: 3, ..Default::default() };
+    b.r#rgb.extend_from_slice(&[1.0, 0.0, 0.0]).unwrap();
+    bad.r#blocks.push(b).unwrap();
+    bad.set_channel(ledmapper_player::HW_CHANNELS as i32);
+    expect_error(send(&mut player, CMsg::SetCountingPattern(bad), 3600.0), "bad_message");
+    assert_eq!(player.counting_color(0), None);
 
     // The detected count persists per channel; channel 0 becomes the new
     // default code-book size.
@@ -560,4 +572,65 @@ fn diffuse_striding_masks_and_rotates_phase() {
     };
     assert_eq!(state.r#code_params.r#stride_spacing().copied(), Some(spacing as i32));
     check_phase(&player, 0);
+}
+
+/// Per-channel LED counts (set_hardware_config.led_count): echoed per channel in
+/// hardware_config_state, bounded by the board's total LED cap, and their total
+/// becomes the default map size so a new map covers every channel.
+#[test]
+fn hardware_config_led_counts() {
+    let mut player = Player::new("esp32-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_hw_defaults(1, 14, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_output_caps(2, 512);
+    // Boot seed from flash: channel 0 had 100 LEDs persisted.
+    player.seed_led_count(0, 100);
+    let gen0 = player.hw_config_gen();
+    assert_eq!(player.hw_config_gen(), gen0, "seeding isn't a change to persist");
+
+    let Some(SMsg::HardwareConfigState(st)) =
+        send(&mut player, CMsg::GetHardwareConfig(pb::GetHardwareConfig::default()), 0.0)
+    else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[0].r#led_count, 100);
+    assert_eq!(st.r#channels[1].r#led_count, 0, "unset reads 0");
+    // The runtime output caps fill the board descriptor's capacity fields.
+    let board = st.r#board().expect("board reported");
+    assert_eq!((board.r#led_channels, board.r#max_leds), (2, 512));
+
+    // Channel 1 gets 150 LEDs: echoed, persisted (commit), and the default map
+    // size becomes the TOTAL across channels.
+    let set = |ch: i32, n: i32| {
+        let mut cfg = pb::SetHardwareConfig::default();
+        cfg.set_channel(ch);
+        cfg.set_led_count(n);
+        cfg.set_commit(true);
+        CMsg::SetHardwareConfig(cfg)
+    };
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, set(1, 150), 100.0) else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[1].r#led_count, 150);
+    assert!(player.hw_config_gen() != gen0, "a count change bumps the gen (persist)");
+    assert_eq!((player.led_count(0), player.led_count(1)), (Some(100), Some(150)));
+    let Some(SMsg::Welcome(w)) = send(&mut player, CMsg::Hello(pb::Hello::default()), 150.0) else {
+        panic!("welcome");
+    };
+    assert_eq!(w.r#code_params.r#led_count, 250, "default map size = channel total");
+
+    // The SUM across channels is bounded by max_leds; a refusal leaves state alone.
+    expect_error(send(&mut player, set(1, 413), 200.0), "bad_message");
+    expect_error(send(&mut player, set(0, -1), 210.0), "bad_message");
+    assert_eq!(player.led_count(1), Some(150));
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, set(1, 412), 220.0) else {
+        panic!("exactly max_leds total is fine");
+    };
+
+    // 0 clears a channel's count.
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, set(1, 0), 300.0) else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[1].r#led_count, 0);
+    assert_eq!(player.led_count(1), None);
 }
