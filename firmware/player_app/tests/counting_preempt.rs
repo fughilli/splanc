@@ -13,7 +13,7 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_counting_color, lm_counting_color_order, lm_counting_len, lm_fx_active, lm_fx_load,
+    lm_counting_channel, lm_counting_color, lm_counting_color_order, lm_counting_len, lm_fx_active, lm_fx_load,
     lm_fx_set_active, lm_hw_color_order_perm, lm_map_len, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -152,4 +152,34 @@ fn counting_probe_overrides_fx_with_no_map() {
         panic!("counting_state expected");
     };
     assert_eq!(probe_order(), [0, 1, 2], "cleared probe -> identity");
+
+    // The probe on channel 1 (the zero-copy decoder must read field 2): the same
+    // blocks, relative to channel 1's strip start — render_once() routes them to
+    // that output and blanks channel 0.
+    assert_eq!(unsafe { lm_counting_channel() }, 0, "cleared probe -> channel 0");
+    let CMsg::SetCountingPattern(mut on_ch1) = counting_pattern(3, Some("RGB")) else {
+        unreachable!()
+    };
+    on_ch1.set_channel(1);
+    let Some(SMsg::CountingState(cs)) =
+        handle(&encode(CMsg::SetCountingPattern(on_ch1)), 2400.0)
+    else {
+        panic!("counting_state expected");
+    };
+    assert!(cs.r#active);
+    assert_eq!(unsafe { lm_counting_channel() }, 1, "probe paints channel 1");
+    assert!(unsafe { lm_counting_color(0, rgb.as_mut_ptr()) });
+    assert_eq!(rgb, [255, 0, 0], "block 0 is channel 1's first LED");
+    assert_eq!(unsafe { lm_counting_len() }, 9);
+
+    // A channel the board doesn't drive is refused (error reply), and the
+    // channel-1 probe stays latched.
+    let CMsg::SetCountingPattern(mut on_ch2) = counting_pattern(3, Some("RGB")) else {
+        unreachable!()
+    };
+    on_ch2.set_channel(2);
+    let Some(SMsg::Error(_)) = handle(&encode(CMsg::SetCountingPattern(on_ch2)), 2500.0) else {
+        panic!("error expected for an undriven channel");
+    };
+    assert_eq!(unsafe { lm_counting_channel() }, 1);
 }

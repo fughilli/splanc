@@ -682,7 +682,11 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
             *e = FxLedTopo::NONE;
         }
         *addr_of_mut!(ARENA) = Some(Arena::new(&mut *addr_of_mut!(ARENA_MEM)));
-        *addr_of_mut!(PLAYER) = Some(Player::new("esp32c6-player", default_led_count.max(1)));
+        let mut p = Player::new("esp32c6-player", default_led_count.max(1));
+        // The render buffer (FX_TOPO_CAP == LM_MAX_LEDS) is shared by every
+        // output channel, so it's the cap on the SUM of the channel counts.
+        p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, FX_TOPO_CAP as u32);
+        *addr_of_mut!(PLAYER) = Some(p);
     }
 }
 
@@ -853,6 +857,18 @@ pub unsafe extern "C" fn lm_hw_seed(channel: u32, gpio: i32, order: *const u8, o
     };
     let idx = ledmapper_player::color_order_index(name).unwrap_or(ledmapper_player::DEFAULT_COLOR_ORDER);
     player().set_hw_defaults(channel as usize, gpio, idx);
+}
+
+/// Seed hardware channel `channel`'s LED count at boot from the value the
+/// firmware persisted (0 = not set). Call after [`lm_player_init`], BEFORE any
+/// client connects, like [`lm_hw_seed`].
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
+#[no_mangle]
+pub unsafe extern "C" fn lm_led_count_seed(channel: u32, led_count: u32) {
+    player().seed_led_count(channel as usize, led_count);
 }
 
 /// Install this board's static capability descriptor: `data` is a serialized
@@ -1300,8 +1316,8 @@ fn wr_varint(buf: &mut [u8], p: &mut usize, mut v: u64) {
 
 /// set_counting_pattern, decoded ZERO-COPY: walk the repeated `ColorBlock`
 /// (field 1) — `{ start:1, count:2, rgb:3 (repeated double) }` — reducing each
-/// `[0,1]` rgb to 8-bit, plus the optional `color_order` string (field 3), and
-/// install via the player. Avoids a by-value `pb::SetCountingPattern`, whose
+/// `[0,1]` rgb to 8-bit, plus the optional `channel` (field 2) and
+/// `color_order` string (field 3), and install via the player. Avoids a by-value `pb::SetCountingPattern`, whose
 /// `Vec<ColorBlock, 32>` (each with an inline `Vec<f64, 4>`) is the ~1.5 KiB arm
 /// that sizes every `ClientMessage`. Reply: counting_state.
 unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
@@ -1313,6 +1329,7 @@ unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMe
     let mut blocks: micropb::heapless::Vec<(u32, u32, (u8, u8, u8)), 32> =
         micropb::heapless::Vec::new();
     let mut color_order: Option<&str> = None;
+    let mut channel: Option<i32> = None;
     let mut o = 0;
     while o < body.len() {
         let Some(key) = rd_varint(body, &mut o) else { break };
@@ -1326,6 +1343,11 @@ unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMe
                 if blocks.len() < blocks.capacity() {
                     let _ = blocks.push(parse_color_block(blk));
                 }
+            }
+            // channel (optional int32): the player range-checks it.
+            (2, 0) => {
+                let Some(v) = rd_varint(body, &mut o) else { break };
+                channel = Some(v as i32);
             }
             // color_order (optional string): the player validates it and applies
             // it to the probe's pixels; invalid UTF-8 is treated as unset.
@@ -1343,7 +1365,7 @@ unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMe
             }
         }
     }
-    player().set_counting_blocks(now_ms, &blocks, color_order)
+    player().set_counting_blocks(now_ms, &blocks, color_order, channel)
 }
 
 /// Parse one `ColorBlock { start:1, count:2, rgb:3 }` → (start, count, 8-bit
@@ -2595,7 +2617,19 @@ pub unsafe extern "C" fn lm_counting_color_order(perm: *mut u8) {
     *perm.add(2) = p[2];
 }
 
-/// The persisted strip length for `channel` (set_led_count); -1 when unset.
+/// The hardware output channel the latched counting pattern paints (its block
+/// indices are relative to that channel's strip start); 0 when none latched.
+///
+/// # Safety
+/// The global player must have been initialized by [`lm_player_init`] and
+/// this must not be called reentrantly (single firmware thread).
+#[no_mangle]
+pub unsafe extern "C" fn lm_counting_channel() -> u32 {
+    player().counting_channel()
+}
+
+/// The LED count for `channel` (set_hardware_config / set_led_count, or the
+/// boot seed); -1 when unset.
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and

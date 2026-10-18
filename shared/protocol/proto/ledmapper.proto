@@ -331,8 +331,11 @@ message GetSolveStatus {}
 // Reply: counting_state.
 message SetCountingPattern {
   repeated ColorBlock blocks = 1;
-  // Player output channel; unset -> 0 (the Pi has one channel; the ESP32
-  // may drive several RMT outputs).
+  // Player output channel the blocks paint; unset -> 0. Block indices are
+  // relative to the START of this channel's strip (block start 0 = the first
+  // LED wired to that output), so the probe works the same on every channel.
+  // The other channels are blanked while the probe runs. A channel the player
+  // doesn't drive is rejected (error bad_message).
   optional int32 channel = 2;
   // Wire color order for THIS probe's pixels (a permutation of "RGB", e.g.
   // "GRB"), applied ONLY to the counting pattern and independent of the
@@ -597,6 +600,8 @@ message HardwareChannel {
   string led_type = 3;
   // Wire color order, a permutation of "RGB" (see SetHardwareConfig.color_order).
   string color_order = 4;
+  // LEDs wired to this channel (see SetHardwareConfig.led_count); 0 = not set.
+  int32 led_count = 5;
 }
 
 // Request the per-channel hardware config (GPIO / LED type / wire color order),
@@ -719,6 +724,13 @@ message SetHardwareConfig {
   // confirmation test streams commit=false previews (forcing identity "RGB" so
   // the raw wire bytes reach the strip) and commits once the user picks the match.
   optional bool commit = 5;
+  // How many LEDs are wired to this channel; 0 clears it. The channels' LEDs
+  // form ONE global index space in channel order (channel 0's LEDs are
+  // [0, n0), channel 1's are [n0, n0 + n1), ...), which mapping and effects
+  // address; the player splits a frame across the outputs at these
+  // boundaries. The sum across channels must not exceed
+  // BoardCapabilities.max_leds. Unset -> leave unchanged.
+  optional int32 led_count = 6;
 }
 
 // Reply to set_hardware_config / get_hardware_config: the per-channel hardware
@@ -774,6 +786,12 @@ message BoardCapabilities {
   repeated GpioPin gpio_pins = 2;
   // LED driver modes (chip families) this firmware build supports.
   repeated LedMode led_modes = 3;
+  // Parallel LED output channels this firmware drives (0 = not reported; treat
+  // as 1). Filled in by the player at runtime when the descriptor leaves it 0.
+  uint32 led_channels = 4;
+  // Most LEDs the player can drive, summed across all channels (0 = not
+  // reported). Filled in by the player at runtime when the descriptor leaves it 0.
+  uint32 max_leds = 5;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host

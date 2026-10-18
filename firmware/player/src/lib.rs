@@ -307,6 +307,9 @@ pub struct Player {
     /// SetCountingPattern; kept out of the committed per-channel `hw_order` so
     /// the color-order test never mutates the persisted config.
     counting_order: [u8; 3],
+    /// Hardware output channel the latched counting pattern paints (its block
+    /// indices are relative to that channel's strip start). 0 when none latched.
+    counting_channel: u8,
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
@@ -353,6 +356,12 @@ pub struct Player {
     /// `hardware_config_state` so the app builds its pin picker from THIS board.
     /// `None` until installed (and on boards/tests that never call it).
     board_caps: Option<pb::BoardCapabilities>,
+    /// Output capacity the firmware build actually has (parallel LED channels,
+    /// total LEDs across them), set at boot via [`Player::set_output_caps`].
+    /// Reported in `hardware_config_state.board` where the descriptor leaves
+    /// those fields 0, and bounds `set_hardware_config.led_count`. 0 = unknown.
+    out_channels: u32,
+    out_max_leds: u32,
 }
 
 impl Player {
@@ -368,6 +377,7 @@ impl Player {
             active: None,
             counting: None,
             counting_order: [0, 1, 2],
+            counting_channel: 0,
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
@@ -383,6 +393,8 @@ impl Player {
             hw_config_gen: 0,
             hw_config_commit: true,
             board_caps: None,
+            out_channels: 0,
+            out_max_leds: 0,
         }
     }
 
@@ -713,7 +725,12 @@ impl Player {
                 (ch(0), ch(1), ch(2)),
             ));
         }
-        self.set_counting_blocks(now_ms, &reduced, m.r#color_order().map(|s| s.as_str()))
+        self.set_counting_blocks(
+            now_ms,
+            &reduced,
+            m.r#color_order().map(|s| s.as_str()),
+            m.r#channel().copied(),
+        )
     }
 
     /// Install a counting pattern from pre-reduced 8-bit blocks (empty = clear
@@ -722,14 +739,20 @@ impl Player {
     /// above and the firmware's zero-copy ffi walker, so neither materializes the
     /// wire ColorBlock array. Colors are pre-reduced by the caller so
     /// `counting_color` (polled per-LED every render pass) stays pure-integer.
-    /// `color_order` is validated BEFORE any mutation, so a bad string leaves the
-    /// current pattern untouched.
+    /// `color_order` and `channel` (the hardware output the blocks paint, relative
+    /// to its strip start; None = 0) are validated BEFORE any mutation, so a bad
+    /// value leaves the current pattern untouched.
     pub fn set_counting_blocks(
         &mut self,
         now_ms: i64,
         blocks: &[(u32, u32, Rgb)],
         color_order: Option<&str>,
+        channel: Option<i32>,
     ) -> pb::ServerMessage {
+        let channel = channel.unwrap_or(0);
+        if channel < 0 || channel as usize >= HW_CHANNELS {
+            return error("bad_message", "channel out of range");
+        }
         let mut state = pb::CountingState::default();
         // Probe wire order (identity = raw). Validated before any mutation so a
         // bad string leaves the current pattern untouched.
@@ -743,9 +766,11 @@ impl Player {
         if blocks.is_empty() {
             self.counting = None;
             self.counting_order = [0, 1, 2];
+            self.counting_channel = 0;
             state.r#active = false;
         } else {
             self.counting_order = order;
+            self.counting_channel = channel as u8;
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
             let mut cb = CountingBlocks::new();
@@ -764,10 +789,7 @@ impl Player {
         if channel < 0 || channel as usize >= MAX_CHANNELS || m.r#led_count < 0 {
             return error("bad_message", "channel or ledCount out of range");
         }
-        self.led_counts[channel as usize] = Some(m.r#led_count as u32);
-        if channel == 0 && m.r#led_count >= 1 {
-            self.default_led_count = m.r#led_count as u32;
-        }
+        self.apply_led_count(channel as usize, m.r#led_count as u32);
         let state = pb::LedCountState {
             r#led_count: m.r#led_count,
             r#channel,
@@ -803,12 +825,30 @@ impl Player {
             },
             None => None,
         };
+        if let Some(&n) = m.r#led_count() {
+            if n < 0 {
+                return error("bad_message", "led_count out of range");
+            }
+            if self.out_max_leds > 0 {
+                // The channels share one render buffer: the SUM must fit.
+                let others: u32 = (0..HW_CHANNELS)
+                    .filter(|&c| c != ch)
+                    .map(|c| self.led_counts[c].unwrap_or(0))
+                    .sum();
+                if others.saturating_add(n as u32) > self.out_max_leds {
+                    return error("bad_message", "led_count exceeds the board's max_leds");
+                }
+            }
+        }
         // All valid: apply the present fields.
         if let Some(&gpio) = m.r#gpio() {
             self.hw_gpio[ch] = gpio;
         }
         if let Some(i) = order_idx {
             self.hw_order[ch] = i;
+        }
+        if let Some(&n) = m.r#led_count() {
+            self.apply_led_count(ch, n as u32);
         }
         self.hw_config_commit = m.r#commit().copied().unwrap_or(true);
         self.hw_config_gen = self.hw_config_gen.wrapping_add(1);
@@ -956,11 +996,19 @@ impl Player {
                 r#gpio: self.hw_gpio[ch],
                 r#led_type: s64(LED_TYPE_WS281X),
                 r#color_order: s64(COLOR_ORDERS[self.hw_order[ch] as usize].0),
+                r#led_count: self.led_counts[ch].unwrap_or(0) as i32,
             };
             let _ = state.r#channels.push(hc);
         }
-        if let Some(caps) = &self.board_caps {
-            state.set_board(caps.clone());
+        if self.board_caps.is_some() || self.out_channels > 0 || self.out_max_leds > 0 {
+            let mut caps = self.board_caps.clone().unwrap_or_default();
+            if caps.r#led_channels == 0 {
+                caps.r#led_channels = self.out_channels;
+            }
+            if caps.r#max_leds == 0 {
+                caps.r#max_leds = self.out_max_leds;
+            }
+            state.set_board(caps);
         }
         reply(SMsg::HardwareConfigState(state))
     }
@@ -1008,6 +1056,36 @@ impl Player {
     /// catalog when a board doesn't report one). Call once at boot.
     pub fn set_board_caps(&mut self, caps: pb::BoardCapabilities) {
         self.board_caps = Some(caps);
+    }
+
+    /// Record the output capacity this firmware build has: `channels` parallel
+    /// LED outputs and `max_leds` LEDs summed across them. Reported in
+    /// `hardware_config_state.board` (where the descriptor leaves them 0) and
+    /// bounds `set_hardware_config.led_count`. Call once at boot.
+    pub fn set_output_caps(&mut self, channels: u32, max_leds: u32) {
+        self.out_channels = channels;
+        self.out_max_leds = max_leds;
+    }
+
+    /// Seed channel `channel`'s LED count at boot from what the firmware
+    /// persisted (0 = not set). Like [`Player::set_hw_defaults`], does NOT bump
+    /// `hw_config_gen` — it's the starting state, not a change to persist.
+    pub fn seed_led_count(&mut self, channel: usize, n: u32) {
+        if channel < HW_CHANNELS {
+            self.apply_led_count(channel, n);
+        }
+    }
+
+    /// Set channel `ch`'s LED count (0 clears it). The hardware channels form
+    /// one global LED index space in channel order, so their TOTAL becomes the
+    /// code-book default (the welcome's codeParams.ledCount) — a new map then
+    /// covers every channel's LEDs by default.
+    fn apply_led_count(&mut self, ch: usize, n: u32) {
+        self.led_counts[ch] = if n > 0 { Some(n) } else { None };
+        let total: u32 = self.led_counts[..HW_CHANNELS].iter().map(|c| c.unwrap_or(0)).sum();
+        if total >= 1 {
+            self.default_led_count = total;
+        }
     }
 
     /// Generation counter bumped on every `set_hardware_config`; the firmware
@@ -1102,6 +1180,12 @@ impl Player {
     /// pattern is latched.
     pub fn counting_color_order(&self) -> [u8; 3] {
         self.counting_order
+    }
+
+    /// The hardware output channel the latched counting pattern paints; its
+    /// block indices are relative to that channel's strip start. 0 when none.
+    pub fn counting_channel(&self) -> u32 {
+        self.counting_channel as u32
     }
 
     /// Record that the output driver just pushed mapping-pattern frame `seq`

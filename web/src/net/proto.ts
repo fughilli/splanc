@@ -364,6 +364,9 @@ export interface HardwareChannel {
   gpio: number;
   ledType: string;
   colorOrder: ColorOrder;
+  /** LEDs wired to this channel; 0 = not set (or firmware too old to store it).
+   * Channels form one global LED index space in channel order. */
+  ledCount: number;
 }
 
 /** Pin safety category (proto PinSafety). Rides the JSON boundary as its enum
@@ -394,6 +397,10 @@ export interface BoardCapabilitiesFlat {
   board: string;
   gpioPins: GpioPinFlat[];
   ledModes: LedModeFlat[];
+  /** Parallel LED output channels the firmware drives (0 = not reported). */
+  ledChannels: number;
+  /** Most LEDs the board drives, summed across channels (0 = not reported). */
+  maxLeds: number;
 }
 
 /** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel

@@ -66,6 +66,10 @@ uint8_t lm_brightness_u8(void);
 // (lm_hw_color_order_name) to NVS.
 void lm_hw_seed(uint32_t channel, int32_t gpio, const uint8_t *order,
                 size_t order_len);
+// Seed a channel's LED count at boot from NVS (0 = not set), like lm_hw_seed.
+// set_hardware_config.led_count bumps lm_hw_config_gen; on commit the app
+// persists lm_led_count(ch) per channel.
+void lm_led_count_seed(uint32_t channel, uint32_t led_count);
 // Install this board's static capability descriptor (a serialized
 // BoardCapabilities: the board textproto compiled to a binaryproto at build time
 // and embedded in the image). Call once at boot; it's echoed in
@@ -151,6 +155,10 @@ uint32_t lm_counting_len(void);
 // index permutation (R=0,G=1,B=2) into `perm`. The probe's OWN order, applied at
 // transmit independent of the committed per-channel color order (identity = raw).
 void lm_counting_color_order(uint8_t perm[3]);
+// Hardware output channel the counting probe paints (0 when none). Its block
+// indices (lm_counting_color / lm_counting_len) are relative to that channel's
+// strip start; the frame loop routes them to that output and blanks the others.
+uint32_t lm_counting_channel(void);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim

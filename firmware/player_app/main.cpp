@@ -657,6 +657,10 @@ static void poll_hardware_config() {
   if (commit) {
     prefs.putInt("hw_gpio0", g0);
     prefs.putInt("hw_gpio1", g1);
+    // Per-channel LED counts (0 = not set); lm_led_count is -1 when unset.
+    int32_t n0 = lm_led_count(0), n1 = lm_led_count(1);
+    prefs.putInt("hw_len0", n0 > 0 ? n0 : 0);
+    prefs.putInt("hw_len1", n1 > 0 ? n1 : 0);
     char ord0[8] = {0}, ord1[8] = {0};
     if (lm_hw_color_order_name(0, reinterpret_cast<uint8_t *>(ord0), sizeof ord0 - 1) >= 0) {
       prefs.putString("hw_ord0", ord0);
@@ -664,7 +668,8 @@ static void poll_hardware_config() {
     if (lm_hw_color_order_name(1, reinterpret_cast<uint8_t *>(ord1), sizeof ord1 - 1) >= 0) {
       prefs.putString("hw_ord1", ord1);
     }
-    Log().printf("[hw] committed gpio=%d/%d order=%s/%s (gen=%u)\n", g0, g1, ord0, ord1, gen);
+    Log().printf("[hw] committed gpio=%d/%d order=%s/%s leds=%d/%d (gen=%u)\n", g0, g1, ord0,
+                 ord1, (int)lm_led_count(0), (int)lm_led_count(1), gen);
   } else {
     Log().printf("[hw] preview gpio=%d/%d (gen=%u)\n", g0, g1, gen);
   }
@@ -678,9 +683,13 @@ static void hardware_config_begin() {
   int g1 = prefs.getInt("hw_gpio1", LED_DATA_PIN_2);
   String o0 = prefs.getString("hw_ord0", "GRB");
   String o1 = prefs.getString("hw_ord1", "GRB");
+  int n0 = prefs.getInt("hw_len0", 0);
+  int n1 = prefs.getInt("hw_len1", 0);
   // Seed the core so the first welcome echoes the real per-channel config.
   lm_hw_seed(0, g0, reinterpret_cast<const uint8_t *>(o0.c_str()), o0.length());
   lm_hw_seed(1, g1, reinterpret_cast<const uint8_t *>(o1.c_str()), o1.length());
+  lm_led_count_seed(0, n0 > 0 ? (uint32_t)n0 : 0);
+  lm_led_count_seed(1, n1 > 0 ? (uint32_t)n1 : 0);
   // Apply the wire color orders to the driver.
   for (int ch = 0; ch < 2; ch++) {
     uint8_t perm[3];
@@ -701,8 +710,8 @@ static void hardware_config_begin() {
   g_hw_req_gpio0 = g_hw_gpio0;
   g_hw_req_gpio1 = g_hw_gpio1;
   g_hw_gen = lm_hw_config_gen();
-  Log().printf("[hw] boot gpio=%d/%d order=%s/%s\n", g_hw_gpio0, g_hw_gpio1, o0.c_str(),
-               o1.c_str());
+  Log().printf("[hw] boot gpio=%d/%d order=%s/%s leds=%d/%d\n", g_hw_gpio0, g_hw_gpio1,
+               o0.c_str(), o1.c_str(), n0, n1);
 }
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
@@ -1290,6 +1299,11 @@ static uint32_t render_once() {
   // the committed per-channel order.
   uint8_t frame_order[3];
   bool use_frame_order = false;
+  // Per-channel transmit lengths set directly by a branch that addresses the
+  // outputs itself (the counting probe); otherwise the LOGICAL `xmit_len` is
+  // split at the channel-0 boundary just before the transmit.
+  bool direct_split = false;
+  uint32_t direct0 = 0, direct1 = 0;
 
   // Active strip length to clock out this frame, split across the two output
   // channels at the channel-0 boundary. Default total: set_led_count(0) +
@@ -1355,27 +1369,47 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence.
+    // Counting probe: static pattern, repaint at the slow static cadence. Its
+    // blocks are relative to the START of the probed channel's strip, so the
+    // probe is routed straight to that output (bypassing the logical split) and
+    // the other channel is held black. Painting past the probed strip's end is
+    // the length probe, so the probed run is NOT clamped to its configured count.
+    //
     // Shrinking the per-color run ("pixels each" 10 -> 1) lights fewer LEDs, but
     // an exact-count transmit of just the new run would leave the WS2812s the
     // old, wider run drove latched at their stale color. Track the widest run
-    // we've driven and, on a shrink, transmit out to it once with the freed tail
-    // blanked — so the strip actually clears from N back down to M.
-    static uint32_t counting_hwm = 0;  // widest run lit since counting began
+    // we've driven per channel and, on a shrink (or when the probe moves to the
+    // other channel), transmit out to it once with the freed tail blanked — so
+    // the strip actually clears from N back down to M.
+    static uint32_t counting_hwm[2] = {0, 0};  // widest run lit per channel
+    uint32_t cch = lm_counting_channel() == 1 ? 1 : 0;
+    uint32_t other = 1 - cch;
+    uint32_t other_len = other == 0 ? ch0_len : ch1_len;
+    if (counting_hwm[other] > other_len) other_len = counting_hwm[other];
+    counting_hwm[other] = 0;  // blanked this frame
     uint32_t cn = lm_counting_len();
     if (cn == 0) cn = 1;
     if (cn > kMaxLeds) cn = kMaxLeds;
-    uint32_t extent = cn > counting_hwm ? cn : counting_hwm;
-    xmit_len = extent;
+    uint32_t extent = cn > counting_hwm[cch] ? cn : counting_hwm[cch];
+    if (extent > kMaxLeds) extent = kMaxLeds;
+    if (other_len > kMaxLeds - extent) other_len = kMaxLeds - extent;
+    // Buffer layout follows the transmit: channel 0's pixels first, then 1's.
+    uint32_t probe_off = cch == 0 ? 0 : other_len;
+    uint32_t other_off = cch == 0 ? extent : 0;
     for (uint32_t i = 0; i < cn; i++) {
       lm_counting_color(i, rgb);
-      leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
+      leds[probe_off + i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
-    for (uint32_t i = cn; i < extent; i++) leds[i] = Rgb::Black;  // clear the stale tail
-    counting_hwm = cn;  // next frame only needs to cover the current run
+    for (uint32_t i = cn; i < extent; i++) leds[probe_off + i] = Rgb::Black;  // stale tail
+    for (uint32_t i = 0; i < other_len; i++) leds[other_off + i] = Rgb::Black;
+    counting_hwm[cch] = cn;  // next frame only needs to cover the current run
+    direct_split = true;
+    direct0 = cch == 0 ? extent : other_len;
+    direct1 = cch == 0 ? other_len : extent;
     // Drive the probe through ITS OWN wire order (identity = raw, or a previewed
     // candidate), bypassing the committed per-channel color order so the test
-    // never mutates the persisted config.
+    // never mutates the persisted config. (The other channel is black, so the
+    // order doesn't matter there.)
     lm_counting_color_order(frame_order);
     use_frame_order = true;
     show = true;
@@ -1529,6 +1563,10 @@ static uint32_t render_once() {
     uint32_t count0 = xmit_len < split ? xmit_len : split;
     uint32_t count1 = xmit_len > split ? (xmit_len - split) : 0;
     if (count1 > ch1_len) count1 = ch1_len;
+    if (direct_split) {
+      count0 = direct0;
+      count1 = direct1;
+    }
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
     if (fx_frame_rendered) show_c = g_show_c;
   }
