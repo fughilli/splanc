@@ -42,6 +42,9 @@ fn default_outlier_sigma() -> f64 {
 fn default_min_views() -> usize {
     2
 }
+fn default_strip_tolerance() -> f64 {
+    0.25
+}
 
 /// Mirrors reconstruct_vio's keyword arguments (and their defaults).
 #[derive(Deserialize, Debug, Clone)]
@@ -59,6 +62,19 @@ pub struct ProblemOptions {
     pub outlier_sigma: f64,
     #[serde(rename = "minViews")]
     pub min_views: usize,
+    /// Strip prior (strip.rs): LED ids are wired in order, so consecutive ids
+    /// are at most one pitch apart. Constrains the bundle adjustment, demotes
+    /// LEDs that break the chain, and places interior unmapped runs on the
+    /// segment between their mapped neighbours. Off by default.
+    #[serde(rename = "stripPrior")]
+    pub strip_prior: bool,
+    /// Known LED pitch in meters (e.g. 1/60 for a 60 LED/m strip). Unset =
+    /// estimated from the unconstrained solve.
+    #[serde(rename = "stripSpacingM")]
+    pub strip_spacing_m: Option<f64>,
+    /// Fractional slack on the pitch bound (bound = gap · pitch · (1 + tol)).
+    #[serde(rename = "stripTolerance")]
+    pub strip_tolerance: f64,
 }
 
 impl Default for ProblemOptions {
@@ -70,6 +86,9 @@ impl Default for ProblemOptions {
             reject_outliers: default_true(),
             outlier_sigma: default_outlier_sigma(),
             min_views: default_min_views(),
+            strip_prior: false,
+            strip_spacing_m: None,
+            strip_tolerance: default_strip_tolerance(),
         }
     }
 }

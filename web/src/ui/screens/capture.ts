@@ -52,6 +52,7 @@ import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
 import { overlayLegend } from "../overlayStyle";
 import { LIVE_SOLVE_OPTIONS, LiveSolveScheduler } from "../../solver/liveSolve";
+import type { SolveProblem } from "../../solver/agent";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
 import { deviceStore, DEFAULT_CAPTURE_STRIDE } from "../../store/deviceStore";
@@ -142,6 +143,15 @@ const servoExposure = qs.get("exposure") === "servo";
 // Interim phone solves during capture feed the live overlay on devices without
 // a host solver (FUG-112); `?livesolve=0` turns them off.
 const liveSolveEnabled = qs.get("livesolve") !== "0";
+/** Options for the FINAL phone-side solves (standalone + supplemental joint).
+ * The strip prior (Settings ▸ Capture) is off for the interim live solves:
+ * they drive the overlay, and their LED sets are too partial to estimate a
+ * pitch from. `?stripprior=0|1` overrides the setting for one session. */
+function finalSolveOptions(): NonNullable<SolveProblem["options"]> {
+  const forced = qs.get("stripprior");
+  const on = forced === null ? prefs.getStripPrior() : forced === "1";
+  return on ? { stripPrior: true } : {};
+}
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -1346,6 +1356,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ledCount: lastLedCount,
         mapId: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
+        options: finalSolveOptions(),
       };
       // Persist the exact solver input on iOS so a failed solve can be replayed
       // natively (//solver:solver_cli) instead of re-captured per hypothesis.
@@ -1547,6 +1558,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             ledCount: mergedObs.ledCount,
             mapId: crypto.randomUUID(),
             createdAt: new Date().toISOString(),
+            options: finalSolveOptions(),
           },
           (snap) => {
             progFill.style.width = `${Math.round(snap.progress * 100)}%`;

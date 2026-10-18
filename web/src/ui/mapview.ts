@@ -13,6 +13,7 @@
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
 import type { TopologyDebug, TopologyStage } from "../topology/extract";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
+import { countPlacement } from "../geom/inferred";
 import { transformMeshVertex, type MeshOverlay } from "../geom/mesh";
 import { renderSettings } from "../store/appearance";
 
@@ -815,8 +816,11 @@ export class MapView {
       const solveSummary = s
         ? ` · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · median parallax ${s.medianParallaxDeg.toFixed(1)}°`
         : "";
+      // Strip-prior placements (geom/inferred) are positions, not solves.
+      const { measured, inferred } = countPlacement(leds);
+      const placedSummary = inferred > 0 ? ` · ${inferred} placed by strip prior` : "";
       ctx.fillText(
-        `${leds.length}/${this.map.ledCount} solved${solveSummary}${deltaSummary}`,
+        `${measured}/${this.map.ledCount} solved${placedSummary}${solveSummary}${deltaSummary}`,
         12,
         h - 12,
       );

@@ -226,6 +226,21 @@ export function SettingsScreen(router: Router): Screen {
         }).el,
       ),
       hint,
+      row(
+        "Strip prior",
+        "Treat LED numbers as wired in order along a strip, rope or string: the " +
+          "solver keeps consecutive LEDs within one LED spacing of each other, " +
+          "drops LEDs that break the chain, and places LEDs the capture missed " +
+          "evenly between their neighbours. Turn off for fixtures not wired in order.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          prefs.getStripPrior() ? "on" : "off",
+          (v) => prefs.setStripPrior(v === "on"),
+        ),
+      ),
     );
     return g;
   }
@@ -675,6 +690,7 @@ export function SettingsScreen(router: Router): Screen {
   function captureResetRow(): HTMLElement {
     return resetRow("Reset capture settings (incl. diffuse params) to their defaults?", () => {
       prefs.setManualExposureCeilingMs(DEFAULT_MANUAL_EXPOSURE_CEILING_MS);
+      prefs.setStripPrior(true);
       prefs.resetDiffuseParams();
       rerender();
       toast("Capture settings reset");
