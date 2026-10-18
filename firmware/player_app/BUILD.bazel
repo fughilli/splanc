@@ -124,6 +124,23 @@ rr_rust_test(
     ],
 )
 
+# Sparse maps (unmapped LEDs) land on their LED ids + interpolate the gaps; own
+# binary for fresh process-global FFI state — see tests/sparse_map.rs.
+rr_rust_test(
+    name = "sparse_map_test",
+    srcs = ["tests/sparse_map.rs"],
+    edition = "2021",
+    # On the wrapper; the test binary it runs inherits it. Host-profile
+    # envelopes carry big inline heapless storage.
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # Regression guard on the firmware-profile envelope struct sizes (they sit on
 # the heap-allocated task stacks; FUG-71). Host-profile crate, but the sizes it
 # asserts are the firmware ones.

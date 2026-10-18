@@ -377,8 +377,57 @@ static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP
 /// Flash-backed map: the per-LED positions (meters), the ONLY map data resident
 /// at render time. Fed by the streaming submit_map decode; lm_map_led /
 /// get_stored_map / led.uv all read this (the raw StoredMap is gone). Indexed by
-/// map index, which IS the LED id (the render is index-based).
+/// LED id (= strip position; the render is index-based) — NOT by the entry's
+/// position in the uploaded list, which skips unmapped LEDs. Unmapped slots hold
+/// a position interpolated from their mapped neighbours (see fill_unmapped).
 static mut FX_LED_POS: [[f32; 3]; FX_TOPO_CAP] = [[0.0; 3]; FX_TOPO_CAP];
+/// One bit per LED id: set when the uploaded map solved that LED (its
+/// FX_LED_POS is measured), clear when FX_LED_POS[id] is interpolated.
+static mut FX_LED_MAPPED: [u32; FX_TOPO_CAP.div_ceil(32)] = [0; FX_TOPO_CAP.div_ceil(32)];
+
+#[inline]
+unsafe fn led_mapped(i: usize) -> bool {
+    (*addr_of!(FX_LED_MAPPED))[i / 32] & (1 << (i % 32)) != 0
+}
+
+/// Fill every unmapped LED in [0, n) with a position linearly interpolated (by
+/// LED index) between its nearest mapped neighbours; an unmapped run at either
+/// end of the strip clamps to the nearest mapped LED. With no mapped LED at all
+/// everything stays at the origin. Interpolated points lie on the segment
+/// between two mapped ones, so they never widen the map's bounding box.
+unsafe fn fill_unmapped(n: usize) {
+    let pos = &mut *addr_of_mut!(FX_LED_POS);
+    let mut prev: Option<usize> = None;
+    let mut i = 0;
+    while i < n {
+        if led_mapped(i) {
+            prev = Some(i);
+            i += 1;
+            continue;
+        }
+        let mut next = i;
+        while next < n && !led_mapped(next) {
+            next += 1;
+        }
+        for j in i..next {
+            pos[j] = match (prev, next < n) {
+                (Some(a), true) => {
+                    let t = (j - a) as f32 / (next - a) as f32;
+                    let (pa, pb) = (pos[a], pos[next]);
+                    [
+                        pa[0] + (pb[0] - pa[0]) * t,
+                        pa[1] + (pb[1] - pa[1]) * t,
+                        pa[2] + (pb[2] - pa[2]) * t,
+                    ]
+                }
+                (Some(a), false) => pos[a],
+                (None, true) => pos[next],
+                (None, false) => [0.0; 3],
+            };
+        }
+        i = next;
+    }
+}
 
 /// Map XY bounding box for `led.uv` (a top-down projection of the map to 0..1):
 /// `uv = (pos.xy - FX_UV_MIN) * FX_UV_INV`, clamped. Recomputed from FX_LED_POS
@@ -1003,16 +1052,26 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     *addr_of_mut!(MAP_META) = None;
     reset_topo_cache();
     FX_UV_READY = false; // positions changed → uv bounds stale
-    let res = decode_submit_map_streamed(reader, total, |idx, _led_count, led| {
-        if (idx as usize) < FX_TOPO_CAP {
-            (*addr_of_mut!(FX_LED_POS))[idx as usize] = led.xyz;
+    // Nothing from a previous map may survive into this one.
+    // (Filled in place: a whole-array assignment would build the temporary on
+    // the task stack.)
+    (*addr_of_mut!(FX_LED_POS)).fill([0.0; 3]);
+    (*addr_of_mut!(FX_LED_MAPPED)).fill(0);
+    let res = decode_submit_map_streamed(reader, total, |_idx, led_count, led| {
+        // Key by the LED's id, not its list position: a map with unmapped LEDs
+        // omits them, so positions past the first gap would land in the wrong
+        // slot. Ids past the strip (led_count) or the render cap aren't stored
+        // (the strip can't drive them); the decode still validates the frame.
+        let i = led.id as usize;
+        if led.id < led_count && i < FX_TOPO_CAP {
+            (*addr_of_mut!(FX_LED_POS))[i] = led.xyz;
+            (*addr_of_mut!(FX_LED_MAPPED))[i / 32] |= 1 << (i % 32);
         }
-        // LEDs past the render cap simply aren't stored (the strip can't drive
-        // them); the decode still validates the whole frame.
         Ok(())
     });
     match res {
         Ok((map_id, led_count)) => {
+            fill_unmapped((led_count as usize).min(FX_TOPO_CAP));
             let reply = player().map_stored(map_id.as_str());
             *addr_of_mut!(MAP_META) = Some((map_id, led_count));
             reply
@@ -1113,10 +1172,27 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
     // Resolve the per-LED cache so FX_LED_TOPO.seg is the segment INDEX (not the
     // raw upload id); cheap after the first frame.
     fx_rebuild_topo();
-    // Reconstruct the bundle from the resident caches (see dump::*_src): id == map
-    // index, xyz from FX_LED_POS, associations recovered from FX_LED_TOPO with the
-    // segment_id read back out of the geometry.
-    let led = |i: u32| -> (u32, [f32; 3]) { (i, (*addr_of!(FX_LED_POS))[i as usize]) };
+    // Reconstruct the bundle from the resident caches (see dump::*_src): the
+    // mapped LEDs (real ids, xyz from FX_LED_POS) + the unmapped ids (their
+    // interpolated positions are a render detail, not map data), associations
+    // recovered from FX_LED_TOPO with the segment_id read back out of the geometry.
+    let n_leds = (led_count as usize).min(FX_TOPO_CAP);
+    let led_each = |f: &mut dyn FnMut(u32, [f32; 3])| {
+        for i in (0..n_leds).filter(|&i| led_mapped(i)) {
+            f(i as u32, (*addr_of!(FX_LED_POS))[i]);
+        }
+    };
+    let unmapped_each = |f: &mut dyn FnMut(u32)| {
+        for i in (0..n_leds).filter(|&i| !led_mapped(i)) {
+            f(i as u32);
+        }
+    };
+    let msrc = dump::MapSrc {
+        map_id: map_id.as_str(),
+        led_count,
+        led_each: &led_each,
+        unmapped_each: &unmapped_each,
+    };
     let geom = (*addr_of!(GEOM)).as_ref();
     let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
         if let Some(g) = geom {
@@ -1135,15 +1211,13 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
         segments: g.segments,
         assoc_each: &assoc_each,
     });
-    let total = dump::bundle_len_src(map_id.as_str(), led_count, &led, tsrc.as_ref());
+    let total = dump::bundle_len_src(&msrc, tsrc.as_ref());
     // Bound the chunk by the reply field capacity (StoredMapChunk.data).
     let cap = max_len.min(1024);
     let mut chunk = [0u8; 1024];
     let n = if offset < total {
         dump::encode_bundle_window_src(
-            map_id.as_str(),
-            led_count,
-            &led,
+            &msrc,
             tsrc.as_ref(),
             offset,
             &mut chunk[..cap],
@@ -2544,9 +2618,11 @@ pub unsafe extern "C" fn lm_map_len() -> u32 {
     (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c)
 }
 
-/// The stored map entry at `index`: id + xyz (meters). The map is flash-backed —
-/// only positions are resident (FX_LED_POS); id == index (the render is
-/// index-based). False out of range.
+/// The render position of LED `index`: id + xyz (meters). The map is
+/// flash-backed — only positions are resident (FX_LED_POS); id == index (the
+/// render is index-based). An LED the map left unmapped reports its position
+/// interpolated from its mapped neighbours (see fill_unmapped), so it still
+/// shades sensibly. False out of range.
 ///
 /// # Safety
 /// The pointer arguments must be null or point to writable/readable memory
@@ -2589,7 +2665,9 @@ unsafe fn fx_rebuild_topo() {
             .min(FX_TOPO_CAP);
         let mut mn = [f32::INFINITY; 2];
         let mut mx = [f32::NEG_INFINITY; 2];
-        for p in (*addr_of!(FX_LED_POS)).iter().take(len) {
+        // Measured LEDs only (interpolated ones lie inside their hull anyway).
+        let pos = &*addr_of!(FX_LED_POS);
+        for p in (0..len).filter(|&i| led_mapped(i)).map(|i| &pos[i]) {
             for k in 0..2 {
                 mn[k] = mn[k].min(p[k]);
                 mx[k] = mx[k].max(p[k]);

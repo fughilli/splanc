@@ -581,6 +581,8 @@ pub struct StoredTopoGeom<'a> {
 
 /// Streaming decode of `submit_map`: invoke `sink(index, led_count, &led)` for
 /// each LED without accumulating them in the arena. Returns (map_id, led_count).
+/// `index` is the entry's position in the wire list, NOT its LED: a map with
+/// unmapped LEDs is sparse, so sinks must key per-LED state by `led.id`.
 pub fn decode_submit_map_streamed<R, F>(
     reader: R,
     frame_len: usize,
@@ -1137,13 +1139,23 @@ pub mod dump {
 
     // -- source-agnostic dump (flash-backed storage) ------------------------
     // The same MappingBundle encoding, but the map LEDs come from a dense
-    // accessor `led(i) -> (id, xyz)` and the topology associations from a
-    // `for_each` callback, so get_stored_map can reconstruct the bundle straight
-    // from the resident per-LED caches (FX_LED_POS + FX_LED_TOPO + segment geom)
-    // without ever materializing a StoredMap/StoredTopology. `assoc_each(f)`
-    // invokes `f(led_id, segment_id, foot_arclength, d_perp)` per association, in
-    // led order. Both passes (size + window) call it, so it must be repeatable.
-    pub type LedFn<'a> = dyn Fn(u32) -> (u32, [f32; 3]) + 'a;
+    // `for_each` over the mapped LEDs (`led_each(f)` invokes `f(id, xyz)` per
+    // mapped LED, in id order; `unmapped_each(f)` invokes `f(id)` per unmapped
+    // one) and the topology associations from a `for_each` callback, so
+    // get_stored_map can reconstruct the bundle straight from the resident
+    // per-LED caches (FX_LED_POS + FX_LED_TOPO + segment geom) without ever
+    // materializing a StoredMap/StoredTopology. `assoc_each(f)` invokes
+    // `f(led_id, segment_id, foot_arclength, d_perp)` per association, in led
+    // order. Both passes (size + window) call every for_each, so they must be
+    // repeatable.
+    pub type LedEach<'a> = dyn Fn(&mut dyn FnMut(u32, [f32; 3])) + 'a;
+    pub type IdEach<'a> = dyn Fn(&mut dyn FnMut(u32)) + 'a;
+    pub struct MapSrc<'a> {
+        pub map_id: &'a str,
+        pub led_count: u32,
+        pub led_each: &'a LedEach<'a>,
+        pub unmapped_each: &'a IdEach<'a>,
+    }
     pub type AssocEach<'a> = dyn Fn(&mut dyn FnMut(u32, u32, f32, f32)) + 'a;
     pub struct TopoSrc<'a> {
         pub map_id: &'a str,
@@ -1152,12 +1164,21 @@ pub mod dump {
         pub assoc_each: &'a AssocEach<'a>,
     }
 
-    fn map_len_src(map_id: &str, led_count: u32, led: &LedFn) -> usize {
-        let mut n =
-            str_len(1, map_id) + str_len(3, UNITS) + str_len(4, FRAME) + i32_len(5, led_count as i32);
-        for i in 0..led_count {
-            let (id, _) = led(i);
-            n += sub_len(6, i32_len(1, id as i32) + packed3_len(2));
+    /// Content length of the packed `unmapped` ids (0 when there are none).
+    fn unmapped_payload_len(m: &MapSrc) -> usize {
+        let mut n = 0;
+        (m.unmapped_each)(&mut |id| n += varint_len(id as u64));
+        n
+    }
+    fn map_len_src(m: &MapSrc) -> usize {
+        let mut n = str_len(1, m.map_id)
+            + str_len(3, UNITS)
+            + str_len(4, FRAME)
+            + i32_len(5, m.led_count as i32);
+        (m.led_each)(&mut |id, _| n += sub_len(6, i32_len(1, id as i32) + packed3_len(2)));
+        let un = unmapped_payload_len(m);
+        if un > 0 {
+            n += sub_len(7, un);
         }
         n
     }
@@ -1177,16 +1198,20 @@ pub mod dump {
         });
         n
     }
-    fn enc_map_src(w: &mut Win, map_id: &str, led_count: u32, led: &LedFn) {
-        w.str_field(1, map_id);
+    fn enc_map_src(w: &mut Win, m: &MapSrc) {
+        w.str_field(1, m.map_id);
         w.str_field(3, UNITS);
         w.str_field(4, FRAME);
-        w.i32_field(5, led_count as i32);
-        for i in 0..led_count {
-            let (id, xyz) = led(i);
+        w.i32_field(5, m.led_count as i32);
+        (m.led_each)(&mut |id, xyz| {
             w.sub(6, i32_len(1, id as i32) + packed3_len(2));
             w.i32_field(1, id as i32);
             w.packed3(2, xyz);
+        });
+        let un = unmapped_payload_len(m);
+        if un > 0 {
+            w.sub(7, un);
+            (m.unmapped_each)(&mut |id| w.varint(id as u64));
         }
     }
     fn enc_topo_src(w: &mut Win, t: &TopoSrc) {
@@ -1220,8 +1245,8 @@ pub mod dump {
     }
 
     /// Total encoded MappingBundle length, from accessors (see module note).
-    pub fn bundle_len_src(map_id: &str, led_count: u32, led: &LedFn, topo: Option<&TopoSrc>) -> usize {
-        let mut n = sub_len(1, map_len_src(map_id, led_count, led));
+    pub fn bundle_len_src(map: &MapSrc, topo: Option<&TopoSrc>) -> usize {
+        let mut n = sub_len(1, map_len_src(map));
         if let Some(t) = topo {
             n += sub_len(2, topo_len_src(t));
         }
@@ -1229,17 +1254,15 @@ pub mod dump {
     }
     /// Windowed encode, from accessors (see module note).
     pub fn encode_bundle_window_src(
-        map_id: &str,
-        led_count: u32,
-        led: &LedFn,
+        map: &MapSrc,
         topo: Option<&TopoSrc>,
         start: usize,
         buf: &mut [u8],
     ) -> usize {
         let end = start + buf.len();
         let mut w = Win { pos: 0, start, end, buf, w: 0 };
-        w.sub(1, map_len_src(map_id, led_count, led));
-        enc_map_src(&mut w, map_id, led_count, led);
+        w.sub(1, map_len_src(map));
+        enc_map_src(&mut w, map);
         if let Some(t) = topo {
             w.sub(2, topo_len_src(t));
             enc_topo_src(&mut w, t);
