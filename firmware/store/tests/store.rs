@@ -38,13 +38,19 @@ fn encode_client(msg: pb::ClientMessage_::Msg) -> Vec<u8> {
 /// A submit_map frame with `n` LEDs (id i at [i, 2i, -i] mm-ish values),
 /// including fields the store must SKIP (timestamps, trajectory, stats).
 fn submit_map_frame(n: usize) -> Vec<u8> {
+    submit_sparse_map_frame(n, &[])
+}
+
+/// A submit_map frame for an `n`-LED strip that leaves the `unmapped` ids out of
+/// `leds` (and lists them in `unmapped`), the way a partial scan uploads.
+fn submit_sparse_map_frame(n: usize, unmapped: &[usize]) -> Vec<u8> {
     let mut map = Box::new(pb::OutputMap::default());
     map.r#map_id = "m-test".parse().unwrap();
     map.r#created_at = "2026-07-12T00:00:00Z".parse().unwrap();
     map.r#units = "meters".parse().unwrap();
     map.r#frame = "gravity_leveled".parse().unwrap();
     map.r#led_count = n as i32;
-    for i in 0..n {
+    for i in (0..n).filter(|i| !unmapped.contains(i)) {
         let mut led = pb::LedEntry::default();
         led.r#id = i as i32;
         led.r#xyz
@@ -53,6 +59,9 @@ fn submit_map_frame(n: usize) -> Vec<u8> {
         led.r#confidence = 0.9;
         led.r#n_views = 12;
         map.r#leds.push(led).expect("fixture within generated caps");
+    }
+    for &i in unmapped {
+        map.r#unmapped.push(i as i32).unwrap();
     }
     for i in 0..8 {
         let mut p = pb::Vec3::default();
@@ -270,6 +279,34 @@ fn streamed_map_matches_the_arena_decode() {
 }
 
 #[test]
+fn streamed_sparse_map_hands_the_sink_real_led_ids() {
+    // A partial scan omits its unmapped LEDs, so the sink's index (the entry's
+    // position in the list) diverges from the LED id after the first gap. The
+    // sink must see each LED's real id + xyz so the caller can key by id.
+    let unmapped = [0usize, 1, 40, 47, 49, 51, 52, 53, 249];
+    let frame = submit_sparse_map_frame(250, &unmapped);
+    let mut got: Vec<(u32, StoredLed)> = Vec::new();
+    let (map_id, led_count) =
+        decode_submit_map_streamed(frame.as_slice(), frame.len(), |idx, lc, led| {
+            assert_eq!(lc, 250, "led_count is the whole strip, not the entry count");
+            got.push((idx, *led));
+            Ok(())
+        })
+        .expect("streams");
+    assert_eq!(map_id.as_str(), "m-test");
+    assert_eq!(led_count, 250);
+    let want_ids: Vec<u32> = (0..250u32).filter(|i| !unmapped.contains(&(*i as usize))).collect();
+    assert_eq!(got.len(), want_ids.len());
+    for (k, ((idx, led), id)) in got.iter().zip(&want_ids).enumerate() {
+        assert_eq!(*idx as usize, k, "index is the list position");
+        assert_eq!(led.id, *id, "entry {k} carries its real LED id");
+        let i = *id as f64;
+        let want = [(i * 0.001) as f32, (i * 0.002) as f32, (-i * 0.001) as f32];
+        assert_eq!(led.xyz, want, "xyz of LED {id}");
+    }
+}
+
+#[test]
 fn streamed_topology_matches_the_arena_decode() {
     let frame = submit_topology_frame(150, 12, 20, 12);
     let mut buf = vec![0u8; 32 * 1024];
@@ -308,7 +345,7 @@ fn streamed_topology_matches_the_arena_decode() {
 fn dump_src_matches_the_slice_dump() {
     // get_stored_map reconstructs the bundle from the render caches via the
     // accessor dump; assert it's byte-identical to the slice dump for the same
-    // data (id/xyz via a dense led() closure, associations via a for_each).
+    // data (LEDs + associations via for_each callbacks).
     let mut buf = vec![0u8; 64 * 1024];
     let arena = Arena::new(&mut buf);
     let mframe = submit_map_frame(150);
@@ -316,9 +353,17 @@ fn dump_src_matches_the_slice_dump() {
     let tframe = submit_topology_frame(150, 12, 20, 12);
     let topo = decode_submit_topology(tframe.as_slice(), tframe.len(), &arena).expect("topo");
 
-    let led = |i: u32| {
-        let l = &map.leds[i as usize];
-        (l.id, l.xyz)
+    let led_each = |f: &mut dyn FnMut(u32, [f32; 3])| {
+        for l in map.leds {
+            f(l.id, l.xyz);
+        }
+    };
+    let unmapped_each = |_: &mut dyn FnMut(u32)| {};
+    let msrc = ledmapper_store::dump::MapSrc {
+        map_id: map.map_id.as_str(),
+        led_count: map.led_count,
+        led_each: &led_each,
+        unmapped_each: &unmapped_each,
     };
     let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
         for a in topo.associations {
@@ -332,21 +377,13 @@ fn dump_src_matches_the_slice_dump() {
         assoc_each: &assoc_each,
     };
     let want_len = ledmapper_store::dump::bundle_len(&map, Some(&topo));
-    let got_len =
-        ledmapper_store::dump::bundle_len_src(map.map_id.as_str(), map.led_count, &led, Some(&tsrc));
+    let got_len = ledmapper_store::dump::bundle_len_src(&msrc, Some(&tsrc));
     assert_eq!(got_len, want_len, "src bundle_len == slice bundle_len");
 
     let mut a = vec![0u8; want_len];
     let mut b = vec![0u8; want_len];
     ledmapper_store::dump::encode_bundle_window(&map, Some(&topo), 0, &mut a);
-    ledmapper_store::dump::encode_bundle_window_src(
-        map.map_id.as_str(),
-        map.led_count,
-        &led,
-        Some(&tsrc),
-        0,
-        &mut b,
-    );
+    ledmapper_store::dump::encode_bundle_window_src(&msrc, Some(&tsrc), 0, &mut b);
     assert_eq!(a, b, "src dump == slice dump, byte-for-byte");
 }
 
