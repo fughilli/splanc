@@ -99,6 +99,10 @@ jobs:
       # :8088 — tailnet discovery only reaches :8087). Overridable via the HITL env var
       # if the host/port ever changes; the android_journeys test defaults to it.
       HITL_ANDROID_SERVER: ${{ vars.HITL_ANDROID_SERVER || 'http://amd-rig:8088' }}
+      # Every reservation captures its DUT's serial console for the whole test
+      # (hitl_client + serial_capture) and saves it here; uploaded below as the
+      # hitl-serial-logs artifact. A failing attempt also prints the log's tail inline.
+      HITL_SERIAL_LOG_DIR: ${{ github.workspace }}/hitl-serial-logs
       # The Mac mini iOS bench daemon (the `ios-phone` unit: real iPhone + c6-c) and the
       # journeys its rep runs. Overridable via HITL environment vars; see
       # //pi/hitl/phone:ios_journeys.
@@ -330,6 +334,7 @@ jobs:
               --test_env=HITL_WIFI_SSID \
               --test_env=HITL_WIFI_PASS \
               --test_env=HITL_OWNER \
+              --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=HITL_EXCLUDE_HOSTS \
               --test_env=GITHUB_SHA \
               "${server_arg[@]}"
@@ -379,6 +384,7 @@ jobs:
               --test_env=HITL_ANDROID_SERVER \
               --test_env=HITL_ANDROID_PIN \
               --test_env=HITL_OWNER \
+              --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1
             echo "::endgroup::"
           else
@@ -410,6 +416,7 @@ jobs:
               --test_env=HITL_IOS_BLE_MODE \
               --test_env=HITL_IOS_FLASH_C6 \
               --test_env=HITL_OWNER \
+              --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1
             echo "::endgroup::"
           else
@@ -434,6 +441,15 @@ jobs:
           cd "$testlogs"
           find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
           echo "collected $(find "$GITHUB_WORKSPACE/hitl-traceability-evidence" -name test.xml 2>/dev/null | wc -l) test.xml from $testlogs"
+
+      - name: Upload DUT serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-serial-logs
+          path: hitl-serial-logs
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload HITL JUnit evidence
         if: always()

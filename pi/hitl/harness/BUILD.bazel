@@ -106,6 +106,7 @@ py_library(
         "mapping_trigger_core.py",
         "provision.py",
         "rig_isolation_core.py",
+        "serial_capture.py",
         "serial_discovery.py",
         "sync.py",
         "tls_churn_core.py",
