@@ -258,12 +258,6 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:android_journeys",
-      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is OPEN",
