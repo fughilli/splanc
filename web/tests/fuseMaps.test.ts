@@ -311,3 +311,55 @@ test("concatObservations puts the supplement after the base on one timeline", ()
   // Inputs untouched.
   assert.equal(add.detections[0]!.tCaptureMs, 500);
 });
+
+// ---------------------------------------------------------------------------
+// Strip-prior placements (geom/inferred): nViews = 0, confidence = 0.
+// ---------------------------------------------------------------------------
+
+/** An LED the solver placed by the strip prior, not measured. */
+function placed(id: number, xyz: Vec3): LedEntry {
+  return { id, xyz, confidence: 0, nViews: 0, rmsReprojPx: 0, parallaxDeg: 0 };
+}
+
+test("a strip-prior placement in the base is replaced outright when the new scan measures it", () => {
+  // Base: 0..11 measured except 5, which the prior placed 30 mm off.
+  const baseLeds = grid(range(0, 11), 0.95).map((l) =>
+    l.id === 5 ? placed(5, [pos(5)[0] + 0.03, pos(5)[1], pos(5)[2]]) : l,
+  );
+  const prior = mapOf(baseLeds);
+  const addition = transformMap(mapOf(grid(range(0, 11), 0.6)), DISGUISE);
+  const { map, report, provenance } = fuseMaps(prior, addition);
+  assert.ok(report.registered, report.summary);
+  const l5 = map.leds.find((l) => l.id === 5)!;
+  assert.equal(provenance.get(5), "updated");
+  assert.ok(Math.hypot(l5.xyz[0] - pos(5)[0], l5.xyz[1] - pos(5)[1], l5.xyz[2] - pos(5)[2]) < 1e-3);
+  assert.equal(l5.nViews, 6); // the measurement's statistics, not a fusion with the placement
+});
+
+test("placements are never registration evidence, and never override a measurement", () => {
+  const prior = mapOf(grid(range(0, 11), 0.95));
+  // The addition measured 0..7; its 8..11 are placements, deliberately wrong.
+  const addLeds = [
+    ...grid(range(0, 7), 0.9),
+    ...range(8, 11).map((id) => placed(id, [pos(id)[0] + 0.5, pos(id)[1] - 0.4, 0.3])),
+  ];
+  const { map, report } = fuseMaps(prior, transformMap(mapOf(addLeds), DISGUISE));
+  assert.ok(report.registered, report.summary);
+  assert.equal(report.common, 8);
+  assert.ok(report.rmsM < 1e-3, `residual ${report.rmsM}`);
+  for (const id of range(8, 11)) assert.deepEqual(map.leds.find((l) => l.id === id)!.xyz, pos(id));
+});
+
+test("a strip-prior fill in the joint solve cannot hide a dropped session", () => {
+  const prior = weakPrior(8, 0.01);
+  const supp = transformMap(mapOf(range(4, 15).map((id) => led(id, pos(id), 0.9))), DISGUISE);
+  // The joint solve kept only the supplemental arc, and the prior "placed"
+  // the base-only LEDs 0..3 — present, but not measured.
+  const dropped = transformMap(
+    mapOf([...range(0, 3).map((id) => placed(id, pos(id))), ...range(4, 15).map((id) => led(id, pos(id), 0.97))]),
+    DISGUISE,
+  );
+  const { report } = fuseMaps(prior, supp, { joint: dropped });
+  assert.equal(report.method, "registered");
+  assert.match(report.jointRejected ?? "", /lost 4 of the base map's 12 LEDs/);
+});

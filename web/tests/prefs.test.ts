@@ -83,3 +83,13 @@ test("resetDiffuseParams clears back to defaults", () => {
   prefs.resetDiffuseParams();
   assert.deepEqual(prefs.getDiffuseParams(), DEFAULT_DIFFUSE_CAPTURE_PARAMS);
 });
+
+test("strip prior defaults on, round-trips, and stores only the opt-out", () => {
+  assert.equal(prefs.getStripPrior(), true);
+  prefs.setStripPrior(false);
+  assert.equal(prefs.getStripPrior(), false);
+  assert.equal(mem.getItem("ledmapper.stripPriorOff"), "1");
+  prefs.setStripPrior(true);
+  assert.equal(prefs.getStripPrior(), true);
+  assert.equal(mem.getItem("ledmapper.stripPriorOff"), null);
+});

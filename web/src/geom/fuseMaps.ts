@@ -38,6 +38,7 @@
 
 import type { DetectionRecord, ImuSample, LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
 import { applySimilarity, fitSimilarity, type Similarity } from "./fit";
+import { isInferred } from "./inferred";
 import { ledSigmaM, mapSigmaContext } from "./ledVariance";
 
 /** Where an LED's current position came from, relative to the base map. */
@@ -194,7 +195,11 @@ export function registerInto(
   const common: { a: Vec3; p: Vec3; anchor: boolean }[] = [];
   for (const a of addition.leds) {
     const p = priorById.get(a.id);
-    if (p) common.push({ a: a.xyz, p: p.xyz, anchor: p.confidence >= anchorConf });
+    // Strip-prior placements are interpolations, not measurements — never
+    // registration evidence on either side.
+    if (p && !isInferred(p) && !isInferred(a)) {
+      common.push({ a: a.xyz, p: p.xyz, anchor: p.confidence >= anchorConf });
+    }
   }
   const tolM = maxRmsFrac * radiusOf(prior.leds);
   const fail = (reason: string, anchors: number, rmsM = Infinity): Registration => ({
@@ -268,15 +273,18 @@ export function validateJoint(
   joint: OutputMap,
   opts: { observedIds?: ReadonlySet<number>; anchorConfidence?: number } = {},
 ): string | null {
-  const jointById = new Map(joint.leds.map((l) => [l.id, l]));
-  const missing = (m: OutputMap): number => m.leds.filter((l) => !jointById.has(l.id)).length;
+  // Measured LEDs only: a strip-prior fill in the joint solve must not stand in
+  // for an LED a dropped session measured (it would hide exactly the loss this
+  // check exists to catch), and a fill in either input proves nothing.
+  const jointById = new Map(joint.leds.filter((l) => !isInferred(l)).map((l) => [l.id, l]));
+  const measured = (m: OutputMap): LedEntry[] => m.leds.filter((l) => !isInferred(l));
+  const missing = (m: OutputMap): number => measured(m).filter((l) => !jointById.has(l.id)).length;
   const check = (m: OutputMap, what: string): string | null => {
     const miss = missing(m);
+    const n = measured(m).length;
     // Tolerate a stray LED or two the joint outlier rejection legitimately
     // drops; a dropped session loses a block of them.
-    return miss > Math.max(1, Math.floor(0.1 * m.leds.length))
-      ? `the joint re-solve lost ${miss} of the ${what}'s ${m.leds.length} LEDs`
-      : null;
+    return miss > Math.max(1, Math.floor(0.1 * n)) ? `the joint re-solve lost ${miss} of the ${what}'s ${n} LEDs` : null;
   };
   const coverage = check(prior, "base map") ?? (supplement ? check(supplement, "new scan") : null);
   if (coverage !== null) return coverage;
@@ -384,6 +392,16 @@ export function fuseMaps(prior: OutputMap, addition: OutputMap | null, opts: Fus
     const id = a.id;
     const xyzReg = applySimilarity(sim, a.xyz);
     const p = priorById.get(id);
+    if (p && isInferred(a)) continue; // a placement never overrides what the base holds
+    if (p && isInferred(p)) {
+      // The base only interpolated this LED; the new scan placed it from rays
+      // (or a fresh interpolation with more neighbours measured): take it.
+      merged.set(id, { ...a, id, xyz: xyzReg });
+      provenance.set(id, "updated");
+      resolved++;
+      if (!isInferred(a)) improved++;
+      continue;
+    }
     if (!p) {
       // New LED: extends coverage. Registered position, carried statistics.
       merged.set(id, { ...a, id, xyz: xyzReg });

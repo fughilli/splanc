@@ -135,6 +135,13 @@ pub struct SolveOptions {
     pub huber_px: f64,
     pub max_nfev: usize,
     pub ftol: f64,
+    /// Strip prior "rope" links `(led_a, led_b, max_dist)` (see strip.rs):
+    /// one residual each, zero while the two LEDs are within `max_dist` and
+    /// `(dist − max_dist) / chain_sigma` past it. Links naming an LED this
+    /// solve does not carry are ignored. Empty = no prior (the default).
+    pub chain: Vec<(u32, u32, f64)>,
+    /// Stiffness of the rope links (meters per unit residual).
+    pub chain_sigma: f64,
 }
 
 impl Default for SolveOptions {
@@ -146,6 +153,8 @@ impl Default for SolveOptions {
             huber_px: 4.0,
             max_nfev: 60,
             ftol: 1e-6,
+            chain: Vec::new(),
+            chain_sigma: 0.0,
         }
     }
 }
@@ -601,7 +610,23 @@ pub fn solve_vio(
         r.signum() * hub_delta * (2.0 * ((1.0 + q * q).sqrt() - 1.0)).sqrt()
     };
 
-    let n_res = 2 * n_obs + 9 * n_int + 6 + 1 + 6;
+    // Strip-prior rope links, resolved to LED parameter indices.
+    let links: Vec<(usize, usize, f64)> = if opts.chain_sigma > 0.0 {
+        opts.chain
+            .iter()
+            .filter_map(|&(a, b, max_dist)| {
+                let ja = led_ids.binary_search(&a).ok()?;
+                let jb = led_ids.binary_search(&b).ok()?;
+                (ja != jb && max_dist.is_finite()).then_some((ja, jb, max_dist))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let chain_sigma = opts.chain_sigma;
+
+    let n_res_base = 2 * n_obs + 9 * n_int + 6 + 1 + 6;
+    let n_res = n_res_base + links.len();
 
     // Sparsity pattern (mirrors the Python lil_matrix construction). Built
     // BEFORE the residual closure takes ownership of obs_flat.
@@ -623,6 +648,12 @@ pub fn solve_vio(
         spar.block(k, k + 1, off_bias + 6, off_bias + 9);
         k += 1;
         spar.block(k, k + 6, 9 * g_idx, 9 * g_idx + 6);
+        k += 6;
+        for &(ja, jb, _) in &links {
+            spar.block(k, k + 1, off_led + 3 * ja, off_led + 3 * ja + 3);
+            spar.block(k, k + 1, off_led + 3 * jb, off_led + 3 * jb + 3);
+            k += 1;
+        }
     }
 
     // Shared snapshot for the progress hook (single-threaded interleaving:
@@ -723,6 +754,25 @@ pub fn solve_vio(
         for r in 0..3 {
             out[k + r] = (x[gi + r] - gauge_rot_seed[r]) / 1e-6;
             out[k + 3 + r] = (x[gi + 3 + r] - gauge_pos_seed[r]) / 1e-6;
+        }
+        // Strip prior: one-sided rope penalty per link.
+        for (li, &(ja, jb, max_dist)) in links.iter().enumerate() {
+            let xa = [
+                x[off_led + 3 * ja],
+                x[off_led + 3 * ja + 1],
+                x[off_led + 3 * ja + 2],
+            ];
+            let xb = [
+                x[off_led + 3 * jb],
+                x[off_led + 3 * jb + 1],
+                x[off_led + 3 * jb + 2],
+            ];
+            let excess = norm(sub(xa, xb)) - max_dist;
+            out[n_res_base + li] = if excess > 0.0 {
+                excess / chain_sigma
+            } else {
+                0.0
+            };
         }
 
         // Snapshot for progress reporting.

@@ -19,7 +19,8 @@ JSON in, JSON out — both carriers stay trivial:
 ```text
 stdin/solve_json  {detections, imu, ledCount, mapId, createdAt,
                    options{maxKeyframes, maxNfev, pxSigma, rejectOutliers,
-                           outlierSigma, minViews}}
+                           outlierSigma, minViews,
+                           stripPrior, stripSpacingM, stripTolerance}}
 stdout/return     §7.5 OutputMap JSON
 stderr/progress   solve_status-shaped snapshots (JSON per line / JS callback)
 ```
@@ -52,6 +53,35 @@ Intentionally not ported: `refine_intrinsics` (never enabled in production —
 a floating focal is a scale-drift channel; calibration studies keep the
 Python solver, which also remains the automatic fallback when the binary is
 missing from runfiles).
+
+## Strip prior (`options.stripPrior`, off by default)
+
+Most fixtures are a strip, rope or string wired in id order, so LED `i` and
+LED `i + k` are at most `k` pitches apart. Diffuse capture needs this most:
+striding cuts each LED's observation rate N×, and bloomed blobs give poor ray
+vergence. `src/strip.rs` adds, after the outlier-rejection loop:
+
+1. **Pitch estimate** — median distance between consecutive mapped ids
+   (confident pairs preferred; `stripSpacingM` overrides).
+2. **Rope constraint** — a second VI-BA pass, warm-started, with one one-sided
+   residual per consecutive mapped pair: zero within `gap · pitch · (1 +
+stripTolerance)`, linear past it (a pitch of overshoot ≈ a 20σ pixel
+   error). LEDs already off the chain are left out of the rope so their
+   observations can't drag their neighbours, and a far jump between two LEDs
+   that each agree with their other neighbour is a **break** (a jumper between
+   strip segments, a raster row wrap) and is not linked.
+3. **Demote + fill** — at assembly, an LED still too far from both
+   neighbours (while they agree) is dropped, and every interior run of
+   unmapped ids is placed on the straight segment between its mapped
+   neighbours at equal spacing. End runs stay unmapped. Placed LEDs are
+   emitted as ordinary entries with `nViews = 0, confidence = 0` (the web app's
+   `geom/inferred.ts` keys on that), so any real measurement outranks them.
+
+Rust-only: the Python reference doesn't implement it, and with the option off
+(the default) the solve is unchanged, so `rust_parity_test` is unaffected. The
+phone enables it on final solves from Settings ▸ Capture ▸ Strip prior; the
+host-solve path doesn't carry the option yet (`stop_mapping` has no field for
+it), so host-placed solves run without it.
 
 ## Build / test
 

@@ -14,6 +14,7 @@ pub mod pipeline;
 pub mod quat;
 pub mod so3;
 pub mod sparse;
+pub mod strip;
 pub mod synth;
 pub mod types;
 pub mod vio;

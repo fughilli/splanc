@@ -31,6 +31,10 @@ const DIFFUSE_ENABLED_KEY = "ledmapper.diffuseCapture";
  * gain, detection threshold, downscale, flip-V). Surfaced in Behavior Settings;
  * per-device stride lives on the device record instead. URL params override. */
 const DIFFUSE_PARAMS_KEY = "ledmapper.diffuseParams";
+/** Whether final solves apply the strip prior (solver/src/strip.rs). On by
+ * default — most fixtures are a strip, rope or string wired in id order — so
+ * only the opt-OUT is stored. */
+const STRIP_PRIOR_OFF_KEY = "ledmapper.stripPriorOff";
 /** Default manual-exposure ceiling (ms) — generous headroom over a typical
  * Nyquist cap so a well-lit frame is reachable without changing the setting. */
 // LEDs are bright: even in a naturally lit room the useful manual range tops out
@@ -204,6 +208,22 @@ export const prefs = {
   /** Merge a partial update into the stored diffuse params (re-clamped on read). */
   setDiffuseParams(patch: Partial<DiffuseCaptureParams>): void {
     writeJson(DIFFUSE_PARAMS_KEY, { ...this.getDiffuseParams(), ...patch });
+  },
+  /** Whether final solves apply the strip prior (default on). */
+  getStripPrior(): boolean {
+    try {
+      return localStorage.getItem(STRIP_PRIOR_OFF_KEY) !== "1";
+    } catch {
+      return true;
+    }
+  },
+  setStripPrior(on: boolean): void {
+    try {
+      if (on) localStorage.removeItem(STRIP_PRIOR_OFF_KEY);
+      else localStorage.setItem(STRIP_PRIOR_OFF_KEY, "1");
+    } catch {
+      /* non-fatal */
+    }
   },
   /** Reset the diffuse capture-engine params to their defaults. */
   resetDiffuseParams(): void {

@@ -10,6 +10,7 @@ use crate::linalg::{
     add, cross, dot, mat_vec, norm, normalize, scale, solve3_spd, sub, Mat3, Vec3, EYE3, ZERO3,
 };
 use crate::quat::{back_project_dir, quat_to_rotmat};
+use crate::strip;
 use crate::types::{LedEntry, OutputMap, OutputMapStats, Problem, ProgressLed, ProgressSnapshot};
 use crate::vio::{solve_vio, FrameObservations, ProgressFn, SolveOptions, VioResult};
 
@@ -359,6 +360,81 @@ fn confidence(parallax_deg: f64, n_views: usize, rms_px: f64) -> f64 {
     (par_score * (0.4 + 0.6 * rms_score) * (0.5 + 0.5 * view_score)).clamp(0.0, 1.0)
 }
 
+/// Per-LED view count, reprojection rms (px) and max parallax (deg) against a
+/// solved state (observations behind the camera don't count as views).
+struct LedQuality {
+    views: usize,
+    rms: f64,
+    parallax: f64,
+}
+
+fn led_quality(frames: &[FrameObservations], result: &VioResult) -> BTreeMap<u32, LedQuality> {
+    let mut sq_err: BTreeMap<u32, Vec<f64>> = BTreeMap::new();
+    let mut dirs: BTreeMap<u32, Vec<Vec3>> = BTreeMap::new();
+    for (fi, fr) in frames.iter().enumerate() {
+        let r = quat_to_rotmat(result.quats[fi]);
+        let p = result.positions[fi];
+        for &(led, u, v) in &fr.obs {
+            let x = match result.led_pos(led) {
+                Some(x) => x,
+                None => continue,
+            };
+            let (uu, vv, depth) = project(&r, p, fr.k, x);
+            if depth <= 1e-6 {
+                continue;
+            }
+            sq_err
+                .entry(led)
+                .or_default()
+                .push((uu - u).powi(2) + (vv - v).powi(2));
+            dirs.entry(led).or_default().push(normalize(sub(x, p)));
+        }
+    }
+    sq_err
+        .into_iter()
+        .map(|(led, errs)| {
+            let q = LedQuality {
+                views: errs.len(),
+                rms: (errs.iter().sum::<f64>() / errs.len() as f64).sqrt(),
+                parallax: max_parallax_deg(&dirs[&led]),
+            };
+            (led, q)
+        })
+        .collect()
+}
+
+/// Rope stiffness for the strip prior, in pitches per unit residual: a link
+/// overshooting its bound by a full pitch costs as much as a 20σ pixel error,
+/// so a misplaced LED is pulled back to its neighbours while well-observed
+/// geometry (which already satisfies the bound) feels nothing.
+const CHAIN_SIGMA_PITCH: f64 = 0.05;
+/// Confidence at which an LED counts as solidly solved for the strip prior
+/// (spacing estimate, break detection).
+const STRIP_CONFIDENT: f64 = 0.5;
+
+/// The strip prior's view of a solved state: output-eligible LEDs (sorted
+/// ids), their positions, and whether each is confidently solved.
+fn strip_inputs(
+    frames: &[FrameObservations],
+    result: &VioResult,
+    min_views: usize,
+) -> (Vec<u32>, Vec<Vec3>, Vec<bool>) {
+    let quality = led_quality(frames, result);
+    let mut ids = Vec::new();
+    let mut pos = Vec::new();
+    let mut conf = Vec::new();
+    for (idx, &led) in result.led_ids.iter().enumerate() {
+        if let Some(q) = quality.get(&led) {
+            if q.views >= min_views {
+                ids.push(led);
+                pos.push(result.led_positions[idx]);
+                conf.push(confidence(q.parallax, q.views, q.rms) >= STRIP_CONFIDENT);
+            }
+        }
+    }
+    (ids, pos, conf)
+}
+
 /// Rotation leveling the estimated gravity onto -Y.
 fn gravity_level_rot(g: Vec3) -> Mat3 {
     let gn = scale(g, 1.0 / (norm(g) + 1e-12));
@@ -495,63 +571,111 @@ pub fn reconstruct_vio(
         }
     }
 
-    // Gravity leveling + per-LED quality (view count, rms, parallax).
-    let rot = gravity_level_rot(result.gravity);
-    let mut n_views: BTreeMap<u32, usize> = BTreeMap::new();
-    let mut sq_err: BTreeMap<u32, Vec<f64>> = BTreeMap::new();
-    let mut dirs: BTreeMap<u32, Vec<Vec3>> = BTreeMap::new();
-    for (fi, fr) in frames.iter().enumerate() {
-        let r = quat_to_rotmat(result.quats[fi]);
-        let p = result.positions[fi];
-        for &(led, u, v) in &fr.obs {
-            let x = match result.led_pos(led) {
-                Some(x) => x,
-                None => continue,
-            };
-            let (uu, vv, depth) = project(&r, p, fr.k, x);
-            if depth <= 1e-6 {
-                continue;
+    // Strip prior (strip.rs): estimate the pitch from the unconstrained
+    // solve, then re-solve with rope links between consecutive mapped LEDs,
+    // warm-started from the best state. The gap fill happens at assembly.
+    let strip_tol = opts.strip_tolerance.max(0.0);
+    let known_spacing = opts.strip_spacing_m.filter(|s| s.is_finite() && *s > 0.0);
+    let mut strip_ctx: Option<(f64, Vec<(u32, u32)>)> = None;
+    if opts.strip_prior {
+        let (ids, pos, conf) = strip_inputs(&frames, &result, opts.min_views);
+        if let Some(spacing) = known_spacing.or_else(|| strip::estimate_spacing(&ids, &pos, &conf))
+        {
+            // LEDs already off the chain (a decode swap, a bad triangulation)
+            // stay out of the rope: their consistent-but-wrong observations
+            // would otherwise drag their neighbours (and through them the
+            // poses). Their neighbours link across them instead; they are
+            // demoted at assembly if they still don't fit.
+            let (_links, breaks) = strip::chain_links(&ids, &pos, &conf, spacing, strip_tol);
+            let off_chain = strip::chain_outliers(&ids, &pos, spacing, strip_tol, &breaks);
+            let keep: Vec<usize> = (0..ids.len())
+                .filter(|&w| !off_chain.contains(&ids[w]))
+                .collect();
+            let (ids, pos, conf): (Vec<u32>, Vec<Vec3>, Vec<bool>) = (
+                keep.iter().map(|&w| ids[w]).collect(),
+                keep.iter().map(|&w| pos[w]).collect(),
+                keep.iter().map(|&w| conf[w]).collect(),
+            );
+            let (links, _breaks) = strip::chain_links(&ids, &pos, &conf, spacing, strip_tol);
+            if !links.is_empty() {
+                let chain_opts = SolveOptions {
+                    max_nfev: (opts.max_nfev / 2).max(30),
+                    ftol: 1e-5,
+                    chain: links.iter().map(|l| (l.a, l.b, l.max_dist)).collect(),
+                    chain_sigma: CHAIN_SIGMA_PITCH * spacing,
+                    ..solve_opts.clone()
+                };
+                result = solve_vio(&frames, &imu, &chain_opts, Some(&result), prog!());
             }
-            sq_err
-                .entry(led)
-                .or_default()
-                .push((uu - u).powi(2) + (vv - v).powi(2));
-            *n_views.entry(led).or_insert(0) += 1;
-            let ray = normalize(sub(x, p));
-            dirs.entry(led).or_default().push(ray);
+            // Re-measure on the constrained state: the solve's a-posteriori
+            // metric re-anchor may have rescaled it.
+            let (ids, pos, conf) = strip_inputs(&frames, &result, opts.min_views);
+            let spacing = known_spacing
+                .or_else(|| strip::estimate_spacing(&ids, &pos, &conf))
+                .unwrap_or(spacing);
+            let (_links, breaks) = strip::chain_links(&ids, &pos, &conf, spacing, strip_tol);
+            strip_ctx = Some((spacing, breaks));
         }
     }
 
+    // Gravity leveling + per-LED quality (view count, rms, parallax).
+    let rot = gravity_level_rot(result.gravity);
+    let quality = led_quality(&frames, &result);
+
     let mut entries: Vec<LedEntry> = Vec::new();
-    let mut parallaxes: Vec<f64> = Vec::new();
-    let mut solved_ids: Vec<u32> = Vec::new();
     for (idx, &led) in result.led_ids.iter().enumerate() {
-        let views = n_views.get(&led).copied().unwrap_or(0);
-        if views < opts.min_views {
-            continue;
-        }
-        let errs = &sq_err[&led];
-        let rms = (errs.iter().sum::<f64>() / errs.len() as f64).sqrt();
-        let par = max_parallax_deg(&dirs[&led]);
-        parallaxes.push(par);
-        solved_ids.push(led);
+        let q = match quality.get(&led) {
+            Some(q) if q.views >= opts.min_views => q,
+            _ => continue,
+        };
         let xyz = mat_vec(&rot, result.led_positions[idx]);
         entries.push(LedEntry {
             id: led,
             xyz,
-            confidence: confidence(par, views, rms),
-            n_views: views,
-            rms_reproj_px: rms,
-            parallax_deg: par,
+            confidence: confidence(q.parallax, q.views, q.rms),
+            n_views: q.views,
+            rms_reproj_px: q.rms,
+            parallax_deg: q.parallax,
         });
     }
 
     let led_count = problem
         .led_count
         .unwrap_or_else(|| result.led_ids.iter().max().map(|m| m + 1).unwrap_or(0));
-    let unmapped: Vec<u32> = (0..led_count)
-        .filter(|id| !solved_ids.contains(id))
+
+    // Strip prior, output side: demote LEDs that still break the chain, then
+    // place interior unmapped runs on the segment between their mapped
+    // neighbours. Placed LEDs carry nViews = 0 / confidence = 0 — measured by
+    // nothing, so any real observation (a supplemental scan) outranks them.
+    if let Some((spacing, breaks)) = &strip_ctx {
+        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
+        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
+        let demoted = strip::chain_outliers(&ids, &pos, *spacing, strip_tol, breaks);
+        entries.retain(|e| !demoted.contains(&e.id));
+        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
+        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
+        for (id, xyz) in strip::fill_gaps(&ids, &pos, *spacing, strip_tol, breaks) {
+            if id < led_count {
+                entries.push(LedEntry {
+                    id,
+                    xyz,
+                    confidence: 0.0,
+                    n_views: 0,
+                    rms_reproj_px: 0.0,
+                    parallax_deg: 0.0,
+                });
+            }
+        }
+        entries.sort_by_key(|e| e.id);
+    }
+
+    let parallaxes: Vec<f64> = entries
+        .iter()
+        .filter(|e| e.n_views > 0)
+        .map(|e| e.parallax_deg)
         .collect();
+    let placed: std::collections::BTreeSet<u32> = entries.iter().map(|e| e.id).collect();
+    let unmapped: Vec<u32> = (0..led_count).filter(|id| !placed.contains(id)).collect();
     let leveled_traj: Vec<Vec3> = result.positions.iter().map(|p| mat_vec(&rot, *p)).collect();
 
     Ok(OutputMap {
@@ -663,6 +787,251 @@ mod tests {
         xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let span = xs.last().unwrap() - xs.first().unwrap();
         assert!(span > 0.3, "x span {span:.3} m — metric scale collapsed?");
+    }
+
+    /// A coiled strip captured the way diffuse mode sees it: bloomed blobs
+    /// (2 px noise), striding (each LED in ~10% of frames), a run of LEDs
+    /// never decoded, an LED seen once, and a decode swap that puts LED 50's
+    /// observations at LED 12's spot. Returns (truth, problem).
+    fn hostile_strip_problem(seed: u64) -> (Vec<Vec3>, Problem) {
+        use crate::synth::{synth_frames, synth_imu, Rng};
+        let n = 60usize;
+        let (r, rise_per_turn, pitch) = (0.15, 0.08, 0.05);
+        let arc_per_turn = (std::f64::consts::TAU * r).hypot(rise_per_turn);
+        let truth: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let th = std::f64::consts::TAU * (i as f64 * pitch) / arc_per_turn;
+                [
+                    r * th.cos(),
+                    rise_per_turn * th / std::f64::consts::TAU - 0.12,
+                    r * th.sin(),
+                ]
+            })
+            .collect();
+        let mut observed = truth.clone();
+        observed[50] = truth[12]; // decode swap
+        let mut rng = Rng::new(seed);
+        let duration = 8.0;
+        let imu_samples = synth_imu(duration, true, &mut rng);
+        let frames = synth_frames(&observed, duration, 2.0, 0.85, &mut rng);
+        let mut seen_once = false;
+        let detections: Vec<DetectionRecordWire> = frames
+            .iter()
+            .flat_map(|fr| {
+                fr.obs
+                    .iter()
+                    .filter(|&&(led, _, _)| !(20..=22).contains(&led) && led != 41)
+                    .filter(|&&(led, _, _)| led != 33 || !std::mem::replace(&mut seen_once, true))
+                    .map(|&(led, u, v)| DetectionRecordWire {
+                        led_id: led,
+                        u,
+                        v,
+                        k: fr.k,
+                        t_capture_ms: fr.t * 1000.0,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let imu: Vec<ImuSampleWire> = imu_samples
+            .iter()
+            .map(|s| ImuSampleWire {
+                t: s.t * 1000.0,
+                gyro: s.gyro,
+                accel: s.accel,
+            })
+            .collect();
+        let problem = Problem {
+            detections,
+            imu,
+            led_count: Some(n as u32),
+            map_id: Some("strip-test".into()),
+            created_at: Some("2026-10-17T00:00:00Z".into()),
+            options: ProblemOptions::default(),
+        };
+        (truth, problem)
+    }
+
+    /// Per-LED error (m) of `map` against `truth`, after a similarity fit on
+    /// the measured LEDs other than the swapped one.
+    fn errors_vs_truth(map: &OutputMap, truth: &[Vec3]) -> BTreeMap<u32, f64> {
+        let fit: Vec<&LedEntry> = map
+            .leds
+            .iter()
+            .filter(|l| l.n_views > 0 && l.id != 50)
+            .collect();
+        let est: Vec<Vec3> = fit.iter().map(|l| l.xyz).collect();
+        let tru: Vec<Vec3> = fit.iter().map(|l| truth[l.id as usize]).collect();
+        let (s, r, t) = crate::vio::similarity_align(&est, &tru);
+        map.leds
+            .iter()
+            .map(|l| {
+                (
+                    l.id,
+                    norm(sub(
+                        add(mat_vec(&r, scale(l.xyz, s)), t),
+                        truth[l.id as usize],
+                    )),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn strip_prior_repairs_a_sparse_noisy_strip() {
+        // One seed keeps this affordable in fastbuild (~10× slower than opt);
+        // seeds 1–12 all pass, with the prior's measured-LED rms at or below
+        // the plain solve's on every one.
+        check_strip_prior_on_hostile_strip(4);
+    }
+
+    fn check_strip_prior_on_hostile_strip(seed: u64) {
+        let (truth, problem) = hostile_strip_problem(seed);
+        let pitch = 0.05;
+
+        let plain = reconstruct_vio(&problem, None).unwrap();
+        let mut with_prior = problem.clone();
+        with_prior.options.strip_prior = true;
+        let strip_map = reconstruct_vio(&with_prior, None).unwrap();
+
+        let e_plain = errors_vs_truth(&plain, &truth);
+        let e_strip = errors_vs_truth(&strip_map, &truth);
+        let rms = |m: &OutputMap, e: &BTreeMap<u32, f64>| {
+            let v: Vec<f64> = m
+                .leds
+                .iter()
+                .filter(|l| l.n_views > 0 && l.id != 50)
+                .map(|l| e[&l.id])
+                .collect();
+            (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt()
+        };
+        eprintln!(
+            "strip prior (seed {seed}): plain {} mapped, rms {:.1} mm, unmapped {:?}, led50 err {:.0} mm",
+            plain.leds.len(),
+            rms(&plain, &e_plain) * 1000.0,
+            plain.unmapped,
+            e_plain.get(&50).copied().unwrap_or(f64::NAN) * 1000.0
+        );
+        eprintln!(
+            "strip prior: prior {} placed ({} inferred), rms {:.1} mm, unmapped {:?}, led50 err {:.0} mm",
+            strip_map.leds.len(),
+            strip_map.leds.iter().filter(|l| l.n_views == 0).count(),
+            rms(&strip_map, &e_strip) * 1000.0,
+            strip_map.unmapped,
+            e_strip[&50] * 1000.0
+        );
+        for id in [20u32, 21, 22, 33, 41, 50] {
+            eprintln!(
+                "  led {id}: err {:.1} mm",
+                e_strip.get(&id).copied().unwrap_or(f64::NAN) * 1000.0
+            );
+        }
+
+        // Without the prior, the swap lands LED 50 across the coil and the
+        // undecoded LEDs are simply missing.
+        assert!(
+            e_plain[&50] > 3.0 * pitch,
+            "plain led50 err {}",
+            e_plain[&50]
+        );
+        for id in [20u32, 21, 22, 33, 41] {
+            assert!(plain.unmapped.contains(&id), "plain should not map {id}");
+        }
+
+        // With it: LED 50 is demoted and re-placed between its neighbours, the
+        // undecoded run, the lone LED and the once-seen LED are placed on their
+        // segments, and nothing interior is left unmapped.
+        let placed: Vec<u32> = strip_map.leds.iter().map(|l| l.id).collect();
+        let first = *placed.first().unwrap();
+        let last = *placed.last().unwrap();
+        assert!(
+            (first..=last).all(|id| placed.contains(&id)),
+            "interior gap: {:?}",
+            strip_map.unmapped
+        );
+        assert!(e_strip[&50] < pitch, "led50 err {}", e_strip[&50]);
+        for id in [20u32, 21, 22, 33, 41] {
+            let l = strip_map.leds.iter().find(|l| l.id == id).unwrap();
+            assert_eq!(
+                (l.n_views, l.confidence),
+                (0, 0.0),
+                "led {id} should be inferred"
+            );
+            assert!(e_strip[&id] < pitch, "led {id} err {}", e_strip[&id]);
+        }
+        let led50 = strip_map.leds.iter().find(|l| l.id == 50).unwrap();
+        assert_eq!(
+            led50.n_views, 0,
+            "the swapped LED should be demoted + re-placed"
+        );
+        // ...and the rope does not cost the measured LEDs any accuracy.
+        assert!(
+            rms(&strip_map, &e_strip) <= rms(&plain, &e_plain) * 1.05 + 1e-3,
+            "measured rms {} vs {}",
+            rms(&strip_map, &e_strip),
+            rms(&plain, &e_plain)
+        );
+        assert_eq!(strip_map.led_count, 60);
+        assert_eq!(strip_map.leds.len() + strip_map.unmapped.len(), 60);
+    }
+
+    /// A raster-wired wall (row-major ids, no serpentine): every row wrap is a
+    /// ~5-pitch jump between two well-solved LEDs. The prior must read those as
+    /// breaks — no rope across them, nothing demoted, nothing inferred.
+    #[test]
+    fn strip_prior_treats_raster_row_wraps_as_breaks() {
+        let mut rng = crate::synth::Rng::new(3);
+        let leds = crate::synth::wall_leds(6, 6, 0.12);
+        let imu_samples = crate::synth::synth_imu(10.0, true, &mut rng);
+        let frames = crate::synth::synth_frames(&leds, 10.0, 0.3, 0.05, &mut rng);
+        let detections: Vec<DetectionRecordWire> = frames
+            .iter()
+            .flat_map(|fr| {
+                fr.obs.iter().map(|&(led, u, v)| DetectionRecordWire {
+                    led_id: led,
+                    u,
+                    v,
+                    k: fr.k,
+                    t_capture_ms: fr.t * 1000.0,
+                })
+            })
+            .collect();
+        let imu: Vec<ImuSampleWire> = imu_samples
+            .iter()
+            .map(|s| ImuSampleWire {
+                t: s.t * 1000.0,
+                gyro: s.gyro,
+                accel: s.accel,
+            })
+            .collect();
+        let mut problem = Problem {
+            detections,
+            imu,
+            led_count: Some(36),
+            map_id: None,
+            created_at: None,
+            options: ProblemOptions::default(),
+        };
+        problem.options.strip_prior = true;
+        let map = reconstruct_vio(&problem, None).unwrap();
+        assert_eq!(map.leds.len(), 36);
+        assert!(
+            map.leds.iter().all(|l| l.n_views > 0),
+            "nothing should be inferred"
+        );
+        let err = errors_vs_truth(&map, &leds);
+        let rms = (err.values().map(|e| e * e).sum::<f64>() / err.len() as f64).sqrt();
+        assert!(rms < 0.002, "wall rms {} mm", rms * 1000.0);
+    }
+
+    #[test]
+    fn strip_prior_options_parse_from_the_wire() {
+        let o: ProblemOptions =
+            serde_json::from_str(r#"{"stripPrior": true, "stripSpacingM": 0.0166667}"#).unwrap();
+        assert!(o.strip_prior);
+        assert_eq!(o.strip_spacing_m, Some(0.0166667));
+        assert_eq!(o.strip_tolerance, 0.25);
+        let d: ProblemOptions = serde_json::from_str("{}").unwrap();
+        assert!(!d.strip_prior && d.strip_spacing_m.is_none());
     }
 
     /// End-to-end wire test on the synthetic scene (mirrors

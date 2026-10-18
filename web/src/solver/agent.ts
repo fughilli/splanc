@@ -29,6 +29,15 @@ export interface SolveProblem {
     maxNfev?: number;
     rejectOutliers?: boolean;
     minViews?: number;
+    /** Strip prior (solver/src/strip.rs): ids are wired in order, so
+     * consecutive LEDs are pinned within one pitch, chain-breaking LEDs are
+     * demoted, and interior unmapped runs are placed between their neighbours
+     * (emitted with nViews = 0, confidence = 0 — see geom/inferred). */
+    stripPrior?: boolean;
+    /** Known LED pitch, meters (unset = estimated from the solve). */
+    stripSpacingM?: number;
+    /** Fractional slack on the pitch bound (default 0.25). */
+    stripTolerance?: number;
   };
 }
 
