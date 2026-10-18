@@ -1529,8 +1529,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:ios_journeys",
-      "message": "//pi/hitl/phone:ios_journeys pi/hitl/phone/ios_journeys error and traces to no requirement",
+      "entity": "//pi/hitl/phone:android_journeys",
+      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
       "route": "autonomous"
     },
     {
