@@ -752,6 +752,7 @@ py_binary(
         "hitl_ram_audit.py",
     ],
     data = [
+        "hang_watch.tcl",
         "ram_watch.tcl",
         ":esp32c6_netstack_elf",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
