@@ -430,18 +430,26 @@ message UniformValue {
 
 // Upload a compiled effect: `.fxb` = bytecode + embedded uniform manifest.
 // Stored to LittleFS keyed by `effect_id`, like submit_map. Set `activate` to
-// make it the active effect on receipt. Reply: result_ready (id=effect_id) or
+// make it the active effect on receipt. `deck` selects which of the two
+// concurrent FX decks it loads onto (0 = A, the default and the only persisted
+// deck; 1 = B) so the app can cue two effects and crossfade between them
+// (docs/design/uniform-keypoints.md). Reply: result_ready (id=effect_id) or
 // error (`effect_too_large`, `bad_fxb`).
 message SubmitEffect {
   string effect_id = 1;
   bytes fxb = 2;
   bool activate = 3;
+  // FX deck to load onto: 0 = A (default), 1 = B. See SetCrossfade.
+  uint32 deck = 4;
 }
 
 // Select the active effect by id. "" or "off" clears it (back to the built-in
-// idle/playback). Reply: playback_state.
+// idle/playback). `deck` targets deck A (0, default) or B (1); "" on a deck
+// parks that deck without disturbing the other. Reply: playback_state.
 message SetEffect {
   string effect_id = 1;
+  // FX deck to target: 0 = A (default), 1 = B.
+  uint32 deck = 2;
 }
 
 // Set live uniform values on the active effect (slider drags). Coalesced and
@@ -453,11 +461,14 @@ message SetUniforms {
   // updates and commits once at the end, so a slider drag doesn't wear the flash.
   // Mirrors SetColorCorrection.commit.
   optional bool commit = 2;
+  // FX deck whose uniforms to set: 0 = A (default), 1 = B. Deck B is never
+  // persisted (commit is ignored there).
+  uint32 deck = 3;
 }
 
-// List the effects the device stores. The firmware holds ONE effect slot (the
-// last submit_effect, persisted and auto-resumed on boot), so the reply has at most
-// one entry. Reply: effect_list.
+// List the effects the device holds: one per FX deck (deck A's is the last
+// submit_effect, persisted and auto-resumed on boot; deck B's is runtime-only),
+// so the reply has at most two entries. Reply: effect_list.
 message ListEffects {}
 
 message StoredEffect {
@@ -466,6 +477,8 @@ message StoredEffect {
   uint32 fxb_bytes = 2;
   // Whether it is the active (rendering) effect.
   bool active = 3;
+  // The FX deck it is loaded on (0 = A, 1 = B).
+  uint32 deck = 4;
 }
 
 message EffectList {
@@ -516,6 +529,88 @@ message SetTimeBase {
 // `no_effect`).
 message GetEffectUniforms {
   optional string effect_id = 1;
+  // FX deck to describe: 0 = A (default), 1 = B.
+  uint32 deck = 2;
+}
+
+// Global FX crossfade. The device runs two effect decks (A and B) concurrently
+// and blends their per-LED output. `position` is 0.0 (all deck A) .. 1.0 (all
+// deck B); `mode` selects the colour space of the blend: 0 = linear RGB, 1 =
+// linear HSV (shortest-hue path). Runtime-only, echoed in `welcome` for UI
+// hydration. Reply: welcome.
+message SetCrossfade {
+  double position = 1;
+  // 0 = linear RGB, 1 = linear HSV.
+  uint32 mode = 2;
+}
+
+// -- Uniform keypoints (docs/design/uniform-keypoints.md) --------------------
+// A keypoint is a NAMED set of uniform values for one effect, stored on the
+// device (littlefs) under the effect's id, so the app and agents share it.
+// Values are kept by uniform NAME, so a recompiled effect still recalls them.
+// Bounds: 16 keypoints per effect, names <= 32 bytes, <= 32 uniforms / 64 floats
+// per keypoint.
+
+// One stored value: a uniform by name + its 1..4 floats.
+message KeypointValue {
+  string uniform = 1;
+  repeated float value = 2 [packed = true];
+}
+
+// Save (or overwrite, by name) a keypoint for the effect loaded on `deck`.
+// Empty `values` = the deck's current live uniforms; otherwise the slot-addressed
+// values (as in set_uniforms) are resolved to names via the deck's manifest.
+// Reply: keypoint_list (or error `no_effect`, `keypoint_full`,
+// `too_many_uniforms`, `bad_keypoint`).
+message SaveKeypoint {
+  uint32 deck = 1;
+  string name = 2;
+  repeated UniformValue values = 3;
+}
+
+// Delete a keypoint by name. `effect_id` unset = the effect on `deck`.
+// Reply: keypoint_list.
+message DeleteKeypoint {
+  uint32 deck = 1;
+  string name = 2;
+  optional string effect_id = 3;
+}
+
+// List an effect's keypoints. `effect_id` unset = the effect on `deck`.
+// Reply: keypoint_list.
+message ListKeypoints {
+  uint32 deck = 1;
+  optional string effect_id = 2;
+}
+
+// Read one keypoint's values. Reply: keypoint (or error `no_keypoint`).
+message GetKeypoint {
+  uint32 deck = 1;
+  string name = 2;
+  optional string effect_id = 3;
+}
+
+message KeypointWeight {
+  string name = 1;
+  float weight = 2;
+}
+
+// Move a deck's uniforms to a weighted blend of its effect's keypoints, in
+// parameter space, on the device. One weight = recall. Weights are normalised;
+// at most 4 keypoints. `seconds` > 0 morphs there from the current values
+// (smoothstep, per frame); 0 applies at once (fader / MIDI path; cached, no flash
+// read while the set of names is unchanged). Per-uniform rules follow the
+// manifest: sliders lerp (snapped to step, clamped), colours blend per
+// `color_mode` (0 linear RGB, 1 HSV shortest hue), toggles/dropdowns take the
+// heaviest keypoint's value. Live-only unless `commit` (deck A: persist the
+// blend's target like set_uniforms). A set_uniforms on the deck cancels a morph.
+// Reply: playback_state (or error `no_effect`, `no_keypoint`).
+message BlendKeypoints {
+  uint32 deck = 1;
+  repeated KeypointWeight weights = 2;
+  float seconds = 3;
+  uint32 color_mode = 4;
+  optional bool commit = 5;
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +721,12 @@ message ClientMessage {
     ListEffects list_effects = 36;
     SetFixturePose set_fixture_pose = 37;
     SetTimeBase set_time_base = 38;
+    SetCrossfade set_crossfade = 39;
+    SaveKeypoint save_keypoint = 40;
+    DeleteKeypoint delete_keypoint = 41;
+    ListKeypoints list_keypoints = 42;
+    GetKeypoint get_keypoint = 43;
+    BlendKeypoints blend_keypoints = 44;
   }
 }
 
@@ -662,8 +763,10 @@ message Welcome {
   string fw_version = 9;
   // Protocol features this firmware serves, so a client (the agent bridge) needn't
   // infer them from fw_version: "effects", "perf", "textures", "stored_map",
-  // "uniform_commit" (SetUniforms.commit), "list_effects" (ListEffects). The same list
-  // is in the /.well-known/splanc.json manifest. Empty on older firmware.
+  // "uniform_commit" (SetUniforms.commit), "list_effects" (ListEffects), "decks"
+  // (the `deck` fields), "crossfade" (SetCrossfade), "keypoints" (the *_keypoint
+  // arms). The same list is in the /.well-known/splanc.json manifest. Empty on
+  // older firmware.
   repeated string features = 10;
   // The .fxb bytecode format version the device's VM accepts (the version byte of
   // the .fxb header). 0 on older firmware (which accepts 1).
@@ -672,6 +775,11 @@ message Welcome {
   FixturePose pose = 12;
   // The active shared time base (set_time_base), device-clock ms; absent = none.
   optional int64 time_base_ms = 13;
+  // Current global FX crossfade position (0.0 .. 1.0) and mode (0 = linear RGB,
+  // 1 = linear HSV), so a client can hydrate its crossfader on connect.
+  // Runtime-only (0.0 / RGB after a reboot); unset on older firmware.
+  optional double crossfade = 14;
+  optional uint32 crossfade_mode = 15;
 }
 
 // One LED output channel's hardware config, carried in hardware_config_state.
@@ -1029,6 +1137,39 @@ message EffectUniforms {
   repeated UniformValue current = 3;
   // Declared 2D texture inputs of the active effect (empty on older firmware).
   repeated TexturePort textures = 4;
+  // FX deck this manifest describes: 0 = A (default), 1 = B.
+  uint32 deck = 5;
+}
+
+message KeypointInfo {
+  // Stable storage index (0..capacity-1).
+  uint32 index = 1;
+  string name = 2;
+  // Saved against a different build of the effect (manifest hash differs); its
+  // values still apply by uniform name.
+  bool stale = 3;
+}
+
+// Reply to save/delete/list_keypoints.
+message KeypointList {
+  string effect_id = 1;
+  uint32 deck = 2;
+  repeated KeypointInfo keypoints = 3;
+  // Max keypoints per effect (16).
+  uint32 capacity = 4;
+}
+
+// Reply to get_keypoint.
+message Keypoint {
+  string effect_id = 1;
+  uint32 index = 2;
+  string name = 3;
+  bool stale = 4;
+  // By uniform name (as stored).
+  repeated KeypointValue values = 5;
+  // The same values resolved to slots of the effect loaded on the deck (empty
+  // when the effect isn't loaded; names it no longer declares are dropped).
+  repeated UniformValue slots = 6;
 }
 
 message ServerMessage {
@@ -1054,5 +1195,7 @@ message ServerMessage {
     HardwareConfigState hardware_config_state = 19;
     ColorCorrectionState color_correction_state = 20;
     EffectList effect_list = 21;
+    KeypointList keypoint_list = 22;
+    Keypoint keypoint = 23;
   }
 }
