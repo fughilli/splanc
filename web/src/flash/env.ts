@@ -77,7 +77,7 @@ export function summarizeEnv(env: FlashEnv): EnvSummary {
     reason = "Flashing needs a secure (https) page — open the app over https and retry.";
   } else if (viaPolyfill) {
     note =
-      "On this device flashing runs over WebUSB (Android's native serial port picker only lists Bluetooth devices, not USB boards). Pick the board from the WebUSB prompt. If it doesn't appear, use a data-capable cable, tap “allow” on any Android USB permission prompt, and make sure no other app has the port open.";
+      "On this device flashing runs over WebUSB (Android's native serial port picker only lists Bluetooth devices, not USB boards). Pick the board from the WebUSB prompt. If it doesn't appear, use a data-capable cable, tap “allow” on any Android USB permission prompt, and make sure no other app has the port open. If the prompt lists the same “USB JTAG/serial debug unit” many times, pick the LAST entry: Chrome keeps stale entries from the board's earlier USB sessions (each reset re-enumerates it).";
   }
   return { ok: reason === null, reason, note, lines };
 }
