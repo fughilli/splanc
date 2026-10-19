@@ -70,6 +70,32 @@ def elf_symbol(path: str, name: str) -> int | None:
     return None
 
 
+MODE_FIELDS = (
+    "polls accepted refused refused_not_applicable refused_no_transport refused_not_joined "
+    "refused_no_effect unmodeled state last_refusal"
+).split()
+
+
+def _report_mode(log_path: str) -> None:
+    """Print the firmware's memory-mode tracker counters (LM_MODE) the watcher read."""
+    try:
+        lines = [ln for ln in open(log_path) if " LM_MODE " in ln]
+    except OSError:
+        _log("[mode] no watcher log (JTAG didn't attach); see the status line's mode= in dut0.log")
+        return
+    if not lines:
+        _log("[mode] no LM_MODE read (image without the tracker, or the watcher didn't attach)")
+        return
+    vals = [int(v, 0) for v in lines[-1].split("LM_MODE", 1)[1].split()]
+    _log(
+        "[mode] "
+        + " ".join(
+            f"{k}={v:#x}" if k in ("state", "last_refusal") else f"{k}={v}"
+            for k, v in zip(MODE_FIELDS, vals)
+        )
+    )
+
+
 def _fetch(res: Reservation, remote: str, local: str) -> bool:
     """Copy a container file back (base64 over ssh: the image has no scp-from)."""
     p = res.ssh(f"base64 -w0 {remote} 2>/dev/null", capture=True, timeout=300)
@@ -90,7 +116,7 @@ def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
     else:
         sets = (
             f'-c "set thresh {args.thresh}" -c "set step {args.step}" '
-            f'-c "set heads {args.heads:#x}" '
+            f'-c "set heads {args.heads:#x}" -c "set mode {args.mode:#x}" '
         )
         if args.census:
             sets += (
@@ -155,6 +181,8 @@ def main() -> int:
     args.census = heap_census.symbol(heap_census.elf_symbols(args.elf), "LM_HEAP_CENSUS")
     if args.census:
         _log(f"[elf] LM_HEAP_CENSUS @ {args.census[0]:#x} ({args.census[1]} B)")
+    # The memory-mode tracker's counters (0 = an image without the tracker).
+    args.mode = elf_symbol(args.elf, "LM_MODE") or 0
     # Fields hitl_loaded_tls._drive reads.
     args.effect_id, args.tex_index = "__ramaudit", 0
     args.settle, args.open_timeout, args.recover_window = (
@@ -219,6 +247,7 @@ def main() -> int:
                 with open(os.path.join(args.out, "census.md"), "w") as fh:
                     fh.write(heap_census.render(census, sym))
                 _log(f"[census] {os.path.join(args.out, 'census.md')}")
+            _report_mode(os.path.join(args.out, "log.txt"))
         finally:
             res.release()
 
