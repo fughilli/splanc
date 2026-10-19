@@ -1501,6 +1501,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             ? `Saved ${map.leds.length} LEDs`
             : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
         );
+        // Solver quality warnings (e.g. a metric scale the capture motion
+        // couldn't pin down): long-lived, so they're actually read.
+        for (const w of map.stats?.warnings ?? []) toast(w, { error: true, ms: 10000 });
         driverSolveResolve?.({ mapId: id, ledCount: lastLedCount, solved: map.leds.length });
         driverSolveResolve = null;
         driverSolveReject = null;

@@ -29,12 +29,16 @@ rust_library(
 )
 
 # One JUnit case per libtest test (rr_rust_test runs :solver_test_bin).
+# Optimized even under fastbuild: the synthetic end-to-end solves (minute-long
+# coil captures, dwell-and-hop sessions) take minutes unoptimized and blew
+# CI's 300 s timeout; at opt-level 2 the whole suite runs in seconds.
 rr_rust_test(
     name = "solver_test",
     crate = ":solver",
     data = ["testdata/ios_capture.json"],
     edition = "2021",
     rule = rust_test,
+    rustc_flags = ["-Copt-level=2"],
 )
 
 rust_binary(

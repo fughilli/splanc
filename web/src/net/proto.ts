@@ -177,6 +177,9 @@ function trajectoryFromProto(value: unknown): unknown {
   if (value !== null && typeof value === "object") {
     const out: Json = {};
     for (const [k, v] of Object.entries(value as Json)) {
+      // OutputMapStats.warnings is optional in the flat types; alwaysEmitImplicit
+      // would otherwise surface every warning-free map as `warnings: []`.
+      if (k === "warnings" && Array.isArray(v) && v.length === 0) continue;
       out[k] =
         VEC3_LIST_KEYS.has(k) && Array.isArray(v)
           ? v.map((p) => (p as { v?: number[] }).v ?? [])

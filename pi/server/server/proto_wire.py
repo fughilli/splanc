@@ -62,6 +62,10 @@ def _trajectory_from_proto(value: Any) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
+            # OutputMapStats.warnings is optional in the flat schema; the
+            # always-print option would otherwise add `warnings: []` to every map.
+            if k == "warnings" and v == []:
+                continue
             if k in _VEC3_LIST_KEYS and isinstance(v, list):
                 out[k] = [p.get("v", []) for p in v]
             else:

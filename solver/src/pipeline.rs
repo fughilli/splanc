@@ -408,6 +408,61 @@ fn led_quality(frames: &[FrameObservations], result: &VioResult) -> BTreeMap<u32
 /// so a misplaced LED is pulled back to its neighbours while well-observed
 /// geometry (which already satisfies the bound) feels nothing.
 const CHAIN_SIGMA_PITCH: f64 = 0.05;
+
+/// Scale relative standard error above which the map is flagged as having a
+/// weakly determined metric scale. Well-excited synthetic captures sit at
+/// ≤ 0.05; gentle ones (whose size came out 15-40% off) at 0.07-0.25, and
+/// the near-static ones that collapsed to a fraction of true size at 0.5+.
+const SCALE_REL_SE_WARN: f64 = 0.1;
+
+/// Median camera-to-fixture distance below which the solved scale is
+/// implausible: nobody maps a whole fixture from closer than this, so a
+/// path this close means the metric scale collapsed (the coil-lamp scan
+/// that came out 8.6x small had its camera path ~9 cm from the fixture).
+const MIN_PLAUSIBLE_CAMERA_DIST_M: f64 = 0.15;
+
+/// Solve-quality warnings about the metric scale. Shape is unaffected by
+/// either condition (reprojection is scale-invariant); size is what's wrong.
+fn scale_warnings(scale_rel_se: f64, median_camera_dist_m: Option<f64>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(d) = median_camera_dist_m.filter(|d| d.is_finite()) {
+        if d < MIN_PLAUSIBLE_CAMERA_DIST_M {
+            out.push(format!(
+                "The solved camera path is only {:.0} cm from the fixture, which is \
+                 implausibly close: the map's size has probably collapsed (its shape \
+                 may still be right). Re-capture with more phone movement, or rescale \
+                 the map.",
+                d * 100.0
+            ));
+        }
+    }
+    if scale_rel_se > SCALE_REL_SE_WARN {
+        let pct = if scale_rel_se.is_finite() {
+            format!(" (±{:.0}% or more)", scale_rel_se * 100.0)
+        } else {
+            String::new()
+        };
+        out.push(format!(
+            "The map's size is uncertain{pct}: the capture had too little phone \
+             motion to measure scale. Its shape is unaffected. For a reliable size, \
+             include a few brisk side-to-side and up-down sweeps when capturing."
+        ));
+    }
+    out
+}
+
+/// Median distance from the solved camera centers to the LEDs' centroid.
+fn median_camera_distance(cams: &[Vec3], leds: &[Vec3]) -> Option<f64> {
+    if cams.is_empty() || leds.is_empty() {
+        return None;
+    }
+    let c = scale(
+        leds.iter().fold(ZERO3, |a, l| add(a, *l)),
+        1.0 / leds.len() as f64,
+    );
+    let d: Vec<f64> = cams.iter().map(|p| norm(sub(*p, c))).collect();
+    Some(median(&d))
+}
 /// Confidence at which an LED counts as solidly solved for the strip prior
 /// (spacing estimate, break detection).
 const STRIP_CONFIDENT: f64 = 0.5;
@@ -677,6 +732,17 @@ pub fn reconstruct_vio(
     let placed: std::collections::BTreeSet<u32> = entries.iter().map(|e| e.id).collect();
     let unmapped: Vec<u32> = (0..led_count).filter(|id| !placed.contains(id)).collect();
     let leveled_traj: Vec<Vec3> = result.positions.iter().map(|p| mat_vec(&rot, *p)).collect();
+    let measured: Vec<Vec3> = entries
+        .iter()
+        .filter(|e| e.n_views > 0)
+        .map(|e| e.xyz)
+        .collect();
+    // Infinite = the re-anchor couldn't observe scale at all (warned below);
+    // only a finite estimate goes on the wire.
+    let warnings = scale_warnings(
+        result.scale_rel_se,
+        median_camera_distance(&leveled_traj, &measured),
+    );
 
     Ok(OutputMap {
         map_id: problem
@@ -696,6 +762,8 @@ pub fn reconstruct_vio(
         stats: OutputMapStats {
             rms_reproj_px_global: result.rms_reproj_px,
             median_parallax_deg: median(&parallaxes),
+            scale_rel_std_err: Some(result.scale_rel_se).filter(|s| s.is_finite()),
+            warnings,
         },
     })
 }
@@ -724,6 +792,19 @@ pub fn snapshot(
 mod tests {
     use super::*;
     use crate::types::{DetectionRecordWire, ImuSampleWire, ProblemOptions};
+
+    #[test]
+    fn scale_warnings_flag_collapsed_and_uncertain_scale() {
+        assert!(scale_warnings(0.02, Some(0.75)).is_empty(), "a sound solve warns nothing");
+        let close = scale_warnings(0.02, Some(0.09));
+        assert_eq!(close.len(), 1);
+        assert!(close[0].contains("9 cm"), "{}", close[0]);
+        let vague = scale_warnings(0.4, Some(0.75));
+        assert_eq!(vague.len(), 1);
+        assert!(vague[0].contains("±40%"), "{}", vague[0]);
+        assert!(!scale_warnings(f64::INFINITY, None)[0].contains('±'));
+        assert_eq!(scale_warnings(0.4, Some(0.09)).len(), 2);
+    }
 
     #[test]
     fn median_and_percentile_match_numpy_conventions() {
