@@ -1,5 +1,6 @@
 # Publish a successful main-branch Test artifact without cutting an iOS/firmware
-# release. The source, compiler/VM and worker must come from that one build.
+# release. App source and compiler/VM come from one successful build. A relay-only
+# update may replace the independent Worker after strict diff and runtime gates.
 name: Deploy tested web app
 on:
   workflow_dispatch:
@@ -8,6 +9,11 @@ on:
         description: Successful Test workflow run on main
         required: true
         type: string
+      worker_only:
+        description: Update only the relay; retain tested static app and matching WASM
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: write
   actions: read
@@ -38,6 +44,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Validate independent relay update
+        if: inputs.worker_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TESTED_SHA="$(jq -r .head_sha /tmp/run.json)"
+          git fetch --depth=1 origin "$TESTED_SHA"
+          git diff --name-only "$TESTED_SHA" HEAD > /tmp/relay-changes.txt
+          # No app, compiler, VM, native source or dependency changes may be overlaid.
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          allowed = {'web/_worker.js', 'web/tests/demoAiWorker.test.mjs',
+                     'web/tests/demoAiWorker.runtime.mjs', '.github/workflows/deploy-web.yml',
+                     'docs/design/effects-demo.md'}
+          unexpected = set(Path('/tmp/relay-changes.txt').read_text().splitlines()) - allowed
+          if unexpected:
+              raise SystemExit('Relay-only deployment rejected: ' + ', '.join(sorted(unexpected)))
+          PYCODE
+          node --test web/tests/demoAiWorker.test.mjs
+          npm install --prefix "$RUNNER_TEMP/relay-runtime" --no-save --ignore-scripts miniflare@4.20260730.0
+          MINIFLARE_MODULE="$RUNNER_TEMP/relay-runtime/node_modules/miniflare/dist/src/index.js" node web/tests/demoAiWorker.runtime.mjs
+          cp web/_worker.js _site/_worker.js
+          jq -n --arg app "$TESTED_SHA" --arg worker "$GITHUB_SHA" '{static_revision:$app,worker_revision:$worker}' > _site/worker-deployment.json
       - uses: pnpm/action-setup@v4
       - name: Deploy to Cloudflare Pages
         env:
@@ -50,6 +80,7 @@ jobs:
             pnpm dlx wrangler@4 pages deploy _site --project-name "$project" --branch main --commit-dirty=true
           done
       - name: Deploy to GitHub Pages
+        if: ${{ !inputs.worker_only }}
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: _site

@@ -125,3 +125,20 @@ BYOK access. Do not promise unlimited free AI or use a paid model silently.
 - Desktop and phone screenshots were actually viewed; the tab strip and core
   pane dimensions were corrected during review. Logs/screenshots are local-only
   under .ledmapper, not committed generated artifacts.
+
+## Relay-only operational updates
+
+The deployed browser reached OpenRouter after the redirect fix, but returned a
+429. Its shared/platform vs provider scope was not distinguishable in the old
+sanitation. Provider fallback now accepts OpenRouter's documented typed
+`rate_limited`/`rate_limit_exceeded` and explicit legacy provider error metadata.
+Exhausted platform headers or an OpenRouter limit source still stop the chain;
+ambiguous limits stop too. No key rotation or paid fallback is used.
+
+`Deploy tested web app` has an optional `worker_only` mode. It retains the entire
+successful main Test artifact, requires the diff from that artifact to contain
+only the Worker, its tests, this document and the deployment workflow, runs Node
+regressions and pinned Miniflare/workerd checks, then replaces only `_worker.js`.
+It records distinct static/worker source revisions in `worker-deployment.json`.
+The static app and its compiler/VM stay matched; GitHub Pages is not republished
+for this mode. Any app, native source or dependency change requires a full build.

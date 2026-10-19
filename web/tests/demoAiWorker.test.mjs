@@ -181,3 +181,28 @@ test('uses a Workers-compatible redirect mode and rejects every redirect without
     assert.equal(calls, 1);
   }
 });
+
+test('documented typed and legacy provider capacity errors use another model', async () => {
+  for (const metadata of [
+    {provider_name:'Example',error_type:'rate_limit_exceeded',provider_code:'rate_limited'},
+    {provider_name:'Example',provider_code:'rate_limit_exceeded'},
+    {provider_name:'Example',raw:'temporarily rate limited upstream'},
+  ]) {
+    let calls=0;
+    const relay=createDemoRelay({fetchImpl:async()=>++calls===1 ? Response.json({error:{code:429,message:'Provider returned error',metadata}},{status:429}) : success()});
+    assert.equal((await relay(req(),env)).status,200);
+    assert.equal(calls,2);
+  }
+});
+test('platform quota overrides provider metadata and never rotates models', async () => {
+  for (const extra of [
+    {headers:{'X-RateLimit-Remaining':'0','Retry-After':'300'}},
+    {limit_source:'openrouter_free_daily'},
+  ]) {
+    let calls=0;
+    const relay=createDemoRelay({fetchImpl:async()=>{calls++;return failure(429,{provider_name:'Example',provider_code:'rate_limited',...extra});}});
+    const response=await relay(req(),env);
+    assert.equal(response.status,429);assert.equal(calls,1);
+    assert.deepEqual(await response.json(),{error:{code:'rate_limited',scope:'platform'}});
+  }
+});
