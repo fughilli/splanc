@@ -81,7 +81,6 @@ rust_static_library(
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player:player_fw",
-        "//firmware/pulse",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "@crates//:micropb",
@@ -103,7 +102,6 @@ rust_library(
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player",
-        "//firmware/pulse",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
@@ -645,8 +643,6 @@ rr_rust_test(
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
-        "//shared/protocol/rust:ledmapper_pb",
-        "@crates//:micropb",
         "@rules_requirements//rust:rr",
     ],
 )

@@ -24,7 +24,7 @@ use ledmapper_fx_vm::Program;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_decode_upload_stream, lm_fx_active, lm_fx_clear, lm_fx_load, lm_fx_set_active, lm_fx_shade,
-    lm_fx_update, lm_map_led, lm_map_len, lm_perf_build_report, lm_perf_set_heap, lm_playback_step,
+    lm_fx_update, lm_map_led, lm_map_len, lm_perf_build_report, lm_perf_set_heap,
     lm_player_handle, lm_player_init, FX_TOPO_CAP,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -169,15 +169,6 @@ fn get_stored_map_head() -> pb::StoredMapChunk {
     }
 }
 
-fn set_pulse_playback() {
-    let mut params = pb::PlaybackParams::default();
-    params.set_speed(0.5);
-    let mut sp = pb::SetPlayback::default();
-    sp.r#effect = "pulse".parse().unwrap();
-    sp.set_params(params);
-    assert!(matches!(handle(&encode(CMsg::SetPlayback(sp))), Some(SMsg::PlaybackState(_))));
-}
-
 /// Records how the stream decoder pulls a "flash file" (main.cpp upload_refill).
 struct Flash<'a> {
     data: &'a [u8],
@@ -240,19 +231,16 @@ fn an_upload_past_the_storage_arena_is_refused_rolled_back_and_recoverable() {
     rr::verifies!("PR-26");
     lm_player_init(64);
     assert!(matches!(handle(&submit_map_frame("m-big", 64)), Some(SMsg::ResultReady(_))));
-    set_pulse_playback();
     // 32 segments x 64 polyline points of geometry: ~24 KiB, three times the
     // topology arena. Refused with the bounded error, never a crash/overflow.
     let too_big = topology_frame("m-big", 32, 64, 64);
     assert_eq!(error_code(handle(&too_big)), "map_too_large");
     // Rolled back: no half-stored topology is left behind to render from.
     assert!(!get_stored_map_head().r#has_topology, "no partial topology is resident");
-    assert!(!unsafe { lm_playback_step(33) }, "nothing to play without a topology");
     // The arena was reclaimed: a topology that fits is accepted right after.
     let fits = topology_frame("m-big", 4, 8, 64);
     assert!(matches!(handle(&fits), Some(SMsg::ResultReady(_))));
-    assert!(get_stored_map_head().r#has_topology);
-    assert!(unsafe { lm_playback_step(33) }, "the recovered topology plays");
+    assert!(get_stored_map_head().r#has_topology, "the recovered topology is resident");
 }
 
 /// An effect whose bytecode outgrows the player's 4 KiB effect buffer: a long

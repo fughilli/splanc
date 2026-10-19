@@ -31,13 +31,12 @@ use ledmapper_fx_vm::{
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
-use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
     decode_submit_map_streamed, decode_submit_topology_streamed, dump, envelope_arm,
     parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredTopoGeom,
     Str64, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
-use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
+use micropb::{MessageDecode, PbDecoder, PbRead};
 
 /// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
 /// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
@@ -56,10 +55,6 @@ use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
 // longer scales with the strip length.
 const ARENA_BYTES: usize = 8 * 1024;
 
-/// Reply frames are control traffic (firmware caps): welcome is the
-/// largest at a few hundred bytes.
-const REPLY_CAP: usize = 2048;
-
 static mut ARENA_MEM: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
 static mut ARENA: Option<Arena<'static>> = None;
 /// The stored map's id + LED count. The per-LED positions live in FX_LED_POS
@@ -70,11 +65,6 @@ static mut MAP_META: Option<(Str64, u32)> = None;
 static mut GEOM: Option<StoredTopoGeom<'static>> = None;
 static mut PLAYER: Option<Player> = None;
 
-/// The topology-aware effect simulator, rebuilt lazily from GEOM + the active
-/// effect config. `SIM_GEN` records the `playback_gen` it was built for so a
-/// config change forces a rebuild; a topology upload nulls SIM directly.
-static mut SIM: Option<Sim> = None;
-static mut SIM_GEN: u32 = u32::MAX;
 
 // -- effects VM (fx_vm) -------------------------------------------------------
 // The active `.fxb` lives in a fixed static buffer the C++ side copies the
@@ -342,14 +332,13 @@ const fn parse_cap(s: &str) -> usize {
 const FX_BRANCH_DIST_M: f32 = 0.05;
 
 /// One LED's derived topology terms, in map-index order (== led_id; the render
-/// is index-based). `seg` is the segment INDEX (position in topo.segments, which
-/// equals the sim segment index — see ensure_sim), -1 = no association; `s` is
+/// is index-based). `seg` is the segment INDEX (position in topo.segments),
+/// -1 = no association; `s` is
 /// normalized 0..1; `branch` = near a junction; `dist` is the geodesic distance
 /// from the topology root, 0..1. `foot`/`dperp` are the raw association terms
-/// (meters) the pulse/flood sim needs — caching them here makes lm_playback_color
-/// an O(1) array read instead of an O(associations) scan per LED per frame. This
-/// cache is the SOLE render-time source of topology (the raw associations are no
-/// longer resident). 20 bytes/entry.
+/// (meters): `foot` feeds the resolve, and both are echoed by the stored-map
+/// dump. This cache is the SOLE resident copy of the associations (the raw
+/// upload is not kept). 20 bytes/entry.
 #[derive(Clone, Copy)]
 struct FxLedTopo {
     seg: i16,
@@ -675,7 +664,6 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
     unsafe {
         *addr_of_mut!(MAP_META) = None;
         *addr_of_mut!(GEOM) = None;
-        *addr_of_mut!(SIM) = None;
         FX_TOPO_READY = false;
         FX_UV_READY = false;
         for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
@@ -873,25 +861,23 @@ pub unsafe extern "C" fn lm_led_count_seed(channel: u32, led_count: u32) {
 
 /// Install this board's static capability descriptor: `data` is a serialized
 /// `BoardCapabilities` (the board textproto compiled to a binaryproto at build
-/// time and embedded in the image). Decoded once and echoed in
+/// time and embedded in the image). Kept encoded and echoed in
 /// `hardware_config_state` so the app builds its pin picker / LED-type list from
 /// what this board supports. Call once after [`lm_player_init`]. A null, empty,
-/// or undecodable blob is ignored (the app just falls back to its built-in
+/// or malformed blob is ignored (the app just falls back to its built-in
 /// catalog), so a board that ships no descriptor still works.
 ///
 /// # Safety
-/// `data` points to `len` readable bytes (or is null).
+/// `data` points to `len` readable bytes (or is null) that stay valid and
+/// unchanged for the rest of the program (the image-embedded array).
 #[no_mangle]
 pub unsafe extern "C" fn lm_set_board_caps(data: *const u8, len: usize) {
     if data.is_null() || len == 0 {
         return;
     }
-    let bytes = core::slice::from_raw_parts(data, len);
-    let mut caps = pb::BoardCapabilities::default();
-    let mut dec = PbDecoder::new(bytes);
-    if caps.decode(&mut dec, bytes.len()).is_ok() {
-        player().set_board_caps(caps);
-    }
+    // Kept encoded (never decoded into the ~4 KiB struct); the player splices
+    // it into hardware_config_state replies.
+    let _ = player().set_board_caps(core::slice::from_raw_parts(data, len));
 }
 
 /// Generation counter for the hardware config, bumped on every
@@ -965,16 +951,12 @@ pub unsafe extern "C" fn lm_hw_color_order_name(channel: u32, out: *mut u8, cap:
 }
 
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
-    let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
-    if reply.encode(&mut enc).is_err() {
-        return -2; // reply exceeds REPLY_CAP — a firmware bug, not remote input
+    // Encoded straight into the caller's tx (no staging copy on this stack).
+    let out = unsafe { core::slice::from_raw_parts_mut(out, out_cap) };
+    match unsafe { player() }.encode_reply(reply, out) {
+        Some(n) => n as i32,
+        None => -2, // reply exceeds out_cap — a firmware bug, not remote input
     }
-    let bytes = enc.into_writer();
-    if bytes.len() > out_cap {
-        return -2;
-    }
-    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
-    bytes.len() as i32
 }
 
 /// Handle one received protocol frame; writes the reply frame (if any) to
@@ -1048,11 +1030,10 @@ pub unsafe extern "C" fn lm_player_handle(
     encode_reply(&reply, out, out_cap)
 }
 
-/// Drop the resident topology (geometry + sim + per-LED cache). The geometry
+/// Drop the resident topology (geometry + per-LED cache). The geometry
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
     *addr_of_mut!(GEOM) = None;
-    *addr_of_mut!(SIM) = None;
     for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
         *e = FxLedTopo::NONE;
     }
@@ -2456,118 +2437,6 @@ pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut 
     }
 }
 
-/// Whether a playback effect ("pulse"/"flood") is configured — the render loop
-/// drives the LEDs via lm_playback_step + lm_playback_color when so (and no
-/// capture/counting is running). LEDs stay black until a topology is uploaded.
-///
-/// # Safety
-/// The global player must have been initialized by [`lm_player_init`] and
-/// this must not be called reentrantly (single firmware thread).
-#[no_mangle]
-pub unsafe extern "C" fn lm_playback_active() -> bool {
-    player().effect_config().is_some()
-}
-
-/// (Re)build the effect simulator from the stored topology + active config if
-/// stale, then advance it by `dt_ms`. Returns whether a renderable sim exists
-/// (config active AND a topology is stored). Call once per render frame before
-/// the per-LED lm_playback_color sweep.
-///
-/// # Safety
-/// The global player must have been initialized by [`lm_player_init`] and
-/// this must not be called reentrantly (single firmware thread).
-#[no_mangle]
-pub unsafe extern "C" fn lm_playback_step(dt_ms: u32) -> bool {
-    ensure_sim();
-    // The per-LED topology cache backs lm_playback_color (O(1) reads); build it
-    // here too (not just on the fx path) so pulse/flood playback has it fresh.
-    // Cheap: early-returns unless a map/topology upload invalidated it.
-    fx_rebuild_topo();
-    match (*addr_of_mut!(SIM)).as_mut() {
-        Some(sim) => {
-            sim.step(dt_ms);
-            true
-        }
-        None => false,
-    }
-}
-
-/// Ensure SIM reflects the current TOPO + effect config. A config-only change
-/// (a live slider) is ADOPTED IN PLACE so the running animation isn't reset; a
-/// fresh sim is built only when none exists yet or the topology was (re)uploaded
-/// (which nulls SIM). Nulls SIM when the effect is off or no topology is stored.
-unsafe fn ensure_sim() {
-    let cfg = match player().effect_config() {
-        Some(c) => *c,
-        None => {
-            *addr_of_mut!(SIM) = None;
-            return;
-        }
-    };
-    let gen = player().playback_gen();
-    // A sim already exists (same topology): adopt config changes smoothly.
-    if let Some(sim) = (*addr_of_mut!(SIM)).as_mut() {
-        if SIM_GEN != gen {
-            sim.set_config(cfg);
-            SIM_GEN = gen;
-        }
-        return;
-    }
-    let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
-        return;
-    };
-    // Graph::build takes (branch-point a, b, length_mm) per segment in order;
-    // the resulting segment index equals the input position, which is how
-    // lm_playback_color maps an association's segment_id back to a sim segment.
-    let mut segs = [(0i32, 0i32, 0u32); MAX_SEGMENTS];
-    let mut n = 0usize;
-    for s in topo.segments.iter() {
-        if n >= MAX_SEGMENTS {
-            break;
-        }
-        segs[n] = (s.a, s.b, (s.length * 1000.0) as u32);
-        n += 1;
-    }
-    let graph = Graph::build(&segs[..n]);
-    // Vary the PRNG seed per config so successive effects don't replay identically.
-    *addr_of_mut!(SIM) = Some(Sim::new(graph, cfg, gen ^ 0x9E37_79B9));
-    SIM_GEN = gen;
-}
-
-/// The color LED `led` shows under the active effect, from the stepped sim and
-/// this LED's stored association (segment index, foot arclength, perpendicular
-/// offset). False when no sim is renderable or this LED has no association.
-/// Meters→mm uses f32 (hardware on the C6); the sim math itself is integer.
-///
-/// # Safety
-/// The pointer arguments must be null or point to writable/readable memory
-/// of the documented size, and the global player must have been initialized
-/// by [`lm_player_init`] and not be called reentrantly.
-#[no_mangle]
-pub unsafe extern "C" fn lm_playback_color(led: u32, rgb: *mut u8) -> bool {
-    let Some(sim) = (*addr_of!(SIM)).as_ref() else {
-        return false;
-    };
-    // O(1): the per-LED cache (built in lm_playback_step) already holds this LED's
-    // segment index + foot arclength + perpendicular offset — no per-frame scan of
-    // the associations/segments. seg is the sim segment index (see ensure_sim).
-    let i = led as usize;
-    if i >= FX_TOPO_CAP {
-        return false;
-    }
-    let e = &(*addr_of!(FX_LED_TOPO))[i];
-    if e.seg < 0 || e.seg as usize >= MAX_SEGMENTS {
-        return false;
-    }
-    let s_mm = (e.foot * 1000.0) as u32;
-    let d_perp_mm = (e.dperp * 1000.0) as u32;
-    let (r, g, b) = sim.led_color(e.seg as u16, s_mm, d_perp_mm);
-    *rgb = r;
-    *rgb.add(1) = g;
-    *rgb.add(2) = b;
-    true
-}
-
 /// The color LED `led` shows under the latched counting pattern (blocks
 /// paint, everything else off). False when no counting pattern is latched.
 ///
@@ -2823,9 +2692,9 @@ unsafe fn fx_rebuild_topo() {
     }
 
     // Resolve each sink-filled entry in place: `seg` currently holds the raw
-    // segment_id → map it to the segment INDEX (== sim segment index), and derive
-    // s/branch/dist. foot/dperp are kept. O(associations × segments), once per
-    // upload — and lm_playback_color/shade are then O(1) reads per frame.
+    // segment_id → map it to the segment INDEX, and derive s/branch/dist.
+    // foot/dperp are kept. O(associations × segments), once per upload — and
+    // lm_fx_shade's topology reads are then O(1) per frame.
     let cache = &mut *addr_of_mut!(FX_LED_TOPO);
     let mut max_geo = 0.0f32;
     for e in cache.iter_mut() {
@@ -2975,7 +2844,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     true
 }
 
-/// Clear the loaded effect (back to the built-in playback/idle). Frees nothing
+/// Clear the loaded effect (back to idle). Frees nothing
 /// (the buffer is static) but marks no program loaded and not active.
 ///
 /// # Safety
@@ -3040,7 +2909,7 @@ pub unsafe extern "C" fn lm_fx_jit_diag(plans: *mut u32, words: *mut u32, alloc_
 }
 
 /// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
-/// on this, taking priority over the built-in pulse/flood playback.
+/// on this (below an active capture / counting probe).
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and

@@ -280,9 +280,37 @@ pub struct ImprovService {
 const DEFAULT_DEVICE_NAME: &[u8] = b"splanc-device";
 
 impl ImprovService {
+    /// A service with no attributes yet (call [`ImprovService::reset`] to build
+    /// it). `const`, so a static can hold one without a stack temporary.
+    pub const fn empty() -> Self {
+        ImprovService {
+            db: GattDb::new(),
+            improv: Improv::new(),
+            h_device_name: 0,
+            h_current: 0,
+            h_error: 0,
+            h_rpc_cmd: 0,
+            h_rpc_result: 0,
+            h_player_rx: 0,
+            h_player_tx: 0,
+        }
+    }
+
     pub fn new() -> Self {
-        let improv = Improv::new();
-        let mut db: GattDb<32> = GattDb::new();
+        let mut svc = Self::empty();
+        svc.reset();
+        svc
+    }
+
+    /// Rebuild the service IN PLACE: a fresh Improv state machine and GATT table
+    /// (the firmware resets it on every new central connection). Building into
+    /// `self` rather than returning a new value keeps the ~4 KiB table off the BLE
+    /// HCI handler's stack.
+    pub fn reset(&mut self) {
+        self.improv = Improv::new();
+        self.db.clear();
+        let improv = &self.improv;
+        let db = &mut self.db;
         // Generic Access Profile service (0x1800) with the Device Name (0x2A00)
         // characteristic. This exposes the board's name over GATT, readable after a
         // plain connect — INDEPENDENT of the scan-response Complete-Local-Name, whose
@@ -329,17 +357,13 @@ impl ImprovService {
         let h_player_tx = db
             .add_characteristic(Uuid::U128(PLAYER_TX_UUID), PROP_READ | PROP_NOTIFY, &[])
             .unwrap_or(0);
-        ImprovService {
-            db,
-            improv,
-            h_device_name,
-            h_current,
-            h_error,
-            h_rpc_cmd,
-            h_rpc_result,
-            h_player_rx,
-            h_player_tx,
-        }
+        self.h_device_name = h_device_name;
+        self.h_current = h_current;
+        self.h_error = h_error;
+        self.h_rpc_cmd = h_rpc_cmd;
+        self.h_rpc_result = h_rpc_result;
+        self.h_player_rx = h_player_rx;
+        self.h_player_tx = h_player_tx;
     }
 
     /// Set the GAP Device Name (0x2A00) value so a central reading it over GATT

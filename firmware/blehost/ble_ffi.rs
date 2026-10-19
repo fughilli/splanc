@@ -15,7 +15,18 @@ use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PAS
 use ledmapper_netstack::rx::Buf;
 
 static mut HOST: BleHost = BleHost::new();
-static mut IMPROV: Option<ImprovService> = None;
+// Statically placed (const-initialized) and rebuilt in place by `reset_improv`, never
+// assigned a fresh by-value ImprovService: that temporary is ~4 KiB of the
+// HCI handler's / setup's stack frame (loopTask). `None` until ns_ble_setup.
+static mut IMPROV_SVC: ImprovService = ImprovService::empty();
+static mut IMPROV: Option<&'static mut ImprovService> = None;
+
+/// (Re)build the Improv service in place and publish it.
+unsafe fn reset_improv() {
+    let svc = &mut *core::ptr::addr_of_mut!(IMPROV_SVC);
+    svc.reset();
+    IMPROV = Some(svc);
+}
 /// The board's live device name (set by the firmware via `ns_ble_set_name`). Kept
 /// here so it can be re-applied to the GAP Device-Name (0x2A00) characteristic
 /// every time the Improv service is rebuilt on a fresh connection — otherwise a
@@ -230,7 +241,7 @@ pub extern "C" fn ns_ble_setup() {
         // Distinctive static random address for this build so a central can't reuse
         // a GATT cache from an earlier build (LE order; MSB C0 = static random).
         HOST.set_random_addr([0x02, 0x00, 0x0f, 0x1f, 0xde, 0xc0]); // C0:DE:1F:0F:00:02
-        IMPROV = Some(ImprovService::new());
+        reset_improv();
     }
 }
 
@@ -329,7 +340,7 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             let now_connected = matches!(unsafe { HOST.state }, HostState::Connected(_));
             if now_connected && !was_connected {
                 unsafe {
-                    IMPROV = Some(ImprovService::new());
+                    reset_improv();
                     // Re-apply the live device name to the fresh service's GAP
                     // Device-Name (0x2A00) so a central that connects and reads it
                     // gets the real name, not the build default (the service is a

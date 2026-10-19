@@ -152,9 +152,9 @@ fn main() -> std::io::Result<()> {
     // profiles.
     g.configure(".ledmapper.v1.EffectUniforms.textures", Config::new().max_len(8));
 
-    // Static board capabilities the firmware ENCODES into hardware_config_state
-    // (full size in both profiles). The C6 has GPIO0..30, so 31 pins covers the
-    // worst case; a handful of LED driver modes is plenty.
+    // Static board capabilities the firmware ENCODES into hardware_config_state.
+    // The C6 has GPIO0..30, so 31 pins covers the worst case; a handful of LED
+    // driver modes is plenty.
     g.configure(
         ".ledmapper.v1.BoardCapabilities.gpio_pins",
         Config::new().max_len(31),
@@ -163,6 +163,16 @@ fn main() -> std::io::Result<()> {
         ".ledmapper.v1.BoardCapabilities.led_modes",
         Config::new().max_len(6),
     );
+    // ...but the FIRMWARE never materializes that struct: it keeps the embedded
+    // descriptor encoded and splices it into the reply (Player::encode_reply).
+    // Inline, this ~4 KiB field sized EVERY by-value ServerMessage on the
+    // handler stacks, so the firmware profile drops it from the envelope.
+    if firmware {
+        g.configure(
+            ".ledmapper.v1.HardwareConfigState.board",
+            Config::new().skip(true),
+        );
+    }
 
     g.compile_fdset_file(&args[1], &args[2])
 }

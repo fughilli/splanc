@@ -11,11 +11,10 @@ fn stored_map_chunk_stays_lean() {
     // StoredMapChunk carries a `bytes data` payload (1 KiB on host). On firmware
     // the player encodes this reply ZERO-COPY straight to the output (ffi.rs
     // handle_get_stored_map) and never materializes the struct, so `data` is
-    // stubbed to 8 B (gen_main.rs). Guard the struct DIRECTLY: the whole
-    // `ServerMessage` oneof is dominated by the unrelated `HardwareConfigState`
-    // arm (the ~4 KiB board-capabilities catalog, full-size in both profiles),
-    // so a size assertion on `ServerMessage` can't catch a StoredMapChunk
-    // regression. If this jumps back toward ~1 KiB, `data` regained its fat
+    // stubbed to 8 B (gen_main.rs). Guard the struct DIRECTLY: a ~1 KiB arm
+    // would still fit server_message_stays_lean's envelope bound, so that
+    // assertion alone can't catch a StoredMapChunk regression. If this jumps
+    // back toward ~1 KiB, `data` regained its fat
     // inline buffer instead of being walked zero-copy.
     let sz = core::mem::size_of::<pb::StoredMapChunk>();
     assert!(sz <= 128, "StoredMapChunk grew to {sz} B (expected <= 128)");
@@ -40,4 +39,16 @@ fn client_message_stays_lean() {
     // here means some arm regained inline storage that should be walked instead.
     let sz = core::mem::size_of::<pb::ClientMessage>();
     assert!(sz <= 560, "ClientMessage grew to {sz} B (expected <= 560)");
+}
+
+#[test]
+fn server_message_stays_lean() {
+    // HardwareConfigState's board descriptor (31-pin catalog, ~4 KiB) used to
+    // size EVERY by-value ServerMessage — each handler frame holding a reply
+    // paid it (lm_player_handle ~10 KiB, hardware_config_state ~10 KiB). The
+    // firmware now splices the encoded descriptor in at encode time
+    // (Player::encode_reply) and the profile drops the field (gen_main.rs), so
+    // the envelope is sized by the largest real arm (Welcome, ~650 B).
+    let sz = core::mem::size_of::<pb::ServerMessage>();
+    assert!(sz <= 768, "ServerMessage grew to {sz} B (expected <= 768)");
 }

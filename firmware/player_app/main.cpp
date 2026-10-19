@@ -128,10 +128,15 @@ size_t lm_jit_region_size(void) { return kJitRegionSize; }
 // grow, re-measure with objdump on the .elf prologues. (The render task has
 // its own stack; it only calls the small pure-read accessors + the RMT show.)
 #if defined(LM_NETSTACK)
-// The netstack loop adds the mbedtls handshake + a deep protobuf-encode (~800B
-// hardware_config_state) + link-pump nested inside a TLS write on top of Player::handle;
-// 24KB overflowed, so give loopTask more headroom.
-SET_LOOP_TASK_STACK_SIZE(48 * 1024);
+// The netstack loop adds the mbedtls handshake + link-pump nested inside a TLS write on top
+// of Player::handle. 24 KB once overflowed — when every by-value ServerMessage carried the
+// ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
+// ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
+// static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
+// callbacks) is ~13.5 KB: netstack_loop -> ws_pump -> TLS read/handshake -> bio_send ->
+// the WiFi TX path, or the BLE HCI -> Improv path (~12.2 KB). 20 KB is ~1.5x that bound;
+// re-derive it (tools: objdump prologues + call graph) before growing a frame.
+SET_LOOP_TASK_STACK_SIZE(20 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 #endif
@@ -263,7 +268,14 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-static const uint32_t kRenderTaskStack = 8192;   // render + the GRB reorder/RMT show
+// render: static bound ~3.3 KB (render_once -> lm_fx_update -> fx_rebuild_topo's
+// ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
+// jump tables + ROM soft-float leaves, and JIT segments use no machine stack), so
+// 5 KB is ~1.5x. The measured high-water (~0.8 KB) is NOT a sizing basis.
+static const uint32_t kRenderTaskStack = 5120;
+// xmit: just stages/sends the LED frame; static bound ~2.4 KB (dominated by the
+// C++ unwind path off a Log() call), measured ~0.5 KB.
+static const uint32_t kXmitTaskStack = 3072;
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -275,7 +287,18 @@ static const uint32_t kRenderTaskStack = 8192;   // render + the GRB reorder/RMT
 // temp file (see process_upload_chunk) and decode straight off flash — so this
 // shrank 32 KB -> 12 KB (FUG-74 Phase B), handing ~20 KB back to the heap the
 // wss TLS handshake needs. Shared by the ws:81 and wss:443 paths.
+//
+// The netstack build never receives into rx: its transports (WS reassembly in
+// g_ws_rx, the BLE frame ring) dispatch every message in place. rx only stages
+// the two whole frames read back off flash — a persisted control/effect frame at
+// boot (fs_replay) and a reassembled sharded effect upload — and an effect frame
+// is bounded by the VM's 4 KiB bytecode cap (ffi.rs FX_MAX_BYTES) plus its
+// envelope, so 4.5 KiB covers it (a larger effect is refused either way).
+#if defined(LM_NETSTACK)
+static const size_t kRxCap = 4608;
+#else
 static const size_t kRxCap = 12288;
+#endif
 static uint8_t rx[kRxCap];      // one whole (non-sharded) message
 static size_t rx_len = 0;
 // Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
@@ -325,9 +348,9 @@ static const char *kFsBase = "/lfs";
 static const char *kFsPartition = "spiffs";
 static const char *kMapPath = "/lfs/map.pb";
 static const char *kTopoPath = "/lfs/topo.pb";
-// The last playback selection (set_playback frame), so the show auto-resumes
-// on boot. Coalesced (live tuning fires rapidly) — see queue/flush below.
-static const char *kPlaybackPath = "/lfs/play.pb";
+// Where the removed native playback effects (pulse/flood) persisted their
+// set_playback frame; deleted at mount so an upgraded board doesn't keep it.
+static const char *kLegacyPlaybackPath = "/lfs/play.pb";
 // The active user effect: the raw submit_effect upload frame (bytecode) and,
 // separately, the last effect-control frame (set_effect / set_uniforms) so the
 // effect + its live uniforms auto-resume on boot. Replayed through the SAME
@@ -339,7 +362,6 @@ static bool fs_ok = false;
 // frames for persistence — see lm_envelope_arm.
 static const int32_t kArmSubmitMap = 13;
 static const int32_t kArmSubmitTopology = 16;
-static const int32_t kArmSetPlayback = 17;
 static const int32_t kArmResultReady = 8;
 static const int32_t kArmPlaybackState = 13;
 static const int32_t kArmSubmitEffect = 21;
@@ -347,22 +369,15 @@ static const int32_t kArmSetEffect = 22;
 static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
 
-// Coalesced playback save: live slider tuning re-sends set_playback on every
-// tick, so writing flash each time would thrash it. Stash the latest frame and
-// flush once the stream goes quiet (from loop()).
-static uint8_t pending_playback[512];
-static size_t pending_playback_len = 0;
-static bool playback_dirty = false;
-static uint32_t playback_dirty_at = 0;
-static const uint32_t kPlaybackSaveQuietMs = 1500;
-
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
-// re-send set_uniforms every tick, so coalesce exactly like playback above.
+// re-send set_uniforms on every tick, so writing flash each time would thrash
+// it. Stash the latest frame and flush once the stream goes quiet (from loop()).
 // The largest such frame is a full uniform set — bounded to this buffer.
 static uint8_t pending_fx_sel[2048];
 static size_t pending_fx_sel_len = 0;
 static bool fx_sel_dirty = false;
 static uint32_t fx_sel_dirty_at = 0;
+static const uint32_t kFxSelSaveQuietMs = 1500;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -718,7 +733,7 @@ static void hardware_config_begin() {
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
 // from flash), then scale by the global output brightness. Used on the CONTENT
-// render paths (effects / playback); the camera calibration patterns (mapping
+// render paths (effects); the camera calibration patterns (mapping
 // gray-code, counting probe) stay uncorrected AND unscaled so their known signal
 // values reach the camera unchanged.
 static inline Rgb cc_apply(const uint8_t rgb[3]) {
@@ -729,25 +744,8 @@ static inline Rgb cc_apply(const uint8_t rgb[3]) {
   return c;
 }
 
-// Stash the latest playback selection to flush once live tuning goes quiet.
-static void queue_playback_save(const uint8_t *data, size_t len) {
-  if (len > sizeof pending_playback) return;  // too big to persist (bounded)
-  memcpy(pending_playback, data, len);
-  pending_playback_len = len;
-  playback_dirty = true;
-  playback_dirty_at = millis();
-}
-
-// Flush the coalesced playback selection once the change stream has settled.
-// Called from loop(); one flash write per settled edit, not per slider tick.
-static void flush_playback_save() {
-  if (!playback_dirty || millis() - playback_dirty_at < kPlaybackSaveQuietMs) return;
-  fs_write_file(kPlaybackPath, pending_playback, pending_playback_len);
-  playback_dirty = false;
-}
-
 // Stash the latest effect-control frame (set_effect / set_uniforms) to flush
-// once live tuning settles, same coalescing as playback.
+// once live tuning settles.
 static void queue_fx_sel_save(const uint8_t *data, size_t len) {
   if (len > sizeof pending_fx_sel) return;  // too big to persist (bounded)
   memcpy(pending_fx_sel, data, len);
@@ -756,14 +754,15 @@ static void queue_fx_sel_save(const uint8_t *data, size_t len) {
   fx_sel_dirty_at = millis();
 }
 
+// Called from loop(); one flash write per settled edit, not per slider tick.
 static void flush_fx_sel_save() {
-  if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kPlaybackSaveQuietMs) return;
+  if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kFxSelSaveQuietMs) return;
   fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
   fx_sel_dirty = false;
 }
 
 // Persist state after a SUCCESSFUL upload/selection so it survives a reboot:
-// the map+topology (fixture) and the playback selection (auto-resume the show).
+// the map+topology (fixture) and the effect + its selection (auto-resume the show).
 // A new map invalidates any stored topology.
 static void persist_if_upload(const uint8_t *req, size_t req_len,
                               const uint8_t *reply, size_t reply_len) {
@@ -775,8 +774,6 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     remove(kTopoPath);  // the previous topology no longer matches this map
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
-  } else if (reply_arm == kArmPlaybackState && req_arm == kArmSetPlayback) {
-    queue_playback_save(req, req_len);  // coalesced: live tuning fires rapidly
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
     // A validated effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
@@ -785,7 +782,7 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     remove(kEffectSelPath);
   } else if (reply_arm == kArmPlaybackState &&
              (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
-    // Effect selection / live uniforms — coalesced like set_playback.
+    // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
     queue_fx_sel_save(req, req_len);
   }
 }
@@ -798,7 +795,7 @@ static size_t upload_refill(void *ctx, uint8_t *buf, size_t cap) {
 
 // Replay a persisted frame through the session core on boot — the SAME decode a
 // live upload takes. map/topology can be big, so they stream off flash block by
-// block (no whole-frame buffer); everything else (playback, effect, uniforms)
+// block (no whole-frame buffer); everything else (effect, selection, uniforms)
 // is control-sized and decodes in one pass through rx.
 static void fs_replay(const char *path) {
   FILE *f = fopen(path, "rb");
@@ -845,7 +842,7 @@ static void fs_begin_and_restore() {
   fs_ok = true;
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
-  fs_replay(kPlaybackPath);  // resume the last show (the render task picks it up)
+  remove(kLegacyPlaybackPath);
   // Resume a user effect after the map/topology it shades over: the .fxb first
   // (submit_effect, activate flag replayed as-sent), then its last selection +
   // live uniforms (set_effect / set_uniforms). The render task picks it up via
@@ -974,17 +971,17 @@ static void poll_after_message() {
   poll_hardware_config();
 }
 
-// Dispatch the plain (non-upload) message currently in rx[0..rx_len) through the
-// session core: compute the reply into tx, persist it if it's a state-changing
-// upload (map/topology/effect/selection), and run the post-message hw pollers.
-// Shared by ws_compute_reply and the EFFECT-upload final step (a reassembled
-// submit_effect frame is a normal message). Returns the reply length, 0, or -1.
-static int dispatch_plain_rx() {
+// Dispatch the plain (non-upload) message msg[0..len) through the session core, in
+// place in whatever buffer the transport received it into: compute the reply into tx,
+// persist it if it's a state-changing upload (map/topology/effect/selection), and run the
+// post-message hw pollers. Shared by ws_compute_reply and the EFFECT-upload final step (a
+// reassembled submit_effect frame is a normal message). Returns the reply length, 0, or -1.
+static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
+  int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
-  if (n > 0) persist_if_upload(rx, rx_len, tx, (size_t)n);
+  if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
   return (int)n;
 }
@@ -1053,8 +1050,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     fclose(ef);
     remove(kUploadTmp);
     if (rn != upload_total) return -1;
-    rx_len = rn;
-    return dispatch_plain_rx();
+    return dispatch_plain(rx, rn);
   }
 
   // Map/topology: decode the reassembled frame straight off flash, then persist
@@ -1085,24 +1081,24 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   return n;
 }
 
-// Compute the reply for the message currently in rx[0..rx_len). Returns the reply length
+// Compute the reply for the message msg[0..len), read in place. Returns the reply length
 // (bytes written to the global tx, >0), 0 (no reply / fire-and-forget), or -1 (fs error /
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
-static int ws_compute_reply() {
+static int ws_compute_reply(const uint8_t *msg, size_t len) {
   // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
   // and handles the final-decode + persist).
   LmUploadChunk ch;
-  if (lm_parse_upload_chunk(rx, rx_len, &ch) == 1) {
-    return (int)process_upload_chunk(&ch, rx + ch.payload_off);
+  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
+    return (int)process_upload_chunk(&ch, msg + ch.payload_off);
   }
-  return dispatch_plain_rx();
+  return dispatch_plain(msg, len);
 }
 
 #if !defined(LM_NETSTACK)
 static void ws_dispatch_message() {
-  int n = ws_compute_reply();
+  int n = ws_compute_reply(rx, rx_len);
   if (n > 0) {
     ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
   } else if (n < 0) {
@@ -1112,29 +1108,22 @@ static void ws_dispatch_message() {
 }
 
 // Player-protocol BLE transport bridge (improv_ble.cpp's player_ble_poll calls this):
-// treat `in` as one received frame, compute the reply via the shared handler, and point
-// `reply` at the shared tx. Mirrors lm_ws_dispatch for the vendor build's BLE path so a
-// message behaves identically over BLE, ws:81, and wss:443.
+// treat `in` as one received frame, compute the reply via the shared handler (reading the
+// frame in place — no copy into rx), and point `reply` at the shared tx. Mirrors
+// lm_ws_dispatch for the vendor build's BLE path so a message behaves identically over
+// BLE, ws:81, and wss:443.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
-  if (len > kRxCap) return -1;
-  memcpy(rx, in, len);
-  rx_len = len;
-  int n = ws_compute_reply();
+  int n = ws_compute_reply(in, len);
   *reply = tx;
-  rx_len = 0;
   return n;
 }
 #else
-// The netstack transport's WS pump calls this: copy the received message into the shared rx,
-// compute the reply into the shared tx, and hand back a pointer to it. (One extra copy vs the
-// vendor path, which receives directly into rx; the player protocol frames are small.)
+// The netstack transport's WS pump calls this: dispatch the received message IN PLACE in
+// the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
+// compute the reply into the shared tx, and hand back a pointer to it.
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
-  if (len > kRxCap) return -1;
-  memcpy(rx, in, len);
-  rx_len = len;
-  int n = ws_compute_reply();
+  int n = ws_compute_reply(in, len);
   *reply = tx;
-  rx_len = 0;
   return n;
 }
 
@@ -1336,7 +1325,7 @@ static uint32_t render_once() {
   // (fs_replay of kEffectPath) would otherwise keep rendering and mask the
   // mapping pattern, so "start mapping" never visibly flashed the strip
   // (FUG-62). Check them first; when neither is active they fall through to the
-  // effect / playback / idle branches below.
+  // effect / idle branches below.
   if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
     // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
     // elapsed_us / period_us (64-bit product so it can't overflow).
@@ -1418,9 +1407,8 @@ static uint32_t render_once() {
     was_active = true;
     last_shown_frame = 0xffffffff;
   } else if (lm_fx_active()) {
-    // User effect (.fxb shader) takes priority over the built-in playback:
-    // run update() once, then shade() per LED over the stored map position.
-    // Bounded execution guards each invocation (instruction budget + wall-time
+    // User effect (.fxb shader): run update() once, then shade() per LED over the
+    // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
     // deadline flag); a cancelled shade holds black for that LED. ~30 fps.
     static uint32_t fx_frame = 0;
     static uint32_t fx_last_ms = 0;
@@ -1499,36 +1487,6 @@ static uint32_t render_once() {
     was_active = true;
     last_shown_frame = 0xffffffff;
     next_delay_ms = 33;  // ~30 fps
-  } else if (lm_playback_active()) {
-    // Topology-aware effect (pulse/flood): advance the stateful sim by the real
-    // elapsed time, then colour every LED from its stored association. It's an
-    // animation, so repaint at ~30 fps.
-    static uint32_t last_playback_ms = 0;
-    uint32_t now = millis();
-    uint32_t dt = now - last_playback_ms;   // wraps cleanly (unsigned)
-    if (last_playback_ms == 0 || dt > 100) dt = 33;  // fresh entry / long gap
-    last_playback_ms = now;
-    // Colour + transmit exactly the mapped/topology LEDs, not the whole 1024-cap
-    // buffer (lm_playback_color returns false past the topology extent anyway).
-    uint32_t pn = lm_map_len();
-    if (pn > kMaxLeds) pn = kMaxLeds;
-    if (pn > 0) xmit_len = pn;
-    if (lm_playback_step(dt)) {
-      for (uint32_t i = 0; i < xmit_len; i++) {
-        if (lm_playback_color(i, rgb)) {
-          leds[i] = cc_apply(rgb);
-        } else {
-          leds[i] = Rgb::Black;
-        }
-      }
-    } else {
-      // Effect configured but no topology stored yet — hold black.
-      fill_rgb(leds, xmit_len, Rgb::Black);
-    }
-    show = true;
-    was_active = true;
-    last_shown_frame = 0xffffffff;
-    next_delay_ms = 33; // ~30 fps
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {
@@ -1641,9 +1599,9 @@ static void osc_task(void *) {
 }
 #else
 // TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
-// (uniform_bench / video_stream) is disabled on this build. Add a ns UDP listener + feed
-// lm_osc_ingest to re-enable. Everything else (WS player, effects, render) is unaffected.
-static void osc_task(void *) { vTaskDelete(nullptr); }
+// (uniform_bench / video_stream) is disabled on this build and setup() doesn't start the
+// task. Add a ns UDP listener + feed lm_osc_ingest to re-enable. Everything else (WS
+// player, effects, render) is unaffected.
 #endif
 
 // The render task: forever, render one frame then sleep until the next is due.
@@ -1727,7 +1685,7 @@ static void render_task(void *) {
 // While a perf mode is active with interval_ms > 0, the phone asked us to push
 // a rolled-up report every interval_ms rather than poll. Built + drained on the
 // loop task (never the render task — the render loop only fills the ring, no
-// network work), coalesced by the interval like the playback-save timer.
+// network work), coalesced by the interval like the effect-selection save timer.
 // Shipped over the plain ws:81 socket (directly writable from loop()); the
 // wss:443 path is httpd-owned and has no async push handle here, so a phone on
 // wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
@@ -2308,8 +2266,11 @@ void setup() {
   // the render task so a kick preempts, starts the DMA, and yields right back.
   xmit_done = xSemaphoreCreateBinary();
   xSemaphoreGive(xmit_done);
-  xTaskCreate(xmit_task, "xmit", kRenderTaskStack, nullptr, kRenderTaskPrio + 1,
-              &xmit_task_handle);
+  // Static stack + TCB (never the shared heap): sized from the static bound above.
+  static StackType_t xmit_stack[kXmitTaskStack / sizeof(StackType_t)];
+  static StaticTask_t xmit_tcb;
+  xmit_task_handle = xTaskCreateStatic(xmit_task, "xmit", kXmitTaskStack, nullptr,
+                                       kRenderTaskPrio + 1, xmit_stack, &xmit_tcb);
 
   // Guards every call into the single-threaded Rust core; must exist before
   // either the message handler or the render task can touch it.
@@ -2428,12 +2389,16 @@ void setup() {
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
-  xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
-              nullptr);
+  static StackType_t render_stack[kRenderTaskStack / sizeof(StackType_t)];
+  static StaticTask_t render_tcb;
+  xTaskCreateStatic(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
+                    render_stack, &render_tcb);
+#if !defined(LM_NETSTACK)
   // Native OSC input: a low-priority UDP listener that drives live uniforms
   // (FUG-121). Independent of the WS/TLS player path; binds now and receives
-  // once the LAN is up.
+  // once the LAN is up. (Not on the netstack build: no UDP receive path yet.)
   xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#endif
 #if defined(LM_NETSTACK)
   // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
   // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
@@ -2553,7 +2518,6 @@ void loop() {
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
 #endif
   if (fs_ok) {
-    flush_playback_save();
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();

@@ -23,7 +23,6 @@
 #![no_std]
 
 use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb};
-use ledmapper_pulse::{Effect, EffectConfig};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -313,12 +312,6 @@ pub struct Player {
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
-    /// Active playback effect: the sim config (integer, for the hot path) + the
-    /// wire params it was built from (to echo). None = "off".
-    playback: Option<(EffectConfig, pb::PlaybackParams)>,
-    /// Bumped on every set_playback so the render side can rebuild its sim when
-    /// the effect/params change.
-    playback_gen: u32,
     /// Active color-correction profile + a generation the firmware polls (like
     /// set_device_name) to regenerate and re-persist the flash LUT on a change.
     color_correction: ColorCorrection,
@@ -354,8 +347,14 @@ pub struct Player {
     /// Static board capabilities (GPIO safety catalog + LED modes) the firmware
     /// embeds and installs at boot via [`Player::set_board_caps`]; echoed in
     /// `hardware_config_state` so the app builds its pin picker from THIS board.
-    /// `None` until installed (and on boards/tests that never call it).
-    board_caps: Option<pb::BoardCapabilities>,
+    /// `None` until installed (and on boards/tests that never call it). Kept as
+    /// the embedded ENCODED descriptor and spliced into the reply by
+    /// [`Player::encode_reply`]: a decoded `BoardCapabilities` (31-pin catalog)
+    /// is ~4 KiB and would size every by-value `ServerMessage` (FUG-71).
+    board_caps: Option<&'static [u8]>,
+    /// Whether the descriptor itself sets `led_channels` / `max_leds` (else the
+    /// runtime output caps fill them in).
+    board_caps_sets: (bool, bool),
     /// Output capacity the firmware build actually has (parallel LED channels,
     /// total LEDs across them), set at boot via [`Player::set_output_caps`].
     /// Reported in `hardware_config_state.board` where the descriptor leaves
@@ -381,8 +380,6 @@ impl Player {
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
-            playback: None,
-            playback_gen: 0,
             color_correction: ColorCorrection::WS2812B,
             color_correction_gen: 0,
             color_correction_commit: true,
@@ -393,6 +390,7 @@ impl Player {
             hw_config_gen: 0,
             hw_config_commit: true,
             board_caps: None,
+            board_caps_sets: (false, false),
             out_channels: 0,
             out_max_leds: 0,
         }
@@ -447,31 +445,16 @@ impl Player {
                 };
                 Some(reply(SMsg::ResultReady(r)))
             }
-            CMsg::SetPlayback(m) => {
-                let effect = match m.r#effect.as_str() {
-                    "off" => Some(None),
-                    "pulse" => Some(Some(Effect::Pulse)),
-                    "flood" => Some(Some(Effect::Flood)),
-                    _ => None,
-                };
-                match effect {
-                    Some(None) => {
-                        self.playback = None;
-                        self.playback_gen = self.playback_gen.wrapping_add(1);
-                        Some(self.playback_state())
-                    }
-                    Some(Some(e)) => {
-                        let params = m.r#params.clone();
-                        self.playback = Some((effect_config_from(e, &params), params));
-                        self.playback_gen = self.playback_gen.wrapping_add(1);
-                        Some(self.playback_state())
-                    }
-                    None => Some(error(
-                        "unsupported_effect",
-                        "effect not available on this player (supported: off, pulse, flood)",
-                    )),
-                }
-            }
+            // The native playback effects (pulse/flood) are gone: every show is
+            // an FX-engine effect (submit_effect / set_effect). "off" still acks
+            // with the (always idle) playback state so an old client's stop works.
+            CMsg::SetPlayback(m) => match m.r#effect.as_str() {
+                "off" => Some(self.playback_state()),
+                _ => Some(error(
+                    "unsupported_effect",
+                    "native playback effects were removed; use the effects engine (submit_effect)",
+                )),
+            },
             CMsg::GetPlayback(_) => Some(self.playback_state()),
             CMsg::GetFrameTiming(_) => Some(self.frame_timing()),
             // The map dump lives in the arena layer (ffi), which intercepts this
@@ -893,22 +876,11 @@ impl Player {
     }
 
     fn playback_state(&self) -> pb::ServerMessage {
+        // No native playback effect exists any more, so it is always "off".
         let mut state = pb::PlaybackState::default();
-        match self.playback.as_ref() {
-            Some((cfg, params)) => {
-                state.r#active = true;
-                state.r#effect = s64(match cfg.effect {
-                    Effect::Pulse => "pulse",
-                    Effect::Flood => "flood",
-                });
-                state.set_params(params.clone());
-            }
-            None => {
-                state.r#active = false;
-                state.r#effect = s64("off");
-                state.set_params(pb::PlaybackParams::default());
-            }
-        }
+        state.r#active = false;
+        state.r#effect = s64("off");
+        state.set_params(pb::PlaybackParams::default());
         reply(SMsg::PlaybackState(state))
     }
 
@@ -1000,17 +972,76 @@ impl Player {
             };
             let _ = state.r#channels.push(hc);
         }
-        if self.board_caps.is_some() || self.out_channels > 0 || self.out_max_leds > 0 {
-            let mut caps = self.board_caps.clone().unwrap_or_default();
-            if caps.r#led_channels == 0 {
-                caps.r#led_channels = self.out_channels;
-            }
-            if caps.r#max_leds == 0 {
-                caps.r#max_leds = self.out_max_leds;
-            }
-            state.set_board(caps);
-        }
+        // `board` is NOT set here: encode_reply splices it in from the encoded
+        // descriptor, so the struct never holds the catalog.
         reply(SMsg::HardwareConfigState(state))
+    }
+
+    /// The encoded `hardware_config_state.board` body: the embedded descriptor
+    /// followed by the runtime output caps for whichever capacity fields the
+    /// descriptor leaves 0 (proto3 omits zeros; appending a scalar field is a
+    /// valid encoding of setting it). `None` when there is no board to report.
+    fn board_extra(&self) -> Option<([u8; 12], usize)> {
+        if self.board_caps.is_none() && self.out_channels == 0 && self.out_max_leds == 0 {
+            return None;
+        }
+        let mut extra = [0u8; 12];
+        let mut n = 0;
+        for (field, set, v) in [
+            (4u8, self.board_caps_sets.0, self.out_channels),
+            (5u8, self.board_caps_sets.1, self.out_max_leds),
+        ] {
+            if set || v == 0 {
+                continue;
+            }
+            extra[n] = field << 3; // wire type 0 (varint)
+            n += 1;
+            let mut v = v;
+            loop {
+                let b = (v & 0x7f) as u8;
+                v >>= 7;
+                extra[n] = if v == 0 { b } else { b | 0x80 };
+                n += 1;
+                if v == 0 {
+                    break;
+                }
+            }
+        }
+        Some((extra, n))
+    }
+
+    /// Encode `reply` straight into `out` (no staging buffer) and return the
+    /// length, or `None` if it doesn't fit. Every reply MUST go out through
+    /// here: the `hardware_config_state` arm gets its `board` descriptor spliced
+    /// in from the embedded encoded bytes (see `board_caps`).
+    pub fn encode_reply(&self, reply: &pb::ServerMessage, out: &mut [u8]) -> Option<usize> {
+        use micropb::size::sizeof_varint32;
+        use micropb::{MessageEncode, PbEncoder, PbWrite, Tag, WIRE_TYPE_LEN};
+        let cap = out.len();
+        let mut w: &mut [u8] = out;
+        let board = match &reply.r#msg {
+            Some(SMsg::HardwareConfigState(st)) => self.board_extra().map(|e| (st, e)),
+            _ => None,
+        };
+        let Some((st, (extra, en))) = board else {
+            reply.encode(&mut PbEncoder::new(&mut w)).ok()?;
+            return Some(cap - w.len());
+        };
+        let caps = self.board_caps.unwrap_or(&[]);
+        let blen = caps.len() + en;
+        let inner = st.compute_size() + 1 + sizeof_varint32(blen as u32) + blen;
+        {
+            let mut enc = PbEncoder::new(&mut w);
+            // ServerMessage.hardware_config_state = 19; HardwareConfigState.board = 2.
+            enc.encode_tag(Tag::from_parts(19, WIRE_TYPE_LEN)).ok()?;
+            enc.encode_varint32(inner as u32).ok()?;
+            st.encode(&mut enc).ok()?;
+            enc.encode_tag(Tag::from_parts(2, WIRE_TYPE_LEN)).ok()?;
+            enc.encode_varint32(blen as u32).ok()?;
+        }
+        w.pb_write(caps).ok()?;
+        w.pb_write(&extra[..en]).ok()?;
+        Some(cap - w.len())
     }
 
     /// The device's current color correction as a `color_correction_state` reply
@@ -1050,12 +1081,56 @@ impl Player {
         };
     }
 
-    /// Install the board's static capability descriptor (already decoded from the
-    /// embedded binaryproto). Echoed verbatim in `hardware_config_state`; the app
+    /// Install the board's static capability descriptor: the embedded
+    /// binaryproto, kept encoded. Echoed verbatim in `hardware_config_state`; the app
     /// builds its GPIO picker + LED-type list from it (falling back to a built-in
     /// catalog when a board doesn't report one). Call once at boot.
-    pub fn set_board_caps(&mut self, caps: pb::BoardCapabilities) {
-        self.board_caps = Some(caps);
+    /// A malformed descriptor is ignored (returns false).
+    pub fn set_board_caps(&mut self, encoded: &'static [u8]) -> bool {
+        // Walk the top-level fields once: validates the framing and learns which
+        // capacity fields the descriptor sets itself (4 = led_channels, 5 = max_leds).
+        let mut sets = (false, false);
+        let mut o = 0;
+        let varint = |o: &mut usize| -> Option<u64> {
+            let mut v = 0u64;
+            for shift in (0..64).step_by(7) {
+                let b = *encoded.get(*o)?;
+                *o += 1;
+                v |= u64::from(b & 0x7f) << shift;
+                if b & 0x80 == 0 {
+                    return Some(v);
+                }
+            }
+            None
+        };
+        while o < encoded.len() {
+            let Some(key) = varint(&mut o) else { return false };
+            // Only varint values matter (the capacity fields); skip the rest.
+            let v = match key & 7 {
+                0 => varint(&mut o),
+                1 | 5 => {
+                    o += if key & 7 == 1 { 8 } else { 4 };
+                    Some(0)
+                }
+                2 => varint(&mut o).map(|l| {
+                    o = o.saturating_add(l as usize);
+                    0
+                }),
+                _ => None,
+            };
+            let Some(v) = v else { return false };
+            match key {
+                0x20 => sets.0 = v != 0, // led_channels, varint
+                0x28 => sets.1 = v != 0, // max_leds, varint
+                _ => {}
+            }
+        }
+        if o != encoded.len() {
+            return false; // a field ran past the end
+        }
+        self.board_caps = Some(encoded);
+        self.board_caps_sets = sets;
+        true
     }
 
     /// Record the output capacity this firmware build has: `channels` parallel
@@ -1199,19 +1274,6 @@ impl Player {
         self.frame_log.push(seq, t_us);
     }
 
-    /// The active effect-playback config, or None when playback is "off". The
-    /// render loop feeds it (plus the stored topology) to a `Sim` that it steps
-    /// each frame and samples per LED via its (segment, foot arclength, dPerp).
-    pub fn effect_config(&self) -> Option<&EffectConfig> {
-        self.playback.as_ref().map(|(cfg, _)| cfg)
-    }
-
-    /// Monotonic counter bumped on every SetPlayback; the render side rebuilds
-    /// its `Sim` when this changes.
-    pub fn playback_gen(&self) -> u32 {
-        self.playback_gen
-    }
-
     /// Pattern clock epoch of the active capture, if any (integer ms).
     pub fn pattern_epoch_ms(&self) -> Option<i64> {
         self.active.as_ref().map(|a| a.epoch_ms)
@@ -1277,24 +1339,6 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
-/// Build the fixed-point EffectConfig from the wire PlaybackParams. Decoding
-/// the wire doubles here is COLD (once per set_playback); the derivation itself
-/// lives in ledmapper_pulse::EffectConfig::from_wire so the player and the host
-/// WASM preview share one source of truth. Optional knobs unset → sensible
-/// defaults (lead/decay derive from glow; split → the default fork rate).
-fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
-    EffectConfig::from_wire(
-        effect,
-        p.r#intensity().copied().unwrap_or(1.0) as f32,
-        p.r#glow_radius().copied().unwrap_or(0.15) as f32,
-        p.r#speed().copied().unwrap_or(0.5) as f32,
-        p.r#agent_count().copied().unwrap_or(2).max(0) as u32,
-        p.r#lead_in().copied().unwrap_or(0.0) as f32,
-        p.r#split_prob().map(|v| *v as f32).unwrap_or(-1.0),
-        p.r#decay().copied().unwrap_or(0.0) as f32,
-        &p.r#palette,
-    )
-}
 
 pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
     let mut cp = pb::CodeParams {

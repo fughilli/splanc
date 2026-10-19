@@ -62,7 +62,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
             if m.r#effect.as_str() == "off" {
                 matches!(reply, Some(SMsg::PlaybackState(_)))
             } else {
-                matches!(reply, Some(SMsg::PlaybackState(_))) || is_err("unsupported_effect")
+                // Native playback effects were removed (the FX engine runs shows).
+                is_err("unsupported_effect")
             }
         }
         CMsg::GetPlayback(_) => matches!(reply, Some(SMsg::PlaybackState(_))),
