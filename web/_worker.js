@@ -73,10 +73,14 @@ const obj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const textValue = (v, max = 100000) => typeof v === "string" && v.length <= max;
 const onlyKeys = (v, keys) => obj(v) && Object.keys(v).every(k => keys.includes(k));
 
-async function boundedJson(message, limit = BODY_LIMIT) {
+async function boundedJson(message, limit = BODY_LIMIT, signal) {
+  if (signal?.aborted) throw new Error("cancelled");
   if (Number(message.headers.get("content-length")) > limit) throw new RangeError("body size");
   if (!message.body) throw new SyntaxError("missing body");
   const reader = message.body.getReader();
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   const decoder = new TextDecoder();
   let bytes = 0, body = "";
   try {
@@ -87,8 +91,10 @@ async function boundedJson(message, limit = BODY_LIMIT) {
       if (bytes > limit) throw new RangeError("body size");
       body += decoder.decode(value, { stream: true });
     }
+    if (signal?.aborted) throw new Error("cancelled");
     return JSON.parse(body + decoder.decode());
   } finally {
+    signal?.removeEventListener("abort", cancel);
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
@@ -132,7 +138,7 @@ function completion(json, tools) {
   const requested = new Set((tools ?? []).map(t => t.function.name));
   if (calls !== undefined && (!Array.isArray(calls) || calls.length > 8 ||
       !calls.every(c => validToolCall(c) && requested.has(c.function.name)))) return null;
-  if (choice.finish_reason === "length") return null; // Never execute a truncated edit.
+  if (!["stop", "tool_calls"].includes(choice.finish_reason)) return null; // Never execute truncated/failed edits.
   if (!(typeof m.content === "string" && m.content.trim()) && !calls?.length) return null;
   return {
     choices: [{ message: { role: "assistant", content: m.content ?? "", ...(calls?.length ? { tool_calls: calls } : {}) },
@@ -182,14 +188,12 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
     const total = new AbortController();
     const cancel = () => total.abort();
     request.signal.addEventListener("abort", cancel, { once: true });
+    if (request.signal.aborted) cancel();
     const deadline = setTimeout(cancel, totalMs);
     try {
       let body;
       try {
-        // Race also bounds slow uploads (the handler does not await a hung reader).
-        body = await Promise.race([boundedJson(request), new Promise((_, reject) => {
-          total.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
-        })]);
+        body = await boundedJson(request, BODY_LIMIT, total.signal);
       } catch (e) {
         if (total.signal.aborted) return error(request.signal.aborted ? 499 : 504, "cancelled_or_timed_out");
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
@@ -213,7 +217,8 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
             }),
           });
           let json;
-          try { json = await boundedJson(result); } catch { /* Treat malformed upstream output as unavailable. */ }
+          try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch { /* Treat malformed upstream output as unavailable. */ }
+          if (total.signal.aborted) break;
           const status = result.ok && json?.error ? Number(json.error.code) || 502 : result.status;
           if (status === 429) {
             // Only an explicitly identified provider quota may use a different model.

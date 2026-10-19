@@ -153,3 +153,13 @@ test('static assets and existing worker routes remain separate', async () => {
   const gh = await worker.fetch(new Request('https://splanc.pages.dev/gh-asset?url=https://evil.example'), {});
   assert.equal(gh.status, 400);
 });
+
+
+test('deadline cancels a stalled upload and releases its stream', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream({ cancel() { cancelled = true; } });
+  const request = req(body, { body: stream, duplex: 'half' });
+  const relay = createDemoRelay({ totalMs: 10, fetchImpl: () => assert.fail('upload incomplete') });
+  assert.equal((await relay(request, env)).status, 504);
+  assert.equal(cancelled, true);
+});
