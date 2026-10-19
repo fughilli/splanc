@@ -92,7 +92,7 @@ def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
             f'-c "set heads {args.heads:#x}" '
         )
     cmd = (
-        "rm -rf /tmp/ram_watch /tmp/ram_watch.stop; mkdir -p /tmp/ram_watch; "
+        "rm -rf /tmp/ram_watch /tmp/ram_watch.stop /tmp/ram_watch.arm; mkdir -p /tmp/ram_watch; "
         "for i in 1 2 3 4 5 6; do "
         f"hitl-jtag {sets}"
         f"-f /tmp/{script} > /tmp/ram_watch/openocd.log 2>&1 && break; "
@@ -171,6 +171,9 @@ def main() -> int:
         watcher = _watcher(res, args, wout)
         time.sleep(8)  # attach before the BLE + first-handshake peak
         redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
+        # Arm the dumps only now: a ~46 s halt inside the WiFi join ends in a watchdog
+        # reset. The minimum (first wss handshake) comes after this point.
+        res.ssh("touch /tmp/ram_watch.arm", capture=True, timeout=30)
         host, port = dut_target(redirect, "wss")
         _log(f"[dut] {host}:{port}")
         with res.forward(host, port) as local_port:
