@@ -1,9 +1,10 @@
 # Website effects playground
 
-Status, 2026-10-19: layout/tour/client changes are in the isolated
-`codex/effects-demo-workspace` branch. The public inference relay is **not
-implemented or deployed**. Its visitor-data flow requires the operator's approval
-and an OpenRouter secret; do not present the mock-based checks as live inference.
+Status, 2026-10-19: the operator explicitly approved the OpenRouter visitor-data
+flow and confirmed `OPENROUTER_API_KEY` is installed on Cloudflare. The isolated
+branch contains the layout, tour, client and tested worker implementation. Live
+inference and production deployment are still pending; mocked checks are not
+model-quality results.
 
 ## Entry and layout
 
@@ -17,7 +18,7 @@ Desktop: Preview and Uniforms above Code/tools and AI chat. Phone: Preview,
 Uniforms and AI chat stay stacked, with an expandable tools section underneath.
 The three core panes cannot be hidden or put behind another tab in this preset.
 Normal saved docks are neither loaded nor overwritten. Existing configured AI
-providers are respected; the proposed free provider is the unconfigured demo's
+providers are respected; the free provider is the unconfigured demo's
 default only.
 
 The lower-left invitation starts a short local tour of Preview, Uniforms, AI chat,
@@ -50,7 +51,7 @@ option, but needs a separate server key and has its own data-use and quota terms
 The app's existing local WebGPU/CPU providers need model downloads and compatible
 hardware, making them poor no-setup defaults for this public demo.
 
-## Relay design awaiting approval
+## Approved relay
 
 Use the existing Cloudflare Pages worker at splanc.pages.dev; GitHub Pages cannot
 hold a server-side secret. Store `OPENROUTER_API_KEY` only as a server secret, not
@@ -59,10 +60,24 @@ in Vite variables, localStorage, source or a static build. The planned endpoint 
 from a visitor's browser. The request includes chat messages, effect code,
 compile/tool results and preview images only when capture_preview is requested.
 
-The relay should fix exactly three `:free` model IDs server-side, prohibit paid
+The relay fixes exactly three `:free` model IDs server-side, prohibit paid
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
-limits. Retry only availability failures; stop on bad input, authentication
+limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
+4,000 output tokens, 45 seconds per provider and 100 seconds overall. Price caps
+cover input, output, requests and images at zero. Inline preview images only;
+remote image URLs and visitor-supplied routing overrides are rejected.
+
+The local burst guard allows 24 requests/minute/IP, two concurrent requests/IP,
+eight concurrent and 120 requests/minute/isolate. It is not a distributed quota;
+bind `AI_RATE_LIMITER` for Cloudflare edge rate enforcement. The OpenRouter account
+still enforces its shared free allowance. Client IPs are kept only in the short
+in-memory limiter window; no prompts, keys or responses are logged by this worker.
+Optional `DEMO_DEV_ORIGIN` permits one explicit development origin, never a
+wildcard. GET on the relay returns configuration presence and the fixed model
+list without making an inference call or exposing the key.
+
+Retry only availability failures; stop on bad input, authentication
 failure, user cancellation or shared platform quota exhaustion. Honor upstream
 retry guidance. Do not rotate keys to bypass quotas. See the official
 [fallback guide](https://openrouter.ai/docs/guides/routing/model-fallbacks) and

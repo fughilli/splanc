@@ -3167,3 +3167,7 @@ input.device-name-input {
 }
 
 .fxedit-chat-demo-note { padding:4px 10px; color:var(--text-dim); font-size:var(--f-caption); }
+
+.fxedit-chat-demo-note { flex:0 0 auto; max-height:90px; overflow:auto; }
+.fxedit-chat-demo-note summary { cursor:pointer; }
+.fxedit-chat-demo-note p { margin:6px 0; }

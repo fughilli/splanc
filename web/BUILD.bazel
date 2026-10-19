@@ -191,12 +191,18 @@ _TEST_SOURCE_DATA = {
     for f in glob(["tests/*.test.ts"])
 ]
 
+js_test(
+    name = "demoAiWorker_test",
+    entry_point = "tests/demoAiWorker.test.mjs",
+    data = ["_worker.js", "package.json"],
+)
+
 test_suite(
     name = "unit_tests",
     tests = [
         f.removeprefix("tests/").removesuffix(".test.ts") + "_test"
         for f in glob(["tests/*.test.ts"])
-    ],
+    ] + [":demoAiWorker_test"],
 )
 
 # The emitted dist-test tree is CommonJS, but web/package.json declares

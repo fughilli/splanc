@@ -1584,7 +1584,15 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   if (screenOpts.demo) {
     const note = document.createElement("div");
     note.className = "fxedit-chat-demo-note";
-    note.textContent = demoProvider ? "Free demo AI · powered by OpenRouter" : "Using your configured AI provider";
+    if (demoProvider) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Free AI · public effects only · data use";
+      const disclosure = document.createElement("p");
+      disclosure.textContent = "OpenRouter and its model providers receive your chat, effect code, tool results and requested preview images. Providers may use these for model improvement. Don’t share private or personal information. Free usage is limited.";
+      details.append(summary, disclosure);
+      note.appendChild(details);
+    } else note.textContent = "Using your configured AI provider";
     chatBody.appendChild(note);
   }
   chatBody.append(chatLog, chatInputWrap);

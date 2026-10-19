@@ -1,0 +1,58 @@
+# Publish a successful main-branch Test artifact without cutting an iOS/firmware
+# release. The source, compiler/VM and worker must come from that one build.
+name: Deploy tested web app
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Test workflow run on the current main commit
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Deploy environment
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tested main artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/run.json
+          jq -e --arg sha "$GITHUB_SHA" '.head_sha == $sha and .head_branch == "main" and .event == "push" and .conclusion == "success" and .path == ".github/workflows/test.yaml"' /tmp/run.json
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name site --dir _site
+          test -f _site/_worker.js
+          test -f _site/fx-compiler/fx_compiler_wasm_pkg_bg.wasm
+          test -f _site/fx-vm/fx_vm_wasm_pkg_bg.wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          for project in ledmapper splanc; do
+            pnpm dlx wrangler@4 pages deploy _site --project-name "$project" --branch main --commit-dirty=true
+          done
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site
+          branch: gh-pages
+          clean: true
+          clean-exclude: |
+            pr-preview/
+            traceability/
