@@ -490,10 +490,8 @@ export class DeviceSession {
   setFixturePose(pose: Pose): Promise<boolean> {
     return this.sendGated("fixture_pose", {
       type: "set_fixture_pose",
-      room: pose.room,
-      translation: pose.translation,
-      rotation: pose.rotation,
-      scale: pose.scale,
+      // SetFixturePose { FixturePose pose = 1; ...; optional bool commit = 3 }.
+      pose: { room: pose.room, translation: pose.translation, rotation: pose.rotation, scale: pose.scale },
       commit: true,
     });
   }
