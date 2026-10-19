@@ -28,6 +28,17 @@ void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
 // LM_GIT_DIRTY / LM_VERSION).
 void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dirty,
                               const uint8_t *version, size_t version_len);
+// Render the agent discovery manifest (GET /.well-known/splanc.json, schema
+// "splanc-agent/1") into out (cap bytes); returns its length, or -2 when it
+// doesn't fit. cert_sha256: the TLS certificate's SHA-256, lowercase hex.
+// bundle_url / bundle_sha256: the build's agent-bundle stamps (bundle_info.h;
+// empty = derive the URL for a release build / no hash).
+int32_t lm_agent_manifest(uint8_t *out, size_t cap, const uint8_t *cert_sha256,
+                          size_t cert_len, const uint8_t *bundle_url, size_t url_len,
+                          const uint8_t *bundle_sha256, size_t sha_len);
+// Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
+// unset = true). A commit=false update is applied live but not saved.
+bool lm_set_uniforms_commit(void);
 // Copy the player's CURRENT display name into out (cap bytes). Returns the
 // length written, or -2 when it doesn't fit. The app polls this after each
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.

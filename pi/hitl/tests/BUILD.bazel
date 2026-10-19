@@ -25,6 +25,7 @@ py_test(
     srcs = [
         "conftest.py",
         "pytest_main.py",
+        "test_agent_manifest_check.py",
         "test_ap_lock.py",
         "test_board_caps.py",
         "test_catalog_multidut_isolation.py",

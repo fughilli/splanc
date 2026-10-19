@@ -9,7 +9,7 @@ against the host profile, and the RFC6455 codec is host-tested byte-exactly.
 @rr(PR-13, PR-14, PR-17, PR-18, PR-19, PR-20, PR-21, PR-26, PR-27, PR-28, PR-29, PR-35): implemented in this package (see requirements/requirements.yaml)
 """
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
 load("@embedded//rules:resources.bzl", "c_resource_library")
@@ -22,6 +22,7 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_l
 load("//tools:flash_bundle.bzl", "flash_bundle")
 load("//tools:ram_chart.bzl", "ram_chart")
 load("//tools/build_info:build_info.bzl", "build_info_file")
+load(":agent_bundle.bzl", "agent_bundle_info")
 load(":led_caps.bzl", "MAX_LEDS")
 
 package(default_visibility = ["//visibility:public"])
@@ -66,6 +67,25 @@ build_info_file(
     name = "build_info_h",
     out = "build_info.h",
     template = "build_info.h.tmpl",
+)
+
+# The agent bundle a release names in GET /.well-known/splanc.json (see
+# agent_bundle.bzl). Empty = derive the release URL from the version / no hash.
+string_flag(
+    name = "agent_bundle_url",
+    build_setting_default = "",
+)
+
+string_flag(
+    name = "agent_bundle_sha256",
+    build_setting_default = "",
+)
+
+agent_bundle_info(
+    name = "agent_bundle_h",
+    out = "agent_bundle.h",
+    sha256 = ":agent_bundle_sha256",
+    url = ":agent_bundle_url",
 )
 
 # The board-caps descriptor as a labelable source: the HITL board-caps check
@@ -140,6 +160,24 @@ rr_rust_test(
         "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
+    ],
+)
+
+# The agent-facing protocol surface through the C ABI (welcome.features, a full
+# get_effect_uniforms, list_effects, set_uniforms.commit, the splanc.json manifest).
+# Own binary: fresh process-global FFI state.
+rust_test(
+    name = "agent_surface_test",
+    srcs = ["tests/agent_surface.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@crates//:serde_json",
     ],
 )
 
@@ -388,6 +426,7 @@ cc_binary(
         "serial_log.h",
         "tls_region.cpp",
         "tls_region.h",
+        ":agent_bundle_h",
         ":build_info_h",
     ] + WS2812_SRCS,
     copts = ["-fno-rtti"],

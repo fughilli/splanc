@@ -56,6 +56,9 @@
 #include "selfsigned.h"  // @embedded//libs/tls: on-device keygen + cert re-issuance
 #endif
 #include "firmware/player_app/build_info.h"  // generated: LM_GIT_COMMIT / LM_GIT_DIRTY
+#if defined(LM_NETSTACK)
+#include "firmware/player_app/agent_bundle.h"  // generated: LM_AGENT_BUNDLE_URL / _SHA256
+#endif
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
@@ -797,6 +800,8 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   } else if (reply_arm == kArmPlaybackState &&
              (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
     // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
+    // A set_uniforms with commit=false is a live preview: applied, not saved.
+    if (req_arm == kArmSetUniforms && !lm_set_uniforms_commit()) return;
     queue_fx_sel_save(req, req_len);
   }
 }
@@ -1147,6 +1152,22 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
 // heapless WS on the netstack build.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
   return lm_ws_dispatch(in, len, reply);
+}
+
+// GET /.well-known/splanc.json (netstack_transport.cpp serves it): the agent discovery
+// manifest, rendered by the player (fixed-buffer, no heap) into the shared tx — the
+// same buffer and context as lm_ws_dispatch, under the player mutex.
+int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body) {
+  static const char kUrl[] = LM_AGENT_BUNDLE_URL;
+  static const char kSha[] = LM_AGENT_BUNDLE_SHA256;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_agent_manifest(tx, sizeof tx, reinterpret_cast<const uint8_t *>(cert_sha256),
+                                strlen(cert_sha256), reinterpret_cast<const uint8_t *>(kUrl),
+                                sizeof kUrl - 1, reinterpret_cast<const uint8_t *>(kSha),
+                                sizeof kSha - 1);
+  xSemaphoreGive(player_mutex);
+  *body = tx;
+  return (int)n;
 }
 #endif
 

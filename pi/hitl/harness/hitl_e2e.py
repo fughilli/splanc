@@ -94,7 +94,7 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
 
 async def _ws_checks(
     ws_url: str, new_name: str, insecure: bool, expected_caps: dict | None
-) -> None:
+) -> dict:
     import websockets
     from server import proto_wire
 
@@ -213,8 +213,111 @@ async def _ws_checks(
                 f"{len(board.get('ledModes', []))} LED modes)",
                 flush=True,
             )
+        # The latest welcome (the rename echo: a full welcome carrying the new name),
+        # for the manifest check to mirror.
+        return echo
     finally:
         await sock.close()
+
+
+def _https_get(host: str, port: int, path: str) -> tuple[int, dict, bytes, bytes]:
+    """One raw HTTPS GET; returns (status, lowercased headers, body, peer cert DER)."""
+    import socket
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False  # self-signed device cert, reached via a localhost tunnel
+    ctx.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=15) as raw:
+        with ctx.wrap_socket(raw, server_hostname=host) as tls:
+            der = tls.getpeercert(binary_form=True) or b""
+            tls.sendall(
+                f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
+            )
+            data = b""
+            while True:
+                try:
+                    chunk = tls.recv(4096)
+                except (ssl.SSLEOFError, ConnectionResetError):
+                    break
+                if not chunk:
+                    break
+                data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    status = int(lines[0].split()[1]) if lines and len(lines[0].split()) > 1 else 0
+    headers = {}
+    for ln in lines[1:]:
+        k, _, v = ln.partition(":")
+        headers[k.strip().lower()] = v.strip()
+    return status, headers, body, der
+
+
+def agent_manifest_check(ws_url: str, welcome: dict) -> dict | None:
+    """Assert GET /.well-known/splanc.json serves the agent discovery manifest.
+
+    The agent bridge discovers a device (mDNS _splanc._tcp or a typed host), fetches
+    this manifest, and pins the TLS cert by tls.cert_sha256 before opening /ws. So
+    on real hardware: 200 application/json, schema splanc-agent/1, device/firmware/
+    protocol mirroring the welcome just received, and cert_sha256 equal to the
+    SHA-256 of the certificate this very TLS handshake presented.
+    """
+    if not ws_url.startswith("wss:"):
+        print("[manifest] AGENT MANIFEST skipped — plain-ws target has no TLS", flush=True)
+        return None
+    import json
+
+    u = urllib.parse.urlparse(ws_url)
+    host, port = u.hostname or "localhost", u.port or 443
+    deadline = time.monotonic() + hitl_ws.CONNECT_SETTLE
+    while True:
+        try:
+            status, headers, body, der = _https_get(host, port, "/.well-known/splanc.json")
+            break
+        except OSError as e:
+            if time.monotonic() >= deadline:
+                raise E2EFailure(f"GET /.well-known/splanc.json failed ({type(e).__name__}: {e})")
+            print(f"[manifest] GET not ready ({type(e).__name__}); retrying…", flush=True)
+            time.sleep(1.5)
+    if status != 200 or "application/json" not in headers.get("content-type", ""):
+        raise E2EFailure(
+            f"/.well-known/splanc.json: expected 200 application/json, got {status} "
+            f"{headers.get('content-type')!r} body[:200]={body[:200]!r}"
+        )
+    try:
+        m = json.loads(body)
+    except ValueError as e:
+        raise E2EFailure(f"/.well-known/splanc.json is not JSON ({e}): {body[:300]!r}")
+    problems = []
+
+    def want(path: str, got, expected) -> None:
+        if got != expected:
+            problems.append(f"{path}: manifest {got!r} != expected {expected!r}")
+
+    want("schema", m.get("schema"), "splanc-agent/1")
+    dev, fw, pr = m.get("device") or {}, m.get("firmware") or {}, m.get("protocol") or {}
+    want("device.id", dev.get("id"), welcome.get("mac"))
+    want("device.name", dev.get("name"), welcome.get("deviceName"))
+    want("firmware.version", fw.get("version"), welcome.get("fwVersion"))
+    want("firmware.commit", fw.get("commit"), welcome.get("fwGitCommit"))
+    want("firmware.dirty", fw.get("dirty"), bool(welcome.get("fwGitDirty")))
+    want("protocol.ws_path", pr.get("ws_path"), "/ws")
+    want("protocol.features", pr.get("features"), list(welcome.get("features") or []))
+    want("protocol.fxb_format", pr.get("fxb_format"), int(welcome.get("fxbFormat") or 0))
+    if not welcome.get("features"):
+        problems.append("welcome.features is empty (firmware should advertise its features)")
+    want(
+        "tls.cert_sha256", (m.get("tls") or {}).get("cert_sha256"), hashlib.sha256(der).hexdigest()
+    )
+    if "bundle" not in m:
+        problems.append("bundle key missing (null for a dev/dirty build)")
+    if problems:
+        raise E2EFailure("agent manifest mismatch:\n  " + "\n  ".join(problems))
+    print(
+        f"[manifest] AGENT MANIFEST OK — {len(body)} B, features={pr.get('features')}, "
+        f"cert pin matches, bundle={'null' if m.get('bundle') is None else m['bundle'].get('url')}",
+        flush=True,
+    )
+    return m
 
 
 def cert_page_check(ws_url: str, insecure: bool) -> None:
@@ -275,11 +378,13 @@ def cert_page_check(ws_url: str, insecure: bool) -> None:
 
 
 def ws_checks(ws_url: str, new_name: str, insecure: bool, expected_caps: dict | None) -> None:
-    asyncio.run(_ws_checks(ws_url, new_name, insecure, expected_caps))
+    welcome = asyncio.run(_ws_checks(ws_url, new_name, insecure, expected_caps))
     # After the WS session closes (slot freed), assert the cert-trust landing page —
     # the one-shot GET / the webapp's popup trust flow depends on (FUG: netstack
     # ERR_EMPTY_RESPONSE regression). Uses the same tunnel, root path instead of /ws.
     cert_page_check(ws_url, insecure)
+    # The agent discovery manifest (MCP spec): same tunnel, /.well-known/splanc.json.
+    agent_manifest_check(ws_url, welcome)
 
 
 # --- driver ----------------------------------------------------------------
