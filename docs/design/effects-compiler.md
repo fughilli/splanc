@@ -267,6 +267,23 @@ Notes:
   the fields (`name, type, ui_kind, min, max, step, default|options`). The
   compiler is the only thing that produces it; the editor and preview never
   synthesize one.
+- **Agent-facing manifest fields.** Each uniform's object also carries an explicit
+  `min`/`max` (a slider's range; `0..1` for a toggle or colour; `0..n-1` for a
+  dropdown) so an agent can clamp without knowing the UI vocabulary, an optional
+  `unit` from a string after the UI annotation
+  (`uniform float speed : 0..5 "m/s" = 1.0;`), and an optional `doc` taken from
+  the uniform's `//` comment: a comment trailing the declaration on its last line,
+  else the block of own-line comments directly above it (a blank line breaks the
+  block). Docs are JSON-escaped and cut at `MAX_UNIFORM_DOC` (120 B) because the
+  manifest rides inside the `.fxb`. `doc` is emitted **last** in each object: the
+  device's port table (`ledmapper_osc::parse_manifest`) is a tolerant key
+  scanner, not a JSON parser, and must never meet free text before `name`/`slot`.
+- **`.fxb` format version.** The header's version byte (offset 4, after `FXB1`) is
+  named `fx_vm::FORMAT_VERSION` (= `fx_compiler::FXB_FORMAT_VERSION`, pinned
+  equal by a test). The VM rejects any other value and the firmware answers
+  `bad_fxb`; the device reports the version it runs in `welcome.fxb_format` and in
+  `/.well-known/splanc.json` (`protocol.fxb_format`), so a host toolchain can check
+  it emits what the device runs. Bump it only for an incompatible bytecode change.
 - The result is **cached** by the editor keyed on source text, so the linter and
   the preview trigger share one compile per idle tick (no double work).
 - `stats` feeds the status line ("214 ops") and later the offline perf estimate

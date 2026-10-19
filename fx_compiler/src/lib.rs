@@ -161,7 +161,21 @@ pub struct UniformInfo {
     pub slot: u8,
     pub ui: UiKind,
     pub default: Vec<f32>,
+    /// What the control means, from the uniform's `//` comment (the line(s) right
+    /// above the declaration, or trailing it). Empty when uncommented.
+    pub doc: String,
+    /// Physical unit, from an optional string after the UI annotation
+    /// (`uniform float speed : 0..5 "m/s" = 1.0;`). Empty when unstated.
+    pub unit: String,
 }
+
+/// The `.fxb` format version the compiler emits (the header's version byte). Must
+/// equal `fx_vm::FORMAT_VERSION` (a test pins it): the device rejects others.
+pub const FXB_FORMAT_VERSION: u8 = 1;
+
+/// Longest doc string embedded per uniform (bytes). The manifest rides inside the
+/// `.fxb`, which the device caps at 4 KiB, so a long comment is truncated there.
+pub const MAX_UNIFORM_DOC: usize = 120;
 
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
@@ -193,10 +207,15 @@ struct Lexer<'a> {
     i: usize,
     line: u32,
     col: u32,
+    /// Every `//` comment: (line, own_line, text) — `own_line` when nothing but
+    /// whitespace precedes it on its line. A uniform's doc string comes from these.
+    comments: Vec<(u32, bool, String)>,
+    /// Whether a token has been read on the current line (for `own_line`).
+    token_on_line: bool,
 }
 impl<'a> Lexer<'a> {
     fn new(s: &'a str) -> Self {
-        Lexer { s: s.as_bytes(), i: 0, line: 1, col: 1 }
+        Lexer { s: s.as_bytes(), i: 0, line: 1, col: 1, comments: Vec::new(), token_on_line: false }
     }
     fn bump(&mut self) -> u8 {
         let c = self.s[self.i];
@@ -204,6 +223,7 @@ impl<'a> Lexer<'a> {
         if c == b'\n' {
             self.line += 1;
             self.col = 1;
+            self.token_on_line = false;
         } else {
             self.col += 1;
         }
@@ -217,15 +237,21 @@ impl<'a> Lexer<'a> {
             while self.i < self.s.len() && (self.s[self.i] as char).is_whitespace() {
                 self.bump();
             }
-            // line comments
+            // line comments (kept: a uniform's doc string is its comment)
             if self.peek(0) == b'/' && self.peek(1) == b'/' {
+                let (line, own_line) = (self.line, !self.token_on_line);
+                let start = self.i;
                 while self.i < self.s.len() && self.s[self.i] != b'\n' {
                     self.bump();
                 }
+                let text = String::from_utf8_lossy(&self.s[start..self.i]);
+                let text = text.trim_start_matches('/').trim().to_string();
+                self.comments.push((line, own_line, text));
                 continue;
             }
             break;
         }
+        self.token_on_line = true;
         let (line, col) = (self.line, self.col);
         if self.i >= self.s.len() {
             return Ok((Tok::Eof, line, col));
@@ -341,6 +367,8 @@ struct Place {
 
 pub struct Compiler {
     lx_toks: Vec<(Tok, u32, u32)>,
+    /// The source's `//` comments (line, own_line, text), for uniform doc strings.
+    comments: Vec<(u32, bool, String)>,
     p: usize,
     // symbol tables
     syms: HashMap<String, Sym>,
@@ -429,6 +457,7 @@ pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnosti
     }
     let mut c = Compiler {
         lx_toks: toks,
+        comments: std::mem::take(&mut lx.comments),
         p: 0,
         syms: HashMap::new(),
         funcs: HashMap::new(),
@@ -633,27 +662,55 @@ impl Compiler {
     // uniform float speed : 0..5 = 1.0;   uniform vec3 tint : color = vec3(..);
     // uniform bool x = false;   uniform int mode : {"a","b"} = 0;
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
+        let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
         let tyname = self.eat_ident()?;
         let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
         let name = self.eat_ident()?;
         let mut ui = default_ui(ty);
+        let mut unit = String::new();
         if *self.cur() == Tok::Sym(':') {
             self.advance();
             ui = self.parse_ui_annotation(ty)?;
+            // Optional unit string: `: 0..5 "m/s"` (or just `: "m/s"`).
+            if let Tok::Str(u) = self.cur().clone() {
+                self.advance();
+                unit = u;
+            }
         }
         // default
         self.expect_sym('=')?;
         let default = self.parse_uniform_default(ty)?;
         self.expect_sym(';')?;
+        let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
+        let doc = self.uniform_doc(first_line, end_line);
         let slot = self.n_uniform_slots;
         self.n_uniform_slots += ty.width();
         self.syms.insert(
             name.clone(),
             Sym { kind: SymKind::Uniform, slot, ty },
         );
-        self.uniforms.push(UniformInfo { name, ty, slot, ui, default });
+        self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit });
         Ok(())
+    }
+
+    /// A uniform's doc string: the comment trailing its declaration on the end
+    /// line, else the block of own-line comments directly above its first line.
+    fn uniform_doc(&self, first_line: u32, end_line: u32) -> String {
+        if let Some((_, _, t)) = self.comments.iter().find(|(l, own, _)| *l == end_line && !own) {
+            return t.clone();
+        }
+        let mut lines = Vec::new();
+        let mut want = first_line;
+        while want > 1 {
+            want -= 1;
+            match self.comments.iter().find(|(l, own, _)| *l == want && *own) {
+                Some((_, _, t)) => lines.push(t.as_str()),
+                None => break,
+            }
+        }
+        lines.reverse();
+        lines.join(" ").trim().to_string()
     }
 
     fn parse_ui_annotation(&mut self, ty: Ty) -> Result<UiKind, Diagnostic> {
@@ -2595,7 +2652,7 @@ impl Compiler {
             flags |= FLAG_USES_UV;
         }
         b.extend_from_slice(b"FXB1");
-        b.push(1); // version
+        b.push(FXB_FORMAT_VERSION);
         b.push(flags); // flags
         b.push(self.n_state);
         b.push(self.n_uniform_slots);
@@ -2925,17 +2982,53 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             }
         };
         let def: Vec<String> = u.default.iter().map(|v| v.to_string()).collect();
+        // Explicit range per uniform, even where the UI kind implies it, so an agent
+        // can clamp without knowing the UI vocabulary.
+        let (min, max) = match &u.ui {
+            UiKind::Slider { min, max, .. } => (*min, *max),
+            UiKind::Color | UiKind::Toggle => (0.0, 1.0),
+            UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),
+        };
         let _ = write!(
             s,
-            "{{\"name\":\"{}\",\"slot\":{},\"width\":{},\"ui\":{ui},\"default\":[{}]}}",
+            "{{\"name\":\"{}\",\"slot\":{},\"width\":{},\"ui\":{ui},\"default\":[{}],\"min\":{min},\"max\":{max}",
             u.name,
             u.slot,
             u.ty.width(),
             def.join(",")
         );
+        if !u.unit.is_empty() {
+            let _ = write!(s, ",\"unit\":{}", json_str(&u.unit, MAX_UNIFORM_DOC));
+        }
+        // Last, so the device's tolerant name/slot scanner never meets it first.
+        if !u.doc.is_empty() {
+            let _ = write!(s, ",\"doc\":{}", json_str(&u.doc, MAX_UNIFORM_DOC));
+        }
+        s.push('}');
     }
     s.push(']');
     s
+}
+
+/// A JSON string literal of at most `max` bytes of `text` (cut at a char boundary).
+fn json_str(text: &str, max: usize) -> String {
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = String::from("\"");
+    for c in text[..end].chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 // Opcode constants mirroring fx_vm::Op discriminants (kept in sync by the
