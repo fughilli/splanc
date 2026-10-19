@@ -17,7 +17,6 @@
 #include <esp_wifi.h>
 #include <esp_timer.h>  // high-frequency coex tick (coex_timer_cb) — finer than the netstack loop
 #include <esp_event.h>
-#include <esp_netif.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <string.h>
@@ -223,6 +222,7 @@ void wifi_scan_cache() {
     g_scan_n++;
   }
   free(recs);
+  esp_wifi_clear_ap_list();  // and any list the driver still holds (a no-op if none)
   Serial.printf("[scan] err=%d found=%u AP(s)\n", (int)e, (unsigned)g_scan_n);
   for (uint8_t i = 0; i < g_scan_n; i++)
     Serial.printf("[scan]   ssid=\"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_scan[i].ssid,
@@ -1163,9 +1163,16 @@ void netstack_setup() {
   // RX buffers are pure waste — and they're DMA-capable, the scarce pool the RMT LED driver +
   // our ring also draw from. Under the full player runtime those allocs FAIL (beacons=0), so
   // init esp_wifi with a minimal RX/TX buffer config instead of Arduino's WiFi.mode defaults.
-  esp_netif_init();
-  esp_event_loop_create_default();  // BLE may have created it already (ESP_ERR_INVALID_STATE ok)
+  //
+  // No esp_netif_init(): the heapless netstack owns TCP/IP, so lwIP's tcpip task (tiT,
+  // ~5.6 KB of stack + state) would only ever idle. The default event loop IS created —
+  // the vendor scan below reports through it — but deleted again once the scan is done
+  // (~5.8 KB: the sys_evt task + loop); nothing after the MAC hijack consumes events.
+  esp_event_loop_create_default();
   wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
+  // Credentials live in our own store and the driver runs from RAM config only
+  // (esp_wifi_set_storage below), so its NVS mirror (~4.4 KB cache) is never read.
+  wcfg.nvs_enable = 0;
   wcfg.static_rx_buf_num = 2;    // default 10 — we own the RX ring, minimize the vendor's DMA
   wcfg.dynamic_rx_buf_num = 6;   // default 32
   wcfg.static_tx_buf_num = 2;
@@ -1191,6 +1198,9 @@ void netstack_setup() {
   // loop, once the provisioner gives us the SSID) then picks our AP's real BSSID+channel,
   // so the netstack joins ANY rig's AP, not just the baked rig-3 one.
   wifi_scan_cache();
+  esp_err_t lerr = esp_event_loop_delete_default();
+  Serial.printf("[netstack] vendor scan done; event loop released=%d free=%u\n", (int)lerr,
+                (unsigned)esp_get_free_heap_size());
   // Continuous STA RX with NO promiscuous, so the hardware crypto engine stays inline:
   // stop->start the MAC, configure the STA vif, and force it awake (pm_go_to_wake) so
   // RX is continuous instead of the disconnected duty-cycle. Runs in the WiFi task via
@@ -1200,7 +1210,7 @@ void netstack_setup() {
   delay(150);
 #if defined(LM_CHIP_ESP32C3)
   // ESP32-C3 bring-up milestone: everything ABOVE is the chip-agnostic vendor WiFi
-  // controller init (esp_netif/esp_wifi_init/start/scan), which comes up fine on the
+  // controller init (esp_wifi_init/start/scan), which comes up fine on the
   // C3. Everything BELOW is the heapless-MAC HIJACK — it pokes the ESP32-C6 WiFi MAC
   // register map directly (firmware/netstack lmac.rs / regs.rs at 0x600A_xxxx) and
   // drives reversed C6 libpp externs. The C3's WiFi MAC lives at a DIFFERENT base, so

@@ -481,6 +481,11 @@ archive_override(
         # instead) so the c3 image links strictly — no --unresolved-symbols=
         # ignore-all. Must follow the build-target patch (patches its core_esp32c3).
         "//patches:embedded-esp32c3-mbedtls-sw-ecc.patch",
+        # esp32c6-sections-ld-override: expose the SDK's sections.ld and let the
+        # consumer put a rewritten one ahead of it on the -L path
+        # (--@embedded//ld:esp32c6_sections_override, set in .bazelrc) — how the
+        # player moves dead/cold vendor IRAM code to flash on the prebuilt SDK.
+        "//patches:embedded-esp32c6-sections-ld-override.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],

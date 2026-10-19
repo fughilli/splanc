@@ -1,0 +1,45 @@
+"""The ESP32-C6 player's linker placement script: the SDK's ldgen sections.ld
+rewritten (iram_to_flash.py) to move the input sections listed in
+esp32c6_iram_to_flash.txt from internal RAM to flash. Wired into the link via
+--@embedded//ld:esp32c6_sections_override (.bazelrc)."""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "iram_to_flash_lib",
+    srcs = ["iram_to_flash.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "iram_to_flash",
+    srcs = ["iram_to_flash.py"],
+    deps = [":iram_to_flash_lib"],
+)
+
+# Must be literally `sections.ld` in its own dir: ld resolves the SDK's
+# `-T sections.ld` through the -L path, and this dir is searched first.
+genrule(
+    name = "esp32c6_sections_ld",
+    srcs = [
+        "esp32c6_iram_to_flash.txt",
+        "@embedded//ld:esp32c6_sections_ld",
+    ],
+    outs = ["esp32c6/sections.ld"],
+    cmd = "$(location :iram_to_flash) $(location esp32c6_iram_to_flash.txt) " +
+          "$(location @embedded//ld:esp32c6_sections_ld) $@ 2>/dev/null",
+    tools = [":iram_to_flash"],
+)
+
+py_test(
+    name = "iram_to_flash_test",
+    srcs = ["iram_to_flash_test.py"],
+    data = [
+        "esp32c6_iram_to_flash.txt",
+        ":esp32c6_sections_ld",
+        "@embedded//ld:esp32c6_sections_ld",
+    ],
+    deps = [":iram_to_flash_lib"],
+)

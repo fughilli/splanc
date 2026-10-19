@@ -1,0 +1,65 @@
+# Additive: lets the firmware consumer replace the esp32c6 sections.ld (IRAM->flash
+# placement) without rebuilding the prebuilt SDK. Fold upstream on the next bump.
+diff -ruN a/ld/BUILD.bazel b/ld/BUILD.bazel
+--- a/ld/BUILD.bazel	1970-01-01 00:00:00.000000000 +0000
++++ b/ld/BUILD.bazel	2026-10-19 17:45:42.318744330 +0000
+@@ -0,0 +1,18 @@
++"""Linker-script hooks for consumers of the esp32c6 SDK link (the sections_ld /
++sections_override targets in nix/arduino_esp32.BUILD, re-exported here because
++that repo isn't visible to the root module)."""
++
++package(default_visibility = ["//visibility:public"])
++
++# The SDK's generated sections.ld, as an input for a consumer's rewrite.
++alias(
++    name = "esp32c6_sections_ld",
++    actual = "@arduino_esp32//:sections_ld",
++)
++
++# Set it to a replacement (a file literally named sections.ld), searched before
++# the SDK's: --@embedded//ld:esp32c6_sections_override=//your:sections_ld.
++alias(
++    name = "esp32c6_sections_override",
++    actual = "@arduino_esp32//:sections_override",
++)
+diff -ruN a/nix/arduino_esp32.BUILD b/nix/arduino_esp32.BUILD
+--- a/nix/arduino_esp32.BUILD	2026-10-19 17:44:37.826095616 +0000
++++ b/nix/arduino_esp32.BUILD	2026-10-19 17:45:42.313744281 +0000
+@@ -36,6 +36,24 @@
+     ],
+ ))
+ filegroup(name = "sdk_ld", srcs = glob(["sdk/esp32c6/ld/*.ld"]))
++
++# The SDK's ldgen-generated linker placement script, for consumers that rewrite
++# it, and a consumer-supplied replacement (a file named sections.ld; the
++# label_flag is empty by default). Both are re-exported by @firmware//ld. ld
++# resolves `-T sections.ld` through the -L search path in order, so the
++# override's dir, placed before the SDK's, wins.
++filegroup(name = "sections_ld", srcs = ["sdk/esp32c6/ld/sections.ld"])
++label_flag(
++    name = "sections_override",
++    build_setting_default = ":no_sections_override",
++)
++filegroup(name = "no_sections_override")
++genrule(
++    name = "ld_override_dirs",
++    srcs = [":sections_override"],
++    outs = ["ld_override_dirs.rsp"],
++    cmd = ": > $@; for f in $(SRCS); do echo \"-L$$(dirname $$f)\" >> $@; done",
++)
+ filegroup(name = "ld_flags", srcs = ["sdk/esp32c6/flags/ld_flags"])
+ filegroup(name = "ld_scripts", srcs = ["sdk/esp32c6/flags/ld_scripts"])
+ 
+@@ -613,10 +631,12 @@
+ cc_library(
+     name = "core",
+     additional_linker_inputs = [
++        ":ld_override_dirs", ":sections_override",
+         ":sdk_link_dirs", ":sdk_libs", ":sdk_ld",
+         ":ld_flags", ":ld_scripts", ":ld_libs",
+     ],
+     linkopts = [
++        "@$(location :ld_override_dirs)",
+         "@$(location :sdk_link_dirs)",
+         "@$(location :ld_flags)",
+         "@$(location :ld_scripts)",

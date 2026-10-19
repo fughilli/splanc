@@ -83,3 +83,8 @@ build --jobs=3
 #     (The override dir must have the CustomOperatorSamples layout referenced by
 #     //third_party/touchdesigner:sdk.BUILD.)
 build:td --macos_minimum_os=10.14
+
+# ESP32-C6 link: the player's rewritten sections.ld (vendor code the prebuilt SDK
+# places in IRAM that this firmware never runs with the cache off -> flash). See
+# firmware/player_app/ld/.
+build --@embedded//ld:esp32c6_sections_override=//firmware/player_app/ld:esp32c6_sections_ld
