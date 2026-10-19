@@ -413,6 +413,12 @@ wrapper, cfg-gated so the host test keeps std’s). <code class="docutils litera
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">rx</span></code> reassembly buffer</strong> — <em>done upstream (FUG-74):</em> large map/topology
 uploads are sharded into <code class="docutils literal notranslate"><span class="pre">UploadChunk</span></code> windows streamed to flash and decoded
 straight off flash, so <code class="docutils literal notranslate"><span class="pre">rx</span></code> only holds a whole non-sharded message. <em>(done)</em></p></li>
+<li><p><strong>Heap-free regions + mode model</strong> — fixed-slot pools / slabs / mode-union
+regions (<code class="docutils literal notranslate"><span class="pre">//firmware/region</span></code>) and the reachability-checked memory-mode state
+machine (<code class="docutils literal notranslate"><span class="pre">//firmware/sysmode</span></code>); design, results, and the integration plan in
+<a class="reference internal" href="memory-regions.html"><span class="std std-doc">memory-regions.md</span></a>. Item 4 (lazy FX buffers) becomes the
+activity union there, with no allocator. <em>(crate + model landed; firmware
+integration follow-up)</em></p></li>
 </ol>
 </section>
 </section>

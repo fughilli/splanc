@@ -1,10 +1,12 @@
 # Website effects playground
 
-Status, 2026-10-19: the operator explicitly approved the OpenRouter visitor-data
-flow and confirmed `OPENROUTER_API_KEY` is installed on Cloudflare. The isolated
-branch contains the layout, tour, client and tested worker implementation. Live
-inference and production deployment are still pending; mocked checks are not
-model-quality results.
+Status, 2026-10-19: the operator approved the OpenRouter visitor-data flow and
+confirmed the Cloudflare secret. The guided workspace and relay merged in #275;
+full main CI (39332926193) and web deployment (39336232316) passed. The first live
+check exposed a Workers runtime incompatibility: `redirect: "error"` throws before
+sending any upstream request. The follow-up uses `manual` and rejects every 3xx
+without forwarding credentials. Production inference is being rechecked; mocked
+checks are not model-quality results.
 
 ## Entry and layout
 
@@ -88,17 +90,22 @@ on one OpenRouter account still share its free allowance and the platform itself
 The UI must report a depleted allowance honestly and preserve Code/Uniforms and
 BYOK access. Do not promise unlimited free AI or use a paid model silently.
 
-## Release gates
+## Release verification
 
-- Complete and test the approved worker implementation, including quota, timeout,
-  cancelled-request, malformed-response, invalid-origin and free-only safeguards.
-- Configure the production secret, then measure the three models on representative
-  Splanc edits, compile success and latency. No live model evaluations yet.
-- Publish a complete tested app artifact with matching compiler/VM WASM. Update
-  splanc.io's APP_REVISION pin only after that build succeeds. The existing pin is
-  still the released app-v1.4.0; the website link change alone cannot enable this.
-- Deploy the worker and verify the actual browser-to-relay-to-model flow, including
-  a real fallback. No production changes have been made by this branch.
+- Provider, quota, timeout, cancelled-request, malformed-response, invalid-origin
+  and free-only relay checks pass locally. A regression explicitly rejects 3xx
+  responses and uses the redirect mode supported by Cloudflare Workers.
+- Full app Test CI passed on the merged workspace revision, with 194 tests and a
+  complete matching compiler/VM artifact. A web-only deployment published it to
+  Cloudflare and GitHub Pages without releasing firmware or TestFlight builds.
+- The production endpoint confirms configuration presence. Live model inference
+  failed before dispatch because Workers does not implement redirect error mode;
+  the fix and live edit/compile/preview check are in progress.
+- The website update preserves automatic app/agent release tracking while requiring
+  a tested app revision containing this demo. Newer compatible releases should
+  supersede that baseline. Three individual models have not been benchmarked.
+- Cloudflare behavior is documented in its
+  [Request API](https://developers.cloudflare.com/workers/runtime-apis/request/).
 
 ## Validation completed locally
 
