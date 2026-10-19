@@ -206,3 +206,12 @@ test('platform quota overrides provider metadata and never rotates models', asyn
     assert.deepEqual(await response.json(),{error:{code:'rate_limited',scope:'platform'}});
   }
 });
+
+test('exhausted fallback diagnostics expose only fixed models, status and safe outcomes', async () => {
+  const relay=createDemoRelay({fetchImpl:async()=>failure(503,{raw:'private upstream payload'})});
+  const response=await relay(req(),env);
+  const body=await response.json();
+  assert.deepEqual(body,{error:{code:'models_unavailable'},attempts:FREE_DEMO_MODELS.map(model=>({model,outcome:'upstream_error',status:503}))});
+  assert(!JSON.stringify(body).includes('private upstream payload'));
+  assert(!JSON.stringify(body).includes(env.OPENROUTER_API_KEY));
+});

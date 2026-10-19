@@ -199,8 +199,11 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
       }
       if (!validPayload(body)) return error(400, "invalid_request");
+      const attempts = [];
       for (const model of FREE_DEMO_MODELS) {
         if (total.signal.aborted) break;
+        const diagnostic = { model, outcome: "pending" };
+        attempts.push(diagnostic);
         const attempt = new AbortController();
         const stop = () => attempt.abort();
         total.signal.addEventListener("abort", stop, { once: true });
@@ -226,7 +229,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch { /* Treat malformed upstream output as unavailable. */ }
           if (total.signal.aborted) break;
           const status = result.ok && json?.error ? Number(json.error.code) || 502 : result.status;
+          diagnostic.status = status;
+          diagnostic.outcome = status >= 400 ? "upstream_error" : "invalid_completion";
           if (status === 429) {
+            diagnostic.outcome = "rate_limited";
             // Only an explicitly identified provider quota may use a different model.
             // A platform quota (or ambiguous 429) stops immediately, never key-rotates.
             const metadata = json?.error?.metadata;
@@ -250,10 +256,12 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");
+          if (json?.choices?.[0]?.finish_reason === "length") diagnostic.outcome = "output_limit";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
           if (parsed) return reply(200, { ...parsed, model });
         } catch {
+          diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
           // Network failures/attempt deadlines may try the next free model.
           // A visitor cancellation or overall deadline exits below.
         } finally {
@@ -261,8 +269,11 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           total.signal.removeEventListener("abort", stop);
         }
       }
-      return error(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503,
-        request.signal.aborted ? "cancelled" : "models_unavailable");
+      // Fixed model IDs, numeric status and our own outcome vocabulary only.
+      // Never expose provider raw payloads, prompts, generated code or credentials.
+      return reply(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503, {
+        error: { code: request.signal.aborted ? "cancelled" : "models_unavailable" }, attempts,
+      });
     } finally {
       clearTimeout(deadline);
       request.signal.removeEventListener("abort", cancel);
