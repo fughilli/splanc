@@ -679,3 +679,56 @@ py_test(
         "@rules_requirements//python",  # JUnitWriter (per-case hitl JUnit)
     ],
 )
+
+# WS2812 wire-timing capture (coil-lamp LED-pop investigation): drive an animated
+# 250-LED effect on the netstack C6 and record per-frame timing from the shared
+# analyzer (broker op=timing) under noclient/idle/busy WiFi load. Observes from the
+# wire only — no firmware instrumentation. Manual; pin the analyzer rig:
+#   bazel run //pi/hitl/harness:led_timing -- --server http://hitl-rig-2:8087
+genrule(
+    name = "plasma_hue_fixed_fxb",
+    srcs = ["ab_demo/plasmaHueFixed.fx"],
+    outs = ["plasmaHueFixed.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+# The static ramp `led_timing --split` drives, to show which slice of the strip
+# each channel carries (--fxb $(location :led_timing_ramp_fxb)).
+genrule(
+    name = "led_timing_ramp_fxb",
+    srcs = ["ab_demo/ledTimingRamp.fx"],
+    outs = ["ledTimingRamp.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_binary(
+    name = "led_timing",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+    ],
+    data = [
+        ":led_timing_ramp_fxb",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "LED_TIMING_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_led_timing.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)

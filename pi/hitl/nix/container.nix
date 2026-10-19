@@ -375,16 +375,42 @@ let
       ap.add_argument("--samples", type=int, default=0, help="capture length (0 = rig default)")
       ap.add_argument("--sr", default="", help="also write the raw .sr session to this file")
       ap.add_argument("--json", action="store_true", help="print the raw JSON result")
+      # --timing: the broker's op=timing (streamed WS2812 frame/edge timing; see
+      # hitl-reserve README "Logic-analyzer ops"). Without --json prints a summary.
+      ap.add_argument("--timing", action="store_true", help="frame/edge timing capture instead of one decoded frame")
+      ap.add_argument("--duration-ms", type=int, default=0, help="timing window (default 1000; rig cap 60000)")
+      ap.add_argument("--samplerate", default="", help="timing samplerate, e.g. 12m (default: rig's)")
+      ap.add_argument("--reset-us", type=float, default=0, help="LOW >= this ends a frame (default 50)")
+      ap.add_argument("--gap-threshold-us", type=float, default=0, help="report intra-frame LOWs >= this (default 20)")
+      ap.add_argument("--split-gap-us", type=float, default=0, help="flag frames preceded by a shorter LOW (default 1000)")
+      ap.add_argument("--anomalies-only", action="store_true", help="list only flagged frames")
+      ap.add_argument("--no-frames", action="store_true", help="summary only")
+      ap.add_argument("--pixels", action="store_true", help="decode pixels per frame (first --max-pixel-frames)")
+      ap.add_argument("--max-pixel-frames", type=int, default=0)
+      ap.add_argument("--edges", action="store_true", help="include raw run-length edges")
+      ap.add_argument("--edges-format", default="", help="uvarint (default) | json")
+      ap.add_argument("--max-edges", type=int, default=0)
       a = ap.parse_args()
       if not a.server:
           sys.exit("hitl-capture: no daemon URL ($HITL_BROKER_URL unset; pass --server)")
-      req = {"op": "capture", "unit": a.dut, "protocol": a.protocol, "samples": a.samples, "save_sr": bool(a.sr)}
+      if a.timing:
+          req = {"op": "timing", "unit": a.dut, "samples": a.samples, "duration_ms": a.duration_ms,
+                 "samplerate": a.samplerate, "reset_us": a.reset_us, "gap_threshold_us": a.gap_threshold_us,
+                 "split_gap_us": a.split_gap_us, "anomalies_only": a.anomalies_only,
+                 "include_frames": not a.no_frames, "include_pixels": a.pixels,
+                 "max_pixel_frames": a.max_pixel_frames, "include_edges": a.edges,
+                 "edges_format": a.edges_format, "max_edges": a.max_edges}
+          req = {k: v for k, v in req.items() if v not in (0, "", None) or k == "include_frames"}
+          timeout = 120 + (a.duration_ms or 1000) / 1000.0
+      else:
+          req = {"op": "capture", "unit": a.dut, "protocol": a.protocol, "samples": a.samples, "save_sr": bool(a.sr)}
+          timeout = 60
       body = json.dumps(req).encode()
       try:
           with urllib.request.urlopen(
                   urllib.request.Request(a.server.rstrip("/") + "/shared/logic-analyzer", data=body,
                                          headers={"Content-Type": "application/json"}),
-                  timeout=60) as r:
+                  timeout=timeout) as r:
               res = json.loads(r.read())
       except urllib.error.HTTPError as e:
           sys.exit("hitl-capture: %s: %s" % (e.code, e.read().decode(errors="replace")))
@@ -396,6 +422,32 @@ let
           sys.stderr.write("hitl-capture: wrote raw session to %s\n" % a.sr)
       if a.json:
           json.dump(res, sys.stdout); print()
+      elif a.timing:
+          c, s = res.get("capture", {}), res.get("summary", {})
+          print("capture: %s @ %d Hz, %d/%d samples (%.1f ms)%s" % (
+              c.get("channel"), c.get("sample_rate", 0), c.get("samples", 0), c.get("requested_samples", 0),
+              c.get("duration_ms", 0), "  DROP SUSPECTED" if c.get("drop_suspected") else ""))
+          for n in c.get("notes") or []:
+              print("  note: " + n)
+          st = lambda k: s.get(k) or {}
+          print("frames: %d (%d complete), modal %d LEDs, histogram %s" % (
+              s.get("frames", 0), s.get("complete_frames", 0), s.get("modal_leds", 0), s.get("led_histogram")))
+          print("anomalies: runts=%d oversize=%d partial_bits=%d gaps=%d short_gap_before=%d bad_bit=%d max_intra_gap=%.1fus" % (
+              s.get("runts", 0), s.get("oversize", 0), s.get("partial_bit_frames", 0), s.get("frames_with_gaps", 0),
+              s.get("short_gap_before", 0), s.get("bad_bit_frames", 0), s.get("max_intra_gap_us", 0)))
+          for k in ("period_us", "duration_us", "gap_before_us", "intra_gap_max_us"):
+              v = st(k)
+              print("  %-16s min %.1f  med %.1f  p99 %.1f  max %.1f" % (k, v.get("min", 0), v.get("median", 0), v.get("p99", 0), v.get("max", 0)))
+          b = s.get("bit") or {}
+          for k in ("t0h_ns", "t1h_ns", "low_ns", "bit_period_ns"):
+              v = b.get(k) or {}
+              print("  %-16s min %.0f  med %.0f  max %.0f" % (k, v.get("min", 0), v.get("median", 0), v.get("max", 0)))
+          for f in res.get("frames") or []:
+              if f.get("flags"):
+                  print("  frame %d @%.1fus: %d LEDs (+%d bits) dur %.1fus gap_before %s max_gap %.1fus %s %s" % (
+                      f["index"], f["start_us"], f["leds"], f["trailing_bits"], f["duration_us"],
+                      f.get("gap_before_us"), f["max_intra_gap_us"], ",".join(f["flags"]),
+                      " ".join("[+%.1fus %.1fus @bit %d]" % (g["at_us"], g["len_us"], g["bit"]) for g in f.get("gaps") or [])))
       else:
           for i, px in enumerate(res.get("pixels") or []):
               print("%3d: #%02x%02x%02x" % (i, px["r"], px["g"], px["b"]))

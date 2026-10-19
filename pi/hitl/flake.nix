@@ -38,7 +38,7 @@
     # @hitl_reserve git_override in //MODULE.bazel — bump both together. main @
     # 825d155 (PR #6: WS2812 capture pre-trigger, see the MODULE.bazel comment).
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/00598e21960e077efc76759bcc93f849665a3b75";
+      url = "github:fughilli/hitl-reserve/bdf28ce0f84968836c8b8be1a0601a5ca7c6d52f";
       flake = false;
     };
   };
