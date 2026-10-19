@@ -405,6 +405,7 @@ pub struct Compiler {
     // FUG-122: set once the program references `led.uv` (float or fixed), so the
     // host can skip the per-LED soft-float uv projection when it's unset.
     uses_uv: bool,
+    uses_room: bool,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
@@ -478,6 +479,7 @@ pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnosti
         last_const: None,
         emitted_ctxfix: false,
         uses_uv: false,
+        uses_room: false,
         optimize,
     };
     match c.program() {
@@ -1841,7 +1843,7 @@ impl Compiler {
                 self.expect_sym(')')?;
                 Ok(t)
             }
-            Tok::Ident(id) if id == "led" || id == "imu" => {
+            Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => {
                 // namespace access: led.pos / led.idx / imu.accel ... (further
                 // swizzles like led.pos.x are then handled by postfix()).
                 self.advance();
@@ -2490,6 +2492,10 @@ impl Compiler {
             ("led", "s") => (fx_ctx::LED_S, Ty::Float),
             ("led", "dist") => (fx_ctx::LED_DIST, Ty::Float),
             ("led", "uv") => (fx_ctx::LED_UV, Ty::Vec2),
+            // Room frame (multi-fixture): == led.pos while the fixture is unposed.
+            ("led", "room") => (fx_ctx::LED_ROOM, Ty::Vec3),
+            ("room", "min") => (fx_ctx::ROOM_MIN, Ty::Vec3),
+            ("room", "max") => (fx_ctx::ROOM_MAX, Ty::Vec3),
             ("led", "branch") => (fx_ctx::LED_BRANCH, Ty::Bool),
             ("imu", "accel") => (fx_ctx::IMU_ACCEL, Ty::Vec3),
             ("imu", "gyro") => (fx_ctx::IMU_GYRO, Ty::Vec3),
@@ -2500,6 +2506,9 @@ impl Compiler {
         self.emit(id);
         if id == fx_ctx::LED_UV {
             self.uses_uv = true; // host must compute the per-LED uv projection
+        }
+        if matches!(id, fx_ctx::LED_ROOM | fx_ctx::ROOM_MIN | fx_ctx::ROOM_MAX) {
+            self.uses_room = true; // host must fetch the room-frame position / box
         }
         // Record provenance for the LoadCtxFix peephole. A scalar field is already
         // reducible (comp 0); a vector waits for a `.x/.y/.z` swizzle to pin comp.
@@ -2651,6 +2660,9 @@ impl Compiler {
         if self.uses_uv {
             flags |= FLAG_USES_UV;
         }
+        if self.uses_room {
+            flags |= FLAG_USES_ROOM;
+        }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
         b.push(flags); // flags
@@ -2800,7 +2812,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
     let ctx_name = |id: u8| match id {
         0 => "time", 1 => "dt", 2 => "frame", 3 => "led.pos", 4 => "led.idx",
         5 => "led.count", 6 => "led.seg", 7 => "led.s", 8 => "led.branch",
-        9 => "imu.accel", 10 => "imu.gyro", 11 => "led.dist", 12 => "led.uv", _ => "?",
+        9 => "imu.accel", 10 => "imu.gyro", 11 => "led.dist", 12 => "led.uv", 13 => "led.room", 14 => "room.min", 15 => "room.max", _ => "?",
     };
     let cmp_kind = |k: u8| match k {
         0 => "lt", 1 => "le", 2 => "gt", 3 => "ge", 4 => "eq", _ => "ne",
@@ -3164,6 +3176,9 @@ const FLAG_USES_CTXFIX: u8 = 0x02;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_UV): the program reads `led.uv`, so
 /// the host must compute the per-LED uv projection.
 const FLAG_USES_UV: u8 = 0x04;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_ROOM): the program reads the room
+/// frame (`led.room` / `room.min` / `room.max`).
+const FLAG_USES_ROOM: u8 = 0x08;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;
@@ -3178,4 +3193,7 @@ mod fx_ctx {
     pub const IMU_GYRO: u8 = 10;
     pub const LED_DIST: u8 = 11;
     pub const LED_UV: u8 = 12;
+    pub const LED_ROOM: u8 = 13;
+    pub const ROOM_MIN: u8 = 14;
+    pub const ROOM_MAX: u8 = 15;
 }
