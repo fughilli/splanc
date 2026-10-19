@@ -27,6 +27,7 @@ import struct
 import threading
 import time
 
+import heap_census
 import hitl_ws
 from hitl_client import Reservation
 from hitl_loaded_tls import _drive, compile_fx_src, default_flashbundle, default_fx_compile
@@ -91,6 +92,10 @@ def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
             f'-c "set thresh {args.thresh}" -c "set step {args.step}" '
             f'-c "set heads {args.heads:#x}" '
         )
+        if args.census:
+            sets += (
+                f'-c "set census_addr {args.census[0]:#x}" -c "set census_size {args.census[1]}" '
+            )
     cmd = (
         "rm -rf /tmp/ram_watch /tmp/ram_watch.stop /tmp/ram_watch.arm; mkdir -p /tmp/ram_watch; "
         "for i in 1 2 3 4 5 6; do "
@@ -145,6 +150,11 @@ def main() -> int:
     if args.heads is None:
         ap.error(f"registered_heaps not found in --elf {args.elf}")
     _log(f"[elf] registered_heaps @ {args.heads:#x}")
+    # A heap-census build (--//firmware/player_app:heap_census): the watcher dumps the
+    # table at the end of the run and it is symbolized against the same ELF.
+    args.census = heap_census.symbol(heap_census.elf_symbols(args.elf), "LM_HEAP_CENSUS")
+    if args.census:
+        _log(f"[elf] LM_HEAP_CENSUS @ {args.census[0]:#x} ({args.census[1]} B)")
     # Fields hitl_loaded_tls._drive reads.
     args.effect_id, args.tex_index = "__ramaudit", 0
     args.settle, args.open_timeout, args.recover_window = (
@@ -188,10 +198,27 @@ def main() -> int:
             res.ssh("touch /tmp/ram_watch.stop", capture=True, timeout=30)
             if watcher is not None:
                 watcher.join(timeout=120)
-            names = ("log.txt", "openocd.log", "retries", "hp.bin", "lp.bin", "regs.txt", "pcs.txt")
+            names = (
+                "log.txt",
+                "openocd.log",
+                "retries",
+                "hp.bin",
+                "lp.bin",
+                "regs.txt",
+                "pcs.txt",
+                "census.bin",
+            )
             for name in names:
                 ok = _fetch(res, f"/tmp/ram_watch/{name}", os.path.join(args.out, name))
                 _log(f"[fetch] {name}: {'ok' if ok else 'missing'}")
+            census_bin = os.path.join(args.out, "census.bin")
+            if args.census and os.path.exists(census_bin):
+                with open(census_bin, "rb") as fh:
+                    census = heap_census.parse(fh.read())
+                sym = heap_census.Symbolizer(heap_census.elf_symbols(args.elf))
+                with open(os.path.join(args.out, "census.md"), "w") as fh:
+                    fh.write(heap_census.render(census, sym))
+                _log(f"[census] {os.path.join(args.out, 'census.md')}")
         finally:
             res.release()
 

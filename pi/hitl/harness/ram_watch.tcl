@@ -79,4 +79,10 @@ while {![file exists /tmp/ram_watch.stop]} {
     }
 }
 logline "stop after $n samples; min sum=$best last_dump=$dumped"
+# A heap-census build (--//firmware/player_app:heap_census): dump LM_HEAP_CENSUS
+# (a ~10 KB system-bus read, no halt) for pi/hitl/harness/heap_census.py.
+if {[info exists census_addr]} {
+    dump_image $out/census.bin $census_addr $census_size
+    logline "census dumped ($census_size B @ $census_addr)"
+}
 shutdown
