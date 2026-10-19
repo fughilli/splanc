@@ -348,17 +348,17 @@
 <p><strong>State.</strong> <code class="docutils literal notranslate"><span class="pre">SysMode</span></code> is the product of these axes:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">Wifi</span></code> {Unprovisioned, Scanning, Joined};</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Ble</span></code> {Off, Advertising, Connected};</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Ble</span></code> {Advertising, Connected} — never off (PR-38);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">wss:</span> <span class="pre">bool</span></code>;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Activity</span></code> {Idle, Mapping, Playback, Effect{video}, Upload};</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Activity</span></code> {Idle, Mapping, Effect{video}, Upload} (the native pulse/flood playback was removed; every show is an FX-engine effect);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">map:</span> <span class="pre">bool</span></code>.</p></li>
 </ul>
 <p><strong>Decisions encoded:</strong></p>
 <ul class="simple">
 <li><p><strong>Upload is exclusive of an effect</strong> (product decision, 2026-10-19), so <code class="docutils literal notranslate"><span class="pre">Upload</span></code> is an activity, not a flag beside <code class="docutils literal notranslate"><span class="pre">Effect</span></code>. <code class="docutils literal notranslate"><span class="pre">FxLoad</span></code> mid-upload is refused, and an upload clears the running effect.</p></li>
-<li><p><strong>Radio policy is a knob.</strong> Today BLE keeps advertising beside a wss session: the provisioning link is dropped when a wss client appears, but a central may reconnect. <code class="docutils literal notranslate"><span class="pre">Policy::RADIO_EXCLUSIVE</span></code> deinitializes the controller for the session instead. This is an open product decision.</p></li>
+<li><p><strong>BLE and wss coexist</strong> (requirement PR-38, product decision 2026-10-19). BLE keeps advertising beside a wss session: the vestigial provisioning link is dropped when a wss client appears, but a central may reconnect and both are served at once. Radio mutual exclusion is NOT an available memory lever, so every budget includes both.</p></li>
 </ul>
-<p><strong>Transition function.</strong> <code class="docutils literal notranslate"><span class="pre">step(state,</span> <span class="pre">event,</span> <span class="pre">policy)</span></code> is the single pure transition function. It is total: each (state, event) gives either a new state or a <code class="docutils literal notranslate"><span class="pre">Refuse</span></code>. The firmware should call it as the authority for mode switches, so the model can’t drift from the code. TLA+ can’t offer that.</p>
+<p><strong>Transition function.</strong> <code class="docutils literal notranslate"><span class="pre">step(state,</span> <span class="pre">event)</span></code> is the single pure transition function. It is total: each (state, event) gives either a new state or a <code class="docutils literal notranslate"><span class="pre">Refuse</span></code>. The firmware should call it as the authority for mode switches, so the model can’t drift from the code. TLA+ can’t offer that.</p>
 <p><strong>Costs.</strong> <code class="docutils literal notranslate"><span class="pre">cost::*</span></code> is the per-component RAM table. Each entry cites its source:</p>
 <ul class="simple">
 <li><p>static sizes come from <code class="docutils literal notranslate"><span class="pre">nm</span> <span class="pre">-S</span></code> of the shipped ELF;</p></li>
@@ -367,41 +367,33 @@
 <p><code class="docutils literal notranslate"><span class="pre">BUDGET</span></code> is what those components occupy in today’s layout at the measured minimum, plus the measured free heap there (54,204 B, after #262).</p>
 <p><strong>Test.</strong> <code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> runs a breadth-first search from both boot states (unprovisioned, and restored with credentials + map + effect) over every event. It visits every reachable state and asserts:</p>
 <ul class="simple">
-<li><p><strong>Invariants:</strong> wss ⇒ Joined; video ⇒ wss; never Upload ∧ Effect; no orphaned upload; under exclusive radios, never BLE-up ∧ wss.</p></li>
+<li><p><strong>Invariants:</strong> wss ⇒ Joined; video ⇒ wss; never Upload ∧ Effect; no orphaned upload.</p></li>
+<li><p><strong>Coexistence (PR-38):</strong> a BLE central and a wss session are live together in a reachable state; a central can connect during any session and a session can open with BLE up.</p></li>
 <li><p><strong>Recoverability:</strong> every state can return to a quiescent one.</p></li>
 <li><p><strong>The HITL gate exercises the worst heap case:</strong> under today’s layout the worst reachable heap state equals the measured one.</p></li>
 <li><p><strong>Budget:</strong> every state’s live set fits <code class="docutils literal notranslate"><span class="pre">BUDGET</span></code>.</p></li>
-<li><p><strong>Pins:</strong> the state counts and worst live sets are pinned, so a cost or transition change is a reviewed budget change.</p></li>
+<li><p><strong>Pins:</strong> the state count and worst live set are pinned, so a cost or transition change is a reviewed budget change.</p></li>
 </ul>
 <p>The test already caught one model bug: closing wss with a BLE central still connected left video “streaming”.</p>
 <p><strong>Results (2026-10-19):</strong></p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
-<tr class="row-odd"><th class="head"><p>Policy</p></th>
-<th class="head text-right"><p>Reachable states</p></th>
+<tr class="row-odd"><th class="head text-right"><p>Reachable states</p></th>
 <th class="head text-right"><p>Worst live set</p></th>
 <th class="head"><p>Worst state</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>current (BLE coexists)</p></td>
-<td class="text-right"><p>65</p></td>
+<tr class="row-even"><td class="text-right"><p>57</p></td>
 <td class="text-right"><p>151,213 B</p></td>
 <td><p>Joined + BLE connected + wss + effect with video + map</p></td>
-</tr>
-<tr class="row-odd"><td><p>radio exclusive</p></td>
-<td class="text-right"><p>55</p></td>
-<td class="text-right"><p>125,829 B</p></td>
-<td><p>Scanning + BLE connected + effect + map (a restored effect during provisioning)</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Today’s layout holds 154,317 B for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set:</p>
+<p>Today’s layout holds about 152 KB for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set, which under PR-38 has nearly everything live at once, so the union saves little by itself (~1 KB):</p>
 <ul class="simple">
-<li><p><strong>Under the current policy that saves just ~3 KB:</strong> the worst state has nearly everything live at once.</p></li>
-<li><p><strong>Exclusive radios save ~28 KB.</strong> This is the number behind the BLE-vs-wss product decision.</p></li>
 <li><p><strong>The next lever is the scan residue:</strong> 20 KB of vendor scan, lwIP and event-loop heap that never frees.</p></li>
 </ul>
 </section>
@@ -417,13 +409,7 @@
 </ul>
 </li>
 <li><p><strong>Activity union.</strong> Put <code class="docutils literal notranslate"><span class="pre">ModeRegion&lt;ActivityStore&gt;</span></code> over the effect statics (FX_ARENA, FX_VM, FX_BYTES, JIT, LUT, OSC) and use the upload/mapping scratch. Video’s FX_TEX_PREV is a sub-variant of Effect.</p></li>
-<li><p><strong>Radio regions,</strong> if the radio-exclusive decision is taken:</p>
-<ul class="simple">
-<li><p>deinit the BLE controller on wss open;</p></li>
-<li><p>put the BLE host statics + link buffers and the WS buffers in a <code class="docutils literal notranslate"><span class="pre">ModeRegion</span></code>;</p></li>
-<li><p>wrap <code class="docutils literal notranslate"><span class="pre">bt_osi_mem_*</span></code> into a <code class="docutils literal notranslate"><span class="pre">Slab</span></code> for the controller’s own allocations, with the exit leak check verifying <code class="docutils literal notranslate"><span class="pre">esp_bt_controller_deinit</span></code> frees everything.</p></li>
-</ul>
-</li>
+<li><p><strong>BLE controller slab:</strong> wrap <code class="docutils literal notranslate"><span class="pre">bt_osi_mem_*</span></code> into a bounded <code class="docutils literal notranslate"><span class="pre">Slab</span></code> so the controller’s own allocations are isolated from the shared heap (the controller stays up: PR-38).</p></li>
 <li><p><strong>TLS slab.</strong> Add <code class="docutils literal notranslate"><span class="pre">MBEDTLS_PLATFORM_MEMORY</span></code> + <code class="docutils literal notranslate"><span class="pre">mbedtls_platform_set_calloc_free</span></code> into a <code class="docutils literal notranslate"><span class="pre">Slab</span></code>. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap.</p></li>
 <li><p><strong>Scan residue.</strong> Scan with the netstack’s own MLME, or <code class="docutils literal notranslate"><span class="pre">esp_wifi_deinit</span></code> after the scan, and drop <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>/lwIP/event-loop tasks. Then set <code class="docutils literal notranslate"><span class="pre">scan_residue</span></code> live only in <code class="docutils literal notranslate"><span class="pre">Wifi::Scanning</span></code>.</p></li>
 <li><p><strong>CI gates:</strong></p>
