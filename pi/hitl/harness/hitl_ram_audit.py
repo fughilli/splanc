@@ -69,6 +69,32 @@ def elf_symbol(path: str, name: str) -> int | None:
     return None
 
 
+MODE_FIELDS = (
+    "polls accepted refused refused_not_applicable refused_no_transport refused_not_joined "
+    "refused_no_effect unmodeled state last_refusal"
+).split()
+
+
+def _report_mode(log_path: str) -> None:
+    """Print the firmware's memory-mode tracker counters (LM_MODE) the watcher read."""
+    try:
+        lines = [ln for ln in open(log_path) if " LM_MODE " in ln]
+    except OSError:
+        _log("[mode] no watcher log (JTAG didn't attach); see the status line's mode= in dut0.log")
+        return
+    if not lines:
+        _log("[mode] no LM_MODE read (image without the tracker, or the watcher didn't attach)")
+        return
+    vals = [int(v, 0) for v in lines[-1].split("LM_MODE", 1)[1].split()]
+    _log(
+        "[mode] "
+        + " ".join(
+            f"{k}={v:#x}" if k in ("state", "last_refusal") else f"{k}={v}"
+            for k, v in zip(MODE_FIELDS, vals)
+        )
+    )
+
+
 def _fetch(res: Reservation, remote: str, local: str) -> bool:
     """Copy a container file back (base64 over ssh: the image has no scp-from)."""
     p = res.ssh(f"base64 -w0 {remote} 2>/dev/null", capture=True, timeout=300)
@@ -87,7 +113,7 @@ def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
         "rm -rf /tmp/ram_watch /tmp/ram_watch.stop; mkdir -p /tmp/ram_watch; "
         "for i in 1 2 3 4 5 6; do "
         f'hitl-jtag -c "set thresh {args.thresh}" -c "set step {args.step}" '
-        f'-c "set heads {args.heads:#x}" '
+        f'-c "set heads {args.heads:#x}" -c "set mode {args.mode:#x}" '
         "-f /tmp/ram_watch.tcl > /tmp/ram_watch/openocd.log 2>&1 && break; "
         "[ -e /tmp/ram_watch.stop ] && break; echo attach-retry $i >> /tmp/ram_watch/retries; "
         "sleep 3; done"
@@ -130,6 +156,8 @@ def main() -> int:
     if args.heads is None:
         ap.error(f"registered_heaps not found in --elf {args.elf}")
     _log(f"[elf] registered_heaps @ {args.heads:#x}")
+    # The memory-mode tracker's counters (0 = an image without the tracker).
+    args.mode = elf_symbol(args.elf, "LM_MODE") or 0
     # Fields hitl_loaded_tls._drive reads.
     args.effect_id, args.tex_index = "__ramaudit", 0
     args.settle, args.open_timeout, args.recover_window = (
@@ -166,6 +194,7 @@ def main() -> int:
         for name in ("log.txt", "openocd.log", "retries", "hp.bin", "lp.bin", "regs.txt"):
             ok = _fetch(res, f"/tmp/ram_watch/{name}", os.path.join(args.out, name))
             _log(f"[fetch] {name}: {'ok' if ok else 'missing'}")
+        _report_mode(os.path.join(args.out, "log.txt"))
         return 0
     finally:
         res.release()

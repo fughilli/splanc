@@ -185,6 +185,39 @@ void lm_fx_clear(void);
 bool lm_fx_active(void);
 // True when an effect is loaded at all (active or parked) — for persistence.
 bool lm_fx_loaded(void);
+
+// Memory-mode tracking (docs/design/memory-regions.md), LOG-ONLY: the loop hands the
+// network-side facts to lm_mode_observe, which tracks the device through the sysmode model
+// and reports each transition the model refuses (to log; nothing is gated yet). Counters
+// live in the LM_MODE static (read over JTAG). lm_mode_boot starts tracking after the
+// stored map/effect replay; lm_mode_event applies one explicit model event.
+typedef struct {
+  bool creds;
+  bool leased;
+  bool ble_connected;
+  bool wss;
+  bool upload;
+} LmNetObserved;
+typedef struct {
+  uint32_t state;  // sysmode state_code before the transition
+  uint32_t event;  // index in sysmode Event::ALL (0xff: a change no event models)
+  uint32_t why;    // sysmode refuse code (0xff: unmodeled)
+} LmModeRefusal;
+// ledmapper_sysmode::observe::Stats (same field order).
+typedef struct {
+  uint32_t polls;
+  uint32_t accepted;
+  uint32_t refused;
+  uint32_t refused_by_kind[4];
+  uint32_t unmodeled;
+  uint32_t state;
+  uint32_t last_refusal;
+} LmModeStats;
+extern LmModeStats LM_MODE;
+void lm_mode_boot(void);
+uint32_t lm_mode_observe(const LmNetObserved *net, int64_t now_ms, LmModeRefusal *out,
+                         size_t cap);
+int32_t lm_mode_event(uint32_t event);
 // Activate (true) / park (false) the loaded effect.
 void lm_fx_set_active(bool active);
 // Per-invocation instruction cap for update()/shade() (0 = default).

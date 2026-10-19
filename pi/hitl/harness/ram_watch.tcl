@@ -74,4 +74,10 @@ while {![file exists /tmp/ram_watch.stop]} {
     }
 }
 logline "stop after $n samples; min sum=$best last_dump=$dumped"
+# The firmware's memory-mode tracker counters (LM_MODE, ledmapper_sysmode
+# observe::Stats: polls accepted refused refused_by_kind[4] unmodeled state
+# last_refusal), read once at the end — no reporting from the DUT itself.
+if {[info exists mode] && $mode != 0} {
+    logline "LM_MODE [read_memory $mode 32 10]"
+}
 shutdown

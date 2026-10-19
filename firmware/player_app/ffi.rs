@@ -1015,6 +1015,7 @@ pub unsafe extern "C" fn lm_player_handle(
         // trip — a malformed/oversized frame is silently dropped.
         Some(ARM_SET_TEXTURE) => {
             handle_set_texture(frame);
+            LAST_TEXTURE_MS = Some(recv_ms);
             return 0;
         }
         // Everything else is read IN PLACE from the frame (pbview): no
@@ -3003,4 +3004,142 @@ pub unsafe extern "C" fn lm_perf_build_report(out: *mut u8, out_cap: usize) -> i
     }
     let reply = build_perf_report();
     encode_reply(&reply, out, out_cap)
+}
+
+// -- Memory-mode tracking (docs/design/memory-regions.md, integration step 1) --
+//
+// The firmware's mode switches are checked against the sysmode model, LOG-ONLY:
+// the loop hands lm_mode_observe a snapshot of what it sees; the tracker derives
+// the model events and applies them through sysmode::step. A refusal (the device
+// took a transition the model calls unreachable) is reported to the caller to
+// log once per kind, counted in LM_MODE, and the axis is forced so tracking
+// continues. LM_MODE is a fixed-layout static a JTAG watcher can read without
+// disturbing the device (no network reporting).
+
+use ledmapper_sysmode::observe::{event_code, refuse_code, state_code, Observed, Stats, Tracker};
+use ledmapper_sysmode::SysMode;
+
+/// Video is "streaming" while a set_texture frame arrived within this long.
+const VIDEO_QUIET_MS: i64 = 2000;
+static mut LAST_TEXTURE_MS: Option<i64> = None;
+
+static mut MODE: Tracker = Tracker::new(SysMode::BOOT_UNPROVISIONED);
+
+/// The tracker's counters, mirrored after every observation (fixed C layout;
+/// read over JTAG by symbol, see ledmapper_sysmode::observe::Stats).
+#[no_mangle]
+pub static mut LM_MODE: Stats = Stats {
+    polls: 0,
+    accepted: 0,
+    refused: 0,
+    refused_by_kind: [0; 4],
+    unmodeled: 0,
+    state: 0,
+    last_refusal: 0,
+};
+
+/// One refused (or unmodeled) transition, for the caller to log:
+/// `state` = sysmode state_code before it, `event` = index in Event::ALL (0xff
+/// = a change no event models), `why` = refuse code (0xff = unmodeled).
+#[repr(C)]
+pub struct LmModeRefusal {
+    pub state: u32,
+    pub event: u32,
+    pub why: u32,
+}
+
+/// The network-side facts only the transport knows.
+#[repr(C)]
+pub struct LmNetObserved {
+    pub creds: bool,
+    pub leased: bool,
+    pub ble_connected: bool,
+    pub wss: bool,
+    pub upload: bool,
+}
+
+/// Start tracking from the boot state, after fs_replay restored (or didn't) a
+/// map and an effect. WiFi credentials are RAM-only, so boot is unprovisioned.
+///
+/// # Safety
+/// Single firmware thread (loopTask), after [`lm_player_init`].
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_boot() {
+    let mut boot = SysMode::BOOT_UNPROVISIONED;
+    if lm_map_len() > 0 {
+        boot.map = true;
+    }
+    if lm_fx_loaded() {
+        boot.activity = ledmapper_sysmode::Activity::Effect { video: false };
+    }
+    (*addr_of_mut!(MODE)).reset(boot);
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+}
+
+/// Observe the device now (`now_ms`: millis) and track it through the model.
+/// Writes up to `cap` refusals into `out` and returns how many occurred (may
+/// exceed `cap`). Cheap: a handful of compares when nothing changed.
+///
+/// # Safety
+/// `net` points to a valid struct; `out` to `cap` writable entries (or is null
+/// with cap 0). Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_observe(
+    net: *const LmNetObserved,
+    now_ms: i64,
+    out: *mut LmModeRefusal,
+    cap: usize,
+) -> u32 {
+    if net.is_null() {
+        return 0;
+    }
+    let n = &*net;
+    let p = player();
+    let effect = lm_fx_loaded();
+    let video = effect
+        && n.wss
+        && LAST_TEXTURE_MS.is_some_and(|t| now_ms.wrapping_sub(t) < VIDEO_QUIET_MS);
+    let o = Observed {
+        creds: n.creds,
+        leased: n.leased,
+        ble_connected: n.ble_connected,
+        wss: n.wss,
+        upload: n.upload,
+        mapping: p.pattern_timing().is_some() || p.counting_len() > 0,
+        effect,
+        video,
+        map: lm_map_len() > 0,
+    };
+    let mut count = 0u32;
+    (*addr_of_mut!(MODE)).observe(o, |r| {
+        if (count as usize) < cap && !out.is_null() {
+            *out.add(count as usize) = LmModeRefusal {
+                state: state_code(r.from),
+                event: r.event.map_or(0xff, event_code),
+                why: r.why.map_or(0xff, refuse_code),
+            };
+        }
+        count += 1;
+    });
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+    count
+}
+
+/// Apply one explicit model event (index in `ledmapper_sysmode::Event::ALL`).
+/// Returns 0 if the model accepts it, 1 + the refuse code if it refuses, -1 for
+/// an unknown event. Log-only like lm_mode_observe: nothing is gated on it yet.
+///
+/// # Safety
+/// Single firmware thread.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
+    let Some(&e) = ledmapper_sysmode::Event::ALL.get(event as usize) else {
+        return -1;
+    };
+    let r = (*addr_of_mut!(MODE)).event(e);
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+    match r {
+        Ok(_) => 0,
+        Err(why) => 1 + refuse_code(why) as i32,
+    }
 }

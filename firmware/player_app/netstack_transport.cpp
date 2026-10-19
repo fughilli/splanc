@@ -1155,6 +1155,10 @@ bool netstack_ws_is_open() { return g_tls_hs && g_ws_up; }
 
 bool netstack_ws_send(uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
 bool netstack_ws_open() { return netstack_ws_is_open(); }
+// Mode-tracking facts (main.cpp's lm_mode_observe snapshot): credentials committed (Improv
+// or the wired console) and a DHCP lease held.
+bool netstack_creds_ready() { return g_creds_ready; }
+bool netstack_leased() { return g_leased; }
 // External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
 uint32_t netstack_rekey_count() { return g_rekey_serviced; }
