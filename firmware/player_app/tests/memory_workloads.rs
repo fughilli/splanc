@@ -19,7 +19,7 @@ use core::ffi::c_void;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_decode_upload_stream, lm_encode_chunk_ack, lm_fx_clear, lm_fx_load, lm_fx_set_active,
-    lm_fx_shade, lm_fx_update, lm_map_led, lm_map_len, lm_parse_upload_chunk, lm_playback_step,
+    lm_fx_shade, lm_fx_update, lm_map_led, lm_map_len, lm_parse_upload_chunk,
     lm_player_handle, lm_player_init, LmUploadChunk, FX_TOPO_CAP,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -229,15 +229,8 @@ fn a_realistic_scan_topology_is_stored_beside_its_map_and_plays() {
         SMsg::ResultReady(r) => assert_eq!(r.r#map_id.as_str(), "m-scan"),
         other => panic!("the scan's topology fits beside its map, got {other:?}"),
     }
-    // The stored topology drives the built-in topology effects...
-    let mut params = pb::PlaybackParams::default();
-    params.set_speed(0.5);
-    let mut sp = pb::SetPlayback::default();
-    sp.r#effect = "pulse".parse().unwrap();
-    sp.set_params(params);
-    assert!(matches!(handle(&encode(CMsg::SetPlayback(sp))), Some(SMsg::PlaybackState(_))));
-    assert!(unsafe { lm_playback_step(33) }, "the stored topology is playable");
-    // ...and dumps back out complete (every segment with its whole polyline).
+    // The stored topology dumps back out complete (every segment with its whole
+    // polyline).
     let mut bundle_bytes: Vec<u8> = Vec::new();
     loop {
         let g = pb::GetStoredMap { r#offset: bundle_bytes.len() as i32, r#max_len: 1024 };

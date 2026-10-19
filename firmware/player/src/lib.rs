@@ -23,7 +23,6 @@
 #![no_std]
 
 use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb};
-use ledmapper_pulse::{Effect, EffectConfig};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -313,12 +312,6 @@ pub struct Player {
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
-    /// Active playback effect: the sim config (integer, for the hot path) + the
-    /// wire params it was built from (to echo). None = "off".
-    playback: Option<(EffectConfig, pb::PlaybackParams)>,
-    /// Bumped on every set_playback so the render side can rebuild its sim when
-    /// the effect/params change.
-    playback_gen: u32,
     /// Active color-correction profile + a generation the firmware polls (like
     /// set_device_name) to regenerate and re-persist the flash LUT on a change.
     color_correction: ColorCorrection,
@@ -387,8 +380,6 @@ impl Player {
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
-            playback: None,
-            playback_gen: 0,
             color_correction: ColorCorrection::WS2812B,
             color_correction_gen: 0,
             color_correction_commit: true,
@@ -454,31 +445,16 @@ impl Player {
                 };
                 Some(reply(SMsg::ResultReady(r)))
             }
-            CMsg::SetPlayback(m) => {
-                let effect = match m.r#effect.as_str() {
-                    "off" => Some(None),
-                    "pulse" => Some(Some(Effect::Pulse)),
-                    "flood" => Some(Some(Effect::Flood)),
-                    _ => None,
-                };
-                match effect {
-                    Some(None) => {
-                        self.playback = None;
-                        self.playback_gen = self.playback_gen.wrapping_add(1);
-                        Some(self.playback_state())
-                    }
-                    Some(Some(e)) => {
-                        let params = m.r#params.clone();
-                        self.playback = Some((effect_config_from(e, &params), params));
-                        self.playback_gen = self.playback_gen.wrapping_add(1);
-                        Some(self.playback_state())
-                    }
-                    None => Some(error(
-                        "unsupported_effect",
-                        "effect not available on this player (supported: off, pulse, flood)",
-                    )),
-                }
-            }
+            // The native playback effects (pulse/flood) are gone: every show is
+            // an FX-engine effect (submit_effect / set_effect). "off" still acks
+            // with the (always idle) playback state so an old client's stop works.
+            CMsg::SetPlayback(m) => match m.r#effect.as_str() {
+                "off" => Some(self.playback_state()),
+                _ => Some(error(
+                    "unsupported_effect",
+                    "native playback effects were removed; use the effects engine (submit_effect)",
+                )),
+            },
             CMsg::GetPlayback(_) => Some(self.playback_state()),
             CMsg::GetFrameTiming(_) => Some(self.frame_timing()),
             // The map dump lives in the arena layer (ffi), which intercepts this
@@ -900,22 +876,11 @@ impl Player {
     }
 
     fn playback_state(&self) -> pb::ServerMessage {
+        // No native playback effect exists any more, so it is always "off".
         let mut state = pb::PlaybackState::default();
-        match self.playback.as_ref() {
-            Some((cfg, params)) => {
-                state.r#active = true;
-                state.r#effect = s64(match cfg.effect {
-                    Effect::Pulse => "pulse",
-                    Effect::Flood => "flood",
-                });
-                state.set_params(params.clone());
-            }
-            None => {
-                state.r#active = false;
-                state.r#effect = s64("off");
-                state.set_params(pb::PlaybackParams::default());
-            }
-        }
+        state.r#active = false;
+        state.r#effect = s64("off");
+        state.set_params(pb::PlaybackParams::default());
         reply(SMsg::PlaybackState(state))
     }
 
@@ -1309,19 +1274,6 @@ impl Player {
         self.frame_log.push(seq, t_us);
     }
 
-    /// The active effect-playback config, or None when playback is "off". The
-    /// render loop feeds it (plus the stored topology) to a `Sim` that it steps
-    /// each frame and samples per LED via its (segment, foot arclength, dPerp).
-    pub fn effect_config(&self) -> Option<&EffectConfig> {
-        self.playback.as_ref().map(|(cfg, _)| cfg)
-    }
-
-    /// Monotonic counter bumped on every SetPlayback; the render side rebuilds
-    /// its `Sim` when this changes.
-    pub fn playback_gen(&self) -> u32 {
-        self.playback_gen
-    }
-
     /// Pattern clock epoch of the active capture, if any (integer ms).
     pub fn pattern_epoch_ms(&self) -> Option<i64> {
         self.active.as_ref().map(|a| a.epoch_ms)
@@ -1387,24 +1339,6 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
-/// Build the fixed-point EffectConfig from the wire PlaybackParams. Decoding
-/// the wire doubles here is COLD (once per set_playback); the derivation itself
-/// lives in ledmapper_pulse::EffectConfig::from_wire so the player and the host
-/// WASM preview share one source of truth. Optional knobs unset → sensible
-/// defaults (lead/decay derive from glow; split → the default fork rate).
-fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
-    EffectConfig::from_wire(
-        effect,
-        p.r#intensity().copied().unwrap_or(1.0) as f32,
-        p.r#glow_radius().copied().unwrap_or(0.15) as f32,
-        p.r#speed().copied().unwrap_or(0.5) as f32,
-        p.r#agent_count().copied().unwrap_or(2).max(0) as u32,
-        p.r#lead_in().copied().unwrap_or(0.0) as f32,
-        p.r#split_prob().map(|v| *v as f32).unwrap_or(-1.0),
-        p.r#decay().copied().unwrap_or(0.0) as f32,
-        &p.r#palette,
-    )
-}
 
 pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
     let mut cp = pb::CodeParams {

@@ -276,8 +276,9 @@ fn full_phone_session() {
     };
     assert_eq!(r.r#map_id.as_str(), "m-77");
 
-    // Playback: off is universal, "pulse" is the topology-aware effect, any
-    // other name is a bounded refusal.
+    // Playback: the native effects (pulse/flood) were removed in favour of the
+    // effects engine, so playback is always "off": "off" acks idle, any named
+    // native effect is a bounded refusal.
     let Some(SMsg::PlaybackState(ps)) =
         send(&mut player, CMsg::GetPlayback(pb::GetPlayback::default()), 7000.0)
     else {
@@ -285,38 +286,13 @@ fn full_phone_session() {
     };
     assert!(!ps.r#active);
     assert_eq!(ps.r#effect.as_str(), "off");
-    // Enable the pulse effect: state goes active + the config is stored.
-    let mut params = pb::PlaybackParams::default();
-    params.set_speed(0.5);
-    params.set_agent_count(2);
-    let mut sp = pb::SetPlayback {
-        r#effect: core::str::FromStr::from_str("pulse").unwrap(),
-        ..Default::default()
-    };
-    sp.set_params(params);
-    let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(sp), 7100.0) else {
-        panic!("set_playback pulse must produce playback_state");
-    };
-    assert!(ps.r#active);
-    assert_eq!(ps.r#effect.as_str(), "pulse");
-    assert!(player.effect_config().is_some());
-    // The topology-aware flood effect is also accepted.
-    let flood = pb::SetPlayback {
-        r#effect: core::str::FromStr::from_str("flood").unwrap(),
-        ..Default::default()
-    };
-    let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(flood), 7120.0) else {
-        panic!("set_playback flood must produce playback_state");
-    };
-    assert!(ps.r#active);
-    assert_eq!(ps.r#effect.as_str(), "flood");
-    // An unknown effect is refused and leaves the effect running.
-    let bad = pb::SetPlayback {
-        r#effect: core::str::FromStr::from_str("rainbow").unwrap(),
-        ..Default::default()
-    };
-    expect_error(send(&mut player, CMsg::SetPlayback(bad), 7150.0), "unsupported_effect");
-    // "off" clears it.
+    for name in ["pulse", "flood", "rainbow"] {
+        let sp = pb::SetPlayback {
+            r#effect: core::str::FromStr::from_str(name).unwrap(),
+            ..Default::default()
+        };
+        expect_error(send(&mut player, CMsg::SetPlayback(sp), 7100.0), "unsupported_effect");
+    }
     let off = pb::SetPlayback {
         r#effect: core::str::FromStr::from_str("off").unwrap(),
         ..Default::default()
@@ -325,7 +301,6 @@ fn full_phone_session() {
         panic!("set_playback off");
     };
     assert!(!ps.r#active);
-    assert!(player.effect_config().is_none());
 
     // Pi-profile arms: telemetry drops silently, polls refuse loudly.
     assert!(send(&mut player, CMsg::Detections(pb::Detections::default()), 8000.0).is_none());

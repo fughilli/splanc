@@ -268,10 +268,11 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-// render: static bound ~7.4 KB (render_once -> lm_playback_step ~4.3 KB frame ->
-// fx_rebuild_topo ~2.5 KB), so it stays at 8 KB until those frames shrink. The
-// measured high-water (~0.8 KB with no effect loaded) is NOT a sizing basis.
-static const uint32_t kRenderTaskStack = 8192;
+// render: static bound ~3.3 KB (render_once -> lm_fx_update -> fx_rebuild_topo's
+// ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
+// jump tables + ROM soft-float leaves, and JIT segments use no machine stack), so
+// 5 KB is ~1.5x. The measured high-water (~0.8 KB) is NOT a sizing basis.
+static const uint32_t kRenderTaskStack = 5120;
 // xmit: just stages/sends the LED frame; static bound ~2.4 KB (dominated by the
 // C++ unwind path off a Log() call), measured ~0.5 KB.
 static const uint32_t kXmitTaskStack = 3072;
@@ -347,9 +348,9 @@ static const char *kFsBase = "/lfs";
 static const char *kFsPartition = "spiffs";
 static const char *kMapPath = "/lfs/map.pb";
 static const char *kTopoPath = "/lfs/topo.pb";
-// The last playback selection (set_playback frame), so the show auto-resumes
-// on boot. Coalesced (live tuning fires rapidly) — see queue/flush below.
-static const char *kPlaybackPath = "/lfs/play.pb";
+// Where the removed native playback effects (pulse/flood) persisted their
+// set_playback frame; deleted at mount so an upgraded board doesn't keep it.
+static const char *kLegacyPlaybackPath = "/lfs/play.pb";
 // The active user effect: the raw submit_effect upload frame (bytecode) and,
 // separately, the last effect-control frame (set_effect / set_uniforms) so the
 // effect + its live uniforms auto-resume on boot. Replayed through the SAME
@@ -361,7 +362,6 @@ static bool fs_ok = false;
 // frames for persistence — see lm_envelope_arm.
 static const int32_t kArmSubmitMap = 13;
 static const int32_t kArmSubmitTopology = 16;
-static const int32_t kArmSetPlayback = 17;
 static const int32_t kArmResultReady = 8;
 static const int32_t kArmPlaybackState = 13;
 static const int32_t kArmSubmitEffect = 21;
@@ -369,22 +369,15 @@ static const int32_t kArmSetEffect = 22;
 static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
 
-// Coalesced playback save: live slider tuning re-sends set_playback on every
-// tick, so writing flash each time would thrash it. Stash the latest frame and
-// flush once the stream goes quiet (from loop()).
-static uint8_t pending_playback[512];
-static size_t pending_playback_len = 0;
-static bool playback_dirty = false;
-static uint32_t playback_dirty_at = 0;
-static const uint32_t kPlaybackSaveQuietMs = 1500;
-
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
-// re-send set_uniforms every tick, so coalesce exactly like playback above.
+// re-send set_uniforms on every tick, so writing flash each time would thrash
+// it. Stash the latest frame and flush once the stream goes quiet (from loop()).
 // The largest such frame is a full uniform set — bounded to this buffer.
 static uint8_t pending_fx_sel[2048];
 static size_t pending_fx_sel_len = 0;
 static bool fx_sel_dirty = false;
 static uint32_t fx_sel_dirty_at = 0;
+static const uint32_t kFxSelSaveQuietMs = 1500;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -740,7 +733,7 @@ static void hardware_config_begin() {
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
 // from flash), then scale by the global output brightness. Used on the CONTENT
-// render paths (effects / playback); the camera calibration patterns (mapping
+// render paths (effects); the camera calibration patterns (mapping
 // gray-code, counting probe) stay uncorrected AND unscaled so their known signal
 // values reach the camera unchanged.
 static inline Rgb cc_apply(const uint8_t rgb[3]) {
@@ -751,25 +744,8 @@ static inline Rgb cc_apply(const uint8_t rgb[3]) {
   return c;
 }
 
-// Stash the latest playback selection to flush once live tuning goes quiet.
-static void queue_playback_save(const uint8_t *data, size_t len) {
-  if (len > sizeof pending_playback) return;  // too big to persist (bounded)
-  memcpy(pending_playback, data, len);
-  pending_playback_len = len;
-  playback_dirty = true;
-  playback_dirty_at = millis();
-}
-
-// Flush the coalesced playback selection once the change stream has settled.
-// Called from loop(); one flash write per settled edit, not per slider tick.
-static void flush_playback_save() {
-  if (!playback_dirty || millis() - playback_dirty_at < kPlaybackSaveQuietMs) return;
-  fs_write_file(kPlaybackPath, pending_playback, pending_playback_len);
-  playback_dirty = false;
-}
-
 // Stash the latest effect-control frame (set_effect / set_uniforms) to flush
-// once live tuning settles, same coalescing as playback.
+// once live tuning settles.
 static void queue_fx_sel_save(const uint8_t *data, size_t len) {
   if (len > sizeof pending_fx_sel) return;  // too big to persist (bounded)
   memcpy(pending_fx_sel, data, len);
@@ -778,14 +754,15 @@ static void queue_fx_sel_save(const uint8_t *data, size_t len) {
   fx_sel_dirty_at = millis();
 }
 
+// Called from loop(); one flash write per settled edit, not per slider tick.
 static void flush_fx_sel_save() {
-  if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kPlaybackSaveQuietMs) return;
+  if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kFxSelSaveQuietMs) return;
   fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
   fx_sel_dirty = false;
 }
 
 // Persist state after a SUCCESSFUL upload/selection so it survives a reboot:
-// the map+topology (fixture) and the playback selection (auto-resume the show).
+// the map+topology (fixture) and the effect + its selection (auto-resume the show).
 // A new map invalidates any stored topology.
 static void persist_if_upload(const uint8_t *req, size_t req_len,
                               const uint8_t *reply, size_t reply_len) {
@@ -797,8 +774,6 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     remove(kTopoPath);  // the previous topology no longer matches this map
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
-  } else if (reply_arm == kArmPlaybackState && req_arm == kArmSetPlayback) {
-    queue_playback_save(req, req_len);  // coalesced: live tuning fires rapidly
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
     // A validated effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
@@ -807,7 +782,7 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     remove(kEffectSelPath);
   } else if (reply_arm == kArmPlaybackState &&
              (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
-    // Effect selection / live uniforms — coalesced like set_playback.
+    // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
     queue_fx_sel_save(req, req_len);
   }
 }
@@ -820,7 +795,7 @@ static size_t upload_refill(void *ctx, uint8_t *buf, size_t cap) {
 
 // Replay a persisted frame through the session core on boot — the SAME decode a
 // live upload takes. map/topology can be big, so they stream off flash block by
-// block (no whole-frame buffer); everything else (playback, effect, uniforms)
+// block (no whole-frame buffer); everything else (effect, selection, uniforms)
 // is control-sized and decodes in one pass through rx.
 static void fs_replay(const char *path) {
   FILE *f = fopen(path, "rb");
@@ -867,7 +842,7 @@ static void fs_begin_and_restore() {
   fs_ok = true;
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
-  fs_replay(kPlaybackPath);  // resume the last show (the render task picks it up)
+  remove(kLegacyPlaybackPath);
   // Resume a user effect after the map/topology it shades over: the .fxb first
   // (submit_effect, activate flag replayed as-sent), then its last selection +
   // live uniforms (set_effect / set_uniforms). The render task picks it up via
@@ -1350,7 +1325,7 @@ static uint32_t render_once() {
   // (fs_replay of kEffectPath) would otherwise keep rendering and mask the
   // mapping pattern, so "start mapping" never visibly flashed the strip
   // (FUG-62). Check them first; when neither is active they fall through to the
-  // effect / playback / idle branches below.
+  // effect / idle branches below.
   if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
     // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
     // elapsed_us / period_us (64-bit product so it can't overflow).
@@ -1432,9 +1407,8 @@ static uint32_t render_once() {
     was_active = true;
     last_shown_frame = 0xffffffff;
   } else if (lm_fx_active()) {
-    // User effect (.fxb shader) takes priority over the built-in playback:
-    // run update() once, then shade() per LED over the stored map position.
-    // Bounded execution guards each invocation (instruction budget + wall-time
+    // User effect (.fxb shader): run update() once, then shade() per LED over the
+    // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
     // deadline flag); a cancelled shade holds black for that LED. ~30 fps.
     static uint32_t fx_frame = 0;
     static uint32_t fx_last_ms = 0;
@@ -1513,36 +1487,6 @@ static uint32_t render_once() {
     was_active = true;
     last_shown_frame = 0xffffffff;
     next_delay_ms = 33;  // ~30 fps
-  } else if (lm_playback_active()) {
-    // Topology-aware effect (pulse/flood): advance the stateful sim by the real
-    // elapsed time, then colour every LED from its stored association. It's an
-    // animation, so repaint at ~30 fps.
-    static uint32_t last_playback_ms = 0;
-    uint32_t now = millis();
-    uint32_t dt = now - last_playback_ms;   // wraps cleanly (unsigned)
-    if (last_playback_ms == 0 || dt > 100) dt = 33;  // fresh entry / long gap
-    last_playback_ms = now;
-    // Colour + transmit exactly the mapped/topology LEDs, not the whole 1024-cap
-    // buffer (lm_playback_color returns false past the topology extent anyway).
-    uint32_t pn = lm_map_len();
-    if (pn > kMaxLeds) pn = kMaxLeds;
-    if (pn > 0) xmit_len = pn;
-    if (lm_playback_step(dt)) {
-      for (uint32_t i = 0; i < xmit_len; i++) {
-        if (lm_playback_color(i, rgb)) {
-          leds[i] = cc_apply(rgb);
-        } else {
-          leds[i] = Rgb::Black;
-        }
-      }
-    } else {
-      // Effect configured but no topology stored yet — hold black.
-      fill_rgb(leds, xmit_len, Rgb::Black);
-    }
-    show = true;
-    was_active = true;
-    last_shown_frame = 0xffffffff;
-    next_delay_ms = 33; // ~30 fps
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {
@@ -1741,7 +1685,7 @@ static void render_task(void *) {
 // While a perf mode is active with interval_ms > 0, the phone asked us to push
 // a rolled-up report every interval_ms rather than poll. Built + drained on the
 // loop task (never the render task — the render loop only fills the ring, no
-// network work), coalesced by the interval like the playback-save timer.
+// network work), coalesced by the interval like the effect-selection save timer.
 // Shipped over the plain ws:81 socket (directly writable from loop()); the
 // wss:443 path is httpd-owned and has no async push handle here, so a phone on
 // wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
@@ -2574,7 +2518,6 @@ void loop() {
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
 #endif
   if (fs_ok) {
-    flush_playback_save();
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();
