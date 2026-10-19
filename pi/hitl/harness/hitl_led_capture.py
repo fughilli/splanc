@@ -72,7 +72,7 @@ from led_pattern import (
     diff_structure_aligned,
     expected_pixels,
 )
-from provision import HarnessError, dut_target, ensure_booted, provision_dut
+from provision import HarnessError, ble_advertising, dut_target, ensure_booted, provision_dut
 
 # The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
 BLE_MARKER = "[ble] advertising"
@@ -117,7 +117,7 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
         log = ensure_booted(res, log, monitor_seconds)
     except HarnessError as e:
         raise SystemExit(f"[flash] {e}\n{log[-2000:]}")
-    if BLE_MARKER not in log:
+    if not ble_advertising(log):
         raise SystemExit(f"[flash] BLE never advertised ({BLE_MARKER!r} absent)\n{log[-2000:]}")
     _log("[flash] booted + BLE up")
     for line in log.splitlines():

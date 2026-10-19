@@ -40,6 +40,19 @@ def in_download_mode(log: str) -> bool:
     return any(marker in log for marker in _DOWNLOAD_MODE_MARKERS)
 
 
+# The DUT's Improv/BLE service is up. The netstack firmware writes its serial log
+# non-blocking (dropped, not stalled, when the USB-CDC FIFO is full), so the one-shot
+# "[ble] advertising" line can be lost in the boot burst (e.g. while the first-boot
+# littlefs format has the flash cache off); the periodic "[ble] link state=N" status
+# line, N = 6 advertising / 7 connected, carries the same fact.
+BLE_UP_RE = re.compile(r"\[ble\] advertising|\[ble\] link state=[67] ")
+
+
+def ble_advertising(log: str) -> bool:
+    """Whether the serial log shows the DUT's BLE (Improv) service up."""
+    return BLE_UP_RE.search(log or "") is not None
+
+
 def ensure_booted(res, log: str, monitor_seconds: float, attempts: int = BOOT_ATTEMPTS) -> str:
     """Ensure the freshly-flashed DUT booted the app; retry the *boot* if not.
 

@@ -52,7 +52,7 @@ import hitl_ws
 from e2e_phases import SetupError, phase, planned, setup_done, tracked
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
-from provision import dut_target, ensure_booted, provision_dut, wire_provision_dut
+from provision import ble_advertising, dut_target, ensure_booted, provision_dut, wire_provision_dut
 from rules_requirements.hooks.junit_writer import JUnitWriter
 from sync import best_sample, is_sane, sync_sample
 
@@ -86,7 +86,7 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     # post-flash reset / GPIO9-strap race); re-reset and re-read a few times
     # before calling it a boot failure. Returns the log of the successful boot.
     log = ensure_booted(res, log, monitor_seconds)
-    if BLE_MARKER not in log:
+    if not ble_advertising(log):
         raise E2EFailure(f"BLE never came up (no {BLE_MARKER!r} in serial)")
     print("[flash] OK — booted the app and BLE is advertising", flush=True)
     return log
