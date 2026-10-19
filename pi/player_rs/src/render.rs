@@ -166,8 +166,12 @@ mod tests {
     use pb::ServerMessage_::Msg as SMsg;
 
     fn send(player: &mut Player, msg: CMsg, now: i64) -> Option<SMsg> {
+        use micropb::{MessageEncode, PbEncoder};
+        // The player decodes requests in place from the wire, so encode the request.
         let req = pb::ClientMessage { r#msg: Some(msg) };
-        player.handle(req, now, now).and_then(|r| r.r#msg)
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
+        req.encode(&mut enc).expect("request fits");
+        player.handle_frame(&enc.into_writer(), now, now).and_then(|r| r.r#msg)
     }
 
     fn start_mapping(player: &mut Player, led_count: u32, epoch_ms: i64) {

@@ -6,6 +6,7 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::Player;
+use micropb::{MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
 
@@ -29,7 +30,11 @@ pub fn start_mapping(
     let req = pb::ClientMessage {
         r#msg: Some(CMsg::StartMapping(start)),
     };
-    match player.handle(req, epoch_ms, epoch_ms).and_then(|r| r.r#msg) {
+    // The player decodes requests in place from the wire, so encode the request.
+    let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 1024>::new());
+    req.encode(&mut enc).ok()?;
+    let frame = enc.into_writer();
+    match player.handle_frame(&frame, epoch_ms, epoch_ms).and_then(|r| r.r#msg) {
         Some(SMsg::MappingStarted(_)) => player.pattern_epoch_ms(),
         _ => None,
     }

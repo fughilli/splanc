@@ -14,9 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
-use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::Player;
-use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
+use ledmapper_view::ledmapper::v1::ClientMessageView;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio_rustls::rustls::ServerConfig;
@@ -89,23 +88,21 @@ pub fn handle_frame(
     recv_ms: i64,
     send_ms: i64,
 ) -> Result<Option<Vec<u8>>, &'static str> {
-    let mut dec = PbDecoder::new(frame);
-    let mut req = pb::ClientMessage::default();
-    if req.decode(&mut dec, frame.len()).is_err() {
+    // Decoded in place (pbview views over `frame`): a frame that doesn't parse is a
+    // decode error for the caller, not a reply.
+    if ClientMessageView::parse(frame).is_err() {
         return Err("decode");
     }
-    let reply = {
-        let mut p = player.lock().expect("player mutex poisoned");
-        p.handle(req, recv_ms, send_ms)
-    };
-    let Some(reply) = reply else {
+    let mut p = player.lock().expect("player mutex poisoned");
+    let Some(reply) = p.handle_frame(frame, recv_ms, send_ms) else {
         return Ok(None);
     };
-    let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
-    if reply.encode(&mut enc).is_err() {
-        return Err("reply too large");
-    }
-    Ok(Some(enc.into_writer().to_vec()))
+    // Every reply goes out through Player::encode_reply (it splices the board
+    // descriptor into hardware_config_state).
+    let mut out = vec![0u8; REPLY_CAP];
+    let n = p.encode_reply(&reply, &mut out).ok_or("reply too large")?;
+    out.truncate(n);
+    Ok(Some(out))
 }
 
 /// Serve the player over TLS + WebSocket at `addr` forever, sharing `player`
@@ -175,6 +172,8 @@ async fn handle_conn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ledmapper_pb::ledmapper_::v1_ as pb;
+    use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
 
     #[test]
     fn builds_self_signed_config() {
