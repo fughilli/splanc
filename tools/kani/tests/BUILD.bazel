@@ -1,0 +1,31 @@
+# rust_kani_test's own regression: a harness that reaches into a dep, so the
+# aspect has to rebuild the dep with kani-compiler and hand it to the
+# standalone driver via --extern. Manual like every Kani target (it fetches the
+# ~200 MB bundle on first use).
+#   bazel test //tools/kani/tests:all
+load("@rules_rust//rust:defs.bzl", "rust_library")
+load("//tools/kani:defs.bzl", "rust_kani_test")
+
+rust_library(
+    name = "clamp",
+    srcs = ["clamp.rs"],
+    crate_root = "clamp.rs",
+    edition = "2021",
+)
+
+rust_library(
+    name = "uses_clamp",
+    srcs = ["uses_clamp.rs"],
+    crate_root = "uses_clamp.rs",
+    edition = "2021",
+    deps = [":clamp"],
+)
+
+rust_kani_test(
+    name = "uses_clamp_kani",
+    crate = ":uses_clamp",
+    tags = [
+        "kani",
+        "manual",
+    ],
+)

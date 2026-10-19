@@ -539,8 +539,8 @@ mod tests {
     }
 }
 
-// Kani proofs (bounded model checking of the unsafe slot bookkeeping). Not in
-// the Bazel build: run `cargo kani` from firmware/region (see README.md).
+// Kani proofs (bounded model checking of the unsafe slot bookkeeping):
+// `bazel test //firmware/region:region_kani` (see README.md).
 #[cfg(kani)]
 mod proofs {
     use super::*;
