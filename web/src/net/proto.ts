@@ -58,6 +58,7 @@ const CLIENT_ARMS: Record<string, string> = {
   set_hardware_config: "setHardwareConfig",
   get_hardware_config: "getHardwareConfig",
   get_color_correction: "getColorCorrection",
+  list_effects: "listEffects",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -80,6 +81,7 @@ const SERVER_ARMS: Record<string, string> = {
   chunk_ack: "chunkAck",
   hardware_config_state: "hardwareConfigState",
   color_correction_state: "colorCorrectionState",
+  effect_list: "effectList",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -310,6 +312,10 @@ export interface SetEffectMessage {
 export interface SetUniformsMessage {
   type: "set_uniforms";
   values: UniformValueFlat[];
+  /** Persist (true / unset, the default) or apply live only (false): stream a
+   * ramp uncommitted and commit once at the end. Firmware advertising the
+   * "uniform_commit" feature honours it; older firmware always persists. */
+  commit?: boolean;
 }
 
 /** Request an effect's manifest + current values (proto GetEffectUniforms). */
@@ -442,6 +448,27 @@ export interface ColorCorrectionStateMessage {
   lumR: number;
   lumG: number;
   lumB: number;
+}
+
+/** List the effects the device stores (proto ListEffects): one slot today.
+ * Firmware advertising the "list_effects" feature answers it. Reply: effect_list. */
+export interface ListEffectsMessage {
+  type: "list_effects";
+}
+
+/** One stored effect (proto StoredEffect). */
+export interface StoredEffectFlat {
+  effectId: string;
+  /** .fxb bytecode size in bytes. */
+  fxbBytes: number;
+  /** Whether it is the active (rendering) effect. */
+  active: boolean;
+}
+
+/** Reply to list_effects (proto EffectList). */
+export interface EffectListMessage {
+  type: "effect_list";
+  effects: StoredEffectFlat[];
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

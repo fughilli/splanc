@@ -45,6 +45,7 @@ import {
   type ColorCorrectionStateMessage,
   type ColorOrder,
   decodeMappingBundle,
+  type EffectListMessage,
   type EffectUniformsMessage,
   type HardwareConfigStateMessage,
   type MappingBundle,
@@ -600,8 +601,11 @@ export class LedMapperClient {
    * each set_uniforms it receives in order (TCP, no coalescing), so just send them
    * all and the last one wins. Returns false if the socket isn't open.
    */
-  setUniforms(values: UniformValueFlat[]): boolean {
-    return this.send({ type: "set_uniforms", values } as unknown as ClientMessage);
+  setUniforms(values: UniformValueFlat[], commit?: boolean): boolean {
+    // `commit: false` applies the values live without persisting them (honoured by
+    // firmware advertising "uniform_commit"; omitted = persist, today's behaviour).
+    const msg = commit === undefined ? { type: "set_uniforms", values } : { type: "set_uniforms", values, commit };
+    return this.send(msg as unknown as ClientMessage);
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-
@@ -710,6 +714,15 @@ export class LedMapperClient {
    * on open (instead of only the last locally-remembered profile), and lets a
    * gamma HITL journey assert the device reports the gamma it was set to. Reply:
    * color_correction_state (the WS2812B default on a freshly-booted device). */
+  /** List the effects the device stores (proto ListEffects; one slot today).
+   * Needs firmware advertising the "list_effects" feature. */
+  async listEffects(): Promise<EffectListMessage> {
+    return (await this.request(
+      { type: "list_effects" } as unknown as ClientMessage,
+      "effect_list",
+    )) as unknown as EffectListMessage;
+  }
+
   async getColorCorrection(): Promise<ColorCorrectionStateMessage> {
     return (await this.request(
       { type: "get_color_correction" } as unknown as ClientMessage,

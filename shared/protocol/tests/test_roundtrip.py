@@ -550,6 +550,8 @@ def test_decode_raw_dict_welcome_message() -> None:
         "fwGitCommit": "0123456789abcdef0123456789abcdef01234567",
         "fwGitDirty": False,
         "fwVersion": "1.2.0",
+        "features": ["effects", "list_effects"],
+        "fxbFormat": 1,
         "codeParams": {
             "ledCount": 1024,
             "bits": 10,
