@@ -354,8 +354,10 @@ pub mod cost {
 
     // -- stored map ---------------------------------------------------------------
     /// ARENA_MEM 8,192 (topology geometry) + FX_LED_TOPO 10,240 + FX_LED_POS
-    /// 6,144 + FX_LED_MAPPED 32 (nm): the per-LED caches the map decodes into.
-    pub const MAP_STORE_STATIC: usize = 8_192 + 10_240 + 6_144 + 32;
+    /// 6,144 + FX_LED_MAPPED 32 + FX_LED_ROOM 3,072 (i16 mm x3 x 512 LEDs, the
+    /// room-frame cache for multi-fixture effects) (nm): the per-LED caches the
+    /// map decodes into.
+    pub const MAP_STORE_STATIC: usize = 8_192 + 10_240 + 6_144 + 32 + 3_072;
 
     // -- activity -------------------------------------------------------------------
     /// The loaded fx VM: FX_ARENA 24,576 + FX_VM 5,120 + FX_BYTES 4,096 + JIT
