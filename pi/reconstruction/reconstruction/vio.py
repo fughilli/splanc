@@ -452,7 +452,62 @@ def _inertial_alignment(
     interval's IMU uncertainty relative to the session's typical interval (so
     a regular session is unchanged, while one long dead-reckoned gap cannot
     dominate the fit). Intervals the IMU does not cover contribute nothing.
+
+    The camera centers come from vision and jitter with pixel noise. Weighting
+    the position rows by IMU noise alone treats that jitter as motion the IMU
+    failed to see: on a dwell-heavy capture (long static holds, brief hops
+    between vantage points) the many near-static intervals then dilute the
+    scale toward zero, swamping the hops that actually carry it. So each
+    position row's σ also carries the center noise (metric τ, per center),
+    estimated from the data: a few rounds of solve → pick τ so the position
+    rows' normalized residuals match their expected χ².
     """
+    tau = 0.0
+    out = _alignment_with_center_noise(frames, rotations, centers, imu, gyro_bias, accel_bias, tau)
+    for _ in range(4):
+        resid, dof_frac = out[3], out[4]
+        if len(resid) == 0:
+            break
+        r2, sp = resid[:, 0], resid[:, 1]
+        target = dof_frac * len(r2)
+
+        def chi2(t: float) -> float:
+            return float(np.sum(r2 / (sp * sp + 2.0 * t * t)))
+
+        if chi2(0.0) <= target:
+            nxt = 0.0
+        else:
+            lo, hi = 0.0, 1.0
+            for _ in range(60):
+                mid = 0.5 * (lo + hi)
+                if chi2(mid) > target:
+                    lo = mid
+                else:
+                    hi = mid
+            nxt = 0.5 * (lo + hi)
+        done = abs(nxt - tau) <= 0.05 * max(tau, 1e-6)
+        tau = nxt
+        out = _alignment_with_center_noise(
+            frames, rotations, centers, imu, gyro_bias, accel_bias, tau
+        )
+        if done:
+            break
+    return out[0], out[1], out[2]
+
+
+def _alignment_with_center_noise(
+    frames: Sequence[FrameObservations],
+    rotations: Sequence[np.ndarray],
+    centers: np.ndarray,
+    imu: Sequence[ImuSample],
+    gyro_bias: Optional[np.ndarray],
+    accel_bias: Optional[np.ndarray],
+    tau: float,
+) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
+    """One weighted linear alignment with metric center noise `tau` folded
+    into the position rows' σ. Also returns, per position-row component,
+    (squared metric residual, IMU σ_p) and the residual-dof fraction, for
+    the τ fit."""
     n = len(frames)
     zero = np.zeros(3)
     bg = zero if gyro_bias is None else gyro_bias
@@ -465,10 +520,14 @@ def _inertial_alignment(
     ref_p = float(np.median([sg[2] for sg in covered])) if covered else 1.0
     rows = []
     rhs = []
+    # (block index in rows/rhs, position-row weight, IMU σ_p) per interval.
+    p_rows = []
     for i in range(n - 1):
         if sig[i][3]:
             continue
-        w_v, w_p = ref_v / sig[i][1], ref_p / sig[i][2]
+        sp_eff = float(np.sqrt(sig[i][2] ** 2 + 2.0 * tau * tau))
+        w_v, w_p = ref_v / sig[i][1], ref_p / sp_eff
+        p_rows.append((len(rhs), w_p, sig[i][2]))
         d_rot, d_vel, d_pos, dt = preintegrate(imu, frames[i].t, frames[i + 1].t, bg, ba)
         ri = rotations[i]
         rit = ri.T
@@ -523,7 +582,15 @@ def _inertial_alignment(
         g = GRAVITY * (g_dir + basis @ delta)
         g = GRAVITY * g / np.linalg.norm(g)
         v = sol2[3:].reshape(n, 3)
-    return s, g, v
+    # Unweight the position rows to metric residuals of the final (s, g, v).
+    x = np.concatenate([[s], g, v.reshape(-1)])
+    resid = []
+    for blk, w_p, sp in p_rows:
+        e = (rows[blk] @ x - rhs[blk]) / w_p
+        resid.extend((float(ei * ei), sp) for ei in e)
+    n_rows = a.shape[0]
+    dof_frac = (n_rows - n_unknowns) / n_rows if n_rows > n_unknowns else 0.0
+    return s, g, v, np.array(resid).reshape(-1, 2), dof_frac
 
 
 # ---------------------------------------------------------------------------
