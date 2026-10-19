@@ -199,5 +199,14 @@ fn main() -> std::io::Result<()> {
         );
     }
 
+    // Fixture pose: a short room name + four small float vectors (the default
+    // max_len 4 fits xyz / a quaternion). The firmware splices welcome.pose at
+    // encode time from the player's stored pose (like features), so its profile
+    // drops the inline copy from every by-value ServerMessage.
+    g.configure(".ledmapper.v1.FixturePose.room", Config::new().max_bytes(32));
+    if firmware {
+        g.configure(".ledmapper.v1.Welcome.pose", Config::new().skip(true));
+    }
+
     g.compile_fdset_file(&args[1], &args[2])
 }

@@ -89,8 +89,13 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::ListEffects(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
-        // Rename, color correction, and output brightness all reply welcome.
-        CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
+        // Rename, color correction, output brightness, the room pose and the time
+        // base all reply welcome.
+        CMsg::SetDeviceName(_)
+        | CMsg::SetColorCorrection(_)
+        | CMsg::SetBrightness(_)
+        | CMsg::SetFixturePose(_)
+        | CMsg::SetTimeBase(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
         }
         // Hardware config get/set reply hardware_config_state.
@@ -140,6 +145,8 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetHardwareConfig(_) => "get_hardware_config",
         CMsg::GetColorCorrection(_) => "get_color_correction",
         CMsg::ListEffects(_) => "list_effects",
+        CMsg::SetFixturePose(_) => "set_fixture_pose",
+        CMsg::SetTimeBase(_) => "set_time_base",
     }
 }
 
