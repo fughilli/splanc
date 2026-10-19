@@ -145,9 +145,12 @@ class Bound:
 
 
 def objdump(tool, elf):
-    return subprocess.run(
-        [tool, "-d", "--no-show-raw-insn", "-C", elf], check=True, capture_output=True, text=True
-    ).stdout
+    p = subprocess.run(
+        [tool, "-d", "--no-show-raw-insn", "-C", elf], capture_output=True, text=True
+    )
+    if p.returncode != 0:
+        raise RuntimeError(f"{tool} exited {p.returncode}: {p.stderr.strip()[:2000]}")
+    return p.stdout
 
 
 def main():

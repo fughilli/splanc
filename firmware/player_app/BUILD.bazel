@@ -795,6 +795,9 @@ py_test(
         "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
     },
     main = "tests/test_stack_bound.py",
+    # The bound is a property of the one shipped ELF, so one host checks it: the
+    # Linux CI job. (The macOS runner's riscv objdump exits 101 with no output.)
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//tools/stack_bound:stack_bound_lib",
         "@rules_python//python/runfiles",
