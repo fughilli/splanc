@@ -48,7 +48,8 @@ project:
     FUG-88 "Draft requirements and risk assessment for Splanc" baseline
     (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88
     states as prose are mitigations MIT-1..12, each implemented by a
-    risk-control requirement PR-26..37 (FUG-89).
+    risk-control requirement PR-26..37 (FUG-89). PR-38+ are later product
+    requirements.
 
 # --------------------------------------------------------------------------- #
 # User needs (FUG-88)                                                         #
@@ -500,6 +501,22 @@ requirements:
     satisfies: [UN-1, UN-2]
     modules: [web]
     verified_by: ['//web:appearance_test']
+
+  - id: PR-38
+    title: BLE and Wi-Fi (wss) transports coexist
+    description: >-
+      The device shall keep its BLE service (Improv provisioning and the BLE
+      player transport) advertising and connectable while a wss session is
+      live, and shall serve a BLE central and a wss client concurrently. Memory
+      budgets shall hold both at once: making the radios mutually exclusive
+      (tearing down the BLE controller for a wss session, or refusing wss while
+      BLE is up) is not an allowed memory-reduction strategy. Dropping the
+      vestigial post-provisioning BLE link when a wss client first appears is
+      permitted, provided the device keeps advertising and accepts a new
+      central during the session. Product decision, 2026-10-19.
+    satisfies: [UN-5, UN-7]
+    method: hitl
+    modules: [firmware]
 
 # --------------------------------------------------------------------------- #
 # Risks (FUG-88 RISK-1..12)                                                   #

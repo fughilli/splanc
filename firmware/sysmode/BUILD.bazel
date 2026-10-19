@@ -5,6 +5,7 @@ reachability_test walks every reachable state (explicit-state model checking)
 and asserts the invariants + budget. Kept apart from //firmware/region: that
 crate is the generic mechanism, this is the firmware's policy."""
 
+load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -17,10 +18,14 @@ rust_library(
 )
 
 # bazel test //firmware/sysmode:reachability_test --test_arg=--nocapture
-# prints the per-state live-bytes table and the worst state per radio policy.
-rust_test(
+# prints the per-state live-bytes table and the worst state.
+rr_rust_test(
     name = "reachability_test",
     srcs = ["tests/reachability.rs"],
     edition = "2021",
-    deps = [":sysmode"],
+    rule = rust_test,
+    deps = [
+        ":sysmode",
+        "@rules_requirements//rust:rr",
+    ],
 )

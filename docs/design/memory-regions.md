@@ -34,16 +34,16 @@ The IDF heap is first-fit TLSF over variable-size blocks, so its worst case depe
 
 **State.** `SysMode` is the product of these axes:
 - `Wifi` {Unprovisioned, Scanning, Joined};
-- `Ble` {Off, Advertising, Connected};
+- `Ble` {Advertising, Connected} — never off (PR-38);
 - `wss: bool`;
-- `Activity` {Idle, Mapping, Playback, Effect{video}, Upload};
+- `Activity` {Idle, Mapping, Effect{video}, Upload} (the native pulse/flood playback was removed; every show is an FX-engine effect);
 - `map: bool`.
 
 **Decisions encoded:**
 - **Upload is exclusive of an effect** (product decision, 2026-10-19), so `Upload` is an activity, not a flag beside `Effect`. `FxLoad` mid-upload is refused, and an upload clears the running effect.
-- **Radio policy is a knob.** Today BLE keeps advertising beside a wss session: the provisioning link is dropped when a wss client appears, but a central may reconnect. `Policy::RADIO_EXCLUSIVE` deinitializes the controller for the session instead. This is an open product decision.
+- **BLE and wss coexist** (requirement PR-38, product decision 2026-10-19). BLE keeps advertising beside a wss session: the vestigial provisioning link is dropped when a wss client appears, but a central may reconnect and both are served at once. Radio mutual exclusion is NOT an available memory lever, so every budget includes both.
 
-**Transition function.** `step(state, event, policy)` is the single pure transition function. It is total: each (state, event) gives either a new state or a `Refuse`. The firmware should call it as the authority for mode switches, so the model can't drift from the code. TLA+ can't offer that.
+**Transition function.** `step(state, event)` is the single pure transition function. It is total: each (state, event) gives either a new state or a `Refuse`. The firmware should call it as the authority for mode switches, so the model can't drift from the code. TLA+ can't offer that.
 
 **Costs.** `cost::*` is the per-component RAM table. Each entry cites its source:
 - static sizes come from `nm -S` of the shipped ELF;
@@ -52,24 +52,22 @@ The IDF heap is first-fit TLSF over variable-size blocks, so its worst case depe
 `BUDGET` is what those components occupy in today's layout at the measured minimum, plus the measured free heap there (54,204 B, after #262).
 
 **Test.** `reachability_test` runs a breadth-first search from both boot states (unprovisioned, and restored with credentials + map + effect) over every event. It visits every reachable state and asserts:
-- **Invariants:** wss ⇒ Joined; video ⇒ wss; never Upload ∧ Effect; no orphaned upload; under exclusive radios, never BLE-up ∧ wss.
+- **Invariants:** wss ⇒ Joined; video ⇒ wss; never Upload ∧ Effect; no orphaned upload.
+- **Coexistence (PR-38):** a BLE central and a wss session are live together in a reachable state; a central can connect during any session and a session can open with BLE up.
 - **Recoverability:** every state can return to a quiescent one.
 - **The HITL gate exercises the worst heap case:** under today's layout the worst reachable heap state equals the measured one.
 - **Budget:** every state's live set fits `BUDGET`.
-- **Pins:** the state counts and worst live sets are pinned, so a cost or transition change is a reviewed budget change.
+- **Pins:** the state count and worst live set are pinned, so a cost or transition change is a reviewed budget change.
 
 The test already caught one model bug: closing wss with a BLE central still connected left video "streaming".
 
 **Results (2026-10-19):**
 
-| Policy | Reachable states | Worst live set | Worst state |
-|---|---:|---:|---|
-| current (BLE coexists) | 65 | 151,213 B | Joined + BLE connected + wss + effect with video + map |
-| radio exclusive | 55 | 125,829 B | Scanning + BLE connected + effect + map (a restored effect during provisioning) |
+| Reachable states | Worst live set | Worst state |
+|---:|---:|---|
+| 57 | 151,213 B | Joined + BLE connected + wss + effect with video + map |
 
-Today's layout holds 154,317 B for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set:
-- **Under the current policy that saves just ~3 KB:** the worst state has nearly everything live at once.
-- **Exclusive radios save ~28 KB.** This is the number behind the BLE-vs-wss product decision.
+Today's layout holds about 152 KB for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set, which under PR-38 has nearly everything live at once, so the union saves little by itself (~1 KB):
 - **The next lever is the scan residue:** 20 KB of vendor scan, lwIP and event-loop heap that never frees.
 
 ## Integration plan
@@ -80,10 +78,7 @@ Ordered by bytes recovered per effort:
    - After `setup()`, record the caller PC and size of any IDF-heap allocation in a census ring, read over JTAG by `ram_watch.tcl`, so the DUT isn't disturbed.
    - Log-only first, to name the ~5 KB nobody owns; then abort in HITL builds.
 3. **Activity union.** Put `ModeRegion<ActivityStore>` over the effect statics (FX_ARENA, FX_VM, FX_BYTES, JIT, LUT, OSC) and use the upload/mapping scratch. Video's FX_TEX_PREV is a sub-variant of Effect.
-4. **Radio regions,** if the radio-exclusive decision is taken:
-   - deinit the BLE controller on wss open;
-   - put the BLE host statics + link buffers and the WS buffers in a `ModeRegion`;
-   - wrap `bt_osi_mem_*` into a `Slab` for the controller's own allocations, with the exit leak check verifying `esp_bt_controller_deinit` frees everything.
+4. **BLE controller slab:** wrap `bt_osi_mem_*` into a bounded `Slab` so the controller's own allocations are isolated from the shared heap (the controller stays up: PR-38).
 5. **TLS slab.** Add `MBEDTLS_PLATFORM_MEMORY` + `mbedtls_platform_set_calloc_free` into a `Slab`. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap.
 6. **Scan residue.** Scan with the netstack's own MLME, or `esp_wifi_deinit` after the scan, and drop `esp_netif`/lwIP/event-loop tasks. Then set `scan_residue` live only in `Wifi::Scanning`.
 7. **CI gates:**

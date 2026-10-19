@@ -17,9 +17,9 @@
 //! model checking — the space is a few hundred states) and asserts the
 //! invariants and the budget.
 //!
-//! Policy: today BLE stays up (advertising, reconnectable) alongside a wss
-//! session; making the radios exclusive is an open product decision, so it is
-//! a [`Policy`] knob and the test reports the worst state under both.
+//! BLE and wss COEXIST (requirement PR-38): the controller is never torn down
+//! for a wss session, so the budget must hold both at once — radio mutual
+//! exclusion is not an available memory-reduction strategy.
 
 #![no_std]
 
@@ -39,8 +39,6 @@ pub enum Wifi {
 /// transport share one link).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ble {
-    /// Controller deinitialized (only under [`Policy::radio_exclusive`]).
-    Off,
     /// Controller up, advertising, no central.
     Advertising,
     /// A central is connected (Improv or the BLE player session).
@@ -56,8 +54,6 @@ pub enum Activity {
     /// Counting patterns for a capture (state lives in the always-resident
     /// Player core).
     Mapping,
-    /// Built-in pulse/flood playback (the topology simulator, SIM).
-    Playback,
     /// A loaded fx VM effect; `video` = set_texture frames are streaming (the
     /// delta buffer FX_TEX_PREV is live only then).
     Effect { video: bool },
@@ -91,8 +87,6 @@ pub enum Event {
     WssClose,
     MappingStart,
     MappingStop,
-    PlaybackStart,
-    PlaybackStop,
     FxLoad,
     FxClear,
     /// The first set_texture frame of a stream / the stream going quiet.
@@ -104,7 +98,7 @@ pub enum Event {
 }
 
 impl Event {
-    pub const ALL: [Event; 18] = [
+    pub const ALL: [Event; 16] = [
         Event::BleConnect,
         Event::BleDisconnect,
         Event::ImprovCredentials,
@@ -114,8 +108,6 @@ impl Event {
         Event::WssClose,
         Event::MappingStart,
         Event::MappingStop,
-        Event::PlaybackStart,
-        Event::PlaybackStop,
         Event::FxLoad,
         Event::FxClear,
         Event::VideoStart,
@@ -138,22 +130,6 @@ pub enum Refuse {
     NotJoined,
     /// Effects/video need... an effect; video needs the wss transport.
     NoEffect,
-    /// Policy forbids it (BLE while a wss session is live, exclusive radios).
-    Policy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Policy {
-    /// BLE controller deinit while a wss session is live (re-init on close).
-    /// `false` = today's firmware: BLE keeps advertising, the provisioning link
-    /// is dropped when a wss client appears, but a central may reconnect.
-    pub radio_exclusive: bool,
-}
-
-impl Policy {
-    /// What the firmware does today.
-    pub const CURRENT: Policy = Policy { radio_exclusive: false };
-    pub const RADIO_EXCLUSIVE: Policy = Policy { radio_exclusive: true };
 }
 
 impl SysMode {
@@ -183,7 +159,7 @@ impl SysMode {
 
 /// The transition function. Pure and total: every (state, event) is either a
 /// new state or a [`Refuse`].
-pub fn step(s: SysMode, e: Event, p: Policy) -> Result<SysMode, Refuse> {
+pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
     use Activity as A;
     let mut n = s;
     match e {
@@ -221,7 +197,7 @@ pub fn step(s: SysMode, e: Event, p: Policy) -> Result<SysMode, Refuse> {
             // The netstack rejoins in place (Joined -> Joined), but the TCP
             // session dies with the link.
             if s.wss {
-                n = close_wss(n, p);
+                n = close_wss(n);
             }
         }
         Event::WssOpen => {
@@ -232,21 +208,19 @@ pub fn step(s: SysMode, e: Event, p: Policy) -> Result<SysMode, Refuse> {
                 return Err(Refuse::NotApplicable);
             }
             n.wss = true;
-            n.ble = if p.radio_exclusive {
-                Ble::Off
-            } else if s.ble == Ble::Connected {
-                // Today: a wss client appearing drops the (vestigial,
-                // post-provisioning) BLE link; the controller re-advertises.
-                Ble::Advertising
-            } else {
-                s.ble
-            };
+            // A wss client appearing drops the (vestigial, post-provisioning)
+            // BLE link so coex stops yielding airtime to it during the
+            // handshake; the controller keeps advertising and a central may
+            // reconnect alongside the session (PR-38).
+            if s.ble == Ble::Connected {
+                n.ble = Ble::Advertising;
+            }
         }
         Event::WssClose => {
             if !s.wss {
                 return Err(Refuse::NotApplicable);
             }
-            n = close_wss(n, p);
+            n = close_wss(n);
         }
         Event::MappingStart => {
             need_transport(s)?;
@@ -254,19 +228,6 @@ pub fn step(s: SysMode, e: Event, p: Policy) -> Result<SysMode, Refuse> {
         }
         Event::MappingStop => {
             if s.activity != A::Mapping {
-                return Err(Refuse::NotApplicable);
-            }
-            n.activity = A::Idle;
-        }
-        Event::PlaybackStart => {
-            need_transport(s)?;
-            if !s.map {
-                return Err(Refuse::NotApplicable); // pulse/flood need the topology
-            }
-            n.activity = A::Playback;
-        }
-        Event::PlaybackStop => {
-            if s.activity != A::Playback {
                 return Err(Refuse::NotApplicable);
             }
             n.activity = A::Idle;
@@ -305,7 +266,7 @@ pub fn step(s: SysMode, e: Event, p: Policy) -> Result<SysMode, Refuse> {
             if s.activity == A::Upload {
                 return Err(Refuse::NotApplicable);
             }
-            // The upload clears the running effect/playback (it rebuilds the
+            // The upload clears the running effect (it rebuilds the
             // topology anyway) and invalidates the stored map until it ends.
             n.activity = A::Upload;
             n.map = false;
@@ -329,15 +290,12 @@ fn need_transport(s: SysMode) -> Result<(), Refuse> {
     }
 }
 
-fn close_wss(mut n: SysMode, p: Policy) -> SysMode {
+fn close_wss(mut n: SysMode) -> SysMode {
     n.wss = false;
     // Video frames ride wss only: the stream ends with the session even if a
     // BLE central is still connected (found by the reachability test).
     if n.activity == (Activity::Effect { video: true }) {
         n.activity = Activity::Effect { video: false };
-    }
-    if p.radio_exclusive {
-        n.ble = Ble::Advertising; // re-init the controller
     }
     if !n.transport() {
         n = drop_transport(n);
@@ -346,7 +304,7 @@ fn close_wss(mut n: SysMode, p: Policy) -> SysMode {
 }
 
 /// The last transport went away: an in-flight upload is abandoned and a video
-/// stream stops. (A loaded effect / playback / map keep running.)
+/// stream stops. (A loaded effect / map keep running.)
 fn drop_transport(mut n: SysMode) -> SysMode {
     n.activity = match n.activity {
         Activity::Upload => Activity::Idle,
@@ -362,7 +320,7 @@ fn drop_transport(mut n: SysMode) -> SysMode {
 /// (`ram_audit` HITL run, firmware-v1.6.0; heap usage of these components did
 /// not change in #262).
 pub mod cost {
-    // -- BLE (controller up = Advertising or Connected) ----------------------
+    // -- BLE (controller always up: PR-38) -------------------------------------
     /// Vendor controller heap: pools / LL env / HCI buffers (23,368 B in 220
     /// blocks) + the ble_ll_task stack (5,136 B) + small controller allocs.
     /// Core dump: component "BLE controller blob (vendor)", heap.
@@ -400,8 +358,6 @@ pub mod cost {
     pub const MAP_STORE_STATIC: usize = 8_192 + 10_240 + 6_144 + 32;
 
     // -- activity -------------------------------------------------------------------
-    /// The topology simulator SIM (nm) for pulse/flood.
-    pub const PLAYBACK_STATIC: usize = 2_144;
     /// The loaded fx VM: FX_ARENA 24,576 + FX_VM 5,120 + FX_BYTES 4,096 + JIT
     /// (g_jit_region 2,048 + FX_JIT_TARGETS 1,025 + FX_JIT_CONSTS 256 +
     /// FX_JIT_PLANS 80 + FX_JIT_BLOCKS 64) + tex_comp LUT 1,024 + OSC_TABLE 900
@@ -422,7 +378,6 @@ pub mod cost {
         + WS_BUFFERS_STATIC
         + SCAN_STATIC
         + MAP_STORE_STATIC
-        + PLAYBACK_STATIC
         + EFFECT_STATIC
         + VIDEO_STATIC;
 
@@ -455,18 +410,16 @@ pub struct Component {
 /// docs/design/memory-regions.md for the removal).
 pub fn components(s: SysMode) -> impl Iterator<Item = Component> {
     use cost::*;
-    let ble_up = s.ble != Ble::Off;
     let c = |live: bool, name, bytes, heap| (live, Component { name, bytes, heap });
     let parts = [
-        c(ble_up, "ble_controller", BLE_CONTROLLER_HEAP, true),
-        c(ble_up, "ble_host", BLE_HOST_STATIC, false),
+        c(true, "ble_controller", BLE_CONTROLLER_HEAP, true),
+        c(true, "ble_host", BLE_HOST_STATIC, false),
         c(s.ble == Ble::Connected, "ble_link", BLE_LINK_HEAP, true),
         c(s.wss, "tls_session", TLS_SESSION_HEAP, true),
         c(s.wss, "ws_buffers", WS_BUFFERS_STATIC, false),
         c(s.wifi != Wifi::Unprovisioned, "scan_residue", SCAN_RESIDUE_HEAP, true),
         c(s.wifi == Wifi::Scanning, "scan", SCAN_STATIC, false),
         c(s.map || s.activity == Activity::Upload, "map_store", MAP_STORE_STATIC, false),
-        c(s.activity == Activity::Playback, "playback", PLAYBACK_STATIC, false),
         c(matches!(s.activity, Activity::Effect { .. }), "effect", EFFECT_STATIC, false),
         c(s.activity == (Activity::Effect { video: true }), "video", VIDEO_STATIC, false),
         c(s.activity == Activity::Upload, "upload", UPLOAD, false),
@@ -486,7 +439,7 @@ pub fn heap_bytes(s: SysMode) -> usize {
     components(s).filter(|c| c.heap).map(|c| c.bytes).sum()
 }
 
-/// Quiescent: nothing in flight (no session, no central, nothing playing).
+/// Quiescent: nothing in flight (no session, no central, nothing showing).
 pub fn is_quiescent(s: SysMode) -> bool {
     !s.wss && s.ble != Ble::Connected && s.activity == Activity::Idle
 }
