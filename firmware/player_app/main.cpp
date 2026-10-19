@@ -278,7 +278,17 @@ static const uint32_t kRenderTaskStack = 8192;   // render + the GRB reorder/RMT
 static const size_t kRxCap = 12288;
 static uint8_t rx[kRxCap];      // one whole (non-sharded) message
 static size_t rx_len = 0;
-static uint8_t tx[2048];        // encoded reply frames are control-sized
+// Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
+// frame header, written in place by the netstack transport (kWsSendHeadroom) so it needn't
+// stage every reply in a separate copy buffer.
+static struct {
+  uint8_t ws_headroom[16];
+  uint8_t data[2048];
+} g_tx;
+static uint8_t (&tx)[2048] = g_tx.data;
+#if defined(LM_NETSTACK)
+static_assert(sizeof g_tx.ws_headroom >= kWsSendHeadroom, "tx needs WS header headroom");
+#endif
 
 // Sharded upload (proto UploadChunk): each window's payload is appended to this
 // temp file as it arrives; on the last window the reassembled frame is decoded
