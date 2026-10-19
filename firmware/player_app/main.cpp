@@ -431,6 +431,16 @@ static void ws_drop(uint16_t close_code) {
 }
 #endif  // !LM_NETSTACK
 
+// Open a littlefs file with stdio buffering OFF. Every access here is a whole buffer
+// or a block-sized chunk and littlefs caches internally, so newlib's per-FILE 4 KB
+// stdio buffer (malloc'd on first I/O, freed at fclose) was pure heap churn: the heap
+// census (#271) caught a 4 KB allocation on every open.
+static FILE *fs_open(const char *path, const char *mode) {
+  FILE *f = fopen(path, mode);
+  if (f != nullptr) setvbuf(f, nullptr, _IONBF, 0);
+  return f;
+}
+
 // Atomically persist `data` to `path`, power-loss safe: write the bytes to a
 // sibling temp file, flush them all the way to flash (fsync), then rename over
 // the destination. littlefs's rename is a single atomic metadata commit, so an
@@ -449,7 +459,7 @@ static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
     Log().printf("littlefs: path too long for %s\n", path);
     return;
   }
-  FILE *f = fopen(tmp, "wb");
+  FILE *f = fs_open(tmp, "wb");
   if (f == nullptr) {
     Log().printf("littlefs: open %s for write failed\n", tmp);
     return;
@@ -802,7 +812,7 @@ static size_t upload_refill(void *ctx, uint8_t *buf, size_t cap) {
 // block (no whole-frame buffer); everything else (effect, selection, uniforms)
 // is control-sized and decodes in one pass through rx.
 static void fs_replay(const char *path) {
-  FILE *f = fopen(path, "rb");
+  FILE *f = fs_open(path, "rb");
   if (f == nullptr) return;
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
@@ -1001,7 +1011,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 
   if (ch->seq == 0) {
     upload_active = false;
-    FILE *f = fopen(kUploadTmp, "wb");
+    FILE *f = fs_open(kUploadTmp, "wb");
     if (f == nullptr) return -1;
     size_t w = fwrite(payload, 1, ch->payload_len, f);
     fclose(f);
@@ -1015,7 +1025,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
       upload_active = false;
       return -1;  // out-of-order / stale window → drop; the client retries
     }
-    FILE *f = fopen(kUploadTmp, "ab");
+    FILE *f = fs_open(kUploadTmp, "ab");
     if (f == nullptr) {
       upload_active = false;
       return -1;
@@ -1048,7 +1058,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
       remove(kUploadTmp);
       return -1;  // too large to dispatch in-memory
     }
-    FILE *ef = fopen(kUploadTmp, "rb");
+    FILE *ef = fs_open(kUploadTmp, "rb");
     if (ef == nullptr) return -1;
     size_t rn = fread(rx, 1, upload_total, ef);
     fclose(ef);
@@ -1059,7 +1069,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 
   // Map/topology: decode the reassembled frame straight off flash, then persist
   // by renaming the temp file into place (a new map invalidates the topology).
-  FILE *f = fopen(kUploadTmp, "rb");
+  FILE *f = fs_open(kUploadTmp, "rb");
   if (f == nullptr) return -1;
   const int32_t arm = (upload_kind == 1) ? kArmSubmitTopology : kArmSubmitMap;
   int64_t now = (int64_t)millis();
