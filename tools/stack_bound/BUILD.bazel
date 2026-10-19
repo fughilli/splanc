@@ -1,0 +1,18 @@
+"""Static worst-case stack bound over a firmware ELF (see stack_bound.py)."""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "stack_bound_lib",
+    srcs = ["stack_bound.py"],
+    imports = ["."],
+)
+
+# bazel run //tools/stack_bound -- $(objdump) <elf> <manifest.json>
+py_binary(
+    name = "stack_bound",
+    srcs = ["stack_bound.py"],
+    deps = [":stack_bound_lib"],
+)

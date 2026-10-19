@@ -1,0 +1,80 @@
+{
+  "_doc": "Static stack-bound gate for the C6 netstack player (//firmware/player_app:stack_bound_test, tool //tools/stack_bound). Each root's worst case over the ELF call graph, plus isr_context_bytes, times margin must fit its reserved stack, read from the source. Edit this file only with a reason next to the entry.",
+  "margin": 1.25,
+  "isr_context_bytes": 256,
+  "roots": [
+    {
+      "name": "loopTask",
+      "symbol": "loopTask(void*)",
+      "reserved_from": [
+        "firmware/player_app/main.cpp",
+        "SET_LOOP_TASK_STACK_SIZE\\((\\d+) \\* 1024\\)",
+        1024
+      ]
+    },
+    {
+      "name": "render",
+      "symbol": "render_task(void*)",
+      "reserved_from": ["firmware/player_app/main.cpp", "kRenderTaskStack = (\\d+);", 1]
+    },
+    {
+      "name": "xmit",
+      "symbol": "xmit_task(void*)",
+      "reserved_from": ["firmware/player_app/main.cpp", "kXmitTaskStack = (\\d+);", 1]
+    },
+    {
+      "name": "logdrain",
+      "symbol": "log_drain_task(void*)",
+      "reserved_from": ["firmware/player_app/serial_log.h", "StackType_t stack\\[(\\d+) /", 1]
+    }
+  ],
+  "_noreturn": "Callees that never return, so their stack use only changes HOW an already-fatal error presents: Rust panics, and C++ throws (the only catch handlers in the image are libstdc++'s nothrow operator new, so every throw unwinds into std::terminate -> abort).",
+  "noreturn": [
+    "^core::panicking::",
+    "^core::.*::panic",
+    "^core::slice::index::.*_fail",
+    "^core::option::.*failed",
+    "^core::result::unwrap_failed",
+    "^_Unwind_",
+    "^__cxa_throw",
+    "^std::__throw_",
+    "^__cxxabiv1::__terminate",
+    "^std::terminate",
+    "^abort$",
+    "^__assert_func$",
+    "^esp_system_abort$",
+    "^panic_abort$",
+    "^esp_panic_handler",
+    "^__wrap_esp_panic_handler",
+    "^panicHandler$"
+  ],
+  "_indirect_edges": "Function-pointer calls the disassembly can't resolve: mbedtls's f_send/f_recv are our bio callbacks (netstack_transport.cpp mbedtls_ssl_set_bio).",
+  "indirect_edges": [
+    {
+      "callers": "^(mbedtls_ssl|ssl_)",
+      "callees": ["(anonymous namespace)::bio_send", "(anonymous namespace)::bio_recv"]
+    }
+  ],
+  "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold.",
+  "dynamic_allocations": {
+    "Preferences::getString(char const*, String)": 128,
+    "ppTxFragmentProc": 2400
+  },
+  "_accepted_cycles": "Recursion inside prebuilt/vendor code (error/retry paths), taken as one level deep. A NEW cycle fails the gate.",
+  "accepted_cycles": [
+    "Print::~Print()",
+    "__cxa_allocate_exception",
+    "__pinMode",
+    "esp_aes_process_dma",
+    "esp_littlefs_init",
+    "esp_log",
+    "esp_read_mac",
+    "ieee80211_he_attach",
+    "ieee80211_set_phy_bw",
+    "ieee80211_sta_new_state",
+    "mbedtls_cipher_update",
+    "mbedtls_mpi_mul_mpi",
+    "pm_go_to_wake",
+    "ppTxPkt"
+  ]
+}
