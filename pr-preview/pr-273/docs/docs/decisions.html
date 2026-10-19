@@ -1,0 +1,1083 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="How these docs are built" href="../about-these-docs.html"><link rel="prev" title="LED-Mapper App — UI/UX Overhaul (Design Doc)" href="design/app-ux-overhaul.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Decision log - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/decisions.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/decisions.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="decision-log">
+<h1>Decision log<a class="headerlink" href="#decision-log" title="Link to this heading">¶</a></h1>
+<p>Pinned versions and the rationale behind them. Update this file together with
+the file that holds each pin (<code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code>, <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code>,
+<code class="docutils literal notranslate"><span class="pre">package.json</span></code>, <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/flake.nix</span></code>).</p>
+<section id="build-system-bazel-bzlmod">
+<h2>Build system — Bazel (bzlmod)<a class="headerlink" href="#build-system-bazel-bzlmod" title="Link to this heading">¶</a></h2>
+<p>The project is managed with <strong>Bazel using bzlmod</strong> (<code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code>, no
+<code class="docutils literal notranslate"><span class="pre">WORKSPACE</span></code>). Rationale:</p>
+<ul class="simple">
+<li><p><strong>One polyglot graph.</strong> The repo is Python (Pi: driver, server, reconstruction,
+simulator, protocol codegen) <em>and</em> TypeScript (web app + generated protocol
+types). Bazel builds and tests both under one dependency graph, so the protocol
+package (M10) can be the single source of truth that both halves consume, with
+a freshness check that fails the build if the generated Pydantic/TS bindings
+drift from the schemas.</p></li>
+<li><p><strong>bzlmod over WORKSPACE</strong> because it is the supported mechanism in Bazel 7+,
+gives transitive version resolution from the Bazel Central Registry, and keeps
+the module list short and declarative. <code class="docutils literal notranslate"><span class="pre">--enable_bzlmod</span></code> is set in <code class="docutils literal notranslate"><span class="pre">.bazelrc</span></code>.</p></li>
+<li><p><strong>Hermetic toolchains.</strong> <code class="docutils literal notranslate"><span class="pre">rules_python</span></code> provides a pinned interpreter and a
+single root lockfile; <code class="docutils literal notranslate"><span class="pre">aspect_rules_js</span></code>/<code class="docutils literal notranslate"><span class="pre">aspect_rules_ts</span></code> drive a pinned
+TypeScript over the pnpm workspace. No reliance on system Python/Node for the
+build itself.</p></li>
+</ul>
+<section id="jvm-sve-workaround-bazelrc-added-2026-06-19">
+<h3>JVM SVE workaround (<code class="docutils literal notranslate"><span class="pre">.bazelrc</span></code>, added 2026-06-19)<a class="headerlink" href="#jvm-sve-workaround-bazelrc-added-2026-06-19" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">.bazelrc</span></code> carries <code class="docutils literal notranslate"><span class="pre">startup</span> <span class="pre">--host_jvm_args=-XX:UseSVE=0</span></code>. Bazel 7.7.1 ships a
+bundled JDK 21.0.5; on some <code class="docutils literal notranslate"><span class="pre">aarch64</span></code> hosts that JDK emits SVE (Scalable Vector
+Extension) instructions in its VM-startup stub code, and the bundled JVM then
+crashes with <code class="docutils literal notranslate"><span class="pre">SIGILL</span></code> (illegal opcode) in <code class="docutils literal notranslate"><span class="pre">StubRoutines::call_stub</span></code> before it
+can run anything — every <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code> command dies with “Server crashed during
+startup”. This first appeared when this dev container was rebuilt onto a host
+whose CPU rejects those stubs. <code class="docutils literal notranslate"><span class="pre">-XX:UseSVE=0</span></code> disables SVE codegen in the JVM
+and is harmless on hosts without SVE, so it is set unconditionally rather than
+behind a config. If a future Bazel/JDK bump makes it unnecessary it can be
+dropped, but it costs nothing to keep. (Symptom to recognise: a zombie <code class="docutils literal notranslate"><span class="pre">[java]</span> <span class="pre">&lt;defunct&gt;</span></code> server process that <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code> keeps trying and failing to kill — if
+that lock wedges, point bazel at a fresh <code class="docutils literal notranslate"><span class="pre">--output_base</span></code>.)</p>
+</section>
+<section id="pinned-versions-pinned-2026-06-18-lockfiles-regenerated-2026-06-19">
+<h3>Pinned versions (pinned 2026-06-18, lockfiles regenerated 2026-06-19)<a class="headerlink" href="#pinned-versions-pinned-2026-06-18-lockfiles-regenerated-2026-06-19" title="Link to this heading">¶</a></h3>
+<p>Update this table together with the file that holds each pin.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Component</p></th>
+<th class="head"><p>Pin</p></th>
+<th class="head"><p>Held in</p></th>
+<th class="head"><p>Rationale</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Bazel</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">7.7.1</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.bazelversion</span></code></p></td>
+<td><p>Current stable 7.x; bzlmod is mature here. Pinned via Bazelisk.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Python</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3.11</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> (<code class="docutils literal notranslate"><span class="pre">PYTHON_VERSION</span></code>)</p></td>
+<td><p>Matches the Raspberry Pi OS (bookworm) system Python so Pi-side code runs on the same minor version it’s built against.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rules_python</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.0.3</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>Hermetic interpreter + <code class="docutils literal notranslate"><span class="pre">compile_pip_requirements</span></code>; single root <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code> from <code class="docutils literal notranslate"><span class="pre">requirements.in</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">aspect_rules_js</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3.2.2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>pnpm-native JS rules; consumes the checked-in <code class="docutils literal notranslate"><span class="pre">pnpm-lock.yaml</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">aspect_rules_ts</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3.8.11</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ts_project</span></code> type-checking; TS version is taken from <code class="docutils literal notranslate"><span class="pre">package.json</span></code> so Bazel and <code class="docutils literal notranslate"><span class="pre">pnpm</span></code>/<code class="docutils literal notranslate"><span class="pre">tsc</span></code> agree.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">aspect_bazel_lib</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.22.5</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>Shared Starlark helpers required by the aspect rules.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rules_pkg</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.2.0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>Packaging (artifacts to bake into the Pi image).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rules_go</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.53.0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>Build + test the HITL Go daemon/CLI (<code class="docutils literal notranslate"><span class="pre">pi/hitl</span></code>) under Bazel; hermetic Go SDK 1.24.0 (matches <code class="docutils literal notranslate"><span class="pre">pi/hitl/go.mod</span></code>). Added 2026-08-02.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gazelle</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.42.0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code></p></td>
+<td><p>Generates/maintains the <code class="docutils literal notranslate"><span class="pre">pi/hitl</span></code> Go <code class="docutils literal notranslate"><span class="pre">BUILD.bazel</span></code> files (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/hitl:gazelle</span></code>). go.mod is stdlib-only, so no <code class="docutils literal notranslate"><span class="pre">go_deps</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>TypeScript</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5.9.3</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">package.json</span></code> / <code class="docutils literal notranslate"><span class="pre">pnpm-lock.yaml</span></code></p></td>
+<td><p>Single TS version for the whole pnpm workspace; rules_ts reads it from <code class="docutils literal notranslate"><span class="pre">package.json</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>pnpm</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">11+</span></code></p></td>
+<td><p>dev prerequisite</p></td>
+<td><p>Workspace covers <code class="docutils literal notranslate"><span class="pre">web/</span></code> and <code class="docutils literal notranslate"><span class="pre">shared/protocol/ts/</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Python libs</p></td>
+<td><p>see <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">requirements.in</span></code> → <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code></p></td>
+<td><p>pydantic, jsonschema, numpy, scipy, opencv, fastapi, uvicorn, websockets, pytest. Regenerate with <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//:requirements.update</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<div><p>Previously this file was seeded by the M4 track with only the M4 section
+(below). The build-system pins above were folded in from <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> /
+<code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code> / <code class="docutils literal notranslate"><span class="pre">package.json</span></code> per the root README TODO.</p>
+</div></blockquote>
+</section>
+</section>
+<section id="m9-simulator-noise-model-defaults-pinned-2026-06-19">
+<h2>M9 — simulator noise model defaults (pinned 2026-06-19)<a class="headerlink" href="#m9-simulator-noise-model-defaults-pinned-2026-06-19" title="Link to this heading">¶</a></h2>
+<p>The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator</span></code>) is deterministic given a seed. Its degradation
+knobs default to the “nominal noise” point the design doc §9 (Phase 2) and §12
+call for, so a default run exercises a realistic-but-solvable scenario:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Knob</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pixel_noise_px</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.5</span></code></p></td>
+<td><p>Gaussian σ on the <code class="docutils literal notranslate"><span class="pre">(u,</span> <span class="pre">v)</span></code> centroid. §9 Phase 2 nominal.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pose_noise_deg</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Gaussian σ (deg) on camera orientation; small VIO error. §9 Phase 2 nominal.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pose_noise_pos_m</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.003</span></code></p></td>
+<td><p>Gaussian σ (m) on camera position.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">dropout_prob</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Per-observation random drop. Raise to stress-test completeness.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">walk</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">arc</span></code></p></td>
+<td><p>Arc around the fixture (§12); enforces parallax. Straight-on walks are rejected by the UI in production.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">arc_degrees</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">120</span></code></p></td>
+<td><p>Angular span of the arc; sets achievable parallax.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">views</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">60</span></code></p></td>
+<td><p>Camera stations along the walk (≈ design doc’s ~70 observation sets).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">seed</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Fixed seed ⇒ deterministic output (acceptance requirement).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Acceptance (Phase 2):</strong> a <strong>zero-noise</strong> detection log (all knobs 0) reconstructs
+to <strong>&lt; 1 mm RMS</strong> through M3. At nominal noise, RMS ≤ 1% of the fixture span with
+≥ 99% of LEDs solved. Enforced by
+<code class="docutils literal notranslate"><span class="pre">shared/simulator/tests/test_sim_recon_roundtrip.py</span></code>.</p>
+</section>
+<section id="m3-reconstruction-parameters-pinned-2026-06-19">
+<h2>M3 — reconstruction parameters (pinned 2026-06-19)<a class="headerlink" href="#m3-reconstruction-parameters-pinned-2026-06-19" title="Link to this heading">¶</a></h2>
+<p>From design doc §8.3 / §12. These are the defaults in <code class="docutils literal notranslate"><span class="pre">pi/reconstruction</span></code>:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Param</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Triangulation init</p></td>
+<td><p>linear (closest-point to observation rays)</p></td>
+<td><p>Needs ≥ 2 views with parallax.</p></td>
+</tr>
+<tr class="row-odd"><td><p>BA loss</p></td>
+<td><p>Huber, <code class="docutils literal notranslate"><span class="pre">f_scale</span> <span class="pre">=</span> <span class="pre">1.5</span></code> px</p></td>
+<td><p>§12 “Huber delta ~1–2 px”. <code class="docutils literal notranslate"><span class="pre">scipy.optimize.least_squares</span></code>, sparse Jacobian.</p></td>
+</tr>
+<tr class="row-even"><td><p>Pose refinement</p></td>
+<td><p>off (poses fixed)</p></td>
+<td><p>WebXR poses are metric; with fixed poses the BA separates per point (bipartite). Seam left to optimize poses jointly if VIO drift hurts (§13).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Outlier reject</p></td>
+<td><p>residual &gt; <code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">×</span></code> robust σ (MAD), then re-solve</p></td>
+<td><p>§12.</p></td>
+</tr>
+<tr class="row-even"><td><p>Min parallax to accept</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5°</span></code></p></td>
+<td><p>Below this an LED is kept but flagged low-confidence (§12).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Min views</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Fewer ⇒ LED listed in <code class="docutils literal notranslate"><span class="pre">unmapped</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="m1-led-driver-choices-pinned-2026-06-19">
+<h2>M1 — LED driver choices (pinned 2026-06-19)<a class="headerlink" href="#m1-led-driver-choices-pinned-2026-06-19" title="Link to this heading">¶</a></h2>
+<p>SK9822/APA102 over hardware SPI (design doc §5). Decisions in <code class="docutils literal notranslate"><span class="pre">pi/led_driver</span></code>:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Choice</p></th>
+<th class="head"><p>Decision</p></th>
+<th class="head"><p>Rationale</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Wire format</p></td>
+<td><p>start <code class="docutils literal notranslate"><span class="pre">4×00</span></code>; per-LED <code class="docutils literal notranslate"><span class="pre">0xE0|bright5,</span> <span class="pre">B,</span> <span class="pre">G,</span> <span class="pre">R</span></code>; end <code class="docutils literal notranslate"><span class="pre">ceil(n/16)</span></code> (min 4) <code class="docutils literal notranslate"><span class="pre">×00</span></code></p></td>
+<td><p>SK9822 latch semantics; zeros are the safer cross-compatible end frame (classic APA102 used <code class="docutils literal notranslate"><span class="pre">0xFF</span></code>). Long cascades get ~n/16 extra clock bytes.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">spidev</span></code></p></td>
+<td><p>imported lazily inside <code class="docutils literal notranslate"><span class="pre">SpidevSink</span></code>; <strong>not</strong> in <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code></p></td>
+<td><p>Pi-only (provided by <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/modules/spi.nix</span></code>), absent off-Pi. Lazy import keeps the package importable and the suite hermetic.</p></td>
+</tr>
+<tr class="row-even"><td><p>SPI clock</p></td>
+<td><p>8 MHz default</p></td>
+<td><p>Comfortable for SK9822; tune per strip length/wiring.</p></td>
+</tr>
+<tr class="row-odd"><td><p>On colour / brightness</p></td>
+<td><p>white, brightness 31</p></td>
+<td><p>LEDs should be the brightest objects in frame (§5 dim-room guidance); configurable.</p></td>
+</tr>
+<tr class="row-even"><td><p>Pattern clock</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">time.monotonic()</span></code> ms, stamped at frame 0 of the cycle</p></td>
+<td><p>Same monotonic base as M2 clock sync (§8.2); <code class="docutils literal notranslate"><span class="pre">start()</span></code> blocks until the worker stamps it so the epoch reflects the real cycle start.</p></td>
+</tr>
+<tr class="row-odd"><td><p>M1↔M2 transport</p></td>
+<td><p>separate process + Unix-socket, newline-delimited JSON</p></td>
+<td><p>§3 process split: server restarts don’t drop the pattern; driver can run at RT priority. <code class="docutils literal notranslate"><span class="pre">CodeParams</span></code> authored by M2 (<code class="docutils literal notranslate"><span class="pre">codebook.py</span></code>), consumed by M1.</p></td>
+</tr>
+<tr class="row-even"><td><p>Testability</p></td>
+<td><p>injected <code class="docutils literal notranslate"><span class="pre">clock</span></code>/<code class="docutils literal notranslate"><span class="pre">sleep</span></code> + <code class="docutils literal notranslate"><span class="pre">RecordingSink</span></code></p></td>
+<td><p>Drive the loop deterministically with no wall-clock waits or hardware. Real cadence (§9 Phase 1) still needs a logic analyzer on a bench.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="m2-pi-server-choices-pinned-2026-06-19">
+<h2>M2 — Pi server choices (pinned 2026-06-19)<a class="headerlink" href="#m2-pi-server-choices-pinned-2026-06-19" title="Link to this heading">¶</a></h2>
+<p>FastAPI/uvicorn/websockets, per design doc §4. Decisions in <code class="docutils literal notranslate"><span class="pre">pi/server</span></code>:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Choice</p></th>
+<th class="head"><p>Decision</p></th>
+<th class="head"><p>Rationale</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Server clock</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">time.monotonic()</span></code> ms</p></td>
+<td><p>§7.3 offset/rtt math needs differences from a clock that can’t step; one clock feeds both <code class="docutils literal notranslate"><span class="pre">t1</span></code>/<code class="docutils literal notranslate"><span class="pre">t2</span></code> and <code class="docutils literal notranslate"><span class="pre">patternClockEpoch</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Reconstruction trigger</p></td>
+<td><p>M3 library called in a worker thread (<code class="docutils literal notranslate"><span class="pre">asyncio.to_thread</span></code>) on <code class="docutils literal notranslate"><span class="pre">stop_mapping</span></code></p></td>
+<td><p>Keeps the event loop responsive during multi-second BA. Design §3 frames it as a “subprocess/job”; the seam is one async callable in <code class="docutils literal notranslate"><span class="pre">reconstruct.py</span></code>, so swapping to a true subprocess later is local.</p></td>
+</tr>
+<tr class="row-even"><td><p>Session persistence</p></td>
+<td><p>buffer in memory, flush the <code class="docutils literal notranslate"><span class="pre">{ledCount,</span> <span class="pre">detections}</span></code> log on stop</p></td>
+<td><p>Simple; the log is exactly M3’s input format. Trade-off: a crash mid-capture loses the session — on-disk journaling deferred.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">patternClockEpoch</span></code></p></td>
+<td><p>stubbed to server clock at <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code></p></td>
+<td><p>M1 driver isn’t built; <code class="docutils literal notranslate"><span class="pre">get_clock().epoch</span></code> replaces it later. Seam: <code class="docutils literal notranslate"><span class="pre">SessionManager.start()</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">status</span></code> fields</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">identified</span></code> = LEDs ≥2 views; <code class="docutils literal notranslate"><span class="pre">lowParallax</span></code> = LEDs seen once</p></td>
+<td><p>True parallax needs geometry; these are honest live proxies for walk guidance. Real parallax is in the <code class="docutils literal notranslate"><span class="pre">OutputMap</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">welcome.codeParams</span></code></p></td>
+<td><p>server default <code class="docutils literal notranslate"><span class="pre">--led-count</span></code> (1024) until <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code></p></td>
+<td><p>ledCount is unknown at <code class="docutils literal notranslate"><span class="pre">hello</span></code>; <code class="docutils literal notranslate"><span class="pre">mapping_started</span></code> carries the actual code-book once the client sends it.</p></td>
+</tr>
+<tr class="row-even"><td><p>Testing</p></td>
+<td><p>transport-decoupled core + a real-server integration test</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">httpx</span></code> is intentionally <em>not</em> in the lockfile, so we avoid <code class="docutils literal notranslate"><span class="pre">fastapi.TestClient</span></code>; the integration test uses the <code class="docutils literal notranslate"><span class="pre">websockets</span></code> sync client + stdlib <code class="docutils literal notranslate"><span class="pre">urllib</span></code> against a live uvicorn.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="m4-nix-driven-provisioning-pinned-2026-06-19">
+<h2>M4 — Nix-driven provisioning (pinned 2026-06-19)<a class="headerlink" href="#m4-nix-driven-provisioning-pinned-2026-06-19" title="Link to this heading">¶</a></h2>
+<p>The original M4 scope (shell + <code class="docutils literal notranslate"><span class="pre">hostapd</span></code>/<code class="docutils literal notranslate"><span class="pre">dnsmasq</span></code>/<code class="docutils literal notranslate"><span class="pre">avahi</span></code>/systemd) was
+redirected to a Bazel + Nix workflow (root README “Active directives”). See
+<code class="docutils literal notranslate"><span class="pre">pi/provisioning/README.md</span></code> for the full design and the UNVERIFIED list.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Component</p></th>
+<th class="head"><p>Pin</p></th>
+<th class="head"><p>Rationale</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rules_nixpkgs_core</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.13.0</span></code></p></td>
+<td><p>Latest tweag/rules_nixpkgs release; first with Bazel 8 support. Imports nix-built build tools (e.g. the HTML minifier) as Bazel targets. Nix is a system requirement for the repo; fetches are lazy, so only targets that use a nix-backed package realize it.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">nixos-raspberrypi</span></code></p></td>
+<td><p>tag <code class="docutils literal notranslate"><span class="pre">v1.20260517.0</span></code> (commit <code class="docutils literal notranslate"><span class="pre">06c6e3513e1ee64b651913193fc6ac38aa4963f5</span></code>)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">nvmd/nixos-raspberrypi</span></code> provides Pi 4/5 kernel, firmware, device tree, and SD-image builders. Pinned to a tagged release for reproducibility. <strong>Note the <code class="docutils literal notranslate"><span class="pre">v</span></code> prefix</strong> — the flake originally pinned <code class="docutils literal notranslate"><span class="pre">1.20260517.0</span></code> (no <code class="docutils literal notranslate"><span class="pre">v</span></code>), which GitHub does not resolve; corrected 2026-06-19 when generating <code class="docutils literal notranslate"><span class="pre">flake.lock</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">nixpkgs</span></code></p></td>
+<td><p>branch <code class="docutils literal notranslate"><span class="pre">nixos-25.05</span></code> (locked to <code class="docutils literal notranslate"><span class="pre">ac62194</span></code> in <code class="docutils literal notranslate"><span class="pre">flake.lock</span></code>)</p></td>
+<td><p>Followed by <code class="docutils literal notranslate"><span class="pre">nixos-raspberrypi.inputs.nixpkgs</span></code> so there is a single coherent package set (avoids divergent kernel/userspace). <strong>Trade-off:</strong> because we pin our own <code class="docutils literal notranslate"><span class="pre">nixos-25.05</span></code> and make upstream <code class="docutils literal notranslate"><span class="pre">follows</span></code> it, the resolved nixpkgs differs from the one <code class="docutils literal notranslate"><span class="pre">nixos-raspberrypi.cachix.org</span></code> built its kernel/firmware against, so <code class="docutils literal notranslate"><span class="pre">image_sd</span></code> rebuilds the Pi kernel from source (~20–40 min on first build, then cached locally). To get kernel cache hits instead, drop the <code class="docutils literal notranslate"><span class="pre">follows</span></code> and accept upstream’s nixpkgs.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Target board</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">raspberry-pi-5</span></code> (default)</p></td>
+<td><p>Design doc §5 targets Pi 4 or 5; default to 5, switch via <code class="docutils literal notranslate"><span class="pre">board</span></code> in <code class="docutils literal notranslate"><span class="pre">flake.nix</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong><code class="docutils literal notranslate"><span class="pre">flake.lock</span></code>:</strong> generated 2026-06-19 (<code class="docutils literal notranslate"><span class="pre">nix</span> <span class="pre">flake</span> <span class="pre">update</span></code>) and committed; locks
+<code class="docutils literal notranslate"><span class="pre">nixpkgs</span></code> → <code class="docutils literal notranslate"><span class="pre">ac62194</span></code>, <code class="docutils literal notranslate"><span class="pre">nixos-raspberrypi</span></code> → <code class="docutils literal notranslate"><span class="pre">06c6e35</span></code>. The full
+<code class="docutils literal notranslate"><span class="pre">system.build.sdImage</span></code> derivation evaluates on an <code class="docutils literal notranslate"><span class="pre">aarch64-linux</span></code> host (the dev
+container is aarch64, so no qemu/binfmt cross is needed).</p>
+<p><strong>Nix-verified 2026-06-19</strong> on the native aarch64 dev container: the flake and
+the full <code class="docutils literal notranslate"><span class="pre">nixosConfigurations.ledmapper</span></code> evaluate; every flagged option
+path/module name is correct for the pin (<code class="docutils literal notranslate"><span class="pre">system.build.sdImage</span></code> →
+<code class="docutils literal notranslate"><span class="pre">nixos-image-rpi5-kernel.img.zst</span></code>, <code class="docutils literal notranslate"><span class="pre">raspberry-pi-5.{base,display-vc4}</span></code> +
+<code class="docutils literal notranslate"><span class="pre">sd-image</span></code> modules, <code class="docutils literal notranslate"><span class="pre">python3Packages.spidev</span></code> present, deploy pubkey baked into
+root <code class="docutils literal notranslate"><span class="pre">authorizedKeys</span></code>); the SD-image derivation realizes through substitution +
+~90 derivations. The from-source Pi kernel compile is RAM/disk-heavy — it OOM’d
+at full parallelism and hit ENOSPC on the final module link in a ~21 GiB-free
+sandbox — so the final <code class="docutils literal notranslate"><span class="pre">*.img.zst</span></code> was <strong>not realized here</strong>; it needs a host
+with ≥8 GiB RAM and ~25 GiB scratch (or a cache matching the pinned nixpkgs).
+Real Pi first-boot and a live <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> switch remain untested (no hardware).
+Three <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code>-path bugs were found and fixed in <code class="docutils literal notranslate"><span class="pre">pi/provisioning/</span></code>:
+<code class="docutils literal notranslate"><span class="pre">spi.nix</span></code> used <code class="docutils literal notranslate"><span class="pre">lib.mkDefault</span></code> on the whole <code class="docutils literal notranslate"><span class="pre">hardware.raspberry-pi.config</span></code> subtree,
+which dropped the <code class="docutils literal notranslate"><span class="pre">dtparam=spi=on</span></code> leaf (now set directly); and <code class="docutils literal notranslate"><span class="pre">image_sd.sh</span></code> +
+<code class="docutils literal notranslate"><span class="pre">manage_keys.sh</span></code> resolved the <code class="docutils literal notranslate"><span class="pre">secrets/</span></code> dir from the Bazel runfiles tree instead
+of <code class="docutils literal notranslate"><span class="pre">BUILD_WORKSPACE_DIRECTORY</span></code>, so generated keys never reached the flake closure
+(now anchored on the workspace dir, matching <code class="docutils literal notranslate"><span class="pre">deploy_live.sh</span></code>).</p>
+<p><strong>Deploy-key eval path:</strong> the pubkey lives at <code class="docutils literal notranslate"><span class="pre">pi/provisioning/secrets/</span></code>, which
+is <em>outside</em> the flake root (<code class="docutils literal notranslate"><span class="pre">nix/</span></code>), so a relative path from the module cannot
+reach it through the flake’s store copy. <code class="docutils literal notranslate"><span class="pre">image_sd</span></code>/<code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> therefore
+export <code class="docutils literal notranslate"><span class="pre">LEDMAPPER_DEPLOY_PUBKEY_FILE</span></code> (absolute) and build with <code class="docutils literal notranslate"><span class="pre">--impure</span></code>;
+<code class="docutils literal notranslate"><span class="pre">ssh-deploy.nix</span></code> reads that env path first. Pure builds would require moving the
+flake root up to <code class="docutils literal notranslate"><span class="pre">provisioning/</span></code> (left as a future cleanup).</p>
+<p><strong>SSH deploy key:</strong> ed25519 pair owned by the deploy flow. Public half baked
+into the image <code class="docutils literal notranslate"><span class="pre">authorized_keys</span></code>; private half used by <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code>. Stored
+gitignored under <code class="docutils literal notranslate"><span class="pre">pi/provisioning/secrets/</span></code> (or <code class="docutils literal notranslate"><span class="pre">LEDMAPPER_DEPLOY_KEY_DIR</span></code>).
+Never committed; rotatable via <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/provisioning:keys</span> <span class="pre">--</span> <span class="pre">rotate</span></code>.</p>
+</section>
+<section id="web-stack-m5-m6-m7-m8-virtual-led-wall-pinned-2026-07-02">
+<h2>Web stack — M5/M6/M7/M8 + virtual LED wall (pinned 2026-07-02)<a class="headerlink" href="#web-stack-m5-m6-m7-m8-virtual-led-wall-pinned-2026-07-02" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>npm pins:</strong> <code class="docutils literal notranslate"><span class="pre">vite</span> <span class="pre">8.0.16</span></code>, <code class="docutils literal notranslate"><span class="pre">typescript</span> <span class="pre">5.9.3</span></code> (already the workspace pins),
+<code class="docutils literal notranslate"><span class="pre">&#64;types/webxr</span> <span class="pre">0.5.24</span></code>, <code class="docutils literal notranslate"><span class="pre">&#64;types/node</span> <span class="pre">24.10.9</span></code>. <strong>No runtime dependencies</strong>
+(superseded 2026-07-09: the protobuf wire migration below adds
+<code class="docutils literal notranslate"><span class="pre">&#64;bufbuild/protobuf</span></code>) —
+the app is hand-rolled DOM + WebGL2; three.js was dropped because we render
+no 3D AR content (the CV pass and feedback markers are raw GL, the result
+preview is a 2D-canvas scatter), and every KB matters on a phone loading
+from a Pi AP.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">pattern_state</span></code> protocol addition (§7).</strong> New <code class="docutils literal notranslate"><span class="pre">get_pattern</span></code> (client) /
+<code class="docutils literal notranslate"><span class="pre">pattern_state</span></code> (server) messages: <code class="docutils literal notranslate"><span class="pre">{active,</span> <span class="pre">patternClockEpoch|null,</span> <span class="pre">codeParams}</span></code>. Exists so <em>pattern followers</em> — the virtual LED wall — can
+render the blink code against the same clock the phone decodes, without
+owning the capture session. The wall polls (~1 s); the self-clocking
+delimiter makes poll latency harmless.</p></li>
+<li><p><strong>The wall follows the server clock</strong> (rather than driving its own pattern
+and reporting an epoch): the M2 server already stamps <code class="docutils literal notranslate"><span class="pre">patternClockEpoch</span></code>
+at <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code> while M1 hardware is absent, so a follower needs zero new
+server state and the phone-side flow is byte-identical to the hardware path.</p></li>
+<li><p><strong>M6 detect = GPU threshold+downsample, CPU connected components.</strong> A full
+GPU CCL is a multi-pass label-propagation algorithm; not worth it at MVP.
+One fragment pass max-channel-thresholds and 2×-box-downsamples the camera
+texture, a ~640×360 RGBA readback feeds a stack-based 4-connectivity CCL
+with intensity-weighted sub-pixel centroids (the box filter is linear, so
+half-res weighted centroids track full-res well under a pixel). Sync
+readPixels is the accepted MVP cost; PBO/fence is the known upgrade.</p></li>
+<li><p><strong>M6 decode is self-clocking in ms, not just frames.</strong> Beyond §8.2’s
+clock-offset mapping, the decoder estimates a continuous alignment shift by
+maximizing (global on-count in ALL<em>ON window) − (ALL_OFF window) over
+candidate shifts each cycle, taking the _center of the top-score plateau</em>
+(sparse 30 fps sampling makes the score piecewise-constant; centering
+maximizes guard margin). This absorbs constant camera→rAF latency and
+residual sync error — verified by the 60 ms-latency synthetic test.</p></li>
+<li><p><strong>Cross-language goldens.</strong> <code class="docutils literal notranslate"><span class="pre">web/tests/golden_gray16.json</span></code> is generated by
+the M1 driver’s <code class="docutils literal notranslate"><span class="pre">graycode.py</span></code>; <code class="docutils literal notranslate"><span class="pre">golden_pinhole.json</span></code> by M3’s <code class="docutils literal notranslate"><span class="pre">camera.py</span></code>.
+The TS mirrors (<code class="docutils literal notranslate"><span class="pre">src/code/gray.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">src/geom/pinhole.ts</span></code>) are tested
+against them, pinning frame plan and projection conventions to the Pi side.
+If they drift, fix the TS — never the golden.</p></li>
+<li><p><strong>JS unit tests = tsc→CommonJS + node:test under Bazel.</strong> No vitest/jest:
+tsc doesn’t rewrite extensionless ESM specifiers (emitted ESM wouldn’t
+resolve in Node), so tests compile to CJS (<code class="docutils literal notranslate"><span class="pre">tsconfig.test.json</span></code>, emitted to
+<code class="docutils literal notranslate"><span class="pre">dist-test/</span></code>) and run as plain <code class="docutils literal notranslate"><span class="pre">js_test</span></code>s. Protocol imports are type-only,
+so the emitted JS is dependency-free.</p></li>
+<li><p><strong>Vite runs unsandboxed</strong> (<code class="docutils literal notranslate"><span class="pre">--strategy=Vite=local</span></code> in <code class="docutils literal notranslate"><span class="pre">.bazelrc</span></code>): rolldown
+realpath()s entries through sandbox input symlinks while the vite root stays
+at the sandbox path, breaking emitted HTML asset names. Strategy-by-mnemonic
+(not target tags) so shared copy-to-bin actions don’t conflict.</p></li>
+<li><p><strong>HTTPS for phone testing.</strong> WebXR needs a secure context; the serve CLI
+grew <code class="docutils literal notranslate"><span class="pre">--ssl-dir</span></code> (self-signed cert generated once via <code class="docutils literal notranslate"><span class="pre">openssl</span></code>, persisted
+under <code class="docutils literal notranslate"><span class="pre">.ledmapper/ssl/</span></code> so the browser exception sticks). <code class="docutils literal notranslate"><span class="pre">//web:serve</span></code>
+defaults to HTTPS :8443; <code class="docutils literal notranslate"><span class="pre">--no-tls</span></code> gives plain HTTP :8080 for local dev.
+The client derives ws/wss from the page protocol.</p></li>
+<li><p><strong>Camera-texture row order is explicitly deferred</strong> (<code class="docutils literal notranslate"><span class="pre">DetectorOptions.flipV</span></code>,
+<code class="docutils literal notranslate"><span class="pre">?flipv=1</span></code>): whether the raw-camera texture’s v=0 row is image top or bottom
+is device territory; a wrong flip is loudly visible as huge M3 reprojection
+residuals. Default false; confirm once on the target device (§13).</p></li>
+<li><p><strong>flipV resolved on-device (2026-07-03): default TRUE.</strong> Chrome/ARCore
+camera-access delivers the camera texture bottom-up. Symptom of a wrong
+setting: the 3D-composited solve overlay renders Y-mirrored against the
+passthrough (observed live, fixed same day). <code class="docutils literal notranslate"><span class="pre">?flipv=0</span></code> reverts.</p></li>
+<li><p><strong>Codewords carry id + 1 (2026-07-05); the all-zero data word is
+reserved-invalid.</strong> Deviation from the design doc §7.6/§8.1 examples:
+<code class="docutils literal notranslate"><span class="pre">bits</span> <span class="pre">=</span> <span class="pre">ceil(log2(ledCount</span> <span class="pre">+</span> <span class="pre">1))</span></code>, so e.g. 1024 LEDs → 11 bits, not 10.
+Why: anything that blinks the code decodes as an LED, and id 0’s raw Gray
+word is all-dark outside the sync flash — exactly what reflections and
+auto-exposure pumping look like in a dark room, making id 0 a decode
+magnet (observed live: a 1-LED session produced ~45 bogus id-0 records per
+cycle, collapsing the solve onto the camera position). With the offset, a
+“dark data frames” observation decodes to the reserved word and is
+rejected. Sits alongside the other decode-poisoning defenses added the
+same day: decoder <code class="docutils literal notranslate"><span class="pre">minConfidence</span></code> (0.4), per-cycle per-id brightest-anchor
+dedup, and M3’s consensus (mode-seeking) pre-filter for majority-bad
+observation sets.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">gray-hue</span></code> encoding (2026-07-05): color-carried code for uncontrolled
+lighting.</strong> Frame-level recordings showed intensity coding is unusable in a
+lit room (~200 scene blobs/frame above threshold; dots AE-dimmed to ~0.65).
+A probe confirmed chroma separates cleanly (green census = exactly the 4
+dots; bit margins 0.4–0.8). Design: FIXED wire colors, maximally separated
+— white + the three primaries (every pair 2.0 apart in RGB L1; sync axis
+g−(r+b)/2 orthogonal to bit axis r−b) — with RELATIVE decoding: each
+window normalized channel-wise by the track’s own ALL_ON (white) window,
+which cancels diagonal color correction exactly and makes static-hue
+clutter fail the green sync (it normalizes to neutral). Always-lit dots
+also remove the coasting/AE-pumping failure modes. Enabled by server flag
+<code class="docutils literal notranslate"><span class="pre">--encoding</span> <span class="pre">gray-hue</span></code>; wall + phone follow <code class="docutils literal notranslate"><span class="pre">codeParams.encoding</span></code>.</p></li>
+</ul>
+</section>
+<section id="capture-auto-negotiation-exposure-telemetry-pinned-2026-07-08">
+<h2>Capture auto-negotiation + exposure telemetry (pinned 2026-07-08)<a class="headerlink" href="#capture-auto-negotiation-exposure-telemetry-pinned-2026-07-08" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The client configures the code, not the server CLI.</strong> <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code>
+options grew optional <code class="docutils literal notranslate"><span class="pre">encoding</span></code> + <code class="docutils literal notranslate"><span class="pre">bitPeriodMs</span></code>; a new <code class="docutils literal notranslate"><span class="pre">configure</span></code> message
+renegotiates them mid-capture (server restamps <code class="docutils literal notranslate"><span class="pre">patternClockEpoch</span></code>,
+detections already collected are kept — they are (ledId, pixel, pose)
+records, independent of the signaling that produced them). Rationale: only
+the phone can see the light. The server’s <code class="docutils literal notranslate"><span class="pre">--encoding</span></code>/<code class="docutils literal notranslate"><span class="pre">--bit-period-ms</span></code>
+flags remain solely as fallbacks for bare clients.</p></li>
+<li><p><strong>No real 3A/ISP readout exists on the web path.</strong> WebXR raw camera access
+exposes a texture, no ISO/exposure metadata; there is no concurrent
+getUserMedia while ARCore holds the camera. The <code class="docutils literal notranslate"><span class="pre">exposure_report</span></code> message
+therefore carries software estimates — scene luma stats from an
+unthresholded 64-px-wide readback (<code class="docutils literal notranslate"><span class="pre">DetectorGL.measure</span></code>), median frame
+interval as the shutter proxy (low light → longer integration → lower fps),
+and WebXR <code class="docutils literal notranslate"><span class="pre">light-estimation</span></code> ambient intensity when granted — with
+<code class="docutils literal notranslate"><span class="pre">iso</span></code>/<code class="docutils literal notranslate"><span class="pre">exposureTimeMs</span></code> reserved as nullable fields for a future native
+client that can read the real state.</p></li>
+<li><p><strong>Negotiation rules</strong> (<code class="docutils literal notranslate"><span class="pre">web/src/cv/exposure.ts</span></code>, unit-tested):</p>
+<ul>
+<li><p>encoding: mean scene luma &lt; 0.08 → <code class="docutils literal notranslate"><span class="pre">gray</span></code> (dark room: LEDs outshine all;
+camera clipping kills gray-hue’s green sync — measured gScore ~0.13 vs
+the 0.25 gate, 2026-07-07 trace), else <code class="docutils literal notranslate"><span class="pre">gray-hue</span></code>. Mid-capture switch
+only outside a 0.06/0.12 hysteresis band.</p></li>
+<li><p>bit period: ≥ 3 camera frame intervals, 10 ms grid, clamped [60, 400] ms.
+Mid-capture renegotiation below 2.5 frames/bit (decode starving) or when
+2× faster than needed (reclaim cycle time); two consecutive 2 s ticks
+must agree.</p></li>
+<li><p>detector threshold: ±0.05/tick servo on median blob count (flood ceiling
+max(150, 3·ledCount), starve floor ledCount/2), bounded [0.6, 0.9];
+<code class="docutils literal notranslate"><span class="pre">?threshold=</span></code> forces and disables.</p></li>
+</ul>
+</li>
+<li><p><strong>Session logs</strong> gained additive <code class="docutils literal notranslate"><span class="pre">codeParams</span></code> + <code class="docutils literal notranslate"><span class="pre">exposure</span></code> keys (M3’s
+reader ignores unknown keys).</p></li>
+</ul>
+</section>
+<section id="sec-ded-fec-on-the-blink-code-pinned-2026-07-08">
+<h2>SEC-DED FEC on the blink code (pinned 2026-07-08)<a class="headerlink" href="#sec-ded-fec-on-the-blink-code-pinned-2026-07-08" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Why.</strong> The raw codebook (<code class="docutils literal notranslate"><span class="pre">gray(id+1)</span></code> over <code class="docutils literal notranslate"><span class="pre">ceil(log2(n+1))</span></code> frames) has
+minimum Hamming distance 1: any single decisively-wrong bit window (all of
+a window’s samples agreeing on the wrong value — chroma misread near the
+gray-hue thresholds, brief track contamination, a reflection landing on a
+neighboring track) decodes to a valid WRONG id whenever the flipped word
+lands in range, and the in-range fraction <code class="docutils literal notranslate"><span class="pre">(n+1)/2^bits</span></code> is ≥50 % by
+construction (≈100 % at counts like 63). Window voting and the confidence
+gate cannot see this failure — a decisive window has margin 1.0. Only the
+M3 geometric outlier rejection caught it downstream, and that fails for
+systematic wrong decodes (the decode-collision floods of 2026-07-05).</p></li>
+<li><p><strong>What.</strong> Extended Hamming, distance 4, used as <strong>SEC-DED</strong>: the Gray data
+word (k bits) gains r Hamming parity bits (2^r ≥ k+r+1) at power-of-two
+positions plus one overall parity bit transmitted last. Single bit-frame
+errors are CORRECTED; double errors are DETECTED and the cycle rejected —
+never miscorrected (a d=4 guarantee; triples can alias, at which point the
+track is garbage and geometry remains the backstop). Note d=4 does NOT
+give 2-bit correction — that would need d=5/6 (BCH); SEC-DED was chosen
+deliberately: our double-window errors mean track contamination, where
+rejection is the correct response anyway.</p></li>
+<li><p><strong>Cost.</strong> Transmitted bits k → k+r+1: 64 LEDs 7→12 bits (cycle 9→14
+frames, +56 %), 1024 LEDs 11→16 (13→18, +38 %). At 100 ms bits a 64-LED
+cycle is now 1.4 s. Accepted: identification latency, not accuracy, and
+the id repeats every cycle.</p></li>
+<li><p><strong>Where.</strong> Canonical implementation <code class="docutils literal notranslate"><span class="pre">ledmapper_protocol/fec.py</span></code> (encode +
+syndrome decode), TS mirror <code class="docutils literal notranslate"><span class="pre">web/src/code/fec.ts</span></code>, pinned by the
+Python-generated <code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16.json</span></code>
+(<code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//pi/led_driver:gen_golden</span> <span class="pre">--</span> <span class="pre">secded16</span></code> regenerates).
+<code class="docutils literal notranslate"><span class="pre">CodeParams</span></code> gained optional <code class="docutils literal notranslate"><span class="pre">fec:</span> <span class="pre">&quot;none&quot;</span> <span class="pre">|</span> <span class="pre">&quot;secded&quot;</span></code> (absent = “none”,
+legacy); <code class="docutils literal notranslate"><span class="pre">bits</span></code>/<code class="docutils literal notranslate"><span class="pre">cycleFrames</span></code> now count TRANSMITTED frames. M2’s codebook
+emits <code class="docutils literal notranslate"><span class="pre">fec=&quot;secded&quot;</span></code> by default; the driver frame plan, wall, and phone
+decoder all follow <code class="docutils literal notranslate"><span class="pre">codeParams</span></code>. Decoder stats gained <code class="docutils literal notranslate"><span class="pre">correctedCycles</span></code> +
+<code class="docutils literal notranslate"><span class="pre">rejectedFec</span></code>. Exhaustive tests both languages (every 1-flip corrected,
+every 2-flip rejected, k ≤ 11) + synthetic pipeline corruption tests.</p></li>
+</ul>
+</section>
+<section id="protobuf-wire-migration-proto-comms-branch-2026-07-09">
+<h2>Protobuf wire migration (proto-comms branch, 2026-07-09)<a class="headerlink" href="#protobuf-wire-migration-proto-comms-branch-2026-07-09" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The WebSocket now carries binary <code class="docutils literal notranslate"><span class="pre">ledmapper.v1</span></code> protobuf frames</strong> both
+directions (<code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code> — envelopes with one
+oneof arm per §7 message type). Text frames are rejected with a
+<code class="docutils literal notranslate"><span class="pre">bad_message</span></code> error frame.</p></li>
+<li><p><strong>The migration boundary is deliberately thin</strong>: the proto was designed
+for JSON parity (flat repeated doubles for vectors, strings for
+enum-likes, <code class="docutils literal notranslate"><span class="pre">optional</span></code> = null, oneof arm name = the old “type” value), so
+each end converts envelope &lt;-&gt; flat §7 object at the socket
+(<code class="docutils literal notranslate"><span class="pre">pi/server/server/proto_wire.py</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/net/proto.ts</span></code>) and ALL
+internal code — pydantic models, handlers, TS types, tests — is
+unchanged. Collapsing the internal JSON-schema layer onto the proto is a
+possible follow-up, not part of this migration.</p></li>
+<li><p><strong>Null/absence semantics</strong>: JSON null == proto unset; decoded dicts OMIT
+unset optionals (pydantic models default them to None); nullable repeated
+fields decode as [] (all consumers treat null/[] alike). One shape seam:
+trajectories ([[x,y,z], …] &lt;-&gt; repeated Vec3) converted at the boundary
+— proto3 JSON cannot express nested arrays.</p></li>
+<li><p><strong>Toolchain</strong>: hermetic prebuilt protoc (toolchains_protoc v29.3) via a
+platform-select()ed alias (//tools/toolchains:protoc) — no from-source
+protobuf compile, no proto toolchain resolution machinery. Python
+bindings generated AT BUILD TIME (nothing checked in; pip <code class="docutils literal notranslate"><span class="pre">protobuf</span></code>
+runtime); TypeScript bindings CHECKED IN (web/src/gen/, protobuf-es —
+regenerate with shared/protocol/proto/gen_ts.sh) because vite/tsc want
+them on disk. First runtime npm dependency of the web app
+(&#64;bufbuild/protobuf).</p></li>
+<li><p><strong>Cross-language pinning</strong>: //pi/server:gen_proto_golden emits
+web/tests/golden_proto_frames.json (binary frames + decoded flats for
+every §7 example); the TS proto test must decode byte-identical frames to
+the same objects. Plus full py roundtrip tests (test_proto_wire.py) and
+the real-server integration test on the binary wire.</p></li>
+</ul>
+</section>
+<section id="rust-solver-wasm-solver-placement-rust-wasm-solver-branch-2026-07-09">
+<h2>Rust solver + wasm + solver placement (rust-wasm-solver branch, 2026-07-09)<a class="headerlink" href="#rust-solver-wasm-solver-placement-rust-wasm-solver-branch-2026-07-09" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The VIO solver is rewritten in Rust</strong> (<code class="docutils literal notranslate"><span class="pre">solver/</span></code> — one crate, zero
+external math deps) and deployed twice: a host binary the Pi server runs
+as a subprocess (stdin problem JSON → stdout §7.5 OutputMap, stderr
+solve_status-shaped progress lines) and a wasm32/wasm-bindgen module the
+phone runs in a Web Worker. The Python solver remains as the reference
+implementation (parity-pinned), the automatic fallback when the binary is
+absent, and the engine for replay/calibration tooling.</p></li>
+<li><p><strong>Optimizer stand-in</strong>: scipy’s TRF(jac_sparsity, x_scale=”jac”,
+tr_solver=”lsmr”) became hand-rolled Levenberg–Marquardt over damped LSMR
+with Curtis–Powell–Reid column-grouped finite differences and Nielsen’s
+gain-ratio damping. Parity is asserted in SOLUTION space
+(//pi/reconstruction:rust_parity_test: both solvers on one synthetic
+session agree &lt; 3 mm / &lt; 2 % scale after similarity alignment), not
+bitwise — the two optimizers walk different damping schedules.</p></li>
+<li><p><strong>Solver placement (init-time benchmark)</strong>: host and phone run the SAME
+canned synthetic solve through the SAME Rust code (deterministic seeded
+problem, <code class="docutils literal notranslate"><span class="pre">solver/src/synth.rs</span></code>), so the two wall-clock scores are directly
+comparable. Host score rides in <code class="docutils literal notranslate"><span class="pre">welcome.solverBenchMs</span></code>; the phone times
+its wasm module at page load (in the worker — the solve is synchronous)
+and decides in <code class="docutils literal notranslate"><span class="pre">web/src/solver/placement.ts</span></code>. PHONE-FIRST with a 4×
+slowdown margin: the phone holds the data locally and offloading ties up
+the Pi; only decisively slow phones offload. Protocol additions:
+<code class="docutils literal notranslate"><span class="pre">stop_mapping.solveOnHost</span></code> (false → server stops+persists only, replies
+the new <code class="docutils literal notranslate"><span class="pre">mapping_stopped</span></code>), new <code class="docutils literal notranslate"><span class="pre">submit_map</span></code> client message (server
+persists the phone-solved map and replies result_ready — the download
+flow is placement-independent). The XR pose-trusting path always solves
+on the host (~1 s there; the phone keeps no local copy for it).</p></li>
+<li><p><strong>Wasm deployment via runfiles</strong>: //solver:solver_web =
+wasm-bindgen pkg + a PLAIN JS <code class="docutils literal notranslate"><span class="pre">worker.js</span></code> (deliberately not vite-bundled:
+the whole solver deployment is one runfiles directory the server mounts
+at /solver/, and the app references it by URL — no bundler coupling, no
+import.meta in the CJS test build). rules_rust 0.71.3 +
+rules_rust_wasm_bindgen (wasm-bindgen crate pinned <code class="docutils literal notranslate"><span class="pre">=0.2.121</span></code> to the
+bundled CLI version — the bindgen ABI schema must match).</p></li>
+<li><p><strong>Deployments pinned to <code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code> by transition</strong>
+(<code class="docutils literal notranslate"><span class="pre">tools/transitions/opt.bzl</span></code>): an unoptimized solve is ~10× slower and
+nobody runs the dev loop with <code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code>, so the deployed artifacts —
+<code class="docutils literal notranslate"><span class="pre">//solver:solver_cli_opt</span></code> (the binary in the server’s runfiles) and the
+wasm inside <code class="docutils literal notranslate"><span class="pre">//solver:solver_web</span></code> — transition themselves to opt
+regardless of the invocation’s compilation mode (measured: benchmark
+183 ms vs ~2 s fastbuild; wasm 360 KB vs 1.1 MB). Both sides transition
+identically, so the placement decision always compares opt against opt.
+Unit tests keep the invocation’s mode for fast iteration;
+<code class="docutils literal notranslate"><span class="pre">native_solver.py</span></code> falls back from the <code class="docutils literal notranslate"><span class="pre">_opt</span></code> runfiles path to the raw
+one for tests that data-dep <code class="docutils literal notranslate"><span class="pre">:solver_cli</span></code> directly.</p></li>
+</ul>
+</section>
+<section id="hue-only-signaling-snr-adaptive-symbol-alphabet-hue-only-signaling-branch-2026-07-10">
+<h2>Hue-only signaling + SNR-adaptive symbol alphabet (hue-only-signaling branch, 2026-07-10)<a class="headerlink" href="#hue-only-signaling-snr-adaptive-symbol-alphabet-hue-only-signaling-branch-2026-07-10" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The intensity (“gray”) carrier is REMOVED; hue is the only carrier.</strong>
+On-device experience showed the intensity code’s dark frames make blobs
+DISAPPEAR — the tracker had to coast blind through every 0-bit and the
+ALL_OFF frame, and cross-frame track association failed exactly where the
+code needed it. Under the hue carrier every LED is lit every frame at
+constant brightness (the code is in COLOR), so tracks never lose their
+blobs. The §7.6 <code class="docutils literal notranslate"><span class="pre">encoding</span></code> enum collapses to <code class="docutils literal notranslate"><span class="pre">&quot;hue&quot;</span></code>; the old dark-room
+fallback to <code class="docutils literal notranslate"><span class="pre">gray</span></code> is gone (dark rooms now get the robust 2-symbol
+alphabet instead — chroma still washes out in a truly black room, which
+is a lighting problem, not a carrier choice).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">CodeParams.symbols</span></code> (2 | 4): the SNR-adaptive data alphabet.</strong>
+<code class="docutils literal notranslate"><span class="pre">bits</span></code> still counts CODE bits (Gray data + SEC-DED parity); frames carry
+<code class="docutils literal notranslate"><span class="pre">log2(symbols)</span></code> bits each, so <code class="docutils literal notranslate"><span class="pre">cycleFrames</span> <span class="pre">=</span> <span class="pre">2</span> <span class="pre">+</span> <span class="pre">ceil(bits</span> <span class="pre">/</span> <span class="pre">log2(symbols))</span></code> — a 64-LED SEC-DED cycle is 14 windows at 2 symbols,
+8 at 4 (~43% faster identification when conditions allow).</p></li>
+<li><p><strong>Palette</strong> (white=ALL_ON reference, green=ALL_OFF sync, both unchanged):
+2 symbols → red(1)/blue(0), the maximally separated pair. 4 symbols →
+the hue-adjacent path blue(240°) → magenta(300°) → red(0°) → yellow(60°)
+carrying binary-reflected-Gray bit pairs 00→01→11→10, so the DOMINANT
+misread (confusing neighboring hues) flips exactly one bit — which
+SEC-DED corrects; the FEC’s single-window guarantee survives the wider
+alphabet for the realistic error mode. Cyan is unused (it scores on the
+green sync axis and would confuse the alignment census). Pinned by
+cross-language goldens (golden_secded16.json / golden_secded16_sym4.json)
+and an end-to-end adjacent-misread pipeline test.</p></li>
+<li><p><strong>Decode</strong>: per-window mean color is normalized by the track’s own white
+window (cancels white balance; static-hue clutter reads neutral and
+fails the green sync — both mechanisms carried over), then classified to
+the NEAREST palette target (L1); the margin is the best-vs-runner-up gap
+normalized so a perfect read scores 1.0 in either alphabet.</p></li>
+<li><p><strong>Alphabet negotiation</strong>: at start the phone picks from scene stats
+(mean luma ≥ 0.12 and clip fraction ≤ 0.05 → 4, else 2 — clipping
+saturates channels and collapses hue). Mid-capture it reads the
+decoder’s <code class="docutils literal notranslate"><span class="pre">marginEma</span></code> (EMA of per-cycle worst-window margins over
+sync-valid cycles — the MEASURED chroma SNR): &lt; 0.35 downgrades 4→2,
+≥ 0.7 in a still-good scene upgrades 2→4; the wide dead zone plus the
+existing 2-tick agreement rule prevents flapping. <code class="docutils literal notranslate"><span class="pre">?symbols=2|4</span></code> forces.</p></li>
+<li><p><strong>The M1 driver now renders per-LED colors</strong> (<code class="docutils literal notranslate"><span class="pre">frame_bytes_colors</span></code>,
+APA102 B,G,R order; <code class="docutils literal notranslate"><span class="pre">graycode.color_plan</span></code> replaces the binary
+<code class="docutils literal notranslate"><span class="pre">frame_plan</span></code>) — the hue carrier is no longer wall-only.</p></li>
+</ul>
+</section>
+<section id="developer-documentation-sphinx-site-fug-104-pinned-2026-08-11">
+<h2>Developer documentation — Sphinx site (FUG-104, pinned 2026-08-11)<a class="headerlink" href="#developer-documentation-sphinx-site-fug-104-pinned-2026-08-11" title="Link to this heading">¶</a></h2>
+<p>The developer docs are a <strong>Sphinx</strong> site (<code class="docutils literal notranslate"><span class="pre">//docs:build</span></code>) rather than a hand-kept
+HTML tree or a wiki. Rationale:</p>
+<ul class="simple">
+<li><p><strong>Fold in, don’t fork.</strong> MyST-parser renders the existing markdown
+(<code class="docutils literal notranslate"><span class="pre">README.md</span></code>, <code class="docutils literal notranslate"><span class="pre">DEVELOPERS.md</span></code>, <code class="docutils literal notranslate"><span class="pre">EFFECTS.md</span></code>, <code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code>, everything
+under <code class="docutils literal notranslate"><span class="pre">docs/</span></code>, and the subsystem READMEs) as-is, so the source docs stay the
+single source of truth and editing them updates the site. No content is
+duplicated into a docs-only format.</p></li>
+<li><p><strong>One regenerable target.</strong> <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//docs:build</span></code> regenerates <em>everything</em>
+in one shot — it renders the figures/animations from the real
+<code class="docutils literal notranslate"><span class="pre">shared/simulator</span></code> → <code class="docutils literal notranslate"><span class="pre">pi/reconstruction</span></code> code path (so the visuals can’t drift
+from the code) and then runs Sphinx. This mirrors the repo’s existing
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:gen_fx_vm_perf_doc</span></code> convention (write into the working tree
+from <code class="docutils literal notranslate"><span class="pre">$BUILD_WORKSPACE_DIRECTORY</span></code>).</p></li>
+<li><p><strong>Toolchain (pinned in <code class="docutils literal notranslate"><span class="pre">requirements.lock</span></code>, added to <code class="docutils literal notranslate"><span class="pre">requirements.in</span></code>):</strong>
+<code class="docutils literal notranslate"><span class="pre">sphinx</span></code>, <code class="docutils literal notranslate"><span class="pre">myst-parser</span></code>, <code class="docutils literal notranslate"><span class="pre">furo</span></code> (theme), <code class="docutils literal notranslate"><span class="pre">sphinx-copybutton</span></code>, <code class="docutils literal notranslate"><span class="pre">sphinx-design</span></code>
+(landing/subsystem cards), <code class="docutils literal notranslate"><span class="pre">sphinxcontrib-mermaid</span></code> (architecture + dataflow
+diagrams, rendered client-side, <code class="docutils literal notranslate"><span class="pre">mermaid_version</span></code> pinned in <code class="docutils literal notranslate"><span class="pre">conf.py</span></code>), and
+<code class="docutils literal notranslate"><span class="pre">matplotlib</span></code> (the generated figures). All bumped the usual way via
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//:requirements.update</span></code>.</p></li>
+<li><p><strong>Generated output is not committed.</strong> The built site lands in <code class="docutils literal notranslate"><span class="pre">docs/site/</span></code>
+(like other <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code> outputs); only the sources under <code class="docutils literal notranslate"><span class="pre">docs/_sphinx/</span></code>, the
+generators (<code class="docutils literal notranslate"><span class="pre">docs/build_docs.py</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/gen_figures.py</span></code>), and the folded-in
+markdown are tracked. <code class="docutils literal notranslate"><span class="pre">docs/site/</span></code> should be git-ignored.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../about-these-docs.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">How these docs are built</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="design/app-ux-overhaul.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">LED-Mapper App — UI/UX Overhaul (Design Doc)</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Decision log</a><ul>
+<li><a class="reference internal" href="#build-system-bazel-bzlmod">Build system — Bazel (bzlmod)</a><ul>
+<li><a class="reference internal" href="#jvm-sve-workaround-bazelrc-added-2026-06-19">JVM SVE workaround (<code class="docutils literal notranslate"><span class="pre">.bazelrc</span></code>, added 2026-06-19)</a></li>
+<li><a class="reference internal" href="#pinned-versions-pinned-2026-06-18-lockfiles-regenerated-2026-06-19">Pinned versions (pinned 2026-06-18, lockfiles regenerated 2026-06-19)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#m9-simulator-noise-model-defaults-pinned-2026-06-19">M9 — simulator noise model defaults (pinned 2026-06-19)</a></li>
+<li><a class="reference internal" href="#m3-reconstruction-parameters-pinned-2026-06-19">M3 — reconstruction parameters (pinned 2026-06-19)</a></li>
+<li><a class="reference internal" href="#m1-led-driver-choices-pinned-2026-06-19">M1 — LED driver choices (pinned 2026-06-19)</a></li>
+<li><a class="reference internal" href="#m2-pi-server-choices-pinned-2026-06-19">M2 — Pi server choices (pinned 2026-06-19)</a></li>
+<li><a class="reference internal" href="#m4-nix-driven-provisioning-pinned-2026-06-19">M4 — Nix-driven provisioning (pinned 2026-06-19)</a></li>
+<li><a class="reference internal" href="#web-stack-m5-m6-m7-m8-virtual-led-wall-pinned-2026-07-02">Web stack — M5/M6/M7/M8 + virtual LED wall (pinned 2026-07-02)</a></li>
+<li><a class="reference internal" href="#capture-auto-negotiation-exposure-telemetry-pinned-2026-07-08">Capture auto-negotiation + exposure telemetry (pinned 2026-07-08)</a></li>
+<li><a class="reference internal" href="#sec-ded-fec-on-the-blink-code-pinned-2026-07-08">SEC-DED FEC on the blink code (pinned 2026-07-08)</a></li>
+<li><a class="reference internal" href="#protobuf-wire-migration-proto-comms-branch-2026-07-09">Protobuf wire migration (proto-comms branch, 2026-07-09)</a></li>
+<li><a class="reference internal" href="#rust-solver-wasm-solver-placement-rust-wasm-solver-branch-2026-07-09">Rust solver + wasm + solver placement (rust-wasm-solver branch, 2026-07-09)</a></li>
+<li><a class="reference internal" href="#hue-only-signaling-snr-adaptive-symbol-alphabet-hue-only-signaling-branch-2026-07-10">Hue-only signaling + SNR-adaptive symbol alphabet (hue-only-signaling branch, 2026-07-10)</a></li>
+<li><a class="reference internal" href="#developer-documentation-sphinx-site-fug-104-pinned-2026-08-11">Developer documentation — Sphinx site (FUG-104, pinned 2026-08-11)</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
