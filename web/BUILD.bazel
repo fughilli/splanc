@@ -16,6 +16,7 @@ Targets:
 @rr(PR-1, PR-2, PR-3, PR-4, PR-5, PR-6, PR-7, PR-8, PR-9, PR-10, PR-11, PR-12, PR-13, PR-15, PR-16, PR-18, PR-20, PR-22, PR-27, PR-29, PR-31, PR-32, PR-33, PR-34, PR-35, PR-37): implemented in this package (see requirements/requirements.yaml)
 """
 
+load("@aspect_bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_run_devserver", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
@@ -58,6 +59,25 @@ exports_files([
 npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])
+
+# The protocol client + effects-preview modules the MCP bridge (//agent) bundles
+# by relative import, so it speaks /ws through the same code as the app rather
+# than a copy. Keep this the closure of what agent/src imports from web/src.
+# copy_to_bin: an action in //agent may only read bin-tree copies made here.
+copy_to_bin(
+    name = "agent_reuse_srcs",
+    srcs = [
+        "src/assetBase.ts",
+        "src/fx/preview.ts",
+        "src/gen/ledmapper_pb.ts",
+        "src/net/client.ts",
+        "src/net/clocksync.ts",
+        "src/net/fxbTextures.ts",
+        "src/net/proto.ts",
+        "src/net/textureCodec.ts",
+        "tsconfig.json",  # rolldown resolves these modules' tsconfig in the bin tree
+    ],
+)
 
 # Non-TS assets imported for their side effects by the app bundle (the design
 # tokens + app-shell stylesheet). tsc ignores these (they resolve via the

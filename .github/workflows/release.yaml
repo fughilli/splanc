@@ -68,6 +68,21 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
+      # The agent bundle for this firmware (MCP bridge + matching compiler/simulator
+      # wasm + skill; agent/BUILD.bazel), versioned by the tag. Built BEFORE the
+      # firmware: the tarball is reproducible, so its sha256 is known up front, and
+      # the firmware's discovery manifest advertises bundle.url + bundle.sha256.
+      # AGENT_BUNDLE_URL / _SHA256 are exported for that handoff (agent/README.md
+      # "Release"): the device side passes them as
+      #   --//firmware/player_app:agent_bundle_url=... / :agent_bundle_sha256=...
+      - name: Build the agent bundle
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            --//agent:bundle_version="${VER}" //agent:bundle
+          echo "AGENT_BUNDLE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/splanc-agent-${VER}.tgz" >> "$GITHUB_ENV"
+          echo "AGENT_BUNDLE_SHA256=$(cut -d' ' -f1 "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256")" >> "$GITHUB_ENV"
+
       # The vendor player firmware was deprecated/removed; only the heapless-netstack
       # variant ships now. (The webapp's release source still recognizes an
       # esp32c6-vendor-*.tar for OLD releases; new releases carry only -netstack-.)
@@ -83,11 +98,15 @@ jobs:
           VER="${GITHUB_REF_NAME#firmware-v}"
           mkdir -p _assets
           cp bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar "_assets/esp32c6-netstack-${VER}.tar"
+          cp "bazel-bin/agent/splanc-agent-${VER}.tgz" "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256" _assets/
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          files: _assets/*.tar
+          files: |
+            _assets/*.tar
+            _assets/*.tgz
+            _assets/*.tgz.sha256
           generate_release_notes: true
           # Record the exact tagged commit so the webapp can show + link the build
           # each firmware asset was cut from (githubReleaseRepo reads this).

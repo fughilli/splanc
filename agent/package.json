@@ -1,0 +1,30 @@
+{
+  "name": "@splanc/agent",
+  "version": "0.1.0",
+  "description": "Splanc agent bridge: an MCP server that drives a Splanc player over its /ws protobuf wire, with the matching effect compiler, simulator and authoring skill.",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "bin": {
+    "splanc-agent": "mcp/splanc-agent.mjs"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "multicast-dns": "7.2.5",
+    "ws": "8.18.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@bufbuild/protobuf": "^2.12.1",
+    "@ledmapper/protocol": "workspace:*",
+    "@types/multicast-dns": "7.2.4",
+    "@types/node": "24.10.9",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.3",
+    "vite": "8.0.16"
+  }
+}

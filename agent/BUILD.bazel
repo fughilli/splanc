@@ -1,0 +1,156 @@
+"""agent — the Splanc MCP bridge + agent bundle (Splanc Agent Discovery & MCP Bundle Spec).
+
+The bridge (src/) is a Node MCP server (stdio) for ONE player: a /ws client that
+reuses the web app's protocol code (//web:agent_reuse_srcs, bundled by relative
+import), discovery (mDNS + the /.well-known/splanc.json manifest), and host
+compile/preview through the same compiler + VM wasm the editor uses.
+
+Targets:
+  :mcp              dist-mcp/splanc-agent.mjs — the bridge, one self-contained file
+  :wasm             compiler/ + simulator/ (the wasm packages, bundle layout)
+  :bundle           splanc-agent-<ver>.tgz + .sha256 (release asset)
+  :<name>_test      one per tests/*.test.ts (fake TLS player; examples compile+preview;
+                    the shipped .mjs end to end over stdio)
+  :typecheck_test   tsc --noEmit over src/ + tests/ (+ the reused web modules)
+
+Release: `bazel build -c opt //agent:bundle --//agent:bundle_version=<X.Y.Z>`
+(.github/workflows/release.yaml, firmware-v* tags).
+"""
+
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//agent:typescript/package_json.bzl", tsc_bin = "bin")
+load("@npm//agent:vite/package_json.bzl", vite_bin = "bin")
+load(":bundle.bzl", "agent_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+# The bundle's version: the firmware release it belongs to (release.yaml passes
+# the tag's X.Y.Z). 0.0.0-dev = a local build, which has no published bundle.
+string_flag(
+    name = "bundle_version",
+    build_setting_default = "0.0.0-dev",
+)
+
+SRCS = glob(["src/**/*.ts"])
+
+TESTS = glob(["tests/*.test.ts"])
+
+# Everything a Vite (rolldown) build of the bridge reads. The tsconfig chain is
+# DECLARED for the same reason as //web:dist (rolldown resolves a tsconfig by
+# walking up from each source in the bin tree): ours, web's (in
+# //web:agent_reuse_srcs, for the reused web/src modules) and the shared base.
+BUILD_INPUTS = SRCS + [
+    "package.json",
+    "tsconfig.json",
+    "vite.config.ts",
+    "//:tsconfig_base_json",
+    "//web:agent_reuse_srcs",
+    "//web:node_modules/@bufbuild/protobuf",
+    "//web:node_modules/@ledmapper/protocol",
+    ":node_modules/@bufbuild/protobuf",
+    ":node_modules/@ledmapper/protocol",
+    ":node_modules/@modelcontextprotocol/sdk",
+    ":node_modules/multicast-dns",
+    ":node_modules/vite",
+    ":node_modules/ws",
+    ":node_modules/zod",
+]
+
+# The bridge. Runs unsandboxed like //web:dist (--strategy=Vite=local, .bazelrc).
+vite_bin.vite(
+    name = "mcp",
+    srcs = BUILD_INPUTS,
+    outs = ["dist-mcp/splanc-agent.mjs"],
+    args = [
+        "build",
+        "--mode",
+        "mcp",
+    ],
+    chdir = package_name(),
+)
+
+copy_to_directory(
+    name = "wasm",
+    srcs = [
+        "//firmware/fx_vm:fx_vm_web",
+        "//fx_compiler:fx_compiler_web",
+    ],
+    replace_prefixes = {
+        "firmware/fx_vm/fx_vm_web": "simulator",
+        "fx_compiler/fx_compiler_web": "compiler",
+    },
+)
+
+# One single-file bundle + js_test per tests/*.test.ts. node:test runs the
+# file's tests when it is executed and sets the exit code.
+[
+    vite_bin.vite(
+        name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
+        srcs = BUILD_INPUTS + glob(["tests/*.ts"]),
+        outs = ["dist-test/{n}/{n}.test.mjs".format(n = f.removeprefix("tests/").removesuffix(".test.ts"))],
+        args = [
+            "build",
+            "--mode",
+            "test",
+        ],
+        chdir = package_name(),
+        env = {"AGENT_TEST_ENTRY": f.removeprefix("tests/")},
+    )
+    for f in TESTS
+]
+
+[
+    js_test(
+        name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test",
+        chdir = package_name(),
+        data = [
+            ":mcp",
+            ":wasm",
+        ] + glob([
+            "tests/fixtures/**",
+            "skill/examples/*.fx",
+        ]),
+        entry_point = ":" + f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
+        # Local TLS + WebSocket servers on 127.0.0.1.
+        tags = ["requires-network"],
+    )
+    for f in TESTS
+]
+
+tsc_bin.tsc_test(
+    name = "typecheck_test",
+    args = [
+        "-p",
+        "tsconfig.json",
+        "--noEmit",
+    ],
+    chdir = package_name(),
+    data = BUILD_INPUTS + glob(["tests/*.ts"]) + [
+        ":node_modules/@types/multicast-dns",
+        ":node_modules/@types/node",
+        ":node_modules/@types/ws",
+        ":node_modules/typescript",
+    ],
+)
+
+agent_bundle(
+    name = "bundle",
+    compiler = "//fx_compiler:fx_compiler_web",
+    # The .fxb container magic fx_compiler emits (fx_compiler/src/lib.rs). TODO(fxb
+    # format version): read it from the compiler once the device PR versions .fxb.
+    fxb_format = "FXB1",
+    mcp = ":mcp",
+    proto = "//shared/protocol/proto:ledmapper.proto",
+    simulator = "//firmware/fx_vm:fx_vm_web",
+    skill = glob([
+        "skill/*.md",
+        "skill/examples/*.fx",
+    ]),
+    skill_strip = "agent/skill/",
+    version = ":bundle_version",
+)
