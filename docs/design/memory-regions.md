@@ -73,7 +73,11 @@ Today's layout holds about 152 KB for these components, because every static is 
 ## Integration plan
 
 Ordered by bytes recovered per effort:
-1. **Drive the firmware's mode switches through `sysmode::step`.** Call it from loopTask at the BLE/wss/upload/effect edges. Log refusals at first, then enforce them.
+1. **Drive the firmware's mode switches through `sysmode::step`.** *(log-only: done)*
+   - `sysmode::observe::Tracker` tracks the device by OBSERVATION: each loop, `mode_observe()` (main.cpp) hands `lm_mode_observe` the transport's facts (credentials, lease, BLE central, wss, upload window); the player adds its own (capture / counting probe, effect loaded, set_texture frames within 2 s over wss, map stored). The tracker derives the model events axis by axis and applies each through `step`.
+   - A refusal is logged once per (state, event, reason) and forced so tracking continues; counters live in the `LM_MODE` static (`ram_watch.tcl` reads it over JTAG at the end of a `ram_audit` run) and on the serial status line (`mode=state/accepted/refused/unmodeled`).
+   - `observe_test` is the model-vs-firmware agreement test (the HITL scenarios' observation sequences track with zero refusals). Wiring it up corrected two model errors: wired `PROV` provisioning needs no central (`Event::WiredCredentials`), and a restored boot is unprovisioned (credentials are RAM-only).
+   - Next: enforce — gate the switches that the firmware initiates (effect load during an upload, video without wss) on `step` instead of only observing them.
 2. **Freeze trap.** Revive `firmware/sysheap`'s `--wrap` of malloc/heap_caps.
    - After `setup()`, record the caller PC and size of any IDF-heap allocation in a census ring, read over JTAG by `ram_watch.tcl`, so the DUT isn't disturbed.
    - Log-only first, to name the ~5 KB nobody owns; then abort in HITL builds.

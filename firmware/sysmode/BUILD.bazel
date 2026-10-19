@@ -12,7 +12,10 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "sysmode",
-    srcs = ["src/lib.rs"],
+    srcs = [
+        "src/lib.rs",
+        "src/observe.rs",
+    ],
     crate_name = "ledmapper_sysmode",
     edition = "2021",
 )
@@ -28,4 +31,13 @@ rr_rust_test(
         ":sysmode",
         "@rules_requirements//rust:rr",
     ],
+)
+
+# Model-vs-firmware agreement: the observation sequences the firmware produces
+# on the HITL scenarios track through `step` with zero refusals.
+rust_test(
+    name = "observe_test",
+    srcs = ["tests/observe.rs"],
+    edition = "2021",
+    deps = [":sysmode"],
 )
