@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { makeDemoProvider } from "../src/effects/ai/providers/demo";
+
+test("demo assistant carries tool history, images and abort signal without client credentials", async () => {
+  const old = globalThis.fetch;
+  const controller = new AbortController();
+  let calls = 0;
+  globalThis.fetch = async (url, init) => {
+    calls++;
+    assert.equal(url, "https://demo.invalid/chat");
+    assert.equal(init?.signal, controller.signal);
+    assert.equal(new Headers(init?.headers).has("authorization"), false);
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.model, undefined);
+    assert.equal(body.max_tokens, 4000);
+    assert.equal(body.messages[0].content, "Effect instructions");
+    assert.equal(body.messages[2].role, "tool");
+    assert.equal(body.messages[3].content[1].image_url.url, "data:image/png;base64,YQ==");
+    return Response.json({ choices: [{ finish_reason: "tool_calls", message: {
+      role: "assistant", tool_calls: [{id:"edit",type:"function",function:{name:"set_script",arguments:'{"source":"new source"}'}}],
+    } }] });
+  };
+  try {
+    const result = await makeDemoProvider("https://demo.invalid/chat").send([
+      {role:"assistant",content:[{type:"tool_use",id:"capture",name:"capture_preview",input:{}}]},
+      {role:"user",content:[{type:"tool_result",tool_use_id:"capture",content:[{type:"image",source:{type:"base64",media_type:"image/png",data:"YQ=="}}]}]},
+    ], {system:"Effect instructions",tools:[],signal:controller.signal,maxTokens:10000});
+    assert.equal(result.stop_reason, "tool_use");
+    assert.deepEqual(result.content, [{type:"tool_use",id:"edit",name:"set_script",input:{source:"new source"}}]);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = old; }
+});
+
+test("quota and unconfigured relay errors remain actionable and do not auto-retry", async () => {
+  const old = globalThis.fetch;
+  try {
+    for (const [status, pattern] of [[429,/shared allowance/], [503,/temporarily unavailable/]] as const) {
+      let calls = 0;
+      globalThis.fetch = async () => { calls++; return new Response("", {status}); };
+      await assert.rejects(makeDemoProvider().send([], {system:"",tools:[]}), pattern);
+      assert.equal(calls, 1);
+    }
+  } finally { globalThis.fetch = old; }
+});
+
+test("malformed success cannot be mistaken for a completed AI turn", async () => {
+  const old = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ error: "unavailable" });
+  try { await assert.rejects(makeDemoProvider().send([], {system:"",tools:[]}), /incomplete response/); }
+  finally { globalThis.fetch = old; }
+});

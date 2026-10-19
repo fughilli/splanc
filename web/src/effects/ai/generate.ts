@@ -431,10 +431,11 @@ export async function chatTurn(
   hooks: ChatHooks,
   deviceCosts?: string,
   systemExtra?: string,
+  providerOverride?: AiProvider,
 ): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
-  const provider = activeProvider();
+  const provider = providerOverride ?? activeProvider();
   const caps = provider.capabilities;
   // Assemble the system prompt once: the frozen chat spec, then the per-device
   // builtin-cost block (#65), then any caller persona (e.g. Acid Mode's voice).

@@ -25,6 +25,7 @@ import { OnboardingScreen } from "../screens/onboarding";
 import { MapBrowserScreen } from "../screens/mapBrowser";
 import { MapDetailScreen } from "../screens/mapDetail";
 import { EffectsBrowserScreen } from "../screens/effectsBrowser";
+import { EffectDemoScreen } from "../screens/effectDemo";
 import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
@@ -128,6 +129,7 @@ async function main(): Promise<void> {
       // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole
       // viewport and supplies its own floating back/⋯/name controls.
       shell.setChrome({ title: "Edit effect", back: true, tabs: false, overlay: true });
+      if (m.query.get("workspace") === "demo") return EffectDemoScreen(router, m.params["id"]!);
       return EffectEditorScreen(router, m.params["id"]!);
     })
     .add("/perf", () => {
@@ -217,7 +219,9 @@ async function main(): Promise<void> {
   // First-run tutorial hint (FUG-103): a dismissible "?" affordance offering the
   // guided tour. No-op once the tutorial has been taken or dismissed; always
   // recallable from Settings ▸ Help & tutorial.
-  maybeShowFirstRunHint(router);
+  const effectsDemo = router.path().startsWith("/effects/edit/") &&
+    new URLSearchParams(location.hash.split("?")[1]).get("workspace") === "demo";
+  if (!effectsDemo) maybeShowFirstRunHint(router);
 
   // Shake-to-enter Acid Mode (FUG-106): a vigorous side-to-side shake pops a
   // (humorous) confirmation; on OK we drop into the hands-free mode. Guarded so
