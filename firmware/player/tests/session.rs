@@ -21,12 +21,20 @@ use pb::ServerMessage_::Msg as SMsg;
 fn send(player: &mut Player, msg: CMsg, now: f64) -> Option<SMsg> {
     use micropb::{MessageDecode, PbDecoder};
     let req = pb::ClientMessage { r#msg: Some(msg) };
-    let reply = player.handle(req, now as i64, now as i64)?;
+    let reply = player.handle_frame(&encode(&req), now as i64, now as i64)?;
     let mut buf = vec![0u8; 16 * 1024];
     let n = player.encode_reply(&reply, &mut buf).expect("reply fits");
     let mut back = pb::ServerMessage::default();
     back.decode(&mut PbDecoder::new(&buf[..n]), n).expect("reply decodes");
     back.r#msg
+}
+
+/// The wire bytes of a request: the player reads frames, not structs.
+fn encode(req: &pb::ClientMessage) -> Vec<u8> {
+    use micropb::{MessageEncode, PbEncoder};
+    let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 65536>::new());
+    req.encode(&mut enc).expect("request encodes");
+    enc.into_writer().to_vec()
 }
 
 fn get_hw(player: &mut Player) -> pb::HardwareConfigState {
@@ -126,7 +134,7 @@ fn full_phone_session() {
     // Clock sync (§7.3): t0 echoed, t1 = receive, t2 = send.
     let ping = pb::TimeSyncPing { r#t0: 123.5 };
     let req = pb::ClientMessage { r#msg: Some(CMsg::TimeSyncPing(ping)) };
-    let Some(SMsg::TimeSyncPong(pong)) = player.handle(req, 500, 501).and_then(|r| r.r#msg)
+    let Some(SMsg::TimeSyncPong(pong)) = player.handle_frame(&encode(&req), 500, 501).and_then(|r| r.r#msg)
     else {
         panic!("ping must produce pong");
     };
@@ -260,13 +268,16 @@ fn full_phone_session() {
         r#map_id: core::str::FromStr::from_str("m-77").unwrap(),
         ..Default::default()
     };
-    let topo = pb::SubmitTopology { r#topology: t, ..Default::default() };
+    // set_* marks presence: an unset message field is not on the wire.
+    let mut topo = pb::SubmitTopology::default();
+    topo.set_topology(t);
     expect_error(send(&mut player, CMsg::SubmitTopology(topo.clone()), 6000.0), "unknown_map");
     let map = pb::OutputMap {
         r#map_id: core::str::FromStr::from_str("m-77").unwrap(),
         ..Default::default()
     };
-    let submit = pb::SubmitMap { r#map, ..Default::default() };
+    let mut submit = pb::SubmitMap::default();
+    submit.set_map(map);
     let Some(SMsg::ResultReady(r)) = send(&mut player, CMsg::SubmitMap(submit), 6100.0) else {
         panic!("submit_map must produce result_ready");
     };

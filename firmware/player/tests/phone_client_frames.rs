@@ -148,7 +148,7 @@ fn run_frames_through(player: &mut Player, frames: &[Vec<u8>]) {
             .unwrap_or_else(|e| panic!("frame[{i}]: phone frame must decode: {e:?}"));
         let arm = req.r#msg.clone().expect("golden frames always have an arm");
         let now = 1000 + i as i64;
-        let reply = player.handle(req, now, now).map(|r| {
+        let reply = player.handle_frame(bytes, now, now).map(|r| {
             // Every reply must fit and encode — bounded output is part of
             // the firmware contract.
             let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 16384>::new());
