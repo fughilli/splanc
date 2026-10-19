@@ -5,12 +5,12 @@
 # these is reachable from an interrupt that is registered IRAM-safe in the
 # min-watermark RAM dump, nor from the flash-write path.
 #
-# WiFi power-save / sleep paths (.wifislpiram, i.e. the TX/timer half of
-# CONFIG_ESP_WIFI_SLP_IRAM_OPT=n): the netstack runs WIFI_PS_NONE with the radio
-# forced awake. The .wifislprxiram half stays — it also carries the vendor's
-# per-frame RX processing (wDev_ProcessRxSucData, ppRxPkt, ...).
-libpp.a .wifislpiram
-libnet80211.a .wifislpiram
+# NOT moved — the WiFi sleep sections (.wifislpiram, .wifislprxiram) and the
+# power-save objects (pm.o / pm_twt.o), although the netstack runs WIFI_PS_NONE:
+# they carry the TBTT/TSF timer path (pp_timer_do_process, pp_timer_tbtt, ...)
+# and the per-frame RX path, which run while a flash write has the cache off.
+# Moving them hung provisioning intermittently on HITL (silent, then a TG0
+# watchdog reset in the DHCP window, 2026-10-19, both DUTs).
 # CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y: the only ring buffer user is the
 # USB-serial console driver, whose ISR is not IRAM-safe.
 libesp_ringbuf.a
@@ -24,8 +24,3 @@ libesp_driver_rmt.a:rmt_encoder
 # (The other flash VENDORS' chip drivers stay: a board fitted with, say, a
 # Winbond part runs that driver with the cache off on every flash write.)
 libhal.a:spi_flash_hal_gpspi
-# NOT moved: the power-save state machine itself (pm.o / pm_twt.o, ~7 KB),
-# although it looked dead under WIFI_PS_NONE. Carving it out of the
-# library-wide .wifislprxiram / .wifiextrairam placement hung the board in the
-# DHCP window of provisioning (TG0 watchdog reset, HITL 2026-10-19): it runs
-# from a context the static call graph doesn't see.
