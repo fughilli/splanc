@@ -1,5 +1,14 @@
 # ESP32-C6 player app (bring-up build)
 
+> **Historical bring-up notes.** Much of this page describes the original
+> vendor-WiFi bring-up build. The shipped player is now the heapless-netstack
+> build (`:esp32c6_netstack`). It serves `wss://:443` and BLE (not `ws://:81`),
+> drives the LEDs with its own PARLIO + GDMA driver (not FastLED), decodes
+> requests in place from its transport buffers, and streams large uploads to
+> flash. Its stacks and regions are statically sized. For the current picture see the
+> firmware section of [`DEVELOPERS.md`](../../DEVELOPERS.md) and
+> [`docs/design/ram-budget.md`](../../docs/design/ram-budget.md).
+
 The LED Mapper player firmware: WiFi soft-AP, the R2 landing page over HTTP,
 the `ledmapper.v1` player protocol over WebSocket, and FastLED strip output
 rendering the counting/mapping patterns. The protocol brain is the

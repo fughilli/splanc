@@ -15,6 +15,38 @@ both halves of the system agree by construction.
 - `shared/protocol/python/ledmapper_protocol/_generated.py` — the generated
   Pydantic models (`OutputMap`, `LedEntry`, detection records, …).
 
+## Rust bindings: two decoders
+
+The Rust side (`shared/protocol/rust/`) builds `ledmapper.proto` two ways:
+
+- **`ledmapper_pb` / `ledmapper_pb_fw`** — micropb structs. The `_fw` profile
+  is the firmware's capacity profile, which caps the repeated fields and skips
+  the fat arms. These are used for encoding replies and on the host.
+- **`ledmapper_view`** — zero-copy [pbview](https://github.com/fughilli/splanc/tree/main/oss/pbview)
+  views (`oss/pbview`, `pbview_library`). A view is a borrowed two-word handle
+  with lazy accessors over the wire bytes. `parse` validates once, and there is
+  no allocation, no `unsafe` and no panic on any input. The firmware decodes
+  **every** `ClientMessage` in place from the RX frame
+  (`Player::handle_frame` → `ClientMessageView`). That way no by-value envelope,
+  sized by its largest arm, lands on a task stack.
+
+Fat reply arms the firmware profile drops are spliced into the reply
+already encoded (`Player::encode_reply`). Examples are the board-capabilities
+catalog, `Welcome.features` and the fixture pose. `envelope_size_test` pins
+the by-value sizes (`ServerMessage` 656 B on the firmware).
+
+`oss/pbview` is self-contained (its own README, Cargo workspace and tests,
+including fuzzing) so it can be published separately.
+
+## Versioning and feature detection
+
+The protocol only grows additively (new optional fields and new oneof arms),
+and clients feature-detect instead of comparing versions. `Welcome.features`
+lists what the firmware serves, for example `effects`, `uniform_commit`,
+`list_effects`, `fixture_pose` and `time_base`. `Welcome.fxb_format` is the
+`.fxb` version the VM accepts. The agent bridge and the app both read them; see
+{doc}`agent`.
+
 ## Freshness gate
 
 The generated bindings are byte-pinned. A freshness check fails the build if they
