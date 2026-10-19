@@ -193,8 +193,11 @@ _TEST_SOURCE_DATA = {
 
 js_test(
     name = "demoAiWorker_test",
+    data = [
+        "_worker.js",
+        "package.json",
+    ],
     entry_point = "tests/demoAiWorker.test.mjs",
-    data = ["_worker.js", "package.json"],
 )
 
 test_suite(
