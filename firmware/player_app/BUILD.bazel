@@ -386,6 +386,8 @@ cc_binary(
         "netstack_transport.h",
         "player_ffi.h",
         "serial_log.h",
+        "tls_region.cpp",
+        "tls_region.h",
         ":build_info_h",
     ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
