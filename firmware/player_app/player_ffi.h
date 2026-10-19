@@ -45,6 +45,13 @@ int32_t lm_mdns_respond(const uint8_t *query, size_t qlen, uint16_t src_port,
 // An unsolicited mDNS announcement of every record (send to 224.0.0.251:5353);
 // returns its length or <0.
 int32_t lm_mdns_announce(const uint8_t *ip, uint8_t *out, size_t cap);
+// Room pose (set_fixture_pose): change generation (poll after each message) and
+// whether the last change asked to be persisted (commit, unset = true).
+uint32_t lm_fixture_pose_gen(void);
+bool lm_fixture_pose_commit(void);
+// Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
+// set. The render loop derives effect time = (now - epoch) / 1000.
+bool lm_time_base(int64_t *epoch_ms);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);

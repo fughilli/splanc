@@ -185,4 +185,5 @@ fn live_set_fits_the_budget() {
 }
 
 const PINNED_STATES: usize = 57;
-const PINNED_WORST: usize = 151_213;
+// +3,072 B: FX_LED_ROOM (multi-fixture room-frame cache, #280).
+const PINNED_WORST: usize = 154_285;

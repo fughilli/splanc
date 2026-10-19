@@ -364,6 +364,9 @@ static const char *kLegacyPlaybackPath = "/lfs/play.pb";
 // decode path (lm_player_handle) as a live upload, after map+topology.
 static const char *kEffectPath = "/lfs/fx.pb";
 static const char *kEffectSelPath = "/lfs/fx_sel.pb";
+// The fixture's room pose: the raw set_fixture_pose frame (multi-fixture), replayed
+// after the map so the room-frame cache derives from the restored positions.
+static const char *kPosePath = "/lfs/pose.pb";
 static bool fs_ok = false;
 // Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
 // frames for persistence — see lm_envelope_arm.
@@ -375,6 +378,8 @@ static const int32_t kArmSubmitEffect = 21;
 static const int32_t kArmSetEffect = 22;
 static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
+static const int32_t kArmWelcome = 1;
+static const int32_t kArmSetFixturePose = 37;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -797,6 +802,9 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     // selection/uniforms (they belong to the old effect).
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
+  } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
+    // A validated room pose (or a clear): persist the frame unless commit=false.
+    if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
   } else if (reply_arm == kArmPlaybackState &&
              (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
     // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
@@ -868,6 +876,7 @@ static void fs_begin_and_restore() {
   // lm_fx_active once these replay through the same decode path.
   fs_replay(kEffectPath);
   fs_replay(kEffectSelPath);
+  fs_replay(kPosePath);
 }
 
 // Derive a DNS-label-safe hostname from the display name: keep [A-Za-z0-9],
@@ -1465,6 +1474,14 @@ static uint32_t render_once() {
     fx_last_ms = now;
     float dt_s = (float)dt_ms / 1000.0f;
     fx_time_s += dt_s;
+    // A shared time base (set_time_base, multi-fixture) pins effect time to a
+    // common epoch in OUR clock: time = (now - epoch) / 1000, held at 0 before the
+    // epoch, so fixtures the host synced animate in step. Runtime only.
+    int64_t tb_epoch = 0;
+    if (lm_time_base(&tb_epoch)) {
+      int64_t since = (int64_t)now - tb_epoch;
+      fx_time_s = since > 0 ? (float)since / 1000.0f : 0.0f;
+    }
     // TODO(hw): arm an esp_timer/systimer one-shot here for a frame-relative
     // wall-time deadline that calls lm_fx_set_deadline(true); the VM already
     // polls that flag and unwinds to a timeout branch. lm_fx_update clears the

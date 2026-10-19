@@ -183,6 +183,22 @@ rust_test(
     ],
 )
 
+# Multi-fixture room frame (set_fixture_pose -> FX_LED_ROOM -> led.room / room.min /
+# room.max, the unposed fallback) + set_time_base through the C ABI. Own binary.
+rust_test(
+    name = "room_frame_test",
+    srcs = ["tests/room_frame.rs"],
+    compile_data = ["//pi/hitl/harness:ab_demo/timeBaseClock.fx"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The color-order counting probe must preempt the FX engine with no map stored.
 # Own binary (fresh process-global FFI state) so it can arm an effect + skip the
 # map without the full-flow test's ordering — see tests/counting_preempt.rs.

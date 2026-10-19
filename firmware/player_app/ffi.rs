@@ -446,6 +446,26 @@ static mut FX_USES_CTXFIX: bool = false;
 /// True when the loaded effect reads `led.uv`. Effects that don't skip the
 /// per-LED soft-float uv projection entirely — a chunk of the framing floor.
 static mut FX_USES_UV: bool = false;
+/// True when the loaded effect reads the room frame (`led.room`, `room.min/max`).
+static mut FX_USES_ROOM: bool = false;
+
+// -- room frame (multi-fixture, set_fixture_pose) -----------------------------
+/// Each LED's ROOM-frame position (pose applied to FX_LED_POS), in integer
+/// MILLIMETRES: 6 B/LED (3 KB at 512 LEDs) instead of 12 B as f32 — +-32.7 m at
+/// 1 mm covers any room. Rebuilt off the render path's lm_fx_update when the
+/// pose or the map changes; only read while posed (unposed, led.room == led.pos).
+static mut FX_LED_ROOM: [[i16; 3]; FX_TOPO_CAP] = [[0; 3]; FX_TOPO_CAP];
+/// The cache matches the current map + pose (FX_ROOM_GEN = the pose gen it used).
+static mut FX_ROOM_READY: bool = false;
+static mut FX_ROOM_GEN: u32 = 0;
+/// A pose is set (Frame::room_posed).
+static mut FX_ROOM_POSED: bool = false;
+/// room.min / room.max (room frame, m) and their Q16.16 mirrors — the host's
+/// room box from the pose when given, else this fixture's own (posed) box.
+static mut FX_ROOM_MIN: [f32; 3] = [0.0; 3];
+static mut FX_ROOM_MAX: [f32; 3] = [0.0; 3];
+static mut FX_ROOM_MIN_FIX: [i32; 3] = [0; 3];
+static mut FX_ROOM_MAX_FIX: [i32; 3] = [0; 3];
 
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
@@ -674,6 +694,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         *addr_of_mut!(GEOM) = None;
         FX_TOPO_READY = false;
         FX_UV_READY = false;
+        FX_ROOM_READY = false;
         for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
             *e = FxLedTopo::NONE;
         }
@@ -1161,6 +1182,7 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     *addr_of_mut!(MAP_META) = None;
     reset_topo_cache();
     FX_UV_READY = false; // positions changed → uv bounds stale
+    FX_ROOM_READY = false; // ...and so are the room-frame positions
     // Nothing from a previous map may survive into this one.
     // (Filled in place: a whole-array assignment would build the temporary on
     // the task stack.)
@@ -1552,7 +1574,7 @@ const ARM_LIST_EFFECTS: u32 = 36;
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
 /// infer them from fw_version.
 pub const FEATURES: &[&str] =
-    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects"];
+    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects", "fixture_pose", "time_base"];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through
@@ -2440,6 +2462,113 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
 /// via [`FX_TOPO_READY`] unless a map/topology upload invalidated the cache.
 /// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
 /// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
+/// Millimetres -> Q16.16 metres, integer-only.
+fn mm_q16(v: i16) -> i32 {
+    ((v as i64 * 65536) / 1000) as i32
+}
+
+/// Rebuild the room-frame LED cache + room box from the stored map and the
+/// player's pose: room = t + R(q) * (scale * pos). Unposed, only the box is
+/// derived (this fixture's own map box), since led.room then reads led.pos.
+unsafe fn fx_rebuild_room() {
+    FX_ROOM_READY = true;
+    let p = player();
+    FX_ROOM_GEN = p.fixture_pose_gen();
+    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(FX_TOPO_CAP);
+    let pos = &*addr_of!(FX_LED_POS);
+    let pose = p.fixture_pose();
+    FX_ROOM_POSED = pose.is_some();
+    // Rotation matrix from the (normalized) quaternion; identity when unposed.
+    let (t, q, sc) = match pose {
+        Some(ps) => (
+            [ps.r#translation[0], ps.r#translation[1], ps.r#translation[2]],
+            [ps.r#rotation[0], ps.r#rotation[1], ps.r#rotation[2], ps.r#rotation[3]],
+            ps.r#scale,
+        ),
+        None => ([0.0; 3], [0.0, 0.0, 0.0, 1.0], 1.0),
+    };
+    let [x, y, z, w] = q;
+    let r = [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+    ];
+    let mut mn = [f32::INFINITY; 3];
+    let mut mx = [f32::NEG_INFINITY; 3];
+    let room = &mut *addr_of_mut!(FX_LED_ROOM);
+    for i in 0..len {
+        let v = pos[i];
+        let mut o = [0.0f32; 3];
+        for (k, ok) in o.iter_mut().enumerate() {
+            *ok = t[k] + sc * (r[k][0] * v[0] + r[k][1] * v[1] + r[k][2] * v[2]);
+        }
+        if FX_ROOM_POSED {
+            room[i] = [mm_i16(o[0]), mm_i16(o[1]), mm_i16(o[2])];
+        }
+        if led_mapped(i) {
+            for k in 0..3 {
+                mn[k] = mn[k].min(o[k]);
+                mx[k] = mx[k].max(o[k]);
+            }
+        }
+    }
+    // The host's room box (the union over every fixture) wins over our own.
+    if let Some(ps) = pose.filter(|ps| ps.r#room_min.len() == 3 && ps.r#room_max.len() == 3) {
+        mn.copy_from_slice(&ps.r#room_min);
+        mx.copy_from_slice(&ps.r#room_max);
+    }
+    for k in 0..3 {
+        FX_ROOM_MIN[k] = if mn[k].is_finite() { mn[k] } else { 0.0 };
+        FX_ROOM_MAX[k] = if mx[k].is_finite() { mx[k] } else { 0.0 };
+        FX_ROOM_MIN_FIX[k] = q16_16(FX_ROOM_MIN[k]);
+        FX_ROOM_MAX_FIX[k] = q16_16(FX_ROOM_MAX[k]);
+    }
+}
+
+/// Metres -> clamped integer millimetres (the FX_LED_ROOM storage).
+fn mm_i16(m: f32) -> i16 {
+    // Round half away from zero (no_std: no f32::round); `as` saturates.
+    let v = m * 1000.0;
+    (if v >= 0.0 { v + 0.5 } else { v - 0.5 }) as i16
+}
+
+/// The room pose's change generation (set_fixture_pose), polled after each
+/// message like lm_color_correction_gen: on a bump the firmware persists the
+/// request (when `lm_fixture_pose_commit`).
+///
+/// # Safety
+/// Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_gen() -> u32 {
+    player().fixture_pose_gen()
+}
+
+/// Whether the last set_fixture_pose asked to be persisted (commit, unset = true).
+///
+/// # Safety
+/// Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_commit() -> bool {
+    player().fixture_pose_commit()
+}
+
+/// The shared effect-time epoch (set_time_base, device-clock ms): writes it to
+/// `*epoch_ms` and returns true when one is set. The render loop then derives the
+/// effect's `time` as (now - epoch) / 1000 so fixtures animate in step.
+///
+/// # Safety
+/// `epoch_ms` points to a writable i64; under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
+    match player().time_base_ms() {
+        Some(t) if !epoch_ms.is_null() => {
+            *epoch_ms = t;
+            true
+        }
+        _ => false,
+    }
+}
+
 unsafe fn fx_rebuild_topo() {
     // UV bounds for led.uv — map-derived (independent of topology). Gated by its
     // OWN flag so a topology upload doesn't recompute it and, crucially, a map
@@ -2696,6 +2825,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     FX_USES_CTXFIX = prog.uses_ctxfix();
     // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
     FX_USES_UV = prog.uses_uv();
+    FX_USES_ROOM = prog.uses_room();
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2931,6 +3061,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     let Ok(prog) = Program::parse(bytes) else {
         return false;
     };
+    // The room frame follows the map and the pose: rebuild when either changed
+    // (only for effects that read it — the rest never pay the sweep).
+    if FX_USES_ROOM && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
+        fx_rebuild_room();
+    }
     let f = FxFrame {
         time: time_s,
         dt: dt_s,
@@ -2939,6 +3074,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         // Q16.16 mirrors for LoadCtxFix (computed once per frame, not per LED).
         time_fix: q16_16(time_s),
         dt_fix: q16_16(dt_s),
+        room_posed: FX_ROOM_POSED,
+        room_min: FX_ROOM_MIN,
+        room_max: FX_ROOM_MAX,
+        room_min_fix: FX_ROOM_MIN_FIX,
+        room_max_fix: FX_ROOM_MAX_FIX,
         ..Default::default()
     };
     // Capture the frame context so the per-LED shade() sweep sees the same
@@ -3012,6 +3152,11 @@ pub unsafe extern "C" fn lm_fx_shade(
         // soft-float (FUG-122; this was the fx_bench overhead regression).
         time_fix: FX_F_TIME_FIX,
         dt_fix: FX_F_DT_FIX,
+        room_posed: FX_ROOM_POSED,
+        room_min: FX_ROOM_MIN,
+        room_max: FX_ROOM_MAX,
+        room_min_fix: FX_ROOM_MIN_FIX,
+        room_max_fix: FX_ROOM_MAX_FIX,
         ..Default::default()
     };
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
@@ -3043,6 +3188,12 @@ pub unsafe extern "C" fn lm_fx_shade(
     // effect actually reads them (FUG-122), so an all-float shader pays zero
     // per-LED overhead and the resident cache never grows. Positions come from
     // this frame's map fetch; uv/s/dist from the already-derived values.
+    if FX_USES_ROOM && FX_ROOM_POSED {
+        let mm = (*addr_of!(FX_LED_ROOM)).get(idx as usize).copied().unwrap_or([0; 3]);
+        led.room = [mm[0] as f32 * 0.001, mm[1] as f32 * 0.001, mm[2] as f32 * 0.001];
+        // mm -> Q16.16 metres in integer math: v * 65536 / 1000.
+        led.room_fix = [mm_q16(mm[0]), mm_q16(mm[1]), mm_q16(mm[2])];
+    }
     if FX_USES_CTXFIX {
         led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
         led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
