@@ -315,6 +315,90 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
     ({ targets, seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rampUniforms(targets, seconds)))),
   );
 
+  // -- uniform keypoints -----------------------------------------------------------------
+  // Named looks of the active effect, stored on each player (shared with the app's
+  // Show Mode); the device moves between them in parameter space.
+  const deck = z.union([z.literal(0), z.literal(1)]).optional().describe("FX deck (0 = A, the default; 1 = B)");
+  server.registerTool(
+    "list_keypoints",
+    {
+      description:
+        "The active effect's saved keypoints (named looks stored on the player — the user's and other agents'). " +
+        "stale = saved against an older build of the effect (still recalls, by uniform name).",
+      inputSchema: { deck, players },
+    },
+    ({ deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listKeypoints(d ?? 0)))),
+  );
+  server.registerTool(
+    "save_keypoint",
+    {
+      description:
+        "Save the active effect's current uniform values on the player as a named keypoint (a look the user can " +
+        "come back to; overwrites one of the same name). With `values`, save those uniforms by name instead (the " +
+        "others keep their live value on recall). Max 16 per effect, names <= 32 bytes. Ask before overwriting a " +
+        "keypoint you didn't make.",
+      inputSchema: { name: z.string().min(1).max(32), values: z.record(z.string(), uniformValue).optional(), deck, players },
+    },
+    ({ name, values, deck: d, players: sel }) =>
+      guard(async () => ok(await fan(sel, (s) => s.saveKeypoint(name, values, d ?? 0)))),
+  );
+  server.registerTool(
+    "recall_keypoint",
+    {
+      description:
+        "Move the active effect to a saved keypoint, morphing there over `seconds` on the device (0 = jump). " +
+        "Live only unless commit=true (persists across reboots).",
+      inputSchema: {
+        name: z.string().min(1),
+        seconds: z.number().min(0).max(600).optional(),
+        commit: z.boolean().optional(),
+        deck,
+        players,
+      },
+    },
+    ({ name, seconds, commit, deck: d, players: sel }) =>
+      guard(async () =>
+        ok(await fan(sel, (s) => s.blendKeypoints({ [name]: 1 }, { seconds, commit, deck: d ?? 0 }))),
+      ),
+  );
+  server.registerTool(
+    "blend_keypoints",
+    {
+      description:
+        "Blend up to 4 saved keypoints by weight (normalised) — a position between known-good looks, computed on " +
+        "the device per uniform: numbers interpolate, colours blend in RGB or HSV (shortest hue), toggles and " +
+        "dropdowns take the heaviest keypoint's value. `seconds` morphs there from the current look.",
+      inputSchema: {
+        weights: z.record(z.string(), z.number().min(0)),
+        seconds: z.number().min(0).max(600).optional(),
+        color_mode: z.enum(["rgb", "hsv"]).optional(),
+        commit: z.boolean().optional(),
+        deck,
+        players,
+      },
+    },
+    ({ weights, seconds, color_mode, commit, deck: d, players: sel }) =>
+      guard(async () =>
+        ok(await fan(sel, (s) => s.blendKeypoints(weights, { seconds, colorMode: color_mode, commit, deck: d ?? 0 }))),
+      ),
+  );
+  server.registerTool(
+    "get_keypoint",
+    {
+      description: "A saved keypoint's uniform values, by name.",
+      inputSchema: { name: z.string().min(1), deck, players },
+    },
+    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getKeypoint(name, d ?? 0)))),
+  );
+  server.registerTool(
+    "delete_keypoint",
+    {
+      description: "Delete a saved keypoint from the player. Ask the user first: keypoints are theirs.",
+      inputSchema: { name: z.string().min(1), deck, players },
+    },
+    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.deleteKeypoint(name, d ?? 0)))),
+  );
+
   // -- effect authoring -------------------------------------------------------------------
   server.registerTool(
     "compile_effect",

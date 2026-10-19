@@ -48,6 +48,10 @@ export class FakePlayer {
   pingDelayMs = 0;
   /** Manifest features (see agentManifest). */
   features: string[] = ["effects", "perf", "textures", "stored_map"];
+  /** Device-stored uniform keypoints: effect id -> name -> {index, values by uniform}. */
+  keypoints = new Map<string, Map<string, { index: number; values: Record<string, number[]> }>>();
+  /** Every blend_keypoints applied (for assertions). */
+  blends: Msg[] = [];
 
   constructor(opts: { name?: string; mac?: string; fwVersion?: string } = {}) {
     if (opts.name) this.name = opts.name;
@@ -224,6 +228,12 @@ export class FakePlayer {
       }
       case "set_texture":
         return;
+      case "save_keypoint":
+      case "list_keypoints":
+      case "delete_keypoint":
+      case "get_keypoint":
+      case "blend_keypoints":
+        return this.reply(ws, this.keypoint(m));
       case "time_sync_ping": {
         // The device clock: this process's clock shifted by clockOffsetMs.
         const t1 = performance.now() + this.clockOffsetMs;
@@ -239,6 +249,92 @@ export class FakePlayer {
     }
   }
 }
+
+/** The fake's manifest walk: uniform name -> {slot, width}. */
+function ports(manifest: string): Map<string, { slot: number; width: number }> {
+  const out = new Map<string, { slot: number; width: number }>();
+  try {
+    for (const u of JSON.parse(manifest) as { name: string; slot: number; width?: number }[]) {
+      out.set(u.name, { slot: u.slot, width: u.width ?? 1 });
+    }
+  } catch {
+    /* no manifest */
+  }
+  return out;
+}
+
+export interface FakePlayer {
+  keypoint(m: Msg): Msg;
+}
+
+/** Keypoint arms, modelled closely enough for the bridge: store by uniform name,
+ * blend floats linearly (the device's per-kind rules are its own tests'). */
+FakePlayer.prototype.keypoint = function (this: FakePlayer, m: Msg): Msg {
+  const e = this.effect;
+  if (!e) return { type: "error", code: "no_effect", message: "no effect loaded on that deck" };
+  const store = this.keypoints.get(e.id) ?? new Map();
+  this.keypoints.set(e.id, store);
+  const list = (): Msg => ({
+    type: "keypoint_list",
+    effectId: e.id,
+    keypoints: [...store.entries()].map(([name, k]) => ({ index: k.index, name, stale: false })),
+    capacity: 16,
+  });
+  const p = ports(e.manifest);
+  const bySlot = new Map(e.current.map((c) => [c.slot, c.value]));
+  const name = (m["name"] as string) ?? "";
+  switch (m.type) {
+    case "list_keypoints":
+      return list();
+    case "save_keypoint": {
+      const given = (m["values"] as { slot: number; value: number[] }[] | undefined) ?? [];
+      const values: Record<string, number[]> = {};
+      for (const [u, { slot }] of p) {
+        const v = given.length ? given.find((g) => g.slot === slot)?.value : bySlot.get(slot);
+        if (v) values[u] = v;
+      }
+      const index = store.get(name)?.index ?? [...Array(16).keys()].find((i) => ![...store.values()].some((k) => k.index === i));
+      if (index === undefined) return { type: "error", code: "keypoint_full", message: "16 keypoints per effect" };
+      store.set(name, { index, values });
+      return list();
+    }
+    case "delete_keypoint":
+      if (!store.delete(name)) return { type: "error", code: "no_keypoint", message: "no keypoint by that name" };
+      return list();
+    case "get_keypoint": {
+      const k = store.get(name);
+      if (!k) return { type: "error", code: "no_keypoint", message: "no keypoint by that name" };
+      return {
+        type: "keypoint",
+        effectId: e.id,
+        index: k.index,
+        name,
+        stale: false,
+        values: Object.entries(k.values).map(([uniform, value]) => ({ uniform, value })),
+        slots: [],
+      };
+    }
+    default: {
+      // blend_keypoints: weighted mean per uniform, applied at once (the fake has
+      // no frames; `seconds` is just recorded).
+      const ws = m["weights"] as { name: string; weight: number }[];
+      const total = ws.reduce((s, w) => s + Math.max(0, w.weight), 0);
+      for (const w of ws) {
+        if (!store.has(w.name)) return { type: "error", code: "no_keypoint", message: "no keypoint by that name" };
+      }
+      for (const [u, { slot, width }] of p) {
+        const mix = new Array(width).fill(0);
+        for (const w of ws) {
+          const v = store.get(w.name)!.values[u] ?? bySlot.get(slot) ?? new Array(width).fill(0);
+          for (let i = 0; i < width; i++) mix[i] += (Math.max(0, w.weight) / total) * (v[i] ?? 0);
+        }
+        e.current = e.current.filter((c) => c.slot !== slot).concat([{ slot, value: mix }]);
+      }
+      this.blends.push(m);
+      return { type: "playback_state", active: true, effect: e.id };
+    }
+  }
+};
 
 /** A small fixture: a 3-arm Y of 30 LEDs, 1 m arms, with topology. */
 export function yFixture(): MappingBundle {

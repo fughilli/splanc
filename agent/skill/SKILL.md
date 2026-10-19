@@ -51,6 +51,37 @@ bridge checks width and range and tells you the declared names if you miss.
   change to stick (flash wear).
 - `set_brightness {level}` is global output brightness (runtime-only).
 
+## Saved looks: keypoints
+
+A **keypoint** is a named set of uniform values for one effect: a look the user
+(or you) liked, stored ON the player, so the Splanc app's Show Mode and every
+agent see the same ones. The player itself moves between them in parameter space:
+numbers glide, colours blend (`color_mode: "hsv"` keeps them saturated — red to
+blue passes through magenta, not grey), and toggles/dropdowns snap to the
+heaviest look.
+
+- **"Save the look as a keypoint"** → `save_keypoint {name: "dusk"}` stores the
+  CURRENT values. Pass `values` to store a look without showing it first. A name
+  that already exists is overwritten, so `list_keypoints` first and ask before
+  replacing one you didn't make. Max 16 per effect, names up to 32 bytes.
+- **"Go back to dusk"** → `recall_keypoint {name: "dusk", seconds: 10}`. Prefer
+  a morph (`seconds` > 0) for anything a person watches; 0 jumps.
+- **"Morph between moods"** / "somewhere between calm and storm" →
+  `blend_keypoints {weights: {calm: 0.7, storm: 0.3}, seconds: 15}`: a position
+  between known-good looks — safer than inventing new values, because every
+  input is a look someone approved. Weights are normalised; up to 4 keypoints.
+- Start a mood request by reading `splanc://effect/active` (it lists the
+  effect's `keypoints`): if a saved look matches the ask, recall or blend it
+  instead of hand-setting uniforms.
+- Blends and recalls are live-only; `commit: true` makes the result survive a
+  reboot. A blend never creates a keypoint — save explicitly when the user likes
+  the result.
+- `stale: true` marks a look saved against an older build of the effect; it
+  still recalls by uniform name (renamed or removed uniforms are skipped).
+- `delete_keypoint` only when the user asks; keypoints are theirs.
+- Older firmware without the `keypoints` feature answers with a clear error: fall
+  back to `ramp_uniforms`.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;

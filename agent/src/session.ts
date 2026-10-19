@@ -61,6 +61,9 @@ export type Feature =
   | "uniform_commit"
   | "list_effects"
   | "uniform_docs"
+  | "decks"
+  | "crossfade"
+  | "keypoints"
   | (string & {});
 
 export class ToolError extends Error {
@@ -261,11 +264,125 @@ export class DeviceSession {
     const stored = this.has("list_effects")
       ? "TODO(list_effects): wire ListEffects once the device PR lands"
       : "the firmware can't list stored effects; only the active one is known";
+    let keypoints: unknown = "the firmware doesn't store uniform keypoints";
+    if (a.effectId && this.keypointsUsable()) {
+      try {
+        keypoints = (await this.listKeypoints()).keypoints;
+      } catch (e) {
+        keypoints = `unavailable: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
     return {
       effect_id: a.effectId || null,
       uniforms: a.uniforms.map((u) => describe(u, a.current.get(u.name))),
       textures: a.textures,
+      keypoints,
       stored_effects: stored,
+    };
+  }
+
+  // -- uniform keypoints (docs/design/uniform-keypoints.md) ----------------------
+  // Named looks of the active effect, stored ON the device (so the app and every
+  // agent share them); the device blends between them in parameter space.
+
+  /** Both ends can do keypoints: the firmware advertises them AND this bundle's
+   * protocol carries the arms. */
+  keypointsUsable(): boolean {
+    return this.has("keypoints") && KEYPOINTS_IN_PROTO;
+  }
+
+  private requireKeypoints(): void {
+    if (!this.has("keypoints")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) doesn't store uniform keypoints`);
+    }
+    if (!KEYPOINTS_IN_PROTO) throw new ToolError("this agent bundle predates uniform keypoints; update it");
+  }
+
+  /** A request/reply on the device session (single-flight per reply type). */
+  private rpc<T>(msg: Record<string, unknown> & { type: string }, reply: string): Promise<T> {
+    const c = this.client as unknown as { request(m: unknown, t: string, ms?: number): Promise<unknown> };
+    return this.run(() => c.request(msg, reply)) as Promise<T>;
+  }
+
+  private static keypointList(r: KeypointListReply): Record<string, unknown> {
+    return {
+      effect_id: r.effectId,
+      keypoints: (r.keypoints ?? [])
+        .slice()
+        .sort((a, b) => a.index - b.index)
+        .map((k) => ({ name: k.name, ...(k.stale ? { stale: true } : {}) })),
+      capacity: r.capacity,
+    };
+  }
+
+  async listKeypoints(deck = 0): Promise<{ effect_id: string; keypoints: unknown[]; capacity: number }> {
+    this.requireKeypoints();
+    const r = await this.rpc<KeypointListReply>({ type: "list_keypoints", deck }, "keypoint_list");
+    return DeviceSession.keypointList(r) as { effect_id: string; keypoints: unknown[]; capacity: number };
+  }
+
+  /** Save the active effect's live uniforms (or, with `values`, those uniforms
+   * set by name — the rest stay unset in the keypoint) as keypoint `name`.
+   * Overwrites an existing keypoint of that name. */
+  async saveKeypoint(name: string, values?: Record<string, UniformInput>, deck = 0): Promise<Record<string, unknown>> {
+    this.requireKeypoints();
+    if (!name.trim() || new TextEncoder().encode(name).length > 32) {
+      throw new ToolError("keypoint names are 1..32 bytes");
+    }
+    const msg: Record<string, unknown> & { type: string } = { type: "save_keypoint", name, deck };
+    if (values && Object.keys(values).length) {
+      const a = await this.activeEffect();
+      if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
+      msg["values"] = resolve(a.uniforms, values);
+    }
+    return DeviceSession.keypointList(await this.rpc<KeypointListReply>(msg, "keypoint_list"));
+  }
+
+  async deleteKeypoint(name: string, deck = 0): Promise<Record<string, unknown>> {
+    this.requireKeypoints();
+    return DeviceSession.keypointList(
+      await this.rpc<KeypointListReply>({ type: "delete_keypoint", name, deck }, "keypoint_list"),
+    );
+  }
+
+  /** One keypoint's values, by uniform name. */
+  async getKeypoint(name: string, deck = 0): Promise<Record<string, unknown>> {
+    this.requireKeypoints();
+    const r = await this.rpc<KeypointReply>({ type: "get_keypoint", name, deck }, "keypoint");
+    const values: Record<string, number | number[]> = {};
+    for (const v of r.values ?? []) values[v.uniform] = v.value.length === 1 ? v.value[0]! : v.value;
+    return { name: r.name, effect_id: r.effectId, ...(r.stale ? { stale: true } : {}), values };
+  }
+
+  /** Move the active effect's uniforms to a weighted blend of keypoints, on the
+   * device, over `seconds` (0 = at once). One weight = recall. */
+  async blendKeypoints(
+    weights: Record<string, number>,
+    opts: { seconds?: number | undefined; colorMode?: "rgb" | "hsv" | undefined; commit?: boolean | undefined; deck?: number | undefined } = {},
+  ): Promise<Record<string, unknown>> {
+    this.requireKeypoints();
+    const entries = Object.entries(weights).filter(([, w]) => w > 0);
+    if (entries.length === 0) throw new ToolError("give at least one keypoint a positive weight");
+    if (entries.length > 4) throw new ToolError("at most 4 keypoints per blend");
+    const seconds = opts.seconds ?? 0;
+    if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
+    const total = entries.reduce((s, [, w]) => s + w, 0);
+    await this.rpc(
+      {
+        type: "blend_keypoints",
+        deck: opts.deck ?? 0,
+        weights: entries.map(([name, weight]) => ({ name, weight })),
+        seconds,
+        colorMode: opts.colorMode === "hsv" ? 1 : 0,
+        ...(opts.commit ? { commit: true } : {}),
+      },
+      "playback_state",
+    );
+    return {
+      weights: Object.fromEntries(entries.map(([n, w]) => [n, Math.round((w / total) * 1000) / 1000])),
+      seconds,
+      color_mode: opts.colorMode ?? "rgb",
+      committed: opts.commit === true,
     };
   }
 
@@ -680,6 +797,22 @@ export function summarize(b: MappingBundle): Record<string, unknown> {
 
 /** Whether this build's SetUniforms carries the (device-PR) `commit` field. */
 export const COMMIT_IN_PROTO = SetUniformsSchema.fields.some((f) => f.name === "commit");
+
+/** Whether this build's protocol carries the uniform-keypoint arms. */
+export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");
+
+interface KeypointListReply {
+  effectId: string;
+  keypoints?: { index: number; name: string; stale?: boolean }[];
+  capacity: number;
+}
+
+interface KeypointReply {
+  effectId: string;
+  name: string;
+  stale?: boolean;
+  values?: { uniform: string; value: number[] }[];
+}
 
 /** ClientMessage oneof arm names by field number, from the generated schema. */
 const ARM_BY_FIELD: Record<number, string> = Object.fromEntries(
