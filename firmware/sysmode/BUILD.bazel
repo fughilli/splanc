@@ -1,0 +1,31 @@
+"""The device's memory-mode state machine (docs/design/memory-regions.md): the
+product of WiFi / BLE / wss / LED-activity / map axes, ONE pure transition
+function, and a per-component RAM cost table measured on the real image.
+reachability_test walks every reachable state (explicit-state model checking)
+and asserts the invariants + budget. Kept apart from //firmware/region: that
+crate is the generic mechanism, this is the firmware's policy."""
+
+load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "sysmode",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_sysmode",
+    edition = "2021",
+)
+
+# bazel test //firmware/sysmode:reachability_test --test_arg=--nocapture
+# prints the per-state live-bytes table and the worst state.
+rr_rust_test(
+    name = "reachability_test",
+    srcs = ["tests/reachability.rs"],
+    edition = "2021",
+    rule = rust_test,
+    deps = [
+        ":sysmode",
+        "@rules_requirements//rust:rr",
+    ],
+)
