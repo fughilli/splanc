@@ -95,6 +95,7 @@ py_library(
         "e2e_phases.py",
         "fx_bench_core.py",
         "hardware_config_pattern.py",
+        "heap_census.py",
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_ws.py",

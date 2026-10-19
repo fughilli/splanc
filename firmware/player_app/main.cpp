@@ -117,6 +117,9 @@ void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 size_t lm_jit_region_size(void) { return kJitRegionSize; }
 }
 
+// Post-boot heap census hook (heap_census.cpp, where linked); a no-op otherwise.
+extern "C" __attribute__((weak)) void lm_heap_freeze(void) {}
+
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
 // caller's stack, and this path runs in loopTask (ws_poll). Measured frames on
@@ -2410,6 +2413,9 @@ void setup() {
   // netstack's large-record limit — not on scheduling.)
   vTaskPrioritySet(nullptr, kRenderTaskPrio);
 #endif
+  // Boot is done: from here on every heap allocation is attributed to its call site
+  // (heap_census.cpp; read over JTAG, never reported by the DUT).
+  lm_heap_freeze();
 }
 
 #if !defined(LM_NETSTACK)

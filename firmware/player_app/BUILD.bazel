@@ -40,6 +40,20 @@ config_setting(
     flag_values = {":ws2812_rmt": "True"},
 )
 
+# Post-boot heap census (heap_census.cpp): attribute every allocation after setup()
+# to its call site; //pi/hitl/harness:ram_audit dumps it over JTAG at the end of a
+# run (census.md). A diagnostic build (~12 KB of RAM: the 9.8 KB table + ~2.6 KB
+# IRAM shims), so off by default: --//firmware/player_app:heap_census_enabled.
+bool_flag(
+    name = "heap_census_enabled",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "heap_census_on",
+    flag_values = {":heap_census_enabled": "True"},
+)
+
 WS2812_SRCS = ["ws2812.h"] + select({
     "@embedded//platforms:is_esp32c3": ["ws2812_rmt.cpp"],
     ":ws2812_rmt_forced": ["ws2812_rmt.cpp"],
@@ -217,6 +231,49 @@ cc_test(
     ],
 )
 
+# Post-boot heap census (log-only freeze trap, docs/design/memory-regions.md): the
+# bookkeeping (host-tested) + the --wrap shims over the IDF heap's entry points.
+cc_library(
+    name = "heap_census_core",
+    srcs = ["heap_census_core.cc"],
+    hdrs = ["heap_census_core.h"],
+)
+
+cc_test(
+    name = "heap_census_core_test",
+    srcs = ["heap_census_core_test.cc"],
+    deps = [":heap_census_core"],
+)
+
+cc_library(
+    name = "heap_census",
+    srcs = [
+        "heap_census.cpp",
+        "heap_census_core.cc",
+        "heap_census_core.h",
+    ],
+    # Every IDF heap entry point a caller reaches across objects (newlib's
+    # malloc/realloc/free tail-jump into the *_default / heap_caps_free ones).
+    linkopts = [
+        "-Wl,--wrap=heap_caps_malloc_default",
+        "-Wl,--wrap=heap_caps_realloc_default",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=heap_caps_malloc",
+        "-Wl,--wrap=heap_caps_calloc",
+        "-Wl,--wrap=heap_caps_realloc",
+        "-Wl,--wrap=heap_caps_aligned_alloc",
+        "-Wl,--wrap=heap_caps_aligned_calloc",
+        "-Wl,--wrap=heap_caps_free",
+    ],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+    alwayslink = True,
+)
+
 cc_library(
     name = "improv_codec",
     hdrs = ["improv_codec.h"],
@@ -374,7 +431,10 @@ cc_binary(
         "@embedded//libs/vendor:ble",  # vendor BLE *controller* + native ble_hci_trans only
         "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:wifi",  # reversed vendor MAC/PM externs the netstack drives
-    ],
+    ] + select({
+        ":heap_census_on": [":heap_census"],
+        "//conditions:default": [],
+    }),
 )
 
 firmware_binary(
