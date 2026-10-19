@@ -206,6 +206,20 @@
       "provided_level": "simulation"
     },
     {
+      "kind": "under-verified",
+      "entity": "PR-38",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "no-implementation",
+      "entity": "PR-38",
+      "message": "no source annotation implements it",
+      "route": "autonomous"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",

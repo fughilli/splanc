@@ -3,14 +3,14 @@
   "title": "splanc",
   "project": {
     "name": "splanc",
-    "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89)."
+    "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89). PR-38+ are later product requirements."
   },
   "summary": {
     "user_needs": 8,
     "user_needs_validated": 0,
-    "requirements": 37,
+    "requirements": 38,
     "requirements_verified": 10,
-    "requirements_under_verified": 16,
+    "requirements_under_verified": 17,
     "requirements_partial": 0,
     "requirements_failed": 0,
     "requirements_unverified": 11,
@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1453,
-    "gaps": 32
+    "test_cases": 1460,
+    "gaps": 34
   },
   "levels": [
     {
@@ -113,7 +113,8 @@
         "PR-16",
         "PR-29",
         "PR-32",
-        "PR-35"
+        "PR-35",
+        "PR-38"
       ]
     },
     {
@@ -145,7 +146,8 @@
         "PR-26",
         "PR-28",
         "PR-31",
-        "PR-34"
+        "PR-34",
+        "PR-38"
       ]
     },
     {
@@ -6424,6 +6426,44 @@
         }
       ],
       "verified_in": []
+    },
+    {
+      "id": "PR-38",
+      "title": "BLE and Wi-Fi (wss) transports coexist",
+      "status": "UNDER-VERIFIED",
+      "description": "The device shall keep its BLE service (Improv provisioning and the BLE player transport) advertising and connectable while a wss session is live, and shall serve a BLE central and a wss client concurrently. Memory budgets shall hold both at once: making the radios mutually exclusive (tearing down the BLE controller for a wss session, or refusing wss while BLE is up) is not an allowed memory-reduction strategy. Dropping the vestigial post-provisioning BLE link when a wss client first appears is permitted, provided the device keeps advertising and accepts a new central during the session. Product decision, 2026-10-19.",
+      "evidence": [
+        {
+          "name": "reachability_test::ble_and_wss_coexist",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/sysmode:reachability_test"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "simulation",
+      "satisfies": [
+        "UN-5",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "firmware"
+      ],
+      "implemented_in": [],
+      "verified_in": [
+        {
+          "ids": [
+            "PR-38"
+          ],
+          "relation": "verifies",
+          "path": "firmware/sysmode/tests/reachability.rs",
+          "line": 85,
+          "symbol": "fn ble_and_wss_coexist"
+        }
+      ]
     }
   ],
   "mitigations": [
@@ -7003,6 +7043,20 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-38",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "no-implementation",
+      "entity": "PR-38",
+      "message": "no source annotation implements it",
+      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
