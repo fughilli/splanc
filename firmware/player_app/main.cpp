@@ -364,6 +364,9 @@ static const char *kLegacyPlaybackPath = "/lfs/play.pb";
 // decode path (lm_player_handle) as a live upload, after map+topology.
 static const char *kEffectPath = "/lfs/fx.pb";
 static const char *kEffectSelPath = "/lfs/fx_sel.pb";
+// The fixture's room pose: the raw set_fixture_pose frame (multi-fixture), replayed
+// after the map so the room-frame cache derives from the restored positions.
+static const char *kPosePath = "/lfs/pose.pb";
 static bool fs_ok = false;
 // Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
 // frames for persistence — see lm_envelope_arm.
@@ -375,6 +378,8 @@ static const int32_t kArmSubmitEffect = 21;
 static const int32_t kArmSetEffect = 22;
 static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
+static const int32_t kArmWelcome = 1;
+static const int32_t kArmSetFixturePose = 37;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -797,6 +802,9 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     // selection/uniforms (they belong to the old effect).
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
+  } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
+    // A validated room pose (or a clear): persist the frame unless commit=false.
+    if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
   } else if (reply_arm == kArmPlaybackState &&
              (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
     // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
@@ -868,6 +876,7 @@ static void fs_begin_and_restore() {
   // lm_fx_active once these replay through the same decode path.
   fs_replay(kEffectPath);
   fs_replay(kEffectSelPath);
+  fs_replay(kPosePath);
 }
 
 // Derive a DNS-label-safe hostname from the display name: keep [A-Za-z0-9],
@@ -1465,6 +1474,14 @@ static uint32_t render_once() {
     fx_last_ms = now;
     float dt_s = (float)dt_ms / 1000.0f;
     fx_time_s += dt_s;
+    // A shared time base (set_time_base, multi-fixture) pins effect time to a
+    // common epoch in OUR clock: time = (now - epoch) / 1000, held at 0 before the
+    // epoch, so fixtures the host synced animate in step. Runtime only.
+    int64_t tb_epoch = 0;
+    if (lm_time_base(&tb_epoch)) {
+      int64_t since = (int64_t)now - tb_epoch;
+      fx_time_s = since > 0 ? (float)since / 1000.0f : 0.0f;
+    }
     // TODO(hw): arm an esp_timer/systimer one-shot here for a frame-relative
     // wall-time deadline that calls lm_fx_set_deadline(true); the VM already
     // polls that flag and unwinds to a timeout branch. lm_fx_update clears the
@@ -2337,6 +2354,9 @@ void setup() {
 #endif
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();
+#if defined(LM_NETSTACK)
+  lm_mode_boot();  // memory-mode tracking starts from what the replay restored
+#endif
   // Bring up the color-correction LUT (from flash if present, else the default)
   // before the render task starts, so the first frame is already corrected.
   color_correction_begin();
@@ -2530,6 +2550,44 @@ static void provisioning_poll() {
 }
 #endif  // !LM_NETSTACK
 
+#if defined(LM_NETSTACK)
+// Track the device through the memory-mode model (docs/design/memory-regions.md), LOG-ONLY:
+// each loop hands lm_mode_observe what the transport can see; the player side adds its own
+// facts. A transition the model refuses is logged ONCE per (state, event, reason) - the
+// counters in LM_MODE keep the full tally for a JTAG read - and the firmware's behaviour is
+// unchanged. Cheap when nothing changed (a few compares).
+static void mode_observe() {
+  // Every 10 ms, not every 1 ms loop, and a try-lock, never a wait: render_task holds the
+  // player mutex for a whole frame, and loopTask (same priority) blocking on it every
+  // tick cost ~3k cycles per tick inside long frames (fx_bench addM +43k/frame). The
+  // inputs are levels, not edges, and change on 100 ms+ scales, so a skipped or busy
+  // loop just observes on a later one.
+  static uint32_t last_ms = 0;
+  uint32_t now = millis();
+  if (now - last_ms < 10) return;
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  last_ms = now;
+  LmNetObserved net = {netstack_creds_ready(), netstack_leased(), improv_ble_central_connected(),
+                       netstack_ws_open(), upload_active};
+  LmModeRefusal r[4];
+  uint32_t n = lm_mode_observe(&net, (int64_t)now, r, 4);
+  xSemaphoreGive(player_mutex);
+  static uint32_t logged[32];
+  static uint8_t nlogged = 0;
+  for (uint32_t i = 0; i < n && i < 4; i++) {
+    uint32_t key = r[i].state << 16 | r[i].event << 8 | r[i].why;
+    bool seen = false;
+    for (uint8_t k = 0; k < nlogged; k++) seen |= logged[k] == key;
+    if (seen || nlogged >= sizeof logged / sizeof logged[0]) continue;
+    logged[nlogged++] = key;
+    // state bits: 0-1 wifi (0 unprov, 1 scan, 2 joined), 2 ble central, 3 wss,
+    // 4-6 activity (0 idle, 1 mapping, 2 effect, 3 +video, 4 upload), 7 map.
+    Log().printf("[mode] model refused event=%u why=%u in state=0x%02x (log-only)\n",
+                 (unsigned)r[i].event, (unsigned)r[i].why, (unsigned)r[i].state);
+  }
+}
+#endif
+
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
@@ -2565,6 +2623,7 @@ void loop() {
   }
 #else
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+  mode_observe();
 #endif
   if (fs_ok) {
     flush_fx_sel_save();
@@ -2598,13 +2657,16 @@ void loop() {
 #else
     // tls=<small-region peak>/<size> slots=<peak>/<n> big=<largest request> fb=<fallbacks>:
     // the TLS region's high-waters, to size it (tls_region.h).
+    // mode=: the memory-mode tracker (state code, accepted / refused / unmodeled events).
     const TlsRegionStats &tls = tls_region_stats();
     Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u rekeys=%u "
-                 "tls=%u/%u slots=%u/%u big=%u fb=%u\n",
+                 "tls=%u/%u slots=%u/%u big=%u fb=%u mode=0x%02x/%u/%u/%u\n",
                  map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
                  (unsigned)esp_get_minimum_free_heap_size(), (unsigned)netstack_rekey_count(),
                  (unsigned)tls.small_peak, (unsigned)tls.small_size, (unsigned)tls.slots_peak,
-                 (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks);
+                 (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks,
+                 (unsigned)LM_MODE.state, (unsigned)LM_MODE.accepted, (unsigned)LM_MODE.refused,
+                 (unsigned)LM_MODE.unmodeled);
 #endif
   }
   delay(1);

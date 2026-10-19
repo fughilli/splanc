@@ -302,6 +302,16 @@ static mut FX_F_LEDS: u32 = 0;
 // per-LED shade sweep copies them (no soft-float per LED) — FUG-122.
 static mut FX_F_TIME_FIX: i32 = 0;
 static mut FX_F_DT_FIX: i32 = 0;
+/// The whole shade() Frame, built ONCE per frame by lm_fx_update. Building it per
+/// LED (`FxFrame { .., ..Default::default() }`) costs a ROM memset of its ~70-byte
+/// tail on every LED once the struct outgrew LLVM's inline-zeroing threshold (the
+/// room fields did it: +~230 cycles/LED on fx_bench), so shade() borrows this.
+static mut FX_SHADE_FRAME: Option<FxFrame> = None;
+/// Per-LED shade() scratch, reused across LEDs: lm_fx_shade overwrites every field
+/// the loaded program can read (the base fields always, the fixed / room mirrors
+/// when FX_USES_CTXFIX / FX_USES_ROOM say it reads them), so it needn't re-zero the
+/// struct per LED. Reset on lm_fx_load so no previous effect's values leak.
+static mut FX_SHADE_LED: Option<FxLed> = None;
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
@@ -446,6 +456,26 @@ static mut FX_USES_CTXFIX: bool = false;
 /// True when the loaded effect reads `led.uv`. Effects that don't skip the
 /// per-LED soft-float uv projection entirely — a chunk of the framing floor.
 static mut FX_USES_UV: bool = false;
+/// True when the loaded effect reads the room frame (`led.room`, `room.min/max`).
+static mut FX_USES_ROOM: bool = false;
+
+// -- room frame (multi-fixture, set_fixture_pose) -----------------------------
+/// Each LED's ROOM-frame position (pose applied to FX_LED_POS), in integer
+/// MILLIMETRES: 6 B/LED (3 KB at 512 LEDs) instead of 12 B as f32 — +-32.7 m at
+/// 1 mm covers any room. Rebuilt off the render path's lm_fx_update when the
+/// pose or the map changes; only read while posed (unposed, led.room == led.pos).
+static mut FX_LED_ROOM: [[i16; 3]; FX_TOPO_CAP] = [[0; 3]; FX_TOPO_CAP];
+/// The cache matches the current map + pose (FX_ROOM_GEN = the pose gen it used).
+static mut FX_ROOM_READY: bool = false;
+static mut FX_ROOM_GEN: u32 = 0;
+/// A pose is set (Frame::room_posed).
+static mut FX_ROOM_POSED: bool = false;
+/// room.min / room.max (room frame, m) and their Q16.16 mirrors — the host's
+/// room box from the pose when given, else this fixture's own (posed) box.
+static mut FX_ROOM_MIN: [f32; 3] = [0.0; 3];
+static mut FX_ROOM_MAX: [f32; 3] = [0.0; 3];
+static mut FX_ROOM_MIN_FIX: [i32; 3] = [0; 3];
+static mut FX_ROOM_MAX_FIX: [i32; 3] = [0; 3];
 
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
@@ -674,6 +704,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         *addr_of_mut!(GEOM) = None;
         FX_TOPO_READY = false;
         FX_UV_READY = false;
+        FX_ROOM_READY = false;
         for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
             *e = FxLedTopo::NONE;
         }
@@ -1130,6 +1161,7 @@ pub unsafe extern "C" fn lm_player_handle(
         // trip — a malformed/oversized frame is silently dropped.
         Some(ARM_SET_TEXTURE) => {
             handle_set_texture(frame);
+            LAST_TEXTURE_MS = Some(recv_ms);
             return 0;
         }
         // Everything else is read IN PLACE from the frame (pbview): no
@@ -1161,6 +1193,7 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     *addr_of_mut!(MAP_META) = None;
     reset_topo_cache();
     FX_UV_READY = false; // positions changed → uv bounds stale
+    FX_ROOM_READY = false; // ...and so are the room-frame positions
     // Nothing from a previous map may survive into this one.
     // (Filled in place: a whole-array assignment would build the temporary on
     // the task stack.)
@@ -1552,7 +1585,7 @@ const ARM_LIST_EFFECTS: u32 = 36;
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
 /// infer them from fw_version.
 pub const FEATURES: &[&str] =
-    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects"];
+    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects", "fixture_pose", "time_base"];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through
@@ -2440,6 +2473,113 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
 /// via [`FX_TOPO_READY`] unless a map/topology upload invalidated the cache.
 /// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
 /// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
+/// Millimetres -> Q16.16 metres, integer-only.
+fn mm_q16(v: i16) -> i32 {
+    ((v as i64 * 65536) / 1000) as i32
+}
+
+/// Rebuild the room-frame LED cache + room box from the stored map and the
+/// player's pose: room = t + R(q) * (scale * pos). Unposed, only the box is
+/// derived (this fixture's own map box), since led.room then reads led.pos.
+unsafe fn fx_rebuild_room() {
+    FX_ROOM_READY = true;
+    let p = player();
+    FX_ROOM_GEN = p.fixture_pose_gen();
+    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(FX_TOPO_CAP);
+    let pos = &*addr_of!(FX_LED_POS);
+    let pose = p.fixture_pose();
+    FX_ROOM_POSED = pose.is_some();
+    // Rotation matrix from the (normalized) quaternion; identity when unposed.
+    let (t, q, sc) = match pose {
+        Some(ps) => (
+            [ps.r#translation[0], ps.r#translation[1], ps.r#translation[2]],
+            [ps.r#rotation[0], ps.r#rotation[1], ps.r#rotation[2], ps.r#rotation[3]],
+            ps.r#scale,
+        ),
+        None => ([0.0; 3], [0.0, 0.0, 0.0, 1.0], 1.0),
+    };
+    let [x, y, z, w] = q;
+    let r = [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+    ];
+    let mut mn = [f32::INFINITY; 3];
+    let mut mx = [f32::NEG_INFINITY; 3];
+    let room = &mut *addr_of_mut!(FX_LED_ROOM);
+    for i in 0..len {
+        let v = pos[i];
+        let mut o = [0.0f32; 3];
+        for (k, ok) in o.iter_mut().enumerate() {
+            *ok = t[k] + sc * (r[k][0] * v[0] + r[k][1] * v[1] + r[k][2] * v[2]);
+        }
+        if FX_ROOM_POSED {
+            room[i] = [mm_i16(o[0]), mm_i16(o[1]), mm_i16(o[2])];
+        }
+        if led_mapped(i) {
+            for k in 0..3 {
+                mn[k] = mn[k].min(o[k]);
+                mx[k] = mx[k].max(o[k]);
+            }
+        }
+    }
+    // The host's room box (the union over every fixture) wins over our own.
+    if let Some(ps) = pose.filter(|ps| ps.r#room_min.len() == 3 && ps.r#room_max.len() == 3) {
+        mn.copy_from_slice(&ps.r#room_min);
+        mx.copy_from_slice(&ps.r#room_max);
+    }
+    for k in 0..3 {
+        FX_ROOM_MIN[k] = if mn[k].is_finite() { mn[k] } else { 0.0 };
+        FX_ROOM_MAX[k] = if mx[k].is_finite() { mx[k] } else { 0.0 };
+        FX_ROOM_MIN_FIX[k] = q16_16(FX_ROOM_MIN[k]);
+        FX_ROOM_MAX_FIX[k] = q16_16(FX_ROOM_MAX[k]);
+    }
+}
+
+/// Metres -> clamped integer millimetres (the FX_LED_ROOM storage).
+fn mm_i16(m: f32) -> i16 {
+    // Round half away from zero (no_std: no f32::round); `as` saturates.
+    let v = m * 1000.0;
+    (if v >= 0.0 { v + 0.5 } else { v - 0.5 }) as i16
+}
+
+/// The room pose's change generation (set_fixture_pose), polled after each
+/// message like lm_color_correction_gen: on a bump the firmware persists the
+/// request (when `lm_fixture_pose_commit`).
+///
+/// # Safety
+/// Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_gen() -> u32 {
+    player().fixture_pose_gen()
+}
+
+/// Whether the last set_fixture_pose asked to be persisted (commit, unset = true).
+///
+/// # Safety
+/// Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fixture_pose_commit() -> bool {
+    player().fixture_pose_commit()
+}
+
+/// The shared effect-time epoch (set_time_base, device-clock ms): writes it to
+/// `*epoch_ms` and returns true when one is set. The render loop then derives the
+/// effect's `time` as (now - epoch) / 1000 so fixtures animate in step.
+///
+/// # Safety
+/// `epoch_ms` points to a writable i64; under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
+    match player().time_base_ms() {
+        Some(t) if !epoch_ms.is_null() => {
+            *epoch_ms = t;
+            true
+        }
+        _ => false,
+    }
+}
+
 unsafe fn fx_rebuild_topo() {
     // UV bounds for led.uv — map-derived (independent of topology). Gated by its
     // OWN flag so a topology upload doesn't recompute it and, crucially, a map
@@ -2696,6 +2836,9 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     FX_USES_CTXFIX = prog.uses_ctxfix();
     // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
     FX_USES_UV = prog.uses_uv();
+    FX_USES_ROOM = prog.uses_room();
+    *addr_of_mut!(FX_SHADE_FRAME) = None;
+    *addr_of_mut!(FX_SHADE_LED) = None;
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2931,6 +3074,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     let Ok(prog) = Program::parse(bytes) else {
         return false;
     };
+    // The room frame follows the map and the pose: rebuild when either changed
+    // (only for effects that read it — the rest never pay the sweep).
+    if FX_USES_ROOM && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
+        fx_rebuild_room();
+    }
     let f = FxFrame {
         time: time_s,
         dt: dt_s,
@@ -2939,6 +3087,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         // Q16.16 mirrors for LoadCtxFix (computed once per frame, not per LED).
         time_fix: q16_16(time_s),
         dt_fix: q16_16(dt_s),
+        room_posed: FX_ROOM_POSED,
+        room_min: FX_ROOM_MIN,
+        room_max: FX_ROOM_MAX,
+        room_min_fix: FX_ROOM_MIN_FIX,
+        room_max_fix: FX_ROOM_MAX_FIX,
         ..Default::default()
     };
     // Capture the frame context so the per-LED shade() sweep sees the same
@@ -2952,6 +3105,7 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     // an all-float shader pays nothing at all (FUG-122).
     FX_F_TIME_FIX = q16_16(time_s);
     FX_F_DT_FIX = q16_16(dt_s);
+    *addr_of_mut!(FX_SHADE_FRAME) = Some(f);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
@@ -3001,19 +3155,11 @@ pub unsafe extern "C" fn lm_fx_shade(
     let Ok(prog) = Program::parse(bytes) else {
         return false;
     };
-    // Reuse the frame context captured by lm_fx_update so `time`/`dt`/`frame`
-    // are the same as update() — shaders animate off `time` in shade().
-    let f = FxFrame {
-        time: FX_F_TIME,
-        dt: FX_F_DT,
-        frame: FX_F_FRAME,
-        led_count: FX_F_LEDS,
-        // Cheap int copies of the once-per-frame conversions — NO per-LED
-        // soft-float (FUG-122; this was the fx_bench overhead regression).
-        time_fix: FX_F_TIME_FIX,
-        dt_fix: FX_F_DT_FIX,
-        ..Default::default()
-    };
+    // Borrow the frame context lm_fx_update built for this frame, so `time`/`dt`/
+    // `frame` are the same as update() (shaders animate off `time` in shade()) and
+    // nothing frame-wide is rebuilt per LED. Before the first update() of a fresh
+    // effect, a zero Frame (the render loop always updates first).
+    let f: &FxFrame = (*addr_of_mut!(FX_SHADE_FRAME)).get_or_insert_with(FxFrame::default);
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
@@ -3029,20 +3175,25 @@ pub unsafe extern "C" fn lm_fx_shade(
     } else {
         [0.0, 0.0]
     };
-    let mut led = FxLed {
-        pos: [x, y, z],
-        idx,
-        seg: t.seg as i32,
-        s: t.s,
-        branch: t.branch,
-        dist: t.dist,
-        uv,
-        ..Default::default()
-    };
+    // Overwrite the reused scratch field by field — no per-LED struct re-zero.
+    let led: &mut FxLed = (*addr_of_mut!(FX_SHADE_LED)).get_or_insert_with(FxLed::default);
+    led.pos = [x, y, z];
+    led.idx = idx;
+    led.seg = t.seg as i32;
+    led.s = t.s;
+    led.branch = t.branch;
+    led.dist = t.dist;
+    led.uv = uv;
     // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the loaded
     // effect actually reads them (FUG-122), so an all-float shader pays zero
     // per-LED overhead and the resident cache never grows. Positions come from
     // this frame's map fetch; uv/s/dist from the already-derived values.
+    if FX_USES_ROOM && FX_ROOM_POSED {
+        let mm = (*addr_of!(FX_LED_ROOM)).get(idx as usize).copied().unwrap_or([0; 3]);
+        led.room = [mm[0] as f32 * 0.001, mm[1] as f32 * 0.001, mm[2] as f32 * 0.001];
+        // mm -> Q16.16 metres in integer math: v * 65536 / 1000.
+        led.room_fix = [mm_q16(mm[0]), mm_q16(mm[1]), mm_q16(mm[2])];
+    }
     if FX_USES_CTXFIX {
         led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
         led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
@@ -3054,7 +3205,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
         let ((r, g, b), outcome, c): ((u8, u8, u8), Outcome, FxCounters) =
-            vm.run_shade_counted(&prog, &f, &led, &fx_budget());
+            vm.run_shade_counted(&prog, f, led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(c.instrs);
         if c.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = c.stack_max;
@@ -3066,7 +3217,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         }
         outcome
     } else {
-        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
+        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, f, led, &fx_budget());
         if outcome == Outcome::Ok {
             *rgb = r;
             *rgb.add(1) = g;
@@ -3239,4 +3390,142 @@ pub unsafe extern "C" fn lm_perf_build_report(out: *mut u8, out_cap: usize) -> i
     }
     let reply = build_perf_report();
     encode_reply(&reply, out, out_cap)
+}
+
+// -- Memory-mode tracking (docs/design/memory-regions.md, integration step 1) --
+//
+// The firmware's mode switches are checked against the sysmode model, LOG-ONLY:
+// the loop hands lm_mode_observe a snapshot of what it sees; the tracker derives
+// the model events and applies them through sysmode::step. A refusal (the device
+// took a transition the model calls unreachable) is reported to the caller to
+// log once per kind, counted in LM_MODE, and the axis is forced so tracking
+// continues. LM_MODE is a fixed-layout static a JTAG watcher can read without
+// disturbing the device (no network reporting).
+
+use ledmapper_sysmode::observe::{event_code, refuse_code, state_code, Observed, Stats, Tracker};
+use ledmapper_sysmode::SysMode;
+
+/// Video is "streaming" while a set_texture frame arrived within this long.
+const VIDEO_QUIET_MS: i64 = 2000;
+static mut LAST_TEXTURE_MS: Option<i64> = None;
+
+static mut MODE: Tracker = Tracker::new(SysMode::BOOT_UNPROVISIONED);
+
+/// The tracker's counters, mirrored after every observation (fixed C layout;
+/// read over JTAG by symbol, see ledmapper_sysmode::observe::Stats).
+#[no_mangle]
+pub static mut LM_MODE: Stats = Stats {
+    polls: 0,
+    accepted: 0,
+    refused: 0,
+    refused_by_kind: [0; 4],
+    unmodeled: 0,
+    state: 0,
+    last_refusal: 0,
+};
+
+/// One refused (or unmodeled) transition, for the caller to log:
+/// `state` = sysmode state_code before it, `event` = index in Event::ALL (0xff
+/// = a change no event models), `why` = refuse code (0xff = unmodeled).
+#[repr(C)]
+pub struct LmModeRefusal {
+    pub state: u32,
+    pub event: u32,
+    pub why: u32,
+}
+
+/// The network-side facts only the transport knows.
+#[repr(C)]
+pub struct LmNetObserved {
+    pub creds: bool,
+    pub leased: bool,
+    pub ble_connected: bool,
+    pub wss: bool,
+    pub upload: bool,
+}
+
+/// Start tracking from the boot state, after fs_replay restored (or didn't) a
+/// map and an effect. WiFi credentials are RAM-only, so boot is unprovisioned.
+///
+/// # Safety
+/// Single firmware thread (loopTask), after [`lm_player_init`].
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_boot() {
+    let mut boot = SysMode::BOOT_UNPROVISIONED;
+    if lm_map_len() > 0 {
+        boot.map = true;
+    }
+    if lm_fx_loaded() {
+        boot.activity = ledmapper_sysmode::Activity::Effect { video: false };
+    }
+    (*addr_of_mut!(MODE)).reset(boot);
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+}
+
+/// Observe the device now (`now_ms`: millis) and track it through the model.
+/// Writes up to `cap` refusals into `out` and returns how many occurred (may
+/// exceed `cap`). Cheap: a handful of compares when nothing changed.
+///
+/// # Safety
+/// `net` points to a valid struct; `out` to `cap` writable entries (or is null
+/// with cap 0). Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_observe(
+    net: *const LmNetObserved,
+    now_ms: i64,
+    out: *mut LmModeRefusal,
+    cap: usize,
+) -> u32 {
+    if net.is_null() {
+        return 0;
+    }
+    let n = &*net;
+    let p = player();
+    let effect = lm_fx_loaded();
+    let video = effect
+        && n.wss
+        && LAST_TEXTURE_MS.is_some_and(|t| now_ms.wrapping_sub(t) < VIDEO_QUIET_MS);
+    let o = Observed {
+        creds: n.creds,
+        leased: n.leased,
+        ble_connected: n.ble_connected,
+        wss: n.wss,
+        upload: n.upload,
+        mapping: p.pattern_timing().is_some() || p.counting_len() > 0,
+        effect,
+        video,
+        map: lm_map_len() > 0,
+    };
+    let mut count = 0u32;
+    (*addr_of_mut!(MODE)).observe(o, |r| {
+        if (count as usize) < cap && !out.is_null() {
+            *out.add(count as usize) = LmModeRefusal {
+                state: state_code(r.from),
+                event: r.event.map_or(0xff, event_code),
+                why: r.why.map_or(0xff, refuse_code),
+            };
+        }
+        count += 1;
+    });
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+    count
+}
+
+/// Apply one explicit model event (index in `ledmapper_sysmode::Event::ALL`).
+/// Returns 0 if the model accepts it, 1 + the refuse code if it refuses, -1 for
+/// an unknown event. Log-only like lm_mode_observe: nothing is gated on it yet.
+///
+/// # Safety
+/// Single firmware thread.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
+    let Some(&e) = ledmapper_sysmode::Event::ALL.get(event as usize) else {
+        return -1;
+    };
+    let r = (*addr_of_mut!(MODE)).event(e);
+    *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
+    match r {
+        Ok(_) => 0,
+        Err(why) => 1 + refuse_code(why) as i32,
+    }
 }
