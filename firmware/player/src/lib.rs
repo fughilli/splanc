@@ -325,6 +325,11 @@ pub struct Player {
     /// hook. The firmware polls `output_brightness_gen` to notice a change.
     output_brightness: f32,
     output_brightness_gen: u32,
+    /// Global FX deck crossfade: 0.0 (all deck A) .. 1.0 (all deck B), and the
+    /// blend colour space (0 = linear RGB, 1 = HSV). RUNTIME-ONLY like brightness
+    /// (a reboot returns to 0.0 / RGB); the fx layer latches it once per frame.
+    crossfade: f32,
+    crossfade_mode: u32,
     /// Per-channel hardware output config (GPIO + wire color order), configurable
     /// from the Hardware Setup page via `set_hardware_config` and reported by
     /// `hardware_config_state`. `hw_gpio[ch] < 0` means "not yet seeded" — the
@@ -398,6 +403,8 @@ impl Player {
             color_correction_commit: true,
             output_brightness: 1.0,
             output_brightness_gen: 0,
+            crossfade: 0.0,
+            crossfade_mode: 0,
             hw_gpio: [-1; HW_CHANNELS],
             hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
             hw_config_gen: 0,
@@ -527,6 +534,14 @@ impl Player {
             // Global output brightness: store the clamped scale and bump the gen.
             // The firmware polls the gen (like color correction) to apply it to
             // the strip write. Runtime-only, so nothing is persisted.
+            // FX deck crossfade: store the clamped position + mode (runtime only);
+            // echoed in welcome for UI hydration.
+            CMsg::SetCrossfade(m) => {
+                let pos = m.position();
+                self.crossfade = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
+                self.crossfade_mode = m.mode().min(1);
+                Some(self.welcome())
+            }
             CMsg::SetBrightness(m) => {
                 self.output_brightness = (m.brightness() as f32).clamp(0.0, 1.0);
                 self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
@@ -554,7 +569,12 @@ impl Player {
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
             | CMsg::GetEffectUniforms(_)
-            | CMsg::ListEffects(_) => {
+            | CMsg::ListEffects(_)
+            | CMsg::SaveKeypoint(_)
+            | CMsg::DeleteKeypoint(_)
+            | CMsg::ListKeypoints(_)
+            | CMsg::GetKeypoint(_)
+            | CMsg::BlendKeypoints(_) => {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
@@ -978,6 +998,16 @@ impl Player {
     }
 
     /// The active global output brightness in 0.0..=1.0 (1.0 = unattenuated).
+    /// The FX deck crossfade position (0.0 = all deck A .. 1.0 = all deck B).
+    pub fn crossfade(&self) -> f32 {
+        self.crossfade
+    }
+
+    /// The FX deck crossfade colour space (0 = linear RGB, 1 = HSV).
+    pub fn crossfade_mode(&self) -> u32 {
+        self.crossfade_mode
+    }
+
     pub fn output_brightness(&self) -> f32 {
         self.output_brightness
     }
@@ -994,6 +1024,8 @@ impl Player {
             ..Default::default()
         };
         w.set_brightness(self.output_brightness as f64);
+        w.set_crossfade(self.crossfade as f64);
+        w.set_crossfade_mode(self.crossfade_mode);
         if let Some(t) = self.time_base_ms {
             w.set_time_base_ms(t);
         }

@@ -57,8 +57,12 @@ pub enum Activity {
     /// Player core).
     Mapping,
     /// A loaded fx VM effect; `video` = set_texture frames are streaming (the
-    /// delta buffer FX_TEX_PREV is live only then).
-    Effect { video: bool },
+    /// delta buffer is live only then); `deck_b` = a second effect is loaded on
+    /// FX deck B (docs/design/uniform-keypoints.md). Video and deck B share ONE
+    /// aux region (ffi.rs FxAux), so they are mutually exclusive: loading deck B
+    /// ends a stream, and a stream can't start while deck B is loaded. A
+    /// deck-B-only show (deck A cleared) is over-approximated as an effect state.
+    Effect { video: bool, deck_b: bool },
     /// A sharded map/topology upload being decoded into the map store.
     Upload,
 }
@@ -94,6 +98,9 @@ pub enum Event {
     MappingStop,
     FxLoad,
     FxClear,
+    /// An effect loaded onto / cleared from FX deck B.
+    DeckBLoad,
+    DeckBClear,
     /// The first set_texture frame of a stream / the stream going quiet.
     VideoStart,
     VideoStop,
@@ -103,7 +110,7 @@ pub enum Event {
 }
 
 impl Event {
-    pub const ALL: [Event; 17] = [
+    pub const ALL: [Event; 19] = [
         Event::BleConnect,
         Event::BleDisconnect,
         Event::ImprovCredentials,
@@ -116,6 +123,8 @@ impl Event {
         Event::MappingStop,
         Event::FxLoad,
         Event::FxClear,
+        Event::DeckBLoad,
+        Event::DeckBClear,
         Event::VideoStart,
         Event::VideoStop,
         Event::UploadBegin,
@@ -136,6 +145,8 @@ pub enum Refuse {
     NotJoined,
     /// Effects/video need... an effect; video needs the wss transport.
     NoEffect,
+    /// The aux region is held by the other of video / deck B.
+    AuxBusy,
 }
 
 impl SysMode {
@@ -155,7 +166,7 @@ impl SysMode {
         wifi: Wifi::Unprovisioned,
         ble: Ble::Advertising,
         wss: false,
-        activity: Activity::Effect { video: false },
+        activity: Activity::Effect { video: false, deck_b: false },
         map: true,
     };
 
@@ -251,28 +262,48 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
                 // Exclusive of an upload: the upload owns the activity memory.
                 return Err(Refuse::NotApplicable);
             }
-            n.activity = A::Effect { video: false };
+            // A new deck-A effect ends a video stream; a loaded deck B stays.
+            let deck_b = matches!(s.activity, A::Effect { deck_b: true, .. });
+            n.activity = A::Effect { video: false, deck_b };
         }
         Event::FxClear => {
-            if !matches!(s.activity, A::Effect { .. }) {
-                return Err(Refuse::NoEffect);
+            n.activity = match s.activity {
+                // Deck B keeps showing (video drove deck A, so it stops).
+                A::Effect { deck_b: true, .. } => A::Effect { video: false, deck_b: true },
+                A::Effect { .. } => A::Idle,
+                _ => return Err(Refuse::NoEffect),
+            };
+        }
+        Event::DeckBLoad => {
+            need_transport(s)?;
+            if s.activity == A::Upload {
+                return Err(Refuse::NotApplicable);
             }
-            n.activity = A::Idle;
+            // Deck B claims the aux region: a running video stream ends.
+            n.activity = A::Effect { video: false, deck_b: true };
+        }
+        Event::DeckBClear => {
+            if !matches!(s.activity, A::Effect { deck_b: true, .. }) {
+                return Err(Refuse::NotApplicable);
+            }
+            n.activity = A::Effect { video: false, deck_b: false };
         }
         Event::VideoStart => {
             if !s.wss {
                 return Err(Refuse::NoTransport); // 8 KB frames ride wss only
             }
-            if s.activity != (A::Effect { video: false }) {
-                return Err(Refuse::NoEffect);
+            match s.activity {
+                A::Effect { video: false, deck_b: false } => {}
+                A::Effect { deck_b: true, .. } => return Err(Refuse::AuxBusy),
+                _ => return Err(Refuse::NoEffect),
             }
-            n.activity = A::Effect { video: true };
+            n.activity = A::Effect { video: true, deck_b: false };
         }
         Event::VideoStop => {
-            if s.activity != (A::Effect { video: true }) {
+            if !matches!(s.activity, A::Effect { video: true, .. }) {
                 return Err(Refuse::NotApplicable);
             }
-            n.activity = A::Effect { video: false };
+            n.activity = A::Effect { video: false, deck_b: false };
         }
         Event::UploadBegin => {
             need_transport(s)?;
@@ -307,8 +338,8 @@ fn close_wss(mut n: SysMode) -> SysMode {
     n.wss = false;
     // Video frames ride wss only: the stream ends with the session even if a
     // BLE central is still connected (found by the reachability test).
-    if n.activity == (Activity::Effect { video: true }) {
-        n.activity = Activity::Effect { video: false };
+    if let Activity::Effect { video: true, deck_b } = n.activity {
+        n.activity = Activity::Effect { video: false, deck_b };
     }
     if !n.transport() {
         n = drop_transport(n);
@@ -321,7 +352,7 @@ fn close_wss(mut n: SysMode) -> SysMode {
 fn drop_transport(mut n: SysMode) -> SysMode {
     n.activity = match n.activity {
         Activity::Upload => Activity::Idle,
-        Activity::Effect { .. } => Activity::Effect { video: false },
+        Activity::Effect { deck_b, .. } => Activity::Effect { video: false, deck_b },
         a => a,
     };
     n
@@ -373,15 +404,17 @@ pub mod cost {
     pub const MAP_STORE_STATIC: usize = 12_288 + 10_240 + 6_144 + 32 + 3_072;
 
     // -- activity -------------------------------------------------------------------
-    /// The loaded fx VM: FX_ARENA 24,576 + FX_VM 5,120 + FX_BYTES 4,096 + JIT
-    /// (g_jit_region 2,048 + FX_JIT_TARGETS 1,025 + FX_JIT_CONSTS 256 +
-    /// FX_JIT_PLANS 80 + FX_JIT_BLOCKS 64) + tex_comp LUT 1,024 + OSC_TABLE 900
-    /// + OSC_SHADOW 512 (nm).
+    /// The loaded fx VM (deck A): FX_ARENA 24,576 (shared by both decks) + DECK_A
+    /// 11,436 (its .fxb 4,096 + VM 5,120 + keypoint blend state ~2.1 K + id) +
+    /// JIT (g_jit_region 2,048 + FX_JIT_TARGETS 1,025 + FX_JIT_CONSTS 256 +
+    /// FX_JIT_PLANS 80 + FX_JIT_BLOCKS 64) + tex_comp LUT 1,024 + OSC_TABLE 900 +
+    /// OSC_SHADOW 512 + the keypoint record buffer KP_IO 1,130 (nm, fx-keypoints).
     pub const EFFECT_STATIC: usize =
-        24_576 + 5_120 + 4_096 + (2_048 + 1_025 + 256 + 80 + 64) + 1_024 + 900 + 512;
-    /// The set_texture delta buffer FX_TEX_PREV (nm), live only while video
-    /// streams.
-    pub const VIDEO_STATIC: usize = 8_192;
+        24_576 + 11_436 + (2_048 + 1_025 + 256 + 80 + 64) + 1_024 + 900 + 512 + 1_130;
+    /// The aux region FX_AUX (nm): EITHER the set_texture delta buffer (8,192,
+    /// live while video streams) OR FX deck B (a whole deck, 11,436) — one
+    /// union, so the two cost max(), not sum().
+    pub const AUX_STATIC: usize = 11_436;
     /// A map/topology upload streams windows to flash and decodes off flash on
     /// loopTask's (statically sized) stack; the map store is rebuilt in place.
     /// No RAM beyond the map store it fills.
@@ -394,7 +427,14 @@ pub mod cost {
         + SCAN_STATIC
         + MAP_STORE_STATIC
         + EFFECT_STATIC
-        + VIDEO_STATIC;
+        + AUX_STATIC;
+
+    /// [`ALL_MODE_STATICS`] on the image [`MIN_FREE_MEASURED`] was measured on
+    /// (#262). Statics added since come out of that free heap, so the budget is
+    /// fixed by the old figure (growing a static must shrink the headroom, not
+    /// grow the budget).
+    pub const MEASURED_STATICS: usize =
+        7_388 + 8_208 + 960 + 24_608 + (24_576 + 5_120 + 4_096 + 3_473 + 1_024 + 900 + 512) + 8_192;
 
     /// Measured minimum free heap on the `ram_audit` worst case after #262
     /// (device esp_get_minimum_free_heap_size, HITL rig-2, 2026-10-19).
@@ -408,8 +448,10 @@ pub mod cost {
 
     /// Statics added to ALL_MODE_STATICS since MIN_FREE_MEASURED was taken: the
     /// image that measured it had them as free heap, so they move from "free"
-    /// to "static" rather than adding RAM. ARENA_MEM 8 KB -> 12 KB (+4,096).
-    pub const STATICS_ADDED_SINCE_MEASURED: usize = 4_096;
+    /// to "static" rather than adding RAM — ARENA_MEM 8 -> 12 KB (+4,096, #291),
+    /// FX_LED_ROOM (+3,072, #280), deck B + keypoints (+6,594). Derived from
+    /// [`MEASURED_STATICS`] so a new static can't be forgotten here.
+    pub const STATICS_ADDED_SINCE_MEASURED: usize = ALL_MODE_STATICS - MEASURED_STATICS;
 
     /// The RAM that exists for mode-dependent components: what they occupy in
     /// today's layout at the measured minimum, plus what was still free there.
@@ -442,7 +484,12 @@ pub fn components(s: SysMode) -> impl Iterator<Item = Component> {
         c(s.wifi == Wifi::Scanning, "scan", SCAN_STATIC, false),
         c(s.map || s.activity == Activity::Upload, "map_store", MAP_STORE_STATIC, false),
         c(matches!(s.activity, Activity::Effect { .. }), "effect", EFFECT_STATIC, false),
-        c(s.activity == (Activity::Effect { video: true }), "video", VIDEO_STATIC, false),
+        c(
+            matches!(s.activity, Activity::Effect { video: true, .. } | Activity::Effect { deck_b: true, .. }),
+            "fx_aux",
+            AUX_STATIC,
+            false,
+        ),
         c(s.activity == Activity::Upload, "upload", UPLOAD, false),
     ];
     parts.into_iter().filter(|p| p.0).map(|p| p.1)

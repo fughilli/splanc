@@ -55,6 +55,21 @@ bool lm_time_base(int64_t *epoch_ms);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);
+// FX decks (docs/design/uniform-keypoints.md): the deck the effect arm just
+// handled targeted (0 = A, 1 = B). Only deck A's frames are persisted.
+uint32_t lm_fx_last_deck(void);
+// Uniform keypoints. The fx layer owns the record format; the app hands it a
+// littlefs store at boot. `name` is a short file name ("kp_<effect>.<n>"), not
+// NUL-terminated. read: bytes read into buf (cap), -1 when missing. write: an
+// atomic (power-loss-safe) whole-file write. remove: delete (missing is fine).
+typedef int32_t (*lm_kp_read_fn)(const uint8_t *name, size_t name_len, uint8_t *buf, size_t cap);
+typedef bool (*lm_kp_write_fn)(const uint8_t *name, size_t name_len, const uint8_t *buf, size_t len);
+typedef void (*lm_kp_remove_fn)(const uint8_t *name, size_t name_len);
+void lm_kp_set_store(lm_kp_read_fn read, lm_kp_write_fn write, lm_kp_remove_fn remove);
+// Whether the blend_keypoints just handled asked to persist its target (deck A),
+// and that target encoded as a set_uniforms ClientMessage frame (length, or <0).
+bool lm_kp_commit(void);
+int32_t lm_kp_commit_frame(uint8_t *out, size_t cap);
 // Copy the player's CURRENT display name into out (cap bytes). Returns the
 // length written, or -2 when it doesn't fit. The app polls this after each
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.
@@ -209,15 +224,19 @@ bool lm_map_led(uint32_t index, uint32_t *id, float xyz[3]);
 // cancelled shade returns false so the render loop holds last/black for that
 // LED instead of hanging.
 
-// Load (parse + hold) a .fxb, copying len bytes into a static buffer and
-// resetting VM state. False if it doesn't fit or fails to parse. Loading does
-// NOT activate — use lm_fx_set_active (the protocol arms do this).
+// Two decks (A, B) run concurrently and lm_fx_shade blends them by the
+// crossfade; the protocol arms address either deck. The functions below that
+// load / clear / activate / set uniforms act on DECK A (the persisted deck).
+//
+// Load (parse + hold) a .fxb onto deck A, copying len bytes into a static
+// buffer and resetting VM state. False if it doesn't fit or fails to parse.
+// Loading does NOT activate — use lm_fx_set_active (the protocol arms do this).
 bool lm_fx_load(const uint8_t *fxb, size_t len);
-// Clear the loaded effect (back to built-in playback/idle).
+// Clear deck A's effect (back to idle).
 void lm_fx_clear(void);
-// True when an effect is loaded AND active (the render loop gate).
+// True when ANY deck is loaded AND active (the render loop gate).
 bool lm_fx_active(void);
-// True when an effect is loaded at all (active or parked) — for persistence.
+// True when deck A has an effect loaded at all (active or parked).
 bool lm_fx_loaded(void);
 
 // Memory-mode tracking (docs/design/memory-regions.md), LOG-ONLY: the loop hands the
@@ -252,7 +271,7 @@ void lm_mode_boot(void);
 uint32_t lm_mode_observe(const LmNetObserved *net, int64_t now_ms, LmModeRefusal *out,
                          size_t cap);
 int32_t lm_mode_event(uint32_t event);
-// Activate (true) / park (false) the loaded effect.
+// Activate (true) / park (false) deck A's effect.
 void lm_fx_set_active(bool active);
 // Per-invocation instruction cap for update()/shade() (0 = default).
 void lm_fx_set_budget(uint32_t instructions);
@@ -263,7 +282,7 @@ void lm_fx_set_deadline(bool hit);
 // Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
 // timeout. For the rate-limited [fx] diagnostic log.
 uint32_t lm_fx_last_update_outcome(void);
-// Apply a uniform value (n = its width, 1..4) to the active VM.
+// Apply a uniform value (n = its width, 1..4) to deck A's VM.
 void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
 // Ingest one OSC datagram (from the UDP task) and drive the active effect's
 // uniforms from it. Returns the number of uniform writes applied (0 when no
@@ -274,14 +293,16 @@ uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
 // effect's manifest (unknown names fall back to slot index); false treats every
 // address as a raw slot number.
 void lm_osc_set_by_name(bool by_name);
-// Run update() once for this frame (clears the deadline flag first). False when
-// no effect is loaded. A cancelled update still returns true (partial state is
+// Run update() once for this frame on every active deck, advancing keypoint
+// morphs first (clears the deadline flag first, latches the crossfade). False
+// when no deck is loaded. A cancelled update still counts (partial state is
 // harmless).
 bool lm_fx_update(float time_s, float dt_s, uint32_t frame, uint32_t led_count);
-// Shade one LED at position (x,y,z) into rgb[3]. False when no effect is loaded
-// or the invocation was cancelled by a bounded-execution guard.
+// Shade one LED at position (x,y,z) into rgb[3]: each active deck, blended by
+// the crossfade (at an endpoint only that deck shades). False when no deck
+// produced a colour (nothing loaded, or a bounded-execution guard cancelled it).
 bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
-// Copy the active effect's uniform manifest into out (cap bytes). Returns the
+// Copy deck A's uniform manifest into out (cap bytes). Returns the
 // length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);
 // FUG-125 on-device JIT: enable/disable (takes effect on the next lm_fx_load;

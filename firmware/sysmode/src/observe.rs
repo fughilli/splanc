@@ -34,6 +34,8 @@ pub struct Observed {
     /// set_texture frames are streaming over the wss session (one arrived within
     /// the quiet period AND the session is up — frames ride wss only).
     pub video: bool,
+    /// An effect is loaded on FX deck B (it holds the aux region video needs).
+    pub deck_b: bool,
     /// A map is stored.
     pub map: bool,
 }
@@ -145,7 +147,9 @@ impl Tracker {
     fn count_refusal(&mut self, e: Option<Event>, why: Option<Refuse>) {
         self.stats.refused += 1;
         if let Some(w) = why {
-            self.stats.refused_by_kind[refuse_code(w) as usize] += 1;
+            // Four buckets (the JTAG-read layout is fixed); AuxBusy shares the
+            // last with NoEffect — `last_refusal` keeps the exact code.
+            self.stats.refused_by_kind[(refuse_code(w) as usize).min(3)] += 1;
         }
         self.note_last(e, why);
     }
@@ -179,8 +183,10 @@ fn observed_activity(o: Observed) -> Activity {
         Activity::Upload
     } else if o.mapping {
         Activity::Mapping
-    } else if o.effect {
-        Activity::Effect { video: o.video }
+    } else if o.effect || o.deck_b {
+        // Deck B and video share the aux region: deck B wins (the firmware drops
+        // set_texture while deck B is loaded).
+        Activity::Effect { video: o.video && !o.deck_b, deck_b: o.deck_b }
     } else {
         Activity::Idle
     }
@@ -222,8 +228,10 @@ fn next_event(s: SysMode, o: Observed, link_lost: &mut bool) -> Option<Next> {
             (_, Activity::Upload) => E::UploadBegin,
             (Activity::Mapping, _) => E::MappingStop,
             (_, Activity::Mapping) => E::MappingStart,
-            (Activity::Effect { .. }, Activity::Effect { video: true }) => E::VideoStart,
-            (Activity::Effect { .. }, Activity::Effect { video: false }) => E::VideoStop,
+            (Activity::Effect { deck_b: false, .. }, Activity::Effect { deck_b: true, .. }) => E::DeckBLoad,
+            (Activity::Effect { deck_b: true, .. }, Activity::Effect { deck_b: false, .. }) => E::DeckBClear,
+            (Activity::Effect { .. }, Activity::Effect { video: true, .. }) => E::VideoStart,
+            (Activity::Effect { .. }, Activity::Effect { video: false, .. }) => E::VideoStop,
             (Activity::Effect { .. }, _) => E::FxClear,
             (Activity::Idle, _) => E::FxLoad,
         }));
@@ -263,7 +271,8 @@ fn force(mut s: SysMode, o: Observed, e: Option<Event>) -> SysMode {
 
 /// Compact state encoding for the stats static / logs: bits 0-1 wifi
 /// (0 unprovisioned, 1 scanning, 2 joined), bit 2 BLE connected, bit 3 wss,
-/// bits 4-6 activity (0 idle, 1 mapping, 2 effect, 3 effect+video, 4 upload),
+/// bits 4-6 activity (0 idle, 1 mapping, 2 effect, 3 effect+video, 4 upload,
+/// 5 effect+deck B),
 /// bit 7 map.
 pub fn state_code(s: SysMode) -> u32 {
     let wifi = match s.wifi {
@@ -274,8 +283,9 @@ pub fn state_code(s: SysMode) -> u32 {
     let act = match s.activity {
         Activity::Idle => 0,
         Activity::Mapping => 1,
-        Activity::Effect { video: false } => 2,
-        Activity::Effect { video: true } => 3,
+        Activity::Effect { video: false, deck_b: false } => 2,
+        Activity::Effect { video: true, .. } => 3,
+        Activity::Effect { deck_b: true, .. } => 5,
         Activity::Upload => 4,
     };
     wifi | ((s.ble == Ble::Connected) as u32) << 2
@@ -295,5 +305,6 @@ pub fn refuse_code(r: Refuse) -> u32 {
         Refuse::NoTransport => 1,
         Refuse::NotJoined => 2,
         Refuse::NoEffect => 3,
+        Refuse::AuxBusy => 4,
     }
 }

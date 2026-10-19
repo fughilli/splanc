@@ -114,6 +114,7 @@ rust_static_library(
         "//firmware/arena",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
+        "//firmware/keypoint",
         "//firmware/mdns",
         "//firmware/osc",
         "//firmware/player:player_fw",
@@ -139,6 +140,7 @@ rust_library(
         "//firmware/arena",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
+        "//firmware/keypoint",
         "//firmware/mdns",
         "//firmware/osc",
         "//firmware/player",
@@ -182,6 +184,21 @@ rust_test(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         "@crates//:serde_json",
+    ],
+)
+
+# FX decks + crossfade + uniform keypoints (store hooks, blend, morph, stale
+# recall by name, the shared-arena split) through the C ABI. Own binary.
+rust_test(
+    name = "decks_keypoints_test",
+    srcs = ["tests/decks_keypoints.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
     ],
 )
 

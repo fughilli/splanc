@@ -26,8 +26,9 @@ use ledmapper_arena::Arena;
 use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
-    Program, Vm as FxVm,
+    Program, Rgb as Rgb8, Vm as FxVm,
 };
+use ledmapper_keypoint::{self as kp, Morph};
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
@@ -86,9 +87,86 @@ static mut PLAYER: Option<Player> = None;
 /// submit_effect rejects a larger upload with `effect_too_large`.
 const FX_MAX_BYTES: usize = 4 * 1024;
 
-static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
-static mut FX_LEN: usize = 0;
-static mut FX_VM: Option<FxVm> = None;
+// -- FX decks (docs/design/uniform-keypoints.md) -----------------------------
+// Two effects run at once — deck A (0) and deck B (1) — and lm_fx_shade blends
+// their per-LED output by the global crossfade. Deck A is resident and is the
+// only persisted deck (boot resumes it); the JIT and OSC are deck-A only. Deck B
+// lives in FX_AUX, a union with the video-texture delta buffer: loading deck B
+// evicts a video stream, and set_texture is dropped while deck B is loaded, so
+// the two cost max(), not sum() (the mutex is explicit in the type).
+
+const N_DECKS: usize = 2;
+const DECK_A_IDX: usize = 0;
+const DECK_B_IDX: usize = 1;
+
+/// One deck's loaded effect: the `.fxb` (the parsed Program borrows it fresh each
+/// call), its VM, which context mirrors it reads, its identity and its keypoint
+/// blend state.
+struct DeckState {
+    bytes: [u8; FX_MAX_BYTES],
+    len: usize,
+    vm: Option<FxVm>,
+    /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
+    /// the effect (loaded, validated) without taking over rendering.
+    active: bool,
+    /// Reads the per-LED fixed context cache (`LoadCtxFix`); all-float effects
+    /// skip the per-LED fixed-mirror build entirely (FUG-122).
+    uses_ctxfix: bool,
+    /// Reads `led.uv` (else the per-LED soft-float uv projection is skipped).
+    uses_uv: bool,
+    /// Reads the room frame (`led.room`, `room.min/max`).
+    uses_room: bool,
+    /// effect_id of the submit that loaded it (keypoints are stored under it;
+    /// deck A's also pins the PerfReport identity).
+    id: [u8; 64],
+    id_len: usize,
+    /// Hash of the loaded `.fxb` (PerfReport identity, deck A).
+    hash: u32,
+    /// This deck's slice of FX_ARENA (deck A from the front, B from the back).
+    arena_off: usize,
+    arena_len: usize,
+    /// Keypoint blend rules + cached sources + morph (ledmapper_keypoint).
+    morph: Morph,
+    /// Per-LED shade() scratch, reused across LEDs: fx_shade_one overwrites every
+    /// field this deck's program can read (the base fields always, the fixed /
+    /// room mirrors when `uses_ctxfix` / `uses_room` say so), so it needn't
+    /// re-zero the struct per LED. Reset on load so no previous effect's values
+    /// leak.
+    shade_led: Option<FxLed>,
+}
+
+impl DeckState {
+    const EMPTY: DeckState = DeckState {
+        bytes: [0; FX_MAX_BYTES],
+        len: 0,
+        vm: None,
+        active: false,
+        uses_ctxfix: false,
+        uses_uv: false,
+        uses_room: false,
+        id: [0; 64],
+        id_len: 0,
+        hash: 0,
+        arena_off: 0,
+        arena_len: 0,
+        morph: Morph::new(),
+        shade_led: None,
+    };
+
+    fn loaded(&self) -> bool {
+        self.len > 0 && self.vm.is_some()
+    }
+
+    fn renders(&self) -> bool {
+        self.active && self.loaded()
+    }
+
+    fn effect_id(&self) -> &str {
+        core::str::from_utf8(&self.id[..self.id_len]).unwrap_or("")
+    }
+}
+
+static mut DECK_A: DeckState = DeckState::EMPTY;
 
 // -- FUG-125: on-device JIT ---------------------------------------------------
 //
@@ -171,7 +249,7 @@ unsafe fn lm_jit_sync_icache() {}
 /// scratch copy).
 ///
 /// # Safety
-/// Call from `lm_fx_load` after `FX_BYTES`/`FX_LEN` are set and `prog` was parsed
+/// Call from `lm_fx_load` after `FX_BYTES`/`DECK_A.len` are set and `prog` was parsed
 /// from them; mutates `FX_BYTES` (patches `JitCall`) and the JIT statics.
 unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
     FX_JIT_N = 0;
@@ -205,7 +283,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         return; // too big to plan with the bounded scratch — interpret it
     }
     // Byte offset of the code section within FX_BYTES, so we can patch JitCall.
-    let code_off = code.as_ptr() as usize - addr_of!(FX_BYTES) as usize;
+    let code_off = code.as_ptr() as usize - addr_of!(DECK_A.bytes) as usize;
 
     // Compile the hot blocks STRAIGHT into the exec region (no scratch/copy).
     let region = core::slice::from_raw_parts_mut(region_ptr, region_words);
@@ -227,7 +305,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
     // Build the block table + patch JitCall over each block's first 3 bytes.
     let blocks = &mut *addr_of_mut!(FX_JIT_BLOCKS);
     let plans = &*addr_of!(FX_JIT_PLANS);
-    let fxb = &mut *addr_of_mut!(FX_BYTES);
+    let fxb = &mut *addr_of_mut!(DECK_A.bytes);
     let mut installed = 0usize;
     let mut used_words = 0usize;
     for p in plans.iter().take(n) {
@@ -274,11 +352,64 @@ static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
 /// One buffer — video streams target a single texture at a time. A frame whose
 /// quantized byte size exceeds this is dropped (keep the transport small).
 const FX_TEX_PREV_MAX: usize = 8 * 1024;
-static mut FX_TEX_PREV: [u8; FX_TEX_PREV_MAX] = [0; FX_TEX_PREV_MAX];
-/// Whether the loaded effect is the ACTIVE one the render loop drives. An
-/// upload with `activate=false` parks the effect (loaded, validated) without
-/// taking over rendering; set_effect can activate it, or clear it.
-static mut FX_ACTIVE: bool = false;
+
+/// The mode-exclusive aux region: EITHER the video delta buffer OR deck B
+/// (never both — see the FX decks note above). `FX_AUX_OWNER` is the tag.
+#[repr(C)]
+union FxAux {
+    video: [u8; FX_TEX_PREV_MAX],
+    deck_b: core::mem::ManuallyDrop<DeckState>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuxOwner {
+    Free,
+    Video,
+    DeckB,
+}
+
+static mut FX_AUX: FxAux = FxAux { video: [0; FX_TEX_PREV_MAX] };
+static mut FX_AUX_OWNER: AuxOwner = AuxOwner::Free;
+
+/// The deck at `d`, if it exists (deck B only while it owns the aux region).
+unsafe fn deck(d: usize) -> Option<*mut DeckState> {
+    match d {
+        DECK_A_IDX => Some(addr_of_mut!(DECK_A)),
+        DECK_B_IDX if FX_AUX_OWNER == AuxOwner::DeckB => {
+            Some(addr_of_mut!(FX_AUX.deck_b) as *mut DeckState)
+        }
+        _ => None,
+    }
+}
+
+/// Deck B's storage, claimed from the aux region (evicting a video stream).
+/// Initialised IN PLACE (zeroed, then the non-zero fields) so the ~11 KB deck
+/// never passes through a stack temporary.
+unsafe fn deck_b_claim() -> *mut DeckState {
+    let p = addr_of_mut!(FX_AUX.deck_b) as *mut DeckState;
+    if FX_AUX_OWNER != AuxOwner::DeckB {
+        core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
+        addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).shade_led).write(None);
+        (*p).morph.clear();
+        FX_AUX_OWNER = AuxOwner::DeckB;
+    }
+    p
+}
+
+/// The video delta buffer, claimed from the aux region; None while deck B owns
+/// it (set_texture is then dropped). A fresh claim starts from black.
+unsafe fn tex_prev() -> Option<&'static mut [u8; FX_TEX_PREV_MAX]> {
+    match FX_AUX_OWNER {
+        AuxOwner::DeckB => None,
+        AuxOwner::Free => {
+            FX_AUX.video = [0; FX_TEX_PREV_MAX];
+            FX_AUX_OWNER = AuxOwner::Video;
+            Some(&mut *addr_of_mut!(FX_AUX.video))
+        }
+        AuxOwner::Video => Some(&mut *addr_of_mut!(FX_AUX.video)),
+    }
+}
 /// Wall-time cancel flag, raised by the C++ hardware-timer callback at a
 /// frame-relative deadline; the VM loop polls it and unwinds to a timeout.
 static FX_DEADLINE: AtomicBool = AtomicBool::new(false);
@@ -303,11 +434,7 @@ static mut FX_F_DT_FIX: i32 = 0;
 /// tail on every LED once the struct outgrew LLVM's inline-zeroing threshold (the
 /// room fields did it: +~230 cycles/LED on fx_bench), so shade() borrows this.
 static mut FX_SHADE_FRAME: Option<FxFrame> = None;
-/// Per-LED shade() scratch, reused across LEDs: lm_fx_shade overwrites every field
-/// the loaded program can read (the base fields always, the fixed / room mirrors
-/// when FX_USES_CTXFIX / FX_USES_ROOM say it reads them), so it needn't re-zero the
-/// struct per LED. Reset on lm_fx_load so no previous effect's values leak.
-static mut FX_SHADE_LED: Option<FxLed> = None;
+// The per-LED shade() scratch is per deck (DeckState::shade_led).
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
@@ -445,15 +572,6 @@ static mut FX_UV_INV: [f32; 2] = [0.0, 0.0];
 /// treat an already-resolved index as an id). Rebuilt lazily before a frame.
 static mut FX_TOPO_READY: bool = false;
 static mut FX_UV_READY: bool = false;
-/// True when the loaded effect reads the per-LED fixed context cache
-/// (`LoadCtxFix`). All-float effects leave this false and skip the per-LED
-/// fixed-mirror build entirely — zero hot-path overhead (FUG-122).
-static mut FX_USES_CTXFIX: bool = false;
-/// True when the loaded effect reads `led.uv`. Effects that don't skip the
-/// per-LED soft-float uv projection entirely — a chunk of the framing floor.
-static mut FX_USES_UV: bool = false;
-/// True when the loaded effect reads the room frame (`led.room`, `room.min/max`).
-static mut FX_USES_ROOM: bool = false;
 
 // -- room frame (multi-fixture, set_fixture_pose) -----------------------------
 /// Each LED's ROOM-frame position (pose applied to FX_LED_POS), in integer
@@ -514,12 +632,9 @@ static mut FX_INSTR_UPDATE: u32 = 0;
 static mut FX_INSTR_SHADE: u32 = 0;
 static mut FX_STACK_MAX: u16 = 0;
 
-/// The effect identity a PerfReport is pinned to (perf-monitoring.md: the
-/// panel/AI must know metrics belong to the running compiled script). A hash of
-/// the loaded `.fxb`, recomputed on load; effect_id echoes the last submit.
-static mut FX_HASH: u32 = 0;
-static mut FX_ID: [u8; 64] = [0; 64];
-static mut FX_ID_LEN: usize = 0;
+// The effect identity a PerfReport is pinned to (perf-monitoring.md: the
+// panel/AI must know metrics belong to the running compiled script) is deck A's
+// `hash` (of the loaded `.fxb`, recomputed on load) + `id` (the last submit).
 
 /// One rendered effect frame's Tier-0/Tier-1 sample, in native firmware units
 /// (CPU cycles, counts, bytes) — the ring element and the PerfReport tick.
@@ -1140,8 +1255,15 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
         // Encoded ZERO-COPY into `out`: the manifest is effect-sized (well past
         // the firmware profile's inline bytes cap), so it's spliced from the .fxb.
-        Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(out, out_cap),
+        Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(frame, out, out_cap),
         Some(ARM_LIST_EFFECTS) => handle_list_effects(),
+        // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
+        // replies encoded zero-copy into `out`; blend runs on the deck's VM.
+        Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
+        Some(ARM_DELETE_KEYPOINT) => return handle_delete_keypoint(frame, out, out_cap),
+        Some(ARM_LIST_KEYPOINTS) => return handle_list_keypoints(frame, out, out_cap),
+        Some(ARM_GET_KEYPOINT) => return handle_get_keypoint(frame, out, out_cap),
+        Some(ARM_BLEND_KEYPOINTS) => handle_blend_keypoints(frame),
         // Perf-monitoring arms: configure the instrumentation tier / push
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
@@ -1593,12 +1715,29 @@ const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
 const ARM_SET_JIT: u32 = 32;
 const ARM_LIST_EFFECTS: u32 = 36;
+const ARM_SAVE_KEYPOINT: u32 = 40;
+const ARM_DELETE_KEYPOINT: u32 = 41;
+const ARM_LIST_KEYPOINTS: u32 = 42;
+const ARM_GET_KEYPOINT: u32 = 43;
+const ARM_BLEND_KEYPOINTS: u32 = 44;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
 /// infer them from fw_version.
 pub const FEATURES: &[&str] =
-    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects", "fixture_pose", "time_base"];
+    &[
+        "effects",
+        "perf",
+        "textures",
+        "stored_map",
+        "uniform_commit",
+        "list_effects",
+        "fixture_pose",
+        "time_base",
+        "decks",
+        "crossfade",
+        "keypoints",
+    ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through
@@ -1621,40 +1760,46 @@ fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
     None
 }
 
-/// submit_effect: read fxb + activate from the frame in place, load it into the
-/// VM, and (optionally) activate. Reply
-/// result_ready(effect_id) or error(bad_fxb / effect_too_large).
+/// submit_effect: read fxb + activate + deck from the frame in place, load it
+/// onto the deck, and (optionally) activate. Reply result_ready(effect_id) or
+/// error(bad_fxb / effect_too_large).
 unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     let Some(CArm::SubmitEffect(m)) = client_arm(frame) else {
         return fx_error("bad_fxb", "submit_effect is malformed");
     };
     let fxb = pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB).then(|| m.fxb());
     let activate = m.activate();
+    let d = deck_index(m.deck());
+    FX_LAST_DECK = d as u32;
     let Some(fxb) = fxb else {
         return fx_error("bad_fxb", "submit_effect without fxb");
     };
-    if fxb.len() > FX_MAX_BYTES {
-        return fx_error("effect_too_large", "fxb exceeds this player's effect buffer");
-    }
-    let ok = lm_fx_load(fxb.as_ptr(), fxb.len());
-    if !ok {
-        // Distinguish size (bounded) from a parse failure.
-        if fxb.len() > FX_MAX_BYTES {
-            return fx_error("effect_too_large", "fxb exceeds this player's effect buffer");
+    match fx_load(d, fxb) {
+        Ok(()) => {}
+        Err(FxLoadError::TooLarge) => {
+            return fx_error("effect_too_large", "fxb exceeds this player's effect buffer")
         }
-        return fx_error("bad_fxb", "fxb failed to parse");
+        Err(FxLoadError::ArenaFull) => {
+            return fx_error("effect_too_large", "the two decks' buffers exceed the 24 KB fx arena")
+        }
+        Err(FxLoadError::Bad) => return fx_error("bad_fxb", "fxb failed to parse"),
     }
     // activate=true takes over rendering now; false parks it (loaded + valid,
     // set_effect can activate later).
-    lm_fx_set_active(activate);
+    fx_set_active(d, activate);
     let mut r = pb::ResultReady::default();
-    // effect_id echoes back so the app can correlate the ack; also latch it so
-    // the PerfReport can pin its metrics to this effect (perf-monitoring.md).
-    if pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_EFFECT_ID) {
-        let _ = r.r#map_id.push_str(m.effect_id());
-        perf_set_effect_id(m.effect_id());
+    // effect_id echoes back so the app can correlate the ack; also latch it (the
+    // deck's keypoints live under it; deck A's pins the PerfReport identity).
+    let id = if pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_EFFECT_ID) {
+        m.effect_id()
     } else {
-        FX_ID_LEN = 0;
+        ""
+    };
+    let _ = r.r#map_id.push_str(id);
+    if let Some(p) = deck(d) {
+        let n = id.len().min((*p).id.len());
+        (*p).id[..n].copy_from_slice(&id.as_bytes()[..n]);
+        (*p).id_len = n;
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
 }
@@ -1779,8 +1924,8 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     for (slot, v) in palette.iter_mut().zip(t.palette()) {
         *slot = v;
     }
-    // Resolve the target texture in the active program.
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    // Resolve the target texture in deck A's program (video drives deck A).
+    let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
     let Ok(prog) = Program::parse(bytes) else {
         return;
     };
@@ -1795,7 +1940,12 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     if total == 0 || total > FX_TEX_PREV_MAX {
         return;
     }
-    let prev = &mut (*addr_of_mut!(FX_TEX_PREV))[..total];
+    // The delta buffer shares the aux region with deck B: dropped while deck B
+    // is loaded (the mutex is explicit — see FxAux).
+    let Some(prev) = tex_prev() else {
+        return;
+    };
+    let prev = &mut prev[..total];
     if flags & 0x01 == 0 {
         prev.fill(0); // keyframe: start from black, then XOR-apply the frame
     }
@@ -1828,7 +1978,7 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     // Dequantize prev -> the texture's arena region, PACKED at the texture's
     // declared component precision (FUG-10) so a narrow texture compresses the
     // stream on-device too. `comp_store_num` quantizes each float channel.
-    let arena = &mut (*addr_of_mut!(FX_ARENA))[..];
+    let arena = &mut (*addr_of_mut!(FX_ARENA))[DECK_A.arena_off..DECK_A.arena_off + DECK_A.arena_len];
     let base = prog.buf_base(tex_index as usize, FX_F_LEDS as usize);
     let elem = d.elem as usize;
     let cb = ledmapper_fx_vm::comp_bytes(d.comp);
@@ -1966,21 +2116,48 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     }
 }
 
-/// set_effect: "" / "off" clears the active effect; any other id keeps the
-/// loaded effect active (a single effect is held at a time, matching the arena
-/// map). Reply: playback_state (via the session core, so the app's playback UI
-/// stays consistent). We just clear/keep and echo the current playback state.
-unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
-    let id = match client_arm(frame) {
-        Some(CArm::SetEffect(m)) => m.effect_id(),
-        _ => "",
-    };
-    if id.is_empty() || id == "off" {
-        lm_fx_clear();
+/// The deck the last effect arm targeted (0 = A). main.cpp persists only deck
+/// A's frames (deck B is runtime-only), so it reads this after the handle.
+static mut FX_LAST_DECK: u32 = 0;
+
+/// The deck the effect arm just handled targeted (0 = A, 1 = B).
+///
+/// # Safety
+/// Single firmware thread, after `lm_player_handle`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_last_deck() -> u32 {
+    FX_LAST_DECK
+}
+
+/// A wire `deck` field → a deck index (anything but 1 is deck A, so an older
+/// client that never sets it keeps today's single-deck behaviour).
+fn deck_index(deck: u32) -> usize {
+    if deck == 1 {
+        DECK_B_IDX
     } else {
-        // Select the (single) loaded effect as active. One effect is held at a
-        // time, so any non-empty id activates whatever is loaded.
-        lm_fx_set_active(true);
+        DECK_A_IDX
+    }
+}
+
+/// set_effect: "" / "off" clears the deck — deck A back to idle; deck B parks
+/// (stays loaded, inactive) so a show can bring it back without a re-upload
+/// (a second "off" on a parked deck B frees it). Any other id activates whatever
+/// the deck holds (one effect per deck). Reply: playback_state (via the session
+/// core, so the app's playback UI stays consistent).
+unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
+    let (id, d) = match client_arm(frame) {
+        Some(CArm::SetEffect(m)) => (m.effect_id(), deck_index(m.deck())),
+        _ => ("", DECK_A_IDX),
+    };
+    FX_LAST_DECK = d as u32;
+    if id.is_empty() || id == "off" {
+        if d == DECK_B_IDX && deck_renders(DECK_B_IDX) {
+            fx_set_active(DECK_B_IDX, false);
+        } else {
+            fx_clear(d);
+        }
+    } else {
+        fx_set_active(d, true);
     }
     // Ack with the session's playback state so the app's playback UI stays put.
     player().playback_reply()
@@ -2000,12 +2177,21 @@ pub unsafe extern "C" fn lm_set_uniforms_commit() -> bool {
     UNIFORMS_COMMIT
 }
 
-/// set_uniforms: apply every UniformValue{slot, value[]} to the VM. Reply:
-/// playback_state.
+/// set_uniforms: apply every UniformValue{slot, value[]} to the deck's VM (a
+/// running keypoint morph on that deck stops where it is — the slider wins).
+/// Reply: playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
     UNIFORMS_COMMIT = true;
+    FX_LAST_DECK = 0;
     if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
-        UNIFORMS_COMMIT = m.commit().unwrap_or(true);
+        let d = deck_index(m.deck());
+        FX_LAST_DECK = d as u32;
+        // SetUniforms.commit: unset = persist (the old always-persist behaviour).
+        // Deck B is never persisted.
+        UNIFORMS_COMMIT = m.commit().unwrap_or(true) && d == DECK_A_IDX;
+        if let Some(p) = deck(d) {
+            (*p).morph.cancel();
+        }
         for uv in m.values() {
             // UniformValue { slot, repeated float value } — packed or not.
             let mut vals = [0.0f32; 4];
@@ -2015,7 +2201,7 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
                 n += 1;
             }
             if n > 0 {
-                lm_fx_set_uniform(uv.slot(), vals.as_ptr(), n);
+                fx_set_uniform(d, uv.slot(), &vals[..n]);
             }
         }
     }
@@ -2066,44 +2252,97 @@ impl PbOut<'_> {
             self.byte(x);
         }
     }
+    /// A `{ uint32 slot_or_name = 1; repeated float value = 2 [packed]; }`
+    /// submessage (UniformValue / KeypointValue) at `field`; `key1` is the
+    /// slot (varint) or the name (bytes).
+    fn value_msg(&mut self, field: u32, key1: ValueKey, vals: &[f32]) {
+        let k1 = match key1 {
+            ValueKey::Slot(s) => 1 + varint_len(s as u64),
+            ValueKey::Name(n) => 1 + varint_len(n.len() as u64) + n.len(),
+        };
+        let inner = k1 + 1 + varint_len((vals.len() * 4) as u64) + vals.len() * 4;
+        self.key(field, 2);
+        self.varint(inner as u64);
+        match key1 {
+            ValueKey::Slot(s) => self.uint(1, s as u64),
+            ValueKey::Name(n) => self.bytes(1, n),
+        }
+        self.key(2, 2);
+        self.varint((vals.len() * 4) as u64);
+        for v in vals {
+            for b in v.to_le_bytes() {
+                self.byte(b);
+            }
+        }
+    }
 }
 
-/// The EffectUniforms fields (effect_id, manifest, current, textures) of the
-/// loaded effect, into `w`.
-unsafe fn write_effect_uniforms(w: &mut PbOut, prog: &Program) {
-    let id = &(*addr_of!(FX_ID))[..FX_ID_LEN];
+#[derive(Clone, Copy)]
+enum ValueKey<'a> {
+    Slot(u32),
+    Name(&'a [u8]),
+}
+
+/// Write `ServerMessage.<field>` (a LEN arm) around the body `body` writes, in
+/// ONE pass: the body goes in after a reserved 4-byte key+length header, which
+/// is then filled and the body slid down to meet it. Bodies are < 16 KiB.
+unsafe fn write_arm(out: *mut u8, out_cap: usize, field: u32, body: impl FnOnce(&mut PbOut)) -> i32 {
+    const HDR: usize = 4;
+    if out_cap <= HDR {
+        return -2;
+    }
+    let buf = core::slice::from_raw_parts_mut(out, out_cap);
+    let n = {
+        let mut w = PbOut { buf: Some(&mut buf[HDR..]), n: 0, ok: true };
+        body(&mut w);
+        if !w.ok || w.n >= 1 << 14 {
+            return -2;
+        }
+        w.n
+    };
+    let mut h = PbOut { buf: Some(&mut buf[..HDR]), n: 0, ok: true };
+    h.key(field, 2);
+    h.varint(n as u64);
+    let hn = h.n;
+    buf.copy_within(HDR..HDR + n, hn);
+    (hn + n) as i32
+}
+
+/// The EffectUniforms fields (effect_id, manifest, current, textures, deck) of
+/// deck `d`'s loaded effect, into `w`.
+unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog: &Program) {
+    let id = &(*p).id[..(*p).id_len];
     if !id.is_empty() {
         w.bytes(1, id);
     }
     w.bytes(2, prog.manifest);
     // current = 3: each manifest uniform's live value, read back from the VM.
-    if let Some(vm) = (*addr_of!(FX_VM)).as_ref() {
-        for p in (*addr_of!(OSC_TABLE)).ports() {
-            let (slot, width) = (p.slot as usize, p.width as usize);
-            let Some(vals) = vm.uniforms.get(slot..slot + width) else { continue };
-            // UniformValue { uint32 slot = 1; repeated float value = 2 [packed]; }
-            let slot_len = 1 + varint_len(slot as u64);
-            let inner = slot_len + 1 + varint_len((width * 4) as u64) + width * 4;
-            w.key(3, 2);
-            w.varint(inner as u64);
-            w.uint(1, slot as u64);
-            w.key(2, 2);
-            w.varint((width * 4) as u64);
-            for v in vals {
-                for b in v.to_le_bytes() {
-                    w.byte(b);
-                }
+    // Deck A walks the OSC table (every uniform it can drive); deck B its blend
+    // rules (the same uniforms, within the keypoint bounds).
+    if let Some(vm) = (*p).vm.as_ref() {
+        let mut put = |slot: usize, width: usize| {
+            if let Some(vals) = vm.uniforms.get(slot..slot + width) {
+                w.value_msg(3, ValueKey::Slot(slot as u32), vals);
+            }
+        };
+        if d == DECK_A_IDX {
+            for port in (*addr_of!(OSC_TABLE)).ports() {
+                put(port.slot as usize, port.width as usize);
+            }
+        } else {
+            for r in (*p).morph.rules.rules() {
+                put(r.slot as usize, r.width as usize);
             }
         }
     }
     // textures = 4: the declared 2D textures (buffer kind=1), so a texture source
     // learns the exact dimensions set_texture requires (a mismatch is dropped).
     for i in 0..prog.n_buffers as usize {
-        let Some(d) = prog.buf_desc(i) else { continue };
-        if d.kind != 1 {
+        let Some(bd) = prog.buf_desc(i) else { continue };
+        if bd.kind != 1 {
             continue;
         }
-        let fields = [(1, i as u64), (2, d.w as u64), (3, d.h as u64), (4, d.elem as u64)];
+        let fields = [(1, i as u64), (2, bd.w as u64), (3, bd.h as u64), (4, bd.elem as u64)];
         let inner: usize = fields.iter().map(|&(_, v)| 1 + varint_len(v)).sum();
         w.key(4, 2);
         w.varint(inner as u64);
@@ -2111,48 +2350,426 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, prog: &Program) {
             w.uint(f, v);
         }
     }
+    if d != DECK_A_IDX {
+        w.uint(5, d as u64);
+    }
 }
 
-/// get_effect_uniforms: the active effect's EffectUniforms (its id, the uniform
-/// manifest from its .fxb, each uniform's current value, its texture ports),
-/// encoded straight into `out` — the manifest is effect-sized, well past the
-/// firmware profile's inline bytes cap. Error `no_effect` when nothing is loaded.
-unsafe fn handle_get_effect_uniforms(out: *mut u8, out_cap: usize) -> i32 {
+/// get_effect_uniforms: the deck's EffectUniforms (its id, the uniform manifest
+/// from its .fxb, each uniform's current value, its texture ports), encoded
+/// straight into `out` — the manifest is effect-sized, well past the firmware
+/// profile's inline bytes cap. Error `no_effect` when the deck has nothing active.
+unsafe fn handle_get_effect_uniforms(frame: &[u8], out: *mut u8, out_cap: usize) -> i32 {
     let no_effect = || encode_reply(&fx_error("no_effect", "no active effect to describe"), out, out_cap);
-    if !lm_fx_active() {
+    let d = match client_arm(frame) {
+        Some(CArm::GetEffectUniforms(m)) => deck_index(m.deck()),
+        _ => DECK_A_IDX,
+    };
+    let Some(p) = deck(d) else { return no_effect() };
+    if !(*p).renders() {
         return no_effect();
     }
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let bytes = &(*p).bytes[..(*p).len];
     let Ok(prog) = Program::parse(bytes) else {
         return no_effect();
     };
-    // Count the message, then write ServerMessage.effect_uniforms = 16 around it.
-    let mut count = PbOut { buf: None, n: 0, ok: true };
-    write_effect_uniforms(&mut count, &prog);
-    let mut w = PbOut { buf: Some(core::slice::from_raw_parts_mut(out, out_cap)), n: 0, ok: true };
-    w.key(16, 2);
-    w.varint(count.n as u64);
-    write_effect_uniforms(&mut w, &prog);
-    if w.ok {
-        w.n as i32
-    } else {
-        -2
-    }
+    write_arm(out, out_cap, 16, |w| write_effect_uniforms(w, d, p, &prog))
 }
 
-/// list_effects: the device's single effect slot (the loaded .fxb, which is the
-/// persisted one: boot replays it), as an EffectList.
+/// list_effects: one entry per loaded deck (deck A's is the persisted one: boot
+/// replays it), as an EffectList.
 unsafe fn handle_list_effects() -> pb::ServerMessage {
     let mut list = pb::EffectList::default();
-    if FX_LEN > 0 {
+    for d in 0..N_DECKS {
+        let Some(p) = deck(d) else { continue };
+        if !(*p).loaded() {
+            continue;
+        }
         let mut e = pb::StoredEffect::default();
-        let id = core::str::from_utf8(&(*addr_of!(FX_ID))[..FX_ID_LEN]).unwrap_or("");
-        let _ = e.r#effect_id.push_str(id);
-        e.r#fxb_bytes = FX_LEN as u32;
-        e.r#active = lm_fx_active();
+        let _ = e.r#effect_id.push_str((*p).effect_id());
+        e.r#fxb_bytes = (*p).len as u32;
+        e.r#active = (*p).active;
+        e.r#deck = d as u32;
         let _ = list.r#effects.push(e);
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::EffectList(list)) }
+}
+
+// -- uniform keypoints (docs/design/uniform-keypoints.md) ---------------------
+// Rust owns the format and the blend (ledmapper_keypoint); C++ owns the
+// filesystem and hands three hooks in at boot (lm_kp_set_store). One small
+// littlefs file per keypoint: "kp_<fnv32(effect_id)>.<index>" under the FS base,
+// written power-loss-safe by the C++ side (temp + fsync + rename).
+
+type KpRead = unsafe extern "C" fn(name: *const u8, name_len: usize, buf: *mut u8, cap: usize) -> i32;
+type KpWrite = unsafe extern "C" fn(name: *const u8, name_len: usize, buf: *const u8, len: usize) -> bool;
+type KpRemove = unsafe extern "C" fn(name: *const u8, name_len: usize);
+
+static mut KP_READ: Option<KpRead> = None;
+static mut KP_WRITE: Option<KpWrite> = None;
+static mut KP_REMOVE: Option<KpRemove> = None;
+/// The one record buffer (save encodes into it, every read lands in it).
+static mut KP_IO: [u8; kp::RECORD_CAP] = [0; kp::RECORD_CAP];
+/// Whether the blend just handled asked to persist its target (deck A only).
+static mut KP_COMMIT: bool = false;
+/// Deck A's last blend target, for lm_kp_commit_frame.
+static mut KP_COMMIT_DECK: usize = DECK_A_IDX;
+
+/// Install the keypoint store hooks (C++: littlefs). Without them every
+/// keypoint arm answers `no_store`.
+///
+/// # Safety
+/// The hooks must be valid for the process lifetime; single firmware thread.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kp_set_store(read: Option<KpRead>, write: Option<KpWrite>, remove: Option<KpRemove>) {
+    KP_READ = read;
+    KP_WRITE = write;
+    KP_REMOVE = remove;
+}
+
+/// "kp_xxxxxxxx.n" for effect key `key`, index `n`.
+fn kp_file(key: u32, n: usize) -> ([u8; 16], usize) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut b = [0u8; 16];
+    b[..3].copy_from_slice(b"kp_");
+    for i in 0..8 {
+        b[3 + i] = HEX[((key >> (28 - 4 * i)) & 0xf) as usize];
+    }
+    b[11] = b'.';
+    let mut len = 12;
+    if n >= 10 {
+        b[len] = b'0' + (n / 10) as u8;
+        len += 1;
+    }
+    b[len] = b'0' + (n % 10) as u8;
+    (b, len + 1)
+}
+
+/// Read record `n` of effect `key` into KP_IO; its length, if it exists.
+unsafe fn kp_read(key: u32, n: usize) -> Option<usize> {
+    let read = KP_READ?;
+    let (f, fl) = kp_file(key, n);
+    let io = &mut *addr_of_mut!(KP_IO);
+    let got = read(f.as_ptr(), fl, io.as_mut_ptr(), io.len());
+    (got > 0).then_some(got as usize)
+}
+
+/// The stored index of keypoint `name` for effect `key`.
+unsafe fn kp_find(key: u32, name: &[u8]) -> Option<usize> {
+    (0..kp::MAX_KEYPOINTS).find(|&n| {
+        kp_read(key, n).is_some_and(|len| kp::record_info(&(*addr_of!(KP_IO))[..len]).is_ok_and(|i| i.name == name))
+    })
+}
+
+/// Which effect a keypoint arm addresses: `effect_id` if given, else the one
+/// loaded on the deck. (key, the deck when it holds that effect).
+unsafe fn kp_target(d: usize, effect_id: Option<&str>) -> Result<(u32, Option<*mut DeckState>), pb::ServerMessage> {
+    if (*addr_of!(KP_READ)).is_none() || (*addr_of!(KP_WRITE)).is_none() {
+        return Err(fx_error("no_store", "keypoint storage is unavailable"));
+    }
+    let loaded = deck(d).filter(|p| (**p).loaded());
+    let id = match (effect_id, loaded) {
+        (Some(id), _) if !id.is_empty() => id,
+        (_, Some(p)) => (*p).effect_id(),
+        _ => return Err(fx_error("no_effect", "no effect loaded on that deck")),
+    };
+    if id.is_empty() {
+        return Err(fx_error("no_effect", "the deck's effect has no effect_id"));
+    }
+    let on_deck = loaded.filter(|p| (**p).effect_id() == id);
+    Ok((kp::fnv1a(id.as_bytes()), on_deck))
+}
+
+/// The KeypointList reply for effect `key` (stale = saved against another build
+/// of the effect on the deck).
+unsafe fn kp_list_reply(d: usize, key: u32, effect_id: &str, on_deck: Option<*mut DeckState>, out: *mut u8, cap: usize) -> i32 {
+    let hash = on_deck.map(|p| (*p).morph.rules.manifest_hash);
+    write_arm(out, cap, 22, |w| {
+        w.bytes(1, effect_id.as_bytes());
+        if d != DECK_A_IDX {
+            w.uint(2, d as u64);
+        }
+        for n in 0..kp::MAX_KEYPOINTS {
+            let Some(len) = kp_read(key, n) else { continue };
+            let Ok(info) = kp::record_info(&(*addr_of!(KP_IO))[..len]) else { continue };
+            let stale = hash.is_some_and(|h| h != info.manifest_hash);
+            let inner = 1 + varint_len(n as u64) + 1 + varint_len(info.name.len() as u64) + info.name.len() + if stale { 2 } else { 0 };
+            w.key(3, 2);
+            w.varint(inner as u64);
+            w.uint(1, n as u64);
+            w.bytes(2, info.name);
+            if stale {
+                w.uint(3, 1);
+            }
+        }
+        w.uint(4, kp::MAX_KEYPOINTS as u64);
+    })
+}
+
+/// The effect id a keypoint arm resolved to (for the reply).
+unsafe fn kp_effect_id<'a>(given: Option<&'a str>, on_deck: Option<*mut DeckState>, d: usize) -> &'a str {
+    match given {
+        Some(id) if !id.is_empty() => id,
+        _ => on_deck.or_else(|| deck(d)).map(|p| (*p).effect_id()).unwrap_or(""),
+    }
+}
+
+/// Reply with `msg` encoded into `out`.
+fn reply_msg(msg: &pb::ServerMessage, out: *mut u8, cap: usize) -> i32 {
+    encode_reply(msg, out, cap)
+}
+
+unsafe fn handle_list_keypoints(frame: &[u8], out: *mut u8, cap: usize) -> i32 {
+    let Some(CArm::ListKeypoints(m)) = client_arm(frame) else {
+        return reply_msg(&fx_error("bad_keypoint", "list_keypoints is malformed"), out, cap);
+    };
+    let d = deck_index(m.deck());
+    match kp_target(d, m.effect_id()) {
+        Ok((key, on_deck)) => {
+            let id = kp_effect_id(m.effect_id(), on_deck, d);
+            kp_list_reply(d, key, id, on_deck, out, cap)
+        }
+        Err(e) => reply_msg(&e, out, cap),
+    }
+}
+
+unsafe fn handle_save_keypoint(frame: &[u8], out: *mut u8, cap: usize) -> i32 {
+    let Some(CArm::SaveKeypoint(m)) = client_arm(frame) else {
+        return reply_msg(&fx_error("bad_keypoint", "save_keypoint is malformed"), out, cap);
+    };
+    let d = deck_index(m.deck());
+    let (key, on_deck) = match kp_target(d, None) {
+        Ok(t) => t,
+        Err(e) => return reply_msg(&e, out, cap),
+    };
+    let Some(p) = on_deck else {
+        return reply_msg(&fx_error("no_effect", "no effect loaded on that deck"), out, cap);
+    };
+    let name = m.name().as_bytes();
+    if name.is_empty() || name.len() > kp::MAX_NAME {
+        return reply_msg(&fx_error("bad_keypoint", "keypoint names are 1..32 bytes"), out, cap);
+    }
+    let rules = &(*p).morph.rules;
+    if rules.is_empty() {
+        return reply_msg(&fx_error("bad_keypoint", "the effect declares no uniforms"), out, cap);
+    }
+    // The values: the deck's live uniforms, or the given slot-addressed ones.
+    let mut vals = kp::UNSET;
+    let mut explicit = false;
+    for uv in m.values() {
+        explicit = true;
+        let Some(r) = rules.by_slot(uv.slot()) else { continue };
+        let mut c = (uv.slot() - r.slot as u32) as usize;
+        for v in uv.value() {
+            if c >= r.width as usize {
+                break;
+            }
+            vals[r.off as usize + c] = v;
+            c += 1;
+        }
+    }
+    if !explicit {
+        if let Some(vm) = (*p).vm.as_ref() {
+            vals = rules.pack(&vm.uniforms);
+        }
+    }
+    let Ok(prog) = Program::parse(&(*p).bytes[..(*p).len]) else {
+        return reply_msg(&fx_error("no_effect", "no effect loaded on that deck"), out, cap);
+    };
+    // Overwrite in place by name, else the first free index.
+    let slot = kp_find(key, name).or_else(|| (0..kp::MAX_KEYPOINTS).find(|&n| kp_read(key, n).is_none()));
+    let Some(n) = slot else {
+        return reply_msg(&fx_error("keypoint_full", "16 keypoints per effect; delete one first"), out, cap);
+    };
+    let io = &mut *addr_of_mut!(KP_IO);
+    let len = match kp::encode_record(name, prog.manifest, rules, &vals, io) {
+        Ok(len) => len,
+        Err(_) => return reply_msg(&fx_error("bad_keypoint", "keypoint does not encode"), out, cap),
+    };
+    let (f, fl) = kp_file(key, n);
+    let ok = KP_WRITE.is_some_and(|w| w(f.as_ptr(), fl, io.as_ptr(), len));
+    if !ok {
+        return reply_msg(&fx_error("no_store", "keypoint write failed"), out, cap);
+    }
+    (*p).morph.invalidate();
+    let id = (*p).effect_id();
+    kp_list_reply(d, key, id, on_deck, out, cap)
+}
+
+unsafe fn handle_delete_keypoint(frame: &[u8], out: *mut u8, cap: usize) -> i32 {
+    let Some(CArm::DeleteKeypoint(m)) = client_arm(frame) else {
+        return reply_msg(&fx_error("bad_keypoint", "delete_keypoint is malformed"), out, cap);
+    };
+    let d = deck_index(m.deck());
+    let (key, on_deck) = match kp_target(d, m.effect_id()) {
+        Ok(t) => t,
+        Err(e) => return reply_msg(&e, out, cap),
+    };
+    let Some(n) = kp_find(key, m.name().as_bytes()) else {
+        return reply_msg(&fx_error("no_keypoint", "no keypoint by that name"), out, cap);
+    };
+    if let Some(rm) = KP_REMOVE {
+        let (f, fl) = kp_file(key, n);
+        rm(f.as_ptr(), fl);
+    }
+    for dd in 0..N_DECKS {
+        if let Some(p) = deck(dd) {
+            (*p).morph.invalidate();
+        }
+    }
+    let id = kp_effect_id(m.effect_id(), on_deck, d);
+    kp_list_reply(d, key, id, on_deck, out, cap)
+}
+
+unsafe fn handle_get_keypoint(frame: &[u8], out: *mut u8, cap: usize) -> i32 {
+    let Some(CArm::GetKeypoint(m)) = client_arm(frame) else {
+        return reply_msg(&fx_error("bad_keypoint", "get_keypoint is malformed"), out, cap);
+    };
+    let d = deck_index(m.deck());
+    let (key, on_deck) = match kp_target(d, m.effect_id()) {
+        Ok(t) => t,
+        Err(e) => return reply_msg(&e, out, cap),
+    };
+    let Some(n) = kp_find(key, m.name().as_bytes()) else {
+        return reply_msg(&fx_error("no_keypoint", "no keypoint by that name"), out, cap);
+    };
+    let Some(len) = kp_read(key, n) else {
+        return reply_msg(&fx_error("no_keypoint", "no keypoint by that name"), out, cap);
+    };
+    let rec = &(*addr_of!(KP_IO))[..len];
+    let Ok(info) = kp::record_info(rec) else {
+        return reply_msg(&fx_error("no_keypoint", "keypoint record is corrupt"), out, cap);
+    };
+    let id = kp_effect_id(m.effect_id(), on_deck, d);
+    let rules = on_deck.map(|p| &(*p).morph.rules);
+    let stale = rules.is_some_and(|r| r.manifest_hash != info.manifest_hash);
+    // A full keypoint (32 uniforms, by name AND by slot) can outgrow a 2 KiB
+    // reply buffer: then the by-slot copy is dropped (the client resolves names
+    // through the manifest it already has).
+    let r = kp_keypoint_reply(out, cap, id, n, info.name, stale, rec, rules);
+    if r >= 0 {
+        return r;
+    }
+    let r = kp_keypoint_reply(out, cap, id, n, info.name, stale, rec, None);
+    if r >= 0 {
+        return r;
+    }
+    reply_msg(&fx_error("too_large", "keypoint exceeds the reply buffer"), out, cap)
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn kp_keypoint_reply(
+    out: *mut u8,
+    cap: usize,
+    id: &str,
+    n: usize,
+    name: &[u8],
+    stale: bool,
+    rec: &[u8],
+    rules: Option<&kp::Rules>,
+) -> i32 {
+    write_arm(out, cap, 23, |w| {
+        w.bytes(1, id.as_bytes());
+        w.uint(2, n as u64);
+        w.bytes(3, name);
+        if stale {
+            w.uint(4, 1);
+        }
+        let _ = kp::for_each_value(rec, |uname, v| w.value_msg(5, ValueKey::Name(uname), v));
+        if let Some(r) = rules {
+            let _ = kp::for_each_value(rec, |uname, v| {
+                if let Some(rule) = r.by_name(uname) {
+                    if rule.width as usize == v.len() {
+                        w.value_msg(6, ValueKey::Slot(rule.slot as u32), v);
+                    }
+                }
+            });
+        }
+    })
+}
+
+unsafe fn handle_blend_keypoints(frame: &[u8]) -> pb::ServerMessage {
+    KP_COMMIT = false;
+    let Some(CArm::BlendKeypoints(m)) = client_arm(frame) else {
+        return fx_error("bad_keypoint", "blend_keypoints is malformed");
+    };
+    let d = deck_index(m.deck());
+    FX_LAST_DECK = d as u32;
+    let (key, on_deck) = match kp_target(d, None) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let Some(p) = on_deck else {
+        return fx_error("no_effect", "no effect loaded on that deck");
+    };
+    let mut names: [&[u8]; kp::MAX_BLEND] = [b""; kp::MAX_BLEND];
+    let mut weights = [0.0f32; kp::MAX_BLEND];
+    let mut n = 0;
+    for kw in m.weights() {
+        if n >= kp::MAX_BLEND {
+            return fx_error("bad_keypoint", "at most 4 keypoints per blend");
+        }
+        names[n] = kw.name().as_bytes();
+        weights[n] = if kw.weight().is_finite() { kw.weight() } else { 0.0 };
+        n += 1;
+    }
+    if n == 0 || !weights[..n].iter().any(|w| *w > 0.0) {
+        return fx_error("bad_keypoint", "blend needs a keypoint with a positive weight");
+    }
+    let morph = &mut (*p).morph;
+    // The fader path: the same names as last time reuse the cached sources (no
+    // flash read per fader tick).
+    if !morph.cached(key, &names[..n]) {
+        morph.begin_sources(key);
+        for name in &names[..n] {
+            let Some(len) = kp_find(key, name).and_then(|i| kp_read(key, i)) else {
+                morph.invalidate();
+                return fx_error("no_keypoint", "no keypoint by that name");
+            };
+            let mut vals = kp::UNSET;
+            if kp::decode_record(&(*addr_of!(KP_IO))[..len], &morph.rules, &mut vals).is_err() {
+                morph.invalidate();
+                return fx_error("no_keypoint", "keypoint record is corrupt");
+            }
+            morph.push_source(name, &vals);
+        }
+    }
+    let Some(vm) = (*p).vm.as_mut() else {
+        return fx_error("no_effect", "no effect loaded on that deck");
+    };
+    let live = morph.rules.pack(&vm.uniforms);
+    let seconds = if m.seconds().is_finite() { m.seconds().min(3600.0) } else { 0.0 };
+    if let Some(v) = morph.start(&live, &weights[..n], seconds, m.color_mode()) {
+        morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
+    }
+    KP_COMMIT = m.commit().unwrap_or(false) && d == DECK_A_IDX;
+    KP_COMMIT_DECK = d;
+    player().playback_reply()
+}
+
+/// Whether the blend_keypoints just handled asked to persist its target.
+///
+/// # Safety
+/// Single firmware thread, after `lm_player_handle`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kp_commit() -> bool {
+    KP_COMMIT
+}
+
+/// Encode the last blend's TARGET values as a deck-A `set_uniforms` ClientMessage
+/// frame into `out` — what main.cpp persists for a committed blend (boot replays
+/// it like any set_uniforms). Returns the length, or -2 when it doesn't fit.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes; single firmware thread.
+#[no_mangle]
+pub unsafe extern "C" fn lm_kp_commit_frame(out: *mut u8, cap: usize) -> i32 {
+    let Some(p) = deck(KP_COMMIT_DECK) else { return -1 };
+    let target = (*p).morph.target();
+    let rules = &(*p).morph.rules;
+    write_arm(out, cap, ARM_SET_UNIFORMS, |w| {
+        rules.unpack(&target, |slot, vals| w.value_msg(1, ValueKey::Slot(slot as u32), vals));
+    })
 }
 
 fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
@@ -2231,10 +2848,10 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     }
     let w = perf_rollup(&window_buf[..wn]);
 
-    let id = core::str::from_utf8(&(*addr_of!(FX_ID))[..FX_ID_LEN]).unwrap_or("");
+    let id = core::str::from_utf8(&(*addr_of!(DECK_A.id))[..DECK_A.id_len]).unwrap_or("");
     let mut r = pb::PerfReport {
         // Identity.
-        r#fxb_hash: FX_HASH,
+        r#fxb_hash: DECK_A.hash,
         r#cpu_hz: PERF_CPU_HZ,
         r#budget_cycles: PERF_BUDGET_CYCLES,
         // Rolling window.
@@ -2292,15 +2909,6 @@ unsafe fn perf_reset_ring() {
     FX_INSTR_UPDATE = 0;
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
-}
-
-/// Latch the effect_id (truncated to the fixed buffer) for PerfReport identity.
-unsafe fn perf_set_effect_id(id: &str) {
-    let b = id.as_bytes();
-    let dst = &mut *addr_of_mut!(FX_ID);
-    let n = b.len().min(dst.len());
-    dst[..n].copy_from_slice(&b[..n]);
-    FX_ID_LEN = n;
 }
 
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------
@@ -2777,11 +3385,37 @@ unsafe fn fx_rebuild_topo() {
         }
     }
 
-    // Push the topology graph to the active VM for the graph-query intrinsics
-    // (agentic effects). Compact node ids: a real branch point keeps its index,
-    // each free end gets a fresh id after the branch points (kept small so it
-    // stays under fx_vm::MAX_NODE). Segment index i matches led.seg / ag.seg.
-    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+    // (The caller pushes the graph to the decks' VMs — fx_push_graph_all — after
+    // this frame is gone, so the two frames never stack.)
+}
+
+/// Push the topology graph to every loaded deck's VM.
+unsafe fn fx_push_graph_all() {
+    for d in 0..N_DECKS {
+        if let Some(p) = deck(d) {
+            if let Some(vm) = (*p).vm.as_mut() {
+                fx_push_graph(vm);
+            }
+        }
+    }
+}
+
+/// Hand `vm` the resident topology graph for the graph-query intrinsics
+/// (agentic effects); an empty graph when no topology is stored. Compact node
+/// ids: a real branch point keeps its index, each free end gets a fresh id after
+/// the branch points (kept small so it stays under fx_vm::MAX_NODE). Segment
+/// index i matches led.seg / ag.seg.
+#[inline(never)]
+unsafe fn fx_push_graph(vm: &mut FxVm) {
+    let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
+        vm.set_graph(&[], &[], &[]);
+        return;
+    };
+    const MAX_BP: usize = 64;
+    const MAX_SEG: usize = 128;
+    let n_bp = topo.branch_points.len().min(MAX_BP);
+    let n_seg = topo.segments.len().min(MAX_SEG);
+    {
         const G: usize = 64; // fx_vm::MAX_SEG
         let mut seg_len = [0.0f32; G];
         let mut seg_a = [-1i32; G];
@@ -2820,89 +3454,172 @@ unsafe fn fx_budget() -> Budget {
     }
 }
 
-/// Load (parse + hold) a `.fxb` effect, copying `len` bytes into the static
-/// buffer. Resets the VM's state (fresh effect). Returns false if the bytes
-/// don't fit or don't parse as a valid `.fxb`. After a successful load the
-/// effect is HELD but not necessarily active (see lm_fx_active is a pure read
-/// of "is a program loaded").
+/// Why a deck load failed (submit_effect maps these to its error codes).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FxLoadError {
+    /// The `.fxb` exceeds FX_MAX_BYTES.
+    TooLarge,
+    /// The two decks' buffers don't fit the shared FX_ARENA together.
+    ArenaFull,
+    /// Not a valid `.fxb`.
+    Bad,
+}
+
+/// Arena bytes a program's buffers need at the LED cap (its worst case),
+/// rounded up to a word.
+fn arena_need(prog: &Program) -> usize {
+    (prog.arena_bytes(FX_TOPO_CAP) + 3) & !3
+}
+
+/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing).
+unsafe fn bind_arena(p: *mut DeckState) {
+    let (o, n) = ((*p).arena_off, (*p).arena_len);
+    let arena = &mut *addr_of_mut!(FX_ARENA);
+    if let Some(vm) = (*p).vm.as_mut() {
+        vm.set_arena(&mut arena[o..o + n]);
+    }
+}
+
+/// Load (parse + hold) a `.fxb` onto deck `d`, copying it into the deck's
+/// static buffer with a fresh VM. The deck is HELD, not activated. Deck A takes
+/// FX_ARENA from the front (everything deck B doesn't reserve); deck B reserves
+/// exactly its own need from the back, refused when the two don't fit together.
+unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
+    if src.is_empty() || src.len() > FX_MAX_BYTES {
+        return Err(FxLoadError::TooLarge);
+    }
+    // Validate before committing: reject a malformed .fxb so a bad upload can't
+    // wedge the render loop on garbage.
+    let Ok(prog) = Program::parse(src) else {
+        return Err(FxLoadError::Bad);
+    };
+    let need = arena_need(&prog);
+    let b_reserve = match deck(DECK_B_IDX) {
+        Some(b) if (*b).loaded() => (*b).arena_len,
+        _ => 0,
+    };
+    let (off, alen) = if d == DECK_A_IDX {
+        if b_reserve > 0 && need > FX_ARENA_BYTES - b_reserve {
+            return Err(FxLoadError::ArenaFull);
+        }
+        (0, FX_ARENA_BYTES - b_reserve)
+    } else {
+        let a_need = if (*addr_of!(DECK_A)).loaded() {
+            Program::parse(&(*addr_of!(DECK_A.bytes))[..DECK_A.len]).map(|p| arena_need(&p)).unwrap_or(0)
+        } else {
+            0
+        };
+        if a_need + need > FX_ARENA_BYTES {
+            return Err(FxLoadError::ArenaFull);
+        }
+        (FX_ARENA_BYTES - need, need)
+    };
+    let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
+    if d == DECK_A_IDX {
+        // Build the OSC name->slot table for the fresh effect (once, off the
+        // render path) and clear the per-slot value shadow so no stale vector
+        // component leaks across a hot-reload. OSC drives deck A only.
+        *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
+        (*addr_of_mut!(OSC_SHADOW)).reset();
+    }
+    // Only build the per-LED fixed context mirrors / uv projection / room read
+    // on the hot path when the program actually reads them (FUG-122).
+    (*p).uses_ctxfix = prog.uses_ctxfix();
+    (*p).uses_uv = prog.uses_uv();
+    (*p).uses_room = prog.uses_room();
+    (*p).morph.reset(prog.manifest);
+    (*p).shade_led = None;
+    *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).bytes[..src.len()].copy_from_slice(src);
+    (*p).len = src.len();
+    (*p).vm = Some(FxVm::new());
+    // Bind + zero this deck's arena slice (buffers start clean each load; the
+    // static memory's pointer is stable so one bind holds).
+    (*p).arena_off = off;
+    (*p).arena_len = alen;
+    (&mut (*addr_of_mut!(FX_ARENA)))[off..off + alen].fill(0);
+    bind_arena(p);
+    if d == DECK_A_IDX {
+        // FUG-125: build the on-device JIT (patches JitCall into the resident
+        // bytes + installs the segment table). Re-parse from the resident copy so
+        // the patched offsets + JIT code slice point at it.
+        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
+            if let Ok(resident) = Program::parse(&(*addr_of!(DECK_A.bytes))[..DECK_A.len]) {
+                fx_build_jit(&resident, vm);
+            }
+        }
+        // A fresh effect (re)stamps the perf identity and resets the ring/window
+        // so metrics can't be mis-attributed across a hot-reload.
+        DECK_A.hash = fxb_hash(src);
+        perf_reset_ring();
+    } else {
+        // Deck B reserved the back of the arena: deck A keeps the front (its own
+        // buffers sit there already, so the rebind moves nothing).
+        DECK_A.arena_off = 0;
+        DECK_A.arena_len = FX_ARENA_BYTES - alen;
+        bind_arena(addr_of_mut!(DECK_A));
+    }
+    // Hand the fresh VM the current topology graph now (if it's resolved; else
+    // the next update resolves it and pushes to every deck). Re-resolving the
+    // per-LED cache on every load would read its already-resolved indices back
+    // as raw segment ids.
+    if FX_TOPO_READY {
+        if let Some(vm) = (*p).vm.as_mut() {
+            fx_push_graph(vm);
+        }
+    }
+    FX_ROOM_READY = false;
+    FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Load (parse + hold) a `.fxb` onto deck A (see [`fx_load`]). False if the
+/// bytes don't fit or don't parse as a valid `.fxb`.
 ///
 /// # Safety
 /// `fxb` must point to `len` readable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
-    if fxb.is_null() || len == 0 || len > FX_MAX_BYTES {
+    if fxb.is_null() || len == 0 {
         return false;
     }
-    let src = core::slice::from_raw_parts(fxb, len);
-    // Validate before committing: reject a malformed .fxb so a bad upload can't
-    // wedge the render loop on garbage.
-    let Ok(prog) = Program::parse(src) else {
-        return false;
-    };
-    // Build the OSC name->slot table for the fresh effect (once, off the render
-    // path) and clear the per-slot value shadow so no stale vector component
-    // leaks across a hot-reload.
-    *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
-    (*addr_of_mut!(OSC_SHADOW)).reset();
-    // Only build the per-LED fixed context mirrors on the hot path when the
-    // program actually reads them (FUG-122) — an all-float effect pays nothing.
-    FX_USES_CTXFIX = prog.uses_ctxfix();
-    // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
-    FX_USES_UV = prog.uses_uv();
-    FX_USES_ROOM = prog.uses_room();
-    *addr_of_mut!(FX_SHADE_FRAME) = None;
-    *addr_of_mut!(FX_SHADE_LED) = None;
-    let buf = &mut *addr_of_mut!(FX_BYTES);
-    buf[..len].copy_from_slice(src);
-    FX_LEN = len;
-    *addr_of_mut!(FX_VM) = Some(FxVm::new());
-    // Bind + zero the hidden-buffer arena for the fresh effect (buffers start
-    // clean each load; the static memory's pointer is stable so one bind holds).
-    {
-        let arena = &mut *addr_of_mut!(FX_ARENA);
-        arena.fill(0);
-        if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
-            vm.set_arena(arena);
-        }
-    }
-    // FUG-125: build the on-device JIT for this effect (patches JitCall into the
-    // resident FX_BYTES + installs the segment table on the VM). Re-parse from
-    // FX_BYTES so the patched offsets + JIT code slice point at the resident copy.
-    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
-        if let Ok(resident) = Program::parse(&(*addr_of!(FX_BYTES))[..len]) {
-            fx_build_jit(&resident, vm);
-        }
-    }
-    // Force a topology-cache rebuild so the fresh VM gets the current graph
-    // (set_graph) + per-LED cache on its first frame, regardless of load order.
-    FX_TOPO_READY = false;
-    FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
-    // A fresh effect (re)stamps the perf identity and resets the ring/window so
-    // metrics can't be mis-attributed across a hot-reload (perf-monitoring.md).
-    FX_HASH = fxb_hash(src);
-    perf_reset_ring();
-    true
+    fx_load(DECK_A_IDX, core::slice::from_raw_parts(fxb, len)).is_ok()
 }
 
-/// Clear the loaded effect (back to idle). Frees nothing
-/// (the buffer is static) but marks no program loaded and not active.
+/// Clear deck `d` (no program, not active). Clearing deck B hands the aux region
+/// back (a video stream can claim it) and deck A the whole arena.
+unsafe fn fx_clear(d: usize) {
+    if d == DECK_A_IDX {
+        DECK_A.len = 0;
+        DECK_A.active = false;
+        *addr_of_mut!(DECK_A.vm) = None;
+        DECK_A.hash = 0;
+        DECK_A.id_len = 0;
+        (*addr_of_mut!(DECK_A)).morph.clear();
+        *addr_of_mut!(OSC_TABLE) = PortTable::empty();
+        (*addr_of_mut!(OSC_SHADOW)).reset();
+        // Drop the JIT table (the exec region is a fixed static, reused on next
+        // load; the VM was just cleared above, so the installed table goes too).
+        FX_JIT_N = 0;
+        perf_reset_ring();
+    } else if let Some(p) = deck(DECK_B_IDX) {
+        (*p).vm = None;
+        (*p).len = 0;
+        FX_AUX_OWNER = AuxOwner::Free;
+        DECK_A.arena_off = 0;
+        DECK_A.arena_len = FX_ARENA_BYTES;
+        bind_arena(addr_of_mut!(DECK_A));
+    }
+}
+
+/// Clear deck A's effect (back to idle).
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
 /// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_clear() {
-    FX_LEN = 0;
-    FX_ACTIVE = false;
-    *addr_of_mut!(FX_VM) = None;
-    FX_HASH = 0;
-    FX_ID_LEN = 0;
-    *addr_of_mut!(OSC_TABLE) = PortTable::empty();
-    (*addr_of_mut!(OSC_SHADOW)).reset();
-    // Drop the JIT table (the exec region is a fixed static, reused on next load;
-    // FX_VM was just cleared above, so the installed table goes with it).
-    FX_JIT_N = 0;
-    perf_reset_ring();
+    fx_clear(DECK_A_IDX);
 }
 
 /// Enable/disable the on-device JIT (FUG-125). Takes effect on the NEXT
@@ -2948,38 +3665,51 @@ pub unsafe extern "C" fn lm_fx_jit_diag(plans: *mut u32, words: *mut u32, alloc_
     }
 }
 
-/// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
-/// on this (below an active capture / counting probe).
+/// Whether deck `d` is loaded AND active.
+unsafe fn deck_renders(d: usize) -> bool {
+    deck(d).is_some_and(|p| (*p).renders())
+}
+
+/// Whether ANY deck is loaded, ACTIVE and renderable — the render loop gates on
+/// this (below an active capture / counting probe).
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
 /// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_active() -> bool {
-    FX_ACTIVE && FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+    (0..N_DECKS).any(|d| deck_renders(d))
 }
 
-/// Whether an effect is loaded at all (active or parked). Used by persistence.
+/// Whether deck A has an effect loaded at all (active or parked). Used by
+/// persistence (deck A is the persisted deck).
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
 /// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_loaded() -> bool {
-    FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+    (*addr_of!(DECK_A)).loaded()
 }
 
-/// Mark the loaded effect active (true) or parked (false). No-op with nothing
-/// loaded.
+/// Mark deck `d`'s loaded effect active (true) or parked (false). No-op with
+/// nothing loaded.
+unsafe fn fx_set_active(d: usize, active: bool) {
+    if let Some(p) = deck(d) {
+        if (*p).loaded() {
+            (*p).active = active;
+        }
+    }
+}
+
+/// Mark deck A's loaded effect active (true) or parked (false).
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
 /// this must not be called reentrantly (single firmware thread).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_set_active(active: bool) {
-    if FX_LEN > 0 && (*addr_of!(FX_VM)).is_some() {
-        FX_ACTIVE = active;
-    }
+    fx_set_active(DECK_A_IDX, active);
 }
 
 /// Set the max instruction count for one update()/shade() invocation (bounded
@@ -3018,7 +3748,16 @@ pub unsafe extern "C" fn lm_fx_last_update_outcome() -> u32 {
     FX_LAST_UPDATE_OUTCOME
 }
 
-/// Apply a uniform value (`vals` = its slot count, 1..4) to the active VM.
+/// Apply a uniform value to deck `d`'s VM.
+unsafe fn fx_set_uniform(d: usize, slot: u32, vals: &[f32]) {
+    if let Some(p) = deck(d) {
+        if let Some(vm) = (*p).vm.as_mut() {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }
+}
+
+/// Apply a uniform value (`vals` = its slot count, 1..4) to deck A's VM.
 ///
 /// # Safety
 /// `vals` must point to `n` readable f32.
@@ -3027,10 +3766,7 @@ pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize
     if vals.is_null() || n == 0 {
         return;
     }
-    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
-        let s = core::slice::from_raw_parts(vals, n);
-        vm.set_uniform(slot as usize, s);
-    }
+    fx_set_uniform(DECK_A_IDX, slot, core::slice::from_raw_parts(vals, n));
 }
 
 /// Select OSC addressing mode: `true` (default) resolves uniform names via the
@@ -3063,16 +3799,23 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let table = &*addr_of!(OSC_TABLE);
     let shadow = &mut *addr_of_mut!(OSC_SHADOW);
     osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
-        if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }
     }) as u32
 }
 
-/// Run `update()` once for this frame (before the per-LED shade sweep). Clears
-/// the wall-time deadline flag first (a fresh frame gets the full budget).
-/// Returns false when no effect is loaded. A cancelled update (budget/timeout)
-/// still returns true — a partial state advance is harmless.
+/// The global crossfade (Player::set_crossfade), latched once per frame by
+/// lm_fx_update so the per-LED blend reads two plain statics.
+static mut FX_XF_POS: f32 = 0.0;
+static mut FX_XF_MODE: u32 = 0;
+
+/// Run `update()` once for this frame (before the per-LED shade sweep) on EVERY
+/// active deck, first advancing any keypoint morph on that deck. Clears the
+/// wall-time deadline flag first (a fresh frame gets the full budget) and
+/// latches the frame context + crossfade the shade sweep reuses. Returns false
+/// when no deck has an effect loaded. A cancelled update (budget/timeout) still
+/// counts — a partial state advance is harmless.
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
@@ -3080,16 +3823,16 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_count: u32) -> bool {
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
-    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
+    if !(0..N_DECKS).any(|d| deck(d).is_some_and(|p| (*p).loaded())) {
         return false;
-    };
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
-    let Ok(prog) = Program::parse(bytes) else {
-        return false;
-    };
+    }
+    let pl = player();
+    FX_XF_POS = pl.crossfade();
+    FX_XF_MODE = pl.crossfade_mode();
     // The room frame follows the map and the pose: rebuild when either changed
     // (only for effects that read it — the rest never pay the sweep).
-    if FX_USES_ROOM && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
+    let uses_room = (0..N_DECKS).any(|d| deck(d).is_some_and(|p| (*p).loaded() && (*p).uses_room));
+    if uses_room && (!FX_ROOM_READY || FX_ROOM_GEN != pl.fixture_pose_gen()) {
         fx_rebuild_room();
     }
     let f = FxFrame {
@@ -3123,54 +3866,54 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
         fx_rebuild_topo();
+        fx_push_graph_all();
     }
-    // A new frame: reset the per-frame Tier-1 shade accumulators (they sum over
-    // the coming per-LED sweep). update()'s own counts are latched here.
+    // A new frame: reset the per-frame Tier-1 accumulators (they sum over both
+    // decks' update + the coming per-LED sweep).
+    FX_INSTR_UPDATE = 0;
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
-    let outcome = if PERF_MODE == PERF_FULL {
-        // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
-        FX_INSTR_UPDATE = c.instrs;
-        FX_STACK_MAX = c.stack_max;
-        oc
-    } else {
-        // BASIC/OFF: the plain path — no per-opcode counting overhead.
-        FX_INSTR_UPDATE = 0;
-        vm.run_update_bounded(&prog, &f, &fx_budget())
-    };
-    FX_LAST_UPDATE_OUTCOME = outcome as u32;
+    for d in 0..N_DECKS {
+        let Some(p) = deck(d) else { continue };
+        if !(*p).renders() {
+            continue;
+        }
+        let bytes = &(*p).bytes[..(*p).len];
+        let Ok(prog) = Program::parse(bytes) else { continue };
+        let Some(vm) = (*p).vm.as_mut() else { continue };
+        // A keypoint morph moves the uniforms first, so this frame's update and
+        // shade see the same in-between position.
+        if let Some(v) = (*p).morph.advance(dt_s) {
+            (*p).morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
+        }
+        let outcome = if PERF_MODE == PERF_FULL {
+            // FULL: pay the counted VM path so instr_update / stack_max are real.
+            let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
+            FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
+            FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
+            oc
+        } else {
+            // BASIC/OFF: the plain path — no per-opcode counting overhead.
+            vm.run_update_bounded(&prog, &f, &fx_budget())
+        };
+        if d == DECK_A_IDX {
+            FX_LAST_UPDATE_OUTCOME = outcome as u32;
+        }
+    }
     true
 }
 
-/// Shade one LED: run `shade(led)` → rgb (3 bytes). `x`,`y`,`z` are the LED's
-/// position (the render loop passes the stored map position via lm_map_led).
-/// Returns false when no effect is loaded OR the invocation was cancelled by a
-/// bounded-execution guard (budget/timeout) — the caller then holds last/black
-/// for that LED rather than hanging the render task.
-///
-/// # Safety
-/// `rgb` must point to 3 writable bytes.
-#[no_mangle]
-pub unsafe extern "C" fn lm_fx_shade(
-    idx: u32,
-    x: f32,
-    y: f32,
-    z: f32,
-    rgb: *mut u8,
-) -> bool {
-    // &mut: run_shade now writes the VM's resident scratch (stack/locals) in
-    // place instead of allocating per LED (FUG-122 framing hill-climb).
-    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
-        return false;
-    };
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
-    let Ok(prog) = Program::parse(bytes) else {
-        return false;
-    };
-    // Borrow the frame context lm_fx_update built for this frame, so `time`/`dt`/
-    // `frame` are the same as update() (shaders animate off `time` in shade()) and
-    // nothing frame-wide is rebuilt per LED. Before the first update() of a fresh
+/// Shade one LED on deck `p`: run `shade(led)` → rgb. None when the deck has no
+/// program OR the invocation was cancelled by a bounded-execution guard.
+unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> Option<Rgb8> {
+    let bytes = &(*p).bytes[..(*p).len];
+    // &mut: run_shade writes the VM's resident scratch (stack/locals) in place
+    // instead of allocating per LED (FUG-122 framing hill-climb).
+    let vm = (*p).vm.as_mut()?;
+    let prog = Program::parse(bytes).ok()?;
+    // Borrow the frame context lm_fx_update built for this frame (shared by both
+    // decks), so `time`/`dt`/`frame` are the same as update() and nothing
+    // frame-wide is rebuilt per LED. Before the first update() of a fresh
     // effect, a zero Frame (the render loop always updates first).
     let f: &FxFrame = (*addr_of_mut!(FX_SHADE_FRAME)).get_or_insert_with(FxFrame::default);
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
@@ -3178,9 +3921,8 @@ pub unsafe extern "C" fn lm_fx_shade(
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
     let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
     // The uv projection is per-LED soft-float; skip it entirely unless the effect
-    // reads led.uv (FUG-122) — a chunk of the framing floor for the many effects
-    // that don't use it.
-    let uv = if FX_USES_UV {
+    // reads led.uv (FUG-122).
+    let uv = if (*p).uses_uv {
         [
             ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
             ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
@@ -3188,8 +3930,11 @@ pub unsafe extern "C" fn lm_fx_shade(
     } else {
         [0.0, 0.0]
     };
-    // Overwrite the reused scratch field by field — no per-LED struct re-zero.
-    let led: &mut FxLed = (*addr_of_mut!(FX_SHADE_LED)).get_or_insert_with(FxLed::default);
+    // Overwrite this deck's reused scratch field by field — no per-LED struct
+    // re-zero. Per deck: each deck's program reads (and so refreshes) a
+    // different set of the optional mirrors, so a shared scratch would leak one
+    // deck's room / fixed values into the other.
+    let led: &mut FxLed = (*p).shade_led.get_or_insert_with(FxLed::default);
     led.pos = [x, y, z];
     led.idx = idx;
     led.seg = t.seg as i32;
@@ -3197,62 +3942,81 @@ pub unsafe extern "C" fn lm_fx_shade(
     led.branch = t.branch;
     led.dist = t.dist;
     led.uv = uv;
-    // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the loaded
-    // effect actually reads them (FUG-122), so an all-float shader pays zero
-    // per-LED overhead and the resident cache never grows. Positions come from
-    // this frame's map fetch; uv/s/dist from the already-derived values.
-    if FX_USES_ROOM && FX_ROOM_POSED {
+    if (*p).uses_room && FX_ROOM_POSED {
         let mm = (*addr_of!(FX_LED_ROOM)).get(idx as usize).copied().unwrap_or([0; 3]);
         led.room = [mm[0] as f32 * 0.001, mm[1] as f32 * 0.001, mm[2] as f32 * 0.001];
         // mm -> Q16.16 metres in integer math: v * 65536 / 1000.
         led.room_fix = [mm_q16(mm[0]), mm_q16(mm[1]), mm_q16(mm[2])];
     }
-    if FX_USES_CTXFIX {
+    // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the effect
+    // actually reads them (FUG-122), so an all-float shader pays zero per-LED
+    // overhead and the resident cache never grows.
+    if (*p).uses_ctxfix {
         led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
         led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
         led.s_fix = q16_16(t.s);
         led.dist_fix = q16_16(t.dist);
     }
-    let outcome = if PERF_MODE == PERF_FULL {
+    let (c, outcome) = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
-        let ((r, g, b), outcome, c): ((u8, u8, u8), Outcome, FxCounters) =
-            vm.run_shade_counted(&prog, f, led, &fx_budget());
-        FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(c.instrs);
-        if c.stack_max > FX_STACK_MAX {
-            FX_STACK_MAX = c.stack_max;
+        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(&prog, f, led, &fx_budget());
+        FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(k.instrs);
+        if k.stack_max > FX_STACK_MAX {
+            FX_STACK_MAX = k.stack_max;
         }
-        if outcome == Outcome::Ok {
-            *rgb = r;
-            *rgb.add(1) = g;
-            *rgb.add(2) = b;
-        }
-        outcome
+        (c, outcome)
     } else {
-        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, f, led, &fx_budget());
-        if outcome == Outcome::Ok {
-            *rgb = r;
-            *rgb.add(1) = g;
-            *rgb.add(2) = b;
-        }
-        outcome
+        vm.run_shade_bounded(&prog, f, led, &fx_budget())
     };
-    outcome == Outcome::Ok
+    (outcome == Outcome::Ok).then_some(c)
 }
 
-/// Copy the active effect's uniforms manifest into `out` (cap `cap`). Returns
-/// the manifest length written, or -1 when no effect is loaded, or -2 when the
-/// manifest doesn't fit `cap`. Used to build the get_effect_uniforms reply.
+/// Shade one LED: each active deck's `shade(led)`, blended by the crossfade
+/// lm_fx_update latched (position 0 = all deck A .. 1 = all deck B; mode 0 =
+/// linear RGB, 1 = HSV). At either endpoint only that deck shades, so a parked
+/// crossfader costs one deck; a lone active deck shows at full. `x`,`y`,`z` are
+/// the LED's position (the render loop passes the stored map position via
+/// lm_map_led). Returns false when no deck produced a colour (nothing loaded, or
+/// a bounded-execution guard cancelled it) — the caller holds black for that LED
+/// rather than hanging the render task.
+///
+/// # Safety
+/// `rgb` must point to 3 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_shade(idx: u32, x: f32, y: f32, z: f32, rgb: *mut u8) -> bool {
+    let t = FX_XF_POS;
+    let a = (*addr_of!(DECK_A)).renders();
+    let b = deck_renders(DECK_B_IDX);
+    let ca = if a && !(b && t >= 1.0) { fx_shade_one(addr_of_mut!(DECK_A), idx, x, y, z) } else { None };
+    let cb = match deck(DECK_B_IDX) {
+        Some(p) if b && !(a && t <= 0.0) => fx_shade_one(p, idx, x, y, z),
+        _ => None,
+    };
+    let (r, g, bl) = match (ca, cb) {
+        (Some(ca), Some(cb)) => ledmapper_fx_vm::blend_rgb8(ca, cb, t, FX_XF_MODE),
+        (Some(c), None) | (None, Some(c)) => c,
+        (None, None) => return false,
+    };
+    *rgb = r;
+    *rgb.add(1) = g;
+    *rgb.add(2) = bl;
+    true
+}
+
+/// Copy deck A's uniforms manifest into `out` (cap `cap`). Returns the manifest
+/// length written, or -1 when no effect is loaded, or -2 when the manifest
+/// doesn't fit `cap`.
 ///
 /// # Safety
 /// `out` must point to `cap` writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_manifest(out: *mut u8, cap: usize) -> i32 {
-    if FX_LEN == 0 {
+    if DECK_A.len == 0 {
         return -1;
     }
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
     let Ok(prog) = Program::parse(bytes) else {
         return -1;
     };
@@ -3469,7 +4233,7 @@ pub unsafe extern "C" fn lm_mode_boot() {
         boot.map = true;
     }
     if lm_fx_loaded() {
-        boot.activity = ledmapper_sysmode::Activity::Effect { video: false };
+        boot.activity = ledmapper_sysmode::Activity::Effect { video: false, deck_b: false };
     }
     (*addr_of_mut!(MODE)).reset(boot);
     *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
@@ -3507,6 +4271,7 @@ pub unsafe extern "C" fn lm_mode_observe(
         mapping: p.pattern_timing().is_some() || p.counting_len() > 0,
         effect,
         video,
+        deck_b: deck(DECK_B_IDX).is_some_and(|d| (*d).loaded()),
         map: lm_map_len() > 0,
     };
     let mut count = 0u32;

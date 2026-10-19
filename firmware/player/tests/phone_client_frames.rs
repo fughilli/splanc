@@ -87,6 +87,11 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetUniforms(_)
         | CMsg::GetEffectUniforms(_)
         | CMsg::ListEffects(_)
+        | CMsg::SaveKeypoint(_)
+        | CMsg::DeleteKeypoint(_)
+        | CMsg::ListKeypoints(_)
+        | CMsg::GetKeypoint(_)
+        | CMsg::BlendKeypoints(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -95,7 +100,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetColorCorrection(_)
         | CMsg::SetBrightness(_)
         | CMsg::SetFixturePose(_)
-        | CMsg::SetTimeBase(_) => {
+        | CMsg::SetTimeBase(_)
+        | CMsg::SetCrossfade(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
         }
         // Hardware config get/set reply hardware_config_state.
@@ -147,6 +153,12 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::ListEffects(_) => "list_effects",
         CMsg::SetFixturePose(_) => "set_fixture_pose",
         CMsg::SetTimeBase(_) => "set_time_base",
+        CMsg::SetCrossfade(_) => "set_crossfade",
+        CMsg::SaveKeypoint(_) => "save_keypoint",
+        CMsg::DeleteKeypoint(_) => "delete_keypoint",
+        CMsg::ListKeypoints(_) => "list_keypoints",
+        CMsg::GetKeypoint(_) => "get_keypoint",
+        CMsg::BlendKeypoints(_) => "blend_keypoints",
     }
 }
 

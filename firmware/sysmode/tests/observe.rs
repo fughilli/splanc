@@ -95,7 +95,7 @@ fn loaded_tls_worst_case() {
     ]);
     let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
     assert_tracks(&t, &r);
-    assert_eq!(t.state.activity, Activity::Effect { video: false });
+    assert_eq!(t.state.activity, Activity::Effect { video: false, deck_b: false });
     assert!(t.state.map);
 }
 
@@ -112,7 +112,7 @@ fn capture_parks_then_resumes_the_effect() {
     ]);
     let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
     assert_tracks(&t, &r);
-    assert_eq!(t.state.activity, Activity::Effect { video: false });
+    assert_eq!(t.state.activity, Activity::Effect { video: false, deck_b: false });
 }
 
 /// The AP drops us mid-session: the lease and the TCP session die in the same
@@ -159,4 +159,25 @@ fn an_unreachable_observation_is_refused() {
     assert_eq!(r.len(), 1, "{r:#?}");
     assert_eq!(t.stats.refused, 1);
     assert!(t.state.wss, "forced to the observed state");
+}
+
+/// A Show Mode session over wss: video streams into deck A, then deck B is cued
+/// (the stream stops: deck B takes the aux region), crossfaded, and freed; the
+/// stream may resume once deck B is gone.
+#[test]
+fn show_mode_deck_b_evicts_video() {
+    let mut seq = provision_then_wss();
+    seq.extend::<Vec<&dyn Fn(&mut Observed)>>(vec![
+        &|o| o.effect = true,
+        &|o| o.video = true,
+        // Deck B loads: set_texture is dropped from here, so the stream goes quiet.
+        &|o| o.deck_b = true,
+        &|o| o.video = false,
+        &|o| o.deck_b = false,
+        &|o| o.video = true,
+        &|o| o.video = false,
+    ]);
+    let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
+    assert_tracks(&t, &r);
+    assert_eq!(t.state.activity, Activity::Effect { video: false, deck_b: false });
 }
