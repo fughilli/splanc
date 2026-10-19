@@ -448,6 +448,28 @@ message SetEffect {
 // persisted like set_playback. Reply: playback_state.
 message SetUniforms {
   repeated UniformValue values = 1;
+  // Persist these values (auto-resume on boot) — true or unset, today's behaviour —
+  // or apply them live only (false): a client streaming a ramp sends uncommitted
+  // updates and commits once at the end, so a slider drag doesn't wear the flash.
+  // Mirrors SetColorCorrection.commit.
+  optional bool commit = 2;
+}
+
+// List the effects the device stores. The firmware holds ONE effect slot (the
+// last submit_effect, persisted and auto-resumed on boot), so the reply has at most
+// one entry. Reply: effect_list.
+message ListEffects {}
+
+message StoredEffect {
+  string effect_id = 1;
+  // Bytecode (.fxb) size in bytes.
+  uint32 fxb_bytes = 2;
+  // Whether it is the active (rendering) effect.
+  bool active = 3;
+}
+
+message EffectList {
+  repeated StoredEffect effects = 1;
 }
 
 // Request an effect's uniform manifest + current live values for UI hydration.
@@ -562,6 +584,7 @@ message ClientMessage {
     SetHardwareConfig set_hardware_config = 33;
     GetHardwareConfig get_hardware_config = 34;
     GetColorCorrection get_color_correction = 35;
+    ListEffects list_effects = 36;
   }
 }
 
@@ -596,6 +619,14 @@ message Welcome {
   // (e.g. "1.2.0", or "1.2.0-<n>-g<sha>" ahead of it, or "0.0.0-dev"). Stamped in
   // at build time alongside the commit. Empty on older firmware / an unstamped build.
   string fw_version = 9;
+  // Protocol features this firmware serves, so a client (the agent bridge) needn't
+  // infer them from fw_version: "effects", "perf", "textures", "stored_map",
+  // "uniform_commit" (SetUniforms.commit), "list_effects" (ListEffects). The same list
+  // is in the /.well-known/splanc.json manifest. Empty on older firmware.
+  repeated string features = 10;
+  // The .fxb bytecode format version the device's VM accepts (the version byte of
+  // the .fxb header). 0 on older firmware (which accepts 1).
+  uint32 fxb_format = 11;
 }
 
 // One LED output channel's hardware config, carried in hardware_config_state.
@@ -977,5 +1008,6 @@ message ServerMessage {
     ChunkAck chunk_ack = 18;
     HardwareConfigState hardware_config_state = 19;
     ColorCorrectionState color_correction_state = 20;
+    EffectList effect_list = 21;
   }
 }

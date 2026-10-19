@@ -554,6 +554,15 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append('   * or "0.0.0-dev"), stamped in via Bazel --stamp. Empty on older')
     lines.append("   * firmware / an unstamped build. */")
     lines.append("  fwVersion: string;")
+    lines.append('  /** Protocol features the firmware serves (e.g. "effects", "uniform_commit",')
+    lines.append(
+        '   * "list_effects"); also in /.well-known/splanc.json. Empty on older firmware. */'
+    )
+    lines.append("  features: string[];")
+    lines.append(
+        "  /** .fxb bytecode format version the device's VM accepts; 0 on older firmware. */"
+    )
+    lines.append("  fxbFormat: number;")
     lines.append("}\n")
     lines.append("/** Reply to stop_mapping with solveOnHost=false: capture stopped + log")
     lines.append(" * persisted, no host solve. The counts echo what the server logged. */")
@@ -1172,6 +1181,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    fwGitCommit: str = ""')
     out.append("    fwGitDirty: bool = False")
     out.append('    fwVersion: str = ""')
+    out.append("    features: List[str] = Field(default_factory=list)")
+    out.append("    fxbFormat: int = 0")
     out.append("")
     out.append("")
     out.append("class MappingStoppedMessage(_StrictModel):")
