@@ -34,7 +34,7 @@ Status: implemented (supersedes PR #82, FUG-110). Builds on the effects runtime
 | `ClientMessage.list_keypoints` | **42** | reply `keypoint_list` |
 | `ClientMessage.get_keypoint` | **43** | reply `keypoint` |
 | `ClientMessage.blend_keypoints` | **44** | reply `playback_state` |
-| `ServerMessage.keypoint_list` | **22** | names + index + stale |
+| `ServerMessage.keypoint_list` | **22** | names + index + stale + capacity |
 | `ServerMessage.keypoint` | **23** | one keypoint's values |
 | `Welcome.crossfade` / `crossfade_mode` | 14 / 15 | runtime-only |
 | `Welcome.features` | | adds `decks`, `crossfade`, `keypoints` |
@@ -57,9 +57,9 @@ changed since the save. Uniforms the keypoint doesn't name keep their live value
 **Bounds.**
 - At most 16 keypoints per effect, names of at most 32 bytes.
 - At most 32 uniforms and 64 floats per keypoint. The scalar/vector widths are
-  read from the manifest.
-- `save_keypoint` past these limits fails with `keypoint_full` or
-  `too_many_uniforms`.
+  read from the manifest; uniforms past the bound are not keypointed (they keep
+  their live value on recall).
+- A 17th keypoint fails with `keypoint_full`.
 
 **Storage.**
 - One small littlefs file per keypoint: `/lfs/kp/<fnv32(effect_id)>.<n>`, where
@@ -128,9 +128,11 @@ Loading deck B is refused (`effect_too_large`) when the two decks' needs don't
 fit together. Clearing deck B gives deck A the whole arena back.
 
 **Per-deck state.**
-- Morph state: 4 sources × 64 floats + per-uniform rules, about 1.6 KB per deck.
-  Deck A's is resident; deck B's lives in the union.
-- The keypoint I/O scratch: 1.5 KB.
+- Morph state: a live snapshot + 4 cached sources × 64 floats + 32 rules, about
+  2.1 KB per deck. Deck A's is resident; deck B's lives in the union.
+- The keypoint record buffer `KP_IO`: 1,130 B (one record, the largest file).
+- Net: +6.5 KB of static RAM over the single-deck image (DECK_A 11,436 for
+  FX_BYTES+FX_VM+morph, FX_AUX 8,192 → 11,436, KP_IO 1,130).
 - The sysmode cost table carries `fx_aux` (the union) and `keypoints`. The
   reachability test pins the new state count and worst case.
 

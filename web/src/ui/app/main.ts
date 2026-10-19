@@ -27,6 +27,7 @@ import { MapDetailScreen } from "../screens/mapDetail";
 import { EffectsBrowserScreen } from "../screens/effectsBrowser";
 import { EffectDemoScreen } from "../screens/effectDemo";
 import { EffectEditorScreen } from "../screens/effectEditor";
+import { ShowModeScreen } from "../screens/showMode";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
@@ -124,6 +125,11 @@ async function main(): Promise<void> {
     .add("/effects", () => {
       shell.setChrome({ title: "Effects", tabs: true });
       return EffectsBrowserScreen(router);
+    })
+    .add("/show", () => {
+      // Live performance workspace (FUG-110): cue two decks + crossfade.
+      shell.setChrome({ title: "Show mode", back: true, tabs: true });
+      return ShowModeScreen(router);
     })
     .add("/effects/edit/:id", (m) => {
       // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole

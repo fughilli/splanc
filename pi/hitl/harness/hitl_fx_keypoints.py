@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 import hitl_ws
 from hitl_client import Reservation
 from hitl_led_capture import _connect_ws, _linear_map, capture_via_daemon
-from provision import wire_provision_dut
+from provision import HarnessError, provision_dut, wire_provision_dut
 
 LEDS = 12
 FAILS: list = []
@@ -125,16 +125,44 @@ def blend(weights: dict, seconds: float = 0.0, color_mode: int = 0, commit: bool
     }
 
 
-def pixel(server: str, unit: str) -> tuple:
-    """The median colour over the strip, off the analyzer."""
+CAPTURE = True
+
+
+def pixel(server: str, unit: str):
+    """The median colour over the strip, off the analyzer (None with --no-capture:
+    a rig without an analyzer still checks the device-side uniform state)."""
+    if not CAPTURE:
+        return None
     px = capture_via_daemon(server, unit, 0)[:LEDS]
     if not px:
         raise SystemExit("[kp] analyzer returned no pixels")
     return tuple(int(statistics.median(c[i] for c in px)) for i in range(3))
 
 
-def lit(c: tuple, thresh: int = 8) -> str:
+def lit(c, thresh: int = 8):
+    if c is None:
+        return None
     return "".join(ch for ch, v in zip("rgb", c) if v > thresh)
+
+
+def wire(c, want: str, what: str) -> None:
+    """A wire-colour check (skipped without an analyzer)."""
+    if c is None:
+        _log(f"[kp] SKIP (no analyzer) {what}")
+        return
+    check(lit(c) == want, f"{what} {c}")
+
+
+async def state(s: "Session") -> tuple:
+    """The deck-A uniforms the device is applying: (tint, gain), read back with
+    get_effect_uniforms (the VM's live values)."""
+    u = await s.rpc({"type": "get_effect_uniforms"}, "effect_uniforms")
+    cur = {c.get("slot", 0): c.get("value", []) for c in u.get("current", [])}
+    return tuple(round(v, 3) for v in cur.get(0, [])), round((cur.get(3) or [0.0])[0], 3)
+
+
+def near(a, b, tol: float = 0.02) -> bool:
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
 async def _perf(s: Session) -> dict:
@@ -151,7 +179,14 @@ async def _perf(s: Session) -> dict:
 
 
 def provision(r: Reservation, stack: ExitStack, ssid: str, pw: str) -> str:
-    ip = urlparse(wire_provision_dut(r, ssid, pw, 60)).hostname
+    """Join the rig AP (wired PROV over serial; ImprovBLE when the console path
+    doesn't ack) and tunnel the player's wss."""
+    try:
+        redirect = wire_provision_dut(r, ssid, pw, 60)
+    except HarnessError as e:
+        _log(f"[kp] wired provisioning failed ({e}); falling back to ImprovBLE")
+        redirect = provision_dut(r, ssid, pw, 90)
+    ip = urlparse(redirect).hostname
     port = stack.enter_context(r.forward(ip, 443))
     return f"wss://localhost:{port}/ws"
 
@@ -197,33 +232,45 @@ def run(args: argparse.Namespace) -> int:
                 check(names == ["red", "blue"], f"saved keypoints {names}")
 
         asyncio.run(phase_save())
-        c = pixel(args.server, args.unit)
-        check(lit(c) == "b", f"live blue on the wire {c}")
+        wire(pixel(args.server, args.unit), "b", "live blue on the wire")
 
-        # Re-provisioning opens the C6's USB serial, which resets it: a reboot.
-        _log("[kp] rebooting the DUT (serial re-provision)")
+        # A real reboot (USB reset), then join again: keypoints must come back off flash.
+        _log("[kp] rebooting the DUT")
+        r.ssh("hitl-monitor --reset --seconds 3", capture=True, timeout=30)
         url = provision(r, stack, ssid, pw)
 
         async def phase_recall() -> dict:
             out = {}
             async with Session(url) as s:
-                await setup(s)  # the effect itself persists too; re-submit is harmless
                 kl = await s.rpc({"type": "list_keypoints"}, "keypoint_list")
                 names = [k["name"] for k in kl.get("keypoints", [])]
                 check(names == ["red", "blue"], f"keypoints survived the reboot {names}")
+                check(
+                    kl.get("effectId") == "kpSolid",
+                    f"the effect resumed on boot {kl.get('effectId')}",
+                )
                 await s.rpc(blend({"red": 1}), "playback_state")
+                out["s_red"] = await state(s)
             out["red"] = pixel(args.server, args.unit)
             async with Session(url) as s:
                 await s.rpc(blend({"red": 1, "blue": 1}, color_mode=0), "playback_state")
+                out["s_rgb"] = await state(s)
             out["rgb_mid"] = pixel(args.server, args.unit)
             async with Session(url) as s:
                 await s.rpc(blend({"red": 1, "blue": 1}, color_mode=1), "playback_state")
+                out["s_hsv"] = await state(s)
             out["hsv_mid"] = pixel(args.server, args.unit)
             async with Session(url) as s:
                 await s.rpc(blend({"red": 1}), "playback_state")
-                t0 = time.monotonic()
                 await s.rpc(blend({"blue": 1}, seconds=args.morph_s), "playback_state")
-                out["morph_sent"] = time.monotonic() - t0
+                t0 = time.monotonic()
+                trace = []
+                while time.monotonic() - t0 < args.morph_s + 1.0:
+                    trace.append((round(time.monotonic() - t0, 2), (await state(s))[0]))
+                    await asyncio.sleep(0.5)
+                out["morph_trace"] = trace
+                await s.rpc(blend({"red": 1}), "playback_state")
+                await s.rpc(blend({"blue": 1}, seconds=args.morph_s), "playback_state")
             time.sleep(args.morph_s * 0.35)
             out["morph_mid"] = pixel(args.server, args.unit)
             time.sleep(args.morph_s * 0.8 + 1.0)
@@ -232,15 +279,32 @@ def run(args: argparse.Namespace) -> int:
 
         got = asyncio.run(phase_recall())
         _log(f"RESULT colours {got}")
-        check(lit(got["red"]) == "r", f"recall red {got['red']}")
-        check(lit(got["rgb_mid"]) == "rb", f"RGB blend has red+blue {got['rgb_mid']}")
-        check(lit(got["hsv_mid"]) == "rb", f"HSV blend has red+blue {got['hsv_mid']}")
         check(
-            sum(got["hsv_mid"]) > sum(got["rgb_mid"]),
-            f"HSV midpoint brighter than the RGB mix {got['hsv_mid']} vs {got['rgb_mid']}",
+            got["s_red"] == ((1.0, 0.0, 0.0), 1.0), f"recall red sets the uniforms {got['s_red']}"
         )
-        check(lit(got["morph_mid"]) == "rb", f"morph mid-way is in between {got['morph_mid']}")
-        check(lit(got["morph_end"]) == "b", f"morph lands on blue {got['morph_end']}")
+        check(near(got["s_rgb"][0], (0.5, 0.0, 0.5)), f"RGB 50/50 tint {got['s_rgb']}")
+        check(
+            near(got["s_hsv"][0], (1.0, 0.0, 1.0)),
+            f"HSV 50/50 tint keeps saturation {got['s_hsv']}",
+        )
+        tr = [t for _, t in got["morph_trace"]]
+        mids = [t for t in tr if 0.05 < t[0] < 0.95]
+        check(len(mids) >= 3, f"the morph passes through in-between values ({len(mids)} samples)")
+        check(
+            all(a[0] >= b[0] - 1e-3 for a, b in zip(tr, tr[1:])),
+            "the morph is monotonic (red falls, frame by frame)",
+        )
+        check(near(tr[-1], (0.0, 0.0, 1.0)), f"the morph lands on blue {tr[-1]}")
+        wire(got["red"], "r", "recall red on the wire")
+        wire(got["rgb_mid"], "rb", "RGB blend has red+blue on the wire")
+        wire(got["hsv_mid"], "rb", "HSV blend has red+blue on the wire")
+        if got["hsv_mid"] is not None:
+            check(
+                sum(got["hsv_mid"]) > sum(got["rgb_mid"]),
+                f"HSV midpoint brighter than the RGB mix {got['hsv_mid']} vs {got['rgb_mid']}",
+            )
+        wire(got["morph_mid"], "rb", "morph mid-way is in between on the wire")
+        wire(got["morph_end"], "b", "morph lands on blue on the wire")
 
         async def phase_sweep() -> dict:
             async with Session(url) as s:
@@ -286,9 +350,9 @@ def run(args: argparse.Namespace) -> int:
         asyncio.run(xf(1.0))
         b_only = pixel(args.server, args.unit)
         _log(f"RESULT crossfade 0={a_only} 0.5={mix} 1={b_only}")
-        check(lit(a_only) == "b", f"crossfade 0 shows deck A (blue) {a_only}")
-        check(lit(b_only) == "g", f"crossfade 1 shows deck B (green) {b_only}")
-        check(lit(mix) == "gb", f"crossfade 0.5 mixes both {mix}")
+        wire(a_only, "b", "crossfade 0 shows deck A (blue)")
+        wire(b_only, "g", "crossfade 1 shows deck B (green)")
+        wire(mix, "gb", "crossfade 0.5 mixes both")
     verdict = "PASS" if not FAILS else "FAIL"
     _log(f"RESULT verdict={verdict} fails={FAILS}")
     return 0 if not FAILS else 1
@@ -309,7 +373,15 @@ def main() -> int:
     ap.add_argument("--green-fxb", default="_main/pi/hitl/harness/kpGreen.fxb")
     ap.add_argument("--morph-s", type=float, default=6.0)
     ap.add_argument("--sweep", type=int, default=60)
-    return run(ap.parse_args())
+    ap.add_argument(
+        "--no-capture",
+        action="store_true",
+        help="no logic analyzer on this rig: check the device-side state only",
+    )
+    a = ap.parse_args()
+    global CAPTURE
+    CAPTURE = not a.no_capture
+    return run(a)
 
 
 if __name__ == "__main__":

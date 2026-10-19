@@ -148,6 +148,54 @@ test("set_brightness round-trips + welcome carries the brightness echo", () => {
   assert.equal(back.brightness, 0.5);
 });
 
+test("set_crossfade round-trips + welcome carries the crossfade echo (FUG-110)", () => {
+  for (const [position, mode] of [
+    [0, 0],
+    [0.5, 1],
+    [1, 0],
+  ]) {
+    const req = { type: "set_crossfade", position, mode };
+    // set_crossfade isn't in the flat schema union (client casts, like
+    // set_brightness), so cast at the boundary.
+    assert.deepEqual(decodeClient(encodeClient(req as never)), req);
+  }
+  // Welcome echoes the applied crossfade (optional double) + mode (uint32).
+  const w = { type: "welcome", sessionId: "s", crossfade: 0.75, crossfadeMode: 1 };
+  const back = decodeServer(encodeServer(w as never)) as {
+    crossfade?: number;
+    crossfadeMode?: number;
+  };
+  assert.equal(back.crossfade, 0.75);
+  assert.equal(back.crossfadeMode, 1);
+});
+
+test("effect arms carry the deck selector (FUG-110)", () => {
+  // submit_effect onto deck B, with its .fxb bytes round-tripping as base64.
+  const fxb = Uint8Array.from([1, 2, 3, 250, 0]);
+  const submit = { type: "submit_effect", effectId: "e1", fxb, activate: true, deck: 1 };
+  const backSubmit = decodeClient(encodeClient(submit as never)) as {
+    deck?: number;
+    fxb?: Uint8Array;
+    effectId?: string;
+  };
+  assert.equal(backSubmit.deck, 1);
+  assert.equal(backSubmit.effectId, "e1");
+  assert.deepEqual(Array.from(backSubmit.fxb ?? []), Array.from(fxb));
+
+  // set_effect / set_uniforms / get_effect_uniforms all take a deck too.
+  assert.deepEqual(decodeClient(encodeClient({ type: "set_effect", effectId: "e2", deck: 1 } as never)), {
+    type: "set_effect",
+    effectId: "e2",
+    deck: 1,
+  });
+  const su = {
+    type: "set_uniforms",
+    values: [{ slot: 0, value: [0.5] }],
+    deck: 1,
+  };
+  assert.deepEqual(decodeClient(encodeClient(su as never)), su);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {

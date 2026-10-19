@@ -65,6 +65,9 @@ import { MidiMapPanel } from "../../effects/editor/midi-panel";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
+import { deviceEffects } from "../../store/deviceEffects";
+import { KeypointStrip } from "./keypointStrip";
+import { deviceStore } from "../../store/deviceStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
@@ -830,9 +833,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // it isn't this workspace's effect, the Device tab lights up (a warn tint) to
   // prompt the user to open it and push — instead of a floating pill.
   let runningEffectId: string | null = null;
+  // Uniform keypoints of THIS effect, stored on the device (deck A): save the
+  // tuned sliders as a named look, recall / morph between looks. Shown while the
+  // device runs this effect; a recall re-pulls the sliders from the device.
+  let kpPull = 0;
+  const kpStrip = KeypointStrip({
+    deck: 0,
+    client: () => (runningEffectId === effectId ? appState.client : null),
+    onApplied: () => {
+      window.clearTimeout(kpPull);
+      kpPull = window.setTimeout(() => void hydrateFromDevice(), 350);
+    },
+  });
+
   function refreshMismatch(): void {
     const mismatch = runningEffectId !== null && runningEffectId !== effectId;
     layout.setPaneAttention("diagnostics", mismatch);
+    void kpStrip.refresh();
   }
 
   // Video → device-texture streaming panel (its own pane). It consumes the live
@@ -1528,6 +1545,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       await c.submitEffect(effectId, bytecode, true);
       lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
       if (panel.values().length > 0) c.setUniforms(panel.values());
+      // Remember this effect now lives on the connected device (green badge +
+      // the "On <device>" folder in the effects browser, FUG-110).
+      deviceEffects.markSent(deviceStore.activeId(), effectId);
       // This effect is now the one running on the device → clears any mismatch.
       runningEffectId = effectId;
       refreshMismatch();
@@ -1666,7 +1686,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const diagsLegend = document.createElement("div");
   diagsLegend.className = "fxedit-legend";
   diagsLegend.textContent = "Diagnostics";
-  diagBody.append(devTiles, autoPushRow, devStatus, diagsLegend, diagsEl);
+  diagBody.append(devTiles, autoPushRow, devStatus, kpStrip.el, diagsLegend, diagsEl);
 
   // Disassembly pane content (the .fxedit-disasm <pre>).
   const disasmBody = document.createElement("div");
