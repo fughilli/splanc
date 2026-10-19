@@ -63,6 +63,8 @@ import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
 import { Button, IconButton, icon, toast, type IconName } from "../kit";
+import { mountEffectsTour } from "../guide/effectsTour";
+import { makeDemoProvider } from "../../effects/ai/providers/demo";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { renderMarkdown } from "../markdown";
@@ -84,7 +86,10 @@ function bytesEqual(a: Uint8Array | null, b: Uint8Array | null): boolean {
   return true;
 }
 
-export function EffectEditorScreen(router: Router, effectId: string): Screen {
+export function EffectEditorScreen(router: Router, effectId: string, screenOpts: { demo?: boolean } = {}): Screen {
+  let disposeTour: (() => void) | undefined;
+  const chatAbort = new AbortController();
+  const demoProvider = screenOpts.demo && !isAiConfigured() ? makeDemoProvider() : undefined;
   const el = document.createElement("div");
   el.className = "screen screen--fxedit";
 
@@ -1237,7 +1242,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (!ask) return;
     // Keep the typed text if AI isn't set up yet (settings open; sending again
     // after configuring a provider preserves the ask).
-    if (!isAiConfigured()) {
+    if (!screenOpts.demo && !isAiConfigured()) {
       location.hash = "#/settings/ai";
       return;
     }
@@ -1329,7 +1334,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   /** Shared body: ground the turn in the editor context, run the tool loop. */
   async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
-    if (!isAiConfigured()) {
+    if (!screenOpts.demo && !isAiConfigured()) {
       // AI not set up yet — send them to the provider settings the ⋯ menu opens.
       location.hash = "#/settings/ai";
       return;
@@ -1341,7 +1346,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     // tokens that a tiny on-device CPU model would spend minutes prefilling for
     // little benefit, so the wllama path drops it (it also gets the condensed
     // system spec — see generate.ts).
-    const cpuMode = getAiConfig().kind === "wllama";
+    const cpuMode = !demoProvider && getAiConfig().kind === "wllama";
     const ctx = editorContext(
       lastDisassembly && !cpuMode
         ? { source: codeEl.value, compileSummary: lastCompileSummary, disassembly: lastDisassembly }
@@ -1369,6 +1374,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       const finalText = await chatTurn(
         chatHistory,
         {
+        signal: chatAbort.signal,
         onThinking: () => setChatStatus("Thinking…"),
         // Live status as the response streams (thinking → tool verb → the model's
         // own set_script summary), so a long turn narrates itself in real time.
@@ -1408,6 +1414,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         onTrace: onChatTrace,
         },
         deviceCosts,
+        undefined,
+        demoProvider,
       );
       clearChatStatus();
       appendChat("assistant", finalText || "(done)");
@@ -1573,6 +1581,20 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // ⋯ overflow menu rather than taking vertical space here.
   const chatBody = document.createElement("div");
   chatBody.className = "fxedit-chatbody";
+  if (screenOpts.demo) {
+    const note = document.createElement("div");
+    note.className = "fxedit-chat-demo-note";
+    if (demoProvider) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Free AI · public effects only · data use";
+      const disclosure = document.createElement("p");
+      disclosure.textContent = "OpenRouter and its model providers receive your chat, effect code, tool results and requested preview images. Providers may use these for model improvement. Don’t share private or personal information. Free usage is limited.";
+      details.append(summary, disclosure);
+      note.appendChild(details);
+    } else note.textContent = "Using your configured AI provider";
+    chatBody.appendChild(note);
+  }
   chatBody.append(chatLog, chatInputWrap);
 
   // "Device" pane content: the upload/download (send/hydrate) controls are the
@@ -1597,6 +1619,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // localStorage. On narrow viewports the wide layout is ignored: code +
   // uniforms are primary, the rest cycle through an overflow tab strip.
   const layout = new FxLayout({
+    demo: screenOpts.demo ?? false,
     panes: [
       { id: "code", title: "Code", primary: true, node: editorWrap },
       { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
@@ -1632,7 +1655,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   });
   // Restore the persisted collapsed state (defaults to expanded on first visit).
   try {
-    if (localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");
+    if (!screenOpts.demo && localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");
   } catch {
     /* ignore storage errors — start expanded */
   }
@@ -1711,7 +1734,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         if (preview && currentMap) preview.setTexture(texIndex, w, h, rgba, currentMap.leds.length);
       },
     });
+    if (disposed) return;
     layout.mount();
+    if (screenOpts.demo) disposeTour = mountEffectsTour(layout);
     resizePreviewCanvas();
     unsubAppState = appState.subscribe(() => refreshDevice());
     // Start routing MIDI into the uniform seam (moves the panel + preview +
@@ -1767,6 +1792,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     },
     onUnmount: () => {
       disposed = true;
+      chatAbort.abort();
+      disposeTour?.();
       unregisterChatDriver?.();
       document.documentElement.classList.remove("is-locked");
       document.body.classList.remove("is-locked");

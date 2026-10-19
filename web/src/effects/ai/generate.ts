@@ -1,14 +1,15 @@
 /**
- * AI effect generation — BYO-key, direct browser→Anthropic CORS
- * (docs/design/effects-compiler.md §"AI generation", DECISION: no server proxy
- * anywhere; client-side CORS to api.anthropic.com; BYO key from localStorage).
+ * AI effect generation — personal providers use browser-held configuration.
+ * The public effects playground supplies its own free-provider relay override
+ * (docs/design/effects-demo.md), without changing personal AI preferences.
  *
  * Streams the Messages API so the script arrives live in the editor; the caller
  * defers compilation until the stream settles (debounced) so the user doesn't
  * see errors thrashing mid-generation. The system prompt is a frozen, cacheable
  * prefix (system-prompt.ts) so the repair loop pays the cached rate.
  *
- * There is NO worker and NO proxy here — this is a plain fetch from the page.
+ * Personal providers fetch from the page; the website demo can supply a
+ * server-backed free provider override without changing stored preferences.
  */
 
 import type { FxDiagnostic } from "../../fx/preview";
@@ -431,10 +432,11 @@ export async function chatTurn(
   hooks: ChatHooks,
   deviceCosts?: string,
   systemExtra?: string,
+  providerOverride?: AiProvider,
 ): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
-  const provider = activeProvider();
+  const provider = providerOverride ?? activeProvider();
   const caps = provider.capabilities;
   // Assemble the system prompt once: the frozen chat spec, then the per-device
   // builtin-cost block (#65), then any caller persona (e.g. Acid Mode's voice).

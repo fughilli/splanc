@@ -137,6 +137,7 @@ ts_project(
             "src/effects/editor/compiler.ts",
             "src/effects/editor/compile-worker.ts",
             "src/ui/screens/effectEditor.ts",
+            "src/ui/screens/effectDemo.ts",
             # Acid mode (FUG-106) also statically imports the worker compiler, so
             # it's a browser-only bundle entry too (reached only via app/main).
             "src/ui/screens/acidMode.ts",
@@ -190,12 +191,21 @@ _TEST_SOURCE_DATA = {
     for f in glob(["tests/*.test.ts"])
 ]
 
+js_test(
+    name = "demoAiWorker_test",
+    data = [
+        "_worker.js",
+        "package.json",
+    ],
+    entry_point = "tests/demoAiWorker.test.mjs",
+)
+
 test_suite(
     name = "unit_tests",
     tests = [
         f.removeprefix("tests/").removesuffix(".test.ts") + "_test"
         for f in glob(["tests/*.test.ts"])
-    ],
+    ] + [":demoAiWorker_test"],
 )
 
 # The emitted dist-test tree is CommonJS, but web/package.json declares
