@@ -769,6 +769,47 @@ py_binary(
     ],
 )
 
+# FX decks + uniform keypoints on hardware (docs/design/uniform-keypoints.md):
+# save/list/reboot-persist/recall/blend (RGB + HSV)/morph/fader sweep/deck-B
+# crossfade, read off the LED wire by the shared analyzer, plus perf + heap.
+genrule(
+    name = "kp_fxbs",
+    srcs = [
+        "ab_demo/kpSolid.fx",
+        "ab_demo/kpGreen.fx",
+    ],
+    outs = [
+        "kpSolid.fxb",
+        "kpGreen.fxb",
+    ],
+    cmd = "$(execpath //fx_compiler:fx_compile) $(location ab_demo/kpSolid.fx) $(location kpSolid.fxb) && " +
+          "$(execpath //fx_compiler:fx_compile) $(location ab_demo/kpGreen.fx) $(location kpGreen.fxb)",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_binary(
+    name = "fx_keypoints",
+    srcs = [
+        "hitl_fx_keypoints.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        ":kp_fxbs",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_fx_keypoints.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # The ELF the netstack flashbundle was linked from (the watcher reads the heap
 # list's address from it).
 filegroup(
