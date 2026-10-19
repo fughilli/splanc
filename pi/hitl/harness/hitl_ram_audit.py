@@ -1,0 +1,175 @@
+"""Capture an ESP32-C6 core image at the device's minimum heap watermark.
+
+Drives the worst-case heap scenario on a reserved HITL board while a JTAG
+watcher (ram_watch.tcl) polls every heap's free bytes over the system bus — no
+halting — and, at each new low, halts just long enough to dump HP SRAM, LP
+SRAM and the CPU registers. The last dump is the RAM image at (or within
+--step bytes of) the run's lowest free heap, for offline attribution against
+the firmware ELF (heap walk via the light-poisoning canaries, FreeRTOS task
+lists for stacks + 0xA5 high-water).
+
+Scenario (loaded_tls's, the field worst case): flash → BLE-provision → first
+wss handshake while BLE is still up → load a full 512-LED map + a
+texture-sampling effect + a streamed texture keyframe → --rounds fresh wss
+handshakes + cert-page GETs on the loaded heap.
+
+    bazel run //pi/hitl/harness:ram_audit -- --server http://hitl-rig-2:8087 \\
+        --device c6-003f08 --out /tmp/ram_audit
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import base64
+import os
+import struct
+import threading
+import time
+
+import hitl_ws
+from hitl_client import Reservation
+from hitl_loaded_tls import _drive, compile_fx_src, default_flashbundle, default_fx_compile
+from loaded_tls_core import bars_effect_src
+from provision import dut_target, provision_dut
+
+
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def _runfile(rloc: str) -> str | None:
+    try:
+        from python.runfiles import runfiles
+
+        return runfiles.Create().Rlocation(rloc)
+    except Exception:
+        return None
+
+
+def elf_symbol(path: str, name: str) -> int | None:
+    """Address of a symbol in a little-endian ELF32 (the firmware image): the heap
+    list the watcher polls moves with every build, so it's read from the very ELF
+    the flashed bundle was linked from."""
+    with open(path, "rb") as fh:
+        d = fh.read()
+    (shoff,) = struct.unpack_from("<I", d, 0x20)
+    shentsize, shnum = struct.unpack_from("<HH", d, 0x2E)
+    secs = [struct.unpack_from("<IIIIIIIIII", d, shoff + i * shentsize) for i in range(shnum)]
+    want = name.encode()
+    for sec in secs:
+        if sec[1] != 2:  # SHT_SYMTAB
+            continue
+        strtab = secs[sec[6]]
+        for off in range(sec[4], sec[4] + sec[5], 16):
+            st_name, st_value = struct.unpack_from("<II", d, off)
+            s0 = strtab[4] + st_name
+            if d[s0 : d.index(b"\0", s0)] == want:
+                return st_value
+    return None
+
+
+def _fetch(res: Reservation, remote: str, local: str) -> bool:
+    """Copy a container file back (base64 over ssh: the image has no scp-from)."""
+    p = res.ssh(f"base64 -w0 {remote} 2>/dev/null", capture=True, timeout=300)
+    if p.returncode != 0 or not p.stdout:
+        return False
+    with open(local, "wb") as fh:
+        fh.write(base64.b64decode(p.stdout.strip()))
+    return True
+
+
+def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
+    """Run ram_watch.tcl in the container until /tmp/ram_watch.stop appears,
+    retrying the attach: the C6's debug module sometimes reports a stuck abstract
+    command on the first examine of a running core."""
+    cmd = (
+        "rm -rf /tmp/ram_watch /tmp/ram_watch.stop; mkdir -p /tmp/ram_watch; "
+        "for i in 1 2 3 4 5 6; do "
+        f'hitl-jtag -c "set thresh {args.thresh}" -c "set step {args.step}" '
+        f'-c "set heads {args.heads:#x}" '
+        "-f /tmp/ram_watch.tcl > /tmp/ram_watch/openocd.log 2>&1 && break; "
+        "[ -e /tmp/ram_watch.stop ] && break; echo attach-retry $i >> /tmp/ram_watch/retries; "
+        "sleep 3; done"
+    )
+
+    def run():
+        out["proc"] = res.ssh(cmd, capture=True, timeout=args.max_seconds)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--server", default=os.environ.get("HITL_SERVER"))
+    ap.add_argument("--device", default=os.environ.get("HITL_DEVICE"))
+    ap.add_argument("--owner", default=os.environ.get("HITL_OWNER", "ram_audit"))
+    ap.add_argument("--bundle", default=default_flashbundle())
+    ap.add_argument("--watch-tcl", default=_runfile("_main/pi/hitl/harness/ram_watch.tcl"))
+    ap.add_argument(
+        "--elf",
+        default=_runfile("_main/firmware/player_app/esp32c6_netstack.elf"),
+        help="ELF the bundle was built from (for the heap list address)",
+    )
+    ap.add_argument("--out", default="ram_audit_out")
+    ap.add_argument("--thresh", type=int, default=9000, help="dump only below this total free")
+    ap.add_argument("--step", type=int, default=512, help="re-dump only this far below the last")
+    ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--led-count", type=int, default=512)
+    ap.add_argument("--tex-width", type=int, default=40)
+    ap.add_argument("--tex-height", type=int, default=40)
+    ap.add_argument("--max-seconds", type=float, default=1800)
+    ap.add_argument("--improv-timeout", type=float, default=90.0)
+    ap.add_argument("--improv-attempts", type=int, default=3)
+    args = ap.parse_args()
+    args.heads = elf_symbol(args.elf, "registered_heaps") if args.elf else None
+    if args.heads is None:
+        ap.error(f"registered_heaps not found in --elf {args.elf}")
+    _log(f"[elf] registered_heaps @ {args.heads:#x}")
+    # Fields hitl_loaded_tls._drive reads.
+    args.effect_id, args.tex_index = "__ramaudit", 0
+    args.settle, args.open_timeout, args.recover_window = (
+        hitl_ws.CONNECT_SETTLE,
+        hitl_ws.OPEN_TIMEOUT,
+        40.0,
+    )
+    os.makedirs(args.out, exist_ok=True)
+
+    fxb = compile_fx_src(default_fx_compile(), bars_effect_src(args.tex_width, args.tex_height))
+    res = Reservation(server=args.server, owner=args.owner, device=args.device)
+    res.acquire()
+    try:
+        ssid, password = res.wifi() or ("", "")
+        res.scp_to([args.bundle, args.watch_tcl], "/tmp/")
+        _log(f"[flash] {os.path.basename(args.bundle)}")
+        res.ssh(
+            f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs --monitor --monitor-seconds 8",
+            capture=True,
+            timeout=200,
+        )
+        wout: dict = {}
+        watcher = _watcher(res, args, wout)
+        time.sleep(8)  # attach before the BLE + first-handshake peak
+        redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
+        host, port = dut_target(redirect, "wss")
+        _log(f"[dut] {host}:{port}")
+        with res.forward(host, port) as local_port:
+            result = asyncio.run(_drive(f"wss://localhost:{local_port}/ws", True, args, fxb))
+        _log(f"[scenario] {result['result_line']}")
+        time.sleep(3)
+        res.ssh("touch /tmp/ram_watch.stop", capture=True, timeout=30)
+        watcher.join(timeout=120)
+        for name in ("log.txt", "openocd.log", "retries", "hp.bin", "lp.bin", "regs.txt"):
+            ok = _fetch(res, f"/tmp/ram_watch/{name}", os.path.join(args.out, name))
+            _log(f"[fetch] {name}: {'ok' if ok else 'missing'}")
+        return 0
+    finally:
+        res.release()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

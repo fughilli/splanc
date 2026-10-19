@@ -15,9 +15,74 @@ use pb::ServerMessage_::Msg as SMsg;
 
 // `now` stays f64 at the call sites (the golden fixtures are written that way)
 // and is narrowed to the player's integer clock here.
+/// One request through the handler AND the wire: the reply is encoded the way
+/// the firmware sends it (`Player::encode_reply`, which splices in the board
+/// descriptor) and decoded back, so assertions see what the phone receives.
 fn send(player: &mut Player, msg: CMsg, now: f64) -> Option<SMsg> {
+    use micropb::{MessageDecode, PbDecoder};
     let req = pb::ClientMessage { r#msg: Some(msg) };
-    player.handle(req, now as i64, now as i64).and_then(|r| r.r#msg)
+    let reply = player.handle(req, now as i64, now as i64)?;
+    let mut buf = vec![0u8; 16 * 1024];
+    let n = player.encode_reply(&reply, &mut buf).expect("reply fits");
+    let mut back = pb::ServerMessage::default();
+    back.decode(&mut PbDecoder::new(&buf[..n]), n).expect("reply decodes");
+    back.r#msg
+}
+
+fn get_hw(player: &mut Player) -> pb::HardwareConfigState {
+    match send(player, CMsg::GetHardwareConfig(pb::GetHardwareConfig::default()), 0.0) {
+        Some(SMsg::HardwareConfigState(st)) => st,
+        other => panic!("expected hardware_config_state, got {other:?}"),
+    }
+}
+
+/// The board descriptor stays ENCODED in the player and is spliced into
+/// hardware_config_state at encode time; the runtime output caps fill only the
+/// capacity fields the descriptor leaves 0.
+#[test]
+fn board_caps_spliced_into_hardware_config() {
+    use micropb::{MessageEncode, PbEncoder};
+    fn encoded(caps: &pb::BoardCapabilities) -> &'static [u8] {
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
+        caps.encode(&mut enc).unwrap();
+        Vec::leak(enc.into_writer().to_vec())
+    }
+    let mut caps = pb::BoardCapabilities::default();
+    caps.r#board = micropb::heapless::String::try_from("esp32c6-devkit").unwrap();
+    for g in [4u32, 9, 30] {
+        let mut pin = pb::GpioPin::default();
+        pin.r#gpio = g;
+        pin.r#note = micropb::heapless::String::try_from("strap").unwrap();
+        caps.r#gpio_pins.push(pin).unwrap();
+    }
+
+    // No descriptor, no output caps: no board at all.
+    let mut player = Player::new("esp32-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    assert!(get_hw(&mut player).r#board().is_none());
+
+    // Descriptor with capacity fields unset: the output caps fill them.
+    assert!(player.set_board_caps(encoded(&caps)));
+    player.set_output_caps(2, 512);
+    let st = get_hw(&mut player);
+    assert_eq!(st.r#channels.len(), 1, "channels still encoded alongside the board");
+    let b = st.r#board().expect("board reported");
+    assert_eq!(b.r#board.as_str(), "esp32c6-devkit");
+    let pins: Vec<u32> = b.r#gpio_pins.iter().map(|p| p.r#gpio).collect();
+    assert_eq!(pins, [4, 9, 30]);
+    assert_eq!(b.r#gpio_pins[1].r#note.as_str(), "strap");
+    assert_eq!((b.r#led_channels, b.r#max_leds), (2, 512));
+
+    // A descriptor that sets max_leds itself keeps it; led_channels still fills.
+    caps.r#max_leds = 300;
+    assert!(player.set_board_caps(encoded(&caps)));
+    let b = get_hw(&mut player).r#board().cloned().expect("board");
+    assert_eq!((b.r#led_channels, b.r#max_leds), (2, 300));
+
+    // Malformed (truncated) descriptor: rejected, the previous one stays.
+    let good = encoded(&caps);
+    assert!(!player.set_board_caps(&good[..good.len() - 1]));
+    assert_eq!(get_hw(&mut player).r#board().map(|b| b.r#max_leds), Some(300));
 }
 
 fn expect_error(reply: Option<SMsg>, code: &str) {

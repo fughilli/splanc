@@ -732,3 +732,43 @@ py_binary(
         requirement("websockets"),
     ],
 )
+
+# The ELF the netstack flashbundle was linked from (the watcher reads the heap
+# list's address from it).
+filegroup(
+    name = "esp32c6_netstack_elf",
+    srcs = ["//firmware/player_app:esp32c6_netstack"],
+    output_group = "elf",
+)
+
+# RAM audit (heap-watermark core image): run the loaded_tls worst case while a
+# JTAG watcher (ram_watch.tcl) polls heap free bytes over the system bus and
+# dumps HP/LP SRAM at each new low, for offline attribution against the ELF.
+#   bazel run //pi/hitl/harness:ram_audit -- --server http://hitl-rig-2:8087 --out /tmp/ra
+py_binary(
+    name = "ram_audit",
+    srcs = [
+        "hitl_loaded_tls.py",
+        "hitl_ram_audit.py",
+    ],
+    data = [
+        "ram_watch.tcl",
+        ":esp32c6_netstack_elf",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_ram_audit.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)

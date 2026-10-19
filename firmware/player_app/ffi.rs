@@ -37,7 +37,7 @@ use ledmapper_store::{
     parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredTopoGeom,
     Str64, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
-use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
+use micropb::{MessageDecode, PbDecoder, PbRead};
 
 /// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
 /// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
@@ -55,10 +55,6 @@ use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
 // one entry each — independent of LED count), so 8 KB is ample and the arena no
 // longer scales with the strip length.
 const ARENA_BYTES: usize = 8 * 1024;
-
-/// Reply frames are control traffic (firmware caps): welcome is the
-/// largest at a few hundred bytes.
-const REPLY_CAP: usize = 2048;
 
 static mut ARENA_MEM: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
 static mut ARENA: Option<Arena<'static>> = None;
@@ -873,25 +869,23 @@ pub unsafe extern "C" fn lm_led_count_seed(channel: u32, led_count: u32) {
 
 /// Install this board's static capability descriptor: `data` is a serialized
 /// `BoardCapabilities` (the board textproto compiled to a binaryproto at build
-/// time and embedded in the image). Decoded once and echoed in
+/// time and embedded in the image). Kept encoded and echoed in
 /// `hardware_config_state` so the app builds its pin picker / LED-type list from
 /// what this board supports. Call once after [`lm_player_init`]. A null, empty,
-/// or undecodable blob is ignored (the app just falls back to its built-in
+/// or malformed blob is ignored (the app just falls back to its built-in
 /// catalog), so a board that ships no descriptor still works.
 ///
 /// # Safety
-/// `data` points to `len` readable bytes (or is null).
+/// `data` points to `len` readable bytes (or is null) that stay valid and
+/// unchanged for the rest of the program (the image-embedded array).
 #[no_mangle]
 pub unsafe extern "C" fn lm_set_board_caps(data: *const u8, len: usize) {
     if data.is_null() || len == 0 {
         return;
     }
-    let bytes = core::slice::from_raw_parts(data, len);
-    let mut caps = pb::BoardCapabilities::default();
-    let mut dec = PbDecoder::new(bytes);
-    if caps.decode(&mut dec, bytes.len()).is_ok() {
-        player().set_board_caps(caps);
-    }
+    // Kept encoded (never decoded into the ~4 KiB struct); the player splices
+    // it into hardware_config_state replies.
+    let _ = player().set_board_caps(core::slice::from_raw_parts(data, len));
 }
 
 /// Generation counter for the hardware config, bumped on every
@@ -965,16 +959,12 @@ pub unsafe extern "C" fn lm_hw_color_order_name(channel: u32, out: *mut u8, cap:
 }
 
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
-    let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
-    if reply.encode(&mut enc).is_err() {
-        return -2; // reply exceeds REPLY_CAP — a firmware bug, not remote input
+    // Encoded straight into the caller's tx (no staging copy on this stack).
+    let out = unsafe { core::slice::from_raw_parts_mut(out, out_cap) };
+    match unsafe { player() }.encode_reply(reply, out) {
+        Some(n) => n as i32,
+        None => -2, // reply exceeds out_cap — a firmware bug, not remote input
     }
-    let bytes = enc.into_writer();
-    if bytes.len() > out_cap {
-        return -2;
-    }
-    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len()) };
-    bytes.len() as i32
 }
 
 /// Handle one received protocol frame; writes the reply frame (if any) to

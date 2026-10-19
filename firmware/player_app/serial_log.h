@@ -102,8 +102,13 @@ inline void log_drain_task(void *) {
 // Serial.begin). Priority sits BELOW the render (10) and transmit (11) tasks and
 // the Arduino loop (1) so draining never delays LED output; it runs in the idle
 // gaps, which is ample for the byte rates we log.
+// Static stack + TCB (never the shared heap). Static worst-case bound ~2.4 KB (the
+// C++ unwind path off a Log() call); measured ~0.6 KB.
 inline void log_drain_start() {
-  xTaskCreate(log_drain_task, "logdrain", 3072, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+  static StackType_t stack[3072 / sizeof(StackType_t)];
+  static StaticTask_t tcb;
+  xTaskCreateStatic(log_drain_task, "logdrain", sizeof stack, nullptr, tskIDLE_PRIORITY + 1,
+                    stack, &tcb);
 }
 
 #endif  // FIRMWARE_PLAYER_APP_SERIAL_LOG_H_
