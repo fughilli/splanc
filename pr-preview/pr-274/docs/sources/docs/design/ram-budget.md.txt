@@ -116,3 +116,9 @@ draws, paired with the device's `esp_get_free_heap_size()`:
 5. **`rx` reassembly buffer** — *done upstream (FUG-74):* large map/topology
    uploads are sharded into `UploadChunk` windows streamed to flash and decoded
    straight off flash, so `rx` only holds a whole non-sharded message. *(done)*
+6. **Heap-free regions + mode model** — fixed-slot pools / slabs / mode-union
+   regions (`//firmware/region`) and the reachability-checked memory-mode state
+   machine (`//firmware/sysmode`); design, results, and the integration plan in
+   [memory-regions.md](memory-regions.md). Item 4 (lazy FX buffers) becomes the
+   activity union there, with no allocator. *(crate + model landed; firmware
+   integration follow-up)*
