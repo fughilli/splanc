@@ -3163,7 +3163,7 @@ input.device-name-input {
   .fxlayout-demo--tools-open { grid-template-rows:minmax(0,1fr) minmax(0,.6fr) minmax(0,1fr) minmax(0,.85fr); }
   .fxlayout-demo--tools-open .fxlayout-demo-tools > .fxpane { display:flex; }
   .fxlayout-demo--tools-open .fxlayout-demo-collapse { display:block; }
-  .fx-demo-tour-chip { bottom:48px; }
+  .fx-demo-tour-chip { bottom:118px; }
 }
 
 .fxedit-chat-demo-note { padding:4px 10px; color:var(--text-dim); font-size:var(--f-caption); }
