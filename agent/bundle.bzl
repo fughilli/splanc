@@ -10,6 +10,28 @@ has no published bundle — the bridge then runs from a local checkout).
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 
+_PACK_PY = """import gzip, hashlib, io, os, sys, tarfile
+root, stem, out, sha = sys.argv[1:5]
+def norm(ti):
+    ti.mtime = 0
+    ti.uid = ti.gid = 0
+    ti.uname = ti.gname = ""
+    return ti
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as t:
+    paths = [stem]
+    for d, dirs, files in os.walk(os.path.join(root, stem)):
+        dirs.sort()
+        rel = os.path.relpath(d, root)
+        paths += [os.path.join(rel, n) for n in sorted(dirs) + sorted(files)]
+    for p in sorted(set(paths)):
+        t.add(os.path.join(root, p), arcname=p, recursive=False, filter=norm)
+with open(out, "wb") as f, gzip.GzipFile(fileobj=f, mode="wb", compresslevel=9, mtime=0, filename="") as g:
+    g.write(buf.getvalue())
+digest = hashlib.sha256(open(out, "rb").read()).hexdigest()
+open(sha, "w").write(digest + "  " + os.path.basename(out) + "\\n")
+"""
+
 def _agent_bundle_impl(ctx):
     ver = ctx.attr.version[BuildSettingInfo].value
     stem = "splanc-agent-" + ver
@@ -59,10 +81,10 @@ def _agent_bundle_impl(ctx):
             cmds.append("mkdir -p \"$(dirname \"$B/{d}/{r}\")\" && cp -L {s} \"$B/{d}/{r}\"".format(d = dest, r = rel, s = f.path))
     cmds += [
         "chmod -R u+rwX,go+rX \"$B\"",
-        # Reproducible: sorted, fixed mtime/owner, no gzip timestamp.
-        "tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C \"$R\" -cf - " + stem +
-        " | gzip -n -9 > " + tgz.path,
-        "(cd $(dirname {t}) && sha256sum $(basename {t})) > {s}".format(t = tgz.path, s = sha.path),
+        # Reproducible (sorted entries, zero mtimes/owners, no gzip timestamp) and
+        # portable: Python's tarfile, not GNU tar's --sort/--mtime (macOS ships
+        # bsdtar) or sha256sum (absent on macOS).
+        "python3 - \"$R\" " + stem + " " + tgz.path + " " + sha.path + " <<'PY'\n" + _PACK_PY + "PY",
         "rm -rf \"$R\"",
     ]
     ctx.actions.run_shell(
