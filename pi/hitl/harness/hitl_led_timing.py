@@ -172,7 +172,7 @@ def _timing(server: str, unit: str, args: argparse.Namespace) -> dict:
     }
     if args.pixels:
         body["include_pixels"] = True
-        body["max_pixel_frames"] = 2
+        body["max_pixel_frames"] = args.max_pixel_frames
     if args.samplerate:
         body["samplerate"] = args.samplerate
     req = urllib.request.Request(
@@ -356,6 +356,7 @@ def main() -> int:
     )
     ap.add_argument("--ch1-pairs", default="D6:D0,D7:D1", help="ch0->ch1 analyzer tap pairs")
     ap.add_argument("--pixels", action="store_true", help="decode pixels of the first frames")
+    ap.add_argument("--max-pixel-frames", type=int, default=2, help="with --pixels: how many")
     ap.add_argument("--out", default="led_timing_out")
     ap.add_argument("--no-flash", action="store_true", help="reuse the DUT's current firmware")
     ap.add_argument("--server", default=os.environ.get("HITL_SERVER", ""))
