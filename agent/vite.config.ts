@@ -43,6 +43,8 @@ export default defineConfig(({ mode }) => {
           entryFileNames: "[name].mjs",
           chunkFileNames: "chunks/[name]-[hash].mjs",
           ...(single ? { inlineDynamicImports: true } : {}),
+          // The bundle's npm bin (`npx -y <tgz>` runs it directly).
+          ...(!test ? { banner: "#!/usr/bin/env node" } : {}),
         },
       },
     },

@@ -1,0 +1,62 @@
+# Splanc — instructions for AI agents
+
+Splanc lights are LED fixtures whose every LED has a measured 3-D position (in
+metres). Each fixture is driven by a small player on the local network that runs
+**effects**: tiny shader-like programs evaluated per LED, per frame, with named
+knobs (**uniforms**) you can set or glide. You can drive every fixture in a
+house from here: change the mood, write a new effect, preview it, deploy it.
+
+You need: Node.js >= 20 and a machine on the same LAN as the lights.
+
+## Fastest path: the CLI
+
+```sh
+{{NPX}} list-players          # what's here: names, rooms, firmware
+{{NPX}} skill                 # the full how-to (read it before writing effects)
+{{NPX}} list-uniforms         # the running effect's knobs, on every player
+{{NPX}} ramp-uniforms warmth=0.8 --seconds 20     # a smooth, watchable change
+{{NPX}} preview-effect --file calm.fx --out /tmp/p # render on the real maps (PNGs)
+{{NPX}} deploy-effect calm --file calm.fx         # budget-checked, then deployed
+```
+
+Every command prints JSON and exits non-zero on failure. Device commands take
+`--players <name|room|all>` (default: the only player, or all players when they
+form one room). `{{NPX}} tools` lists the full surface.
+
+## Long-lived: as an MCP server
+
+```sh
+claude mcp add splanc -- {{NPX}}
+```
+
+(Any MCP client: command `npx`, args `["-y", "{{TGZ_URL}}"]`, stdio.) Then read
+the `splanc://players` resource or call `list_players`.
+
+## "Set the mood of the room" — the first-contact flow
+
+1. `list_players`. One player: just go. Several and no rooms yet: tools target
+   all of them; if the user talks about rooms, ask which is where
+   (`identify_player` blinks one), then `set_room` / `set_fixture_pose`.
+2. `list_uniforms`: most moods are a uniform change on what is already running —
+   prefer `ramp_uniforms` over a new effect.
+3. A new look: write an effect (skill: effect-language.md), `compile_effect`,
+   `preview_effect` (several players: one room-frame image), `deploy_effect`
+   (refuses an over-budget effect; puts the players on one clock), then
+   `measure_effect` (with rollback_on_overrun).
+4. Tell the user what changed and which knobs they can now ask for.
+
+## Rules
+
+- You can't rewire, re-map or recalibrate fixtures — that's the Splanc app's job.
+- Rename a player (`set_device_name`) only when the user asks, with `confirm`.
+- There is no authentication on the LAN: anyone on it can drive the lights. Don't
+  expose the hub beyond the user's machine.
+- Firmware too old for a feature → say so and point the user at the app's update.
+
+## Reference
+
+- Skill: {{BASE_URL}}/agent/skill/SKILL.md (also `{{NPX}} skill <file>`)
+{{SKILL_INDEX}}
+- Bundle: {{TGZ_URL}} — version {{VERSION}} (firmware {{FIRMWARE_MIN}}..{{FIRMWARE_MAX}}); {{BASE_URL}}/agent/latest.json
+- MCP metadata: {{BASE_URL}}/.well-known/mcp/server.json
+- Source: https://github.com/fughilli/splanc (agent/)

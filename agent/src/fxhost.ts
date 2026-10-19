@@ -26,12 +26,25 @@ interface WasmPkg {
   initSync(arg: { module: BufferSource }): unknown;
 }
 
-let loaded: Promise<void> | null = null;
+/** One loaded compiler + VM pair: the host toolchain of one bundle (this one, or
+ * a player's version-matched bundle fetched by the hub — see toolchain.ts). */
+export interface Toolchain {
+  /** The bundle version it came from ("local" for this bundle / a dev checkout). */
+  version: string;
+  root: string;
+  compiler: unknown;
+  vm: unknown;
+}
 
-/** Load the compiler + VM wasm from `<root>/compiler` and `<root>/simulator`. */
-export function loadFxHost(root: string): Promise<void> {
-  if (loaded === null) {
-    loaded = (async () => {
+const loadedRoots = new Map<string, Promise<Toolchain>>();
+let defaultToolchain: Promise<Toolchain> | null = null;
+
+/** Load (once per root) the compiler + VM wasm from `<root>/compiler` and
+ * `<root>/simulator`, without making it the default. */
+export function loadToolchain(root: string, version = "local"): Promise<Toolchain> {
+  let t = loadedRoots.get(root);
+  if (t === undefined) {
+    t = (async () => {
       const load = async (dir: string, name: string): Promise<WasmPkg> => {
         const url = pathToFileURL(join(root, dir, `${name}.js`)).href;
         const mod = (await import(/* @vite-ignore */ url)) as WasmPkg;
@@ -40,10 +53,41 @@ export function loadFxHost(root: string): Promise<void> {
       };
       const compiler = await load("compiler", "fx_compiler_wasm_pkg");
       const vm = await load("simulator", "fx_vm_wasm_pkg");
-      installFxModules({ compiler: compiler as never, vm: vm as never });
+      return { version, root, compiler, vm };
     })();
+    loadedRoots.set(root, t);
   }
-  return loaded;
+  return t;
+}
+
+/** Load this bundle's own toolchain (`<root>/compiler`, `<root>/simulator`) and
+ * make it the default for compile/preview calls that don't name one. */
+export function loadFxHost(root: string): Promise<void> {
+  if (defaultToolchain === null) defaultToolchain = loadToolchain(root);
+  return defaultToolchain.then(() => undefined);
+}
+
+/** This bundle's own toolchain (after {@link loadFxHost}). */
+export function hostToolchain(): Promise<Toolchain> {
+  if (defaultToolchain === null) throw new Error("the host toolchain isn't loaded (loadFxHost)");
+  return defaultToolchain;
+}
+
+// web/src/fx/preview.ts holds ONE installed compiler/VM pair; toolchains of
+// several bundle versions share it by taking turns: install, then run, under this
+// lock (each call binds its module at entry, so holding the lock across the call
+// is more than enough, and keeps it simple).
+let toolLock: Promise<unknown> = Promise.resolve();
+
+async function withToolchain<T>(tc: Toolchain | undefined, fn: () => Promise<T>): Promise<T> {
+  const chosen = tc ?? (await hostToolchain());
+  const run = async () => {
+    installFxModules({ compiler: chosen.compiler as never, vm: chosen.vm as never });
+    return fn();
+  };
+  const next = toolLock.then(run, run);
+  toolLock = next.catch(() => undefined);
+  return next;
 }
 
 export interface CompileOutcome {
@@ -56,8 +100,8 @@ export interface CompileOutcome {
 }
 
 /** Compile effect source with the host compiler matching this bundle's firmware. */
-export async function compile(source: string): Promise<CompileOutcome> {
-  const r: FxCompiled = await compileScript(source);
+export async function compile(source: string, tc?: Toolchain): Promise<CompileOutcome> {
+  const r: FxCompiled = await withToolchain(tc, () => compileScript(source));
   return {
     ok: r.ok,
     diagnostics: r.diagnostics,
@@ -77,6 +121,20 @@ export interface PreviewFrame {
 
 /** Run the device VM over a fixture's real map + topology at the given times. */
 export async function preview(opts: {
+  fxb: Uint8Array;
+  manifest: ManifestUniform[];
+  bundle: MappingBundle;
+  times: number[];
+  uniforms?: Record<string, UniformInput>;
+  fps?: number;
+  imageWidth?: number;
+  /** The player's version-matched toolchain (default: this bundle's). */
+  toolchain?: Toolchain;
+}): Promise<PreviewFrame[]> {
+  return withToolchain(opts.toolchain, () => previewNow(opts));
+}
+
+async function previewNow(opts: {
   fxb: Uint8Array;
   manifest: ManifestUniform[];
   bundle: MappingBundle;

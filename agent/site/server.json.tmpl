@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.splanc/splanc",
+  "title": "Splanc",
+  "description": "Drive 3-D-mapped Splanc LED fixtures on your LAN: moods, effects, previews, rooms.",
+  "version": "{{VERSION}}",
+  "websiteUrl": "{{BASE_URL}}",
+  "repository": { "url": "https://github.com/fughilli/splanc", "source": "github", "subfolder": "agent" },
+  "_meta": {
+    "io.splanc/install": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "{{TGZ_URL}}"],
+      "tarball": "{{TGZ_URL}}",
+      "latest": "{{BASE_URL}}/agent/latest.json",
+      "node": ">=20",
+      "firmware": { "min": "{{FIRMWARE_MIN}}", "max": "{{FIRMWARE_MAX}}" },
+      "note": "Runs locally and needs the same LAN as the players. Not yet published as an npm/mcpb registry package."
+    }
+  }
+}

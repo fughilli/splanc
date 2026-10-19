@@ -36,6 +36,13 @@ string_flag(
     build_setting_default = "0.0.0-dev",
 )
 
+# The website the bundle's site/ files (AGENTS.md, llms.txt, server.json…) name:
+# the one-liner is `npx -y <site_base>/agent/splanc-agent.tgz`.
+string_flag(
+    name = "site_base",
+    build_setting_default = "https://splanc.io",
+)
+
 SRCS = glob(["src/**/*.ts"])
 
 TESTS = glob(["tests/*.test.ts"])
@@ -111,8 +118,9 @@ copy_to_directory(
         data = [
             ":mcp",
             ":wasm",
-        ] + glob([
+        ] + ([":bundle"] if f == "tests/site.test.ts" else []) + glob([
             "tests/fixtures/**",
+            "skill/*.md",
             "skill/examples/*.fx",
         ]),
         entry_point = ":" + f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
@@ -147,6 +155,8 @@ agent_bundle(
     mcp = ":mcp",
     proto = "//shared/protocol/proto:ledmapper.proto",
     simulator = "//firmware/fx_vm:fx_vm_web",
+    site_base = ":site_base",
+    site_templates = glob(["site/*.tmpl"]),
     skill = glob([
         "skill/*.md",
         "skill/examples/*.fx",

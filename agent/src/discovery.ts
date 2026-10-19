@@ -85,18 +85,25 @@ export interface Target {
   manifestError?: string;
   tls: TlsPolicy;
   wsUrl: string;
+  /** The host answered HTTPS at all (a 404 counts; a refused/timed-out probe doesn't). */
+  reachable: boolean;
 }
 
 /**
  * Resolve a target: fetch its manifest (404 / unreachable -> fallback), take the
  * TLS pin from the operator's `pin` or the manifest's `tls.cert_sha256`.
  */
-export async function resolveTarget(host: string, opts: { pin?: string } = {}): Promise<Target> {
+export async function resolveTarget(
+  host: string,
+  opts: { pin?: string; timeoutMs?: number } = {},
+): Promise<Target> {
   let manifest: Manifest | null = null;
   let manifestError: string | undefined;
   const tls: TlsPolicy = opts.pin ? { pinSha256: opts.pin } : {};
+  let reachable = false;
   try {
-    const r = await httpsGet(`https://${host}/.well-known/splanc.json`, tls);
+    const r = await httpsGet(`https://${host}/.well-known/splanc.json`, tls, opts.timeoutMs);
+    reachable = true;
     if (r.status === 200) {
       manifest = JSON.parse(r.body) as Manifest;
       if (manifest.schema !== "splanc-agent/1") {
@@ -117,7 +124,15 @@ export async function resolveTarget(host: string, opts: { pin?: string } = {}): 
     ...(manifestError !== undefined ? { manifestError } : {}),
     tls: pin ? { pinSha256: pin } : {},
     wsUrl: `wss://${host}${wsPath}`,
+    reachable,
   };
+}
+
+/** host[:port] to dial for an mDNS advert (its first address, else its name). */
+export function advertHost(a: Advert): string {
+  return `${a.addresses.find((x) => !x.includes(":")) ?? a.addresses[0] ?? a.host}${
+    a.port && a.port !== 443 ? `:${a.port}` : ""
+  }`;
 }
 
 /** Check the /ws session reached the player the manifest describes. */

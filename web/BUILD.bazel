@@ -68,6 +68,11 @@ copy_to_bin(
     name = "agent_reuse_srcs",
     srcs = [
         "src/assetBase.ts",
+        # The fleet frame-cost estimator (the hub checks every target's budget
+        # before a room deploy).
+        "src/effects/budget.ts",
+        "src/effects/costModel.ts",
+        "src/effects/multiDevice.ts",
         "src/fx/preview.ts",
         "src/gen/ledmapper_pb.ts",
         "src/net/client.ts",
@@ -75,6 +80,7 @@ copy_to_bin(
         "src/net/fxbTextures.ts",
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
+        "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
         "tsconfig.json",  # rolldown resolves these modules' tsconfig in the bin tree
     ],
 )
