@@ -42,6 +42,7 @@
 // WiFi + esp_https_server + the ws:81 listener + mDNS + the lwIP OSC socket. See main.cpp's
 // LM_NETSTACK gates below and netstack_transport.cpp.
 #include "netstack_transport.h"
+#include "tls_region.h"  // TLS region high-waters on the status line
 #else
 #include <WebServer.h>
 #include <esp_https_server.h>
@@ -2553,9 +2554,15 @@ void loop() {
         map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
         (unsigned)esp_get_minimum_free_heap_size());
 #else
-    Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u rekeys=%u\n", map_leds,
-                 (unsigned)esp_get_free_heap_size(), heap_largest(),
-                 (unsigned)esp_get_minimum_free_heap_size(), (unsigned)netstack_rekey_count());
+    // tls=<small-region peak>/<size> slots=<peak>/<n> big=<largest request> fb=<fallbacks>:
+    // the TLS region's high-waters, to size it (tls_region.h).
+    const TlsRegionStats &tls = tls_region_stats();
+    Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u rekeys=%u "
+                 "tls=%u/%u slots=%u/%u big=%u fb=%u\n",
+                 map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
+                 (unsigned)esp_get_minimum_free_heap_size(), (unsigned)netstack_rekey_count(),
+                 (unsigned)tls.small_peak, (unsigned)tls.small_size, (unsigned)tls.slots_peak,
+                 (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks);
 #endif
   }
   delay(1);
