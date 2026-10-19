@@ -19,13 +19,42 @@
  * DOM-free and generic over the port type so it unit-tests with fake ports.
  */
 
-/** esptool-js "before" reset modes we drive a connect attempt with. */
-export type ConnectMode = "default_reset" | "usb_reset" | "no_reset";
+/** esptool-js "before" reset modes we drive a connect attempt with, plus
+ * `reset_only`: pulse the reset-into-bootloader and DON'T sync on that handle —
+ * the next step reopens the (re-enumerated) port and syncs with `no_reset`. */
+export type ConnectMode = "default_reset" | "usb_reset" | "no_reset" | "reset_only";
+
+/** The modes a connect attempt actually syncs with (esptool-js "before"). */
+export type SyncMode = Exclude<ConnectMode, "reset_only">;
 
 /** One reset mode per attempt: a normal reset-into-bootloader first; then, after
  * a re-enumeration, assume the chip may already be in download mode; then reset
  * again (esptool-js picks its USB-JTAG reset itself for the native PID). */
 export const CONNECT_PLAN: readonly ConnectMode[] = ["default_reset", "no_reset", "default_reset"];
+
+/** The native USB-Serial-JTAG over WebUSB (the Android path): the reset into the
+ * bootloader makes the board drop off the bus, and a WebUSB handle never follows
+ * it — so `default_reset` syncs on a dead handle every time ("Serial data stream
+ * stopped" x35, then a retry that works). Reset, reopen the new port, THEN sync;
+ * a second `no_reset` absorbs the ROM's boot banner landing in the first sync,
+ * and a full reset stays as the last resort. */
+export const RESET_THEN_REOPEN_PLAN: readonly ConnectMode[] = [
+  "reset_only",
+  "no_reset",
+  "no_reset",
+  "default_reset",
+];
+
+const ESPRESSIF_USB_JTAG = { vid: 0x303a, pid: 0x1001 };
+
+/** Which connect plan suits this port: reset-then-reopen for the native
+ * USB-Serial-JTAG when the transport is the WebUSB polyfill; the standard plan
+ * otherwise (native Web Serial, and UART bridges that don't re-enumerate). */
+export function connectPlanFor(info: PortInfoLike, viaWebUsb: boolean): readonly ConnectMode[] {
+  const nativeJtag =
+    info.usbVendorId === ESPRESSIF_USB_JTAG.vid && info.usbProductId === ESPRESSIF_USB_JTAG.pid;
+  return viaWebUsb && nativeJtag ? RESET_THEN_REOPEN_PLAN : CONNECT_PLAN;
+}
 
 export interface PortInfoLike {
   usbVendorId?: number | undefined;
@@ -154,7 +183,11 @@ export interface ReconnectOptions<P extends PortLike, S> {
   plan?: readonly ConnectMode[];
   /** One connect attempt on `port`; call `lost()` if the transport sees the
    * device go away. Resolves to whatever the caller needs to carry on. */
-  connect(port: P, mode: ConnectMode, lost: () => void): Promise<S>;
+  connect(port: P, mode: SyncMode, lost: () => void): Promise<S>;
+  /** Pulse the reset into the bootloader on `port` (a `reset_only` step). The
+   * port is expected to vanish; the next step waits for it and reopens. Without
+   * this hook a `reset_only` step is skipped. */
+  reset?(port: P): Promise<void>;
   /** Release what a failed attempt left open (close the transport). */
   cleanup(): Promise<void>;
   log(line: string): void;
@@ -191,6 +224,22 @@ export async function connectWithReconnect<P extends PortLike, S>(
       port = next;
     } else {
       o.status("Connecting");
+    }
+    if (mode === "reset_only") {
+      if (!o.reset) continue;
+      o.log("Resetting the board into its bootloader (it drops off USB and comes back)…");
+      try {
+        await o.reset(port);
+      } catch (err) {
+        // The handle dying under the reset is the expected outcome, not a failure.
+        o.log(`Port went away during the reset (expected): ${errMessage(err)}`);
+      }
+      try {
+        await o.cleanup();
+      } catch {
+        /* the port is usually gone by now */
+      }
+      continue;
     }
     o.log(`Connect attempt ${i + 1} of ${plan.length} (${mode})…`);
     const attemptPort = port;

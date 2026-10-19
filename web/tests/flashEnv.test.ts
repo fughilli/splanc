@@ -55,6 +55,9 @@ test("Android with native Web Serial still flashes via the WebUSB polyfill", () 
   assert.ok(s.note, "expected a WebUSB-path note on Android");
   assert.match(s.note, /WebUSB/i);
   assert.ok(s.lines.some((l) => l.includes("Flash transport: WebUSB")));
+  // Chrome for Android keeps stale chooser entries from earlier USB sessions
+  // (every reset re-enumerates the board): the note says which one to pick.
+  assert.match(s.note, /pick the LAST entry/);
 });
 
 test("iOS (neither Web Serial nor WebUSB) reports a mobile-specific reason", () => {

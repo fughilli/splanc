@@ -5,7 +5,9 @@ import { test } from "node:test";
 import {
   CONNECT_PLAN,
   PortLostError,
+  RESET_THEN_REOPEN_PLAN,
   appResetSequence,
+  connectPlanFor,
   connectWithReconnect,
   waitForPort,
   type ConnectMode,
@@ -290,6 +292,86 @@ test("waitForPort: refuses to guess between several same-id boards", async () =>
 test("waitForPort: without navigator.serial, retries the same port", async () => {
   const original = new FakePort("a");
   assert.equal(await waitForPort(null, original, fakeTiming()), original);
+});
+
+test("connectPlanFor: reset-then-reopen only for the native USB-JTAG over WebUSB", () => {
+  assert.deepEqual(connectPlanFor(C6, true), RESET_THEN_REOPEN_PLAN);
+  assert.equal(RESET_THEN_REOPEN_PLAN[0], "reset_only");
+  assert.equal(RESET_THEN_REOPEN_PLAN[1], "no_reset");
+  // Native Web Serial (desktop) and UART bridges keep the standard plan.
+  assert.deepEqual(connectPlanFor(C6, false), CONNECT_PLAN);
+  assert.deepEqual(connectPlanFor(CP210X, true), CONNECT_PLAN);
+  assert.deepEqual(connectPlanFor({ usbVendorId: 0x303a, usbProductId: 0x0002 }, true), CONNECT_PLAN);
+});
+
+test("reset_only: pulses the reset, never syncs on that handle, reopens the new port with no_reset", async () => {
+  // The Android path: the USB-JTAG reset kills the WebUSB handle (the board
+  // re-enumerates), so the first sync must happen on the NEW port.
+  const h = harness();
+  const original = new FakePort("before-reset");
+  const reborn = new FakePort("in-bootloader");
+  const serial = new FakeSerial();
+  serial.ports = [original];
+  const resets: FakePort[] = [];
+  const r = await connectWithReconnect({
+    ...opts(h, original, serial, async () => "loader"),
+    plan: RESET_THEN_REOPEN_PLAN,
+    reset: (p: FakePort) => {
+      resets.push(p);
+      serial.ports = [reborn]; // dropped off the bus, back in download mode
+      return Promise.reject(new Error("The device was disconnected."));
+    },
+  });
+  assert.deepEqual(resets, [original]);
+  assert.equal(r.port, reborn);
+  assert.deepEqual(
+    h.calls.map((c) => [c.port.name, c.mode]),
+    [["in-bootloader", "no_reset"]],
+    "exactly one connect: no doomed sync on the reset handle",
+  );
+  assert.equal(h.cleanups, 1, "the reset handle is released before reopening");
+  assert.ok(h.log.some((l) => /re-enumerated/.test(l)));
+  assert.ok(!h.log.some((l) => /Attempt \d failed/.test(l)), "the reset is not reported as a failure");
+});
+
+test("reset_only: a ROM banner in the first sync is absorbed by the second no_reset", async () => {
+  const h = harness();
+  const original = new FakePort("a");
+  const reborn = new FakePort("b");
+  const serial = new FakeSerial();
+  serial.ports = [original];
+  const r = await connectWithReconnect({
+    ...opts(h, original, serial, async (_p, _m, _l, n) => {
+      if (n === 1) throw new Error("Invalid head of packet (0x65)");
+      return "loader";
+    }),
+    plan: RESET_THEN_REOPEN_PLAN,
+    reset: () => {
+      serial.ports = [reborn];
+      return Promise.resolve();
+    },
+  });
+  assert.equal(r.session, "loader");
+  assert.deepEqual(
+    h.calls.map((c) => c.mode),
+    ["no_reset", "no_reset"],
+  );
+});
+
+test("reset_only without a reset hook is skipped", async () => {
+  const h = harness();
+  const port = new FakePort("a");
+  const serial = new FakeSerial();
+  serial.ports = [port];
+  const r = await connectWithReconnect({
+    ...opts(h, port, serial, async () => "loader"),
+    plan: RESET_THEN_REOPEN_PLAN,
+  });
+  assert.equal(r.port, port);
+  assert.deepEqual(
+    h.calls.map((c) => c.mode),
+    ["no_reset"],
+  );
 });
 
 test("appResetSequence pulses EN (RTS) with IO0 released, longer on native USB", () => {

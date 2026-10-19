@@ -18,7 +18,7 @@
  * separately.
  */
 
-import { ESPLoader, Transport } from "esptool-js";
+import { ESPLoader, Transport, UsbJtagSerialReset } from "esptool-js";
 import type {
   FlashFreqValues,
   FlashModeValues,
@@ -26,7 +26,8 @@ import type {
   IEspLoaderTerminal,
 } from "esptool-js";
 import type { Flasher, FlashHooks, FlashRequest, FlashResult } from "./flasher";
-import { appResetSequence, connectWithReconnect, errMessage } from "./reconnect";
+import { appResetSequence, connectPlanFor, connectWithReconnect, errMessage } from "./reconnect";
+import { isPolyfillActive } from "./webserial";
 
 // esptool-js renegotiates the baud only when baudrate !== romBaudrate (115200),
 // and that renegotiation CLOSES and REOPENS the port (Transport.disconnect() then
@@ -45,6 +46,25 @@ const ESPRESSIF_NATIVE_USB_VID = 0x303a;
  * fast rate on real UART bridges (where it's a genuine, safe speedup). */
 function flashBaud(port: SerialPort): number {
   return port.getInfo().usbVendorId === ESPRESSIF_NATIVE_USB_VID ? ROM_BAUD : FAST_FLASH_BAUD;
+}
+
+// esptool-js 0.6.0's ESP32-C6 target copies the C3's SPI_REG_BASE (0x60002000,
+// the C6's SPI0 cache controller); the C6's SPI1 flash controller is at
+// 0x60003000 (Python esptool's ESP32C6ROM). So its post-stub flash-ID probe poked
+// SPI0's command registers and read back 0, printing a bogus "Failed to
+// communicate with the flash chip" before a write that then succeeds (the stub
+// drives the flash itself). Correct the base before that probe.
+const C6_SPI1_REG_BASE = 0x60003000;
+const C3_SPI_REG_BASE = 0x60002000;
+
+class Loader extends ESPLoader {
+  override async readFlashId(): Promise<number> {
+    const chip = this.chip as unknown as { CHIP_NAME?: string; SPI_REG_BASE?: number } | undefined;
+    if (chip?.CHIP_NAME === "ESP32-C6" && chip.SPI_REG_BASE === C3_SPI_REG_BASE) {
+      chip.SPI_REG_BASE = C6_SPI1_REG_BASE;
+    }
+    return super.readFlashId();
+  }
 }
 
 /** esptool-js writes progress fileIndex-relative; make it a whole-job byte bar. */
@@ -98,6 +118,15 @@ export function createEspFlasher(): Flasher {
         const { port: livePort, session: loader } = await connectWithReconnect({
           port,
           serial: typeof navigator !== "undefined" && "serial" in navigator ? navigator.serial : null,
+          plan: connectPlanFor(port.getInfo(), isPolyfillActive()),
+          // reset_only: the USB-JTAG reset into the bootloader, without syncing on
+          // the handle it kills (the next step reopens the re-enumerated port).
+          reset: async (p) => {
+            const t = new Transport(p, false);
+            transport = t;
+            await t.connect(ROM_BAUD);
+            await new UsbJtagSerialReset(t).reset();
+          },
           connect: async (p, mode, lost) => {
             const t = new Transport(p, false);
             transport = t;
@@ -105,7 +134,7 @@ export function createEspFlasher(): Flasher {
             // debugLogging routes esptool-js's reset/sync trace ("bootMode:…",
             // "Error at sync …") into the flash log, so a failed connect says
             // why instead of just "Failed to connect with the device".
-            const l = new ESPLoader({ transport: t, baudrate: flashBaud(p), terminal, debugLogging: true });
+            const l = new Loader({ transport: t, baudrate: flashBaud(p), terminal, debugLogging: true });
             const detected = await l.main(mode);
             hooks.log(`Detected: ${detected}`);
             return l;
