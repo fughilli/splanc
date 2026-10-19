@@ -431,23 +431,39 @@ bool tx_hw_encrypt(const uint8_t *frame, int frame_len) {
   return true;
 }
 
+// The ONE outbound frame, built in place down the stack (zero-copy): TCP writes its
+// segment straight into the IP slot (tx_ip_slot), send_ip prepends the LLC/SNAP header in
+// front of it, and tx_l2 the QoS 802.11 header + the 8-byte HW-TX pad in front of that.
+// Replaces a 1.6-1.7 KB buffer per layer (two on the stack of every TLS write, five static
+// per-call-site segment buffers). loopTask-only, and every fill is transmitted before the
+// next one can start (the vendor TX path copies the frame), so one buffer suffices.
+constexpr int kTxPad = 8;                     // HW-TX header pad (ppTxPkt's secure branch)
+constexpr int kTxL2 = kTxPad + 26;            // payload offset: after the QoS 802.11 header
+constexpr int kTxIp = kTxL2 + 8;              // IP packet offset: after LLC/SNAP
+constexpr uint32_t kTxIpCap = 1600;
+uint8_t g_txf[kTxIp + kTxIpCap];
+uint8_t *tx_ip_slot() { return g_txf + kTxIp; }
+
 // Build + CCMP-encrypt + transmit a DHCP message (DISCOVER/REQUEST) to the AP.
 // Transmit an L2 frame: `hdr` is the 24-byte 802.11 header (Protected bit set), `payload`
-// is LLC/SNAP + L3. With HW crypto active (g_hwkey) hand a plaintext QoS MPDU to the vendor
-// ppTxPkt bridge and let the MAC insert the CCMP header + encrypt; otherwise software-
-// encrypt. Returns the enc'd length or the plaintext length. `label` is logged.
+// is LLC/SNAP + L3 — ideally already in place at g_txf + kTxL2 (send_ip's path); any other
+// buffer is copied there first. With HW crypto active (g_hwkey) hand a plaintext QoS MPDU to
+// the vendor ppTxPkt bridge and let the MAC insert the CCMP header + encrypt; otherwise
+// software-encrypt. Returns the enc'd length or the plaintext length. `label` is logged.
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
+  if (plen < 0 || plen > (int)(sizeof g_txf - kTxL2)) return 0;
+  if (payload != g_txf + kTxL2) memmove(g_txf + kTxL2, payload, plen);
+  payload = g_txf + kTxL2;
   if (g_hwkey) {
     // Bare protected QoS data MPDU: [26B QoS 802.11 hdr, FC 0x88 0x41 = QoS + ToDS +
     // Protected][LLC/SNAP + L3 CLEARTEXT]. No CCMP header — the vendor ppTxPkt path + MAC
     // engine insert the IV, encrypt, and append the MIC. addr1=g_bssid (hdr already carries it).
-    uint8_t frame[1700];
-    memset(frame, 0, 8);                  // 8-byte HW-TX-header pad (secure branch fills it)
+    uint8_t *frame = g_txf;
+    memset(frame, 0, kTxPad);            // 8-byte HW-TX-header pad (secure branch fills it)
     memcpy(frame + 8, hdr, 24);
     frame[8] = 0x88;                     // QoS data subtype (override the 0x08 the caller set)
     frame[9] = 0x41;                     // ToDS + Protected
     frame[8 + 24] = 0x00; frame[8 + 25] = 0x00; // QoS control: TID 0, normal ack
-    memcpy(frame + 8 + 26, payload, plen);
     bool ok = tx_hw_encrypt(frame, 8 + 26 + plen);
     if (label) Serial.printf("%s (HW-enc ppTxPkt %d B, ok=%d)\n", label, 8 + 26 + plen, ok);
     return 8 + 26 + plen;
@@ -461,7 +477,7 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   memcpy(qhdr, hdr, 24);
   qhdr[0] = 0x88;                     // QoS Data subtype (caller set 0x08)
   qhdr[24] = 0x00; qhdr[25] = 0x00;   // QoS Control: TID 0, normal ack
-  uint8_t enc[1700];
+  static uint8_t enc[1700];  // static: off the deep TLS-write stack (encrypt can't run in place)
   uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
     ns_mac_send(enc, el, 0);
@@ -550,11 +566,14 @@ static const uint8_t *neighbor_mac(const uint8_t *dst_ip) {
   return g_bssid;
 }
 
+// Transmit an IP packet. Zero-copy when `ip` is already tx_ip_slot() (the TCP pump sites
+// write there); any other buffer is copied into the slot.
 void send_ip(const uint8_t *ip, int iplen) {
-  uint8_t payload[1600];
+  if (iplen < 0 || iplen > (int)kTxIpCap) return;
+  if (ip != tx_ip_slot()) memmove(tx_ip_slot(), ip, iplen);
+  uint8_t *payload = g_txf + kTxL2;
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
   memcpy(payload, llc, 8);
-  memcpy(payload + 8, ip, iplen);
   uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=DA (peer's MAC, else BSSID)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, neighbor_mac(ip + 16), 6);
@@ -750,9 +769,8 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (tcp[2] << 8) | tcp[3], tcp[13],
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
-      static uint8_t reply[1600];  // static: handle_l3 is never re-entered (single thread)
-      uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, reply, sizeof(reply));
-      if (rl > 0) send_ip(reply, rl);
+      uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, tx_ip_slot(), kTxIpCap);
+      if (rl > 0) send_ip(tx_ip_slot(), rl);
     }
     return;
   }
@@ -873,9 +891,8 @@ uint32_t g_bio_tx = 0, g_bio_rx = 0;
 // peer's window currently allows. Returns the bytes accepted into the window.
 static uint32_t tcp_send_all(const uint8_t *data, uint32_t len) {
   uint32_t acc = ns_tcp_enqueue(data, len);
-  uint8_t seg[1600];
   uint32_t n;
-  while ((n = ns_tcp_pump_tx((uint32_t)millis(), seg, sizeof seg)) > 0) send_ip(seg, n);
+  while ((n = ns_tcp_pump_tx((uint32_t)millis(), tx_ip_slot(), kTxIpCap)) > 0) send_ip(tx_ip_slot(), n);
   return acc;
 }
 // BIO send: hand the TLS record bytes to the TCP send window. Returns the bytes accepted
@@ -963,9 +980,9 @@ static void pump_link_once() {
   // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
   // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
   // go-back-N resend; both need pump_tx to run every spin, not just when RX happens to land.
-  static uint8_t tseg[1600];
   uint32_t tn;
-  while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
+  while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tx_ip_slot(), kTxIpCap)) > 0)
+    send_ip(tx_ip_slot(), tn);
 }
 
 // Write all `len` bytes through TLS. On WANT_WRITE the send window is full — pump the link
@@ -983,9 +1000,8 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
       pump_link_once();  // process ACKs (free send-window space) + stream out the window
       // Let the stack's RTO fire while we spin (a lost segment is retransmitted by the stack,
       // not this loop): go-back-N re-sends the window so a stall during a write recovers.
-      static uint8_t rseg[1600];
-      uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
-      if (rn > 0) send_ip(rseg, rn);
+      uint32_t rn = ns_tcp_tick((uint32_t)millis(), tx_ip_slot(), kTxIpCap);
+      if (rn > 0) send_ip(tx_ip_slot(), rn);
       // Time-based deadline, not an iteration count: a burst of small replies can legitimately
       // back-pressure for a few RTOs (300ms, backed off), and an iteration cap could trip
       // BEFORE the first RTO even fires — dropping the connection mid-sweep. Give real loss
@@ -1609,17 +1625,16 @@ void netstack_loop() {
   // Stream out any send-window segments the just-processed ACKs now allow (the send
   // window pipelines many segments in flight rather than one-per-RTT).
   {
-    static uint8_t tseg[1600];
     uint32_t tn;
-    while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
+    while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tx_ip_slot(), kTxIpCap)) > 0)
+      send_ip(tx_ip_slot(), tn);
   }
   // TCP retransmission is the STACK's job: ns_tcp owns its RTO and ns_tcp_tick(now) emits a
   // retransmit when it fires. The app just provides the clock + carries the bytes — a
   // correctness backstop for genuine loss, not something the app should hand-roll.
   {
-    static uint8_t rseg[1600];
-    uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
-    if (rn > 0) send_ip(rseg, rn);
+    uint32_t rn = ns_tcp_tick((uint32_t)millis(), tx_ip_slot(), kTxIpCap);
+    if (rn > 0) send_ip(tx_ip_slot(), rn);
   }
   // BLE Improv: the harness writes wifi-settings over GATT. Commit those creds + START
   // associating, then answer with the redirect URL once leased (Improv result FIRST, then
