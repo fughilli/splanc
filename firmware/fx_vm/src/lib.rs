@@ -439,6 +439,12 @@ pub const C_LED_DIST: u8 = 11; // 1 — geodesic distance along the topology, 0.
 pub const C_LED_UV: u8 = 12; // 2 — per-LED texture coord (pos.xy over map bounds)
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
+/// The `.fxb` format version this VM executes: the header's version byte (offset
+/// 4). The compiler stamps it, `Program::parse` rejects any other value (the
+/// firmware answers `bad_fxb`), and the device reports it (welcome.fxb_format, the
+/// agent manifest's protocol.fxb_format) so a host toolchain can check it emits
+/// what the device runs.
+pub const FORMAT_VERSION: u8 = 1;
 pub const NO_ENTRY: u16 = 0xFFFF;
 
 /// A parsed program, borrowing the `.fxb` byte buffer.
@@ -630,7 +636,7 @@ impl<'a> Program<'a> {
         if buf[0..4] != MAGIC {
             return Err(ParseErr::BadMagic);
         }
-        if buf[4] != 1 {
+        if buf[4] != FORMAT_VERSION {
             return Err(ParseErr::BadVersion);
         }
         let flags = buf[5];
