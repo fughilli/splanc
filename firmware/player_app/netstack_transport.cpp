@@ -23,6 +23,7 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/sha256.h>
 #include "ws_codec.h"        // RFC6455 server codec
 #include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
 #include "improv_codec.h"    // IMPROV_STATE_* constants
@@ -879,6 +880,9 @@ static const char TLS_KEY[] =
 mbedtls_ssl_context g_ssl;
 mbedtls_ssl_config g_conf;
 mbedtls_x509_crt g_srvcert;
+// SHA-256 of the served certificate's DER, lowercase hex: the agent manifest's
+// tls.cert_sha256, so a bridge can pin the self-signed cert it discovers.
+static char g_cert_sha256[65];
 mbedtls_pk_context g_pk;
 bool g_tls_setup = false;
 bool g_tls_hs = false;
@@ -927,6 +931,16 @@ void tls_init() {
   mbedtls_ssl_conf_rng(&g_conf, tls_rng, nullptr);
   mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
   mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
+  if (r == 0) {
+    uint8_t d[32];
+    mbedtls_sha256(g_srvcert.raw.p, g_srvcert.raw.len, d, 0);
+    static const char kHex[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+      g_cert_sha256[2 * i] = kHex[d[i] >> 4];
+      g_cert_sha256[2 * i + 1] = kHex[d[i] & 15];
+    }
+    g_cert_sha256[64] = 0;
+  }
   int r3 = mbedtls_ssl_setup(&g_ssl, &g_conf);
   mbedtls_ssl_set_bio(&g_ssl, nullptr, bio_send, bio_recv, nullptr);
   g_tls_setup = true;
@@ -1062,6 +1076,26 @@ static bool ws_pump() {
       g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
       if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
       char key[80];
+      // GET /.well-known/splanc.json: the agent discovery manifest (device identity,
+      // firmware, protocol features, cert pin, agent bundle). One-shot like the cert page.
+      static const char kManifestGet[] = "GET /.well-known/splanc.json";
+      if (strncmp((char *)g_ws_rx, kManifestGet, sizeof kManifestGet - 1) == 0 &&
+          (g_ws_rx[sizeof kManifestGet - 1] == ' ' || g_ws_rx[sizeof kManifestGet - 1] == '?')) {
+        const uint8_t *body = nullptr;
+        int bn = lm_agent_manifest_body(g_cert_sha256, &body);
+        char hdr[192];
+        int hn = bn > 0 ? snprintf(hdr, sizeof hdr,
+                                   "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                   "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n"
+                                   "Content-Length: %d\r\nConnection: close\r\n\r\n", bn)
+                        : snprintf(hdr, sizeof hdr,
+                                   "HTTP/1.1 500 Internal Server Error\r\n"
+                                   "Content-Length: 0\r\nConnection: close\r\n\r\n");
+        g_responding = true;
+        tls_write_all((const uint8_t *)hdr, hn);
+        if (bn > 0) tls_write_all(body, (size_t)bn);
+        return false;
+      }
       if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) {
         // Not a WebSocket upgrade — this is the browser's plain GET / for the cert-trust
         // landing (the webapp's certApprovalUrl points at https://<host>/). Serve the same

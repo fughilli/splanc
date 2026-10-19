@@ -42,4 +42,10 @@ uint32_t netstack_rekey_count(void);
 // length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 
+// PROVIDED BY main.cpp. Render the agent discovery manifest (GET
+// /.well-known/splanc.json) into the app's tx buffer and set *body to it. `cert_sha256`
+// is the TLS certificate's SHA-256 (lowercase hex, NUL-terminated). Returns the JSON
+// length (>0), or <0 when it doesn't fit.
+int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body);
+
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_
