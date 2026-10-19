@@ -1,0 +1,28 @@
+"""Fragmentation-free memory regions (docs/design/memory-regions.md): fixed-slot
+pools, a byte-class slab for C callers, and a mode-union region whose borrow
+rules make mutually exclusive features share storage. no_std, zero-dependency;
+Kani proofs live under #[cfg(kani)] (see README.md)."""
+
+load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "region",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_region",
+    edition = "2021",
+)
+
+rust_test(
+    name = "region_test",
+    crate = ":region",
+    edition = "2021",
+)
+
+# Includes the compile_fail doctest proving a slot can't be held across a
+# variant switch (the mutex is a borrow-check error, not a convention).
+rust_doc_test(
+    name = "region_doc_test",
+    crate = ":region",
+)
