@@ -29,6 +29,7 @@ rust_library(
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
         "//firmware/player",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
         # Phase 3 WS+TLS transport (server.rs) — PURE RUST crypto (no ring/C).
         "@player_crates//:futures-util",

@@ -1,0 +1,14 @@
+[package]
+name = "pbview-gen"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Generate pbview zero-copy protobuf views from a FileDescriptorSet"
+license = "TBD"
+
+[dependencies]
+pbview = { path = "../pbview", version = "0.1.0" }
+
+[[bin]]
+name = "pbview-gen"
+path = "src/main.rs"

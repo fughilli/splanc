@@ -1,0 +1,35 @@
+f_double: -1.5
+f_float: 2.25
+f_int64: -9000000000
+f_uint64: 18446744073709551615
+f_int32: -7
+f_fixed64: 1234567890123
+f_fixed32: 4000000000
+f_bool: true
+f_string: "h\303\251llo"
+f_inner { a: 3 label: "in" child { a: 4 } }
+f_bytes: "\000\001\377"
+f_uint32: 300
+f_color: COLOR_GREEN
+f_sfixed32: -2
+f_sfixed64: -3
+f_sint32: -64
+f_sint64: -1000000000000
+opt_int32: 0
+r_packed: [1, -2, 300]
+r_sint64: [-1, 1]
+r_double: [0.5, -0.25]
+r_string: "a"
+r_string: ""
+r_string: "ccc"
+r_inner { a: 1 }
+r_inner { a: 2 label: "two" }
+r_bytes: "x"
+r_color: [COLOR_RED, COLOR_GREEN]
+counts { key: "k1" value: 1 }
+counts { key: "k2" value: 2 }
+c_text: "picked"
+type: 9
+match: "m"
+mode: MODE_ON
+nested { x: 77 }

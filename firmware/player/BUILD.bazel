@@ -19,6 +19,7 @@ rust_library(
     deps = [
         "//firmware/pattern",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
     ],
 )
@@ -34,6 +35,7 @@ rust_library(
     deps = [
         "//firmware/pattern",
         "//shared/protocol/rust:ledmapper_pb_fw",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
     ],
 )
@@ -53,6 +55,7 @@ rust_test(
         ":player",
         "//firmware/pattern",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
         "@crates//:serde_json",
     ],
@@ -72,6 +75,7 @@ rust_test(
         "//firmware/arena",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:base64",
         "@crates//:micropb",
         "@crates//:serde_json",
@@ -90,6 +94,7 @@ rust_test(
     deps = [
         ":player",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:base64",
         "@crates//:micropb",
         "@crates//:serde_json",

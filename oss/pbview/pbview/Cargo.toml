@@ -1,0 +1,11 @@
+[package]
+name = "pbview"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Zero-copy, no_std protobuf views: read messages straight from their wire bytes"
+license = "TBD"
+keywords = ["protobuf", "no_std", "zero-copy", "embedded"]
+categories = ["encoding", "embedded", "no-std"]
+
+[dependencies]

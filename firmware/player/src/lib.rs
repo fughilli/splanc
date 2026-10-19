@@ -24,8 +24,9 @@
 
 use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb};
 use ledmapper_pb::ledmapper_::v1_ as pb;
-use pb::ClientMessage_::Msg as CMsg;
+use ledmapper_view::ledmapper::v1 as pv;
 use pb::ServerMessage_::Msg as SMsg;
+use pv::client_message::Msg as CMsg;
 
 /// design doc §12 default: frame period >= ~3 camera frame intervals.
 pub const DEFAULT_BIT_PERIOD_MS: f64 = 100.0;
@@ -90,6 +91,14 @@ impl FrameLog {
 }
 
 type Str64 = micropb::heapless::String<64>;
+
+/// A wire string as a Str64, or None if it doesn't fit (the by-value decode
+/// this replaced refused such a frame outright).
+fn str64(s: &str) -> Option<Str64> {
+    let mut out = Str64::new();
+    out.push_str(s).ok()?;
+    Some(out)
+}
 
 fn s64(s: &str) -> Str64 {
     let mut out = Str64::new();
@@ -221,31 +230,20 @@ impl ColorCorrection {
 /// Resolve a `set_color_correction` request to a concrete profile: a recognized
 /// `profile` name wins outright; otherwise start from the WS2812B default and
 /// override whichever explicit per-channel fields are present.
-fn color_correction_from(m: &pb::SetColorCorrection) -> ColorCorrection {
-    if let Some(p) = m.r#profile() {
-        match p.as_str() {
-            "ws2812" | "ws2812b" => return ColorCorrection::WS2812B,
-            _ => {}
-        }
+fn color_correction_from(m: pv::SetColorCorrectionView<'_>) -> ColorCorrection {
+    if let Some("ws2812" | "ws2812b") = m.profile() {
+        return ColorCorrection::WS2812B;
     }
     let mut cc = ColorCorrection::WS2812B;
-    if let Some(&v) = m.r#gamma_r() {
-        cc.gamma[0] = v;
+    for (i, v) in [m.gamma_r(), m.gamma_g(), m.gamma_b()].into_iter().enumerate() {
+        if let Some(v) = v {
+            cc.gamma[i] = v;
+        }
     }
-    if let Some(&v) = m.r#gamma_g() {
-        cc.gamma[1] = v;
-    }
-    if let Some(&v) = m.r#gamma_b() {
-        cc.gamma[2] = v;
-    }
-    if let Some(&v) = m.r#lum_r() {
-        cc.luminance[0] = v;
-    }
-    if let Some(&v) = m.r#lum_g() {
-        cc.luminance[1] = v;
-    }
-    if let Some(&v) = m.r#lum_b() {
-        cc.luminance[2] = v;
+    for (i, v) in [m.lum_r(), m.lum_g(), m.lum_b()].into_iter().enumerate() {
+        if let Some(v) = v {
+            cc.luminance[i] = v;
+        }
     }
     cc
 }
@@ -400,13 +398,29 @@ impl Player {
     /// receive and reply timestamps, INTEGER milliseconds (the player clock is
     /// millis()). §7.3 time sync needs both; everything else uses `send_ms` as
     /// "now". Returns the reply, or None for fire-and-forget arms.
-    pub fn handle(
+    /// Handle one encoded `ClientMessage` frame, read IN PLACE (zero-copy
+    /// pbview, no by-value envelope). A frame that isn't a valid encoding gets
+    /// the bounded malformed reply.
+    pub fn handle_frame(
         &mut self,
-        req: pb::ClientMessage,
+        frame: &[u8],
         recv_ms: i64,
         send_ms: i64,
     ) -> Option<pb::ServerMessage> {
-        let Some(msg) = req.r#msg else {
+        match pv::ClientMessageView::parse(frame) {
+            Ok(req) => self.handle(req, recv_ms, send_ms),
+            Err(_) => Some(upload_malformed()),
+        }
+    }
+
+    /// Handle one parsed `ClientMessage` view (see [`Player::handle_frame`]).
+    pub fn handle(
+        &mut self,
+        req: pv::ClientMessageView<'_>,
+        recv_ms: i64,
+        send_ms: i64,
+    ) -> Option<pb::ServerMessage> {
+        let Some(msg) = req.msg() else {
             return Some(error("bad_message", "envelope has no message set"));
         };
         match msg {
@@ -417,38 +431,40 @@ impl Player {
                 // place double is genuinely required). t1/t2 are the player's
                 // integer clock, widened only here at the wire boundary.
                 let pong = pb::TimeSyncPong {
-                    r#t0: p.r#t0,
+                    r#t0: p.t0(),
                     r#t1: recv_ms as f64,
                     r#t2: send_ms as f64,
                 };
                 Some(reply(SMsg::TimeSyncPong(pong)))
             }
-            CMsg::StartMapping(m) => Some(self.start_mapping(&m, send_ms)),
-            CMsg::Configure(m) => Some(self.configure(&m, send_ms)),
-            CMsg::StopMapping(m) => Some(self.stop_mapping(&m)),
+            CMsg::StartMapping(m) => Some(self.start_mapping(m, send_ms)),
+            CMsg::Configure(m) => Some(self.configure(m, send_ms)),
+            CMsg::StopMapping(m) => Some(self.stop_mapping(m)),
             CMsg::GetPattern(_) => Some(self.pattern_state()),
             CMsg::SetCountingPattern(m) => Some(self.set_counting_pattern(m, send_ms)),
-            CMsg::SetLedCount(m) => Some(self.set_led_count(&m)),
+            CMsg::SetLedCount(m) => Some(self.set_led_count(m)),
             CMsg::SubmitMap(m) => {
-                self.stored_map_id = Some(m.r#map.r#map_id.clone());
-                let r = pb::ResultReady {
-                    r#map_id: m.r#map.r#map_id.clone(),
+                let id = m.map().map_or("", |map| map.map_id());
+                let Some(id) = str64(id) else {
+                    return Some(upload_malformed());
                 };
-                Some(reply(SMsg::ResultReady(r)))
+                self.stored_map_id = Some(id.clone());
+                Some(reply(SMsg::ResultReady(pb::ResultReady { r#map_id: id })))
             }
             CMsg::SubmitTopology(m) => {
-                if self.stored_map_id.as_ref() != Some(&m.r#topology.r#map_id) {
+                let id = m.topology().map_or("", |t| t.map_id());
+                let Some(id) = str64(id) else {
+                    return Some(upload_malformed());
+                };
+                if self.stored_map_id.as_ref() != Some(&id) {
                     return Some(error("unknown_map", "no stored map for this topology"));
                 }
-                let r = pb::ResultReady {
-                    r#map_id: m.r#topology.r#map_id.clone(),
-                };
-                Some(reply(SMsg::ResultReady(r)))
+                Some(reply(SMsg::ResultReady(pb::ResultReady { r#map_id: id })))
             }
             // The native playback effects (pulse/flood) are gone: every show is
             // an FX-engine effect (submit_effect / set_effect). "off" still acks
             // with the (always idle) playback state so an old client's stop works.
-            CMsg::SetPlayback(m) => match m.r#effect.as_str() {
+            CMsg::SetPlayback(m) => match m.effect() {
                 "off" => Some(self.playback_state()),
                 _ => Some(error(
                     "unsupported_effect",
@@ -470,17 +486,20 @@ impl Player {
             // The firmware notices this arm, persists the name, and renames the
             // BLE advertisement.
             CMsg::SetDeviceName(m) => {
-                self.device_name = s64(m.r#name.as_str());
+                let Some(name) = str64(m.name()) else {
+                    return Some(error("bad_message", "name is longer than 64 bytes"));
+                };
+                self.device_name = name;
                 Some(self.welcome())
             }
             // Color correction: store the resolved profile and bump the gen. The
             // firmware notices the change (like the rename above), regenerates the
             // per-channel LUTs, and persists them to flash.
             CMsg::SetColorCorrection(m) => {
-                self.color_correction = color_correction_from(&m);
+                self.color_correction = color_correction_from(m);
                 // Unset commit defaults to true (persist); a live-preview stream
                 // sends commit=false to stay in RAM until the UI settles.
-                self.color_correction_commit = m.r#commit().copied().unwrap_or(true);
+                self.color_correction_commit = m.commit().unwrap_or(true);
                 self.color_correction_gen = self.color_correction_gen.wrapping_add(1);
                 Some(self.welcome())
             }
@@ -488,7 +507,7 @@ impl Player {
             // The firmware polls the gen (like color correction) to apply it to
             // the strip write. Runtime-only, so nothing is persisted.
             CMsg::SetBrightness(m) => {
-                self.output_brightness = (m.r#brightness as f32).clamp(0.0, 1.0);
+                self.output_brightness = (m.brightness() as f32).clamp(0.0, 1.0);
                 self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
                 Some(self.welcome())
             }
@@ -496,7 +515,7 @@ impl Player {
             // channel. The firmware notices the gen bump, persists to NVS, and
             // re-applies to the RMT driver. Every field is optional (nudge one
             // setting at a time); an unset field is left unchanged.
-            CMsg::SetHardwareConfig(m) => Some(self.set_hardware_config(&m)),
+            CMsg::SetHardwareConfig(m) => Some(self.set_hardware_config(m)),
             CMsg::GetHardwareConfig(_) => Some(self.hardware_config_state()),
             // Read-back: report the resolved gamma + luminance the device is
             // currently applying (what set_color_correction stored), so the app
@@ -529,15 +548,15 @@ impl Player {
 
     // -- capture ----------------------------------------------------------
 
-    fn start_mapping(&mut self, m: &pb::StartMapping, now_ms: i64) -> pb::ServerMessage {
-        let Some(options) = m.r#options() else {
+    fn start_mapping(&mut self, m: pv::StartMappingView<'_>, now_ms: i64) -> pb::ServerMessage {
+        let Some(options) = m.options() else {
             return error("bad_message", "start_mapping without options");
         };
-        let led_count = options.r#led_count;
+        let led_count = options.led_count();
         if led_count < 1 {
             return error("bad_message", "ledCount must be >= 1");
         }
-        let symbols = match options.r#symbols().copied() {
+        let symbols = match options.symbols() {
             None => DEFAULT_SYMBOLS,
             Some(2) => 2,
             Some(4) => 4,
@@ -545,24 +564,21 @@ impl Player {
         };
         // Wire values (ms/[0,1] doubles) are validated here at the cold decode
         // boundary, then stored in integer/fixed-point form for the hot loop.
-        let bit_period_ms = options
-            .r#bit_period_ms()
-            .copied()
-            .unwrap_or(DEFAULT_BIT_PERIOD_MS);
+        let bit_period_ms = options.bit_period_ms().unwrap_or(DEFAULT_BIT_PERIOD_MS);
         // `!(x > 0.0)` rejects zero, negatives, AND NaN — a rewrite to
         // `x <= 0.0` would silently accept a NaN from the wire.
         #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
-        let brightness = options.r#brightness().copied().unwrap_or(1.0);
+        let brightness = options.brightness().unwrap_or(1.0);
         if !(0.0..=1.0).contains(&brightness) {
             return error("bad_message", "brightness must be in [0, 1]");
         }
         let (stride_spacing, anchor_density, stride_phase) = match parse_stride(
-            options.r#stride_spacing().copied(),
-            options.r#anchor_density().copied(),
-            options.r#stride_phase().copied(),
+            options.stride_spacing(),
+            options.anchor_density(),
+            options.stride_phase(),
             (0, 3, 0),
         ) {
             Ok(v) => v,
@@ -589,25 +605,25 @@ impl Player {
         reply(SMsg::MappingStarted(started))
     }
 
-    fn configure(&mut self, m: &pb::Configure, now_ms: i64) -> pb::ServerMessage {
+    fn configure(&mut self, m: pv::ConfigureView<'_>, now_ms: i64) -> pb::ServerMessage {
         let Some(active) = self.active else {
             return error("no_session", "configure requires an active capture session");
         };
-        let options = m.r#options();
+        let options = m.options();
         let led_count = options
-            .and_then(|o| o.r#led_count().copied())
+            .and_then(|o| o.led_count())
             .unwrap_or(active.spec.led_count as i32);
         if led_count < 1 {
             return error("bad_message", "ledCount must be >= 1");
         }
-        let symbols = match options.and_then(|o| o.r#symbols().copied()) {
+        let symbols = match options.and_then(|o| o.symbols()) {
             None => active.spec.symbols,
             Some(2) => 2,
             Some(4) => 4,
             Some(_) => return error("bad_message", "symbols must be 2 or 4"),
         };
         let bit_period_ms = options
-            .and_then(|o| o.r#bit_period_ms().copied())
+            .and_then(|o| o.bit_period_ms())
             .unwrap_or(active.bit_period_ms());
         // `!(x > 0.0)` rejects zero, negatives, AND NaN — a rewrite to
         // `x <= 0.0` would silently accept a NaN from the wire.
@@ -616,7 +632,7 @@ impl Player {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
         let brightness = options
-            .and_then(|o| o.r#brightness().copied())
+            .and_then(|o| o.brightness())
             .unwrap_or(active.brightness());
         if !(0.0..=1.0).contains(&brightness) {
             return error("bad_message", "brightness must be in [0, 1]");
@@ -624,9 +640,9 @@ impl Player {
         // Stride params default to the ACTIVE ones, so a phase-advancing Configure
         // (only stride_phase set) keeps the spacing/anchor the session started with.
         let (stride_spacing, anchor_density, stride_phase) = match parse_stride(
-            options.and_then(|o| o.r#stride_spacing().copied()),
-            options.and_then(|o| o.r#anchor_density().copied()),
-            options.and_then(|o| o.r#stride_phase().copied()),
+            options.and_then(|o| o.stride_spacing()),
+            options.and_then(|o| o.anchor_density()),
+            options.and_then(|o| o.stride_phase()),
             (active.stride_spacing as i32, active.anchor_density as i32, active.stride_phase as i32),
         ) {
             Ok(v) => v,
@@ -645,14 +661,14 @@ impl Player {
         self.pattern_state()
     }
 
-    fn stop_mapping(&mut self, m: &pb::StopMapping) -> pb::ServerMessage {
+    fn stop_mapping(&mut self, m: pv::StopMappingView<'_>) -> pb::ServerMessage {
         if self.active.is_none() {
             return error("no_session", "no active capture session");
         }
         // solveOnHost unset/true asks for a host solve; this player has no
         // solver (its welcome carries no solverBenchMs), so that is a phone
         // placement bug — refuse loudly and keep the capture running.
-        if m.r#solve_on_host().copied() != Some(false) {
+        if m.solve_on_host() != Some(false) {
             return error("unsupported", "no solver on this player; stop with solveOnHost=false");
         }
         self.active = None;
@@ -687,33 +703,22 @@ impl Player {
 
     fn set_counting_pattern(
         &mut self,
-        m: pb::SetCountingPattern,
+        m: pv::SetCountingPatternView<'_>,
         now_ms: i64,
     ) -> pb::ServerMessage {
-        // Reduce each block's [0,1] wire color to 8-bit, then install via the
-        // shared path. This generated-decode path serves the host tests /
-        // conformance; on firmware the arm is decoded ZERO-COPY in ffi.rs and
-        // calls set_counting_blocks directly (so the fat 32×f64-rgb wire array
-        // never lands on the task stack).
+        // Reduce each block's [0,1] wire color to 8-bit (read in place from the
+        // frame), then install via the shared path.
         let mut reduced: micropb::heapless::Vec<(u32, u32, Rgb), MAX_COUNTING_BLOCKS> =
             micropb::heapless::Vec::new();
-        for b in m.r#blocks.iter() {
-            let ch = |i: usize| -> u8 {
-                let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
-                (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-            };
-            let _ = reduced.push((
-                b.r#start.max(0) as u32,
-                b.r#count.max(0) as u32,
-                (ch(0), ch(1), ch(2)),
-            ));
+        for b in m.blocks().take(MAX_COUNTING_BLOCKS) {
+            let mut rgb = [0u8; 3];
+            for (c, v) in rgb.iter_mut().zip(b.rgb()) {
+                *c = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            }
+            let block = (b.start().max(0) as u32, b.count().max(0) as u32, (rgb[0], rgb[1], rgb[2]));
+            let _ = reduced.push(block);
         }
-        self.set_counting_blocks(
-            now_ms,
-            &reduced,
-            m.r#color_order().map(|s| s.as_str()),
-            m.r#channel().copied(),
-        )
+        self.set_counting_blocks(now_ms, &reduced, m.color_order(), m.channel())
     }
 
     /// Install a counting pattern from pre-reduced 8-bit blocks (empty = clear
@@ -767,28 +772,29 @@ impl Player {
         reply(SMsg::CountingState(state))
     }
 
-    fn set_led_count(&mut self, m: &pb::SetLedCount) -> pb::ServerMessage {
-        let channel = m.r#channel().copied().unwrap_or(0);
-        if channel < 0 || channel as usize >= MAX_CHANNELS || m.r#led_count < 0 {
+    fn set_led_count(&mut self, m: pv::SetLedCountView<'_>) -> pb::ServerMessage {
+        let channel = m.channel().unwrap_or(0);
+        let led_count = m.led_count();
+        if channel < 0 || channel as usize >= MAX_CHANNELS || led_count < 0 {
             return error("bad_message", "channel or ledCount out of range");
         }
-        self.apply_led_count(channel as usize, m.r#led_count as u32);
+        self.apply_led_count(channel as usize, led_count as u32);
         let state = pb::LedCountState {
-            r#led_count: m.r#led_count,
+            r#led_count: led_count,
             r#channel,
         };
         reply(SMsg::LedCountState(state))
     }
 
-    fn set_hardware_config(&mut self, m: &pb::SetHardwareConfig) -> pb::ServerMessage {
-        let channel = m.r#channel().copied().unwrap_or(0);
+    fn set_hardware_config(&mut self, m: pv::SetHardwareConfigView<'_>) -> pb::ServerMessage {
+        let channel = m.channel().unwrap_or(0);
         if channel < 0 || channel as usize >= HW_CHANNELS {
             return error("bad_message", "channel out of range");
         }
         let ch = channel as usize;
         // Validate everything BEFORE mutating so a bad field leaves the config
         // untouched (and the app sees the real state echoed back).
-        if let Some(&gpio) = m.r#gpio() {
+        if let Some(gpio) = m.gpio() {
             // Any output-capable C6 GPIO (0..=30 covers the exposed pins; the
             // RMT peripheral routes through the GPIO matrix). A tighter denylist
             // lives in the app's curated pin list.
@@ -796,19 +802,19 @@ impl Player {
                 return error("bad_message", "gpio out of range");
             }
         }
-        if let Some(t) = m.r#led_type() {
+        if let Some(t) = m.led_type() {
             if !t.eq_ignore_ascii_case(LED_TYPE_WS281X) {
                 return error("bad_message", "unsupported led_type (only ws281x)");
             }
         }
-        let order_idx = match m.r#color_order() {
-            Some(s) => match color_order_index(s.as_str()) {
+        let order_idx = match m.color_order() {
+            Some(s) => match color_order_index(s) {
                 Some(i) => Some(i),
                 None => return error("bad_message", "unknown color_order"),
             },
             None => None,
         };
-        if let Some(&n) = m.r#led_count() {
+        if let Some(n) = m.led_count() {
             if n < 0 {
                 return error("bad_message", "led_count out of range");
             }
@@ -824,16 +830,16 @@ impl Player {
             }
         }
         // All valid: apply the present fields.
-        if let Some(&gpio) = m.r#gpio() {
+        if let Some(gpio) = m.gpio() {
             self.hw_gpio[ch] = gpio;
         }
         if let Some(i) = order_idx {
             self.hw_order[ch] = i;
         }
-        if let Some(&n) = m.r#led_count() {
+        if let Some(n) = m.led_count() {
             self.apply_led_count(ch, n as u32);
         }
-        self.hw_config_commit = m.r#commit().copied().unwrap_or(true);
+        self.hw_config_commit = m.commit().unwrap_or(true);
         self.hw_config_gen = self.hw_config_gen.wrapping_add(1);
         self.hardware_config_state()
     }

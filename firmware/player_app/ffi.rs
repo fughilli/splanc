@@ -31,12 +31,20 @@ use ledmapper_fx_vm::{
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
+use ledmapper_view::ledmapper::v1 as pv;
+use pv::client_message::Msg as CArm;
 use ledmapper_store::{
     decode_submit_map_streamed, decode_submit_topology_streamed, dump, envelope_arm,
     parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredTopoGeom,
     Str64, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
-use micropb::{MessageDecode, PbDecoder, PbRead};
+use micropb::PbRead;
+
+/// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
+/// envelope, no capacity profile). None when the frame isn't a valid encoding.
+fn client_arm(frame: &[u8]) -> Option<CArm<'_>> {
+    pv::ClientMessageView::parse(frame).ok()?.msg()
+}
 
 /// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
 /// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
@@ -986,8 +994,8 @@ pub unsafe extern "C" fn lm_player_handle(
         // Encoded ZERO-COPY straight into `out` (never a fat by-value
         // StoredMapChunk), so it returns the reply length directly.
         Some(ARM_GET_STORED_MAP) => return handle_get_stored_map(frame, out, out_cap),
-        // Effects arms: decoded by a hand-rolled walker (the firmware profile
-        // caps SubmitEffect.fxb at 64 B), then loaded/selected/tuned on the VM.
+        // Effects arms: read in place (pbview — a full .fxb rides the frame, no
+        // capacity profile), then loaded/selected/tuned on the VM.
         Some(ARM_SUBMIT_EFFECT) => handle_submit_effect(frame),
         Some(ARM_SET_EFFECT) => handle_set_effect(frame),
         Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
@@ -996,9 +1004,6 @@ pub unsafe extern "C" fn lm_player_handle(
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
         Some(ARM_GET_PERF_REPORT) => handle_get_perf_report(),
-        // Counting pattern: walk the ColorBlock array zero-copy (its 32 × f64-rgb
-        // is the fat arm of ClientMessage) and install pre-reduced 8-bit blocks.
-        Some(ARM_SET_COUNTING_PATTERN) => handle_set_counting_pattern(frame, send_ms),
         // Debug/bench: toggle the on-device JIT (FUG-125). Fire-and-forget; takes
         // effect on the next lm_fx_load, so the HITL fx_bench re-submits after.
         Some(ARM_SET_JIT) => {
@@ -1012,20 +1017,12 @@ pub unsafe extern "C" fn lm_player_handle(
             handle_set_texture(frame);
             return 0;
         }
-        _ => {
-            let mut env = pb::ClientMessage::default();
-            let mut dec = PbDecoder::new(frame);
-            // Oversized repeated fields (Pi-profile telemetry) truncate;
-            // the arms that matter carry firmware-sized data.
-            dec.ignore_repeated_cap_err = true;
-            match env.decode(&mut dec, frame.len()) {
-                Ok(()) => match player().handle(env, recv_ms, send_ms) {
-                    Some(reply) => reply,
-                    None => return 0,
-                },
-                Err(_) => upload_malformed(),
-            }
-        }
+        // Everything else is read IN PLACE from the frame (pbview): no
+        // by-value ClientMessage on this stack, and no capacity truncation.
+        _ => match player().handle_frame(frame, recv_ms, send_ms) {
+            Some(reply) => reply,
+            None => return 0,
+        },
     };
     encode_reply(&reply, out, out_cap)
 }
@@ -1141,26 +1138,12 @@ fn upload_error(e: StoreError) -> pb::ServerMessage {
 /// this is the only place the message is produced, and only the phone decodes
 /// it. Returns the encoded length (or an encoded error / `-2` if `out` is small).
 unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i32 {
-    // Hand-rolled request decode (avoids a ~1.5 KiB by-value ClientMessage on
-    // this path too): GetStoredMap = { offset:1, max_len:2 }, both int32/varint.
-    let Some(inner) = unwrap_arm(frame, ARM_GET_STORED_MAP) else {
+    // The request, read in place: GetStoredMap = { offset:1, max_len:2 }.
+    let Some(CArm::GetStoredMap(req)) = client_arm(frame) else {
         return encode_reply(&upload_malformed(), out, out_cap);
     };
-    let (mut offset, mut max_len) = (0usize, 1usize);
-    let mut o = 0;
-    while o < inner.len() {
-        let Some(key) = rd_varint(inner, &mut o) else { break };
-        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
-        match (field, wire) {
-            (1, 0) => offset = rd_varint(inner, &mut o).unwrap_or(0) as i32 as usize,
-            (2, 0) => max_len = ((rd_varint(inner, &mut o).unwrap_or(1) as i32).max(1)) as usize,
-            _ => {
-                if !skip_field(inner, &mut o, wire) {
-                    break;
-                }
-            }
-        }
-    }
+    let offset = req.offset() as usize;
+    let max_len = req.max_len().max(1) as usize;
 
     let Some((map_id, led_count)) = (*addr_of!(MAP_META)).as_ref().map(|(id, c)| (id.clone(), *c))
     else {
@@ -1293,113 +1276,6 @@ fn wr_varint(buf: &mut [u8], p: &mut usize, mut v: u64) {
     }
     buf[*p] = v as u8;
     *p += 1;
-}
-
-/// set_counting_pattern, decoded ZERO-COPY: walk the repeated `ColorBlock`
-/// (field 1) — `{ start:1, count:2, rgb:3 (repeated double) }` — reducing each
-/// `[0,1]` rgb to 8-bit, plus the optional `channel` (field 2) and
-/// `color_order` string (field 3), and install via the player. Avoids a by-value `pb::SetCountingPattern`, whose
-/// `Vec<ColorBlock, 32>` (each with an inline `Vec<f64, 4>`) is the ~1.5 KiB arm
-/// that sizes every `ClientMessage`. Reply: counting_state.
-unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
-    let Some(body) = unwrap_arm(frame, ARM_SET_COUNTING_PATTERN) else {
-        return upload_malformed();
-    };
-    // Pre-reduced blocks (start, count, 8-bit rgb) — 12 B each vs the ~48 B wire
-    // ColorBlock, and only as many as actually arrive.
-    let mut blocks: micropb::heapless::Vec<(u32, u32, (u8, u8, u8)), 32> =
-        micropb::heapless::Vec::new();
-    let mut color_order: Option<&str> = None;
-    let mut channel: Option<i32> = None;
-    let mut o = 0;
-    while o < body.len() {
-        let Some(key) = rd_varint(body, &mut o) else { break };
-        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
-        match (field, wire) {
-            (1, 2) => {
-                let Some(len) = rd_varint(body, &mut o) else { break };
-                let end = o + len as usize;
-                let Some(blk) = body.get(o..end) else { break };
-                o = end;
-                if blocks.len() < blocks.capacity() {
-                    let _ = blocks.push(parse_color_block(blk));
-                }
-            }
-            // channel (optional int32): the player range-checks it.
-            (2, 0) => {
-                let Some(v) = rd_varint(body, &mut o) else { break };
-                channel = Some(v as i32);
-            }
-            // color_order (optional string): the player validates it and applies
-            // it to the probe's pixels; invalid UTF-8 is treated as unset.
-            (3, 2) => {
-                let Some(len) = rd_varint(body, &mut o) else { break };
-                let end = o + len as usize;
-                let Some(s) = body.get(o..end) else { break };
-                o = end;
-                color_order = core::str::from_utf8(s).ok();
-            }
-            _ => {
-                if !skip_field(body, &mut o, wire) {
-                    break;
-                }
-            }
-        }
-    }
-    player().set_counting_blocks(now_ms, &blocks, color_order, channel)
-}
-
-/// Parse one `ColorBlock { start:1, count:2, rgb:3 }` → (start, count, 8-bit
-/// rgb). `rgb` is `repeated double` — packed (LEN, the default proto3 encoding)
-/// or, defensively, unpacked (one 64-bit field each), taken in order as r,g,b.
-fn parse_color_block(blk: &[u8]) -> (u32, u32, (u8, u8, u8)) {
-    let (mut start, mut count) = (0u32, 0u32);
-    let mut rgb = [0u8; 3];
-    let mut ci = 0usize; // next rgb channel to fill (unpacked case)
-    let mut bo = 0;
-    let reduce = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
-    while bo < blk.len() {
-        let Some(bk) = rd_varint(blk, &mut bo) else { break };
-        let (bf, bw) = ((bk >> 3) as u32, (bk & 7) as u8);
-        match (bf, bw) {
-            (1, 0) => start = rd_varint(blk, &mut bo).unwrap_or(0) as i32 as u32,
-            (2, 0) => count = rd_varint(blk, &mut bo).unwrap_or(0) as i32 as u32,
-            (3, 2) => {
-                // packed doubles: [len][f64 ...]
-                let Some(plen) = rd_varint(blk, &mut bo) else { break };
-                let pend = (bo + plen as usize).min(blk.len());
-                let mut c = 0;
-                while bo + 8 <= pend && c < 3 {
-                    let mut a = [0u8; 8];
-                    a.copy_from_slice(&blk[bo..bo + 8]);
-                    rgb[c] = reduce(f64::from_le_bytes(a));
-                    bo += 8;
-                    c += 1;
-                }
-                bo = pend;
-            }
-            (3, 1) => {
-                // unpacked double (one field per channel), taken in order.
-                if bo + 8 <= blk.len() {
-                    if ci < 3 {
-                        let mut a = [0u8; 8];
-                        a.copy_from_slice(&blk[bo..bo + 8]);
-                        rgb[ci] = reduce(f64::from_le_bytes(a));
-                        ci += 1;
-                    }
-                    bo += 8;
-                } else {
-                    break;
-                }
-            }
-            _ => {
-                if !skip_field(blk, &mut bo, bw) {
-                    break;
-                }
-            }
-        }
-    }
-    (start, count, (rgb[0], rgb[1], rgb[2]))
 }
 
 fn dump_error(code: &str, message: &str) -> pb::ServerMessage {
@@ -1541,12 +1417,10 @@ pub unsafe extern "C" fn lm_decode_upload_stream(
 // -- effects protocol dispatch (submit_effect / set_effect / set_uniforms /
 //    get_effect_uniforms) -----------------------------------------------------
 //
-// These are decoded by a tiny hand-rolled protobuf walker rather than the
-// generated envelope, exactly like the arena upload arms: the firmware profile
-// caps `SubmitEffect.fxb` at 64 B and `SetUniforms.values` at a handful, far
-// too small for a real effect, so the generated decode can't be used. Walking
-// the raw frame lets a full `.fxb` (up to FX_MAX_BYTES) and any number of
-// uniform slots ride the same fixed statics the VM already owns.
+// These read the frame IN PLACE through pbview views (client_arm), so a full
+// `.fxb` (up to FX_MAX_BYTES) and any number of uniform slots go straight from
+// the RX buffer into the fixed statics the VM already owns — no by-value
+// envelope, and none of the firmware micropb profile's capacity stubs.
 
 /// ClientMessage oneof field numbers for the effect arms.
 const ARM_SUBMIT_EFFECT: u32 = 21;
@@ -1557,9 +1431,10 @@ const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
 const ARM_SET_JIT: u32 = 32;
-const ARM_SET_COUNTING_PATTERN: u32 = 14;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
+/// (The set_texture RLE payload's run lengths; protobuf fields go through
+/// pbview.)
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
     let mut val: u64 = 0;
     let mut shift = 0u32;
@@ -1578,86 +1453,15 @@ fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
     None
 }
 
-/// Skip a field of the given wire type at `buf[*o..]`. False on truncation.
-fn skip_field(buf: &[u8], o: &mut usize, wire: u8) -> bool {
-    match wire {
-        0 => rd_varint(buf, o).is_some(),
-        1 => {
-            *o += 8;
-            *o <= buf.len()
-        }
-        5 => {
-            *o += 4;
-            *o <= buf.len()
-        }
-        2 => match rd_varint(buf, o) {
-            Some(len) => {
-                *o += len as usize;
-                *o <= buf.len()
-            }
-            None => false,
-        },
-        _ => false,
-    }
-}
-
-/// Unwrap `ClientMessage { <arm> = N }` → the inner message's byte slice for
-/// the expected arm number. Returns None if the frame's first field isn't a
-/// LEN-delimited field with that number.
-fn unwrap_arm(frame: &[u8], arm: u32) -> Option<&[u8]> {
-    let mut o = 0;
-    let key = rd_varint(frame, &mut o)?;
-    let field = (key >> 3) as u32;
-    let wire = (key & 7) as u8;
-    if field != arm || wire != 2 {
-        return None;
-    }
-    let len = rd_varint(frame, &mut o)? as usize;
-    frame.get(o..o + len)
-}
-
-/// submit_effect: extract fxb (field 2, LEN) + activate (field 3, varint) from
-/// the raw frame, load it into the VM, and (optionally) activate. Reply
+/// submit_effect: read fxb + activate from the frame in place, load it into the
+/// VM, and (optionally) activate. Reply
 /// result_ready(effect_id) or error(bad_fxb / effect_too_large).
 unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
-    let Some(body) = unwrap_arm(frame, ARM_SUBMIT_EFFECT) else {
+    let Some(CArm::SubmitEffect(m)) = client_arm(frame) else {
         return fx_error("bad_fxb", "submit_effect is malformed");
     };
-    // SubmitEffect { string effect_id = 1; bytes fxb = 2; bool activate = 3; }
-    let mut fxb: Option<&[u8]> = None;
-    let mut activate = false;
-    let mut o = 0;
-    while o < body.len() {
-        let Some(key) = rd_varint(body, &mut o) else {
-            return fx_error("bad_fxb", "submit_effect is malformed");
-        };
-        let field = (key >> 3) as u32;
-        let wire = (key & 7) as u8;
-        match (field, wire) {
-            (2, 2) => {
-                let Some(len) = rd_varint(body, &mut o) else {
-                    return fx_error("bad_fxb", "submit_effect is malformed");
-                };
-                let len = len as usize;
-                let Some(s) = body.get(o..o + len) else {
-                    return fx_error("bad_fxb", "submit_effect is malformed");
-                };
-                fxb = Some(s);
-                o += len;
-            }
-            (3, 0) => {
-                let Some(v) = rd_varint(body, &mut o) else {
-                    return fx_error("bad_fxb", "submit_effect is malformed");
-                };
-                activate = v != 0;
-            }
-            _ => {
-                if !skip_field(body, &mut o, wire) {
-                    return fx_error("bad_fxb", "submit_effect is malformed");
-                }
-            }
-        }
-    }
+    let fxb = pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB).then(|| m.fxb());
+    let activate = m.activate();
     let Some(fxb) = fxb else {
         return fx_error("bad_fxb", "submit_effect without fxb");
     };
@@ -1678,9 +1482,9 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     let mut r = pb::ResultReady::default();
     // effect_id echoes back so the app can correlate the ack; also latch it so
     // the PerfReport can pin its metrics to this effect (perf-monitoring.md).
-    if let Some(id) = read_effect_id(body) {
-        let _ = r.r#map_id.push_str(id);
-        perf_set_effect_id(id);
+    if pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_EFFECT_ID) {
+        let _ = r.r#map_id.push_str(m.effect_id());
+        perf_set_effect_id(m.effect_id());
     } else {
         FX_ID_LEN = 0;
     }
@@ -1792,67 +1596,20 @@ fn dequant_at(prev: &[u8], t: usize, format: u64, palette: &[u32]) -> (f32, f32,
 /// frame (a keyframe zeroes it first), optionally RLE'd (zero-run scheme), then
 /// dequantized into the texture's arena slots. Silently drops on any mismatch.
 unsafe fn handle_set_texture(frame: &[u8]) {
-    let Some(body) = unwrap_arm(frame, ARM_SET_TEXTURE) else {
+    let Some(CArm::SetTexture(t)) = client_arm(frame) else {
         return;
     };
-    let (mut tex_index, mut format, mut width, mut height, mut flags) = (0u64, 0u64, 0u64, 0u64, 0u64);
-    let mut data: &[u8] = &[];
+    let (tex_index, format, width, height, flags) = (
+        u64::from(t.tex_index()),
+        u64::from(t.format()),
+        u64::from(t.width()),
+        u64::from(t.height()),
+        u64::from(t.flags()),
+    );
+    let data = t.data();
     let mut palette = [0u32; TEX_PAL_MAX]; // INDEXED8 lookup (0x00RRGGBB)
-    let mut o = 0;
-    while o < body.len() {
-        let Some(key) = rd_varint(body, &mut o) else {
-            return;
-        };
-        let field = (key >> 3) as u32;
-        let wire = (key & 7) as u8;
-        macro_rules! rdv {
-            ($dst:expr) => {{
-                match rd_varint(body, &mut o) {
-                    Some(v) => $dst = v,
-                    None => return,
-                }
-            }};
-        }
-        match (field, wire) {
-            (1, 0) => rdv!(tex_index),
-            (2, 0) => rdv!(format),
-            (3, 0) => rdv!(width),
-            (4, 0) => rdv!(height),
-            (5, 0) => rdv!(flags),
-            (6, 2) => {
-                let Some(len) = rd_varint(body, &mut o) else {
-                    return;
-                };
-                let Some(s) = body.get(o..o + len as usize) else {
-                    return;
-                };
-                data = s;
-                o += len as usize;
-            }
-            (7, 2) => {
-                // palette (packed repeated uint32, 0x00RRGGBB) for INDEXED8.
-                let Some(len) = rd_varint(body, &mut o) else {
-                    return;
-                };
-                let end = o + len as usize;
-                let mut pi = 0usize;
-                while o < end && pi < TEX_PAL_MAX {
-                    match rd_varint(body, &mut o) {
-                        Some(v) => {
-                            palette[pi] = v as u32;
-                            pi += 1;
-                        }
-                        None => return,
-                    }
-                }
-                o = end; // skip any overflow entries
-            }
-            _ => {
-                if !skip_field(body, &mut o, wire) {
-                    return;
-                }
-            }
-        }
+    for (slot, v) in palette.iter_mut().zip(t.palette()) {
+        *slot = v;
     }
     // Resolve the target texture in the active program.
     let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
@@ -2041,31 +1798,15 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     }
 }
 
-/// Read a message's `effect_id` (field 1, string) if present.
-fn read_effect_id(body: &[u8]) -> Option<&str> {
-    let mut o = 0;
-    while o < body.len() {
-        let key = rd_varint(body, &mut o)?;
-        let field = (key >> 3) as u32;
-        let wire = (key & 7) as u8;
-        if field == 1 && wire == 2 {
-            let len = rd_varint(body, &mut o)? as usize;
-            let s = body.get(o..o + len)?;
-            return core::str::from_utf8(s).ok();
-        }
-        if !skip_field(body, &mut o, wire) {
-            return None;
-        }
-    }
-    None
-}
-
 /// set_effect: "" / "off" clears the active effect; any other id keeps the
 /// loaded effect active (a single effect is held at a time, matching the arena
 /// map). Reply: playback_state (via the session core, so the app's playback UI
 /// stays consistent). We just clear/keep and echo the current playback state.
 unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
-    let id = unwrap_arm(frame, ARM_SET_EFFECT).and_then(read_effect_id).unwrap_or("");
+    let id = match client_arm(frame) {
+        Some(CArm::SetEffect(m)) => m.effect_id(),
+        _ => "",
+    };
     if id.is_empty() || id == "off" {
         lm_fx_clear();
     } else {
@@ -2080,76 +1821,21 @@ unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
 /// set_uniforms: apply every UniformValue{slot, value[]} to the VM. Reply:
 /// playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
-    if let Some(body) = unwrap_arm(frame, ARM_SET_UNIFORMS) {
-        // SetUniforms { repeated UniformValue values = 1; }
-        let mut o = 0;
-        while o < body.len() {
-            let Some(key) = rd_varint(body, &mut o) else { break };
-            let field = (key >> 3) as u32;
-            let wire = (key & 7) as u8;
-            if field == 1 && wire == 2 {
-                let Some(len) = rd_varint(body, &mut o) else { break };
-                let len = len as usize;
-                let Some(uv) = body.get(o..o + len) else { break };
-                apply_uniform_value(uv);
-                o += len;
-            } else if !skip_field(body, &mut o, wire) {
-                break;
+    if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
+        for uv in m.values() {
+            // UniformValue { slot, repeated float value } — packed or not.
+            let mut vals = [0.0f32; 4];
+            let mut n = 0;
+            for (dst, v) in vals.iter_mut().zip(uv.value()) {
+                *dst = v;
+                n += 1;
+            }
+            if n > 0 {
+                lm_fx_set_uniform(uv.slot(), vals.as_ptr(), n);
             }
         }
     }
     player().playback_reply()
-}
-
-/// Decode one UniformValue{ uint32 slot = 1; repeated float value = 2; } and
-/// push it into the VM. `value` may arrive packed (a single LEN field of f32s)
-/// or unpacked (repeated fixed32) — handle both.
-unsafe fn apply_uniform_value(uv: &[u8]) {
-    let mut slot: u32 = 0;
-    let mut vals = [0.0f32; 4];
-    let mut n = 0usize;
-    let mut o = 0;
-    while o < uv.len() {
-        let Some(key) = rd_varint(uv, &mut o) else { break };
-        let field = (key >> 3) as u32;
-        let wire = (key & 7) as u8;
-        match (field, wire) {
-            (1, 0) => {
-                let Some(v) = rd_varint(uv, &mut o) else { break };
-                slot = v as u32;
-            }
-            (2, 2) => {
-                // packed floats
-                let Some(len) = rd_varint(uv, &mut o) else { break };
-                let len = len as usize;
-                let Some(p) = uv.get(o..o + len) else { break };
-                let mut k = 0;
-                while k + 4 <= p.len() && n < vals.len() {
-                    vals[n] = f32::from_le_bytes([p[k], p[k + 1], p[k + 2], p[k + 3]]);
-                    n += 1;
-                    k += 4;
-                }
-                o += len;
-            }
-            (2, 5) => {
-                // unpacked single float
-                let Some(p) = uv.get(o..o + 4) else { break };
-                if n < vals.len() {
-                    vals[n] = f32::from_le_bytes([p[0], p[1], p[2], p[3]]);
-                    n += 1;
-                }
-                o += 4;
-            }
-            _ => {
-                if !skip_field(uv, &mut o, wire) {
-                    break;
-                }
-            }
-        }
-    }
-    if n > 0 {
-        lm_fx_set_uniform(slot, vals.as_ptr(), n);
-    }
 }
 
 /// get_effect_uniforms: build an EffectUniforms reply carrying the active
@@ -2210,32 +1896,11 @@ const PERF_BUDGET_CYCLES: u32 = (PERF_CPU_HZ / 1000) * 33;
 /// (current window), like get_perf_report — so opening the panel gets one
 /// synchronously. FULL flips on Tier-1 counting; OFF/BASIC skip it.
 unsafe fn handle_set_perf(frame: &[u8]) -> pb::ServerMessage {
-    let mut mode = PERF_OFF;
-    let mut interval = 0u32;
-    if let Some(body) = unwrap_arm(frame, ARM_SET_PERF) {
-        // SetPerf { Mode mode = 1; uint32 interval_ms = 2; }
-        let mut o = 0;
-        while o < body.len() {
-            let Some(key) = rd_varint(body, &mut o) else { break };
-            let field = (key >> 3) as u32;
-            let wire = (key & 7) as u8;
-            match (field, wire) {
-                (1, 0) => {
-                    let Some(v) = rd_varint(body, &mut o) else { break };
-                    mode = v as u32;
-                }
-                (2, 0) => {
-                    let Some(v) = rd_varint(body, &mut o) else { break };
-                    interval = v as u32;
-                }
-                _ => {
-                    if !skip_field(body, &mut o, wire) {
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    // SetPerf { Mode mode = 1; uint32 interval_ms = 2; } (absent = OFF / 0).
+    let (mode, interval) = match client_arm(frame) {
+        Some(CArm::SetPerf(m)) => (m.mode() as u32, m.interval_ms()),
+        _ => (PERF_OFF, 0),
+    };
     PERF_MODE = if mode > PERF_FULL { PERF_FULL } else { mode };
     PERF_INTERVAL_MS = interval;
     // OFF clears the accumulated ring so a later BASIC/FULL starts clean.
@@ -2256,27 +1921,10 @@ unsafe fn handle_set_jit(frame: &[u8]) {
     // EMPTY body. Default to false and assign AFTER the walk (like handle_set_perf)
     // so an absent field correctly DISABLES the JIT — assigning only inside the
     // match arm would leave a set_jit(false) as a no-op at the default (on).
-    let mut enabled = false;
-    if let Some(body) = unwrap_arm(frame, ARM_SET_JIT) {
-        // SetJit { bool enabled = 1; }  (field 1, varint wire type)
-        let mut o = 0;
-        while o < body.len() {
-            let Some(key) = rd_varint(body, &mut o) else { break };
-            let field = (key >> 3) as u32;
-            let wire = (key & 7) as u8;
-            match (field, wire) {
-                (1, 0) => {
-                    let Some(v) = rd_varint(body, &mut o) else { break };
-                    enabled = v != 0;
-                }
-                _ => {
-                    if !skip_field(body, &mut o, wire) {
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    let enabled = match client_arm(frame) {
+        Some(CArm::SetJit(m)) => m.enabled(),
+        _ => false,
+    };
     FX_JIT_ENABLED = enabled;
 }
 

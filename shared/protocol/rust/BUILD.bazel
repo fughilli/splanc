@@ -12,6 +12,7 @@ packing behavior to canonical protobuf.
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//oss/pbview:defs.bzl", "pbview_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -93,6 +94,28 @@ rust_test(
         ":ledmapper_pb",
         "@crates//:base64",
         "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
+# Zero-copy views of the same proto (//oss/pbview): read a frame in place from
+# the RX buffer, no by-value envelope and no capacity profile.
+pbview_library(
+    name = "ledmapper_view",
+    fdset = ":ledmapper_fdset",
+)
+
+# The views against the same cross-language golden frames as the micropb leg:
+# every frame parses, and lands on the oneof arm the golden says it is.
+rust_test(
+    name = "view_conformance_test",
+    srcs = ["tests/view_conformance.rs"],
+    data = ["//web:tests/golden_proto_frames.json"],
+    edition = "2021",
+    env = {"GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)"},
+    deps = [
+        ":ledmapper_view",
+        "@crates//:base64",
         "@crates//:serde_json",
     ],
 )

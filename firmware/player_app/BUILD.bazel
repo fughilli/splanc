@@ -82,7 +82,9 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/player:player_fw",
         "//firmware/store",
+        "//oss/pbview",
         "//shared/protocol/rust:ledmapper_pb_fw",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
     ],
 )
@@ -103,7 +105,9 @@ rust_library(
         "//firmware/osc",
         "//firmware/player",
         "//firmware/store",
+        "//oss/pbview",
         "//shared/protocol/rust:ledmapper_pb",
+        "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
     ],
 )

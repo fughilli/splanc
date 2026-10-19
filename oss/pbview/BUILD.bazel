@@ -1,0 +1,88 @@
+"""pbview: zero-copy protobuf views (runtime + generator).
+
+Self-contained (no deps on the rest of this repo besides protoc for the
+conformance goldens) so it can be published on its own; see README.md.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load(":defs.bzl", "pbview_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["defs.bzl"])
+
+rust_library(
+    name = "pbview",
+    srcs = ["pbview/src/lib.rs"],
+    crate_root = "pbview/src/lib.rs",
+    edition = "2021",
+)
+
+rust_library(
+    name = "pbview_gen_lib",
+    srcs = [
+        "pbview-gen/src/descriptor.rs",
+        "pbview-gen/src/lib.rs",
+    ],
+    crate_name = "pbview_gen",
+    crate_root = "pbview-gen/src/lib.rs",
+    edition = "2021",
+    deps = [":pbview"],
+)
+
+rust_binary(
+    name = "pbview_gen",
+    srcs = ["pbview-gen/src/main.rs"],
+    edition = "2021",
+    deps = [":pbview_gen_lib"],
+)
+
+rust_test(
+    name = "runtime_test",
+    srcs = ["tests/runtime.rs"],
+    edition = "2021",
+    deps = [":pbview"],
+)
+
+rust_test(
+    name = "gen_unit_test",
+    crate = ":pbview_gen_lib",
+    edition = "2021",
+)
+
+# Conformance: the descriptor set + golden encodings come from protoc itself.
+genrule(
+    name = "conformance_fdset",
+    srcs = ["testdata/conformance.proto"],
+    outs = ["conformance.fdset.bin"],
+    cmd = "$(execpath //tools/toolchains:protoc) -I $$(dirname $(location testdata/conformance.proto)) --descriptor_set_out=$@ $(location testdata/conformance.proto)",
+    tools = ["//tools/toolchains:protoc"],
+)
+
+genrule(
+    name = "conformance_golden",
+    srcs = [
+        "testdata/conformance.proto",
+        "testdata/all.textproto",
+    ],
+    outs = ["all.bin"],
+    cmd = "$(execpath //tools/toolchains:protoc) -I $$(dirname $(location testdata/conformance.proto)) --encode=pbview.test.All $(location testdata/conformance.proto) < $(location testdata/all.textproto) > $@",
+    tools = ["//tools/toolchains:protoc"],
+)
+
+pbview_library(
+    name = "conformance_views",
+    fdset = ":conformance_fdset",
+)
+
+rust_test(
+    name = "conformance_test",
+    srcs = ["tests/conformance.rs"],
+    data = [":conformance_golden"],
+    edition = "2021",
+    env = {"ALL_BIN": "$(rootpath :conformance_golden)"},
+    deps = [
+        ":conformance_views",
+        ":pbview",
+    ],
+)
