@@ -693,6 +693,16 @@ genrule(
     tools = ["//fx_compiler:fx_compile"],
 )
 
+# The static ramp `led_timing --split` drives, to show which slice of the strip
+# each channel carries (--fxb $(location :led_timing_ramp_fxb)).
+genrule(
+    name = "led_timing_ramp_fxb",
+    srcs = ["ab_demo/ledTimingRamp.fx"],
+    outs = ["ledTimingRamp.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
 py_binary(
     name = "led_timing",
     srcs = [
@@ -700,6 +710,7 @@ py_binary(
         "hitl_led_timing.py",
     ],
     data = [
+        ":led_timing_ramp_fxb",
         ":plasma_hue_fixed_fxb",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "@hitl_reserve//cmd/hitl",
