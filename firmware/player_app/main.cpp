@@ -133,10 +133,12 @@ size_t lm_jit_region_size(void) { return kJitRegionSize; }
 // ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
 // ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
 // static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
-// callbacks) is ~13.5 KB: netstack_loop -> ws_pump -> TLS read/handshake -> bio_send ->
-// the WiFi TX path, or the BLE HCI -> Improv path (~12.2 KB). 20 KB is ~1.5x that bound;
-// re-derive it (tools: objdump prologues + call graph) before growing a frame.
-SET_LOOP_TASK_STACK_SIZE(20 * 1024);
+// callbacks) is ~10 KB: netstack_loop -> TLS read/handshake -> bio_send -> the vendor
+// WiFi TX path (its own ~4.2 KB ppTxFragmentProc frame; the netstack's TX layers build one
+// in-place frame, no per-layer stack buffer). Measured high-water on the ram_audit worst
+// case: 4.8 KB. 14 KB is ~1.4x the bound; re-derive it (objdump prologues + call graph)
+// before growing a frame.
+SET_LOOP_TASK_STACK_SIZE(14 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 #endif
