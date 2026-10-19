@@ -119,6 +119,18 @@ impl<const N: usize> GattDb<N> {
         GattDb { attrs: [NONE; N], count: 0, next_handle: 1, mtu: 23 }
     }
 
+    /// Empty the table IN PLACE, back to the `new()` state. Rebuilding a live
+    /// table this way never materializes a temporary `GattDb` on the caller's
+    /// stack (at N = 32 one is ~4 KiB).
+    pub fn clear(&mut self) {
+        for a in self.attrs.iter_mut() {
+            *a = None;
+        }
+        self.count = 0;
+        self.next_handle = 1;
+        self.mtu = 23;
+    }
+
     fn push(&mut self, a: Attr) -> Result<u16, Overflow> {
         if self.count >= N {
             return Err(Overflow);
