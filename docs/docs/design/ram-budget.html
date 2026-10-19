@@ -358,7 +358,7 @@ log to size them.</p></li>
 </section>
 <section id="reduction-roadmap">
 <h2>Reduction roadmap<a class="headerlink" href="#reduction-roadmap" title="Link to this heading">¶</a></h2>
-<ol class="arabic simple">
+<ol class="arabic">
 <li><p><strong>Tooling</strong>: <code class="docutils literal notranslate"><span class="pre">.ram_chart</span></code> + the audit above. <em>(done)</em></p></li>
 <li><p><strong>Lighten BLE</strong>: the heapless BLE host replaces Bluedroid, removing the bulk
 of the permanent BLE heap draw. <em>(done — supersedes the earlier
@@ -373,12 +373,33 @@ arena/effects arms), and the firmware profile stubs them:</p>
 <code class="docutils literal notranslate"><span class="pre">Welcome</span></code> arm.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">SetCountingPattern.blocks</span></code> (32 × f64-rgb) — walked in
 <code class="docutils literal notranslate"><span class="pre">handle_set_counting_pattern</span></code>; the firmware <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> collapses to a
-control-frame arm.
-<code class="docutils literal notranslate"><span class="pre">envelope_size_test</span></code> pins both. With the by-value frames now small, the
-heap-allocated task stacks (loopTask, <code class="docutils literal notranslate"><span class="pre">httpd_ssl</span></code>) can be tightened toward the
-objdump-measured deepest handler chain — a follow-up sized off the live
-<code class="docutils literal notranslate"><span class="pre">[stack]</span></code> high-water log. <em>(zero-copy done; stack retune follow-up)</em></p></li>
+control-frame arm.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">HardwareConfigState.board</span></code> (the ~4 KiB, 31-pin board-capabilities
+catalog) — the real sizer of EVERY by-value <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> (4,104 B):
+each handler frame holding a reply paid it (<code class="docutils literal notranslate"><span class="pre">lm_player_handle</span></code> and
+<code class="docutils literal notranslate"><span class="pre">hardware_config_state</span></code> were ~10 KiB frames each). The player keeps the
+embedded descriptor ENCODED and <code class="docutils literal notranslate"><span class="pre">Player::encode_reply</span></code> splices it into the
+reply (encoding straight into the caller’s <code class="docutils literal notranslate"><span class="pre">tx</span></code>, no staging copy); the
+firmware profile drops the field, so <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> is 656 B.
+<code class="docutils literal notranslate"><span class="pre">envelope_size_test</span></code> pins all three. <em>(done)</em></p></li>
 </ul>
+<p>Stack retune <em>(done)</em>, sized from a static worst-case bound over the ELF
+call graph (objdump prologues + direct calls + the mbedtls bio/RNG
+callbacks), not the measured high-water (which understates paths a run
+didn’t take — render measures 0.8 KiB against a 7.4 KiB bound):
+loopTask 48 → 20 KiB (bound ~13.5 KiB, measured 12.9 KiB on the
+<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> worst case), xmit 8 → 3 KiB; render stays 8 KiB until
+<code class="docutils literal notranslate"><span class="pre">lm_playback_step</span></code>’s ~4 KiB frame shrinks. Our tasks (render/xmit/logdrain)
+use static stacks (<code class="docutils literal notranslate"><span class="pre">xTaskCreateStatic</span></code>), off the shared heap. Next fat
+frames on loopTask: the BLE host’s <code class="docutils literal notranslate"><span class="pre">ns_ble_on_hci</span></code> / <code class="docutils literal notranslate"><span class="pre">ImprovService::new</span></code>
+(~4.5 KiB each).</p>
+<p>The netstack transports dispatch every message IN PLACE (WS reassembly
+buffer / BLE frame), so <code class="docutils literal notranslate"><span class="pre">rx</span></code> only stages frames read back off flash and
+shrank 12 → 4.5 KiB on that build.</p>
+<p>Measured on the <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> HITL worst case (BLE provisioning → first wss
+handshake → 512-LED map + texture effect → loaded handshakes): minimum free
+heap 1.6 KiB → 54 KiB; free with the map loaded 23.6 → 67 KiB; largest
+block 13.8 → 45 KiB.</p>
 </li>
 <li><p><strong>Lazily heap-allocate the FX buffers</strong> (<code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> + <code class="docutils literal notranslate"><span class="pre">FX_TEX_PREV</span></code> +
 <code class="docutils literal notranslate"><span class="pre">FX_BYTES</span></code>): these are <code class="docutils literal notranslate"><span class="pre">static</span> <span class="pre">mut</span></code> arrays reserved for the whole process, but

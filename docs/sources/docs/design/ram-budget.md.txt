@@ -76,10 +76,34 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    - `SetCountingPattern.blocks` (32 × f64-rgb) — walked in
      `handle_set_counting_pattern`; the firmware `ClientMessage` collapses to a
      control-frame arm.
-   `envelope_size_test` pins both. With the by-value frames now small, the
-   heap-allocated task stacks (loopTask, `httpd_ssl`) can be tightened toward the
-   objdump-measured deepest handler chain — a follow-up sized off the live
-   `[stack]` high-water log. *(zero-copy done; stack retune follow-up)*
+   - `HardwareConfigState.board` (the ~4 KiB, 31-pin board-capabilities
+     catalog) — the real sizer of EVERY by-value `ServerMessage` (4,104 B):
+     each handler frame holding a reply paid it (`lm_player_handle` and
+     `hardware_config_state` were ~10 KiB frames each). The player keeps the
+     embedded descriptor ENCODED and `Player::encode_reply` splices it into the
+     reply (encoding straight into the caller's `tx`, no staging copy); the
+     firmware profile drops the field, so `ServerMessage` is 656 B.
+   `envelope_size_test` pins all three. *(done)*
+
+   Stack retune *(done)*, sized from a static worst-case bound over the ELF
+   call graph (objdump prologues + direct calls + the mbedtls bio/RNG
+   callbacks), not the measured high-water (which understates paths a run
+   didn't take — render measures 0.8 KiB against a 7.4 KiB bound):
+   loopTask 48 → 20 KiB (bound ~13.5 KiB, measured 12.9 KiB on the
+   `ram_audit` worst case), xmit 8 → 3 KiB; render stays 8 KiB until
+   `lm_playback_step`'s ~4 KiB frame shrinks. Our tasks (render/xmit/logdrain)
+   use static stacks (`xTaskCreateStatic`), off the shared heap. Next fat
+   frames on loopTask: the BLE host's `ns_ble_on_hci` / `ImprovService::new`
+   (~4.5 KiB each).
+
+   The netstack transports dispatch every message IN PLACE (WS reassembly
+   buffer / BLE frame), so `rx` only stages frames read back off flash and
+   shrank 12 → 4.5 KiB on that build.
+
+   Measured on the `ram_audit` HITL worst case (BLE provisioning → first wss
+   handshake → 512-LED map + texture effect → loaded handshakes): minimum free
+   heap 1.6 KiB → 54 KiB; free with the map loaded 23.6 → 67 KiB; largest
+   block 13.8 → 45 KiB.
 4. **Lazily heap-allocate the FX buffers** (`FX_ARENA` + `FX_TEX_PREV` +
    `FX_BYTES`): these are `static mut` arrays reserved for the whole process, but
    no effect is loaded during a *capture* — exactly the TLS-heavy window — so
