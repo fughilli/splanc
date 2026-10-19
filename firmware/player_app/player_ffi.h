@@ -36,6 +36,15 @@ void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dir
 int32_t lm_agent_manifest(uint8_t *out, size_t cap, const uint8_t *cert_sha256,
                           size_t cert_len, const uint8_t *bundle_url, size_t url_len,
                           const uint8_t *bundle_sha256, size_t sha_len);
+// mDNS (_splanc._tcp, firmware/mdns): answer one UDP:5353 datagram from src_port.
+// Writes the reply DNS message into out; returns its length (0 = nothing to answer,
+// <0 = error). *unicast: reply to the querier's address+port, not 224.0.0.251:5353.
+// ip = our IPv4 address (4 bytes).
+int32_t lm_mdns_respond(const uint8_t *query, size_t qlen, uint16_t src_port,
+                        const uint8_t *ip, uint8_t *out, size_t cap, bool *unicast);
+// An unsolicited mDNS announcement of every record (send to 224.0.0.251:5353);
+// returns its length or <0.
+int32_t lm_mdns_announce(const uint8_t *ip, uint8_t *out, size_t cap);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);
