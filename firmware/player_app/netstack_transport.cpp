@@ -204,8 +204,16 @@ void wifi_scan_cache() {
   uint16_t n = 0;
   esp_wifi_scan_get_ap_num(&n);
   if (n > 24) n = 24;
-  static wifi_ap_record_t recs[24];
-  esp_wifi_scan_get_ap_records(&n, recs);
+  // The full vendor records (~2.2KB for 24) are needed only for this copy-out, so
+  // borrow them from the heap at setup instead of pinning them in BSS — all C6
+  // SRAM is DMA-capable and the running netstack is short of it (see g_ws_rx).
+  auto *recs = static_cast<wifi_ap_record_t *>(calloc(n ? n : 1, sizeof(wifi_ap_record_t)));
+  if (recs) {
+    esp_wifi_scan_get_ap_records(&n, recs);
+  } else {
+    esp_wifi_clear_ap_list();  // still release the driver's scan list
+    n = 0;
+  }
   g_scan_n = 0;
   for (uint16_t i = 0; i < n && g_scan_n < 24; i++) {
     memcpy(g_scan[g_scan_n].ssid, recs[i].ssid, 32);
@@ -214,6 +222,7 @@ void wifi_scan_cache() {
     g_scan[g_scan_n].chan = recs[i].primary;
     g_scan_n++;
   }
+  free(recs);
   Serial.printf("[scan] err=%d found=%u AP(s)\n", (int)e, (unsigned)g_scan_n);
   for (uint8_t i = 0; i < g_scan_n; i++)
     Serial.printf("[scan]   ssid=\"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_scan[i].ssid,
@@ -997,22 +1006,20 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
 }
 
 // Frame + send one server WS message (unmasked). Header + payload go out as ONE buffer so
-// a small reply is a single TLS record / TCP segment (no mid-message stop-and-wait stall).
+// a small reply is a single TLS record / TCP segment (no mid-message stop-and-wait stall):
+// the header is written into the `headroom` bytes just before `payload` (the app's tx
+// buffer reserves kWsSendHeadroom; a PONG echoes in place in g_ws_rx, behind the client's
+// longer masked header). Too little headroom falls back to header, then payload.
 // Returns false if the write ultimately failed (tls_write_all gave up on a vanished peer) —
 // the caller tears the connection down so the single server slot is freed for the next client
 // instead of being held by a dead peer (a wss wedge). Best-effort callers may ignore it.
-static bool ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
-  // Server replies come from the app's tx buffer (<=2KB); size the coalesce buffer to match
-  // (the oversized path below handles anything larger). Small on purpose — see g_ws_rx note.
-  static uint8_t frame[2560];
-  uint8_t hdr[10];
+static bool ws_send(uint8_t opcode, uint8_t *payload, size_t len, size_t headroom) {
+  uint8_t hdr[kWsSendHeadroom];
   size_t hn = ws_build_frame_header(opcode, len, hdr);
-  if (hn + len <= sizeof(frame)) {
-    memcpy(frame, hdr, hn);
-    if (len) memcpy(frame + hn, payload, len);
-    return tls_write_all(frame, hn + len);
+  if (hn <= headroom) {
+    memcpy(payload - hn, hdr, hn);
+    return tls_write_all(payload - hn, hn + len);
   }
-  // oversized: header then payload (tls_write_all pumps the link between segments)
   if (!tls_write_all(hdr, hn)) return false;
   return len ? tls_write_all(payload, len) : true;
 }
@@ -1096,9 +1103,12 @@ static bool ws_pump() {
         // A reply that can't be delivered means the peer vanished mid-write: tear the
         // connection down (return false) so the poll loop re-listens and frees the slot,
         // rather than silently dropping the reply and holding a dead ESTABLISHED slot.
-        if (tn > 0 && reply && !ws_send(WS_OP_BINARY, reply, (size_t)tn)) return false;
+        // (The reply is the app's writable tx buffer, with headroom — see lm_ws_dispatch.)
+        if (tn > 0 && reply &&
+            !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
+          return false;
       } else if (h.opcode == WS_OP_PING) {
-        if (!ws_send(WS_OP_PONG, payload, h.payload_len)) return false;
+        if (!ws_send(WS_OP_PONG, payload, h.payload_len, h.header_len)) return false;
       } else if (h.opcode == WS_OP_CLOSE) {
         return false;
       }
@@ -1112,7 +1122,7 @@ static bool ws_pump() {
 
 // Push an unsolicited server frame (a PerfReport) over the active TLS/WS, if a client is
 // upgraded. Called from the app's perf-report cadence. Best-effort (drops if not connected).
-bool netstack_ws_send_frame(const uint8_t *data, size_t len) {
+bool netstack_ws_send_frame(uint8_t *data, size_t len) {
   if (!g_tls_hs || !g_ws_up) return false;
   // Best-effort: unsolicited PerfReports must NEVER starve the request/reply path. If the
   // send window doesn't comfortably hold this frame (+ TLS record overhead), drop it — a
@@ -1120,14 +1130,14 @@ bool netstack_ws_send_frame(const uint8_t *data, size_t len) {
   // wedges tls_write_all long enough for the client to time out and reset (observed as
   // mid-sweep socket drops in fx_bench). A dropped perf sample just means one fewer report.
   if (ns_tcp_tx_room() < len + 96) return false;
-  ws_send(WS_OP_BINARY, data, len);
+  ws_send(WS_OP_BINARY, data, len, kWsSendHeadroom);
   return true;
 }
 bool netstack_ws_is_open() { return g_tls_hs && g_ws_up; }
 
 } // namespace
 
-bool netstack_ws_send(const uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
+bool netstack_ws_send(uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
 bool netstack_ws_open() { return netstack_ws_is_open(); }
 // External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.

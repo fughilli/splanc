@@ -1,4 +1,4 @@
-#include "firmware/player_app/ws2812_rmt.h"
+#include "firmware/player_app/ws2812.h"
 
 #include <driver/rmt_encoder.h>
 #include <driver/rmt_tx.h>
@@ -20,7 +20,8 @@ constexpr int kMaxChannels = 2;
 rmt_channel_handle_t g_chan[kMaxChannels] = {nullptr, nullptr};
 rmt_encoder_handle_t g_encoder[kMaxChannels] = {nullptr, nullptr};
 int g_n_chan = 0;
-uint8_t *g_grb = nullptr;  // reordered wire scratch (max_leds*3)
+uint8_t *g_grb = nullptr;  // staged frame, reordered to wire order (max_leds*3)
+uint32_t g_staged0 = 0, g_staged1 = 0;  // per-channel LED counts staged in g_grb
 uint32_t g_max_leds = 0;
 rmt_transmit_config_t g_txcfg = {};
 esp_err_t g_last_tx[kMaxChannels] = {ESP_OK, ESP_OK};  // last rmt_transmit result / channel
@@ -93,7 +94,7 @@ void teardown_channels() {
 
 }  // namespace
 
-bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds) {
+bool ws2812_init(int gpio0, int gpio1, uint32_t max_leds) {
   if (g_n_chan) return true;  // idempotent
   g_grb = static_cast<uint8_t *>(malloc(static_cast<size_t>(max_leds) * 3));
   if (!g_grb) return false;
@@ -108,22 +109,23 @@ bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds) {
   return true;
 }
 
-void ws2812_rmt_set_color_order(int ch, uint8_t s0, uint8_t s1, uint8_t s2) {
+void ws2812_set_color_order(int ch, uint8_t s0, uint8_t s1, uint8_t s2) {
   if (ch < 0 || ch >= kMaxChannels) return;
   g_order[ch][0] = s0;
   g_order[ch][1] = s1;
   g_order[ch][2] = s2;
 }
 
-bool ws2812_rmt_reconfigure(int gpio0, int gpio1) {
+bool ws2812_reconfigure(int gpio0, int gpio1) {
   if (!g_grb) return false;  // never init'd — nothing to reconfigure
   teardown_channels();
   return build_channels(gpio0, gpio1);
 }
 
-void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
-                     const uint8_t *order_override) {
-  if (!g_n_chan) return;
+void ws2812_stage(const uint8_t *rgb, uint32_t count0, uint32_t count1,
+                  const uint8_t *order_override) {
+  g_staged0 = g_staged1 = 0;
+  if (!g_grb) return;
   if (g_n_chan < 2) count1 = 0;  // no channel 1 configured
   uint32_t total = count0 + count1;
   if (total > g_max_leds) return;
@@ -139,6 +141,14 @@ void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
     g_grb[3 * i + 1] = in[ord[1]];
     g_grb[3 * i + 2] = in[ord[2]];
   }
+  g_staged0 = count0;
+  g_staged1 = count1;
+}
+
+void ws2812_send(void) {
+  if (!g_n_chan) return;
+  const uint32_t count0 = g_staged0;
+  const uint32_t count1 = g_n_chan < 2 ? 0 : g_staged1;
   // Kick both channels, THEN wait — so they clock out in parallel.
   bool tx1 = count1 > 0 && g_chan[1];
   if (count0 > 0) {
@@ -153,7 +163,14 @@ void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
   if (tx1) rmt_tx_wait_all_done(g_chan[1], -1);
 }
 
-int ws2812_rmt_channels(void) { return g_n_chan; }
-int ws2812_rmt_last_error(int ch) {
+void ws2812_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
+                 const uint8_t *order_override) {
+  ws2812_stage(rgb, count0, count1, order_override);
+  ws2812_send();
+}
+
+int ws2812_channels(void) { return g_n_chan; }
+const char *ws2812_backend(void) { return "rmt"; }
+int ws2812_last_error(int ch) {
   return (ch >= 0 && ch < kMaxChannels) ? static_cast<int>(g_last_tx[ch]) : -1;
 }

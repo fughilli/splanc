@@ -1,7 +1,7 @@
 """ESP32-C6 player firmware app (bring-up build — see README.md).
 
 WiFi soft-AP + HTTP (landing page) + plain-WS player protocol bridged into
-the Rust session core via a C ABI staticlib, RMT WS2812 strip rendering. The
+the Rust session core via a C ABI staticlib, WS2812 strip rendering (ws2812.h). The
 Rust side links the FIRMWARE capacity profile of the generated protobuf
 (//shared/protocol/rust:ledmapper_pb_fw); host tests drive the same ffi.rs
 against the host profile, and the RFC6455 codec is host-tested byte-exactly.
@@ -9,6 +9,7 @@ against the host profile, and the RFC6455 codec is host-tested byte-exactly.
 @rr(PR-13, PR-14, PR-17, PR-18, PR-19, PR-20, PR-21, PR-26, PR-27, PR-28, PR-29, PR-35): implemented in this package (see requirements/requirements.yaml)
 """
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
 load("@embedded//rules:resources.bzl", "c_resource_library")
@@ -23,6 +24,26 @@ load("//tools/build_info:build_info.bzl", "build_info_file")
 load(":led_caps.bzl", "MAX_LEDS")
 
 package(default_visibility = ["//visibility:public"])
+
+# WS2812 backend (ws2812.h). The C6 drives the strip from PARLIO+GDMA so ISR
+# latency can't corrupt a frame on the wire; the C3 has no PARLIO and keeps the
+# interrupt-refilled RMT driver. --//firmware/player_app:ws2812_rmt forces RMT on
+# the C6 too, for A/B wire captures (//pi/hitl/harness:led_timing).
+bool_flag(
+    name = "ws2812_rmt",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "ws2812_rmt_forced",
+    flag_values = {":ws2812_rmt": "True"},
+)
+
+WS2812_SRCS = ["ws2812.h"] + select({
+    "@embedded//platforms:is_esp32c3": ["ws2812_rmt.cpp"],
+    ":ws2812_rmt_forced": ["ws2812_rmt.cpp"],
+    "//conditions:default": ["ws2812_parlio.cpp"],
+})
 
 # Git build info (FUG-126): main.cpp includes this stamped header and reports the
 # commit + dirty flag to the app in every `welcome` (see lm_player_set_build_info).
@@ -305,10 +326,8 @@ cc_binary(
         "netstack_transport.h",
         "player_ffi.h",
         "serial_log.h",
-        "ws2812_rmt.cpp",
-        "ws2812_rmt.h",
         ":build_info_h",
-    ],
+    ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
     # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
@@ -444,10 +463,8 @@ cc_binary(
         "main.cpp",
         "player_ffi.h",
         "serial_log.h",
-        "ws2812_rmt.cpp",
-        "ws2812_rmt.h",
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
-    ],
+    ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
     local_defines = [
         "LM_OSC_BENCH",
@@ -522,10 +539,8 @@ cc_binary(
         "main.cpp",
         "player_ffi.h",
         "serial_log.h",
-        "ws2812_rmt.cpp",
-        "ws2812_rmt.h",
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
-    ],
+    ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
     local_defines = [
         "LM_FX_JIT_BENCH",

@@ -18,9 +18,16 @@ void netstack_setup(void);
 // handshake + WS pump. Non-blocking. Complete WS messages are handed to lm_ws_dispatch().
 void netstack_loop(void);
 
+// Bytes a WS server frame header can take (2 + 8-byte extended length). Payloads handed to
+// the WS layer must be preceded by this much writable headroom: the header is written in
+// place there so header + payload leave as one TLS record without a 2.5 KB staging copy
+// (all C6 SRAM is DMA-capable and the netstack build is short of it).
+constexpr size_t kWsSendHeadroom = 10;
+
 // Push an unsolicited server frame (e.g. a PerfReport) over the active TLS/WS, best-effort.
+// `data` must have kWsSendHeadroom writable bytes before it (the app's tx buffer does).
 // Returns true if a client was connected + it was written.
-bool netstack_ws_send(const uint8_t *data, size_t len);
+bool netstack_ws_send(uint8_t *data, size_t len);
 // True when a WS client is upgraded (for gating unsolicited pushes).
 bool netstack_ws_open(void);
 
@@ -31,7 +38,8 @@ uint32_t netstack_rekey_count(void);
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and
-// sets *reply to it; returns the reply length (>0), 0 (no reply), or <0 (drop the connection).
+// sets *reply to it (writable, with kWsSendHeadroom bytes before it); returns the reply
+// length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_

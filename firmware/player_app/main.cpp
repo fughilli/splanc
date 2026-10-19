@@ -61,7 +61,7 @@
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
-#include "firmware/player_app/ws2812_rmt.h"
+#include "firmware/player_app/ws2812.h"
 #include "firmware/player_app/ws_codec.h"
 
 // FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
@@ -153,10 +153,11 @@ static char g_hostname[33] = "ledmapper";
 static const uint32_t kStaJoinTimeoutMs = 20000;
 
 // Minimal RGB pixel — replaces FastLED's CRGB now that the WS2812 transmit is our
-// own RMT driver (ws2812_rmt). Memory layout is r,g,b, tightly packed (3 bytes,
-// no padding), so `(const uint8_t *)show_buf` feeds the driver directly (which
-// reorders to the WS2812 GRB wire order). nscale8 matches Rgb::nscale8 (scale by
-// scale/256) so the software brightness path is unchanged.
+// own driver (ws2812.h: PARLIO+DMA on the C6, RMT on the C3). Memory layout is
+// r,g,b, tightly packed (3 bytes, no padding), so `(const uint8_t *)leds`
+// feeds the driver directly (which reorders to the WS2812 GRB wire order).
+// nscale8 matches Rgb::nscale8 (scale by scale/256) so the software brightness
+// path is unchanged.
 struct Rgb {
   uint8_t r = 0, g = 0, b = 0;
   Rgb() = default;
@@ -221,42 +222,33 @@ static Rgb leds[kMaxLeds];
 // task for the whole transmit, serializing compute and I/O (frame period = render
 // + transmit). The RMT peripheral clocks the bits by interrupt with the CPU idle,
 // and rmt_tx_wait_all_done YIELDS, so the push runs on a dedicated higher-priority
-// task: the render task snapshots its frame into `show_buf`, kicks the transmit
-// task, and immediately renders the NEXT frame WHILE the current one clocks out.
-// Net frame period drops to max(render, transmit). The transmit reads `show_buf`
-// (the snapshot), never the live `leds`.
+// task: the render task stages its frame into the driver (ws2812_stage encodes
+// it into the driver's own transmit buffer — that buffer IS the snapshot), kicks
+// the transmit task, and immediately renders the NEXT frame WHILE the current one
+// clocks out. Net frame period drops to max(render, transmit). The transmit never
+// reads the live `leds`.
 //
-// The WS2812 output is our own RMT driver (ws2812_rmt.{h,cpp}) — FastLED was
+// The WS2812 output is our own driver (ws2812.h; RMT originally) — FastLED was
 // dropped once the logic-analyzer HITL (//pi/hitl/harness:led_capture) confirmed
 // the driver's WS2812 bit timing (T0H≈0.4µs/T0L≈0.8µs, T1H≈0.8µs/T1L≈0.4µs,
 // ≥50µs inter-frame reset), GRB byte order, full-scale output (no hardware
 // dimming; calibration patterns reach the wire at their exact values), and — key
 // for the async double-buffer — that no torn/half-updated frame goes out (the
 // `xmit_done` semaphore prevents a snapshot from racing an in-flight push).
-static Rgb show_buf[kMaxLeds];
 static TaskHandle_t xmit_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
-// before overwriting `show_buf`, so a snapshot never races an in-flight push.
+// before staging the next frame, so a snapshot never races an in-flight push.
 static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (cycles), written by the transmit task, read for perf.
 static volatile uint32_t g_show_c = 0;
 static volatile bool g_show_timed = false;
-// Per-frame color-order override for the counting probe: when g_xmit_probe_order
-// is set, the transmit applies g_probe_perm (a source-index permutation) to every
-// pixel instead of the committed per-channel order — so the color-order test
-// drives its own wire order without touching the persisted config. Latched by
-// led_show_async under the xmit_done gate (like g_xmit_len*), read by xmit_task.
-static volatile bool g_xmit_probe_order = false;
-static volatile uint8_t g_probe_perm[3] = {0, 1, 2};
-// How many LEDs the transmit task clocks out this frame per channel — the ACTIVE
-// strip length, not the whole render buffer. Channel 0 drives show_buf[0..len0),
-// channel 1 show_buf[len0..len0+len1) (len1 == 0 = single channel). Latched by
-// led_show_async alongside the show_buf snapshot (so a length change never races
-// an in-flight push), read by xmit_task. Raising kMaxLeds therefore doesn't slow
-// a short strip; the calibration probe drives exactly its extent; and a long
-// strip clocks out on both channels in parallel.
-static volatile uint32_t g_xmit_len0 = 0;
-static volatile uint32_t g_xmit_len1 = 0;
+// The staged frame carries, per channel, the ACTIVE strip length (not the whole
+// render buffer): channel 0 drives leds[0..len0), channel 1 leds[len0..len0+len1)
+// (len1 == 0 = single channel), plus the counting probe's color-order override.
+// Both are fixed at ws2812_stage time under the xmit_done gate, so a length change
+// never races an in-flight push. Raising kMaxLeds therefore doesn't slow a short
+// strip; the calibration probe drives exactly its extent; and a long strip clocks
+// out on both channels in parallel.
 // defined below render_once
 static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
                            const uint8_t *order_override);
@@ -286,7 +278,17 @@ static const uint32_t kRenderTaskStack = 8192;   // render + the GRB reorder/RMT
 static const size_t kRxCap = 12288;
 static uint8_t rx[kRxCap];      // one whole (non-sharded) message
 static size_t rx_len = 0;
-static uint8_t tx[2048];        // encoded reply frames are control-sized
+// Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
+// frame header, written in place by the netstack transport (kWsSendHeadroom) so it needn't
+// stage every reply in a separate copy buffer.
+static struct {
+  uint8_t ws_headroom[16];
+  uint8_t data[2048];
+} g_tx;
+static uint8_t (&tx)[2048] = g_tx.data;
+#if defined(LM_NETSTACK)
+static_assert(sizeof g_tx.ws_headroom >= kWsSendHeadroom, "tx needs WS header headroom");
+#endif
 
 // Sharded upload (proto UploadChunk): each window's payload is appended to this
 // temp file as it arrives; on the last window the reassembled frame is decoded
@@ -642,7 +644,7 @@ static void poll_hardware_config() {
   for (int ch = 0; ch < 2; ch++) {
     uint8_t perm[3];
     if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
-      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+      ws2812_set_color_order(ch, perm[0], perm[1], perm[2]);
     }
   }
   // GPIO: stage a reconfigure for the transmit task if either pin changed.
@@ -694,13 +696,13 @@ static void hardware_config_begin() {
   for (int ch = 0; ch < 2; ch++) {
     uint8_t perm[3];
     if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
-      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+      ws2812_set_color_order(ch, perm[0], perm[1], perm[2]);
     }
   }
   // The strip was init'd on the led_config.h defaults; if NVS pins differ,
   // reconfigure the RMT channels now (synchronous — transmit task still idle).
   if (g0 != g_hw_gpio0 || g1 != g_hw_gpio1) {
-    if (ws2812_rmt_reconfigure(g0, g1)) {
+    if (ws2812_reconfigure(g0, g1)) {
       g_hw_gpio0 = g0;
       g_hw_gpio1 = g1;
     } else {
@@ -1646,7 +1648,7 @@ static void osc_task(void *) { vTaskDelete(nullptr); }
 
 // The render task: forever, render one frame then sleep until the next is due.
 // Dedicated LED transmit task (higher priority than render). Sleeps until the
-// render task kicks it, pushes `show_buf` via the RMT WS2812 driver (blocks THIS
+// render task kicks it, pushes the staged frame via the WS2812 driver (blocks THIS
 // task while the encoder streams the bits by interrupt, YIELDING the single core
 // back to the render task for the whole ~7.7 ms transmit), then signals
 // completion. Owns the RMT channel from one task.
@@ -1659,7 +1661,7 @@ static void xmit_task(void *) {
     if (g_hw_reconfig_req) {
       int ng0 = g_hw_req_gpio0, ng1 = g_hw_req_gpio1;
       g_hw_reconfig_req = false;
-      if (ws2812_rmt_reconfigure(ng0, ng1)) {
+      if (ws2812_reconfigure(ng0, ng1)) {
         g_hw_gpio0 = ng0;
         g_hw_gpio1 = ng1;
         Log().printf("[hw] RMT reconfigured to gpio=%d/%d\n", ng0, ng1);
@@ -1668,8 +1670,7 @@ static void xmit_task(void *) {
       }
     }
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    const uint8_t *ovr = g_xmit_probe_order ? const_cast<const uint8_t *>(g_probe_perm) : nullptr;
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1, ovr);
+    ws2812_send();
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1677,7 +1678,8 @@ static void xmit_task(void *) {
 
 // Hand the just-rendered `leds` frame to the transmit task without blocking the
 // render task on the strip write. Waits only for the PREVIOUS push to finish
-// (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
+// (instant once rendering out-runs the transmit), stages the frame into the
+// driver (its transmit buffer is the snapshot), and
 // kicks the higher-priority transmit task — which preempts, starts the DMA, and
 // yields straight back so the render task can compute the next frame in parallel.
 static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
@@ -1689,23 +1691,16 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
   }
   if (xmit_task_handle == nullptr) {
     // Pre-task fallback (setup, before the transmit task exists): synchronous.
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1, order_override);
+    ws2812_show(reinterpret_cast<const uint8_t *>(leds), count0, count1, order_override);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  // Snapshot only the active LEDs; the per-channel lengths + probe order ride with
-  // the buffer under the same xmit_done gate so the transmit task sees a
-  // consistent snapshot.
-  memcpy(show_buf, leds, static_cast<size_t>(total) * sizeof(Rgb));
-  g_xmit_len0 = count0;
-  g_xmit_len1 = count1;
+  // Snapshot only the active LEDs: staging encodes them (with the per-channel
+  // lengths + probe order) into the driver's transmit buffer under the same
+  // xmit_done gate, so the transmit task sends a consistent frame and render can
+  // overwrite `leds` immediately.
+  ws2812_stage(reinterpret_cast<const uint8_t *>(leds), count0, count1, order_override);
   g_show_timed = timed;
-  g_xmit_probe_order = order_override != nullptr;
-  if (order_override != nullptr) {
-    g_probe_perm[0] = order_override[0];
-    g_probe_perm[1] = order_override[1];
-    g_probe_perm[2] = order_override[2];
-  }
   xTaskNotifyGive(xmit_task_handle);
 }
 
@@ -2284,30 +2279,30 @@ void setup() {
   // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
   // site. Registered before anything allocates so no early failure is missed.
   heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
-  // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
-  // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
-  // the async transmit task pushes show_buf while the render task fills leds.
-  if (!ws2812_rmt_init(LED_DATA_PIN, LED_DATA_PIN_2, kMaxLeds)) {
-    Log().printf("[led] ws2812 RMT init FAILED\n");
+  // WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless driver).
+  // Frames are staged into its own buffer (the transmit snapshot), so the async
+  // transmit task never reads `leds` while the render task fills it.
+  if (!ws2812_init(LED_DATA_PIN, LED_DATA_PIN_2, kMaxLeds)) {
+    Log().printf("[led] ws2812 RMT init FAILED (backend=%s)\n", ws2812_backend());
   }
   // No global hardware dimming. Output brightness is owned by the software
   // control: cc_apply() nscale8's content by g_brightness (set over the protocol
   // via set_brightness). A hardware scale would also dim the RAW calibration
   // patterns (counting probe / mapping gray-code), which must reach the wire at
   // their exact known values for the camera + logic-analyzer to decode.
+  // (No render task yet, so `leds` is free to use as boot scratch.)
   fill_rgb(leds, kMaxLeds, Rgb::Black);
-  fill_rgb(show_buf, kMaxLeds, Rgb::Black);
-  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // blank the strip
-  // Boot self-test: drive ONE pixel on each channel so a silent rmt_transmit()
+  ws2812_show(reinterpret_cast<const uint8_t *>(leds), kMaxLeds, 0);  // blank the strip
+  // Boot self-test: drive ONE pixel on each channel so a silent transmit
   // failure on channel 1 (GPIO14) shows up in the boot log, independent of the
-  // logic-analyzer tap. show_buf[0] -> ch0, show_buf[1] -> ch1 (count0==1 splits).
-  show_buf[0] = Rgb(1, 0, 0);
-  show_buf[1] = Rgb(0, 0, 1);
-  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), 1, 1);
-  Log().printf("[led] ws2812 channels=%d ch0_err=0x%x ch1_err=0x%x\n",
-               ws2812_rmt_channels(), ws2812_rmt_last_error(0), ws2812_rmt_last_error(1));
-  fill_rgb(show_buf, kMaxLeds, Rgb::Black);
-  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // re-blank
+  // logic-analyzer tap. leds[0] -> ch0, leds[1] -> ch1 (count0==1 splits).
+  leds[0] = Rgb(1, 0, 0);
+  leds[1] = Rgb(0, 0, 1);
+  ws2812_show(reinterpret_cast<const uint8_t *>(leds), 1, 1);
+  Log().printf("[led] ws2812 backend=%s channels=%d ch0_err=0x%x ch1_err=0x%x\n",
+               ws2812_backend(), ws2812_channels(), ws2812_last_error(0), ws2812_last_error(1));
+  fill_rgb(leds, kMaxLeds, Rgb::Black);
+  ws2812_show(reinterpret_cast<const uint8_t *>(leds), kMaxLeds, 0);  // re-blank
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.
