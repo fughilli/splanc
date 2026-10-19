@@ -207,7 +207,9 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         const timer = setTimeout(stop, attemptMs);
         try {
           const result = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST", redirect: "error", signal: attempt.signal,
+            // Workers supports manual/follow, not the Fetch standard error mode.
+            // Never follow a redirect carrying the server credential.
+            method: "POST", redirect: "manual", signal: attempt.signal,
             headers: { authorization: `Bearer ${env.OPENROUTER_API_KEY}`, "content-type": "application/json",
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
@@ -216,6 +218,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
             }),
           });
+          if (result.status >= 300 && result.status < 400) {
+            await result.body?.cancel();
+            return error(503, "upstream_redirect");
+          }
           let json;
           try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch { /* Treat malformed upstream output as unavailable. */ }
           if (total.signal.aborted) break;
