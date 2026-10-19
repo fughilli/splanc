@@ -41,7 +41,7 @@ test('locks upstream/model/price/output and preserves tool/image history', async
   assert.equal(result.status, 200);
   assert.equal(sent.target, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(sent.init.headers.authorization, 'Bearer unit-test-secret');
-  assert.equal(sent.init.redirect, 'error');
+  assert.equal(sent.init.redirect, 'manual');
   assert.equal(sent.body.model, FREE_DEMO_MODELS[0]);
   assert.equal(sent.body.max_tokens, 4000);
   assert.deepEqual(sent.body.provider.max_price, { prompt: 0, completion: 0, request: 0, image: 0 });
@@ -162,4 +162,22 @@ test('deadline cancels a stalled upload and releases its stream', async () => {
   const relay = createDemoRelay({ totalMs: 10, fetchImpl: () => assert.fail('upload incomplete') });
   assert.equal((await relay(request, env)).status, 504);
   assert.equal(cancelled, true);
+});
+
+// Cloudflare Workers rejects redirect:error synchronously, unlike Node fetch.
+test('uses a Workers-compatible redirect mode and rejects every redirect without forwarding credentials', async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    let calls = 0;
+    const relay = createDemoRelay({ fetchImpl: async (url, init) => {
+      calls++;
+      if (init.redirect === 'error') throw new TypeError('Unsupported redirect mode');
+      assert.equal(init.redirect, 'manual');
+      assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions');
+      return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:'Do not accept redirect body'},finish_reason:'stop'}]}), { status, headers: { location: 'https://untrusted.invalid' } });
+    } });
+    const response = await relay(req(), env);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {error:{code:'upstream_redirect'}});
+    assert.equal(calls, 1);
+  }
 });
