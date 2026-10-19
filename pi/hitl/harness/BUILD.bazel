@@ -110,6 +110,7 @@ py_library(
         "serial_capture.py",
         "serial_discovery.py",
         "sync.py",
+        "time_base_skew_core.py",
         "tls_churn_core.py",
         "uniform_bench_core.py",
         "video_bench_core.py",
@@ -725,6 +726,40 @@ py_binary(
     },
     imports = ["."],
     main = "hitl_led_timing.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Shared-time-base skew (multi-fixture §3): two DUTs, one room epoch via
+# set_time_base, both WS2812 wires in ONE analyzer capture; reads each frame's
+# effect time off the wire (binary clock) and reports the inter-fixture skew.
+genrule(
+    name = "time_base_clock_fxb",
+    srcs = ["ab_demo/timeBaseClock.fx"],
+    outs = ["timeBaseClock.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_binary(
+    name = "time_base_skew",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_time_base_skew.py",
+    ],
+    data = [
+        ":time_base_clock_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_time_base_skew.py",
     tags = ["manual"],
     deps = [
         ":harness",
