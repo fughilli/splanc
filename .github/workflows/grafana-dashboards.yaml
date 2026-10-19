@@ -33,7 +33,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_TOKEN:-}" ]; then
-            echo "GRAFANA_URL/GRAFANA_TOKEN unset (Grafana environment not configured); skipping." >&2
+            # Loud, not silent: a green no-op here meant dashboards (e.g. hitl-fleet)
+            # never reached Grafana while every run looked fine.
+            echo "::warning title=Grafana dashboards NOT synced::GRAFANA_URL/GRAFANA_TOKEN unset in the 'Grafana' environment; dashboards were not pushed."
             exit 0
           fi
           shopt -s nullglob
