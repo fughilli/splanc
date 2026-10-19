@@ -32,8 +32,11 @@ class RewriteTest(unittest.TestCase):
                 any(r[0].split(":", 1)[0] == lib for r in self.rules),
                 f"{t} moved but no rule lists it",
             )
+        # The only additions are the per-object carve-outs (rule kind 3): their
+        # EXCLUDE_FILE entries + explicit flash statements.
         added = set(tok(self.ours)) - set(tok(self.sdk))
-        self.assertEqual(added, set(), "the rewrite must only remove placements")
+        carved = {"*" + r[0] + ".*" for r in self.rules if ":" in r[0] and r[1]}
+        self.assertLessEqual(added, carved, "the rewrite must only move listed sections")
 
     def test_ram_placement_lines_are_gone(self):
         for line in self.ours.splitlines():

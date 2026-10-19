@@ -14,6 +14,11 @@ optionally, the input sections it applies to. For a rule:
      EXCLUDE_FILE list (for a section-filtered rule, only in statements that
      name one of those sections), so the generic flash catch-alls pick them up.
 
+  3. an OBJECT rule with sections (`lib.a:obj .sec ...`) whose sections the RAM
+     side places library-wide (`*lib.a:(.sec .sec.*)`, no per-object line) is
+     carved out instead: the object is EXCLUDE_FILE'd from that RAM statement
+     and an explicit `*lib.a:obj.*(.sec .sec.*)` statement is added at the top
+     of .flash.text (the flash catch-alls exclude the whole library).
 
 Nothing else changes; the link runs with --orphan-handling=warn, so a section
 that ends up placed nowhere is a loud warning, and the caller asserts every rule
@@ -56,8 +61,53 @@ def names_section(stmt, sections):
     )
 
 
+def carve(src, rules, hits):
+    """Rule kind 3 (see the module doc): object carve-outs from library-wide RAM
+    statements. Idempotent: a statement already carrying an EXCLUDE_FILE is left
+    alone."""
+    carves = [r for r in rules if ":" in r[0] and r[1]]
+    lines = src.splitlines(keepends=True)
+    region = None
+    flash_adds = []
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*(\.[\w.]+)\s*:", line)
+        if m:
+            region = m.group(1)
+        stmt = line.strip()
+        if region not in RAM_SECTIONS or "EXCLUDE_FILE" in stmt:
+            continue
+        m = re.fullmatch(r"\*([\w.-]+\.a):\(([^()]*)\)", stmt)
+        if not m:
+            continue
+        lib, pats = m.group(1), m.group(2).split()
+        mine = [r for r in carves if r[0].split(":", 1)[0] == lib and names_section(stmt, r[1])]
+        if not mine:
+            continue
+        objs = " ".join("*" + r[0] + ".*" for r in mine)
+        secs = {x for r in mine for x in r[1]}
+        new = [f"EXCLUDE_FILE({objs}) {p}" if p.removesuffix(".*") in secs else p for p in pats]
+        lines[i] = line[: len(line) - len(line.lstrip())] + f"*{lib}:({' '.join(new)})\n"
+        for r in mine:
+            hits[r] += 1
+            add = "    *" + r[0] + ".*(" + " ".join(f"{x} {x}.*" for x in r[1]) + ")\n"
+            if add not in flash_adds:
+                flash_adds.append(add)
+    if flash_adds:
+        for i, line in enumerate(lines):
+            if re.match(r"\s*\.flash\.text\s*:", line):
+                j = i + 1
+                while j < len(lines) and "{" not in lines[j - 1]:
+                    j += 1
+                lines[j:j] = flash_adds
+                break
+        else:
+            raise SystemExit("iram_to_flash: no .flash.text section")
+    return "".join(lines)
+
+
 def rewrite(src, rules):
     out, hits = [], {r: 0 for r in rules}
+    src = carve(src, rules, hits)
     region = None
     for line in src.splitlines(keepends=True):
         m = re.match(r"\s*(\.[\w.]+)\s*:", line)

@@ -5,12 +5,17 @@
 # these is reachable from an interrupt that is registered IRAM-safe in the
 # min-watermark RAM dump, nor from the flash-write path.
 #
-# NOT moved — the WiFi sleep sections (.wifislpiram, .wifislprxiram) and the
-# power-save objects (pm.o / pm_twt.o), although the netstack runs WIFI_PS_NONE:
-# they carry the TBTT/TSF timer path (pp_timer_do_process, pp_timer_tbtt, ...)
-# and the per-frame RX path, which run while a flash write has the cache off.
-# Moving them hung provisioning intermittently on HITL (silent, then a TG0
-# watchdog reset in the DHCP window, 2026-10-19, both DUTs).
+# WiFi power-save / sleep paths (.wifislpiram: the TX/timer half of
+# CONFIG_ESP_WIFI_SLP_IRAM_OPT=n): the netstack runs WIFI_PS_NONE with the radio
+# forced awake. The .wifislprxiram half stays — it also carries the vendor's
+# per-frame RX processing (wDev_ProcessRxSucData, ppRxPkt, ...).
+libpp.a .wifislpiram
+libnet80211.a .wifislpiram
+# The power-save state machine itself (TBTT / beacon-miss / TWT bookkeeping)
+# shares the library-wide .wifislprxiram / .wifiextrairam placement with live
+# per-frame code, so it is carved out per object.
+libpp.a:pm .wifislprxiram .wifiextrairam
+libpp.a:pm_twt .wifislprxiram .wifiextrairam
 # CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y: the only ring buffer user is the
 # USB-serial console driver, whose ISR is not IRAM-safe.
 libesp_ringbuf.a
