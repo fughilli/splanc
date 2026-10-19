@@ -59,6 +59,8 @@ const CLIENT_ARMS: Record<string, string> = {
   get_hardware_config: "getHardwareConfig",
   get_color_correction: "getColorCorrection",
   list_effects: "listEffects",
+  set_fixture_pose: "setFixturePose",
+  set_time_base: "setTimeBase",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -469,6 +471,39 @@ export interface StoredEffectFlat {
 export interface EffectListMessage {
   type: "effect_list";
   effects: StoredEffectFlat[];
+}
+
+/** A fixture's pose in a shared room frame (proto FixturePose): room-frame LED
+ * position = translation + rotation * (scale * led.pos). */
+export interface FixturePoseFlat {
+  room: string;
+  /** metres, [x, y, z] */
+  translation: number[];
+  /** unit quaternion [x, y, z, w]; empty = identity */
+  rotation: number[];
+  /** 0 = 1 */
+  scale: number;
+  /** Optional room bounding box (room.min / room.max); empty = the fixture's own. */
+  roomMin?: number[];
+  roomMax?: number[];
+}
+
+/** Set (or clear) the fixture's room pose. Firmware advertising "fixture_pose"
+ * answers it; persisted unless commit=false. Reply: welcome (with `pose`). */
+export interface SetFixturePoseMessage {
+  type: "set_fixture_pose";
+  pose?: FixturePoseFlat;
+  clear?: boolean;
+  commit?: boolean;
+}
+
+/** Pin effect time to a shared epoch in the DEVICE's clock (time_sync_pong's
+ * domain): time = (now - epochMs) / 1000. Firmware advertising "time_base"
+ * answers it; runtime only. Reply: welcome (with `timeBaseMs`). */
+export interface SetTimeBaseMessage {
+  type: "set_time_base";
+  epochMs: number;
+  clear?: boolean;
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

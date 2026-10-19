@@ -360,6 +360,14 @@ pub struct Player {
     features: &'static [&'static str],
     /// The .fxb format version the effects VM accepts (welcome.fxb_format).
     fxb_format: u32,
+    /// This fixture's room pose (set_fixture_pose); None = unposed. `pose_gen`
+    /// bumps on every change so the firmware re-derives its room-frame LED cache
+    /// and persists (unless `pose_commit` is false).
+    pose: Option<pb::FixturePose>,
+    pose_gen: u32,
+    pose_commit: bool,
+    /// Shared effect-time epoch (set_time_base), device-clock ms; runtime only.
+    time_base_ms: Option<i64>,
     /// Output capacity the firmware build actually has (parallel LED channels,
     /// total LEDs across them), set at boot via [`Player::set_output_caps`].
     /// Reported in `hardware_config_state.board` where the descriptor leaves
@@ -398,6 +406,10 @@ impl Player {
             board_caps_sets: (false, false),
             features: &[],
             fxb_format: 0,
+            pose: None,
+            pose_gen: 0,
+            pose_commit: true,
+            time_base_ms: None,
             out_channels: 0,
             out_max_leds: 0,
         }
@@ -530,6 +542,14 @@ impl Player {
             // currently applying (what set_color_correction stored), so the app
             // can hydrate its curves and a journey can assert the applied gamma.
             CMsg::GetColorCorrection(_) => Some(self.color_correction_state()),
+            // Room pose (multi-fixture): validate + store; the firmware polls the gen
+            // to rebuild its room-frame LED cache and persist. Reply: welcome (pose).
+            CMsg::SetFixturePose(m) => Some(self.set_fixture_pose(m)),
+            // Shared time base: effect time = (now - epoch) / 1000. Runtime only.
+            CMsg::SetTimeBase(m) => {
+                self.time_base_ms = if m.clear() { None } else { Some(m.epoch_ms()) };
+                Some(self.welcome())
+            }
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
@@ -974,6 +994,9 @@ impl Player {
             ..Default::default()
         };
         w.set_brightness(self.output_brightness as f64);
+        if let Some(t) = self.time_base_ms {
+            w.set_time_base_ms(t);
+        }
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
         // NO solver_bench_ms: chooseSolvePlacement(phone, null) == "phone".
@@ -1047,7 +1070,7 @@ impl Player {
         let cap = out.len();
         let mut w: &mut [u8] = out;
         if let Some(SMsg::Welcome(wl)) = &reply.r#msg {
-            if !self.features.is_empty() {
+            if !self.features.is_empty() || self.pose.is_some() {
                 return self.encode_welcome(wl, out);
             }
         }
@@ -1088,10 +1111,12 @@ impl Player {
             .iter()
             .map(|f| 1 + sizeof_varint32(f.len() as u32) + f.len())
             .sum();
-        let inner = wl.compute_size() + feats;
+        let pose_len = self.pose.as_ref().map(|p| p.compute_size());
+        let pose = pose_len.map_or(0, |n| 1 + sizeof_varint32(n as u32) + n);
+        let inner = wl.compute_size() + feats + pose;
         {
             let mut enc = PbEncoder::new(&mut w);
-            // ServerMessage.welcome = 1; Welcome.features = 10.
+            // ServerMessage.welcome = 1; Welcome.features = 10, Welcome.pose = 12.
             enc.encode_tag(Tag::from_parts(1, WIRE_TYPE_LEN)).ok()?;
             enc.encode_varint32(inner as u32).ok()?;
             wl.encode(&mut enc).ok()?;
@@ -1099,8 +1124,46 @@ impl Player {
                 enc.encode_tag(Tag::from_parts(10, WIRE_TYPE_LEN)).ok()?;
                 enc.encode_string(f).ok()?;
             }
+            if let (Some(p), Some(n)) = (&self.pose, pose_len) {
+                enc.encode_tag(Tag::from_parts(12, WIRE_TYPE_LEN)).ok()?;
+                enc.encode_varint32(n as u32).ok()?;
+                p.encode(&mut enc).ok()?;
+            }
         }
         Some(cap - w.len())
+    }
+
+    fn set_fixture_pose(&mut self, m: pv::SetFixturePoseView<'_>) -> pb::ServerMessage {
+        if m.clear() {
+            self.pose = None;
+        } else {
+            let Some(p) = m.pose().map_or(Some(pb::FixturePose::default()), owned_pose).as_ref().and_then(normalized_pose) else {
+                return error("bad_pose", "translation/room_min/room_max need 3 floats, rotation 4, all finite");
+            };
+            self.pose = Some(p);
+        }
+        self.pose_commit = m.commit().unwrap_or(true);
+        self.pose_gen = self.pose_gen.wrapping_add(1);
+        self.welcome()
+    }
+
+    /// The stored room pose (None = unposed), its change generation, and whether
+    /// the last change asked to be persisted.
+    pub fn fixture_pose(&self) -> Option<&pb::FixturePose> {
+        self.pose.as_ref()
+    }
+
+    pub fn fixture_pose_gen(&self) -> u32 {
+        self.pose_gen
+    }
+
+    pub fn fixture_pose_commit(&self) -> bool {
+        self.pose_commit
+    }
+
+    /// The shared effect-time epoch (device-clock ms), if one is set.
+    pub fn time_base_ms(&self) -> Option<i64> {
+        self.time_base_ms
     }
 
     /// Declare the protocol features this firmware serves and the .fxb format
@@ -1631,4 +1694,70 @@ impl Player {
         j.raw("}");
         j.ok.then_some(j.n)
     }
+}
+
+/// A pose with its defaults filled (identity rotation, unit scale, zero
+/// translation) and the quaternion normalized; None when a vector has the wrong
+/// arity or a value is not finite.
+/// The wire pose (read in place) as the owned, persisted/echoed form. None when
+/// a field overflows its capacity (more floats than any valid pose has).
+fn owned_pose(v: pv::FixturePoseView<'_>) -> Option<pb::FixturePose> {
+    let mut p = pb::FixturePose::default();
+    p.r#room.push_str(v.room()).ok()?;
+    for x in v.translation() {
+        p.r#translation.push(x).ok()?;
+    }
+    for x in v.rotation() {
+        p.r#rotation.push(x).ok()?;
+    }
+    p.r#scale = v.scale();
+    for x in v.room_min() {
+        p.r#room_min.push(x).ok()?;
+    }
+    for x in v.room_max() {
+        p.r#room_max.push(x).ok()?;
+    }
+    Some(p)
+}
+
+fn normalized_pose(p: &pb::FixturePose) -> Option<pb::FixturePose> {
+    let ok = |v: &[f32], n: usize| (v.is_empty() || v.len() == n) && v.iter().all(|x| x.is_finite());
+    if !ok(&p.r#translation, 3)
+        || !ok(&p.r#rotation, 4)
+        || !ok(&p.r#room_min, 3)
+        || !ok(&p.r#room_max, 3)
+        || !p.r#scale.is_finite()
+        || (p.r#room_min.is_empty() != p.r#room_max.is_empty())
+    {
+        return None;
+    }
+    let mut out = p.clone();
+    if out.r#translation.is_empty() {
+        out.r#translation.extend_from_slice(&[0.0; 3]).ok()?;
+    }
+    let mut q = [0.0f32, 0.0, 0.0, 1.0];
+    if !p.r#rotation.is_empty() {
+        q.copy_from_slice(&p.r#rotation);
+    }
+    let n2 = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    if n2 < 1e-12 {
+        return None;
+    }
+    let k = inv_sqrt(n2);
+    out.r#rotation.clear();
+    out.r#rotation.extend_from_slice(&[q[0] * k, q[1] * k, q[2] * k, q[3] * k]).ok()?;
+    if out.r#scale <= 0.0 {
+        out.r#scale = 1.0;
+    }
+    Some(out)
+}
+
+/// 1/sqrt(x) for x > 0 (no_std, no libm): the bit-trick seed + three Newton steps,
+/// accurate to f32 rounding — enough to normalize a quaternion.
+fn inv_sqrt(x: f32) -> f32 {
+    let mut y = f32::from_bits(0x5f37_59df - (x.to_bits() >> 1));
+    for _ in 0..3 {
+        y *= 1.5 - 0.5 * x * y * y;
+    }
+    y
 }

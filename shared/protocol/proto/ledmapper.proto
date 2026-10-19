@@ -472,6 +472,45 @@ message EffectList {
   repeated StoredEffect effects = 1;
 }
 
+// Where this fixture sits in a shared ROOM frame (multi-fixture agents): the
+// room-frame position of a LED is translation + rotation * (scale * led.pos).
+// Effects read it as `led.room` (== led.pos while unposed).
+message FixturePose {
+  // Room / group name the fixture belongs to ("" = none).
+  string room = 1;
+  // Translation, metres (x, y, z).
+  repeated float translation = 2;
+  // Unit quaternion (x, y, z, w); empty = identity.
+  repeated float rotation = 3;
+  // Uniform scale; 0 = 1.
+  float scale = 4;
+  // Optional room bounding box (the union over every fixture, which only the host
+  // knows). Empty = this fixture's own room-frame bounding box. Effects read it as
+  // `room.min` / `room.max`.
+  repeated float room_min = 5;
+  repeated float room_max = 6;
+}
+
+// Set (or clear) this fixture's room pose. Persisted unless commit=false (like
+// set_color_correction); echoed in welcome.pose. Reply: welcome.
+message SetFixturePose {
+  FixturePose pose = 1;
+  // Remove the pose (back to unposed: led.room == led.pos).
+  bool clear = 2;
+  // Unset = persist; false = apply live only.
+  optional bool commit = 3;
+}
+
+// Align effect time to a shared epoch so several fixtures animate in step: the
+// effect's `time` becomes (now - epoch_ms) / 1000, in the DEVICE's clock (the
+// millis() domain time_sync_pong reports). Runtime only (a reboot returns to
+// time-since-effect-start). Reply: welcome.
+message SetTimeBase {
+  int64 epoch_ms = 1;
+  // Drop the time base (back to time since effect start).
+  bool clear = 2;
+}
+
 // Request an effect's uniform manifest + current live values for UI hydration.
 // Unset `effect_id` = the active effect. Reply: effect_uniforms (or error
 // `no_effect`).
@@ -585,6 +624,8 @@ message ClientMessage {
     GetHardwareConfig get_hardware_config = 34;
     GetColorCorrection get_color_correction = 35;
     ListEffects list_effects = 36;
+    SetFixturePose set_fixture_pose = 37;
+    SetTimeBase set_time_base = 38;
   }
 }
 
@@ -627,6 +668,10 @@ message Welcome {
   // The .fxb bytecode format version the device's VM accepts (the version byte of
   // the .fxb header). 0 on older firmware (which accepts 1).
   uint32 fxb_format = 11;
+  // This fixture's room pose (set_fixture_pose); absent = unposed.
+  FixturePose pose = 12;
+  // The active shared time base (set_time_base), device-clock ms; absent = none.
+  optional int64 time_base_ms = 13;
 }
 
 // One LED output channel's hardware config, carried in hardware_config_state.
