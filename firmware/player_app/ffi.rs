@@ -743,6 +743,73 @@ pub unsafe extern "C" fn lm_player_set_build_info(
     player().set_build_info(commit_s, dirty, version_s);
 }
 
+/// The device's mDNS service: `<name>._splanc._tcp.local` on the wss/HTTPS port,
+/// host `splanc-<mac tail>.local`, TXT id/name/fw/path — from the player's live
+/// identity, so a rename is advertised on the next reply.
+unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
+    let p = player();
+    let mut hb = [0u8; 13];
+    let host = ledmapper_mdns::host_label(p.mac(), &mut hb);
+    let txt = [
+        ("id", p.mac()),
+        ("name", p.device_name()),
+        ("fw", p.fw_version()),
+        ("path", "/.well-known/splanc.json"),
+    ];
+    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), port: 443, ip, txt: &txt };
+    f(&svc)
+}
+
+/// Answer one mDNS datagram received on UDP:5353 from `src_port`. Writes the reply
+/// DNS message into `out` and returns its length (0 = nothing to answer, -2 = too
+/// small); `*unicast` is set when the reply goes back to the querier's address and
+/// port instead of 224.0.0.251:5353. `ip` is our IPv4 address (4 bytes).
+///
+/// # Safety
+/// `query`/`ip`/`out`/`unicast` point to readable/writable memory of the stated sizes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mdns_respond(
+    query: *const u8,
+    qlen: usize,
+    src_port: u16,
+    ip: *const u8,
+    out: *mut u8,
+    cap: usize,
+    unicast: *mut bool,
+) -> i32 {
+    if query.is_null() || ip.is_null() || out.is_null() || unicast.is_null() {
+        return -1;
+    }
+    let q = core::slice::from_raw_parts(query, qlen);
+    let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
+    let o = core::slice::from_raw_parts_mut(out, cap);
+    match with_mdns_service(ip, |s| ledmapper_mdns::respond(q, src_port, s, o)) {
+        Some(r) => {
+            *unicast = r.dest == ledmapper_mdns::Dest::Unicast;
+            r.len as i32
+        }
+        None => 0,
+    }
+}
+
+/// An unsolicited mDNS announcement of every record (for 224.0.0.251:5353): the
+/// DNS message into `out`; returns its length or -2 when it doesn't fit.
+///
+/// # Safety
+/// `ip` points to 4 readable bytes, `out` to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mdns_announce(ip: *const u8, out: *mut u8, cap: usize) -> i32 {
+    if ip.is_null() || out.is_null() {
+        return -1;
+    }
+    let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
+    let o = core::slice::from_raw_parts_mut(out, cap);
+    match with_mdns_service(ip, |s| ledmapper_mdns::announce(s, o)) {
+        Some(n) => n as i32,
+        None => -2,
+    }
+}
+
 /// A C (ptr, len) UTF-8 argument as &str ("" when null / not UTF-8).
 unsafe fn str_arg<'a>(p: *const u8, len: usize) -> &'a str {
     if p.is_null() {

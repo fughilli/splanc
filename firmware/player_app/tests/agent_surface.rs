@@ -4,8 +4,8 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_agent_manifest, lm_player_handle, lm_player_init, lm_player_set_build_info,
-    lm_player_set_identity, lm_set_uniforms_commit, FEATURES,
+    lm_agent_manifest, lm_mdns_announce, lm_mdns_respond, lm_player_handle, lm_player_init,
+    lm_player_set_build_info, lm_player_set_identity, lm_set_uniforms_commit, FEATURES,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -144,4 +144,23 @@ fn the_agent_surface() {
     assert_eq!(mf["protocol"]["features"], serde_json::json!(FEATURES));
     assert_eq!(mf["tls"]["cert_sha256"], sha);
     assert!(unsafe { lm_agent_manifest(buf.as_mut_ptr(), 32, sha.as_ptr(), 0, url.as_ptr(), 0, url.as_ptr(), 0) } == -2);
+
+    // mDNS: the service carries the player's live identity.
+    let ip = [192u8, 168, 4, 23];
+    let mut q = vec![0u8, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    for l in ["_splanc", "_tcp", "local"] {
+        q.push(l.len() as u8);
+        q.extend_from_slice(l.as_bytes());
+    }
+    q.extend([0, 0, 12, 0, 1]);
+    let mut out = [0u8; 1024];
+    let mut unicast = true;
+    let n = unsafe { lm_mdns_respond(q.as_ptr(), q.len(), 5353, ip.as_ptr(), out.as_mut_ptr(), out.len(), &mut unicast) };
+    assert!(n > 0 && !unicast, "multicast reply ({n})");
+    let reply = &out[..n as usize];
+    let has = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
+    assert!(has(b"\x11Led Widget DDEEFF\x07_splanc"), "instance = device name");
+    assert!(has(b"\x0dsplanc-ddeeff\x05local"), "host from the MAC");
+    assert!(has(b"path=/.well-known/splanc.json") && has(b"fw=1.2.0") && has(&ip));
+    assert!(unsafe { lm_mdns_announce(ip.as_ptr(), out.as_mut_ptr(), out.len()) } > n);
 }

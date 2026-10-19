@@ -923,6 +923,16 @@ impl Player {
         self.device_name.as_str()
     }
 
+    /// The hardware id (MAC) and release version echoed in `welcome` — what the
+    /// firmware advertises in its mDNS TXT record.
+    pub fn mac(&self) -> &str {
+        self.mac.as_str()
+    }
+
+    pub fn fw_version(&self) -> &str {
+        self.fw_version.as_str()
+    }
+
     /// Generation counter bumped on every `set_color_correction`; the firmware
     /// polls it (like the device name) to notice a profile change.
     pub fn color_correction_gen(&self) -> u32 {

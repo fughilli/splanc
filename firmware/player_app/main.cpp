@@ -1169,6 +1169,17 @@ int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body) {
   *body = tx;
   return (int)n;
 }
+
+// mDNS for netstack_transport.cpp: the Rust responder reads the player's live identity
+// (name / MAC / version), so it runs under the player mutex like a WS message.
+int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const uint8_t *ip,
+                  uint8_t *out, size_t cap, bool *unicast) {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = query ? lm_mdns_respond(query, qlen, src_port, ip, out, cap, unicast)
+                    : lm_mdns_announce(ip, out, cap);
+  xSemaphoreGive(player_mutex);
+  return (int)n;
+}
 #endif
 
 #if !defined(LM_NETSTACK)

@@ -1,0 +1,24 @@
+"""mDNS / DNS-SD responder for the heapless netstack player (_splanc._tcp).
+
+no_std, zero-dependency, no allocation — linked into //firmware/player_app's
+player FFI, which feeds it the UDP:5353 datagrams the netstack receives and sends
+its replies. The query parser and reply encoder are host-tested in :mdns_test.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "mdns",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_mdns",
+    edition = "2021",
+)
+
+rust_test(
+    name = "mdns_test",
+    srcs = ["tests/mdns.rs"],
+    edition = "2021",
+    deps = [":mdns"],
+)
