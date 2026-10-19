@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Successful Test workflow run on the current main commit
+        description: Successful Test workflow run on main
         required: true
         type: string
 permissions:
@@ -28,7 +28,9 @@ jobs:
         run: |
           [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/run.json
-          jq -e --arg sha "$GITHUB_SHA" '.head_sha == $sha and .head_branch == "main" and .event == "push" and .conclusion == "success" and .path == ".github/workflows/test.yaml"' /tmp/run.json
+          jq -e '.head_branch == "main" and .event == "push" and .conclusion == "success" and .path == ".github/workflows/test.yaml"' /tmp/run.json
+          TESTED_SHA="$(jq -r .head_sha /tmp/run.json)"
+          gh api "repos/$GITHUB_REPOSITORY/compare/$TESTED_SHA...$GITHUB_SHA" | jq -e '.status == "ahead" or .status == "identical"'
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name site --dir _site
           test -f _site/_worker.js
           test -f _site/fx-compiler/fx_compiler_wasm_pkg_bg.wasm
@@ -43,7 +45,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          # Wrangler can discover the account from the existing scoped token.
           for project in ledmapper splanc; do
             pnpm dlx wrangler@4 pages deploy _site --project-name "$project" --branch main --commit-dirty=true
           done
