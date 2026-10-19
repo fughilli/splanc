@@ -204,8 +204,16 @@ void wifi_scan_cache() {
   uint16_t n = 0;
   esp_wifi_scan_get_ap_num(&n);
   if (n > 24) n = 24;
-  static wifi_ap_record_t recs[24];
-  esp_wifi_scan_get_ap_records(&n, recs);
+  // The full vendor records (~2.2KB for 24) are needed only for this copy-out, so
+  // borrow them from the heap at setup instead of pinning them in BSS — all C6
+  // SRAM is DMA-capable and the running netstack is short of it (see g_ws_rx).
+  auto *recs = static_cast<wifi_ap_record_t *>(calloc(n ? n : 1, sizeof(wifi_ap_record_t)));
+  if (recs) {
+    esp_wifi_scan_get_ap_records(&n, recs);
+  } else {
+    esp_wifi_clear_ap_list();  // still release the driver's scan list
+    n = 0;
+  }
   g_scan_n = 0;
   for (uint16_t i = 0; i < n && g_scan_n < 24; i++) {
     memcpy(g_scan[g_scan_n].ssid, recs[i].ssid, 32);
@@ -214,6 +222,7 @@ void wifi_scan_cache() {
     g_scan[g_scan_n].chan = recs[i].primary;
     g_scan_n++;
   }
+  free(recs);
   Serial.printf("[scan] err=%d found=%u AP(s)\n", (int)e, (unsigned)g_scan_n);
   for (uint8_t i = 0; i < g_scan_n; i++)
     Serial.printf("[scan]   ssid=\"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_scan[i].ssid,
