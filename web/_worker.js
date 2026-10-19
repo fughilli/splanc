@@ -229,11 +229,21 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           if (status === 429) {
             // Only an explicitly identified provider quota may use a different model.
             // A platform quota (or ambiguous 429) stops immediately, never key-rotates.
-            const providerQuota = json?.error?.metadata?.provider_name &&
-              Number(json?.error?.metadata?.provider_code) === 429;
-            if (!providerQuota || result.headers.has("x-ratelimit-remaining")) {
-              const retry = result.headers.get("retry-after");
-              return error(429, "shared_allowance", retry ? { "retry-after": retry } : { "retry-after": "60" });
+            const metadata = json?.error?.metadata;
+            const provider = metadata?.provider_name;
+            const providerQuota = typeof provider === "string" && provider.trim() && provider.toLowerCase() !== "openrouter" && (
+              Number(metadata.provider_code) === 429 ||
+              ["rate_limited", "rate_limit_exceeded"].includes(metadata.provider_code) ||
+              metadata.error_type === "rate_limit_exceeded" ||
+              (json.error.message === "Provider returned error" && typeof metadata.raw === "string")
+            );
+            const quotaHeaders = new Headers(obj(metadata?.headers) ? metadata.headers : {});
+            const exhausted = h => h.has("x-ratelimit-remaining") && Number(h.get("x-ratelimit-remaining")) === 0;
+            const platformQuota = exhausted(result.headers) || exhausted(quotaHeaders) ||
+              String(metadata?.limit_source ?? "").startsWith("openrouter_");
+            if (!providerQuota || platformQuota) {
+              const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
+              return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
             continue;
           }
