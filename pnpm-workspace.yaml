@@ -4,6 +4,7 @@
 # (M10) as a workspace package via @ledmapper/protocol.
 packages:
   - 'web'
+  - 'agent'
   - 'shared/protocol/ts'
 
 # aspect_rules_js requires this to be set, even if empty: it is the explicit

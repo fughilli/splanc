@@ -1,0 +1,3 @@
+# Local `vite build --mode mcp|test` outputs (Bazel builds into bazel-bin).
+dist-mcp/
+dist-test/

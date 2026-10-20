@@ -66,6 +66,25 @@ interface VmModule {
 let compilerMod: Promise<CompilerModule> | null = null;
 let vmMod: Promise<VmModule> | null = null;
 
+/** The wasm-bindgen modules after their init (the shapes {@link compileScript} and
+ * {@link FxPreview} call into). */
+export interface FxModules {
+  compiler?: Pick<CompilerModule, "fx_compile">;
+  vm?: Pick<VmModule, "FxPreview">;
+}
+
+/**
+ * Supply already-initialized compiler / VM modules instead of fetching them from
+ * the deploy root — for hosts with no document to resolve asset URLs against
+ * (the Node MCP bridge, //agent, which loads the same wasm packages from its
+ * bundle's compiler/ and simulator/ directories). Call before the first
+ * {@link compileScript} / {@link FxPreview.create}.
+ */
+export function installFxModules(m: FxModules): void {
+  if (m.compiler) compilerMod = Promise.resolve(m.compiler as CompilerModule);
+  if (m.vm) vmMod = Promise.resolve(m.vm as VmModule);
+}
+
 function loadCompiler(base = assetUrl("fx-compiler")): Promise<CompilerModule> {
   if (compilerMod === null) {
     compilerMod = (async () => {

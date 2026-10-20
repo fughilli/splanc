@@ -1,0 +1,11 @@
+{
+  "//": "Type-check config for the MCP bridge. It imports the web app's protocol + effects modules (../web/src/net, ../web/src/fx) directly; tsc follows those imports. Vite bundles for Node (vite.config.ts); this is check-only.",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "lib": ["ESNext", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts"]
+}
