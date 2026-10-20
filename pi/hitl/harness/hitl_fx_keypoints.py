@@ -42,6 +42,15 @@ from provision import HarnessError, provision_dut, wire_provision_dut
 
 LEDS = 12
 FAILS: list = []
+QUEUE_S = 2400.0
+
+
+class PatientReservation(Reservation):
+    """A reservation that waits --queue-s for its turn (shared rigs run long CI
+    queues; the harness default is 40 min)."""
+
+    def _await_active(self, timeout: float = 2400.0) -> None:
+        super()._await_active(timeout=max(timeout, QUEUE_S))
 
 
 def _log(msg: str) -> None:
@@ -195,7 +204,9 @@ def run(args: argparse.Namespace) -> int:
     solid, green = _b64(args.solid_fxb), _b64(args.green_fxb)
     bundle = _runfile(args.bundle)
     with ExitStack() as stack:
-        r = stack.enter_context(Reservation(server=args.server, owner=args.owner, device=args.unit))
+        r = stack.enter_context(
+            PatientReservation(server=args.server, owner=args.owner, device=args.unit)
+        )
         ssid, pw = r.wifi()
         r.scp_to([bundle], "/tmp/")
         fp = r.ssh_serialized(
@@ -378,9 +389,13 @@ def main() -> int:
         action="store_true",
         help="no logic analyzer on this rig: check the device-side state only",
     )
+    ap.add_argument(
+        "--queue-s", type=float, default=2400.0, help="how long to wait in the rig queue"
+    )
     a = ap.parse_args()
-    global CAPTURE
+    global CAPTURE, QUEUE_S
     CAPTURE = not a.no_capture
+    QUEUE_S = a.queue_s
     return run(a)
 
 
