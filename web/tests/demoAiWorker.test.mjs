@@ -215,3 +215,11 @@ test('exhausted fallback diagnostics expose only fixed models, status and safe o
   assert(!JSON.stringify(body).includes('private upstream payload'));
   assert(!JSON.stringify(body).includes(env.OPENROUTER_API_KEY));
 });
+
+test('provider transport fields are discarded while validated tool calls remain usable', async () => {
+  const call={id:'call_1',type:'function',function:{name:'set_script',arguments:'{"source":"blue"}'}};
+  const relay=createDemoRelay({fetchImpl:async()=>Response.json({choices:[{finish_reason:'tool_calls',message:{role:'assistant',content:null,tool_calls:[{...call,index:0,function:{...call.function,transport_metadata:'discard'}}]}}]})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).choices[0].message.tool_calls,[call]);
+});
