@@ -33,9 +33,11 @@ import {
   type Advert,
   type BrowseOptions,
   type Manifest,
+  type ResolveOptions,
   type Target,
 } from "./discovery";
 import { ms, progress } from "./progress";
+import { decideTrust, trusted, type TrustVerdict } from "./trust";
 
 export type Source = "host" | "remembered" | "mdns" | "sweep";
 
@@ -54,6 +56,9 @@ export interface PlayerRecord {
    * answer on :443 (identity from the cache), an mDNS advert, not yet (cached:
    * taken from the cache for a tool whose session will confirm it), or not at all. */
   checked?: "session" | "manifest" | "tcp" | "mdns" | "cached" | "unreachable";
+  /** The TOFU decision on its certificate (trust.ts), once a connection showed one.
+   * A "changed"/"mismatch" verdict makes the hub refuse the player. */
+  trust?: TrustVerdict;
 }
 
 /** What a probe learned about the player at a host. */
@@ -67,7 +72,7 @@ export interface Identity {
 
 export interface RegistryDeps {
   browse?: (ms: number, opts?: BrowseOptions) => Promise<Advert[]>;
-  resolve?: (host: string, opts: { pin?: string; timeoutMs?: number }) => Promise<Target>;
+  resolve?: (host: string, opts: ResolveOptions) => Promise<Target>;
   /** Identify an unknown host by opening its session (the hub keeps the session).
    * Without it, unknown hosts are identified by their manifest. */
   identify?: (host: string, pin?: string) => Promise<Identity>;
@@ -98,6 +103,9 @@ const REACH_MS = 1500;
 export class Registry {
   private readonly players = new Map<string, PlayerRecord>();
   private readonly explicit: string[];
+  /** Hosts whose mDNS advert says tls=generating (a first-boot player still
+   * generating its key + certificate): their manifest read waits for it. */
+  private readonly generating = new Set<string>();
 
   constructor(
     hosts: string[],
@@ -161,6 +169,7 @@ export class Registry {
     const work: Promise<void>[] = [];
     let allKnownUp = true;
     const handle = (host: string, source: Source, advert?: Advert) => {
+      if (advert?.txt["tls"] === "generating") this.generating.add(host);
       if (handled.has(host)) {
         if (advert) this.noteAdvert(host, advert);
         return;
@@ -237,7 +246,7 @@ export class Registry {
       return true;
     }
     if (fresh) {
-      const t = await (this.deps.resolve ?? resolveTarget)(host, { ...(pin ? { pin } : {}), timeoutMs: 6000 });
+      const t = await (this.deps.resolve ?? resolveTarget)(host, this.resolveOpts(host, 6000));
       if (!t.reachable && source !== "host") return false; // gone: keep only what was asked for explicitly
       this.upsert(host, t, source, t.manifest ? "manifest" : t.reachable ? "tcp" : "unreachable");
       return t.reachable;
@@ -284,10 +293,32 @@ export class Registry {
         return false;
       }
     }
-    const t = await (this.deps.resolve ?? resolveTarget)(host, { ...(pin ? { pin } : {}), timeoutMs: 6000 });
+    const t = await (this.deps.resolve ?? resolveTarget)(host, this.resolveOpts(host, 6000));
     if (!t.reachable && source !== "host") return false;
     this.upsert(host, t, source, t.manifest ? "manifest" : t.reachable ? "tcp" : "unreachable");
     return t.reachable;
+  }
+
+  /** Manifest-read options: the pin is looked up by the DEVICE ID the manifest names
+   * (TOFU, trust.ts) — never by host, since an IP can move to another device. */
+  private resolveOpts(host: string, timeoutMs: number): ResolveOptions {
+    return {
+      timeoutMs,
+      knownPin: (id) => this.config.players[id]?.pin,
+      ...(this.generating.has(host) ? { waitGeneratingMs: 30000 } : {}),
+    };
+  }
+
+  /** Judge a certificate a session presented for device `id` against the pin
+   * remembered for that id (trust.ts). */
+  private judge(id: string, presented: string | undefined): TrustVerdict {
+    return decideTrust({ id, presented, known: this.config.players[id]?.pin });
+  }
+
+  /** Record a trust verdict found outside discovery (the hub's session dial). */
+  markTrust(id: string, v: TrustVerdict): void {
+    const rec = this.players.get(id);
+    if (rec) rec.trust = v;
   }
 
   /** The /24 sweep: TCP :443 first (wide, short timeout), then the manifest of
@@ -307,7 +338,7 @@ export class Registry {
     );
     await pool(open, 16, async (host) => {
       if (this.byHost(host)) return;
-      const t = await (this.deps.resolve ?? resolveTarget)(host, { timeoutMs: 2500 });
+      const t = await (this.deps.resolve ?? resolveTarget)(host, this.resolveOpts(host, 2500));
       if (!t.manifest) return;
       const r = this.upsert(host, t, "sweep", "manifest");
       progress(`sweep: ${r.name} (${host})`);
@@ -339,7 +370,10 @@ export class Registry {
     if (prevHost && prevHost.id !== id) this.players.delete(prevHost.id);
     const prev = this.players.get(id);
     const manifest = prev?.manifest ?? rem?.manifest ?? this.config.players[id]?.manifest ?? null;
-    const pin = who.pin ?? rem?.pin ?? this.config.players[id]?.pin;
+    // A session's certificate is judged against the pin remembered for THIS id: a
+    // different one (factory reset / impostor) never replaces it.
+    const trust = who.pin ? this.judge(id, who.pin) : prev?.trust;
+    const pin = trust && !trusted(trust) ? this.config.players[id]?.pin : (who.pin ?? rem?.pin ?? this.config.players[id]?.pin);
     const rec: PlayerRecord = {
       id,
       name: who.name || prev?.name || host,
@@ -350,6 +384,7 @@ export class Registry {
       sources: [...new Set([...(prev?.sources ?? []), ...(prevHost?.sources ?? []), source])],
       lastSeen: Date.now(),
       checked,
+      ...(trust ? { trust } : {}),
     };
     this.players.set(id, rec);
     return rec;
@@ -378,6 +413,7 @@ export class Registry {
       sources: [...new Set([...(prev?.sources ?? []), source])],
       lastSeen: t.reachable ? Date.now() : (prev?.lastSeen ?? 0),
       checked,
+      ...(t.trust ? { trust: t.trust } : prev?.trust ? { trust: prev.trust } : {}),
     };
     this.players.set(id, rec);
     return rec;
@@ -395,7 +431,12 @@ export class Registry {
     if (!rec || !w.mac) return rec;
     const id = w.mac.toUpperCase();
     rec.checked = "session";
-    if (pin && rec.target && !rec.target.tls.pinSha256) rec.target = { ...rec.target, tls: { pinSha256: pin } };
+    if (pin) {
+      const v = this.judge(id, pin);
+      rec.trust = v;
+      // Trusted (first sight / known / legacy re-pin): pin to what it presented.
+      if (trusted(v) && rec.target) rec.target = { ...rec.target, tls: { pinSha256: v.pin } };
+    }
     const dup = this.players.get(id);
     if (dup && dup !== rec) {
       // Keep the record that was asked for explicitly / found live; merge sources.
@@ -452,8 +493,10 @@ export class Registry {
     let changed = false;
     for (const p of this.players.values()) {
       if (p.id.startsWith("host:")) continue;
-      const pin = p.target?.tls.pinSha256;
       const old = this.config.players[p.id];
+      // Only a trusted verdict moves the remembered pin; a changed/mismatched
+      // certificate never overwrites it (trust_player does, on the user's word).
+      const pin = p.trust && !trusted(p.trust) ? old?.pin : p.target?.tls.pinSha256;
       const manifest = p.manifest ?? old?.manifest;
       const next: RememberedPlayer = {
         host: p.host,
@@ -476,6 +519,21 @@ export class Registry {
       }
     }
     if (changed) this.persist();
+  }
+
+  /** Re-trust a player whose certificate changed (the user confirmed a factory
+   * reset): accept the certificate it presents now. Returns the new pin, or null
+   * when there is nothing to re-trust. */
+  retrust(id: string): string | null {
+    const rec = this.players.get(id);
+    if (!rec?.trust || rec.trust.kind !== "changed") return null;
+    const pin = rec.trust.presented;
+    rec.trust = { kind: "known", pin };
+    if (rec.target) rec.target = { ...rec.target, tls: { pinSha256: pin } };
+    const old = this.config.players[id];
+    this.config.players[id] = { ...(old ?? { host: rec.host }), pin };
+    this.persist();
+    return pin;
   }
 
   forget(id: string): boolean {

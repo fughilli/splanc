@@ -10,6 +10,7 @@ import { certApprovalUrl, LedMapperClient, type ClientOptions, type SocketFactor
 import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { deviceStore } from "../../store/deviceStore";
+import { certChangedMessage, certPins } from "../../net/deviceTrust";
 import { deviceProber } from "../../net/deviceProber";
 import type { PillState } from "../kit";
 
@@ -20,6 +21,9 @@ export interface ConnStatus {
   certUrl: string | null;
   /** Last server/connection error detail (surfaced in the device sheet). */
   error: string | null;
+  /** The connected device reported a DIFFERENT certificate than the one first seen
+   * for its id (TOFU, net/deviceTrust.ts): warn, offer re-trust (factory reset). */
+  certChanged?: { mac: string; label: string; reported: string; message: string } | null;
 }
 
 type Listener = () => void;
@@ -138,6 +142,7 @@ class AppState {
               .catch(() => undefined);
           }
         }
+        await this.checkCert(client, dev.id);
         const sync = await client.syncClock();
         deviceStore.upsert(wssUrl, label); // refresh lastSeen
         this.setStatus({
@@ -253,6 +258,32 @@ class AppState {
   setSelectedMap(id: string | null): void {
     this.selectedMapId = id;
     this.emit();
+  }
+
+  /** TOFU check of the device's own TLS certificate (per-device-cert.md): remember
+   * it on first sight (or replacing the legacy shared one), warn if a known device
+   * now reports a different one. Best-effort: older firmware has no tls_info. */
+  private async checkCert(client: LedMapperClient, devId: string): Promise<void> {
+    const w = client.welcome;
+    if (!w?.mac || !(w.features ?? []).includes("tls_info")) return;
+    const info = await client.getTlsInfo().catch(() => null);
+    const v = certPins.check(w.mac, info);
+    if (v.kind === "changed") {
+      const label = deviceStore.get(devId)?.label ?? w.deviceName ?? w.mac;
+      this.setStatus({
+        certChanged: { mac: w.mac, label, reported: v.reported, message: certChangedMessage(label) },
+      });
+    } else {
+      this.setStatus({ certChanged: null });
+    }
+  }
+
+  /** The user confirmed the device was factory-reset: accept its new certificate. */
+  retrustCert(): void {
+    const c = this.status.certChanged;
+    if (!c) return;
+    certPins.retrust(c.mac, c.reported);
+    this.setStatus({ certChanged: null });
   }
 
   /** Expose the raw welcome (LED count seed etc.) when connected. */

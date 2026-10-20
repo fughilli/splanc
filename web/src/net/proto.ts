@@ -67,6 +67,7 @@ const CLIENT_ARMS: Record<string, string> = {
   list_keypoints: "listKeypoints",
   get_keypoint: "getKeypoint",
   blend_keypoints: "blendKeypoints",
+  get_tls_info: "getTlsInfo",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -92,6 +93,7 @@ const SERVER_ARMS: Record<string, string> = {
   effect_list: "effectList",
   keypoint_list: "keypointList",
   keypoint: "keypoint",
+  tls_info: "tlsInfo",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -546,6 +548,24 @@ export interface BlendOptions {
   seconds?: number;
   colorMode?: number;
   commit?: boolean;
+}
+
+/** Ask for the device's TLS identity (proto GetTlsInfo; the "tls_info" feature):
+ * works over BLE too, so the app can tell whether wss is up yet. Reply: tls_info. */
+export interface GetTlsInfoMessage {
+  type: "get_tls_info";
+}
+
+/** Reply to get_tls_info (proto TlsInfo): the device's own TLS identity
+ * (docs/design/per-device-cert.md). */
+export interface TlsInfoMessage {
+  type: "tls_info";
+  /** "generating" (first-boot keygen; wss:443 not open yet) or "ready". */
+  state: string;
+  /** SHA-256 of the served certificate (hex); "" while generating. */
+  certSha256: string;
+  /** False when the identity couldn't be saved to flash (changes on reboot). */
+  persisted: boolean;
 }
 
 /** Reply to list_effects (proto EffectList). */

@@ -67,7 +67,7 @@ fn manifest_mirrors_the_welcome_and_names_the_release_bundle() {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
     caps.encode(&mut enc).unwrap();
     assert!(p.set_board_caps(Vec::leak(enc.into_writer().to_vec())));
-    let x = ManifestExtras { tls_cert_sha256: "ab12", bundle_url: "", bundle_sha256: "" };
+    let x = ManifestExtras { tls_cert_sha256: "ab12", bundle_url: "", bundle_sha256: "", ..Default::default() };
     let m = manifest(&p, &x);
     assert_eq!(m["schema"], "splanc-agent/1");
     assert_eq!(m["device"]["id"], "AA:BB:CC:DD:EE:FF");
@@ -86,7 +86,7 @@ fn manifest_mirrors_the_welcome_and_names_the_release_bundle() {
     assert_eq!(m["bundle"]["mcp"]["command"], "npx");
     assert_eq!(m["bundle"]["mcp"]["args"], serde_json::json!(["-y", "@splanc/agent@1.2.0", "--host", "{host}"]));
     // The release pipeline's explicit URL + hash win over the derived URL.
-    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "https://x/b.tgz", bundle_sha256: "ff" };
+    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "https://x/b.tgz", bundle_sha256: "ff", ..Default::default() };
     let m = manifest(&p, &x);
     assert_eq!(m["bundle"]["url"], "https://x/b.tgz");
     assert_eq!(m["bundle"]["sha256"], "ff");
@@ -99,8 +99,22 @@ fn manifest_mirrors_the_welcome_and_names_the_release_bundle() {
 }
 
 #[test]
+fn manifest_reports_the_tls_identity_state_when_published() {
+    let p = player();
+    let x = ManifestExtras { tls_cert_sha256: "ab12", tls_state: "ready", tls_persisted: true, ..Default::default() };
+    let m = manifest(&p, &x);
+    assert_eq!(m["tls"], serde_json::json!({"cert_sha256": "ab12", "state": "ready", "persisted": true}));
+    let x = ManifestExtras { tls_state: "generating", ..Default::default() };
+    let m = manifest(&p, &x);
+    assert_eq!(m["tls"], serde_json::json!({"cert_sha256": "", "state": "generating", "persisted": false}));
+    // Unpublished (older firmware shape): only the pin.
+    let m = manifest(&p, &ManifestExtras::default());
+    assert_eq!(m["tls"], serde_json::json!({"cert_sha256": ""}));
+}
+
+#[test]
 fn dev_and_dirty_builds_publish_no_bundle() {
-    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "https://x/b.tgz", bundle_sha256: "" };
+    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "https://x/b.tgz", bundle_sha256: "", ..Default::default() };
     for (version, dirty) in [("0.0.0-dev", false), ("1.2.0-3-gabcdef0", false), ("1.2.0", true)] {
         let mut p = player();
         p.set_build_info("c0ffee", dirty, version);
@@ -112,7 +126,7 @@ fn dev_and_dirty_builds_publish_no_bundle() {
 #[test]
 fn manifest_refuses_a_buffer_too_small() {
     let p = player();
-    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "", bundle_sha256: "" };
+    let x = ManifestExtras { tls_cert_sha256: "", bundle_url: "", bundle_sha256: "", ..Default::default() };
     let mut small = [0u8; 64];
     assert!(p.agent_manifest(&mut small, &x).is_none());
 }

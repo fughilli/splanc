@@ -466,6 +466,13 @@ message SetUniforms {
   uint32 deck = 3;
 }
 
+// Ask for the device's TLS identity state (docs/design/per-device-cert.md). Works over
+// BLE as well as wss, so a client can learn — before it opens wss — whether the device
+// has finished generating its first-boot key + certificate, and which certificate
+// (SHA-256) to pin for this device id. Firmware advertising the "tls_info" feature
+// answers it. Reply: tls_info.
+message GetTlsInfo {}
+
 // List the effects the device holds: one per FX deck (deck A's is the last
 // submit_effect, persisted and auto-resumed on boot; deck B's is runtime-only),
 // so the reply has at most two entries. Reply: effect_list.
@@ -727,6 +734,7 @@ message ClientMessage {
     ListKeypoints list_keypoints = 42;
     GetKeypoint get_keypoint = 43;
     BlendKeypoints blend_keypoints = 44;
+    GetTlsInfo get_tls_info = 45;
   }
 }
 
@@ -1172,6 +1180,22 @@ message Keypoint {
   repeated UniformValue slots = 6;
 }
 
+// Reply to get_tls_info: the device's own TLS identity (each device generates its own
+// EC P-256 key + self-signed certificate on first boot; nothing secret ships in the
+// firmware image).
+message TlsInfo {
+  // "generating" (first-boot key generation not finished: wss:443 is closed — wait and
+  // retry) or "ready" (wss:443 is serving cert_sha256).
+  string state = 1;
+  // SHA-256 of the served certificate's DER, lowercase hex; empty while generating.
+  // Stable for the device's life (no IP in the cert, so DHCP changes don't rotate it);
+  // only a factory reset (flash erase) generates a new one. Clients pin it per device id.
+  string cert_sha256 = 2;
+  // False when the identity could not be written to flash this boot (it will change on
+  // the next reboot) — a client should not treat that change as an attack.
+  bool persisted = 3;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -1197,5 +1221,6 @@ message ServerMessage {
     EffectList effect_list = 21;
     KeypointList keypoint_list = 22;
     Keypoint keypoint = 23;
+    TlsInfo tls_info = 24;
   }
 }

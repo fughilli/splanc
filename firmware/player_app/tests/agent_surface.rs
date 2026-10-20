@@ -5,7 +5,8 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_agent_manifest, lm_mdns_announce, lm_mdns_respond, lm_player_handle, lm_player_init,
-    lm_player_set_build_info, lm_player_set_identity, lm_set_uniforms_commit, FEATURES,
+    lm_player_set_build_info, lm_player_set_identity, lm_set_tls_info, lm_set_uniforms_commit,
+    FEATURES,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -144,6 +145,30 @@ fn the_agent_surface() {
     assert_eq!(mf["protocol"]["features"], serde_json::json!(FEATURES));
     assert_eq!(mf["tls"]["cert_sha256"], sha);
     assert!(unsafe { lm_agent_manifest(buf.as_mut_ptr(), 32, sha.as_ptr(), 0, url.as_ptr(), 0, url.as_ptr(), 0) } == -2);
+    // Nothing published yet (firmware without per-device certs): no tls.state.
+    assert!(mf["tls"].get("state").is_none());
+
+    // The per-device TLS identity: get_tls_info answers what the firmware published
+    // (lm_set_tls_info) — "generating" with no pin, then "ready" with the pin.
+    let tls_info = || {
+        let Some(SMsg::TlsInfo(t)) = handle(CMsg::GetTlsInfo(pb::GetTlsInfo::default())) else {
+            panic!("tls_info");
+        };
+        (t.r#state.to_string(), t.r#cert_sha256.to_string(), t.r#persisted)
+    };
+    assert_eq!(tls_info(), (String::new(), String::new(), false));
+    let st = "generating";
+    unsafe { lm_set_tls_info(st.as_ptr(), st.len(), sha.as_ptr(), 0, false) };
+    assert_eq!(tls_info(), ("generating".into(), String::new(), false));
+    let st = "ready";
+    unsafe { lm_set_tls_info(st.as_ptr(), st.len(), sha.as_ptr(), sha.len(), true) };
+    assert_eq!(tls_info(), ("ready".into(), sha.clone(), true));
+    let n = unsafe {
+        lm_agent_manifest(buf.as_mut_ptr(), buf.len(), sha.as_ptr(), sha.len(), url.as_ptr(), 0, url.as_ptr(), 0)
+    };
+    let mf: serde_json::Value = serde_json::from_slice(&buf[..n as usize]).unwrap();
+    assert_eq!(mf["tls"], serde_json::json!({"cert_sha256": sha, "state": "ready", "persisted": true}));
+    assert!(FEATURES.contains(&"tls_info"));
 
     // mDNS: the service carries the player's live identity.
     let ip = [192u8, 168, 4, 23];
@@ -162,5 +187,6 @@ fn the_agent_surface() {
     assert!(has(b"\x11Led Widget DDEEFF\x07_splanc"), "instance = device name");
     assert!(has(b"\x0dsplanc-ddeeff\x05local"), "host from the MAC");
     assert!(has(b"path=/.well-known/splanc.json") && has(b"fw=1.2.0") && has(&ip));
+    assert!(has(b"\x09tls=ready"), "TXT carries the TLS identity state");
     assert!(unsafe { lm_mdns_announce(ip.as_ptr(), out.as_mut_ptr(), out.len()) } > n);
 }

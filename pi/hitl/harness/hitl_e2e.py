@@ -48,6 +48,7 @@ import urllib.parse
 import urllib.request
 
 import board_caps
+import device_cert_core
 import hitl_ws
 from e2e_phases import SetupError, phase, planned, setup_done, tracked
 from hitl_client import Reservation, ReserveError
@@ -308,6 +309,13 @@ def agent_manifest_check(ws_url: str, welcome: dict) -> dict | None:
     want(
         "tls.cert_sha256", (m.get("tls") or {}).get("cert_sha256"), hashlib.sha256(der).hexdigest()
     )
+    # Per-device identity (docs/design/per-device-cert.md): the device serves its OWN
+    # first-boot-generated cert (persisted), never the legacy shared CN=heapless one.
+    tls = m.get("tls") or {}
+    want("tls.state", tls.get("state"), "ready")
+    want("tls.persisted", tls.get("persisted"), True)
+    if hashlib.sha256(der).hexdigest() == device_cert_core.LEGACY_SHA256:
+        problems.append("the device serves the LEGACY shared certificate (CN=heapless)")
     if "bundle" not in m:
         problems.append("bundle key missing (null for a dev/dirty build)")
     if problems:

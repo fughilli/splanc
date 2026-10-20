@@ -18,6 +18,10 @@ import type { ServerMessage } from "@ledmapper/protocol";
 export const FIXTURES = process.env["AGENT_TEST_FIXTURES"] ?? join(process.cwd(), "tests/fixtures");
 export const TEST_CERT_SHA256 =
   "2B:2F:BA:31:32:EF:D5:58:E4:33:4D:DC:23:7B:88:D6:0F:B4:3F:9C:EC:56:CD:D5:F5:53:14:7E:9F:69:8D:E2";
+/** A second identity (cert2.pem/key2.pem): the same player after a factory reset, or
+ * an impostor answering as it. */
+export const TEST_CERT2_SHA256 =
+  "BA:5B:E9:6F:A9:C8:7C:CA:6C:45:06:E2:1D:49:1E:78:EA:E8:75:7F:BA:E7:2A:5A:82:F6:FD:16:54:AC:6B:40";
 
 type Msg = Record<string, unknown> & { type: string };
 
@@ -57,10 +61,18 @@ export class FakePlayer {
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
-  constructor(opts: { name?: string; mac?: string; fwVersion?: string } = {}) {
+  /** Which TLS identity this player serves (2 = cert2.pem: "after a factory reset"). */
+  identity: 1 | 2 = 1;
+
+  constructor(opts: { name?: string; mac?: string; fwVersion?: string; identity?: 1 | 2 } = {}) {
     if (opts.name) this.name = opts.name;
     if (opts.mac) this.mac = opts.mac;
     if (opts.fwVersion) this.fwVersion = opts.fwVersion;
+    if (opts.identity) this.identity = opts.identity;
+  }
+
+  get certSha256(): string {
+    return this.identity === 2 ? TEST_CERT2_SHA256 : TEST_CERT_SHA256;
   }
 
   /** Serve a splanc-agent/1 manifest describing this player. */
@@ -70,7 +82,7 @@ export class FakePlayer {
       device: { id: this.mac, name: this.name, board: "ESP32-C6 SuperMini" },
       firmware: { version: this.fwVersion },
       protocol: { ws_path: "/ws", features: this.features },
-      tls: { cert_sha256: TEST_CERT_SHA256 },
+      tls: { cert_sha256: this.certSha256, state: "ready", persisted: true },
       ...extra,
     };
   }
@@ -79,9 +91,11 @@ export class FakePlayer {
   private uploads = new Map<number, string[]>();
   port = 0;
 
-  async start(): Promise<void> {
+  /** Listen (on `port`, default any free one — pass the old port to "reboot"). */
+  async start(port = 0): Promise<void> {
+    const sfx = this.identity === 2 ? "2" : "";
     this.server = https.createServer(
-      { cert: readFileSync(join(FIXTURES, "cert.pem")), key: readFileSync(join(FIXTURES, "key.pem")) },
+      { cert: readFileSync(join(FIXTURES, `cert${sfx}.pem`)), key: readFileSync(join(FIXTURES, `key${sfx}.pem`)) },
       (req, res) => {
         this.connections.push("manifest");
         if (req.url === "/.well-known/splanc.json" && this.manifest !== null) {
@@ -98,7 +112,7 @@ export class FakePlayer {
       this.connections.push("ws");
       ws.on("message", (data: Buffer) => this.onMessage(ws, decodeClient(new Uint8Array(data)) as unknown as Msg));
     });
-    await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
+    await new Promise<void>((r) => this.server.listen(port, "127.0.0.1", r));
     this.port = (this.server.address() as AddressInfo).port;
   }
 

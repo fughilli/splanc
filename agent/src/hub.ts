@@ -23,6 +23,7 @@ import { DeviceSession, ToolError } from "./session";
 import { nodeSocketFactory } from "./socket";
 import { RESYNC_MS, deviceEpochs, skewBoundMs, type ClockSync } from "./timesync";
 import { Toolchains, type ToolchainChoice } from "./toolchain";
+import { decideTrust, trustError, trusted } from "./trust";
 
 export type Selector = string | string[] | undefined;
 
@@ -73,7 +74,13 @@ export class Hub {
       identify: async (host, pin) => {
         const { s, w, fp } = await this.dial(host, host, pin);
         this.dialed.get(host)?.close();
-        this.dialed.set(host, s);
+        // TOFU by device id: a session whose certificate isn't the one remembered
+        // for its MAC is not kept (the registry records the verdict; the tool
+        // that wants it is refused with the explanation).
+        const id = (w.mac || "").toUpperCase();
+        const v = this.opts.pin ? null : decideTrust({ id, presented: fp, known: this.config.players[id]?.pin });
+        if (v && !trusted(v) && v.kind !== "unverified") s.close();
+        else this.dialed.set(host, s);
         return {
           id: w.mac || `host:${host}`,
           name: w.deviceName || host,
@@ -225,7 +232,7 @@ export class Hub {
     host: string,
     name: string,
     pin?: string,
-    opts: { url?: string; features?: string[] } = {},
+    opts: { url?: string; features?: string[]; id?: string } = {},
   ): Promise<{ s: DeviceSession; w: WelcomeOf; fp?: string }> {
     const t0 = performance.now();
     const usePin = this.opts.pin ?? pin;
@@ -248,11 +255,23 @@ export class Hub {
       return { s, w, ...(fp ? { fp } : {}) };
     } catch (e) {
       s.close();
-      let why = sockErr ?? (e as Error).message;
-      if (/pin mismatch/.test(why) && !this.opts.pin) {
-        why +=
-          " — its certificate changed since it was remembered (a rename regenerates it): forget_player it " +
-          "(CLI: call forget_player) and it is found afresh";
+      const why = sockErr ?? (e as Error).message;
+      if (/pin mismatch/.test(why) && !this.opts.pin && fp && pin) {
+        // The player presented another certificate than the one remembered for it
+        // (trust.ts): the legacy shared cert moving to a per-device one is expected
+        // (re-pin silently, one redial); anything else is refused, with how to
+        // re-trust after a factory reset.
+        const id = opts.id ?? host;
+        const v = decideTrust({ id, presented: fp, known: pin });
+        if (v.kind === "legacy-repin") {
+          progress(`${name}: now has its own TLS certificate (was the shared legacy one); re-pinned`);
+          this.log(`${name}: now has its own TLS certificate (was the shared legacy one); re-pinned`);
+          return this.dial(host, name, v.pin, opts);
+        }
+        this.registry.markTrust(id, v);
+        const msg = trustError(name, id, v) ?? why;
+        progress(`${name}: ${msg}`);
+        throw new ToolError(msg);
       }
       progress(`${name}: failed after ${ms(t0)}: ${why}`);
       throw new ToolError(`can't reach ${name} at ${host}: ${why}`);
@@ -260,6 +279,10 @@ export class Hub {
   }
 
   private async open(p: PlayerRecord): Promise<DeviceSession> {
+    // TOFU (trust.ts): a player whose certificate changed (or is intercepted) is
+    // refused before any connection, with the reason and how to re-trust it.
+    const refused = !this.opts.pin && p.trust ? trustError(p.name, p.id, p.trust) : null;
+    if (refused) throw new ToolError(refused);
     const t = p.target;
     // Discovery may already hold this host's session (it identified the host by it).
     let s = this.dialed.get(p.host);
@@ -272,8 +295,10 @@ export class Hub {
         d = await this.dial(p.host, p.name, t?.tls.pinSha256, {
           url: t?.wsUrl ?? `wss://${p.host}/ws`,
           features: p.manifest?.protocol?.features ?? [],
+          id: p.id,
         });
       } catch (e) {
+        if (p.trust && !trusted(p.trust) && p.trust.kind !== "unverified") throw e; // refused: don't hunt for it
         // A remembered player that stopped answering may just have a new lease:
         // its mDNS advert (TXT id) says where it went. One retry there.
         const remembered = !p.sources.includes("host") && /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/.test(p.id);
@@ -281,6 +306,7 @@ export class Hub {
         if (!moved) throw e;
         d = await this.dial(moved.host, moved.name, moved.target?.tls.pinSha256, {
           url: moved.target?.wsUrl ?? `wss://${moved.host}/ws`,
+          id: moved.id,
         });
         p = moved;
       }
@@ -291,6 +317,11 @@ export class Hub {
     const mismatch = checkSamePlayer(p.manifest, w);
     if (mismatch) this.log(`WARNING (${p.name}): ${mismatch}`);
     const rec = this.registry.identify(p.host, w, fp) ?? p;
+    const refusedNow = !this.opts.pin && rec.trust ? trustError(rec.name, rec.id, rec.trust) : null;
+    if (refusedNow) {
+      s.close();
+      throw new ToolError(refusedNow);
+    }
     const dup = this.sessions.get(rec.id);
     if (dup) {
       // The same device reached by another host: keep the one socket.

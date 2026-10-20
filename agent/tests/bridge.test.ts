@@ -16,6 +16,7 @@ import { compile, loadFxHost } from "../src/fxhost";
 import { createServer } from "../src/server";
 import { COMMIT_IN_PROTO, DeviceSession, FORBIDDEN_TYPES, ToolError, sniffType } from "../src/session";
 import { nodeSocketFactory } from "../src/socket";
+import { normFingerprint } from "../src/trust";
 import { FakePlayer, TEST_CERT_SHA256, yFixture } from "./fakePlayer";
 
 const WASM_ROOT = process.env["AGENT_WASM_ROOT"] ?? "wasm";
@@ -72,7 +73,9 @@ describe("discovery", () => {
     };
     const t = await resolveTarget(player.host);
     assert.equal(t.manifest?.schema, "splanc-agent/1");
-    assert.equal(t.tls.pinSha256, TEST_CERT_SHA256);
+    // First sight of this device id: pinned to the certificate the GET came over.
+    assert.equal(t.tls.pinSha256, normFingerprint(TEST_CERT_SHA256));
+    assert.equal(t.trust?.kind, "first-sight");
     assert.equal(t.wsUrl, `wss://${player.host}/ws`);
     assert.equal(checkSamePlayer(t.manifest, session.welcome), null);
     assert.match(

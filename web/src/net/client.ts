@@ -57,6 +57,7 @@ import {
   type PerfMode,
   type PerfReportMessage,
   type SetTextureMessage,
+  type TlsInfoMessage,
   type UniformValueFlat,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
@@ -815,6 +816,22 @@ export class LedMapperClient {
       { type: "list_effects" } as unknown as ClientMessage,
       "effect_list",
     )) as unknown as EffectListMessage;
+  }
+
+  /** The device's TLS identity: its state ("generating" until the first-boot key +
+   * certificate exist, then "ready") and the certificate SHA-256 to pin per device
+   * id (net/deviceTrust.ts). Needs the "tls_info" feature; answers over BLE too. */
+  async getTlsInfo(): Promise<TlsInfoMessage> {
+    const r = (await this.request(
+      { type: "get_tls_info" } as unknown as ClientMessage,
+      "tls_info",
+    )) as unknown as Partial<TlsInfoMessage>;
+    return {
+      type: "tls_info",
+      state: r.state ?? "",
+      certSha256: r.certSha256 ?? "",
+      persisted: r.persisted ?? false,
+    };
   }
 
   /** Place this fixture in a shared room frame (or clear it); resolves with the

@@ -249,6 +249,16 @@ address.
 Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or
 the Device tab) any time to reopen the device sheet.
 
+#### The device's security certificate
+
+- Each device creates its **own** security certificate the first time it starts (it takes well under
+  a second), and keeps it for life. Your browser asks you to trust it once per device.
+- The app remembers each device's certificate. If a device you know shows up with a **different**
+  one, the device sheet warns you: that is expected only after a factory reset (its flash erased).
+  Tap **I reset it — trust the new certificate** if you did; otherwise disconnect.
+- Devices updated from older firmware get their own certificate on the first start after the update;
+  the app switches to it without a warning.
+
 ### Managing devices
 
 _Connect, rename, re-discover, and forget the controllers you know._

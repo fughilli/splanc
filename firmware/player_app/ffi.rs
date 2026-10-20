@@ -885,20 +885,71 @@ pub unsafe extern "C" fn lm_player_set_build_info(
     player().set_build_info(commit_s, dirty, version_s);
 }
 
+/// The per-device TLS identity as the firmware last published it (lm_set_tls_info):
+/// "generating" | "ready" ("" = never published) + the cert pin.
+struct TlsIdentity {
+    state: [u8; 16],
+    state_len: usize,
+    sha: [u8; 64],
+    sha_len: usize,
+    persisted: bool,
+}
+static mut TLS_ID: TlsIdentity =
+    TlsIdentity { state: [0; 16], state_len: 0, sha: [0; 64], sha_len: 0, persisted: false };
+
+unsafe fn tls_state() -> &'static str {
+    let t = &*addr_of!(TLS_ID);
+    core::str::from_utf8(&t.state[..t.state_len]).unwrap_or("")
+}
+
+unsafe fn tls_sha() -> &'static str {
+    let t = &*addr_of!(TLS_ID);
+    core::str::from_utf8(&t.sha[..t.sha_len]).unwrap_or("")
+}
+
+/// Publish the per-device TLS identity's state ("generating" | "ready"), its cert
+/// SHA-256 (lowercase hex, "" while generating) and whether it is persisted. Read
+/// by get_tls_info, the agent manifest (tls.state / tls.persisted) and the mDNS
+/// TXT `tls` key. Over-long arguments are truncated to the field caps.
+///
+/// # Safety
+/// `state`/`sha` point to `state_len`/`sha_len` readable bytes (or are null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_tls_info(
+    state: *const u8,
+    state_len: usize,
+    sha: *const u8,
+    sha_len: usize,
+    persisted: bool,
+) {
+    let t = &mut *addr_of_mut!(TLS_ID);
+    let st = str_arg(state, state_len).as_bytes();
+    t.state_len = st.len().min(t.state.len());
+    t.state[..t.state_len].copy_from_slice(&st[..t.state_len]);
+    let sh = str_arg(sha, sha_len).as_bytes();
+    t.sha_len = sh.len().min(t.sha.len());
+    t.sha[..t.sha_len].copy_from_slice(&sh[..t.sha_len]);
+    t.persisted = persisted;
+}
+
 /// The device's mDNS service: `<name>._splanc._tcp.local` on the wss/HTTPS port,
-/// host `splanc-<mac tail>.local`, TXT id/name/fw/path — from the player's live
-/// identity, so a rename is advertised on the next reply.
+/// host `splanc-<mac tail>.local`, TXT id/name/fw/path (+ `tls` = the TLS
+/// identity's state, once published) — from the player's live identity, so a
+/// rename is advertised on the next reply.
 unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
     let p = player();
     let mut hb = [0u8; 13];
     let host = ledmapper_mdns::host_label(p.mac(), &mut hb);
+    let tls = tls_state();
     let txt = [
         ("id", p.mac()),
         ("name", p.device_name()),
         ("fw", p.fw_version()),
         ("path", "/.well-known/splanc.json"),
+        ("tls", tls),
     ];
-    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), port: 443, ip, txt: &txt };
+    let txt: &[(&str, &str)] = if tls.is_empty() { &txt[..4] } else { &txt };
+    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), port: 443, ip, txt };
     f(&svc)
 }
 
@@ -987,6 +1038,8 @@ pub unsafe extern "C" fn lm_agent_manifest(
     }
     let x = ledmapper_player::ManifestExtras {
         tls_cert_sha256: str_arg(cert_sha256, cert_len),
+        tls_state: tls_state(),
+        tls_persisted: (*addr_of!(TLS_ID)).persisted,
         bundle_url: str_arg(bundle_url, url_len),
         bundle_sha256: str_arg(bundle_sha256, sha_len),
     };
@@ -1257,6 +1310,9 @@ pub unsafe extern "C" fn lm_player_handle(
         // the firmware profile's inline bytes cap), so it's spliced from the .fxb.
         Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(frame, out, out_cap),
         Some(ARM_LIST_EFFECTS) => handle_list_effects(),
+        // The per-device TLS identity's state + pin (set by the firmware through
+        // lm_set_tls_info): answers over BLE too, before wss is reachable.
+        Some(ARM_GET_TLS_INFO) => handle_get_tls_info(),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1720,6 +1776,7 @@ const ARM_DELETE_KEYPOINT: u32 = 41;
 const ARM_LIST_KEYPOINTS: u32 = 42;
 const ARM_GET_KEYPOINT: u32 = 43;
 const ARM_BLEND_KEYPOINTS: u32 = 44;
+const ARM_GET_TLS_INFO: u32 = 45;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1737,6 +1794,7 @@ pub const FEATURES: &[&str] =
         "decks",
         "crossfade",
         "keypoints",
+        "tls_info",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2374,6 +2432,15 @@ unsafe fn handle_get_effect_uniforms(frame: &[u8], out: *mut u8, out_cap: usize)
         return no_effect();
     };
     write_arm(out, out_cap, 16, |w| write_effect_uniforms(w, d, p, &prog))
+}
+
+/// get_tls_info: the per-device TLS identity as the firmware last published it.
+unsafe fn handle_get_tls_info() -> pb::ServerMessage {
+    let mut t = pb::TlsInfo::default();
+    let _ = t.r#state.push_str(tls_state());
+    let _ = t.r#cert_sha256.push_str(tls_sha());
+    t.r#persisted = (*addr_of!(TLS_ID)).persisted;
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::TlsInfo(t)) }
 }
 
 /// list_effects: one entry per loaded deck (deck A's is the persisted one: boot

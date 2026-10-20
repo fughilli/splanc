@@ -36,6 +36,11 @@ void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dir
 int32_t lm_agent_manifest(uint8_t *out, size_t cap, const uint8_t *cert_sha256,
                           size_t cert_len, const uint8_t *bundle_url, size_t url_len,
                           const uint8_t *bundle_sha256, size_t sha_len);
+// Publish the per-device TLS identity: state "generating" | "ready", the cert's
+// SHA-256 (lowercase hex, empty while generating) and whether it is persisted in
+// flash. Read by get_tls_info, the manifest's tls block and the mDNS TXT "tls" key.
+void lm_set_tls_info(const uint8_t *state, size_t state_len, const uint8_t *sha,
+                     size_t sha_len, bool persisted);
 // mDNS (_splanc._tcp, firmware/mdns): answer one UDP:5353 datagram from src_port.
 // Writes the reply DNS message into out; returns its length (0 = nothing to answer,
 // <0 = error). *unicast: reply to the querier's address+port, not 224.0.0.251:5353.

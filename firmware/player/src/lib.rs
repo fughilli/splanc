@@ -577,6 +577,8 @@ impl Player {
             | CMsg::BlendKeypoints(_) => {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
+            // The TLS identity is the firmware's (player_app ffi), not the core's.
+            CMsg::GetTlsInfo(_) => Some(error("unsupported", "tls info is handled by the firmware")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
@@ -1546,9 +1548,15 @@ fn error(code: &str, message: &str) -> pb::ServerMessage {
 
 /// What the firmware (not the session core) knows for the agent manifest: the
 /// TLS certificate pin and the build's agent-bundle location.
+#[derive(Default)]
 pub struct ManifestExtras<'a> {
     /// SHA-256 of the DER TLS certificate, lowercase hex ("" = unknown).
     pub tls_cert_sha256: &'a str,
+    /// The per-device TLS identity's state: "generating" | "ready" ("" = not
+    /// reported, i.e. firmware without per-device certs; the field is omitted).
+    pub tls_state: &'a str,
+    /// Whether that identity is persisted in flash (stable across reboots).
+    pub tls_persisted: bool,
     /// Agent bundle URL from the release pipeline ("" = derive it for a release
     /// build: the firmware-v<version> GitHub release asset).
     pub bundle_url: &'a str,
@@ -1701,6 +1709,11 @@ impl Player {
         j.uint(self.fxb_format);
         j.raw("},\"tls\":{\"cert_sha256\":");
         j.str(x.tls_cert_sha256);
+        if !x.tls_state.is_empty() {
+            j.raw(",\"state\":");
+            j.str(x.tls_state);
+            j.raw(if x.tls_persisted { ",\"persisted\":true" } else { ",\"persisted\":false" });
+        }
         j.raw("},\"bundle\":");
         if is_release_version(version) && !self.fw_git_dirty {
             j.raw("{\"url\":");
