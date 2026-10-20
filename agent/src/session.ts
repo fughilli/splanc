@@ -27,6 +27,7 @@ import {
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
 import type { Pose } from "./config";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
+import { progress } from "./progress";
 import type { ClockSync } from "./timesync";
 import {
   describe,
@@ -469,7 +470,11 @@ export class DeviceSession {
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const names = Object.keys(targets);
     const from = names.map((n) => a.current.get(n) ?? byName.get(n)!.default);
+    if (seconds >= 2) progress(`ramping ${names.join(", ")} over ${seconds} s…`);
     for (let i = 1; i < steps; i++) {
+      if (seconds >= 2 && i % Math.max(1, Math.round(hz * Math.max(1, seconds / 5))) === 0) {
+        progress(`ramp ${Math.round((100 * i) / steps)}%`);
+      }
       const t = i / steps;
       const vals = names.map((n, k) => ({
         slot: byName.get(n)!.slot,
@@ -551,6 +556,7 @@ export class DeviceSession {
     opts: { sleep?: (ms: number) => Promise<void> } = {},
   ): Promise<Record<string, unknown>> {
     if (!(seconds > 0 && seconds <= 60)) throw new ToolError("seconds must be within (0, 60]");
+    progress(`measuring for ${seconds} s…`);
     const reports: PerfReportMessage[] = [];
     const unsub = this.client.onPerfReport((r) => reports.push(r));
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));

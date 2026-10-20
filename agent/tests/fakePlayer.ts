@@ -48,6 +48,10 @@ export class FakePlayer {
   pingDelayMs = 0;
   /** Manifest features (see agentManifest). */
   features: string[] = ["effects", "perf", "textures", "stored_map"];
+  /** Also send them in Welcome.features (current firmware does). */
+  welcomeFeatures = true;
+  /** Every HTTPS GET (the manifest route) and every /ws connection, in order. */
+  readonly connections: ("manifest" | "ws")[] = [];
   /** Device-stored uniform keypoints: effect id -> name -> {index, values by uniform}. */
   keypoints = new Map<string, Map<string, { index: number; values: Record<string, number[]> }>>();
   /** Every blend_keypoints applied (for assertions). */
@@ -79,6 +83,7 @@ export class FakePlayer {
     this.server = https.createServer(
       { cert: readFileSync(join(FIXTURES, "cert.pem")), key: readFileSync(join(FIXTURES, "key.pem")) },
       (req, res) => {
+        this.connections.push("manifest");
         if (req.url === "/.well-known/splanc.json" && this.manifest !== null) {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(this.manifest));
@@ -90,6 +95,7 @@ export class FakePlayer {
     );
     this.wss = new WebSocketServer({ server: this.server, path: "/ws" });
     this.wss.on("connection", (ws) => {
+      this.connections.push("ws");
       ws.on("message", (data: Buffer) => this.onMessage(ws, decodeClient(new Uint8Array(data)) as unknown as Msg));
     });
     await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
@@ -124,6 +130,9 @@ export class FakePlayer {
       fwGitCommit: "0".repeat(40),
       fwGitDirty: false,
       brightness: this.brightness,
+      // Like the firmware since the manifest arrived (#276): Welcome carries the
+      // features too, so the bridge needn't read the manifest to know them.
+      ...(this.welcomeFeatures ? { features: this.features } : {}),
     };
   }
 

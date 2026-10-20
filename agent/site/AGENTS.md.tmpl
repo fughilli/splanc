@@ -21,14 +21,35 @@ You need: Node.js >= 20 and a machine on the same LAN as the lights.
 {{NPX}} recall-keypoint dusk --seconds 10         # glide back to it later
 ```
 
-Every command prints JSON. Exit status: 0 on success, 1 on an error or when
-every targeted player failed, 2 when only some did (the JSON names each
-player's error). Device commands take `--players <name|room|all>` (default: the
-only player, or all players when they form one room). `list-players` finds
-players by mDNS and a sweep of the local /24s; if it finds none, pass
-`--host <ip>`. `{{NPX}} help` lists the commands (keypoints: `list-`, `save-`,
-`get-`, `recall-`, `delete-keypoint`, `blend-keypoints`); `{{NPX}} tools` the
-full tool surface.
+Every command prints JSON on stdout and its progress on stderr
+(`connecting Kitchen (10.0.0.7)… / Kitchen: connected 850 ms`; `--quiet` turns
+it off). Exit status: 0 on success, 1 on an error or when every targeted player
+failed, 2 when only some did (the JSON names each player's error). Device
+commands take `--players <name|room|all>` (default: the only player, or all
+players when they form one room). `list-players` finds players by mDNS and a
+sweep of the local /24s; if it finds none, pass `--host <ip>` (repeatable; with
+hosts given there is no discovery wait). `{{NPX}} help` lists the commands
+(keypoints: `list-`, `save-`, `get-`, `recall-`, `delete-keypoint`,
+`blend-keypoints`); `{{NPX}} tools` the full tool surface.
+
+## Fast calls
+
+The hub remembers every player it reaches (`~/.config/splanc/hub.json`: host,
+MAC, certificate), so after the first call it goes straight to them: no mDNS
+wait, no sweep, no manifest round trip — one TLS handshake per player, which the
+player's small chip takes ~0.7 s to do. `list-players` from the cache needs no
+TLS at all. What's left is `npx` itself: it re-downloads the bundle on EVERY call
+(0.4–2 s) and keeps running whichever version it cached first. For more than a
+couple of calls, install once and call the binary:
+
+```sh
+npm i -g {{TGZ_URL}}     # once; re-run to update (or: --prefix ~/.local)
+splanc-agent list-players
+claude mcp add splanc -- splanc-agent
+```
+
+Fastest of all is one long-lived MCP server: its sessions stay open, so every
+tool call after the first is a single round trip to the player.
 
 ## Long-lived: as an MCP server
 
@@ -36,8 +57,11 @@ full tool surface.
 claude mcp add splanc -- {{NPX}}
 ```
 
-(Any MCP client: command `npx`, args `["-y", "{{TGZ_URL}}"]`, stdio.) Then read
-the `splanc://players` resource or call `list_players`.
+(Any MCP client: command `npx`, args `["-y", "{{TGZ_URL}}"]`, stdio; or
+`splanc-agent` once installed.) Then read the `splanc://players` resource or call
+`list_players`. Long tools (discovery, deploys, ramps) send
+`notifications/progress` when the call carries a progress token, and log
+messages otherwise.
 
 ## "Set the mood of the room" — the first-contact flow
 

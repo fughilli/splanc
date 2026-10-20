@@ -16,7 +16,8 @@
  */
 
 import { loadConfig, saveConfig, type HubConfig, type Pose } from "./config";
-import { checkSamePlayer } from "./discovery";
+import { checkSamePlayer, resolveTarget, type Manifest } from "./discovery";
+import { ms, progress } from "./progress";
 import { Registry, type PlayerRecord, type RefreshOptions, type RegistryDeps } from "./registry";
 import { DeviceSession, ToolError } from "./session";
 import { nodeSocketFactory } from "./socket";
@@ -24,6 +25,8 @@ import { RESYNC_MS, deviceEpochs, skewBoundMs, type ClockSync } from "./timesync
 import { Toolchains, type ToolchainChoice } from "./toolchain";
 
 export type Selector = string | string[] | undefined;
+
+type WelcomeOf = Awaited<ReturnType<DeviceSession["connect"]>>;
 
 export interface PlayerResult<T> {
   player: { id: string; name: string };
@@ -55,6 +58,8 @@ export class Hub {
   readonly toolchains: Toolchains;
   private readonly sessions = new Map<string, DeviceSession>();
   private readonly connecting = new Map<string, Promise<DeviceSession>>();
+  /** Sessions opened by discovery (identifying a host), by host, until a tool adopts them. */
+  private readonly dialed = new Map<string, DeviceSession>();
   private readonly choice = new Map<string, ToolchainChoice>();
   private refreshed: Promise<unknown> | null = null;
   private readonly log: (...a: unknown[]) => void;
@@ -62,7 +67,22 @@ export class Hub {
   constructor(private readonly opts: HubOptions) {
     this.config = opts.config ?? loadConfig();
     const persist = opts.persist ?? ((c: HubConfig) => void saveConfig(c));
-    this.registry = new Registry(opts.hosts ?? [], this.config, () => persist(this.config), opts.registryDeps ?? {});
+    this.registry = new Registry(opts.hosts ?? [], this.config, () => persist(this.config), {
+      // An unknown host is identified by opening its session (one TLS handshake,
+      // kept for the tool that needs it) rather than by a separate manifest GET.
+      identify: async (host, pin) => {
+        const { s, w, fp } = await this.dial(host, host, pin);
+        this.dialed.get(host)?.close();
+        this.dialed.set(host, s);
+        return {
+          id: w.mac || `host:${host}`,
+          name: w.deviceName || host,
+          ...(w.fwVersion ? { fw: w.fwVersion } : {}),
+          ...(fp ? { pin: fp } : {}),
+        };
+      },
+      ...opts.registryDeps,
+    });
     this.toolchains = opts.toolchains ?? new Toolchains(opts.root);
     this.log = opts.log ?? (() => undefined);
     this.persistConfig = () => persist(this.config);
@@ -101,7 +121,9 @@ export class Hub {
 
   /** Discover (once, lazily, before the first use; again on refresh()). */
   async ready(): Promise<void> {
-    if (this.refreshed === null) this.refreshed = this.refresh({ sweep: "auto" });
+    // For tools: remembered players straight from the cache (their sessions are
+    // the check); unknown hosts identified; discovery only when nothing is known.
+    if (this.refreshed === null) this.refreshed = this.refresh({ sweep: "auto", lazy: true });
     await this.refreshed;
   }
 
@@ -116,8 +138,11 @@ export class Hub {
     this.registry.addHost(host);
   }
 
+  /** Every player, each confirmed this run: list_players answers "who is here",
+   * so cache-only records get their (cheap, TCP-only) check. */
   async players(): Promise<PlayerRecord[]> {
     await this.ready();
+    if (this.registry.list().some((p) => p.checked === "cached")) await this.refresh({ sweep: "auto" });
     return this.registry.list();
   }
 
@@ -194,27 +219,78 @@ export class Hub {
     return c;
   }
 
-  private async open(p: PlayerRecord): Promise<DeviceSession> {
-    const t = p.target;
-    const url = t?.wsUrl ?? `wss://${p.host}/ws`;
-    const pin = this.opts.pin ?? t?.tls.pinSha256;
+  /** Open a /ws session to `host` (hello/welcome), reporting progress. `fp` is
+   * the certificate's SHA-256 (trust on first use). */
+  private async dial(
+    host: string,
+    name: string,
+    pin?: string,
+    opts: { url?: string; features?: string[] } = {},
+  ): Promise<{ s: DeviceSession; w: WelcomeOf; fp?: string }> {
+    const t0 = performance.now();
+    const usePin = this.opts.pin ?? pin;
+    progress(`connecting ${name === host ? host : `${name} (${host})`}…`);
+    let fp: string | undefined;
+    let sockErr: string | undefined;
     const s = new DeviceSession({
-      url,
-      socketFactory: nodeSocketFactory(pin ? { pinSha256: pin } : {}),
-      features: p.manifest?.protocol?.features ?? [],
+      url: opts.url ?? `wss://${host}/ws`,
+      socketFactory: nodeSocketFactory(usePin ? { pinSha256: usePin } : {}, {
+        onPeer: (x) => (fp = x),
+        onError: (e) => (sockErr ??= e.message),
+      }),
+      features: opts.features ?? [],
       ...(this.opts.streamHz ? { streamHz: this.opts.streamHz } : {}),
-      connectTimeoutMs: this.opts.connectTimeoutMs ?? 15000,
+      connectTimeoutMs: this.opts.connectTimeoutMs ?? 8000, // a C6 handshake is ~1 s, 3 s at worst
     });
-    let w;
     try {
-      w = await s.connect();
+      const w = await s.connect();
+      progress(`${w.deviceName || name}: connected ${ms(t0)}${w.fwVersion ? ` (firmware ${w.fwVersion})` : ""}`);
+      return { s, w, ...(fp ? { fp } : {}) };
     } catch (e) {
       s.close();
-      throw new ToolError(`can't reach ${p.name} at ${p.host}: ${(e as Error).message}`);
+      let why = sockErr ?? (e as Error).message;
+      if (/pin mismatch/.test(why) && !this.opts.pin) {
+        why +=
+          " — its certificate changed since it was remembered (a rename regenerates it): forget_player it " +
+          "(CLI: call forget_player) and it is found afresh";
+      }
+      progress(`${name}: failed after ${ms(t0)}: ${why}`);
+      throw new ToolError(`can't reach ${name} at ${host}: ${why}`);
     }
+  }
+
+  private async open(p: PlayerRecord): Promise<DeviceSession> {
+    const t = p.target;
+    // Discovery may already hold this host's session (it identified the host by it).
+    let s = this.dialed.get(p.host);
+    this.dialed.delete(p.host);
+    let fp: string | undefined;
+    if (!s?.client.isConnected) {
+      s?.close();
+      let d;
+      try {
+        d = await this.dial(p.host, p.name, t?.tls.pinSha256, {
+          url: t?.wsUrl ?? `wss://${p.host}/ws`,
+          features: p.manifest?.protocol?.features ?? [],
+        });
+      } catch (e) {
+        // A remembered player that stopped answering may just have a new lease:
+        // its mDNS advert (TXT id) says where it went. One retry there.
+        const remembered = !p.sources.includes("host") && /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/.test(p.id);
+        const moved = remembered && this.opts.mdns !== false ? await this.registry.relocate(p.id) : undefined;
+        if (!moved) throw e;
+        d = await this.dial(moved.host, moved.name, moved.target?.tls.pinSha256, {
+          url: moved.target?.wsUrl ?? `wss://${moved.host}/ws`,
+        });
+        p = moved;
+      }
+      s = d.s;
+      fp = d.fp;
+    }
+    const w = s.welcome;
     const mismatch = checkSamePlayer(p.manifest, w);
     if (mismatch) this.log(`WARNING (${p.name}): ${mismatch}`);
-    const rec = this.registry.identify(p.host, w) ?? p;
+    const rec = this.registry.identify(p.host, w, fp) ?? p;
     const dup = this.sessions.get(rec.id);
     if (dup) {
       // The same device reached by another host: keep the one socket.
@@ -223,9 +299,11 @@ export class Hub {
     }
     // The version-matched compiler is picked (maybe fetched) on first compile:
     // brightness or uniforms don't need it, and a bad bundle mustn't block them.
+    // The manifest (for the player's bundle URL) is read only when this bundle
+    // doesn't cover the player's firmware.
     const fw = w.fwVersion || rec.fw;
     s.toolchainLoader = async () => {
-      const choice = await this.toolchains.forPlayer(fw, rec.manifest);
+      const choice = await this.toolchains.forPlayer(fw, rec.manifest, () => this.readManifest(rec));
       this.choice.set(rec.id, choice);
       if (choice.note) this.log(`${rec.name}: ${choice.note}`);
       return choice.toolchain;
@@ -235,13 +313,36 @@ export class Hub {
     return s;
   }
 
+  /** Read (and remember) a player's discovery manifest, once something needs it. */
+  private async readManifest(rec: PlayerRecord): Promise<Manifest | null> {
+    if (rec.manifest) return rec.manifest;
+    const pin = this.opts.pin ?? rec.target?.tls.pinSha256;
+    const t = await resolveTarget(rec.host, { ...(pin ? { pin } : {}), timeoutMs: 8000 });
+    if (t.manifest) this.registry.noteManifest(rec.id, t.manifest);
+    return t.manifest;
+  }
+
+  /** Open every reachable player's session ahead of the first tool (the MCP
+   * server does this after its background discovery, so the agent's first tool
+   * call doesn't pay the TLS handshakes). Errors are left for the tools to report. */
+  async warm(): Promise<void> {
+    await this.ready();
+    await Promise.all(
+      this.registry
+        .list()
+        .filter((p) => p.checked !== "unreachable")
+        .map((p) => this.session(p).catch(() => undefined)),
+    );
+  }
+
   toolchainNote(id: string): string | undefined {
     return this.choice.get(id)?.note;
   }
 
   close(): void {
-    for (const s of new Set(this.sessions.values())) s.close();
+    for (const s of new Set([...this.sessions.values(), ...this.dialed.values()])) s.close();
     this.sessions.clear();
+    this.dialed.clear();
   }
 
   /** Run `fn` on every selected player in parallel; one result per player. */

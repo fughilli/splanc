@@ -24,6 +24,7 @@ import { gunzipSync } from "node:zlib";
 import { cacheDir } from "./config";
 import type { Manifest } from "./discovery";
 import { hostToolchain, loadToolchain, type Toolchain } from "./fxhost";
+import { progress } from "./progress";
 
 export interface BundleInfo {
   version: string;
@@ -87,8 +88,17 @@ export class Toolchains {
     return readBundleInfo(this.hostRoot);
   }
 
-  forPlayer(fw: string | undefined, manifest: Manifest | null): Promise<ToolchainChoice> {
+  /** `loadManifest` reads the player's manifest when `manifest` is null and the
+   * player's bundle is needed (only then: it costs the device a TLS handshake). */
+  async forPlayer(
+    fw: string | undefined,
+    manifest: Manifest | null,
+    loadManifest?: () => Promise<Manifest | null>,
+  ): Promise<ToolchainChoice> {
     const info = this.hostInfo();
+    if (isRelease(fw) && !covers(info, fw) && !manifest && loadManifest) {
+      manifest = await loadManifest().catch(() => null);
+    }
     if (!isRelease(fw) || covers(info, fw)) {
       return hostToolchain().then((t) => ({
         toolchain: t,
@@ -121,6 +131,7 @@ export class Toolchains {
     const dir = join(cacheDir(), "bundles", fw);
     const ok = join(dir, ".ok");
     if (!existsSync(ok)) {
+      progress(`fetching the compiler for firmware ${fw} (${url})…`);
       const tgz = await this.fetcher(url);
       const got = createHash("sha256").update(tgz).digest("hex");
       if (sha256 && got.toLowerCase() !== sha256.toLowerCase()) {
