@@ -43,9 +43,28 @@ including fuzzing) so it can be published separately.
 The protocol only grows additively (new optional fields and new oneof arms),
 and clients feature-detect instead of comparing versions. `Welcome.features`
 lists what the firmware serves, for example `effects`, `uniform_commit`,
-`list_effects`, `fixture_pose` and `time_base`. `Welcome.fxb_format` is the
-`.fxb` version the VM accepts. The agent bridge and the app both read them; see
-{doc}`agent`.
+`list_effects`, `fixture_pose`, `time_base`, `decks`, `crossfade` and
+`keypoints`. `Welcome.fxb_format` is the `.fxb` version the VM accepts. The
+agent bridge and the app both read them; see {doc}`agent`.
+
+Recent arms, with their field numbers (`ledmapper.v1`, all additive):
+
+| Arm                                                    | `ClientMessage` | Reply (`ServerMessage`) | PR   |
+| ------------------------------------------------------ | --------------: | ----------------------- | ---- |
+| `list_effects`                                         |              36 | `effect_list` (21)      | #276 |
+| `set_fixture_pose`                                     |              37 | `welcome`               | #280 |
+| `set_time_base`                                        |              38 | `welcome`               | #280 |
+| `set_crossfade`                                        |              39 | `welcome`               | #285 |
+| `save_keypoint` / `delete_keypoint` / `list_keypoints` |    40 / 41 / 42 | `keypoint_list` (22)    | #285 |
+| `get_keypoint`                                         |              43 | `keypoint` (23)         | #285 |
+| `blend_keypoints`                                      |              44 | `playback_state`        | #285 |
+
+PR #285 also adds a `deck` field (0 = A, 1 = B) to `SubmitEffect` (4), `SetEffect`
+
+(2), `SetUniforms` (3; 2 is `commit`), `GetEffectUniforms` (2),
+`EffectUniforms` (5) and `StoredEffect` (4), and echoes the crossfade in
+`Welcome` (14, 15). Deck, mode and colour-mode fields are plain `uint32`, not
+enums. Details: {doc}`../docs/design/uniform-keypoints`.
 
 ## Freshness gate
 

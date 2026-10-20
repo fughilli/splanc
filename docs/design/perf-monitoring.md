@@ -861,3 +861,20 @@ for the binding device first, then re-estimate to confirm it fits. Online
 (device PerfReport) and offline (cost model) share one schema, so the same loop
 runs with or without hardware; per-device calibrations make each fleet member's
 estimate as trustworthy as its `measuredError`.
+
+A second tool, **`measure_on_device`** (#292, `web/src/effects/devicePerf.ts`),
+closes the loop on real hardware. While a fixture with the `perf` feature is
+connected (never in the website demo), the model can run the current compile
+there: the editor uploads it over the same path as "Send to device" (skipped
+when the fixture already runs that exact program; the result says so if it
+replaced a different effect), sets perf FULL, reads `get_perf_report` every
+0.5 s for `seconds` (1–10, default 3), and turns perf back off. The result is
+the measured `PerfContext` (`contextFromReport`) plus mean / p95 / max frame
+time, the per-window means and a predicted-vs-measured line against the
+estimate's error band. Device work is serialized with the editor's push and
+auto-push and every call times out. The guidance (iterate with the estimate,
+confirm on the device, optimize against the measurement when they disagree,
+since the estimate models the interpreter and the device may JIT) is added to
+the prompt only when the tool is offered, so the small local-model prompt does
+not grow. The MCP hub has the same pair: `estimate_effect` and
+`measure_effect`.

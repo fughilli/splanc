@@ -67,6 +67,15 @@ The test already caught one model bug: closing wss with a BLE central still conn
 |---:|---:|---|
 | 57 | 151,213 B | Joined + BLE connected + wss + effect with video + map |
 
+Each later layout change re-pinned the test in its own PR: +3,072 B for the
+room-frame cache (#280), +4,096 B for the 12 KB topology arena (#291), then 73
+states and 164,975 B with deck B and keypoints (#285, which adds the `fx_aux`
+deck-B / video union and the keypoint buffers to the cost table). Since #291 the
+budget subtracts `STATICS_ADDED_SINCE_MEASURED`: statics added after the
+measured image were counted as free heap there, so they shrink the headroom
+instead of inflating the budget. Since #285 that constant is derived
+(`ALL_MODE_STATICS - MEASURED_STATICS`), so a new static cannot be left out.
+
 Today's layout holds about 152 KB for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set, which under PR-38 has nearly everything live at once, so the union saves little by itself (~1 KB):
 - **The next lever is the scan residue:** 20 KB of vendor scan, lwIP and event-loop heap that never frees. *(Since freed by #266: no `esp_netif_init`, the event loop deleted after the scan, no NVS mirror.)*
 

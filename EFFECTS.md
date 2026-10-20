@@ -415,8 +415,15 @@ There are two call paths:
   compile, and return the compile result — ok/diagnostics/uniforms/disassembly so
   the model can self-repair), `capture_preview` (render the live `FxPreview` canvas
   to a PNG returned as a vision block), `estimate_performance` (run the cost model
-  and report headroom), and `list_midi_controls` / `set_midi_mapping`. Each user
-  turn includes the current source and the latest compile summary as context.
+  and report headroom), `measure_on_device` (offered only while a fixture with
+  the `perf` feature is connected: run the current script there for
+  `seconds` (1–10, default 3), optionally at given `uniforms`, and return the
+  measured frame time mean / p95 / max, per-window means and the estimate's
+  error band next to it), and `list_midi_controls` / `set_midi_mapping`. The
+  prompt tells the model to iterate with the estimate, confirm on the device
+  before calling a performance goal met, and trust the measurement when the two
+  disagree. Each user turn includes the current source and the latest compile
+  summary as context.
 
 So every AI-authored effect is compiled by the real wasm compiler and (optionally)
 previewed by the real VM before it ever reaches the device — the same path a

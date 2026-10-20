@@ -11,6 +11,7 @@ project's own design docs, folded into the site as-is.
 The effects runtime <../docs/design/effects-runtime>
 The effects compiler <../docs/design/effects-compiler>
 Performance monitoring <../docs/design/perf-monitoring>
+FX decks, crossfade & uniform keypoints <../docs/design/uniform-keypoints>
 ```
 
 ## Capture, solve & reconstruct

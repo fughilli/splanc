@@ -44,9 +44,61 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   npx -y https://splanc.io/agent/splanc-agent.tgz list-players
   ```
 
-- **Uniform keypoints and FX blending** _(in progress; the PR succeeds #82)_:
-  named sets of uniform values stored on the device, which the app and agents
-  can discover, plus blending between them on the two-deck crossfade.
+- **Keypoint tools for agents** (#286): `list_keypoints`, `save_keypoint`,
+  `recall_keypoint`, `blend_keypoints` and `delete_keypoint`, plus each
+  player's keypoints in `splanc://effect/active`. The skill maps "save the look
+  as a keypoint" and "morph between moods" onto them. They are gated on the
+  `keypoints` feature (see below).
+
+### Saved looks: uniform keypoints, two decks and a crossfade
+
+Supersedes #82 (FUG-110). Design:
+[uniform-keypoints.md](design/uniform-keypoints.md).
+
+- **Keypoints** (#285): a keypoint is a named set of uniform values for one
+  effect, a known-good position in its parameter space ("dawn", "storm"). They
+  are stored on the device in littlefs (power-loss-safe, at most 16 per
+  effect), so the app, Show Mode and agents all see the same set. Values are
+  stored by uniform name, and a keypoint saved against an older build of the
+  effect is flagged `stale`.
+- **Morphing on the device:** recall a keypoint over N seconds, or blend up to
+  four with weights. The device eases the uniforms itself, once per frame, using
+  each uniform's manifest rule (sliders interpolate and clamp to `min`/`max`,
+  colours blend in linear RGB or HSV, toggles and dropdowns take the nearest
+  source). A live blend never writes flash; saving the blended look is explicit.
+- **Two decks + crossfade:** the player runs deck A and deck B at once and
+  crossfades their per-LED output (linear RGB or HSV). Deck B shares one memory
+  region with the video-texture delta buffer, so **loading deck B ends a video
+  stream** on that player. Deck B is interpreted (no JIT) and is not restored
+  after a reboot.
+- **In the app:** the effect editor and each Show Mode deck (`/show`, from the
+  Effects ⋯ menu) carry a keypoint strip: tap a pad to recall it, "＋ Save" to
+  store the live uniforms, a morph fader to slide between two pads, long-press
+  or right-click to delete. Show Mode's MIDI layer can map the crossfade, blend
+  mode, per-deck play/pause and cue, each deck's keypoint morph fader, and
+  next / previous / save keypoint.
+- **Wire:** `set_crossfade` = 39 and the keypoint arms 40–44 (replies
+  `keypoint_list` = 22, `keypoint` = 23), a `deck` field on the effect messages,
+  and the `decks`, `crossfade` and `keypoints` features. The full table is in
+  [uniform-keypoints.md](design/uniform-keypoints.md#wire-ledmapperv1-additive).
+- **Cost:** +6.5 KB of static RAM, and the per-LED shade entry pinned back in
+  IRAM (`.iram0.text` 97,512 → 99,704 B). With both decks and a wss session the
+  `fx_keypoints` HITL run measured a 72.7 KB minimum free heap. The `sweep16`
+  fx_bench golden was re-baselined (42,589 → 50,259 cycles) on evidence that the
+  remaining gap is flash-cache layout, not added work; the evidence is on #285.
+
+### Effect authoring: measure on the fixture, not just in the model
+
+- **`measure_on_device`** (#292): the editor's and Acid Mode's AI chat can run
+  the current script on the connected fixture with full perf reporting and read
+  a few seconds of the device's perf stream (mean / p95 / max frame time, the
+  update / shade / show split, budget fraction), next to the offline
+  `estimate_performance`. The agent iterates offline and confirms on the device
+  before calling a performance goal met; when they disagree it optimizes
+  against the measurement. The tool is offered only while a fixture with the
+  `perf` feature is connected, and never in the website demo.
+- **The hub gained the same pair:** `estimate_effect` (offline, touches nothing)
+  and `measure_effect` (windowed on-device stream, now in milliseconds).
 
 ### The C6 player's memory, from 1.6 KiB to ~87 KiB of worst-case headroom
 
@@ -79,6 +131,13 @@ handshake → 512-LED map and texture effect → loaded handshakes). Detail in
 - **TLS region** (#272): mbedTLS allocates from its own fixed slots and private
   region, off the shared heap.
 - **Unbuffered littlefs** (#273): removes a 4 KB stdio buffer per file open.
+- **Exact-size topology decode** (#291): a topology upload is decoded in two
+  passes (count, then fill exactly), with every polyline in one shared vertex
+  array, and the topology arena grew from 8 to 12 KB. A scan needs
+  16·J + 24·S + 12·V bytes for J junctions, S segments and V vertices: a
+  462-LED scan with 27 / 51 / 206 now takes 4,128 B (it overflowed 8 KB before),
+  leaving room for ~880 vertices at that junction and segment count. Beyond
+  that the upload fails with `map_too_large`.
 - **Memory regions and the mode model** (#263, #269): `firmware/region` (pools,
   slabs, mode unions) and `firmware/sysmode`, a reachability-checked model of
   the device's memory modes, which the firmware now tracks (log-only). See
@@ -100,5 +159,10 @@ handshake → 512-LED map and texture effect → loaded handshakes). Detail in
 - **Fleet dashboards** (#279): the Android bench (amd-rig) and the iPhone bench
   (mac-mini) push metrics to Grafana, and the dashboard sync warns loudly
   instead of skipping silently.
+- **Release stamps the agent bundle** (#293): `release.yaml` passes the
+  bundle's URL and sha256 into the firmware build, so a released device's
+  `/.well-known/splanc.json` names its bundle with a hash.
+- **`ffi_test` is one `#[test]` again** (#294): the FFI state is
+  process-global, and a second test raced it on the harness's threads.
 - **Docs:** [the Splanc manifesto](manifesto.md), on why the system is built
   the way it is.

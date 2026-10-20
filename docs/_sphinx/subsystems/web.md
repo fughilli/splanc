@@ -30,7 +30,14 @@ loaded at runtime, plus the solver wasm worker.
   (phone-side placement/solve).
 - **Effects (`effects/`, `fx/`)** — the editor (compiler worker, uniform / MIDI /
   video panels), `effects/ai/` (AI generation), and `fx/preview.ts` (`FxPreview`,
-  the exact device VM in-browser over a map's LED positions).
+  the exact device VM in-browser over a map's LED positions). The AI chat has
+  `estimate_performance` (offline cost model) and, while a fixture with `perf`
+  is connected, `measure_on_device` (`effects/devicePerf.ts`), which reads the
+  device's perf stream.
+- **Show Mode & keypoints (`ui/screens/showMode.ts`, `keypointStrip.ts`)** —
+  two decks, the crossfader and per-deck keypoint pads with a morph fader;
+  `midi/showRouter.ts` maps every control to MIDI. The editor reuses the
+  keypoint strip.
 - **Networking (`net/`) & protocol (`gen/`)** — `client.ts` (the wss control
   client), `proto.ts` (the protobuf boundary), `improv.ts` (BLE Wi-Fi
   onboarding), `textureCodec.ts` (video streaming), plus clock sync.

@@ -77,8 +77,13 @@ the only player, or all of them in one room): `set_brightness`, `list_uniforms`,
 `set_uniforms`, `ramp_uniforms`, `compile_effect`, `preview_effect` (several
 players: one room-frame image per time), `deploy_effect` (fleet budget check via
 `web/src/effects/multiDevice.ts`, refuses an overrun unless `force`; then a shared
-time base), `set_effect`, `rollback_effect`, `measure_effect`, `list_textures`,
-`stream_texture`, `stop_texture`, a confirm-gated `set_device_name` (one player).
+time base), `set_effect`, `rollback_effect`, `estimate_effect` (offline cost
+model, touches nothing), `measure_effect` (windowed on-device perf stream),
+`list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
+`list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
+`delete_keypoint` (feature `keypoints`; design
+[uniform-keypoints.md](../docs/design/uniform-keypoints.md)), a confirm-gated
+`set_device_name` (one player).
 Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 `forget_player`, `identify_player` (blinks), `set_room`, `set_fixture_pose`,
 `align_time`. One player + no selector keeps #274's flat result shape;
