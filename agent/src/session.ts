@@ -89,6 +89,11 @@ interface Deployed {
   effectId: string;
   fxb: Uint8Array;
   source?: string;
+  /** The effect's declared uniforms (slot + default), from its compile. */
+  uniforms: ManifestUniform[];
+  /** Last-known value per slot: the defaults sent on activation, then every
+   * set this session sent while it was active (restored by rollback). */
+  values: Map<number, number[]>;
 }
 
 interface TextureStream {
@@ -434,6 +439,17 @@ export class DeviceSession {
     if (this.has("uniform_commit") && COMMIT_IN_PROTO) msg["commit"] = commit;
     const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
     if (!ok) throw new ToolError("the player connection is down");
+    if (this.current) for (const v of values) this.current.values.set(v.slot, v.value);
+  }
+
+  /** The firmware VM starts every uniform at 0 (it ignores the manifest's
+   * defaults), so a freshly activated effect renders black until something sets
+   * them. Send each declared uniform's value — its default, or `known` — right
+   * after the submit, uncommitted (as the web app does after its own submit). */
+  private async sendActivationValues(d: Deployed, known?: Map<number, number[]>): Promise<void> {
+    const values = d.uniforms.map((u) => ({ slot: u.slot, value: known?.get(u.slot) ?? u.default }));
+    if (values.length === 0) return;
+    await this.run(async () => this.sendUniforms(values, false));
   }
 
   /** Interpolate uniforms to `targets` over `seconds`, uncommitted, at the
@@ -492,7 +508,8 @@ export class DeviceSession {
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
       this.previous = this.current;
-      this.current = { effectId, fxb: c.fxb, source };
+      this.current = { effectId, fxb: c.fxb, source, uniforms: c.uniforms, values: new Map() };
+      await this.sendActivationValues(this.current);
     }
     return { effect_id: effectId, bytecode_bytes: c.bytecodeBytes, uniforms: c.uniforms.map((u) => u.name) };
   }
@@ -510,13 +527,17 @@ export class DeviceSession {
     return { active_effect: a.effectId || null };
   }
 
-  /** Restore the effect active before the last deploy (re-uploads its bytecode). */
+  /** Restore the effect active before the last deploy (re-uploads its bytecode,
+   * then its last-known uniform values — the defaults where none were set). */
   async rollback(): Promise<Record<string, unknown>> {
     const prev = this.previous;
     if (prev) {
       await this.run(() => this.client.submitEffect(prev.effectId, prev.fxb, true));
       this.current = prev;
       this.previous = null;
+      const known = prev.values;
+      prev.values = new Map();
+      await this.sendActivationValues(prev, known);
       return { restored: prev.effectId };
     }
     await this.run(() => this.client.setEffect(""));

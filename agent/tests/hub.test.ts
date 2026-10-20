@@ -257,6 +257,15 @@ describe("fan-out", () => {
     // Pings went out to each player; no time-base message was sent.
     assert.ok(ps.every((p) => p.types().includes("time_sync_ping")));
     assert.ok(ps.every((p) => !p.types().includes("set_time_base")));
+    // Each player got the declared defaults right after the submit: the VM
+    // starts every uniform at 0, so without them the effect renders black.
+    await new Promise((res) => setTimeout(res, 50));
+    for (const p of ps) {
+      const types = p.types();
+      const submit = types.lastIndexOf("submit_effect");
+      assert.equal(types[submit + 1], "set_uniforms", "set_uniforms follows submit_effect");
+      assert.ok((p.received[submit + 1]!["values"] as unknown[]).length > 0);
+    }
   });
 
   test("an effect that doesn't compile deploys nowhere", async () => {
