@@ -455,8 +455,18 @@ pub mod cost {
 
     /// The RAM that exists for mode-dependent components: what they occupy in
     /// today's layout at the measured minimum, plus what was still free there.
-    pub const BUDGET: usize =
-        ALL_MODE_STATICS + HEAP_AT_MIN + MIN_FREE_MEASURED - STATICS_ADDED_SINCE_MEASURED;
+    pub const BUDGET: usize = ALL_MODE_STATICS + HEAP_AT_MIN + MIN_FREE_MEASURED
+        - STATICS_ADDED_SINCE_MEASURED
+        + IRAM_TEXT_MEASURED
+        - IRAM_TEXT;
+
+    /// `.iram0.text` on the image MIN_FREE_MEASURED was taken on (#262), and
+    /// now (size -A of the netstack ELF). IRAM and DRAM share the C6's HP SRAM,
+    /// so code moved out of IRAM since (#266: cold SDK code to flash, -17,398 B)
+    /// became heap, and code pinned back in (#285: the per-LED fx shade entry,
+    /// +2,192 B) came out of it.
+    pub const IRAM_TEXT_MEASURED: usize = 114_910;
+    pub const IRAM_TEXT: usize = 99_704;
 }
 
 /// One mode-dependent component live in a state.

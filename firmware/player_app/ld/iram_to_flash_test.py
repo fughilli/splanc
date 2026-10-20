@@ -62,6 +62,22 @@ class RewriteTest(unittest.TestCase):
             len(self.sdk.splitlines()) - len(self.ours.splitlines()), sum(hits.values()) + 1
         )
 
+    def test_iram_pins_land_in_iram0_text(self):
+        # Rule kind 4: each `iram:` rule is one `*(...)` statement inside
+        # .iram0.text (right after `*(.iram1 .iram1.*)`), i.e. before the flash
+        # catch-alls in script order, and nowhere else.
+        pins = [r for r in self.rules if r[0] == "iram:"]
+        self.assertTrue(pins)
+        lines = self.ours.splitlines()
+        iram = next(i for i, ln in enumerate(lines) if ln.strip().startswith(".iram0.text"))
+        flash = next(i for i, ln in enumerate(lines) if ln.strip().startswith(".flash.text"))
+        for _, secs in pins:
+            stmt = "*(" + " ".join(secs) + ")"
+            at = [i for i, ln in enumerate(lines) if ln.strip() == stmt]
+            self.assertEqual(len(at), 1, stmt)
+            self.assertTrue(iram < at[0] < flash, stmt)
+            self.assertEqual(lines[at[0] - 1].strip(), "*(.iram1 .iram1.*)")
+
 
 if __name__ == "__main__":
     unittest.main()

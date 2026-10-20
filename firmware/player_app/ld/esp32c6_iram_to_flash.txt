@@ -29,3 +29,12 @@ libesp_driver_rmt.a:rmt_encoder
 # (The other flash VENDORS' chip drivers stay: a board fitted with, say, a
 # Winbond part runs that driver with the cache off on every flash write.)
 libhal.a:spi_flash_hal_gpspi
+
+# --- the other direction: our own hot code pinned INTO IRAM -------------------
+# The per-LED fx shade entry (single-deck path: lm_fx_shade with the deck shade
+# inlined) plus the two fx_vm calls it makes per LED before the interpreter.
+# Flash-cache misses re-warming this path every frame cost fx_bench ~15% on
+# short sweeps (sweep16) and moved with unrelated layout changes; ~2.2 KB of
+# IRAM makes it layout-independent. The interpreter (`run`, 37 KB) stays in
+# flash, as do the two-deck blend and every cold path.
+iram: .text.lm_fx_shade .text._ZN15ledmapper_fx_vm7Program5parse* .text._ZN15ledmapper_fx_vm2Vm17run_shade_bounded*

@@ -20,12 +20,22 @@ optionally, the input sections it applies to. For a rule:
      and an explicit `*lib.a:obj.*(.sec .sec.*)` statement is added at the top
      of .flash.text (the flash catch-alls exclude the whole library).
 
+The reverse also exists, for our own hot code that must NOT pay flash-cache
+misses (the per-LED fx shade path):
+
+  4. an `iram:` rule (`iram: <input-section glob> ...`) adds `*(<globs>)` to
+     .iram0.text right after the `*(.iram1 .iram1.*)` statement. Output
+     statements match in script order and .iram0.text precedes .flash.text, so
+     those input sections land in IRAM; the flash catch-alls never see them.
+     Our code is built with -ffunction-sections, so a glob names functions
+     (`.text.lm_fx_shade`, `.text._ZN15ledmapper_fx_vm7Program5parse*`).
+
 Nothing else changes; the link runs with --orphan-handling=warn, so a section
 that ends up placed nowhere is a loud warning, and the caller asserts every rule
 matched something.
 
 usage: iram_to_flash.py RULES IN_SECTIONS_LD OUT_SECTIONS_LD
-RULES lines: `<file>[ <section> ...]`, `#` comments.
+RULES lines: `<file>[ <section> ...]` or `iram: <section> ...`, `#` comments.
 """
 
 import re
@@ -105,9 +115,40 @@ def carve(src, rules, hits):
     return "".join(lines)
 
 
+IRAM_ANCHOR = re.compile(r"^(\s*)\*\(\.iram1 \.iram1\.\*\)\s*$")
+
+
+def to_iram(src, rules, hits):
+    """Rule kind 4 (see the module doc): pin input sections into .iram0.text.
+    Idempotent: an identical statement already present is not added again."""
+    pins = [r for r in rules if r[0] == "iram:"]
+    if not pins:
+        return src
+    lines = src.splitlines(keepends=True)
+    region = None
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*(\.[\w.]+)\s*:", line)
+        if m:
+            region = m.group(1)
+        a = IRAM_ANCHOR.match(line)
+        if region == ".iram0.text" and a:
+            adds = []
+            for r in pins:
+                add = f"{a.group(1)}*({' '.join(r[1])})\n"
+                hits[r] += 1
+                if add not in lines and add not in adds:
+                    adds.append(add)
+            lines[i + 1 : i + 1] = adds
+            return "".join(lines)
+    raise SystemExit("iram_to_flash: no `*(.iram1 .iram1.*)` statement in .iram0.text")
+
+
 def rewrite(src, rules):
     out, hits = [], {r: 0 for r in rules}
-    src = carve(src, rules, hits)
+    src = to_iram(src, rules, hits)
+    rules_ram_to_flash = [r for r in rules if r[0] != "iram:"]
+    src = carve(src, rules_ram_to_flash, hits)
+    rules = rules_ram_to_flash
     region = None
     for line in src.splitlines(keepends=True):
         m = re.match(r"\s*(\.[\w.]+)\s*:", line)
@@ -152,6 +193,9 @@ def rewrite(src, rules):
 
 def main():
     rules = parse_rules(open(sys.argv[1]).read())
+    for r in rules:
+        if r[0] == "iram:" and not r[1]:
+            sys.exit("iram_to_flash: an `iram:` rule needs at least one section")
     text, hits = rewrite(open(sys.argv[2]).read(), rules)
     dead = [r for r, n in hits.items() if n == 0]
     if dead:

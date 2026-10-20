@@ -125,6 +125,7 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    | #266 | vendor scan residue freed (no lwIP task, event loop deleted after the scan, no NVS mirror); cold SDK code moved from IRAM to flash (`.iram0.text` 114,910 → 97,512 B) | 61.3 → 82.9 KB | 95.8 KB |
    | #267 | zero-copy TX; loopTask 20 → 14 KiB | — | 95.8 → 106.7 KB |
    | #272 | mbedTLS in its own 24 KiB region (2 × 6,912 B record slots + a 10 KB TLSF region) | ~90 → ~87 KB | ~116 → ~95 KB |
+   | #285 | FX deck B + uniform keypoints: +6.5 KB static (`DECK_A` with its morph state, the video/deck-B aux union 8,192 → 11,436 B, `KP_IO`); the per-LED fx shade entry (`lm_fx_shade`, `Program::parse`, `Vm::run_shade_bounded`) pinned in IRAM (`.iram0.text` 97,512 → 99,704 B, +2,192) | not re-measured on this scenario (fx_keypoints HITL: min free 74.6 KB with both decks + a wss session) | — |
 
    #272 deliberately *reserves* 24 KiB that a session used to take from the
    shared heap. In exchange, a handshake can no longer fail on a fragmented
