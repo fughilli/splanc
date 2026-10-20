@@ -24,6 +24,7 @@ import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
 import { renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
+import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
 import { DeviceSession, ToolError, summarize, type TextureSource } from "./session";
 
@@ -53,9 +54,52 @@ const players = z
 /** Sources compiled or deployed this session, by effect id (for preview_effect). */
 const knownSources = new Map<string, string>();
 
-export function createServer(target: DeviceSession | Hub, opts: { root?: string } = {}): McpServer {
+/** What the SDK hands a tool/resource callback (the parts used here). */
+interface CallExtra {
+  _meta?: { progressToken?: string | number };
+  sendNotification?: (n: { method: string; params: Record<string, unknown> }) => Promise<void>;
+}
+
+/**
+ * A call's progress sink: an MCP progress notification when the caller asked for
+ * them (a progressToken), a log message (hosts that show server logs), and the
+ * optional echo (the stdio server's stderr).
+ */
+function callSink(server: McpServer, extra: CallExtra | undefined, echo?: ProgressSink): ProgressSink {
+  const token = extra?._meta?.progressToken;
+  let n = 0;
+  return (message) => {
+    echo?.(message);
+    if (token !== undefined && extra?.sendNotification) {
+      extra
+        .sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: ++n, message } })
+        .catch(() => undefined);
+    }
+    if (server.isConnected()) {
+      server.server.sendLoggingMessage({ level: "info", logger: "splanc", data: message }).catch(() => undefined);
+    }
+  };
+}
+
+/** Route every tool's and resource's progress (see progress.ts) to its caller. */
+function withCallProgress(server: McpServer, echo?: ProgressSink): void {
+  type Fn = (...a: unknown[]) => unknown;
+  const s = server as unknown as { registerTool: Fn; registerResource: Fn };
+  for (const k of ["registerTool", "registerResource"] as const) {
+    const orig = s[k].bind(server) as Fn;
+    s[k] = (...reg: unknown[]) => {
+      const cb = reg[reg.length - 1] as Fn;
+      reg[reg.length - 1] = (...args: unknown[]) =>
+        withProgress(callSink(server, args[args.length - 1] as CallExtra | undefined, echo), () => cb(...args));
+      return orig(...reg);
+    };
+  }
+}
+
+export function createServer(target: DeviceSession | Hub, opts: { root?: string; echo?: ProgressSink } = {}): McpServer {
   const hub = target instanceof Hub ? target : Hub.forSession(target, opts.root ?? "");
-  const server = new McpServer({ name: "splanc-agent", version: VERSION });
+  const server = new McpServer({ name: "splanc-agent", version: VERSION }, { capabilities: { logging: {} } });
+  withCallProgress(server, opts.echo);
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });
@@ -150,19 +194,22 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
     {
       description:
         "Every Splanc player on the LAN (found by mDNS, remembered from earlier runs, or a LAN sweep): name, id, " +
-        "host, firmware, rooms and pose. Start here.",
+        "host, firmware, rooms and pose. Start here. Fast: remembered players are checked with a bare TCP probe " +
+        "(`checked` says how each was confirmed); refresh_players looks again thoroughly.",
     },
     () => guard(async () => ok(await playersView(hub))),
   );
   server.registerTool(
     "refresh_players",
     {
-      description: "Look for players again (mDNS + remembered; sweep=true also probes every host of the local /24s).",
+      description:
+        "Look for players again, thoroughly: mDNS (even with hosts given) and every reachable player's manifest " +
+        "re-read (list_players trusts the cache); sweep=true also probes every host of the local /24s.",
       inputSchema: { sweep: z.boolean().optional() },
     },
     ({ sweep }) =>
       guard(async () => {
-        await hub.refresh({ sweep: sweep ? "on" : "auto" });
+        await hub.refresh({ sweep: sweep ? "on" : "auto", fresh: true });
         return ok(await playersView(hub));
       }),
   );
@@ -514,6 +561,7 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
             );
           }
           const leds = await s.ledCount();
+          progress(`${p.name}: compiled (${c.bytecodeBytes} B, ${leds} LEDs)`);
           const est = estimateAcrossDevices(c.fxb, [
             { key: p.id, label: p.name, table: defaultCostTable(), ledCount: leds, calibrated: false },
           ]).devices[0]!;
@@ -546,11 +594,16 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
         }
         const compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
         // 2. Deploy everywhere.
-        const deployed = await hub.each(sel, (s, p) =>
-          s.deployEffect(effect_id, source, activate ?? true, compiled.get(p.id) as CompileOutcome | undefined),
-        );
+        const deployed = await hub.each(sel, async (s, p) => {
+          const t0 = performance.now();
+          progress(`${p.name}: uploading ${effect_id}…`);
+          const r = await s.deployEffect(effect_id, source, activate ?? true, compiled.get(p.id) as CompileOutcome | undefined);
+          progress(`${p.name}: deployed ${effect_id} (${Math.round(performance.now() - t0)} ms)`);
+          return r;
+        });
         const okIds = deployed.filter((d) => d.ok).map((d) => d.player.id);
         // 3. One shared clock across a multi-player deploy.
+        if (okIds.length > 1 && (activate ?? true)) progress(`aligning ${okIds.length} clocks…`);
         const time = okIds.length > 1 && (activate ?? true) ? await hub.alignTime(okIds) : undefined;
         const out = shape(deployed, sel !== undefined) as Record<string, unknown>;
         return ok(
@@ -663,7 +716,11 @@ async function playersView(hub: Hub): Promise<Record<string, unknown>> {
       rooms: hub.groupsOf(p.id),
       posed: !!hub.pose(p.id),
       found_by: p.sources,
-      manifest: p.manifest ? "yes" : (p.manifestError ?? "no"),
+      // How this run confirmed it: session (Welcome), manifest, tcp (answers on
+      // :443; name/firmware from the cache), mdns (its advert), or unreachable.
+      checked: p.checked ?? null,
+      ...(p.checked === "unreachable" ? { error: p.manifestError ?? "unreachable" } : {}),
+      manifest: p.manifest ? "yes" : p.checked === "unreachable" ? "no" : (p.manifestError ?? "not read (not needed to connect)"),
       ...(hub.toolchainNote(p.id) ? { compiler: hub.toolchainNote(p.id) } : {}),
     })),
     rooms: hub.config.groups,

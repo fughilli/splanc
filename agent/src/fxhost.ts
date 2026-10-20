@@ -60,16 +60,28 @@ export function loadToolchain(root: string, version = "local"): Promise<Toolchai
   return t;
 }
 
+let hostRoot: string | null = null;
+
 /** Load this bundle's own toolchain (`<root>/compiler`, `<root>/simulator`) and
  * make it the default for compile/preview calls that don't name one. */
 export function loadFxHost(root: string): Promise<void> {
+  hostRoot ??= root;
   if (defaultToolchain === null) defaultToolchain = loadToolchain(root);
   return defaultToolchain.then(() => undefined);
 }
 
-/** This bundle's own toolchain (after {@link loadFxHost}). */
+/** Name this bundle's toolchain root without loading it: the wasm is compiled on
+ * the first compile/preview (most commands never need it). */
+export function setFxHostRoot(root: string): void {
+  hostRoot ??= root;
+}
+
+/** This bundle's own toolchain (loaded on first use). */
 export function hostToolchain(): Promise<Toolchain> {
-  if (defaultToolchain === null) throw new Error("the host toolchain isn't loaded (loadFxHost)");
+  if (defaultToolchain === null) {
+    if (hostRoot === null) throw new Error("the host toolchain isn't loaded (loadFxHost)");
+    defaultToolchain = loadToolchain(hostRoot);
+  }
   return defaultToolchain;
 }
 

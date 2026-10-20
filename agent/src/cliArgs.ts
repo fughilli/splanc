@@ -50,9 +50,11 @@ only player, or all of them when they form one room); keypoint commands also
 take --deck 0|1 (FX deck A/B, default 0).
 
 Options:
-  --host <name|ip[:port]>  a player (repeatable; skips nothing: mDNS still runs)
+  --host <name|ip[:port]>  a player (repeatable). With hosts given there is no
+                           mDNS wait or sweep: the call goes straight to them
   --no-mdns                don't browse mDNS
-  --pin <sha256>           pin the TLS certificate (default: the manifest's)
+  --quiet                  no progress lines on stderr
+  --pin <sha256>           pin the TLS certificate (default: the one first seen)
   --stream-hz <n>          uniform stream rate for ramps (default 20)
   --bundle-root <dir>      where compiler/ and simulator/ live (default: this bundle)
   --list                   (legacy) print mDNS adverts, then exit
@@ -61,7 +63,14 @@ Exit status: 0 on success; 1 on a tool error or when every targeted player
 failed; 2 when some (not all) targeted players failed. The JSON names each
 player's result or error either way.
 
-Logs go to stderr (stdout is the MCP channel / the JSON result).
+Progress and logs go to stderr ("connecting Kitchen… / Kitchen: connected
+180 ms"); stdout is the MCP channel / the JSON result.
+
+Speed: players found once are remembered (~/.config/splanc/hub.json: host, MAC,
+TLS pin), so later calls reconnect directly — one TLS handshake per player, no
+discovery wait. For the fastest calls install once instead of npx (npx re-fetches
+the bundle on every call, and keeps running the version it first cached):
+  npm i -g https://splanc.io/agent/splanc-agent.tgz && splanc-agent list-players
 `;
 
 export interface Parsed {
@@ -70,7 +79,18 @@ export interface Parsed {
 }
 
 /** Flags that take no value. */
-const BOOL = new Set(["sweep", "commit", "no-activate", "force", "rollback-on-overrun", "no-mdns", "list", "include-colors", "help"]);
+const BOOL = new Set([
+  "sweep",
+  "commit",
+  "no-activate",
+  "force",
+  "rollback-on-overrun",
+  "no-mdns",
+  "list",
+  "include-colors",
+  "help",
+  "quiet",
+]);
 
 export function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];

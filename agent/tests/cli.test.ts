@@ -72,6 +72,24 @@ test("list-players: JSON, both players", async () => {
   );
 });
 
+test("progress goes to stderr (stdout stays the JSON); --quiet silences it", async () => {
+  let r = await run(["set-brightness", "0.3"]);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotThrow(() => JSON.parse(r.out));
+  assert.match(r.err, /\[splanc-agent\] connecting (Desk|Shelf) \(127\.0\.0\.1:\d+\)…/);
+  assert.match(r.err, /\[splanc-agent\] (Desk|Shelf): connected \d+ ms/);
+  assert.match(r.err, /\[splanc-agent\] done \(/);
+  r = await run(["set-brightness", "0.3", "--quiet"]);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.err, /connected|discovering|done/);
+});
+
+test("version names the bundle's own version", async () => {
+  const r = await run(["version"]);
+  assert.equal(r.code, 0, r.err);
+  assert.ok(typeof JSON.parse(r.out).version === "string");
+});
+
 test("set-brightness fans out; an unknown player exits 1 with the error", async () => {
   let r = await run(["set-brightness", "0.25"]);
   assert.equal(r.code, 0, r.err);

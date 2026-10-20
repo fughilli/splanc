@@ -3,7 +3,8 @@
  * file in `$SPLANC_CONFIG_DIR` (default `~/.config/splanc/hub.json`):
  *
  * - players: every player the hub has seen, keyed by MAC (last host, name,
- *   firmware, TLS pin) — so a fresh run finds them again even when mDNS doesn't;
+ *   firmware, TLS pin, and its discovery manifest once read) — so a fresh run
+ *   reconnects straight to them: no mDNS wait, no sweep, no manifest round trip;
  * - groups: named rooms/groups of players;
  * - poses: each fixture's pose in its room's frame, until the firmware can hold
  *   it itself (the `fixture_pose` feature).
@@ -16,12 +17,17 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import type { Manifest } from "./discovery";
+
 export interface RememberedPlayer {
   host: string;
   name?: string;
   fw?: string;
   pin?: string;
   lastSeen?: string;
+  /** The discovery manifest, when one was read (sweep, refresh, or a toolchain
+   * lookup): not needed to connect, kept so it needn't be fetched again. */
+  manifest?: Manifest;
 }
 
 /** A fixture's pose in its room frame: p_room = translation + scale * R(rotation) p_map. */

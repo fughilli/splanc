@@ -11,7 +11,9 @@ skill and the website's agent entry point.
 agent/
   src/cli.ts         entry: MCP stdio (no command) or one-shot CLI (`<command>`), both over the hub
   src/hub.ts         players: selectors, lazy one-socket-per-player sessions, fan-out, rooms, time base
-  src/registry.ts    discovery: --host, remembered, mDNS, bounded /24 manifest sweep; dedupe by MAC
+  src/registry.ts    discovery: --host, remembered, mDNS, bounded /24 manifest sweep; dedupe by MAC;
+                     the fast path (cache + TCP check, identify-by-session, early-exit mDNS)
+  src/progress.ts    per-call phase progress -> MCP notifications/progress + logs, CLI stderr
   src/config.ts      ~/.config/splanc/hub.json: remembered players, rooms, poses
   src/toolchain.ts   per-firmware compiler/VM: this bundle's, or the player's fetched+sha256-checked bundle
   src/room.ts        room frame: pose transform, side-by-side layout of unposed fixtures, room summary
@@ -43,7 +45,42 @@ npx -y https://splanc.io/agent/splanc-agent.tgz list-players                 # C
 No `--host` needed: the hub finds players by mDNS, remembers them
 (`$SPLANC_CONFIG_DIR`, default `~/.config/splanc/hub.json`), and sweeps the local
 /24s for `/.well-known/splanc.json` when nothing else finds one. `--host` (repeatable)
-adds players discovery can't see; `--no-mdns` skips browsing.
+adds players discovery can't see — and skips the mDNS wait and the sweep; `--no-mdns`
+skips browsing. Progress goes to stderr (`--quiet` silences it); stdout is the JSON.
+
+### Latency (what a call costs, and why)
+
+The player's chip (heapless TLS on an ESP32-C6) takes ~0.7 s of ECDHE+ECDSA per
+TLS handshake, serves one handshake at a time, and has no session resumption; a
+SYN that arrives before its listener re-arms after a connection is dropped and
+retried by the host 1 s later. So the hub spends handshakes only where a tool needs
+them:
+
+- **Remembered player** (every one reached before): identity, TLS pin and manifest
+  come from `hub.json` after a bare TCP check (closed gracefully, so the listener
+  re-arms before the session's SYN). `list_players` costs no TLS at all; a device
+  tool opens ONE session.
+- **New host** (`--host`, or an mDNS advert without TXT `id`): identified by opening
+  its `/ws` session (Welcome names the MAC and carries the features), which the tool
+  then uses — not a manifest GET followed by a second handshake. Its certificate is
+  pinned on first use.
+- **mDNS** runs only without `--host` (or for `refresh_players`), alongside the known
+  players' checks; it returns 300 ms after the last new answer, or 300 ms after every
+  known player answered, at most 1.5 s. The /24 sweep starts at once when there is
+  nothing to go on (cold, no hosts, nothing remembered) and stops when mDNS answers.
+- **Manifest**: read only by the sweep, `refresh_players`, or a compile for firmware
+  outside this bundle's range (for its `bundle.url`), then remembered.
+- The compiler/VM wasm loads on the first compile/preview, not at startup.
+
+Measured against a real C6 (firmware 1.7.1) through the HITL rig's ssh tunnel (~80 ms
+RTT), old and new interleaved, median of 7, direct `node` (no npx): `set-brightness`
+cold 3.6 s -> 1.6 s, warm 3.0 s -> 2.0 s, warm without `--host` (mDNS) 6.0 s -> 1.8 s;
+`list-players` warm 1.5 s -> 0.65 s. The device's handshake alone was 0.8 s median,
+3.2 s p90 (radio retries). The remaining floor is one handshake per player per process; a
+long-lived MCP server keeps its sessions, so later tool calls are one round trip.
+`npx` adds 0.4–2 s per call on top (it re-fetches the tgz every time, and keeps
+running the version it first cached) — for repeated calls install once:
+`npm i -g https://splanc.io/agent/splanc-agent.tgz`, then `splanc-agent <command>`.
 
 From a release bundle (`splanc-agent-<ver>.tgz`, attached to `firmware-v<ver>`):
 
@@ -62,8 +99,15 @@ From a checkout: `bazel build //agent:mcp //agent:wasm`, then
 `node bazel-bin/agent/dist-mcp/splanc-agent.mjs --bundle-root bazel-bin/agent/wasm --host <player>`.
 
 Flags: `--host <name|ip[:port]>` (repeatable; `--list` prints what mDNS sees), `--pin <sha256>`
-(TLS pin; default: the manifest's `tls.cert_sha256`), `--stream-hz <n>` (ramp stream rate, default 20),
-`--bundle-root <dir>` (where `compiler/` + `simulator/` live; default: the bundle).
+(TLS pin; default: the certificate first seen, or the manifest's `tls.cert_sha256`), `--stream-hz <n>`
+(ramp stream rate, default 20), `--bundle-root <dir>` (where `compiler/` + `simulator/` live; default:
+the bundle), `--quiet` (no progress on stderr).
+
+Progress: every phase (`discovering (2 known + mDNS)…`, `connecting Kitchen (10.0.0.7)…`,
+`Kitchen: connected 850 ms (firmware 1.7.1)`, `found 2 players (900 ms)`, deploy/ramp/measure steps)
+is reported through `src/progress.ts` (per call, via AsyncLocalStorage): the MCP server sends it as
+`notifications/progress` when the call carries a `progressToken` and as `notifications/message` log
+lines (it declares the `logging` capability); the CLI prints it to stderr.
 
 ## Surface
 
@@ -108,8 +152,10 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit �
 ## Decisions on the spec's open questions
 
 - **TLS.** `/ws` is TLS with the player's self-signed cert: chain verification
-  is off; the cert is PINNED when a pin is known (`--pin`, else the manifest's
-  `tls.cert_sha256`). A pin mismatch refuses the connection.
+  is off; the cert is PINNED when a pin is known (`--pin`, else the one remembered
+  from the first session — trust on first use, as the manifest's `tls.cert_sha256`
+  was: it arrives over the same unauthenticated TLS). A pin mismatch refuses the
+  connection and says to `forget_player` it (a rename regenerates the cert).
 - **One hub, every player** (multi-fixture design doc): one lazily-opened socket per
   player, serialized per player, parallel across players. A player whose firmware
   is outside this bundle's range compiles/previews with ITS bundle (manifest
@@ -128,8 +174,9 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit �
 
 ## Feature detection (pending the device-side PR)
 
-Features come from `Welcome.features` merged with the manifest's
-`protocol.features`; everything below falls back on today's firmware:
+Features come from `Welcome.features` (sent since the manifest route arrived, #276)
+merged with a cached manifest's `protocol.features`; everything below falls back on
+older firmware:
 
 | Feature             | With it                                        | Without it (today)                                               |
 | ------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
@@ -191,6 +238,9 @@ safety guard, MCP surface), `hub_test` (N fake players: registry/sweep/dedupe/
 remembered, fan-out + partial failure, selectors + rooms, budget-checked deploy,
 parallel ramps, poses + room view + room preview, identify, clock-offset math,
 per-version toolchain from a fetched fake 9.9.9 bundle + sha256 refusal),
+`fastpath_test` (handshakes per call: cold = one /ws, warm list = no TLS, warm tool =
+one /ws, no mDNS/sweep with hosts, mDNS cut short, fast unreachable, TOFU pin, MCP
+progress notifications),
 `examples_test` (every skill example compiles and previews, non-black, animated),
 `stdio_test` (the shipped `.mjs` over stdio), `cli_test` (the shipped `.mjs` as a
 one-shot CLI vs two fake players), `site_test` (the bundle's site/ files and npm

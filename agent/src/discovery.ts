@@ -19,11 +19,55 @@ export interface Advert {
 
 export const SERVICE = "_splanc._tcp.local";
 
-/** Browse the LAN for `_splanc._tcp` adverts for `timeoutMs`. */
-export function browse(timeoutMs = 3000): Promise<Advert[]> {
+export interface BrowseOptions {
+  /** Called once per advert as soon as it is complete (PTR + SRV), so callers can
+   * start connecting while the browse is still listening. */
+  onAdvert?: (a: Advert) => void;
+  /** Return this long after the last NEW advert, once at least one arrived
+   * (responders answer within ~120 ms of a query; default 300). */
+  quietMs?: number;
+  /** Stop early (the caller already has what it needs). */
+  signal?: AbortSignal;
+}
+
+/**
+ * Browse the LAN for `_splanc._tcp` adverts: at most `timeoutMs`, but returns
+ * `quietMs` after the last new advert once any arrived, or on `signal`. The
+ * query goes out twice (at 0 and 250 ms) to ride out one lost multicast frame.
+ */
+export function browse(timeoutMs = 1500, opts: BrowseOptions = {}): Promise<Advert[]> {
   return new Promise((resolve) => {
-    const mdns = makeMdns();
+    let mdns: ReturnType<typeof makeMdns>;
+    try {
+      mdns = makeMdns();
+    } catch {
+      resolve([]);
+      return;
+    }
     const found = new Map<string, Advert>();
+    const quietMs = opts.quietMs ?? 300;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let quiet: ReturnType<typeof setTimeout> | null = null;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      for (const t of timers) clearTimeout(t);
+      if (quiet) clearTimeout(quiet);
+      opts.signal?.removeEventListener("abort", finish);
+      try {
+        mdns.destroy();
+      } catch {
+        // already closed
+      }
+      resolve([...found.values()]);
+    };
+    if (opts.signal?.aborted) {
+      finish();
+      return;
+    }
+    opts.signal?.addEventListener("abort", finish);
+    mdns.on("error", finish);
     const srv = new Map<string, { target: string; port: number }>();
     const txt = new Map<string, Record<string, string>>();
     const addrs = new Map<string, string[]>();
@@ -49,20 +93,33 @@ export function browse(timeoutMs = 3000): Promise<Advert[]> {
       for (const inst of ptrs) {
         const s = srv.get(inst);
         if (!s) continue;
-        found.set(inst, {
+        const fresh = !found.has(inst);
+        const a: Advert = {
           instance: inst,
           host: s.target,
           port: s.port,
           addresses: addrs.get(s.target) ?? [],
           txt: txt.get(inst) ?? {},
-        });
+        };
+        found.set(inst, a);
+        if (fresh && !done) {
+          opts.onAdvert?.(a);
+          if (quiet) clearTimeout(quiet);
+          quiet = setTimeout(finish, quietMs);
+        }
       }
     });
-    mdns.query({ questions: [{ name: SERVICE, type: "PTR" }] });
-    setTimeout(() => {
-      mdns.destroy();
-      resolve([...found.values()]);
-    }, timeoutMs);
+    const query = () => {
+      if (done) return;
+      try {
+        mdns.query({ questions: [{ name: SERVICE, type: "PTR" }] });
+      } catch {
+        // no multicast route: the timeout ends the browse
+      }
+    };
+    query();
+    timers.push(setTimeout(query, Math.min(250, timeoutMs / 2)));
+    timers.push(setTimeout(finish, timeoutMs));
   });
 }
 
@@ -125,6 +182,19 @@ export async function resolveTarget(
     tls: pin ? { pinSha256: pin } : {},
     wsUrl: `wss://${host}${wsPath}`,
     reachable,
+  };
+}
+
+/** A target from what is already known (no network): the cached manifest and pin,
+ * if any. */
+export function knownTarget(host: string, opts: { pin?: string; manifest?: Manifest | null; reachable?: boolean } = {}): Target {
+  const pin = opts.pin ?? opts.manifest?.tls?.cert_sha256;
+  return {
+    host,
+    manifest: opts.manifest ?? null,
+    tls: pin ? { pinSha256: pin } : {},
+    wsUrl: `wss://${host}${opts.manifest?.protocol?.ws_path ?? "/ws"}`,
+    reachable: opts.reachable ?? true,
   };
 }
 

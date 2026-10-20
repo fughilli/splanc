@@ -19,10 +19,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { browse } from "./discovery";
-import { loadFxHost } from "./fxhost";
+import { setFxHostRoot } from "./fxhost";
 import { Hub } from "./hub";
 import { exitCode, flag, parseArgs, toCall, USAGE, type Parsed } from "./cliArgs";
+import { ms, setProgressSink } from "./progress";
 import { createServer, VERSION } from "./server";
+import { readBundleInfo } from "./toolchain";
 
 const log = (...a: unknown[]) => console.error("[splanc-agent]", ...a);
 
@@ -64,16 +66,31 @@ async function oneShot(p: Parsed, root: string): Promise<number> {
     return 0;
   }
   if (cmd === "version") {
-    console.log(JSON.stringify({ version: VERSION, bundle: root }));
+    console.log(JSON.stringify({ version: readBundleInfo(root)?.version ?? "dev", server: VERSION, bundle: root }));
     return 0;
   }
+  const t0 = performance.now();
   const hub = makeHub(p, root);
-  await loadFxHost(root);
+  setFxHostRoot(root); // the wasm loads on the first compile/preview, not here
   const server = createServer(hub);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   const client = new Client({ name: "splanc-cli", version: VERSION });
   await client.connect(b);
+  // Phase progress (the tool's MCP progress notifications) to stderr; stdout
+  // stays the JSON result.
+  const quiet = flag(p, "quiet") !== undefined;
+  const opts = {
+    timeout: 15 * 60_000,
+    resetTimeoutOnProgress: true,
+    ...(quiet
+      ? {}
+      : {
+          onprogress: (n: { message?: string | undefined }) => {
+            if (n.message) log(n.message);
+          },
+        }),
+  };
   try {
     if (cmd === "tools") {
       const t = await client.listTools();
@@ -82,16 +99,17 @@ async function oneShot(p: Parsed, root: string): Promise<number> {
     }
     const call = toCall(p);
     if (call.resource) {
-      const r = await client.readResource({ uri: call.resource });
+      const r = await client.readResource({ uri: call.resource }, opts);
       const c = r.contents[0] as { text?: string } | undefined;
       console.log(c?.text ?? "null");
+      if (!quiet) log(`done (${ms(t0)})`);
       return 0;
     }
-    const r = (await client.callTool(
-      { name: call.tool!, arguments: call.args },
-      undefined,
-      { timeout: 15 * 60_000 },
-    )) as { isError?: boolean; content: { type: string; text?: string; data?: string }[] };
+    const r = (await client.callTool({ name: call.tool!, arguments: call.args }, undefined, opts)) as {
+      isError?: boolean;
+      content: { type: string; text?: string; data?: string }[];
+    };
+    if (!quiet) log(`done (${ms(t0)})`);
     const out = flag(p, "out");
     let n = 0;
     const texts: string[] = [];
@@ -131,16 +149,22 @@ async function main(): Promise<void> {
     return;
   }
   const hub = makeHub(p, root);
-  await loadFxHost(root);
-  // Discover in the background: the MCP handshake mustn't wait on the LAN.
+  setFxHostRoot(root);
+  // Progress outside any tool call (the background discovery) goes to stderr;
+  // a tool's progress goes to its caller (and is echoed to stderr).
+  setProgressSink(log);
+  // Discover — and open the players' sessions — in the background: the MCP
+  // handshake mustn't wait on the LAN, and the first tool call then finds its
+  // sessions already open.
   hub.ready().then(
     async () => {
       const ps = await hub.players();
       log(`players: ${ps.map((x) => `${x.name} (${x.host})`).join(", ") || "none yet"}`);
+      await hub.warm();
     },
     (e: Error) => log(`discovery: ${e.message}`),
   );
-  const server = createServer(hub);
+  const server = createServer(hub, { echo: log });
   await server.connect(new StdioServerTransport());
 }
 

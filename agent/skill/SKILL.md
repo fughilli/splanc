@@ -24,7 +24,9 @@ With several targets the result is one entry per player (`ok`, `result` or
 ## First, look
 
 1. `list_players` (or the `splanc://players` resource): names, rooms, firmware.
-   No players → ask the user for the player's address and `add_player`.
+   It is fast and trusts what the hub remembers (`checked` says how each player
+   was confirmed); `refresh_players` looks again thoroughly. No players → ask the
+   user for the player's address and `add_player`.
 2. Several players and no rooms, and the user speaks of rooms ("the living
    room", "the shelf")? Ask which fixture is where — `identify_player` blinks one
    so they can tell — then `set_room {room, players}`, and `set_fixture_pose` to
@@ -120,8 +122,13 @@ or when every targeted player failed, 2 when only some did):
 dusk`, `splanc-agent recall-keypoint dusk --seconds 10`, `splanc-agent
 blend-keypoints calm=0.7 storm=0.3`, `splanc-agent skill <file>`;
 `splanc-agent help` lists the commands, `splanc-agent tools` every tool. No
-players found → pass `--host <ip>`. (Installed: `npx -y
-https://splanc.io/agent/splanc-agent.tgz <command>`.)
+players found → pass `--host <ip>` (repeatable; it also skips the discovery
+wait). Progress lines go to stderr, the JSON to stdout. (Not installed: `npx -y
+https://splanc.io/agent/splanc-agent.tgz <command>` — but npx re-downloads the
+bundle on every call, so for more than a couple of calls install it once with
+`npm i -g https://splanc.io/agent/splanc-agent.tgz`.) The hub remembers players
+it reached, so after the first call each one costs a single connection (~1 s on
+the player's small chip); `list-players` from memory costs none.
 
 ## Textures
 

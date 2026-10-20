@@ -40,8 +40,15 @@ export function checkPin(sock: TLSSocket, tls: TlsPolicy): void {
   }
 }
 
-/** A `SocketFactory` for LedMapperClient that opens `ws`/`wss` with the policy. */
-export function nodeSocketFactory(tls: TlsPolicy = {}): SocketFactory {
+/** A `SocketFactory` for LedMapperClient that opens `ws`/`wss` with the policy.
+ * `hooks.onPeer` gets each connection's certificate SHA-256 (trust on first use:
+ * the hub remembers it as the player's pin); `hooks.onError` the socket's error
+ * (LedMapperClient only reports "connection failed"). */
+export function nodeSocketFactory(
+  tls: TlsPolicy = {},
+  hooks: { onPeer?: (sha256: string) => void; onError?: (e: Error) => void } = {},
+): SocketFactory {
+  const { onPeer, onError } = hooks;
   return (url: string): SocketLike => {
     const ws = new WebSocket(url, { rejectUnauthorized: false, handshakeTimeout: 15000 });
     const adapter: SocketLike = {
@@ -64,14 +71,20 @@ export function nodeSocketFactory(tls: TlsPolicy = {}): SocketFactory {
     ws.on("upgrade", (res) => {
       try {
         checkPin(res.socket as TLSSocket, tls);
+        const fp = peerFingerprint(res.socket as TLSSocket);
+        if (fp) onPeer?.(fp);
       } catch (e) {
+        onError?.(e as Error);
         adapter.onerror?.(e);
         ws.terminate();
       }
     });
     ws.on("open", () => adapter.onopen?.());
     ws.on("close", () => adapter.onclose?.());
-    ws.on("error", (e) => adapter.onerror?.(e));
+    ws.on("error", (e) => {
+      onError?.(e);
+      adapter.onerror?.(e);
+    });
     ws.on("message", (data: Buffer) => adapter.onmessage?.({ data: new Uint8Array(data) }));
     return adapter;
   };
