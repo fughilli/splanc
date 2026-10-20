@@ -283,7 +283,9 @@ bazel run //web:serve         # https://0.0.0.0:8443
 ```
 
 The web app deploys to Cloudflare Pages (ledmapper.pages.dev, splanc.pages.dev)
-via `//web:deploy_cloudflare`. Every `app-v*` tag also publishes a GitHub Release
+via `//web:deploy_cloudflare`; splanc.pages.dev itself is retired as an app
+origin (`web/_worker.js` 301s it to <https://splanc.io/app> and keeps only the
+`/gh-asset` and demo-AI API routes). Every `app-v*` tag also publishes a GitHub Release
 carrying the built tree as `splanc-webapp-<ver>.tar.gz` (+ `.sha256`); the
 splanc.io site (Studio-Fug/splanc.io) stages the newest one at
 <https://splanc.io/app>, so it follows app releases without a manual bump. The

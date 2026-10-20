@@ -136,7 +136,34 @@ refine and use the map.
   handles most fixtures; a Fine-tune disclosure exposes the full extraction options.
 - **Send to / pull from a device** so the fixture and the app agree on the map.
 - **Jump to Effects** to start animating this fixture.
+- **Export** the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
+  Studio) fixture file. See below.
 - **Edit metadata** — name, tags, and folder.
+
+#### Exporting a map to other software
+
+**Export** opens a sheet with two formats. Both have one entry per LED in output order, so entry N
+is the LED at output index N. The file is named after the map plus today's date. On iPhone and iPad
+it opens the share sheet; choose **Save to Files**.
+
+- **CSV (TouchDesigner, spreadsheets)** — columns
+  `index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`. Positions are in
+  **metres**. In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's
+  Points DAT. You get one point per LED, numbered by `index`, and the other columns become point
+  attributes.
+- **Chromatik fixture (.lxf)** — copy it into the Fixtures folder under your Chromatik home
+  directory and add it from the Fixture Chooser. Its points follow output order (one component per
+  channel). A **Scale** parameter sets units per metre: the default 100 means centimetres; set 1 for
+  metres or 39.37 for inches.
+- **Unmapped LEDs** still get an entry so the indices line up. They have `mapped = 0`, and their
+  position is interpolated between their mapped neighbours (clamped at the ends), the same place the
+  device renders them.
+- **Channels** — maps don't store a channel layout. If a connected device's per-channel LED counts
+  add up to this map's LED count, the export uses them. Otherwise every LED is on channel 0.
+  `segment` is the topology segment (-1 if none) and `arclength` is the LED's distance along it in
+  metres.
+- **Axes** — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
+  nothing needs converting. For Z-up tools such as Blender, pick **Z up** before exporting the CSV.
 
 The 3D view honors the render knobs in Settings ▸ Appearance (LED size, glow, background, ground
 grid, and axes triad).
@@ -221,6 +248,16 @@ address.
 
 Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or
 the Device tab) any time to reopen the device sheet.
+
+#### The device's security certificate
+
+- Each device creates its **own** security certificate the first time it starts (it takes well under
+  a second), and keeps it for life. Your browser asks you to trust it once per device.
+- The app remembers each device's certificate. If a device you know shows up with a **different**
+  one, the device sheet warns you: that is expected only after a factory reset (its flash erased).
+  Tap **I reset it — trust the new certificate** if you did; otherwise disconnect.
+- Devices updated from older firmware get their own certificate on the first start after the update;
+  the app switches to it without a warning.
 
 ### Managing devices
 

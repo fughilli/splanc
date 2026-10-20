@@ -28,7 +28,8 @@ PHY/lower-MAC blobs is ours. {doc}`../docs/manifesto` explains why.
   for every layer (see `firmware/netstack/DESIGN.md`):
   - our own RX ring and STA MLME;
   - the WPA2 4-way handshake, with CCMP on the AES accelerator;
-  - DHCP, ARP and TCP;
+  - DHCP, ARP and TCP, plus a rate-limited ICMP echo responder (`ping`; 10/s,
+    burst 5, up to 1472 data bytes; see `firmware/player_app/icmp_echo.h`);
   - a bounded HTTP server;
   - the BLE HCI/L2CAP/ATT/GATT layers and the coexistence arbiter.
 - **`blehost/`** — the heapless BLE host over the vendor controller (it replaced

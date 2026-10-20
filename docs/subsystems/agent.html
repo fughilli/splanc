@@ -229,6 +229,9 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -257,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
@@ -342,7 +346,11 @@ rendered from the same bundle they describe.</p>
     reg --&gt; p2
     hub -- &quot;effects · uniforms · pose · epoch&quot; --&gt; p1
     hub --&gt; p2
-    </pre><section id="what-the-hub-does">
+    </pre><p>Agents in the cloud reach the same hub through a <strong>bridge</strong>: <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge</span></code>
+on an always-on LAN host, connected out to the cloud relay, which serves it as a
+remote MCP connector paired with a code on the bridge’s screen
+(<a class="reference internal" href="../docs/guides/cloud-agent.html"><span class="doc">Use Splanc from a cloud agent</span></a>, <a class="reference internal" href="../docs/design/cloud-relay.html"><span class="doc">Cloud relay + LAN bridge</span></a>).</p>
+<section id="what-the-hub-does">
 <h2>What the hub does<a class="headerlink" href="#what-the-hub-does" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p><strong>Discovery.</strong> It browses <code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code> over mDNS and remembers players it
