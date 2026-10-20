@@ -1,0 +1,499 @@
+/* Splanc Bridge Flasher — the webapp's design tokens (web/src/ui/kit/tokens.css). */
+:root {
+  color-scheme: dark;
+  --bg: #0e0e12;
+  --surface: #17171c;
+  --surface-2: #1f1f26;
+  --border: #2a2a33;
+  --text: #e8e8ea;
+  --text-dim: #9a9aa2;
+  --accent: #5b7cfa;
+  --accent-quiet: #2b3566;
+  --ok: #37c871;
+  --warn: #e3b341;
+  --err: #f2555a;
+  --r-card: 12px;
+  --r-ctrl: 8px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 0.95rem / 1.5 var(--font-ui);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+h1 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.small {
+  font-size: 0.8rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.top {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 24px 8px;
+}
+
+.top p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.logo {
+  border-radius: 8px;
+}
+
+.steps {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 24px 0;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding-right: 16px;
+}
+
+.steps li span {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+
+.steps li.active {
+  color: var(--text);
+}
+
+.steps li.active span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.steps li.done span {
+  background: var(--accent-quiet);
+  border-color: var(--accent-quiet);
+  color: #fff;
+}
+
+main {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  gap: 10px;
+  animation: in 220ms var(--ease);
+}
+
+.pane > p {
+  margin: 0;
+}
+
+@keyframes in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.actions {
+  margin-top: auto;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  padding-top: 16px;
+}
+
+.actions > :first-child {
+  margin-right: auto;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* --- controls --- */
+.k-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--r-ctrl);
+  padding: 0.6rem 1.2rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 120ms var(--ease), opacity 120ms;
+}
+
+.k-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.k-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.k-btn.ghost {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.k-btn.danger {
+  background: var(--err);
+}
+
+.k-btn.tiny {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.field label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+  user-select: text;
+}
+
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.field.bad input,
+.field.bad textarea {
+  border-color: var(--err);
+}
+
+.err-text {
+  color: var(--err);
+  margin: 0;
+  font-size: 0.8rem;
+  min-height: 0;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.pw {
+  display: flex;
+  gap: 8px;
+}
+
+.checks {
+  gap: 24px;
+  margin: 0 0 6px;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.check input {
+  width: auto;
+  accent-color: var(--accent);
+}
+
+.advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+/* --- board + disk cards --- */
+.cards,
+.disks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.disks {
+  grid-template-columns: 1fr;
+}
+
+.card {
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 14px 16px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease), background 120ms;
+}
+
+.card:hover {
+  border-color: #3a3a46;
+}
+
+.card.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.card .name {
+  font-weight: 600;
+}
+
+.card .meta {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.card.disk {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.card.disk .icon {
+  width: 24px;
+  height: 30px;
+  flex: none;
+  background: no-repeat center / contain
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 30'><path d='M2 3a2 2 0 0 1 2-2h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z' fill='none' stroke='%239a9aa2' stroke-width='1.6'/><path d='M8 4v5M11 4v5M14 4v5' stroke='%239a9aa2' stroke-width='1.6' stroke-linecap='round'/></svg>");
+}
+
+.card.disk.selected .icon {
+  filter: brightness(1.6);
+}
+
+.card .tag {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+.card .tag.warn {
+  color: var(--warn);
+}
+
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--r-card);
+  padding: 28px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.skeleton {
+  height: 66px;
+  border-radius: var(--r-card);
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.notice {
+  border-radius: var(--r-card);
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  user-select: text;
+}
+
+.notice.err {
+  border-color: color-mix(in srgb, var(--err) 50%, var(--border));
+}
+
+.notice p {
+  margin: 0 0 8px;
+}
+
+/* --- progress --- */
+.bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+
+#bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 200ms linear;
+}
+
+.stages {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.stages li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+.stages li::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex: none;
+}
+
+.stages li.active {
+  color: var(--text);
+}
+
+.stages li.active::before {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+.stages li.done::before {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.stages li.skipped {
+  display: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- done --- */
+.done-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--ok);
+  color: #0e0e12;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.howto {
+  margin: 4px 0;
+  padding-left: 1.3rem;
+  display: grid;
+  gap: 6px;
+}
+
+@media (max-width: 700px) {
+  .grid2 {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,5 @@
+# Host-side Python for freezing the flasher sidecar (CI: Python 3.14, so zstd is
+# the stdlib's compression.zstd and nothing else is needed at runtime).
+pyinstaller==6.22.3
+certifi==2026.7.22
+pytest==9.1.0

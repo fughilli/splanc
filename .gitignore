@@ -68,5 +68,13 @@ venv/
 # hostdeploy runtime mailbox (container<->host deploy driver)
 .hostdeploy/
 
+# pi/bridge/flasher build outputs (packaging/build_app.*) + nix out-links
+pi/bridge/flasher/dist/
+pi/bridge/flasher/.pyibuild/
+pi/bridge/flasher/version.json
+pi/bridge/flasher/electron/node_modules/
+pi/bridge/flasher/electron/dist/
+pi/bridge/image/result*
+
 # --- Cloudflare wrangler (agent/relay) local state ---
 .wrangler/
