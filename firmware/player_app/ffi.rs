@@ -3102,6 +3102,9 @@ fn mm_q16(v: i16) -> i32 {
 /// Rebuild the room-frame LED cache + room box from the stored map and the
 /// player's pose: room = t + R(q) * (scale * pos). Unposed, only the box is
 /// derived (this fixture's own map box), since led.room then reads led.pos.
+// Cold (once per map/pose change): out of the per-frame update's hot code.
+#[cold]
+#[inline(never)]
 unsafe fn fx_rebuild_room() {
     FX_ROOM_READY = true;
     let p = player();
@@ -3201,6 +3204,9 @@ pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
     }
 }
 
+// Cold (once per map/pose change): out of the per-frame update's hot code.
+#[cold]
+#[inline(never)]
 unsafe fn fx_rebuild_topo() {
     // UV bounds for led.uv — map-derived (independent of topology). Gated by its
     // OWN flag so a topology upload doesn't recompute it and, crucially, a map
@@ -3390,6 +3396,9 @@ unsafe fn fx_rebuild_topo() {
 }
 
 /// Push the topology graph to every loaded deck's VM.
+// Cold (once per map/pose change): out of the per-frame update's hot code.
+#[cold]
+#[inline(never)]
 unsafe fn fx_push_graph_all() {
     for d in 0..N_DECKS {
         if let Some(p) = deck(d) {
