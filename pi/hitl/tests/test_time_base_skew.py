@@ -11,6 +11,8 @@ from time_base_skew_core import (
     decode_ticks,
     device_epoch,
     device_offset,
+    frames_by_channel,
+    percentile,
     skew,
 )
 
@@ -71,3 +73,59 @@ def test_no_decodable_frames_is_nan():
 def test_device_epoch_applies_the_clock_offset():
     assert device_epoch(1_000_000.0, -250.4) == 999_750
     assert TICK_S * (1 << BITS) == WRAP_S
+
+
+def _timing_frames(fr, channel, rate=12_000_000):
+    """(start_s, pixels) frames as the analyzer's timing op lists them."""
+    out = []
+    for i, (t, px) in enumerate(fr):
+        out.append(
+            {
+                "index": i,
+                "channel": channel,
+                "start_sample": int(round(t * rate)),
+                "start_us": round(t * 1e6, 3),
+                "pixels": [{"r": r, "g": g, "b": b} for r, g, b in px],
+            }
+        )
+    return out
+
+
+def test_frames_by_channel_splits_a_two_channel_capture():
+    # The broker's multi-channel layout: top level mirrors the primary (D6), and
+    # `channels` carries every channel's block, frames tagged, on one clock.
+    a, b = frames(0.0, seed=8, seconds=3.0), frames(0.009, seed=9, seconds=3.0)
+    d6, d7 = _timing_frames(a, "D6"), _timing_frames(b, "D7")
+    res = {
+        "unit": "c6-003f08",
+        "frames": d6,
+        "channels": [
+            {"channel": "D6", "frames": d6, "frames_listed": len(d6)},
+            {"channel": "D7", "frames": d7, "frames_listed": len(d7)},
+        ],
+    }
+    by = frames_by_channel(res)
+    assert sorted(by) == ["D6", "D7"]
+    assert len(by["D6"]) == len(a) and len(by["D7"]) == len(b)
+    assert abs(by["D7"][3][0] - b[3][0]) < 1e-6 and by["D7"][3][1] == list(b[3][1])
+    s = skew(by["D6"], by["D7"])
+    assert abs(s.skew_ms - 9.0) < 2.5, s.skew_ms
+    assert len(s.per_frame_ms) == s.n_b
+    assert abs(percentile(s.per_frame_ms, 50) - 9.0) < 3.0
+
+
+def test_frames_by_channel_single_channel_and_untagged():
+    fr = frames(0.0, seconds=1.0)
+    assert sorted(frames_by_channel({"frames": _timing_frames(fr, "D6")})) == ["D6"]
+    # A broker predating the channel tag: one bucket named "None" (the harness
+    # then reports the two-channel capture as unavailable).
+    untagged = [dict(f, channel=None) for f in _timing_frames(fr, "D6")]
+    assert sorted(frames_by_channel({"frames": untagged})) == ["None"]
+
+
+def test_per_frame_distribution_wraps_around_the_skew():
+    # A large baseline skew near half the wrap must not split the distribution.
+    s = skew(frames(0.0, seed=10), frames(WRAP_S / 2 - 0.050, seed=11))
+    assert all(abs(v - s.skew_ms) < 10.0 for v in s.per_frame_ms)
+    assert percentile([], 50) != percentile([], 50)  # NaN
+    assert percentile([3.0, 1.0, 2.0], 50) == 2.0

@@ -35,10 +35,10 @@
 
     # The generalized reservation system. Not a flake (plain Go module source);
     # buildGoModule consumes it in nix/packages.nix. Kept in lockstep with the
-    # @hitl_reserve git_override in //MODULE.bazel — bump both together. main @
-    # 825d155 (PR #6: WS2812 capture pre-trigger, see the MODULE.bazel comment).
+    # @hitl_reserve git_override in //MODULE.bazel — bump both together. Now
+    # 1a7a1cc (PR #15: multi-channel timing capture, see the MODULE.bazel comment).
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/bdf28ce0f84968836c8b8be1a0601a5ca7c6d52f";
+      url = "github:fughilli/hitl-reserve/1a7a1cc057c6bc127acce0435221ceca0feed8f1";
       flake = false;
     };
   };

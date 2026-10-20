@@ -16,8 +16,8 @@ can phase-lock to a 1 s toggle. Pure (no I/O): unit-tested in //pi/hitl/tests.
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 BITS = 12
 TICK_S = 0.004  # 4 ms per tick -> 16.384 s wrap
@@ -59,15 +59,57 @@ def device_offset(frames: Iterable[Tuple[float, Sequence[Sequence[int]]]]) -> Op
     return statistics.fmean(core)
 
 
+Frame = Tuple[float, List[Tuple[int, int, int]]]
+
+
+def frames_by_channel(res: dict) -> Dict[str, List[Frame]]:
+    """{channel: [(start_s, pixels)]} from a logic-analyzer "timing" response.
+
+    A multi-channel capture (hitl-reserve's analyzer: one acquisition, one sample
+    clock) carries `channels: [{channel, frames, ...}]`, primary first, with each
+    frame tagged `channel`; a single-channel (or pre-multi-channel broker) response
+    has only the top-level `frames`, keyed by their `channel` tag (None if the
+    broker predates tagging). Frame start times are seconds on the analyzer clock.
+    """
+    out: Dict[str, List[Frame]] = {}
+    blocks = res.get("channels")
+    if isinstance(blocks, dict):
+        items = list(blocks.items())
+    elif isinstance(blocks, list):
+        items = [(b.get("channel") or b.get("pin") or str(i), b) for i, b in enumerate(blocks)]
+    else:
+        items = [(None, res)]
+    for ch, block in items:
+        for f in block.get("frames") or []:
+            key = ch if ch is not None else (f.get("channel") or f.get("pin"))
+            px = [(p["r"], p["g"], p["b"]) for p in (f.get("pixels") or [])]
+            out.setdefault(str(key), []).append((f["start_us"] / 1e6, px))
+    return out
+
+
+def percentile(vals: Sequence[float], q: float) -> float:
+    """Nearest-rank percentile (q in [0, 100]); NaN for no values."""
+    if not vals:
+        return float("nan")
+    s = sorted(vals)
+    i = min(len(s) - 1, max(0, int(round(q / 100.0 * (len(s) - 1)))))
+    return s[i]
+
+
 @dataclass
 class Skew:
-    """offset_B - offset_A (ms), plus each device's per-frame spread (ms) and counts."""
+    """offset_B - offset_A (ms), plus each device's per-frame spread (ms) and counts.
+
+    per_frame_ms is the distribution behind skew_ms: every decodable B frame's
+    (wire - effect) offset minus A's mean offset, i.e. how far each of B's frames
+    sits from A's timeline on the shared analyzer clock."""
 
     skew_ms: float
     spread_a_ms: float
     spread_b_ms: float
     n_a: int
     n_b: int
+    per_frame_ms: List[float] = field(default_factory=list)
 
 
 def skew(
@@ -89,6 +131,13 @@ def skew(
             vals.append(((v + WRAP_S / 2) % WRAP_S) - WRAP_S / 2)
         return statistics.pstdev(vals) * 1000.0 if len(vals) > 1 else 0.0
 
+    per_frame = []
+    for t, px in frames_b:
+        ticks = decode_ticks(px)
+        if ticks is not None:
+            v = t - ticks * TICK_S - oa  # unwrapped around d, like the offsets
+            per_frame.append((d + ((v - d + WRAP_S / 2) % WRAP_S) - WRAP_S / 2) * 1000.0)
+
     count = lambda fr: sum(1 for _, px in fr if decode_ticks(px) is not None)  # noqa: E731
     return Skew(
         skew_ms=d * 1000.0,
@@ -96,6 +145,7 @@ def skew(
         spread_b_ms=spread(frames_b, ob),
         n_a=count(frames_a),
         n_b=count(frames_b),
+        per_frame_ms=per_frame,
     )
 
 
