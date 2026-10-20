@@ -437,6 +437,9 @@ pub const C_IMU_ACCEL: u8 = 9; // 3
 pub const C_IMU_GYRO: u8 = 10; // 3
 pub const C_LED_DIST: u8 = 11; // 1 — geodesic distance along the topology, 0..1
 pub const C_LED_UV: u8 = 12; // 2 — per-LED texture coord (pos.xy over map bounds)
+pub const C_LED_ROOM: u8 = 13; // 3 — room-frame position (m); == led.pos while unposed
+pub const C_ROOM_MIN: u8 = 14; // 3 — room bounding box (room frame, m)
+pub const C_ROOM_MAX: u8 = 15; // 3
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
 /// The `.fxb` format version this VM executes: the header's version byte (offset
@@ -480,6 +483,9 @@ pub const FLAG_USES_CTXFIX: u8 = 0x02;
 /// per-LED soft-float uv projection (2 sub + 2 mul + clamp) for the many effects
 /// that never touch uv — a chunk of the per-LED framing floor (FUG-122).
 pub const FLAG_USES_UV: u8 = 0x04;
+/// flags bit: the program reads `led.room` / `room.min` / `room.max`. Lets the
+/// host skip fetching the per-LED room-frame position for effects that don't.
+pub const FLAG_USES_ROOM: u8 = 0x08;
 /// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
 pub const BUF_DESC_LEN: usize = 7;
 
@@ -709,6 +715,12 @@ impl<'a> Program<'a> {
         self.flags & FLAG_USES_UV != 0
     }
 
+    /// Whether the program reads the room frame (`led.room`, `room.min/max`).
+    #[inline]
+    pub fn uses_room(&self) -> bool {
+        self.flags & FLAG_USES_ROOM != 0
+    }
+
     /// Decode buffer descriptor `i` (or `None`).
     pub fn buf_desc(&self, i: usize) -> Option<BufDesc> {
         let b = self.buffers.get(i * BUF_DESC_LEN..i * BUF_DESC_LEN + BUF_DESC_LEN)?;
@@ -789,6 +801,15 @@ pub struct Frame {
     pub dt_fix: i32,
     pub imu_accel_fix: [i32; 3],
     pub imu_gyro_fix: [i32; 3],
+    /// The fixture has a room pose: `led.room` reads `Led::room`. While false
+    /// (every host that doesn't know about rooms) `led.room` is `led.pos`, so an
+    /// effect written for one fixture keeps working.
+    pub room_posed: bool,
+    /// The room bounding box (`room.min` / `room.max`) and its Q16.16 mirrors.
+    pub room_min: [f32; 3],
+    pub room_max: [f32; 3],
+    pub room_min_fix: [i32; 3],
+    pub room_max_fix: [i32; 3],
 }
 
 /// Per-LED context.
@@ -815,6 +836,10 @@ pub struct Led {
     pub uv_fix: [i32; 2],
     pub s_fix: i32,
     pub dist_fix: i32,
+    /// Room-frame position (metres) and its Q16.16 mirror; read only when
+    /// `Frame::room_posed` (else `led.room` == `led.pos`).
+    pub room: [f32; 3],
+    pub room_fix: [i32; 3],
 }
 
 /// Canonical fraction width the `*_fix` context fields are cached in (Q16.16).
@@ -1467,6 +1492,22 @@ fn run(
                     C_LED_UV => {
                         push!(led.uv[0]);
                         push!(led.uv[1]);
+                    }
+                    C_LED_ROOM => {
+                        let r = if frame.room_posed { &led.room } else { &led.pos };
+                        push!(r[0]);
+                        push!(r[1]);
+                        push!(r[2]);
+                    }
+                    C_ROOM_MIN => {
+                        push!(frame.room_min[0]);
+                        push!(frame.room_min[1]);
+                        push!(frame.room_min[2]);
+                    }
+                    C_ROOM_MAX => {
+                        push!(frame.room_max[0]);
+                        push!(frame.room_max[1]);
+                        push!(frame.room_max[2]);
                     }
                     _ => push!(0.0),
                 }
@@ -2490,6 +2531,10 @@ fn run(
                     C_IMU_GYRO => (frame.imu_gyro_fix[comp.min(2)], CTX_FIX_FRAC),
                     C_LED_DIST => (led.dist_fix, CTX_FIX_FRAC),
                     C_LED_UV => (led.uv_fix[comp.min(1)], CTX_FIX_FRAC),
+                    C_LED_ROOM if frame.room_posed => (led.room_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_LED_ROOM => (led.pos_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_ROOM_MIN => (frame.room_min_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_ROOM_MAX => (frame.room_max_fix[comp.min(2)], CTX_FIX_FRAC),
                     _ => (0, 0),
                 };
                 let sh = frac as i32 - canon as i32;

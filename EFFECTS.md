@@ -55,15 +55,17 @@ slot bit-for-bit).
 Per-frame and per-LED inputs are exposed as globals (each compiles to a `LoadCtx`
 opcode):
 
-| Identifier                       | Type      | Meaning                                                                  |
-| -------------------------------- | --------- | ------------------------------------------------------------------------ |
-| `time`, `dt`, `frame`            | float     | seconds, delta seconds, frame counter                                    |
-| `led.pos`                        | vec3      | LED position (x, y, z)                                                   |
-| `led.idx`, `led.count`           | int/float | LED index, total live LED count                                          |
-| `led.seg`, `led.s`, `led.branch` | int/float | segment id, position along segment, branch id                            |
-| `led.dist`                       | float     | geodesic distance 0..1 from the topology root (or a `flood_from` source) |
-| `led.uv`                         | vec2      | per-LED texture coordinate (top-down projection to 0..1)                 |
-| `imu.accel`, `imu.gyro`          | vec3      | device IMU (when driven)                                                 |
+| Identifier                       | Type      | Meaning                                                                    |
+| -------------------------------- | --------- | -------------------------------------------------------------------------- |
+| `time`, `dt`, `frame`            | float     | seconds, delta seconds, frame counter                                      |
+| `led.pos`                        | vec3      | LED position (x, y, z)                                                     |
+| `led.idx`, `led.count`           | int/float | LED index, total live LED count                                            |
+| `led.seg`, `led.s`, `led.branch` | int/float | segment id, position along segment, branch id                              |
+| `led.dist`                       | float     | geodesic distance 0..1 from the topology root (or a `flood_from` source)   |
+| `led.uv`                         | vec2      | per-LED texture coordinate (top-down projection to 0..1)                   |
+| `led.room`                       | vec3      | LED position in the shared room frame, metres (== `led.pos` while unposed) |
+| `room.min`, `room.max`           | vec3      | room bounding box (the host's, else this fixture's own room-frame box)     |
+| `imu.accel`, `imu.gyro`          | vec3      | device IMU (when driven)                                                   |
 
 ### Declarations
 
@@ -216,7 +218,16 @@ Operands follow inline in the code stream, little-endian.
 Function ids for `UnMath`: `sin cos abs floor ceil fract sqrt exp log sign tan`
 (0–10). For `BinMath`: `min max pow mod step atan2` (0–5). Context ids for
 `LoadCtx`: time, dt, frame, led.pos(3), led.idx, led.count, led.seg, led.s,
-led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2).
+led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2), led.room(3),
+room.min(3), room.max(3). A program reading the room frame sets `.fxb` flags bit
+0x08 (`FLAG_USES_ROOM`) so the host fetches it only then.
+
+`time` is seconds since the effect started — or, once a host sends
+`set_time_base { epoch_ms }` (the multi-fixture shared time base, in the device's
+own clock), `(now - epoch_ms) / 1000`, held at 0 before the epoch, so fixtures
+animate in step. A fixture's room pose (`set_fixture_pose`: translation, rotation
+quaternion, scale) maps each LED as `room = t + R(q) * (scale * pos)`; the device
+caches it per LED in millimetres (6 B/LED).
 
 ## The `.fxb` container
 

@@ -173,6 +173,23 @@ impl FxPreview {
             if mx[0] - mn[0] > 1e-6 { 1.0 / (mx[0] - mn[0]) } else { 0.0 },
             if mx[1] - mn[1] > 1e-6 { 1.0 / (mx[1] - mn[1]) } else { 0.0 },
         ];
+        // room.min / room.max: the preview shows one unposed fixture, so (like the
+        // device) the room box is the map's own 3D box and led.room == led.pos.
+        let mut rmn = [f32::INFINITY; 3];
+        let mut rmx = [f32::NEG_INFINITY; 3];
+        for i in 0..n {
+            for k in 0..3 {
+                rmn[k] = rmn[k].min(positions[3 * i + k]);
+                rmx[k] = rmx[k].max(positions[3 * i + k]);
+            }
+        }
+        let q16b = |x: f32| (x * 65536.0) as i32;
+        for k in 0..3 {
+            self.frame.room_min[k] = if rmn[k].is_finite() { rmn[k] } else { 0.0 };
+            self.frame.room_max[k] = if rmx[k].is_finite() { rmx[k] } else { 0.0 };
+            self.frame.room_min_fix[k] = q16b(self.frame.room_min[k]);
+            self.frame.room_max_fix[k] = q16b(self.frame.room_max[k]);
+        }
         if let Ok(prog) = Program::parse(&self.bytes) {
             for i in 0..n {
                 let uv = [
@@ -195,6 +212,9 @@ impl FxPreview {
                     uv_fix: [q16(uv[0]), q16(uv[1])],
                     s_fix: q16(s),
                     dist_fix: q16(dist),
+                    // Unposed: the VM reads led.pos for led.room (frame.room_posed).
+                    room: [0.0; 3],
+                    room_fix: [0; 3],
                 };
                 let (r, g, b) = self.vm.run_shade(&prog, &self.frame, &led);
                 out.push(r);

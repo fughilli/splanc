@@ -47,6 +47,7 @@ import {
   decodeMappingBundle,
   type EffectListMessage,
   type EffectUniformsMessage,
+  type FixturePoseFlat,
   type HardwareConfigStateMessage,
   type MappingBundle,
   type PerfMode,
@@ -721,6 +722,35 @@ export class LedMapperClient {
       { type: "list_effects" } as unknown as ClientMessage,
       "effect_list",
     )) as unknown as EffectListMessage;
+  }
+
+  /** Place this fixture in a shared room frame (or clear it); resolves with the
+   * echoing welcome. Needs the "fixture_pose" feature. */
+  async setFixturePose(
+    pose: FixturePoseFlat | null,
+    commit?: boolean,
+  ): Promise<Record<string, unknown>> {
+    const msg: Record<string, unknown> = { type: "set_fixture_pose" };
+    if (pose) msg.pose = pose;
+    else msg.clear = true;
+    if (commit !== undefined) msg.commit = commit;
+    return (await this.request(
+      msg as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as Record<string, unknown>;
+  }
+
+  /** Align effect time to `epochMs` in the device's clock (null clears). Needs
+   * the "time_base" feature. */
+  async setTimeBase(epochMs: number | null): Promise<Record<string, unknown>> {
+    const msg =
+      epochMs === null
+        ? { type: "set_time_base", epochMs: 0, clear: true }
+        : { type: "set_time_base", epochMs };
+    return (await this.request(
+      msg as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as Record<string, unknown>;
   }
 
   async getColorCorrection(): Promise<ColorCorrectionStateMessage> {
