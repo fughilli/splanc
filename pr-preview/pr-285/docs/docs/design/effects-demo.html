@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Decision log" href="../decisions.html"><link rel="prev" title="Design: On-device / local models for the AI features (FUG-87)" href="on-device-models.html">
         <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
@@ -237,20 +241,29 @@
 <li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -299,11 +312,12 @@
         <article role="main" id="furo-main-content">
           <section id="website-effects-playground">
 <h1>Website effects playground<a class="headerlink" href="#website-effects-playground" title="Link to this heading">¶</a></h1>
-<p>Status, 2026-10-19: the operator explicitly approved the OpenRouter visitor-data
-flow and confirmed <code class="docutils literal notranslate"><span class="pre">OPENROUTER_API_KEY</span></code> is installed on Cloudflare. The isolated
-branch contains the layout, tour, client and tested worker implementation. Live
-inference and production deployment are still pending; mocked checks are not
-model-quality results.</p>
+<p>Status, 2026-10-19: the guided workspace is live through the website’s Meet
+Splanc scene links. All three entry links, editable scene copies, the three core
+panes and all eight tour steps passed a production browser check. The configured
+relay successfully used MiniMax to edit an effect, compile it and request preview
+images. Its concluding response then timed out; complete live vision-loop
+validation remains pending. Mocked tests are not model-quality results.</p>
 <section id="entry-and-layout">
 <h2>Entry and layout<a class="headerlink" href="#entry-and-layout" title="Link to this heading">¶</a></h2>
 <p>The Meet Splanc scene’s Try it link adds <code class="docutils literal notranslate"><span class="pre">?workspace=demo</span></code> to the hash route:
@@ -311,15 +325,18 @@ model-quality results.</p>
 into an editable local effect and the route is replaced with that copy’s ID.
 Reload keeps the same copy. The original scene, camera and uniform defaults are
 preserved. Ordinary effect links keep the existing customizable workspace.</p>
-<p>Desktop: Preview and Uniforms above Code/tools and AI chat. Phone: Preview,
-Uniforms and AI chat stay stacked, with an expandable tools section underneath.
-The three core panes cannot be hidden or put behind another tab in this preset.
-Normal saved docks are neither loaded nor overwritten. Existing configured AI
-providers are respected; the free provider is the unconfigured demo’s
-default only.</p>
+<p>The link selects the <code class="docutils literal notranslate"><span class="pre">effects-demo</span></code> preset in the existing FxLayout dock engine.
+On desktop, Preview is the center, Uniforms the left dock, AI chat the right dock,
+and Code/MIDI/Video/Device/Disassembly occupy the bottom tab group. On phones,
+Preview, Uniforms and AI chat are initially fronted in the existing top/center/
+bottom regions; the tool tabs share the center region. All normal move, resize,
+hide and recall controls work. There is no demo-specific renderer or locked pane.
+The preset uses a temporary persistence scope, leaving the visitor’s normal saved
+layout intact. Existing configured AI providers are respected; the free provider
+is the unconfigured demo’s default only.</p>
 <p>The lower-left invitation starts a short local tour of Preview, Uniforms, AI chat,
 Code, MIDI, Video, Device and Disassembly. Done, Skip and Escape reset the preset
-(Code selected; phone tools collapsed). Navigating away disposes the overlay and
+(Code selected on desktop; Preview, Uniforms and AI chat fronted on phones). Navigating away disposes the overlay and
 invitation. The general app tour is not prompted over this demo tour.</p>
 </section>
 <section id="free-model-research">
@@ -375,7 +392,13 @@ compile/tool results and preview images only when capture_preview is requested.<
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
 limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
-4,000 output tokens, 45 seconds per provider and 100 seconds overall. Price caps
+4,000 output tokens, 45 seconds per provider and 100 seconds overall. The
+<a class="reference external" href="https://openrouter.ai/api/v1/models">model catalog</a> reports MiniMax’s default
+reasoning effort as <code class="docutils literal notranslate"><span class="pre">max</span></code>; the interactive relay explicitly uses its supported
+<code class="docutils literal notranslate"><span class="pre">low</span></code> setting. Nemotron and Gemma disable optional reasoning. This retains the
+same free models and budgets while avoiding the default deep-reasoning latency.
+A response whose headers arrive but whose body stalls is classified as a timeout,
+not malformed JSON. Price caps
 cover input, output, requests and images at zero. Inline preview images only;
 remote image URLs and visitor-supplied routing overrides are rejected.</p>
 <p>The local burst guard allows 24 requests/minute/IP, two concurrent requests/IP,
@@ -396,18 +419,26 @@ on one OpenRouter account still share its free allowance and the platform itself
 The UI must report a depleted allowance honestly and preserve Code/Uniforms and
 BYOK access. Do not promise unlimited free AI or use a paid model silently.</p>
 </section>
-<section id="release-gates">
-<h2>Release gates<a class="headerlink" href="#release-gates" title="Link to this heading">¶</a></h2>
+<section id="release-verification">
+<h2>Release verification<a class="headerlink" href="#release-verification" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p>Complete and test the approved worker implementation, including quota, timeout,
-cancelled-request, malformed-response, invalid-origin and free-only safeguards.</p></li>
-<li><p>Configure the production secret, then measure the three models on representative
-Splanc edits, compile success and latency. No live model evaluations yet.</p></li>
-<li><p>Publish a complete tested app artifact with matching compiler/VM WASM. Update
-splanc.io’s APP_REVISION pin only after that build succeeds. The existing pin is
-still the released app-v1.4.0; the website link change alone cannot enable this.</p></li>
-<li><p>Deploy the worker and verify the actual browser-to-relay-to-model flow, including
-a real fallback. No production changes have been made by this branch.</p></li>
+<li><p>Provider, quota, timeout, cancelled-request, malformed-response, invalid-origin
+and free-only relay checks pass locally. A regression explicitly rejects 3xx
+responses and uses the redirect mode supported by Cloudflare Workers.</p></li>
+<li><p>Full app Test CI passed on the merged workspace revision, with 194 tests and a
+complete matching compiler/VM artifact. A web-only deployment published it to
+Cloudflare and GitHub Pages without releasing firmware or TestFlight builds.</p></li>
+<li><p>The production endpoint confirms configuration presence. The live MiniMax loop
+performed set_script (6.9 s), compiled successfully, then capture_preview (1.5 s).
+A second preview request took 42.7 s; the subsequent body reads hit the two
+45-second deadlines, and Gemma was provider-rate-limited. Low reasoning is now
+explicit and aborted response bodies are diagnosed correctly. A final live
+edit/compile/preview/conclusion check remains required.</p></li>
+<li><p>The website update preserves automatic app/agent release tracking while requiring
+a tested app revision containing this demo. Newer compatible releases should
+supersede that baseline. Three individual models have not been benchmarked.</p></li>
+<li><p>Cloudflare behavior is documented in its
+<a class="reference external" href="https://developers.cloudflare.com/workers/runtime-apis/request/">Request API</a>.</p></li>
 </ul>
 </section>
 <section id="validation-completed-locally">
@@ -431,6 +462,42 @@ pane dimensions were corrected during review. Logs/screenshots are local-only
 under .ledmapper, not committed generated artifacts.</p></li>
 </ul>
 </section>
+<section id="relay-only-operational-updates">
+<h2>Relay-only operational updates<a class="headerlink" href="#relay-only-operational-updates" title="Link to this heading">¶</a></h2>
+<p>The deployed browser reached OpenRouter after the redirect fix, but returned a
+429. Its shared/platform vs provider scope was not distinguishable in the old
+sanitation. Provider fallback now accepts OpenRouter’s documented typed
+<code class="docutils literal notranslate"><span class="pre">rate_limited</span></code>/<code class="docutils literal notranslate"><span class="pre">rate_limit_exceeded</span></code> and explicit legacy provider error metadata.
+Exhausted platform headers or an OpenRouter limit source still stop the chain;
+ambiguous limits stop too. No key rotation or paid fallback is used.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Deploy</span> <span class="pre">tested</span> <span class="pre">web</span> <span class="pre">app</span></code> has an optional <code class="docutils literal notranslate"><span class="pre">worker_only</span></code> mode. It retains the entire
+successful main Test artifact, requires the diff from that artifact to contain
+only the Worker, its tests, this document and the deployment workflow, runs Node
+regressions and pinned Miniflare/workerd checks, then replaces only <code class="docutils literal notranslate"><span class="pre">_worker.js</span></code>.
+It records distinct static/worker source revisions in <code class="docutils literal notranslate"><span class="pre">worker-deployment.json</span></code>.
+The static app and its compiler/VM stay matched; GitHub Pages is not republished
+for this mode. Any app, native source or dependency change requires a full build.</p>
+</section>
+<section id="tour-visibility-and-bounded-previews">
+<h2>Tour visibility and bounded previews<a class="headerlink" href="#tour-visibility-and-bounded-previews" title="Link to this heading">¶</a></h2>
+<p>The invitation uses larger bold text, a gold border and one smooth highlight every
+six seconds. It stays still during hover/focus and under reduced-motion preferences.
+Finishing or skipping the tour resets the same normal dock preset.</p>
+<p>The free demo previously resent every full-resolution PNG on every tool round,
+which could exceed the relay’s 2 MiB request cap after a few captures. Captures are
+now JPEG, at most 960 pixels on the longest edge and 256 KiB of encoded text. Only
+the latest image is sent; earlier image entries become textual markers. Existing chat persistence already removes image pixels on save, so
+refreshing retains the text/tool history without resending old large images. Tool-call
+IDs, results, code and chat text are retained, and saved history is not mutated.
+The capture waits for the refreshed frame before encoding. Other configured
+providers keep their full-resolution capture path. Oversized text histories are
+caught before sending with guidance to use New chat; server limits stay intact.</p>
+<p>Regression evidence: six synthetic 700 KB preview images previously exceeded
+4 MB; the filtered request retains one image below 1 MB and all tool pairs. A
+real desktop browser at device pixel ratio 3 completed a mocked seven-request
+edit/five-preview/conclusion flow: requests remained below 223 KB and the current
+JPEG under 196 KB. This verifies transport and local compilation, not model output.</p>
+</section>
 </section>
 
         </article>
@@ -438,8 +505,26 @@ under .ledmapper, not committed generated artifacts.</p></li>
       <footer>
         
         <div class="related-pages">
-          
-          
+          <a class="next-page" href="../decisions.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Decision log</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="on-device-models.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Design: On-device / local models for the AI features (FUG-87)</div>
+                
+              </div>
+            </a>
         </div>
         <div class="bottom-of-page">
           <div class="left-details">
@@ -474,8 +559,10 @@ under .ledmapper, not committed generated artifacts.</p></li>
 <li><a class="reference internal" href="#entry-and-layout">Entry and layout</a></li>
 <li><a class="reference internal" href="#free-model-research">Free model research</a></li>
 <li><a class="reference internal" href="#approved-relay">Approved relay</a></li>
-<li><a class="reference internal" href="#release-gates">Release gates</a></li>
+<li><a class="reference internal" href="#release-verification">Release verification</a></li>
 <li><a class="reference internal" href="#validation-completed-locally">Validation completed locally</a></li>
+<li><a class="reference internal" href="#relay-only-operational-updates">Relay-only operational updates</a></li>
+<li><a class="reference internal" href="#tour-visibility-and-bounded-previews">Tour visibility and bounded previews</a></li>
 </ul>
 </li>
 </ul>

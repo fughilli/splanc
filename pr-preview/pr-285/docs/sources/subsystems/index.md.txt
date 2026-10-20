@@ -20,7 +20,7 @@ Framework-free TypeScript on Vite.
 :link-type: doc
 
 `firmware/` — `no_std` Rust crates behind a C++/Arduino app on the ESP32-C6:
-LEDs, the control server, and the effects VM.
+LEDs, a heapless Wi-Fi/BLE stack, the effects VM, and checked memory budgets.
 :::
 
 :::{grid-item-card} ✨ The effects compiler
@@ -52,7 +52,7 @@ into a per-LED 3D map.
 :link-type: doc
 
 `shared/protocol/` — JSON schemas + protobuf as the single source of truth for
-every cross-module message.
+every cross-module message; zero-copy `pbview` views on the firmware.
 :::
 
 :::{grid-item-card} 🧪 The simulator
@@ -61,6 +61,14 @@ every cross-module message.
 
 `shared/simulator/` — synthetic ground truth: fixtures, camera walks, and
 degradations for hardware-free testing.
+:::
+
+:::{grid-item-card} 🧠 The agent bridge
+:link: agent
+:link-type: doc
+
+`agent/` — an MCP server + CLI hub that lets an AI agent drive every player on
+the LAN as one room. Shipped with each firmware release; served at splanc.io.
 :::
 
 :::{grid-item-card} 🤖 HITL & tooling
@@ -83,5 +91,6 @@ solver
 reconstruction
 protocol
 simulator
+agent
 hitl
 ```
