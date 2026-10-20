@@ -15,6 +15,7 @@ import { appendGrouped, openFolderPicker } from "./folders";
 import { appState } from "../app/state";
 import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
+import { saveFile } from "../saveFile";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name" | "leds";
@@ -442,13 +443,7 @@ function pickFile(accept: string): Promise<File | null> {
 }
 
 export function downloadBytes(bytes: Uint8Array, name: string): void {
-  const blob = new Blob([bytes as unknown as BlobPart], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
+  void saveFile(bytes, name, "application/octet-stream");
 }
 
 /** Simple single-field editor in a bottom sheet. */

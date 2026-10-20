@@ -5,6 +5,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Export a map to TouchDesigner or Chromatik
+
+- **Export map** in the mapping workspace downloads the fixture's LED positions,
+  one entry per LED in output order. Two formats:
+
+  - a **CSV** laid out as a TouchDesigner Points DAT
+    (`index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`,
+    metres, +Y up). Load it in a Table DAT and feed a DAT to SOP, no editing.
+  - a **Chromatik `.lxf`** fixture (`points` components per channel, with a
+    `Scale` parameter that defaults to centimetres).
+
+  Unmapped LEDs keep their index with `mapped=0` and an interpolated position.
+  A Z-up option covers Blender-style tools. On iOS the file goes through the
+  share sheet ("Save to Files"). Agents get the same files from the bridge's
+  `export_map` tool / `splanc-agent export-map`. See
+  [the user guide](user-guide.md#exporting-a-map-to-other-software).
+
 ### AI agents can drive Splanc ("Use splanc.io to set the mood of the room")
 
 - **Agent bridge + bundle** (#274): `agent/` is an MCP server (stdio) and a

@@ -82,7 +82,9 @@ model, touches nothing), `measure_effect` (windowed on-device perf stream),
 `list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
 `list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
 `delete_keypoint` (feature `keypoints`; design
-[uniform-keypoints.md](../docs/design/uniform-keypoints.md)), a confirm-gated
+[uniform-keypoints.md](../docs/design/uniform-keypoints.md)), `export_map`
+(the stored map as TouchDesigner CSV or a Chromatik `.lxf`, same serializer as
+the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).
 Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 `forget_player`, `identify_player` (blinks), `set_room`, `set_fixture_pose`,

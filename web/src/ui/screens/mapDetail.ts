@@ -30,6 +30,7 @@ import { Button, Card, Slider, toast, icon, type IconName } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { openDeviceSheet } from "./deviceSheet";
+import { openMapExportSheet } from "./mapExportSheet";
 import type { Router, Screen } from "../app/router";
 
 // The five raw ExtractOptions and the single-knob "Cleanup" curve over them.
@@ -287,6 +288,11 @@ export function MapDetailScreen(
       topoTile,
       actionTile("map-to-device", "Push", () => void sendToDevice()),
       actionTile("map-from-device", "Pull", () => void pullFromDevice()),
+      // Export for other show software (TouchDesigner CSV / Chromatik .lxf).
+      // Exports what's on screen, including unsaved transform edits.
+      actionTile("download", "Export", () => {
+        if (rec) openMapExportSheet({ name: rec.name, map: rec.map, topology: currentTopology ?? rec.topology ?? null });
+      }),
     );
     // Supplemental capture (FUG-112): re-scan and fuse into this map to fill
     // gaps / raise confidence. Only offered for maps that kept their raw

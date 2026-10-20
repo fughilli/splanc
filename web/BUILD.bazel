@@ -75,6 +75,7 @@ copy_to_bin(
         "src/effects/multiDevice.ts",
         "src/fx/preview.ts",
         "src/gen/ledmapper_pb.ts",
+        "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)
         "src/net/client.ts",
         "src/net/clocksync.ts",
         "src/net/fxbTextures.ts",

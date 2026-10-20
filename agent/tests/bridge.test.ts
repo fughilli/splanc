@@ -373,6 +373,30 @@ describe("mcp", () => {
 
   });
 
+  test("export_map returns the fixture as TouchDesigner CSV or a Chromatik .lxf", async () => {
+    const server = createServer(session);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const call = async (args: Record<string, unknown>) => {
+      const r = await client.callTool({ name: "export_map", arguments: args });
+      assert.notEqual(r.isError, true, JSON.stringify(r.content));
+      return JSON.parse((r.content as { text: string }[])[0]!.text) as Record<string, unknown>;
+    };
+    const csv = await call({});
+    assert.equal(csv["format"], "csv");
+    assert.match(String(csv["filename"]), /\.csv$/);
+    const lines = String(csv["content"]).split("\n");
+    assert.match(lines[0]!, /^index,P\(0\),P\(1\),P\(2\),mapped/);
+    assert.equal(lines.length, 1 + 30);
+    const lxf = await call({ format: "lxf" });
+    const fx = JSON.parse(String(lxf["content"]));
+    assert.equal(fx.components[0].type, "points");
+    assert.equal(fx.components[0].coords.length, 30);
+    await client.close();
+
+  });
+
   test("compile_effect reports diagnostics for broken source", async () => {
     const c = await compile("vec3 shade(Led led) { return undefined_thing; }");
     assert.equal(c.ok, false);

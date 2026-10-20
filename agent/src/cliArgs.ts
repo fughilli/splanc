@@ -24,6 +24,7 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   align-time [players]                 one shared effect clock
   room [<room>]                        the room's fixtures in its shared frame
   device [players]                     (also: summary, map, topology, effect)
+  export-map [--format csv|lxf] [--up y|z]   the map as TouchDesigner CSV / Chromatik .lxf
   set-brightness <0..1>
   list-uniforms
   set-uniforms k=v... [--commit]
@@ -272,6 +273,11 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
     }
     case "delete-keypoint":
       return { tool: "delete_keypoint", args: { name: need(rest[0], "keypoint name"), ...deck, ...sel } };
+    case "export-map": {
+      const format = flag(p, "format");
+      const up = flag(p, "up");
+      return { tool: "export_map", args: { ...(format ? { format } : {}), ...(up ? { up } : {}), ...sel } };
+    }
     case "set-device-name":
       return {
         tool: "set_device_name",
