@@ -64,7 +64,7 @@ import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
 import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { mountEffectsTour } from "../guide/effectsTour";
-import { makeDemoProvider } from "../../effects/ai/providers/demo";
+import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { renderMarkdown } from "../markdown";
@@ -1396,7 +1396,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         },
         onCapturePreview: async () => {
           setChatStatus("Taking a screenshot of the preview…");
-          return capturePreviewPng();
+          return capturePreviewImage();
         },
         onListMidi: async () => {
           setChatStatus("Reading MIDI controls…");
@@ -1442,10 +1442,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
   }
 
-  /** Render the live preview canvas to a PNG data URL for the vision tool. The
-   * MapView draws to `canvas` (a 2D context), so toDataURL captures the current
-   * frame directly — we nudge one frame first so it reflects the latest script. */
-  function capturePreviewPng(): string {
+  /** Refresh the live frame before encoding. Free-demo screenshots are bounded
+   * JPEGs; configured providers retain the full-resolution PNG capture. */
+  async function capturePreviewImage(): Promise<string> {
     if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
       const time = (performance.now() - startT) / 1000;
       preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
@@ -1453,7 +1452,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       // canvas on the next frame; the capture reflects the current effect.
       mapView.setLedColors(preview.shadeAll(positions));
     }
-    return canvas.toDataURL("image/png");
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    return demoProvider ? captureDemoPreview(canvas) : canvas.toDataURL("image/png");
   }
 
   // -- device ---------------------------------------------------------------
@@ -1619,7 +1619,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // localStorage. On narrow viewports the wide layout is ignored: code +
   // uniforms are primary, the rest cycle through an overflow tab strip.
   const layout = new FxLayout({
-    demo: screenOpts.demo ?? false,
+    ...(screenOpts.demo ? { preset: "effects-demo" as const, storageKey: null } : {}),
     panes: [
       { id: "code", title: "Code", primary: true, node: editorWrap },
       { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },

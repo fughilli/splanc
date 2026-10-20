@@ -3131,38 +3131,29 @@ input.device-name-input {
   backdrop-filter: blur(6px);
 }
 
-/* Website effects playground: core controls never disappear behind a tab. */
-.fxlayout-demo { display:grid; height:100%; min-height:0; gap:1px;
-  grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);
-  grid-template-rows:minmax(0,1fr) minmax(0,.75fr); background:var(--border); }
-.fxlayout-demo > [data-pane="preview"] { grid-area:1/1; }
-.fxlayout-demo > [data-pane="uniforms"] { grid-area:1/2; }
-.fxlayout-demo > [data-pane="chat"] { grid-area:2/2; }
-.fxlayout-demo-tools { grid-area:2/1; display:flex; flex-direction:column; min-width:0; min-height:0; }
-.fxlayout-demo-tabs { flex:0 0 auto; overflow-x:auto; background:var(--surface); }
-.fxlayout-demo-tabs button { white-space:nowrap; }
-.fxlayout-demo-tools > .fxpane { flex:1; min-height:0; }
-.fxlayout-demo-collapse { display:none; }
-.fx-demo-tour-chip { position:fixed; bottom:12px; left:12px; z-index:90; display:flex;
-  border:1px solid var(--border); border-radius:24px; background:var(--surface);
-  box-shadow:0 4px 20px #0006; overflow:hidden; animation:fx-demo-in .3s ease-out; }
-.fx-demo-tour-chip button { color:var(--text); background:transparent; border:0;
-  cursor:pointer; padding:10px 14px; font:inherit; font-size:var(--f-caption); }
-.fx-demo-tour-chip button:hover { background:var(--surface-2); }
+/* Website effects tour invitation. */
+.fx-demo-tour-chip { position:fixed; bottom:16px; left:16px; z-index:90; display:flex;
+  max-width:calc(100vw - 32px); border:2px solid #e8cc48; border-radius:28px;
+  background:linear-gradient(120deg,#292716,#19191f); color:#fff4b2;
+  box-shadow:0 4px 20px #0008; overflow:hidden;
+  animation:fx-demo-in .35s ease-out, fx-demo-highlight 6s ease-in-out 1s infinite; }
+.fx-demo-tour-chip button { color:inherit; background:transparent; border:0;
+  cursor:pointer; min-height:44px; padding:11px 16px; font:inherit; font-size:var(--f-body); }
+.fx-demo-tour-chip button:first-child { font-weight:700; }
+.fx-demo-tour-chip button:last-child { min-width:44px; padding:9px 12px;
+  border-left:1px solid #e8cc4833; color:#e8ddb2; font-size:20px; }
+.fx-demo-tour-chip button:hover { background:#fff2; }
+.fx-demo-tour-chip button:focus-visible { outline:2px solid #fff6c2; outline-offset:-5px; border-radius:22px; }
+.fx-demo-tour-chip:hover, .fx-demo-tour-chip:focus-within { animation-play-state:paused; border-color:#fff1a0; }
 .fx-demo-tour-chip[hidden] { display:none; }
 @keyframes fx-demo-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+/* One soft highlight per cycle, with a long quiet interval; no scale or layout jump. */
+@keyframes fx-demo-highlight {
+  0%, 38%, 100% { border-color:#e8cc48; box-shadow:0 4px 20px #0008,0 0 0 0 #ffdf5800; }
+  18% { border-color:#fff8cf; box-shadow:0 4px 20px #0008,0 0 0 4px #ffdf5826,0 0 22px #ffdf584d; }
+}
 @media (prefers-reduced-motion:reduce) { .fx-demo-tour-chip { animation:none; } }
 @media (max-width:719px) {
-  .fxlayout-demo { grid-template-columns:minmax(0,1fr);
-    grid-template-rows:minmax(0,1fr) minmax(0,.65fr) minmax(0,1fr) auto; }
-  .fxlayout-demo > [data-pane="preview"] { grid-area:1/1; }
-  .fxlayout-demo > [data-pane="uniforms"] { grid-area:2/1; }
-  .fxlayout-demo > [data-pane="chat"] { grid-area:3/1; }
-  .fxlayout-demo-tools { grid-area:4/1; }
-  .fxlayout-demo-tools > .fxpane { display:none; }
-  .fxlayout-demo--tools-open { grid-template-rows:minmax(0,1fr) minmax(0,.6fr) minmax(0,1fr) minmax(0,.85fr); }
-  .fxlayout-demo--tools-open .fxlayout-demo-tools > .fxpane { display:flex; }
-  .fxlayout-demo--tools-open .fxlayout-demo-collapse { display:block; }
   .fx-demo-tour-chip { bottom:118px; }
 }
 
