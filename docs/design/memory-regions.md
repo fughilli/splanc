@@ -68,7 +68,7 @@ The test already caught one model bug: closing wss with a BLE central still conn
 | 57 | 151,213 B | Joined + BLE connected + wss + effect with video + map |
 
 Today's layout holds about 152 KB for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set, which under PR-38 has nearly everything live at once, so the union saves little by itself (~1 KB):
-- **The next lever is the scan residue:** 20 KB of vendor scan, lwIP and event-loop heap that never frees.
+- **The next lever is the scan residue:** 20 KB of vendor scan, lwIP and event-loop heap that never frees. *(Since freed by #266: no `esp_netif_init`, the event loop deleted after the scan, no NVS mirror.)*
 
 ## Integration plan
 
@@ -83,11 +83,11 @@ Ordered by bytes recovered per effort:
    - Log-only first, to name the ~5 KB nobody owns; then abort in HITL builds.
 3. **Activity union.** Put `ModeRegion<ActivityStore>` over the effect statics (FX_ARENA, FX_VM, FX_BYTES, JIT, LUT, OSC) and use the upload/mapping scratch. Video's FX_TEX_PREV is a sub-variant of Effect.
 4. **BLE controller slab:** wrap `bt_osi_mem_*` into a bounded `Slab` so the controller's own allocations are isolated from the shared heap (the controller stays up: PR-38).
-5. **TLS slab.** Add `MBEDTLS_PLATFORM_MEMORY` + `mbedtls_platform_set_calloc_free` into a `Slab`. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap.
-6. **Scan residue.** Scan with the netstack's own MLME, or `esp_wifi_deinit` after the scan, and drop `esp_netif`/lwIP/event-loop tasks. Then set `scan_residue` live only in `Wifi::Scanning`.
+5. **TLS slab.** Add `MBEDTLS_PLATFORM_MEMORY` + `mbedtls_platform_set_calloc_free` into a `Slab`. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap. *(Done in #272: `firmware/player_app/tls_region.cpp`, with 2 × 6,912 B record slots plus a 10 KB private TLSF region and a counted shared-heap fallback.)*
+6. **Scan residue.** Scan with the netstack's own MLME, or `esp_wifi_deinit` after the scan, and drop `esp_netif`/lwIP/event-loop tasks. Then set `scan_residue` live only in `Wifi::Scanning`. *(The lwIP, event-loop and NVS parts are done in #266. The vendor scan itself and the model's `scan_residue` cost remain.)*
 7. **CI gates:**
    - this test;
-   - a static stack bound over the ELF (`objdump` prologues + call graph + a checked-in manifest of indirect edges);
+   - a static stack bound over the ELF (`objdump` prologues + call graph + a checked-in manifest of indirect edges) *(done in #270: `//firmware/player_app:stack_bound_test`)*;
    - the `ram_audit` HITL watermark run, asserting zero post-freeze allocations and per-region minimum-free margins.
 
 Keep the cost table honest: when a component moves into a region, replace its measured constant with `size_of` of the region variant, so the model and the layout are the same number.

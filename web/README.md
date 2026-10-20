@@ -129,6 +129,17 @@ spike in the plan: a self-signed player cert cannot be click-through-trusted
 from a Pages origin, so the WSS trust flow must be resolved before this is
 the primary path.
 
+## splanc.io/app (follows app releases)
+
+Every `app-v*` tag's Release workflow (`.github/workflows/release.yaml`) also
+creates a GitHub Release carrying `splanc-webapp-<ver>.tar.gz` (+ `.sha256`).
+That tarball is the exact tree deployed to Pages and Cloudflare. The release is
+published with `make_latest: false`, so `releases/latest` stays on firmware for
+the in-app flasher. The splanc.io site (Studio-Fug/splanc.io,
+`scripts/stage-app.mjs`) stages the newest `app-v*` asset, sha256-checked, at
+<https://splanc.io/app>. It re-checks on a schedule, so a new app release
+reaches splanc.io without a manual pin bump.
+
 ## Deploying to GitHub Pages (CI, FUG-26)
 
 CI publishes the same static site to GitHub Pages off the `gh-pages` branch
