@@ -630,12 +630,16 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(ingest(b"not-osc"), 0, "garbage datagram dropped");
     unsafe { lm_fx_set_active(false) };
     assert_eq!(ingest(&osc_msg("/k", "f", &0.5f32.to_be_bytes())), 0, "no active effect -> inert");
+
+    // Last: it re-inits the player, so it must not race the flow above.
+    mode_tracker_over_the_ffi();
 }
 
 /// The memory-mode tracker through the C ABI: provisioning + a wss session
 /// track with no refusals and the counters land in LM_MODE; a session with no
 /// network is refused (log-only: reported, counted, and the state still follows).
-#[test]
+/// Called from the single #[test] above, not a #[test] itself: it re-inits the
+/// process-global player, which raced the main flow on the harness's threads.
 fn mode_tracker_over_the_ffi() {
     use ledmapper_player_ffi::{lm_mode_boot, lm_mode_observe, LmModeRefusal, LmNetObserved, LM_MODE};
     lm_player_init(64);
