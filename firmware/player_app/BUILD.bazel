@@ -455,6 +455,7 @@ cc_binary(
         "improv_ble_netstack.cpp",
         "ble_address.h",
         "dhcp_reply.h",
+        "icmp_echo.h",
         "led_config.h",
         "main.cpp",
         "netstack_transport.cpp",
@@ -895,6 +896,20 @@ cc_test(
     srcs = ["dhcp_reply_test.cc"],
     deps = [
         ":dhcp_reply",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+cc_library(
+    name = "icmp_echo",
+    hdrs = ["icmp_echo.h"],
+)
+
+cc_test(
+    name = "icmp_echo_test",
+    srcs = ["icmp_echo_test.cc"],
+    deps = [
+        ":icmp_echo",
         "@rules_requirements//cc:case",
     ],
 )
