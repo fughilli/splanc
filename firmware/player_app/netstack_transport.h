@@ -53,6 +53,12 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 // length (>0), or <0 when it doesn't fit.
 int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body);
 
+// PROVIDED BY main.cpp. Publish the TLS identity's readiness to the player core (under
+// the player mutex) so the manifest (tls.state / cert_sha256), the TlsInfo reply (wss +
+// BLE) and the mDNS TXT "tls" key report it. `state` is "generating" or "ready";
+// `cert_sha256` lowercase hex ("" while generating).
+void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persisted);
+
 // PROVIDED BY main.cpp. mDNS (_splanc._tcp, under the player mutex): with `query`, answer
 // one UDP:5353 datagram from `src_port` (*unicast: reply to the querier, not the group);
 // with query == nullptr, render the unsolicited announcement. `ip` = our IPv4 address.

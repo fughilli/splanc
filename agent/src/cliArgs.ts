@@ -18,6 +18,8 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   list-players | players               every player: name, id, host, firmware, rooms
   refresh-players [--sweep]            discover again (--sweep: probe the local /24s)
   add-player <host>                    add a player discovery can't see
+  trust-player <player>                re-trust a player whose TLS certificate changed
+                                       (only after a factory reset of that player)
   identify-player [players]            blink fixtures so a person can tell them apart
   set-room <room> <player>...          put players in a room
   set-fixture-pose <player> --translation x,y,z [--yaw-deg d] [--scale s] [--room r]
@@ -163,6 +165,8 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
       return { tool: "add_player", args: { host: rest[0] } };
     case "forget-player":
       return { tool: "forget_player", args: { player: rest[0] } };
+    case "trust-player":
+      return { tool: "trust_player", args: { player: rest[0] } };
     case "identify":
     case "identify-player":
       return { tool: "identify_player", args: rest.length ? { players: rest } : sel };

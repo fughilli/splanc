@@ -70,9 +70,11 @@ export function nodeSocketFactory(
     ws.binaryType = "nodebuffer";
     ws.on("upgrade", (res) => {
       try {
-        checkPin(res.socket as TLSSocket, tls);
+        // Report the presented certificate BEFORE the pin check, so a mismatch can
+        // still be judged (trust.ts: a factory reset, or the legacy shared cert).
         const fp = peerFingerprint(res.socket as TLSSocket);
         if (fp) onPeer?.(fp);
+        checkPin(res.socket as TLSSocket, tls);
       } catch (e) {
         onError?.(e as Error);
         adapter.onerror?.(e);
@@ -100,7 +102,10 @@ export interface HttpResult {
 /** GET an https URL from the player (self-signed; pinned when the policy has a pin). */
 export function httpsGet(url: string, tls: TlsPolicy = {}, timeoutMs = 8000): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { rejectUnauthorized: false, timeout: timeoutMs }, (res) => {
+    // agent: false — a fresh TLS connection per GET: no keep-alive socket holding the
+    // player's single TLS slot, and no resumed session, so the certificate we fingerprint
+    // is the one this handshake presented.
+    const req = https.get(url, { rejectUnauthorized: false, timeout: timeoutMs, agent: false }, (res) => {
       let fp: string | null = null;
       try {
         fp = peerFingerprint(res.socket as TLSSocket);

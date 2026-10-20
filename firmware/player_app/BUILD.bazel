@@ -320,6 +320,51 @@ cc_test(
     deps = [":heap_census_core"],
 )
 
+# Per-device TLS identity (docs/design/per-device-cert.md): the blob format + the
+# readiness state machine that gates the :443 listener, host-testable...
+cc_library(
+    name = "device_cert_core",
+    srcs = ["device_cert_core.cc"],
+    hdrs = ["device_cert_core.h"],
+    includes = ["."],
+)
+
+cc_test(
+    name = "device_cert_core_test",
+    srcs = ["device_cert_core_test.cc"],
+    deps = [
+        ":device_cert_core",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+# ...and the firmware half: on-device EC P-256 keygen + self-signed cert (mbedtls) and
+# the load/generate/persist flow. Compiled against the ledmapper mbedtls config, which
+# enables the X.509/PK writers the stock ESP config prunes (additive; no ssl-context
+# struct change), from the same from-source mbedtls :core links.
+cc_library(
+    name = "device_cert",
+    srcs = [
+        "device_cert.cpp",
+        "serial_log.h",
+    ],
+    hdrs = ["device_cert.h"],
+    copts = [
+        "-fno-rtti",
+        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
+    ],
+    includes = ["."],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":device_cert_core",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
 cc_library(
     name = "heap_census",
     srcs = [
@@ -500,6 +545,7 @@ cc_binary(
     deps = [
         ":board_caps_res",
         ":color_correction",
+        ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_codec",
         ":player_ffi",
         ":ws_codec",

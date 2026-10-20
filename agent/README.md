@@ -131,7 +131,8 @@ model, touches nothing), `measure_effect` (windowed on-device perf stream),
 the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).
 Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
-`forget_player`, `identify_player` (blinks), `set_room`, `set_fixture_pose`,
+`forget_player`, `trust_player` (re-trust after a factory reset), `identify_player`
+(blinks), `set_room`, `set_fixture_pose`,
 `align_time`. One player + no selector keeps #274's flat result shape;
 otherwise `{results: [{player, ok, result|error}], summary}`.
 
@@ -153,11 +154,19 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit â
 
 ## Decisions on the spec's open questions
 
-- **TLS.** `/ws` is TLS with the player's self-signed cert: chain verification
-  is off; the cert is PINNED when a pin is known (`--pin`, else the one remembered
-  from the first session â€” trust on first use, as the manifest's `tls.cert_sha256`
-  was: it arrives over the same unauthenticated TLS). A pin mismatch refuses the
-  connection and says to `forget_player` it (a rename regenerates the cert).
+- **TLS.** `/ws` is TLS with the player's OWN self-signed cert (each player
+  generates its key on first boot and keeps it for life; a rename does not change
+  it; docs/design/per-device-cert.md). Chain verification is off; instead the cert
+  is pinned per player id (MAC), trust on first use, like SSH `known_hosts`
+  (`src/trust.ts`): the fingerprint the first session (or manifest read) actually
+  presented is remembered in `hub.json` (`players[id].pin`), never the manifest's
+  claim. A different cert for a known id is REFUSED (`list_players` shows
+  `tls: CHANGED`) until `trust_player` (CLI `trust-player <id>`) accepts it after
+  the user confirms a factory reset; a manifest naming another cert than the
+  connection presented is refused as interception. A pin equal to the legacy
+  shared cert of pre-per-device firmware re-pins silently. `--pin` overrides all
+  of it. A manifest read for a player advertising `tls=generating` (first boot)
+  waits for it.
 - **One hub, every player** (multi-fixture design doc): one lazily-opened socket per
   player, serialized per player, parallel across players. A player whose firmware
   is outside this bundle's range compiles/previews with ITS bundle (manifest

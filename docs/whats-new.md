@@ -5,6 +5,29 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Every player has its own TLS certificate
+
+Netstack firmware used to serve one shared certificate, and its private key was in
+the open-source tree, so any device could be impersonated. Now each player
+generates its own EC P-256 key and self-signed certificate on first boot. It keeps
+them in littlefs (power-loss-safe) for life: there's no IP in the cert, so DHCP
+changes don't rotate it. Only a factory reset (flash erase) makes a new one.
+Design, the vendor build's re-issue races it avoids, and the measured cost:
+[per-device-cert.md](design/per-device-cert.md).
+
+- **Never serves without a cert.** Generation runs in `setup()` before WiFi
+  comes up, and `:443` opens only once the identity is installed. Until then mDNS
+  advertises `tls=generating` and the new `get_tls_info` (over BLE too) reports
+  `generating`.
+- **Trust on first use.**
+  - The agent bridge pins each player's certificate by id in `hub.json`. A
+    changed certificate is refused (`tls: CHANGED`) until `trust_player`.
+  - The app remembers each device's certificate and warns in the device sheet,
+    with an "I reset it — trust the new certificate" action.
+- **Upgrades are quiet.** A device moving off the old shared certificate is
+  re-pinned without a warning.
+- **The manifest's `tls` block** now carries `state` and `persisted`.
+
 ### Export a map to TouchDesigner or Chromatik
 
 - **Export map** in the mapping workspace downloads the fixture's LED positions,

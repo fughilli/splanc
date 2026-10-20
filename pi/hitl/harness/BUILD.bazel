@@ -92,6 +92,7 @@ py_library(
     name = "harness",
     srcs = [
         "board_caps.py",
+        "device_cert_core.py",
         "e2e_phases.py",
         "fx_bench_core.py",
         "hardware_config_pattern.py",
@@ -514,6 +515,36 @@ py_test(
         "hitl",
         "manual",
     ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Per-device TLS identity on hardware (docs/design/per-device-cert.md): erase-fs flash ->
+# first-boot keygen time from the boot log -> a connect storm at :443 from the instant the
+# DUT leases (every completed handshake must present the same, non-legacy cert) ->
+# manifest + get_tls_info agree -> reboot loads the SAME cert. --out/--compare check that
+# two DUTs hold different certs. Wired (serial PROV) provisioning, so no BLE contention.
+# Manual (bazel run), not in the tag-discovered hitl lane; the e2e's manifest check
+# covers the per-device cert on every hitl run. Pure logic: device_cert_core.
+py_test(
+    name = "device_cert",
+    timeout = "eternal",
+    srcs = ["hitl_device_cert.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_device_cert.py",
+    tags = ["manual"],
     deps = [
         ":harness",
         "//pi/server",

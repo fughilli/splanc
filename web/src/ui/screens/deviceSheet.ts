@@ -171,6 +171,27 @@ function render(): HTMLElement {
     card.append(p, btn);
     wrap.append(card);
   }
+  // -- per-device certificate changed (TOFU): a known device now reports a different
+  // certificate. Expected only after a factory reset; otherwise it may be an impostor.
+  if (status.certChanged) {
+    const card = document.createElement("div");
+    card.className = "k-card";
+    card.style.borderColor = "var(--err)";
+    card.style.marginBottom = "var(--sp-3)";
+    const p = document.createElement("div");
+    p.textContent = status.certChanged.message;
+    p.style.marginBottom = "var(--sp-2)";
+    const btn = Button({
+      label: "I reset it — trust the new certificate",
+      onClick: () => {
+        appState.retrustCert();
+        toast("Certificate re-trusted");
+      },
+    });
+    const off = Button({ label: "Disconnect", onClick: () => appState.disconnect() });
+    card.append(p, btn, off);
+    wrap.append(card);
+  }
   if (status.error) {
     const e = document.createElement("div");
     e.className = "k-card";

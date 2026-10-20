@@ -29,6 +29,7 @@
 #include "improv_codec.h"    // IMPROV_STATE_* constants
 #include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
 #include "tls_region.h"         // mbedtls's own memory region
+#include "device_cert.h"        // this device's own TLS key + cert (first-boot generated)
 #include "dhcp_reply.h"
 #include "icmp_echo.h"
 
@@ -989,34 +990,21 @@ int eapol_body(const uint8_t *f, int len, const uint8_t **out) {
   return 0;
 }
 // ---- TLS server over the heapless TCP (mbedtls with a BIO on ns_tcp) ----------------
-// Layer a real TLS 1.2/1.3 server on the proven heapless TCP server: mbedtls drives the
+// Layer a real TLS 1.2 server on the proven heapless TCP server: mbedtls drives the
 // handshake + records through send/recv callbacks that ride ns_tcp_send/recv (our CCMP
-// data path). Self-signed EC cert (the e2e client uses CERT_NONE, so identity doesn't
-// matter here). Stop-and-wait TCP carries the multi-KB cert flight one segment per ACK.
+// data path).
+//
+// Identity: this device's OWN EC P-256 key + self-signed cert (device_cert.h), generated
+// on first boot and persisted in littlefs — NOT a key baked into the (open-source)
+// image. Every netstack build before per-device certs served one shared cert (CN=heapless)
+// whose private key was in this file, so anyone could impersonate any device; clients
+// that pinned that hash re-pin silently (device_cert_core.h kLegacySharedCertSha256).
+// The :443 listener is not opened until the identity is installed (g_tls_setup), so a
+// handshake never meets a missing/partial cert.
 constexpr bool TLS_SERVER = true;
-static const char TLS_CERT[] =
-    "-----BEGIN CERTIFICATE-----\n"
-    "MIIBfDCCASGgAwIBAgIUYfPx+3+VCjLBTz9xuRRdR2kBVS4wCgYIKoZIzj0EAwIw\n"
-    "EzERMA8GA1UEAwwIaGVhcGxlc3MwHhcNMjYwODI0MTg0NjIyWhcNMzYwODIxMTg0\n"
-    "NjIyWjATMREwDwYDVQQDDAhoZWFwbGVzczBZMBMGByqGSM49AgEGCCqGSM49AwEH\n"
-    "A0IABMYrmea00slBUqpcl1iPe9krK06bYMhL/B6ppK3zGESwPW+6W9HGYcC4aTnL\n"
-    "NSMEvqyHiu94agvA+pyDs/0FozWjUzBRMB0GA1UdDgQWBBTo/KTgeh0O7hupqPDh\n"
-    "hhWN5OIN2TAfBgNVHSMEGDAWgBTo/KTgeh0O7hupqPDhhhWN5OIN2TAPBgNVHRMB\n"
-    "Af8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQD3kGEsK2MPWe1uYErGZgAaKyON\n"
-    "yGs7v+2EV+5lW0UyGwIhAL0WuN6eqZ9watBZpEo2H2AA7Y0a6j7lBCxEGx/nnXW5\n"
-    "-----END CERTIFICATE-----\n";
-static const char TLS_KEY[] =
-    "-----BEGIN EC PRIVATE KEY-----\n"
-    "MHcCAQEEIOEorPYc267y2s0hNmX9QDcFs2wWkH9Tv+UdemPcwYFxoAoGCCqGSM49\n"
-    "AwEHoUQDQgAExiuZ5rTSyUFSqlyXWI972SsrTptgyEv8HqmkrfMYRLA9b7pb0cZh\n"
-    "wLhpOcs1IwS+rIeK73hqC8D6nIOz/QWjNQ==\n"
-    "-----END EC PRIVATE KEY-----\n";
 mbedtls_ssl_context g_ssl;
 mbedtls_ssl_config g_conf;
 mbedtls_x509_crt g_srvcert;
-// SHA-256 of the served certificate's DER, lowercase hex: the agent manifest's
-// tls.cert_sha256, so a bridge can pin the self-signed cert it discovers.
-static char g_cert_sha256[65];
 mbedtls_pk_context g_pk;
 bool g_tls_setup = false;
 bool g_tls_hs = false;
@@ -1051,34 +1039,83 @@ static int bio_recv(void *, unsigned char *buf, size_t len) {
   return (int)n;
 }
 
+// Abandon the current TLS session (re-listen / reclaim / deauth paths). A no-op until the
+// server is set up: before the device identity exists there is no session to reset (and
+// mbedtls_ssl_session_reset on a context that was never mbedtls_ssl_setup'd dereferences
+// its unset conf).
+static void tls_session_reset() {
+  if (g_tls_setup) mbedtls_ssl_session_reset(&g_ssl);
+}
+
+// Install the device identity into the server: parse this device's DER key + cert into
+// mbedtls's own copies (in the TLS region), then free the boot-time DER buffers so the
+// steady state holds only the parsed structures — as it did with the baked cert. On a
+// parse failure the identity is discarded and regenerated (device_cert_reject).
+static bool g_identity_installed = false;
+static bool tls_install_identity() {
+  size_t kl = 0, cl = 0;
+  const uint8_t *key = device_cert_key_der(&kl);
+  const uint8_t *crt = device_cert_cert_der(&cl);
+  int r = crt ? mbedtls_x509_crt_parse_der(&g_srvcert, crt, cl) : -1;
+  int r2 = key ? mbedtls_pk_parse_key(&g_pk, key, kl, nullptr, 0, tls_rng, nullptr) : -1;
+  device_cert_release();
+  if (r != 0 || r2 != 0) {
+    Serial.printf("[tls] device identity install failed: cert=%d key=%d\n", r, r2);
+    mbedtls_x509_crt_free(&g_srvcert);
+    mbedtls_pk_free(&g_pk);
+    mbedtls_x509_crt_init(&g_srvcert);
+    mbedtls_pk_init(&g_pk);
+    device_cert_reject((uint32_t)millis());
+    lm_publish_tls_info(device_cert_machine().state_name(), "", false);
+    return false;
+  }
+  mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
+  g_identity_installed = true;
+  return true;
+}
+
+// Bind the server context to the (identity-bearing) config; :443 opens once this holds.
+// Retried from netstack_loop if it fails (an allocation in the TLS region), so a
+// transient failure can't strand :443 closed until reboot.
+static bool tls_setup_session() {
+  int r3 = mbedtls_ssl_setup(&g_ssl, &g_conf);
+  if (r3 != 0) {
+    Serial.printf("[tls] mbedtls_ssl_setup failed -0x%04x; retrying\n", (unsigned)-r3);
+    mbedtls_ssl_free(&g_ssl);
+    mbedtls_ssl_init(&g_ssl);
+    return false;
+  }
+  mbedtls_ssl_set_bio(&g_ssl, nullptr, bio_send, bio_recv, nullptr);
+  g_tls_setup = true;
+  // The served cert's SHA-256 (device_cert_sha256): the manifest's tls.cert_sha256 and
+  // TlsInfo's pin, so a client can pin this device's self-signed cert per device id.
+  lm_publish_tls_info(device_cert_machine().state_name(), device_cert_sha256(),
+                      device_cert_machine().persisted());
+  Serial.printf("TLS init: setup ok (per-device identity, sha256=%s, persisted=%d)\n",
+                device_cert_sha256(), device_cert_machine().persisted() ? 1 : 0);
+  return true;
+}
+
 void tls_init() {
   tls_region_install();  // mbedtls allocates from its own region from here on
   mbedtls_ssl_init(&g_ssl);
   mbedtls_ssl_config_init(&g_conf);
   mbedtls_x509_crt_init(&g_srvcert);
   mbedtls_pk_init(&g_pk);
-  int r = mbedtls_x509_crt_parse(&g_srvcert, (const unsigned char *)TLS_CERT, sizeof(TLS_CERT));
-  int r2 = mbedtls_pk_parse_key(&g_pk, (const unsigned char *)TLS_KEY, sizeof(TLS_KEY), nullptr, 0,
-                                tls_rng, nullptr);
   mbedtls_ssl_config_defaults(&g_conf, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
                               MBEDTLS_SSL_PRESET_DEFAULT);
   mbedtls_ssl_conf_rng(&g_conf, tls_rng, nullptr);
   mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
-  mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
-  if (r == 0) {
-    uint8_t d[32];
-    mbedtls_sha256(g_srvcert.raw.p, g_srvcert.raw.len, d, 0);
-    static const char kHex[] = "0123456789abcdef";
-    for (int i = 0; i < 32; i++) {
-      g_cert_sha256[2 * i] = kHex[d[i] >> 4];
-      g_cert_sha256[2 * i + 1] = kHex[d[i] & 15];
-    }
-    g_cert_sha256[64] = 0;
+  // The identity is normally ready long before this (setup() loads or generates it before
+  // the WiFi bring-up). If generation failed, :443 stays closed; netstack_loop retries
+  // (device_cert_poll) and finishes the setup once it succeeds.
+  if (device_cert_ready() && tls_install_identity() && tls_setup_session()) {
+    // ready: :443 opens with the lease
+  } else if (!device_cert_ready()) {
+    lm_publish_tls_info(device_cert_machine().state_name(), "", false);
+    Serial.printf("TLS init: device identity not ready (%s) — :443 held closed\n",
+                  device_cert_machine().state_name());
   }
-  int r3 = mbedtls_ssl_setup(&g_ssl, &g_conf);
-  mbedtls_ssl_set_bio(&g_ssl, nullptr, bio_send, bio_recv, nullptr);
-  g_tls_setup = true;
-  Serial.printf("TLS init: cert=%d key=%d setup=%d\n", r, r2, r3);
 }
 
 // ---- WebSocket + player: the LED Mapper protocol over the proven TLS -----------------
@@ -1216,7 +1253,7 @@ static bool ws_pump() {
       if (strncmp((char *)g_ws_rx, kManifestGet, sizeof kManifestGet - 1) == 0 &&
           (g_ws_rx[sizeof kManifestGet - 1] == ' ' || g_ws_rx[sizeof kManifestGet - 1] == '?')) {
         const uint8_t *body = nullptr;
-        int bn = lm_agent_manifest_body(g_cert_sha256, &body);
+        int bn = lm_agent_manifest_body(device_cert_sha256(), &body);
         char hdr[192];
         int hn = bn > 0 ? snprintf(hdr, sizeof hdr,
                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -1632,7 +1669,7 @@ void netstack_loop() {
       g_leased = false;
       g_tcp_started = false;
       if (TLS_SERVER) {
-        mbedtls_ssl_session_reset(&g_ssl);
+        tls_session_reset();
         g_tls_hs = false;
         g_ws_up = false;
         g_responding = false;
@@ -1936,9 +1973,33 @@ void netstack_loop() {
                       g_offer_ip[1], g_offer_ip[2], g_offer_ip[3]);
     }
   }
+  // TLS identity gate. The listener below opens ONLY once this device's key + cert are
+  // installed (g_tls_setup): there is no window in which :443 accepts a handshake with no
+  // or a partial cert — a client meanwhile sees the port closed (SYN unanswered) and the
+  // manifest-less paths (mDNS TXT tls=, TlsInfo over BLE) report "generating". Normally
+  // the identity was loaded/generated in setup() and this is a no-op; it only does work
+  // when that generation failed (e.g. no heap), retrying on the machine's backoff.
+  if (TLS_SERVER && !g_tls_setup) {
+    if (!g_identity_installed) {
+      if (device_cert_poll((uint32_t)millis()) && tls_install_identity()) tls_setup_session();
+    } else {
+      static uint32_t setup_retry_ms = 0;
+      if (millis() - setup_retry_ms > 1000) {
+        setup_retry_ms = millis();
+        tls_setup_session();
+      }
+    }
+    static uint32_t gate_log_ms = 0;
+    if (st == DONE && g_leased && millis() - gate_log_ms > 5000) {
+      gate_log_ms = millis();
+      Serial.printf("[tls] :443 held closed — device identity %s\n",
+                    device_cert_machine().state_name());
+    }
+  }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo
   // server (10.42.0.1:7777) and exchange data over the heapless stack.
-  if (st == DONE && g_leased && !g_tcp_started && millis() - t > 700) {
+  if (st == DONE && g_leased && !g_tcp_started && (!TLS_SERVER || g_tls_setup) &&
+      millis() - t > 700) {
     t = millis();
     if (TCP_SERVER) {
       ns_tcp_listen(g_offer_ip, SERVER_PORT, 0x3000);
@@ -1950,7 +2011,7 @@ void netstack_loop() {
       // wss defers DHCP renewal (renewal is gated on !g_ws_up), so an IP change with g_ws_up
       // still set is a realistic case, not just an edge one.
       if (g_relisten_new_ip) {
-        if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+        if (TLS_SERVER) { tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
         g_bio_tx = g_bio_rx = 0;
         g_relisten_new_ip = false;
       }
@@ -2042,7 +2103,7 @@ void netstack_loop() {
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
           hs_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
@@ -2084,7 +2145,7 @@ void netstack_loop() {
           static uint32_t piss = 0x6000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, piss);
           piss += 0x1000;
-          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+          if (TLS_SERVER) { tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
           g_bio_tx = g_bio_rx = 0;
           txstuck_since = 0;
           last_state = 99;      // re-log SERVER state on the next scan
@@ -2105,7 +2166,7 @@ void netstack_loop() {
           Serial.printf("*** TLS HANDSHAKE COMPLETE (%s) ***\n", mbedtls_ssl_get_ciphersuite(&g_ssl));
         } else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
           Serial.printf("*** TLS handshake err -0x%04x ***\n", (unsigned)-r);
-          mbedtls_ssl_session_reset(&g_ssl);
+          tls_session_reset();
           g_bio_tx = g_bio_rx = 0;
         }
       } else if (PLAYER_MODE) {
@@ -2160,7 +2221,7 @@ void netstack_loop() {
       static uint32_t niss = 0x4000;
       ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
       niss += 0x1000;
-      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+      if (TLS_SERVER) { tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
       Serial.println("*** SERVER re-listening ***");
     }
   } else if (st == DONE && g_tcp_started) {

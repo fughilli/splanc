@@ -213,6 +213,20 @@ export const GUIDE_TOPICS: GuideTopic[] = [
             "every screen. Tap it (or the Device tab) any time to reopen the device sheet.",
         ],
       },
+      {
+        heading: "The device's security certificate",
+        bullets: [
+          "Each device creates its **own** security certificate the first time it starts " +
+            "(it takes well under a second), and keeps it for life. Your browser asks you " +
+            "to trust it once per device.",
+          "The app remembers each device's certificate. If a device you know shows up " +
+            "with a **different** one, the device sheet warns you: that is expected only " +
+            "after a factory reset (its flash erased). Tap **I reset it — trust the new " +
+            "certificate** if you did; otherwise disconnect.",
+          "Devices updated from older firmware get their own certificate on the first " +
+            "start after the update; the app switches to it without a warning.",
+        ],
+      },
     ],
     steps: [
       {

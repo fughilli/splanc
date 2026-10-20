@@ -43,6 +43,7 @@
 // LM_NETSTACK gates below and netstack_transport.cpp.
 #include "netstack_transport.h"
 #include "tls_region.h"  // TLS region high-waters on the status line
+#include "device_cert.h"  // per-device TLS key + cert, generated on first boot
 #else
 #include <WebServer.h>
 #include <esp_https_server.h>
@@ -461,17 +462,17 @@ static FILE *fs_open(const char *path, const char *mode) {
 // "esp_littlefs ... Corrupted dir pair at {0x0, 0x1}" on the next mount. The
 // temp path is derived from the destination so writers to different keys never
 // collide (writes are serialized on this task anyway).
-static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
+static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
   char tmp[64];
   int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
   if (pn < 0 || (size_t)pn >= sizeof tmp) {
     Log().printf("littlefs: path too long for %s\n", path);
-    return;
+    return false;
   }
   FILE *f = fs_open(tmp, "wb");
   if (f == nullptr) {
     Log().printf("littlefs: open %s for write failed\n", tmp);
-    return;
+    return false;
   }
   size_t w = fwrite(data, 1, len, f);
   // Force the data + its metadata out to flash before we swap it in. Without
@@ -482,13 +483,37 @@ static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
     Log().printf("littlefs: write %s failed (w=%u/%u sync=%d)\n", tmp,
                  (unsigned)w, (unsigned)len, (int)synced);
     remove(tmp);
-    return;
+    return false;
   }
   if (rename(tmp, path) != 0) {
     Log().printf("littlefs: rename %s -> %s failed\n", tmp, path);
     remove(tmp);
+    return false;
   }
+  return true;
 }
+
+#if defined(LM_NETSTACK)
+// The per-device TLS identity (device_cert.h): one blob, persisted through the same
+// power-loss-safe writer as the map (temp + fsync + rename), so a reset mid-write leaves
+// either the previous identity or the new one, never a torn file. A full erase
+// (hitl-flash --erase-fs / esptool erase_flash) or a littlefs reformat regenerates it.
+static const char *kTlsIdentityPath = "/lfs/tls_id.bin";
+
+static size_t tls_store_read(uint8_t *buf, size_t cap) {
+  FILE *f = fs_open(kTlsIdentityPath, "rb");
+  if (f == nullptr) return 0;
+  size_t n = fread(buf, 1, cap, f);
+  fclose(f);
+  return n;
+}
+
+static bool tls_store_write(const uint8_t *buf, size_t len) {
+  return fs_write_file(kTlsIdentityPath, buf, len);
+}
+
+static const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};
+#endif
 
 // -- color correction ---------------------------------------------------------
 // LEDs render washed out without gamma compensation. We build 3x256 per-channel
@@ -1204,6 +1229,15 @@ int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body) {
   xSemaphoreGive(player_mutex);
   *body = tx;
   return (int)n;
+}
+
+// TLS identity readiness for the manifest / TlsInfo / mDNS TXT (netstack_transport.cpp
+// publishes it whenever the identity is installed or still pending).
+void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persisted) {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  lm_set_tls_info(reinterpret_cast<const uint8_t *>(state), strlen(state),
+                  reinterpret_cast<const uint8_t *>(cert_sha256), strlen(cert_sha256), persisted);
+  xSemaphoreGive(player_mutex);
 }
 
 // mDNS for netstack_transport.cpp: the Rust responder reads the player's live identity
@@ -2476,7 +2510,14 @@ void setup() {
     wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
   }
 #else
-  // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + a baked-cert TLS server on :443.
+  // This device's own TLS identity (EC P-256 key + self-signed cert), loaded from littlefs
+  // or — first boot / after an erase — generated NOW, before the WiFi bring-up below, so
+  // it's ready long before a lease (and :443) exists: nobody can be mid-connect yet, the
+  // render task hasn't started, and the radio is already on (improv_ble_begin above), so
+  // the HW RNG is a true RNG. Measured on the C6 (HW ECC): see device_cert's log line.
+  // A failure here leaves :443 closed and netstack_loop retries on a backoff.
+  device_cert_begin(macstr, fs_ok ? &kTlsStore : nullptr);
+  // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + the per-device TLS server on :443.
   netstack_setup();
 #endif
 

@@ -28,6 +28,7 @@ import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
 import { DeviceSession, ToolError, summarize, type TextureSource } from "./session";
+import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
 
@@ -238,6 +239,23 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string;
       guard(async () => {
         const [p] = await hub.select(player);
         return ok({ forgot: p!.id, existed: hub.registry.forget(p!.id) });
+      }),
+  );
+  server.registerTool(
+    "trust_player",
+    {
+      description:
+        "Re-trust a player whose TLS certificate changed (list_players shows tls: 'CHANGED'). Each player keeps " +
+        "one certificate for life, so a change means it was factory-reset (flash erased) — or that another device " +
+        "is answering as it. Only call this after the user confirms they reset that player.",
+      inputSchema: { player: z.string() },
+    },
+    ({ player }) =>
+      guard(async () => {
+        const [p] = await hub.select(player);
+        const pin = hub.registry.retrust(p!.id);
+        if (!pin) throw new ToolError(`${p!.name} (${p!.id}) has no changed certificate to re-trust`);
+        return ok({ trusted: p!.id, cert_sha256: pin });
       }),
   );
   server.registerTool(
@@ -734,6 +752,7 @@ async function playersView(hub: Hub): Promise<Record<string, unknown>> {
       checked: p.checked ?? null,
       ...(p.checked === "unreachable" ? { error: p.manifestError ?? "unreachable" } : {}),
       manifest: p.manifest ? "yes" : p.checked === "unreachable" ? "no" : (p.manifestError ?? "not read (not needed to connect)"),
+      tls: tlsView(p.trust, !!p.target?.tls.pinSha256),
       ...(hub.toolchainNote(p.id) ? { compiler: hub.toolchainNote(p.id) } : {}),
     })),
     rooms: hub.config.groups,
@@ -753,6 +772,26 @@ async function playersView(hub: Hub): Promise<Record<string, unknown>> {
         }
       : {}),
   };
+}
+
+/** How list_players describes a player's TLS trust (trust.ts). */
+function tlsView(t: TrustVerdict | undefined, pinned: boolean): string {
+  switch (t?.kind) {
+    case "known":
+      return "pinned";
+    case "first-sight":
+      return "pinned (first sight)";
+    case "legacy-repin":
+      return "pinned (re-pinned: was the shared legacy certificate)";
+    case "operator":
+      return "pinned (--pin)";
+    case "changed":
+      return "CHANGED: refused (factory reset? confirm with the user, then trust_player)";
+    case "mismatch":
+      return "MISMATCH: refused (TLS is being intercepted)";
+    default:
+      return pinned ? "pinned" : "not yet seen";
+  }
 }
 
 function roomNames(hub: Hub): string[] {

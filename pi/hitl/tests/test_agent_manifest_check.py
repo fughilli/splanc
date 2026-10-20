@@ -8,6 +8,7 @@ with a fake HTTPS GET (no hardware).
 import hashlib
 import json
 
+import device_cert_core
 import hitl_e2e
 import pytest
 from provision import HarnessError
@@ -41,7 +42,11 @@ def manifest(**over):
             "features": ["effects", "list_effects"],
             "fxb_format": 1,
         },
-        "tls": {"cert_sha256": hashlib.sha256(CERT).hexdigest()},
+        "tls": {
+            "cert_sha256": hashlib.sha256(CERT).hexdigest(),
+            "state": "ready",
+            "persisted": True,
+        },
         "bundle": None,
     }
     m.update(over)
@@ -64,6 +69,22 @@ def test_a_matching_manifest_passes(monkeypatch):
     "bad",
     [
         manifest(tls={"cert_sha256": "00" * 32}),  # pins a different cert
+        # Per-device identity not ready / not persisted / no state (pre-per-device fw).
+        manifest(
+            tls={
+                "cert_sha256": hashlib.sha256(CERT).hexdigest(),
+                "state": "generating",
+                "persisted": True,
+            }
+        ),
+        manifest(
+            tls={
+                "cert_sha256": hashlib.sha256(CERT).hexdigest(),
+                "state": "ready",
+                "persisted": False,
+            }
+        ),
+        manifest(tls={"cert_sha256": hashlib.sha256(CERT).hexdigest()}),
         manifest(device={"id": "11:22:33:44:55:66", "name": "Kitchen"}),
         manifest(schema="splanc-agent/2"),
     ],
@@ -71,6 +92,15 @@ def test_a_matching_manifest_passes(monkeypatch):
 def test_a_manifest_that_disagrees_fails(monkeypatch, bad):
     serve(monkeypatch, bad)
     with pytest.raises(HarnessError):
+        hitl_e2e.agent_manifest_check("wss://localhost:9443/ws", WELCOME)
+
+
+def test_the_legacy_shared_cert_fails(monkeypatch):
+    # The device must serve its OWN cert, never the shared CN=heapless one every
+    # pre-per-device image carried (its private key was in the open-source tree).
+    monkeypatch.setattr(device_cert_core, "LEGACY_SHA256", hashlib.sha256(CERT).hexdigest())
+    serve(monkeypatch, manifest())
+    with pytest.raises(HarnessError, match="LEGACY"):
         hitl_e2e.agent_manifest_check("wss://localhost:9443/ws", WELCOME)
 
 

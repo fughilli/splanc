@@ -26,7 +26,10 @@ With several targets the result is one entry per player (`ok`, `result` or
 1. `list_players` (or the `splanc://players` resource): names, rooms, firmware.
    It is fast and trusts what the hub remembers (`checked` says how each player
    was confirmed); `refresh_players` looks again thoroughly. No players → ask the
-   user for the player's address and `add_player`.
+   user for the player's address and `add_player`. A player with
+   `tls: CHANGED…` is refused: its certificate differs from the one first seen
+   for it. Tell the user; call `trust_player` only if they confirm they
+   factory-reset that player (otherwise another device may be answering as it).
 2. Several players and no rooms, and the user speaks of rooms ("the living
    room", "the shelf")? Ask which fixture is where — `identify_player` blinks one
    so they can tell — then `set_room {room, players}`, and `set_fixture_pose` to

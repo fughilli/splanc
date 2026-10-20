@@ -1,13 +1,19 @@
 /**
  * Discovery (spec "Discovery"): find a player by mDNS (`_splanc._tcp`, TXT
- * id/name/fw/path) or take a host directly, then read its static manifest
+ * id/name/fw/path/tls) or take a host directly, then read its static manifest
  * (`GET https://<host>/.well-known/splanc.json`). On firmware without the route
  * the bridge still works: it connects to /ws and reads Welcome.fw_version.
+ *
+ * TLS: each player has its own self-signed certificate, pinned per device id on
+ * first sight (trust.ts). The manifest GET itself is unpinned — we don't know the
+ * id until we read it — but the fingerprint of the certificate it actually came
+ * over is what gets checked against the remembered pin, never the manifest's claim.
  */
 
 import makeMdns from "multicast-dns";
 
 import { httpsGet, type TlsPolicy } from "./socket";
+import { decideTrust, trusted, type TrustVerdict } from "./trust";
 
 export interface Advert {
   instance: string;
@@ -130,7 +136,8 @@ export interface Manifest {
   firmware?: { version?: string; commit?: string; dirty?: boolean };
   protocol?: { package?: string; ws_path?: string; profile?: string; features?: string[] };
   bundle?: { url?: string; sha256?: string; mcp?: unknown };
-  tls?: { cert_sha256?: string };
+  /** state: "generating" (first-boot keygen; :443 not yet open) | "ready". */
+  tls?: { cert_sha256?: string; state?: string; persisted?: boolean };
   [k: string]: unknown;
 }
 
@@ -144,36 +151,79 @@ export interface Target {
   wsUrl: string;
   /** The host answered HTTPS at all (a 404 counts; a refused/timed-out probe doesn't). */
   reachable: boolean;
+  /** SHA-256 of the certificate the manifest GET came over (null/absent: no TLS
+   * session — e.g. a target built from the cache). */
+  presented?: string | null;
+  /** The TOFU decision for this device id (trust.ts); absent for a cached target. */
+  trust?: TrustVerdict;
+}
+
+export interface ResolveOptions {
+  /** An explicit operator pin (--pin): only this certificate is accepted. */
+  pin?: string;
+  timeoutMs?: number;
+  /** The pin remembered for a device id (TOFU, hub.json players[id].pin). */
+  knownPin?: (id: string) => string | undefined;
+  /** The player's mDNS advert says its TLS identity is still being generated
+   * (TXT tls=generating, first boot): keep retrying for up to this long. */
+  waitGeneratingMs?: number;
+  /** Delay between those retries (default 2 s). */
+  retryMs?: number;
 }
 
 /**
- * Resolve a target: fetch its manifest (404 / unreachable -> fallback), take the
- * TLS pin from the operator's `pin` or the manifest's `tls.cert_sha256`.
+ * Resolve a target: fetch its manifest (404 / unreachable -> fallback), then decide
+ * the TLS pin — the operator's `pin`, else the certificate remembered for the
+ * manifest's device id, else (first sight) the one it presented now.
  */
-export async function resolveTarget(
-  host: string,
-  opts: { pin?: string; timeoutMs?: number } = {},
-): Promise<Target> {
+export async function resolveTarget(host: string, opts: ResolveOptions = {}): Promise<Target> {
   let manifest: Manifest | null = null;
   let manifestError: string | undefined;
   const tls: TlsPolicy = opts.pin ? { pinSha256: opts.pin } : {};
   let reachable = false;
-  try {
-    const r = await httpsGet(`https://${host}/.well-known/splanc.json`, tls, opts.timeoutMs);
-    reachable = true;
-    if (r.status === 200) {
-      manifest = JSON.parse(r.body) as Manifest;
-      if (manifest.schema !== "splanc-agent/1") {
-        manifestError = `unknown manifest schema ${JSON.stringify(manifest.schema)}`;
-        manifest = null;
+  let presented: string | null = null;
+  const deadline = Date.now() + (opts.waitGeneratingMs ?? 0);
+  for (;;) {
+    manifest = null;
+    manifestError = undefined;
+    try {
+      const r = await httpsGet(`https://${host}/.well-known/splanc.json`, tls, opts.timeoutMs);
+      reachable = true;
+      presented = r.fingerprint;
+      if (r.status === 200) {
+        manifest = JSON.parse(r.body) as Manifest;
+        if (manifest.schema !== "splanc-agent/1") {
+          manifestError = `unknown manifest schema ${JSON.stringify(manifest.schema)}`;
+          manifest = null;
+        }
+      } else {
+        manifestError = `GET /.well-known/splanc.json -> HTTP ${r.status} (older firmware: falling back to Welcome)`;
       }
-    } else {
-      manifestError = `GET /.well-known/splanc.json -> HTTP ${r.status} (older firmware: falling back to Welcome)`;
+    } catch (e) {
+      manifestError = `manifest unavailable: ${(e as Error).message}`;
     }
-  } catch (e) {
-    manifestError = `manifest unavailable: ${(e as Error).message}`;
+    // A first-boot player keeps :443 closed until its key + certificate exist (a few
+    // hundred ms on the C6, normally done before WiFi is even up); its mDNS advert
+    // says tls=generating meanwhile. Wait for it rather than failing.
+    const generating = !reachable || manifest?.tls?.state === "generating";
+    if (!generating || Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, opts.retryMs ?? 2000));
   }
-  const pin = tls.pinSha256 ?? manifest?.tls?.cert_sha256;
+  if (!reachable && opts.waitGeneratingMs) {
+    manifestError = `${manifestError ?? "unreachable"} (the player advertises tls=generating: its first-boot TLS identity isn't ready yet)`;
+  }
+  const id = manifest?.device?.id?.toUpperCase();
+  const trust = decideTrust({
+    id,
+    presented,
+    claimed: manifest?.tls?.cert_sha256,
+    known: id ? opts.knownPin?.(id) : undefined,
+    operatorPin: opts.pin,
+  });
+  // Connect pinned to the decided certificate. A refused verdict (changed/mismatch)
+  // still pins the REMEMBERED one, so even a caller that ignores the verdict can't
+  // talk to the impostor; the hub refuses up front with the explanation.
+  const pin = trusted(trust) ? trust.pin : trust.kind === "changed" ? trust.pin : trust.kind === "mismatch" ? trust.claimed : undefined;
   const wsPath = manifest?.protocol?.ws_path ?? "/ws";
   return {
     host,
@@ -182,6 +232,8 @@ export async function resolveTarget(
     tls: pin ? { pinSha256: pin } : {},
     wsUrl: `wss://${host}${wsPath}`,
     reachable,
+    presented,
+    trust,
   };
 }
 

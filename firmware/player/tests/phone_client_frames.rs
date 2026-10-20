@@ -92,6 +92,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::ListKeypoints(_)
         | CMsg::GetKeypoint(_)
         | CMsg::BlendKeypoints(_)
+        | CMsg::GetTlsInfo(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -159,6 +160,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::ListKeypoints(_) => "list_keypoints",
         CMsg::GetKeypoint(_) => "get_keypoint",
         CMsg::BlendKeypoints(_) => "blend_keypoints",
+        CMsg::GetTlsInfo(_) => "get_tls_info",
     }
 }
 
