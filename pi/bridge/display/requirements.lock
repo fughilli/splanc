@@ -1,0 +1,21 @@
+# Pi-side Python lockfile for splanc-display (installed by pi/bridge/install.sh):
+#
+#   pip install --isolated --index-url https://pypi.org/simple \
+#       --no-deps --require-hashes --only-binary :all: -r requirements.lock
+#
+# Only pure-Python wheels live here (py3-none-any: identical on armhf/arm64/x86).
+# Their compiled dependencies come from Debian/Raspberry Pi OS Bookworm apt
+# packages, built for the board's architecture with no compiler on the Pi:
+#   python3-pil (luma.core: pillow>=9.2), python3-cbor2, python3-smbus2,
+#   python3-spidev, python3-gpiozero + python3-lgpio (Pi 5 / RP1 GPIO).
+# --isolated ignores /etc/pip.conf, which on Pi OS adds piwheels.org: its
+# rebuilt wheels have different hashes from PyPI's.
+#
+# To bump: change a version, then take the wheel's sha256 from
+# https://pypi.org/pypi/<name>/<version>/json (urls[].digests.sha256).
+luma.core==2.6.0 \
+    --hash=sha256:ee2c048982942d936eb3720f17d42262cd1a5085a401cce81de4cbc25bed86f9
+luma.oled==3.16.0 \
+    --hash=sha256:2d863b759472b41ef3a75ddb9532100ce1d26042707d43472b5687b673e4e523
+segno==1.6.6 \
+    --hash=sha256:28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7

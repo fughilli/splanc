@@ -158,7 +158,13 @@ splanc-agent-<ver>/site/
   .well-known/mcp/server.json    MCP registry server.json shape (install in _meta)
   agent/latest.json              {version, release, url, asset, sha256: null, install, skill}
   agent/skill/**                 the bundle's skill, verbatim
+  bridge/install.sh              the Raspberry Pi bridge installer (= pi-bridge/install.sh)
 ```
+
+The bundle also carries `pi-bridge/`, the Raspberry Pi bridge appliance (installer,
+display service, systemd units; [pi/bridge/README.md](../pi/bridge/README.md)), so
+`curl -fsSL https://splanc.io/bridge/install.sh | sudo sh` installs from one
+verified bundle.
 
 The site (Studio-Fug/splanc.io, `scripts/stage-agent.mjs`) picks the newest
 `firmware-v*` release carrying `splanc-agent-<ver>.tgz` + `.tgz.sha256`, verifies the

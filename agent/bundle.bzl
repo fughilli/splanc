@@ -2,6 +2,8 @@
 
     splanc-agent-<ver>/
       bundle.json   package.json   proto/   mcp/   compiler/   simulator/   skill/
+      pi-bridge/    the Raspberry Pi bridge appliance (pi/bridge: installer, display
+                    service, systemd units); its install.sh is also site/bridge/install.sh
       site/         the website's agent entry point, rendered here (README "Site files")
 
 package.json makes the tgz an npm package with a `splanc-agent` bin, so
@@ -111,6 +113,11 @@ def _agent_bundle_impl(ctx):
     }, indent = "  ") + "\n")
     site.append(("agent/latest.json", latest))
 
+    # The Pi bridge installer, served as <site>/bridge/install.sh (the stager copies
+    # site/ verbatim): `curl -fsSL https://splanc.io/bridge/install.sh | sudo sh`.
+    if ctx.file.pi_bridge_installer:
+        site.append(("bridge/install.sh", ctx.file.pi_bridge_installer))
+
     # (destination dir in the bundle, files or tree artifacts, strip prefix)
     groups = [
         ("mcp", [ctx.file.mcp], None),
@@ -118,6 +125,7 @@ def _agent_bundle_impl(ctx):
         ("simulator", ctx.files.simulator, None),
         ("proto", [ctx.file.proto], None),
         ("skill", ctx.files.skill, ctx.attr.skill_strip),
+        ("pi-bridge", ctx.files.pi_bridge, ctx.attr.pi_bridge_strip),
     ]
     cmds = ["set -eu", "R=$(mktemp -d)", "B=\"$R/" + stem + "\"", "mkdir -p \"$B\""]
     cmds.append("cp {} \"$B/bundle.json\"".format(manifest.path))
@@ -144,6 +152,7 @@ def _agent_bundle_impl(ctx):
     cmds += [
         "chmod -R u+rwX,go+rX \"$B\"",
         "chmod 0755 \"$B/mcp/splanc-agent.mjs\"",
+        "for x in install.sh bin/splanc-bridge bin/splanc-bridge-run; do [ ! -f \"$B/pi-bridge/$x\" ] || chmod 0755 \"$B/pi-bridge/$x\"; done",
         # Reproducible (sorted entries, zero mtimes/owners, no gzip timestamp) and
         # portable: Python's tarfile, not GNU tar's --sort/--mtime (macOS ships
         # bsdtar) or sha256sum (absent on macOS).
@@ -165,6 +174,9 @@ agent_bundle = rule(
         "compiler": attr.label(mandatory = True, doc = "fx_compiler wasm package (dir)"),
         "fxb_format": attr.string(mandatory = True, doc = "the .fxb container magic this compiler emits"),
         "mcp": attr.label(mandatory = True, allow_single_file = True, doc = "the bundled bridge .mjs"),
+        "pi_bridge": attr.label_list(allow_files = True, doc = "pi/bridge appliance files -> pi-bridge/"),
+        "pi_bridge_installer": attr.label(allow_single_file = True, doc = "pi/bridge/install.sh -> site/bridge/install.sh"),
+        "pi_bridge_strip": attr.string(doc = "short_path prefix stripped from pi_bridge files"),
         "proto": attr.label(mandatory = True, allow_single_file = True),
         "simulator": attr.label(mandatory = True, doc = "fx_vm wasm package (dir)"),
         "skill": attr.label_list(allow_files = True),

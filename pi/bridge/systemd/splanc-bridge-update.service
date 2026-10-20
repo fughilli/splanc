@@ -1,0 +1,10 @@
+[Unit]
+Description=Update the Splanc bridge to the latest release
+Documentation=https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/splanc-bridge/bridge.env
+ExecStart=/usr/local/bin/splanc-bridge update --auto

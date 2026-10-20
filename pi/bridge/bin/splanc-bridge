@@ -1,0 +1,118 @@
+#!/bin/sh
+# splanc-bridge: manage the Splanc bridge on this Pi.
+#
+#   splanc-bridge status [--json]    state, pairing code, fixtures, clients
+#   splanc-bridge new-code           ask the bridge for a new pairing code
+#   splanc-bridge identify           flash every fixture
+#   splanc-bridge revoke-all [--yes] unpair every client
+#   splanc-bridge logs [-f]          bridge + display logs
+#   splanc-bridge restart            restart both services
+#   splanc-bridge update [--force]   install the latest release (daily timer: --auto)
+#   splanc-bridge config             edit /etc/splanc-bridge/bridge.env, then restart
+#   splanc-bridge version
+#   splanc-bridge uninstall [--purge]
+set -eu
+PREFIX="${SPLANC_PREFIX:-/opt/splanc-bridge}"
+LATEST="${SPLANC_LATEST_URL:-https://splanc.io/agent/latest.json}"
+ENVFILE=/etc/splanc-bridge/bridge.env
+PY="$PREFIX/venv/bin/python3"
+[ -x "$PY" ] || PY=python3
+
+die() {
+  echo "splanc-bridge: $*" >&2
+  exit 1
+}
+
+need_root() {
+  [ "$(id -u)" = 0 ] || die "$1 needs root: sudo splanc-bridge $1"
+}
+
+ctl() {
+  run_dir="$(dirname "${SPLANC_BRIDGE_STATUS:-/run/splanc-bridge/status.json}")"
+  if [ "$(id -u)" != 0 ] && [ -d "$run_dir" ] && [ ! -x "$run_dir" ]; then
+    # Not in the splanc group (yet: it applies from the next login).
+    exec sudo "$0" "$@"
+  fi
+  PYTHONPATH="$PREFIX/agent/current/pi-bridge/display" \
+    SPLANC_BRIDGE_STATUS="${SPLANC_BRIDGE_STATUS:-/run/splanc-bridge/status.json}" \
+    SPLANC_BRIDGE_CONTROL="${SPLANC_BRIDGE_CONTROL:-/run/splanc-bridge/control.sock}" \
+    exec "$PY" -m splanc_display.ctl "$@"
+}
+
+installed_version() {
+  v="$(readlink "$PREFIX/agent/current" 2>/dev/null || true)"
+  echo "${v:-none}"
+}
+
+json_field() {
+  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(v if isinstance(v,str) else "")' "$1" "$2"
+}
+
+update() {
+  auto=0 force=0
+  for a in "$@"; do
+    case "$a" in
+      --auto) auto=1 ;;
+      --force) force=1 ;;
+      *) die "update: unknown option $a" ;;
+    esac
+  done
+  if [ "$auto" = 1 ] && [ "${SPLANC_AUTO_UPDATE:-1}" = 0 ]; then
+    echo "automatic updates are off (SPLANC_AUTO_UPDATE=0)"
+    return 0
+  fi
+  need_root update
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+  curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/latest.json" "$LATEST" || die "can't reach $LATEST"
+  ver="$(json_field "$tmp/latest.json" version)"
+  url="$(json_field "$tmp/latest.json" url)"
+  sha="$(json_field "$tmp/latest.json" sha256)"
+  [ -n "$ver" ] && [ -n "$url" ] && [ -n "$sha" ] || die "$LATEST is incomplete"
+  cur="$(installed_version)"
+  if [ "$ver" = "$cur" ] && [ "$force" = 0 ]; then
+    echo "up to date ($cur)"
+    return 0
+  fi
+  echo "updating $cur -> $ver"
+  curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/bundle.tgz" "$url" || die "download failed: $url"
+  [ "$(sha256sum "$tmp/bundle.tgz" | cut -d' ' -f1)" = "$sha" ] || die "bundle failed its sha256 check"
+  echo "$sha  bundle.tgz" >"$tmp/bundle.tgz.sha256"
+  mkdir "$tmp/x"
+  tar -xzf "$tmp/bundle.tgz" -C "$tmp/x" --no-same-owner
+  inst="$(find "$tmp/x" -maxdepth 3 -path '*/pi-bridge/install.sh' | head -n1)"
+  [ -n "$inst" ] || die "release $ver has no Pi bridge installer; staying on $cur"
+  # The NEW release's installer, verified above, installs itself.
+  sh "$inst" --bundle "$tmp/bundle.tgz" --latest "$LATEST" --upgrade
+}
+
+cmd="${1:-status}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  status | new-code | identify | revoke-all) ctl "$cmd" "$@" ;;
+  logs)
+    exec journalctl -u splanc-bridge -u splanc-display --no-pager -n 200 "$@"
+    ;;
+  restart)
+    need_root restart
+    systemctl restart splanc-bridge splanc-display
+    ;;
+  update) update "$@" ;;
+  config)
+    need_root config
+    "${EDITOR:-nano}" "$ENVFILE"
+    systemctl restart splanc-bridge splanc-display
+    ;;
+  version)
+    echo "splanc-agent $(installed_version)"
+    if [ -x "$PREFIX/node/bin/node" ]; then echo "node $("$PREFIX/node/bin/node" --version)"; fi
+    ;;
+  uninstall)
+    need_root uninstall
+    sh "$PREFIX/agent/current/pi-bridge/install.sh" --uninstall "$@"
+    ;;
+  -h | --help | help)
+    sed -n '2,/^set -eu/p' "$0" | sed 's/^# \{0,1\}//' | grep -v '^set -eu'
+    ;;
+  *) die "unknown command '$cmd' (try: splanc-bridge help)" ;;
+esac

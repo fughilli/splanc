@@ -1,0 +1,18 @@
+#!/bin/sh
+# ExecStart of splanc-bridge.service: run `splanc-agent bridge` from the installed
+# bundle on the installer's pinned Node. Settings come from the unit's
+# environment (/etc/splanc-bridge/bridge.env):
+#   SPLANC_RELAY        relay URL (empty: the bridge's built-in default)
+#   SPLANC_BRIDGE_ARGS  extra arguments for `splanc-agent bridge`
+#   SPLANC_NODE         node binary (default: the pinned one under /opt)
+set -eu
+PREFIX="${SPLANC_PREFIX:-/opt/splanc-bridge}"
+NODE="${SPLANC_NODE:-$PREFIX/node/bin/node}"
+[ -x "$NODE" ] || NODE="$(command -v node)"
+AGENT="$PREFIX/agent/current/mcp/splanc-agent.mjs"
+if [ -n "${SPLANC_RELAY:-}" ]; then
+  # shellcheck disable=SC2086 # SPLANC_BRIDGE_ARGS is a word list on purpose
+  exec "$NODE" "$AGENT" bridge --relay "$SPLANC_RELAY" ${SPLANC_BRIDGE_ARGS:-}
+fi
+# shellcheck disable=SC2086
+exec "$NODE" "$AGENT" bridge ${SPLANC_BRIDGE_ARGS:-}
