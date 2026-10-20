@@ -10,8 +10,9 @@ nobody's capture is disturbed), then:
   3. estimates each player's clock offset (min-RTT of --pings time_sync round
      trips, exactly the bridge's method) and sends each the SAME host epoch
      converted to its clock (set_time_base);
-  4. points one analyzer capture at BOTH DUTs' channel-0 taps (one sample clock)
-     and reads each frame's effect time off the wire; skew = the difference of the
+  4. takes ONE analyzer timing capture of BOTH DUTs' taps (the request's
+     `channels` override: one acquisition, one sample clock, frames tagged per
+     channel) and reads each frame's effect time off the wire; skew = the difference of the
      two devices' (wire time - effect time) offsets (time_base_skew_core).
 
 A baseline capture before set_time_base shows the unsynced skew for contrast.
@@ -39,7 +40,7 @@ from hitl_client import Reservation
 from hitl_led_capture import _connect_ws, _linear_map
 from provision import wire_provision_dut
 from sync import best_sample, sync_sample
-from time_base_skew_core import BITS, device_epoch, skew
+from time_base_skew_core import BITS, device_epoch, frames_by_channel, percentile, skew
 
 TARGET_MS = 20.0
 
@@ -136,50 +137,39 @@ async def _set_time_base(url: str, epoch_ms: int | None) -> None:
         await _rpc(sock, msg, "welcome")
 
 
-def _frames_by_channel(res: dict) -> dict:
-    """{channel: [(start_s, pixels)]} from a multi-channel timing capture, whichever
-    of the broker's layouts it uses (per-channel blocks, or frames tagged by pin)."""
-    out: dict = {}
-    blocks = res.get("channels")
-    if isinstance(blocks, dict):
-        items = blocks.items()
-    elif isinstance(blocks, list):
-        items = [(b.get("channel") or b.get("pin") or str(i), b) for i, b in enumerate(blocks)]
-    else:
-        items = [(None, res)]
-    for ch, block in items:
-        for f in block.get("frames") or []:
-            key = ch if ch is not None else (f.get("channel") or f.get("pin"))
-            px = [(p["r"], p["g"], p["b"]) for p in (f.get("pixels") or [])]
-            out.setdefault(str(key), []).append((f["start_us"] / 1e6, px))
-    return out
-
-
-def _capture_pair(server: str, unit: str, pins: list, ms: int) -> dict:
-    original = _broker(server, {"op": "map.get"})
-    m = json.loads(json.dumps(original))
-    m[unit] = {"channels": pins, "protocol": "ws2812"}
-    _broker(server, {"op": "map.set", "map": m})
-    try:
-        res = _broker(
-            server,
-            {
-                "op": "timing",
-                "unit": unit,
-                "duration_ms": ms,
-                "include_frames": True,
-                "include_pixels": True,
-                "max_pixel_frames": 2000,
-            },
-            timeout=120 + ms / 1000.0,
-        )
-    finally:
-        _broker(server, {"op": "map.set", "map": original})
-    by = _frames_by_channel(res)
+def _capture_pair(server: str, unit: str, pins: list, ms: int, save: str | None = None) -> dict:
+    """ONE timing acquisition of both fixtures' WS2812 lines (one sample clock),
+    split per channel. The channels ride on the request (hitl-reserve's analyzer
+    `channels` override), so the rig-wide unit->channel map is never touched."""
+    res = _broker(
+        server,
+        {
+            "op": "timing",
+            "unit": unit,
+            "channels": pins,
+            "duration_ms": ms,
+            "include_frames": True,
+            "include_pixels": True,
+            "max_pixel_frames": 2000,
+        },
+        timeout=120 + ms / 1000.0,
+    )
+    if save:
+        with open(save, "w") as f:
+            json.dump(res, f)
+    by = frames_by_channel(res)
     if not all(p in by for p in pins):
         raise SystemExit(
             f"[skew] the analyzer returned channels {sorted(by)} for {pins}; result keys "
-            f"{sorted(res)} — a simultaneous two-channel capture isn't available"
+            f"{sorted(res)} — a simultaneous two-channel capture isn't available "
+            "(the rig's hitl-reserve predates the multi-channel timing op?)"
+        )
+    for blk in res.get("channels") or []:
+        c = blk.get("capture") or {}
+        _log(
+            f"[skew]   {blk.get('channel')}: {blk.get('frames_listed')} frames, "
+            f"{c.get('samples')}/{c.get('requested_samples')} samples @ {c.get('sample_rate')} Hz, "
+            f"drop_suspected={c.get('drop_suspected')}"
         )
     return by
 
@@ -215,16 +205,22 @@ def run(args: argparse.Namespace) -> int:
         a, b = args.units
         pins = [tap[a], tap[b]]
 
-        def measure(label: str) -> float:
-            by = _capture_pair(args.server, a, pins, args.capture_ms)
+        def measure(label: str, tag: str) -> float:
+            save = os.path.join(args.save_dir, f"capture-{tag}.json") if args.save_dir else None
+            by = _capture_pair(args.server, a, pins, args.capture_ms, save)
             s = skew(by[pins[0]], by[pins[1]])
+            pf = s.per_frame_ms
             _log(
                 f"[skew] {label}: skew {s.skew_ms:+.1f} ms ({b} - {a}); per-frame spread "
-                f"{s.spread_a_ms:.1f}/{s.spread_b_ms:.1f} ms over {s.n_a}/{s.n_b} frames"
+                f"{s.spread_a_ms:.1f}/{s.spread_b_ms:.1f} ms over {s.n_a}/{s.n_b} frames; "
+                f"per-frame {b} vs {a} p5/p50/p95 = {percentile(pf, 5):+.1f}/"
+                f"{percentile(pf, 50):+.1f}/{percentile(pf, 95):+.1f} ms"
             )
             return s.skew_ms
 
-        base = measure("baseline (no time base)")
+        if args.save_dir:
+            os.makedirs(args.save_dir, exist_ok=True)
+        base = measure("baseline (no time base)", "baseline")
         results = []
         for rnd in range(args.rounds):
             offs = {u: asyncio.run(_offset(urls[u], args.pings)) for u in args.units}
@@ -235,7 +231,7 @@ def run(args: argparse.Namespace) -> int:
                 f"[skew] round {rnd + 1}: offsets "
                 + ", ".join(f"{u} {o:+.1f} ms (rtt {r:.1f})" for u, (o, r) in offs.items())
             )
-            results.append(measure(f"round {rnd + 1} (shared time base)"))
+            results.append(measure(f"round {rnd + 1} (shared time base)", f"round{rnd + 1}"))
         worst = max(abs(x) for x in results)
         verdict = "PASS" if worst < TARGET_MS else "FAIL"
         _log(
@@ -260,6 +256,11 @@ def main() -> int:
     ap.add_argument("--pings", type=int, default=20)
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--capture-ms", type=int, default=5000)
+    ap.add_argument(
+        "--save-dir",
+        default=os.environ.get("HITL_SKEW_SAVE_DIR"),
+        help="write each raw two-channel timing capture (JSON) here, for evidence",
+    )
     return run(ap.parse_args())
 
 
