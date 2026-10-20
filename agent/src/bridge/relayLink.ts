@@ -26,10 +26,8 @@ import type { BridgeIdentity } from "./identity";
 /**
  * The relay a bridge uses when neither --relay nor SPLANC_RELAY names one: the
  * deployed Splanc relay Worker (agent/relay/deploy.sh prints its workers.dev URL).
- * Empty until it is deployed; the bridge then reports state "error" and says how to
- * configure one.
  */
-export const DEFAULT_RELAY_URL = "";
+export const DEFAULT_RELAY_URL = "https://splanc-relay.kbalke.workers.dev";
 
 /** --relay, else $SPLANC_RELAY (the Pi appliance's bridge.env), else the default. */
 export function relayUrl(flagValue: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
