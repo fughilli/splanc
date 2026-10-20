@@ -190,8 +190,12 @@ firmware runs — so what you see is what the fixture will do. Edits autosave ba
 - **Compile feedback** — errors surface inline as you type.
 - **Push to device** — when a controller is connected, send the compiled `.fxb` and live uniform
   values so the fixture updates as you edit.
+- **Keypoints** — save the live uniform values as a named look stored on the controller, tap a pad
+  to morph back to it, or slide the morph fader between two looks. The same keypoints appear in Show
+  Mode and to AI agents.
 - **AI assistant** (optional, bring-your-own-key) — describe a change in words and have it drafted
-  for you.
+  for you. With a controller connected it can also measure the effect's real frame time on the
+  fixture, not just estimate it.
 
 ## Devices
 

@@ -56,6 +56,14 @@ flowchart LR
   and sends every player the same room epoch in its own clock
   (`set_time_base`), so identical effects stay in step. The target is under
   20 ms of skew, which the `time_base_skew` HITL test measures.
+- **Saved looks.** `list_keypoints`, `save_keypoint`, `recall_keypoint`
+  (`seconds` > 0 morphs), `blend_keypoints` (up to four weighted keypoints) and
+  `delete_keypoint` drive the device's uniform keypoints, gated on the
+  `keypoints` feature. The skill maps "save the look as a keypoint" and "morph
+  between moods" onto them.
+- **Performance.** `estimate_effect` runs the offline cost model and touches
+  nothing; `measure_effect` reads a few seconds of the device's perf stream.
+  The skill says to iterate with the first and confirm with the second.
 
 Uniforms are addressed **by name**, with the `doc`, `min`, `max` and `unit`
 that the compiler extracts from the effect's source comments. Ramps stream

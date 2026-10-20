@@ -76,7 +76,13 @@ with its own design note:
   no lwIP task and no NVS mirror. Dead or cold SDK code is moved from IRAM to
   flash by rewriting the SDK's `sections.ld` (`firmware/player_app/ld/`, rules
   in `esp32c6_iram_to_flash.txt`), which took `.iram0.text` from 114,910 to
-  97,512 B.
+  97,512 B. The same file's `iram:` rules pin hot code back in: the per-LED
+  shade entry (`lm_fx_shade`, `Program::parse`, `Vm::run_shade_bounded`, #285)
+  brings it to 99,704 B.
+- **An exact-size topology arena:** a topology upload is decoded in two passes
+  (count, then fill exactly) into the 12 KB `ARENA_MEM`, which needs
+  16·J + 24·S + 12·V bytes for J junctions, S segments and V polyline vertices
+  (#291). An upload past it fails with `map_too_large`.
 - **mbedTLS in its own region:** `tls_region.cpp` has 2 × 6,912 B
   record-buffer slots and a 10 KB private TLSF region. It falls back to the
   shared heap if they run out, and counts each fallback (`fb=` on the status
@@ -108,6 +114,19 @@ describes what it serves:
 - **The room frame:** it stores a fixture pose (`set_fixture_pose`, persisted)
   and a shared time base (`set_time_base`), and keeps a 6 B/LED room-frame
   cache for effects that read `led.room`.
+
+## Decks and keypoints
+
+The player runs two effects at once (deck A and deck B) and crossfades their
+per-LED output (`set_crossfade`, linear RGB or HSV). Deck B's VM and `.fxb`
+buffer share one region with the video-texture delta buffer (`FX_AUX`), so
+loading deck B ends a video stream. Deck B is interpreted and not persisted.
+
+Uniform keypoints (named looks per effect) live in littlefs under `/lfs/kp/`,
+one power-loss-safe file each, at most 16 per effect. The `firmware/keypoint`
+crate owns the record format, the per-uniform blend rules and the morph; the
+morph advances once per frame inside `lm_fx_update`, and a fader-rate blend
+reads no flash. Design: {doc}`../docs/design/uniform-keypoints`.
 
 ## The `@embedded` module & Nix
 

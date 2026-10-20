@@ -120,6 +120,13 @@ The rest of the budget came from many small cuts rather than one big one:
   97,512 B);
 - unbuffered littlefs files.
 
+Headroom is there to be spent deliberately. Later features each took a measured,
+reviewed slice of it: the room-frame cache (3 KiB), a larger topology arena
+(4 KiB), and a second effect deck with on-device keypoints (6.5 KB, plus 2.2 KB
+of hot shade code pinned back into IRAM). With both decks running and a wss
+session open, the keypoints HITL run still measured a 72.7 KB minimum free heap.
+Each of those changes re-pinned the memory-mode model in the same PR.
+
 The detail is in [ram-budget.md](design/ram-budget.md).
 
 **What it costs.** Static sizing means choosing limits up front: the LED count,
