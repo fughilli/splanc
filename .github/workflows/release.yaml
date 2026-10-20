@@ -236,6 +236,27 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+      # A durable copy of the same tree as a Release asset: workflow artifacts
+      # expire (90 days), and splanc.io/app follows the newest app-v* release by
+      # downloading this asset (Studio-Fug/splanc.io scripts/stage-app.mjs).
+      # make_latest=false keeps releases/latest pointing at firmware.
+      - name: Package released webapp
+        run: |
+          VER="${GITHUB_REF_NAME#app-v}"
+          mkdir -p _assets
+          tar -C _site -czf "_assets/splanc-webapp-${VER}.tar.gz" .
+          (cd _assets && sha256sum "splanc-webapp-${VER}.tar.gz" > "splanc-webapp-${VER}.tar.gz.sha256")
+
+      - name: Publish app Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            _assets/splanc-webapp-*.tar.gz
+            _assets/splanc-webapp-*.tar.gz.sha256
+          generate_release_notes: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+
       - name: Deploy to GitHub Pages (main site)
         uses: JamesIves/github-pages-deploy-action@v4
         with:
