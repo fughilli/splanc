@@ -17,9 +17,11 @@ splanc.io).
 ## What you need
 
 - A Splanc player on your Wi-Fi.
-- A bridge: a computer on the same network that stays on. A Raspberry Pi with the Splanc bridge
-  image (it shows its state and pairing code on its screen) is the easy option; any Linux, macOS
-  or Windows machine with Node.js 20 or newer works too.
+- A bridge: a computer on the same network that stays on. The easy option is a Raspberry Pi
+  with the Splanc bridge image: the **Splanc Bridge Flasher** app writes it to a microSD card
+  with your Wi-Fi, no terminal needed, and the Pi shows its state and pairing code on its screen
+  ([Set up a Splanc bridge on a Raspberry Pi](../pi-bridge.md)). Any Linux, macOS or Windows
+  machine with Node.js 20 or newer works too.
 - The relay's address. The public Splanc relay runs at a `workers.dev` address
   (`https://splanc-relay.<name>.workers.dev`, published on splanc.io). You can also run your own:
   see [Run your own relay with Tailscale](relay-tailscale.md).
@@ -28,8 +30,9 @@ Below, `<relay>` stands for that address.
 
 ## 1. Start the bridge
 
-On the Pi image, the bridge starts by itself; its screen says **Pairing** and shows a code like
-`ABCD-EFGH`.
+On the Pi image, the bridge starts by itself; its screen says **Ready to pair** and shows a code
+like `ABCD-EFGH`. If you haven't made the card yet, see
+[Set up a Splanc bridge on a Raspberry Pi](../pi-bridge.md).
 
 On any other computer:
 
@@ -37,8 +40,10 @@ On any other computer:
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay <relay>
 ```
 
-(`--relay` can be left out once the public relay's address is built in, or set `SPLANC_RELAY`;
-on the Pi image that goes in `/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
+(`--relay` can be left out once the public relay's address is built in, or set `SPLANC_RELAY`.
+On the Pi image, set it in the flasher's **Advanced ▸ Relay URL**, or as `SPLANC_RELAY=` in
+`splanc-bridge.conf` on the card's boot partition; on a Raspberry Pi OS install it goes in
+`/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
 then a scan of the local network), connects to the relay, and asks
 for a pairing code. Without a screen, read the code with:
 
@@ -93,7 +98,9 @@ previews). It can't re-flash, re-map or rewire anything.
   pair again with a new code.
 - **Which light is which?** `splanc-agent bridge-ctl identify` blinks every fixture.
 - **Moving the bridge** to another machine: pair again from the new one (the identity lives in
-  `~/.local/state/splanc/bridge.json`; copying it moves the bridge with its pairings).
+  `~/.local/state/splanc/bridge.json`, or `/var/lib/splanc-bridge/bridge.json` on the Pi;
+  copying it moves the bridge with its pairings). Writing a Pi's card again with the flasher
+  gives it a new identity, so pair again after that too.
 
 ## What the screen (status) means
 

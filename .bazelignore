@@ -3,3 +3,4 @@ web/node_modules
 agent/node_modules
 shared/protocol/ts/node_modules
 .venv
+pi/bridge/flasher/electron/node_modules

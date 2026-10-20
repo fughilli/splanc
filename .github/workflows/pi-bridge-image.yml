@@ -1,0 +1,297 @@
+# Splanc bridge: the Raspberry Pi SD image (pi/bridge/image) and the desktop
+# Splanc Bridge Flasher (pi/bridge/flasher) — their own release track.
+#
+#   push to main touching pi/bridge/** (or this file)
+#       -> build every board's image + the QEMU smoke test. Validates the image
+#          and warms the fugstudio Cachix; publishes nothing.
+#   tag pi-bridge-vX.Y.Z
+#       -> images + flasher installers, attached to the GitHub Release
+#          pi-bridge-vX.Y.Z (created here, never marked "latest" so the repo's
+#          firmware/app releases keep that slot):
+#            splanc-bridge-<board>-X.Y.Z.img.zst (+ .sha256)   board: pi5 pi4 pi3 zero2w
+#            Splanc-Bridge-Flasher-X.Y.Z-{mac-arm64,mac-x64}.dmg, -win-x64.exe,
+#            -linux-x86_64.AppImage
+#   workflow_dispatch
+#       -> the same builds on any branch, as run artifacts (pick boards; the
+#          flasher and VM test are optional). Give `tag` to attach to that
+#          existing release instead.
+#
+# Independent of firmware-v* / app-v* / pi-v* (release.yaml). Never runs on pull
+# requests and is not a required check, so it can't block other work.
+#
+# WHO CUTS pi-bridge-v* TAGS: the agents working on the bridge decide when a
+# change is worth shipping to users (image or flasher changes, or a new agent
+# bundle pin in pi/bridge/image/agent-pin.json) and push the tag on a main
+# commit whose push run here was green:
+#     git tag pi-bridge-v1.2.0 <sha> && git push origin pi-bridge-v1.2.0
+# The flasher always offers the newest non-prerelease pi-bridge-v* release.
+#
+# Cachix `fugstudio` (as in td-deploy): environment `CI` holds CACHIX_AUTH_TOKEN,
+# so builds substitute AND push the closure (the RPi kernels are the slow part).
+# Without the secret (e.g. a fork) cachix-action falls back to read-only.
+name: Pi bridge image
+
+on:
+  push:
+    branches: [main]
+    tags: ['pi-bridge-v*'] # (path filters don't apply to tag pushes)
+    paths:
+      - 'pi/bridge/**'
+      - '.github/workflows/pi-bridge-image.yml'
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: 'Boards to build (comma-separated: pi5,pi4,pi3,zero2w)'
+        default: 'pi5,pi4,pi3,zero2w'
+      flasher:
+        description: 'Also build the desktop flasher installers'
+        type: boolean
+        default: true
+      vm_test:
+        description: 'Run the QEMU smoke test'
+        type: boolean
+        default: true
+      tag:
+        description: 'Optional: attach the outputs to this existing pi-bridge-v* release'
+        default: ''
+
+permissions:
+  contents: write # the tag run creates the release + uploads assets
+
+concurrency:
+  # main: one run at a time, the newest wins; anything else: one group per commit.
+  group: pi-bridge-image-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && 'main' || github.sha }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      boards: ${{ steps.s.outputs.boards }}
+      version: ${{ steps.s.outputs.version }}
+      tag: ${{ steps.s.outputs.tag }}
+      publish: ${{ steps.s.outputs.publish }}
+      flasher: ${{ steps.s.outputs.flasher }}
+      vm_test: ${{ steps.s.outputs.vm_test }}
+      artifacts: ${{ steps.s.outputs.artifacts }}
+    steps:
+      - id: s
+        env:
+          IN_BOARDS: ${{ inputs.boards }}
+          IN_TAG: ${{ inputs.tag }}
+          IN_FLASHER: ${{ inputs.flasher }}
+          IN_VM: ${{ inputs.vm_test }}
+        run: |
+          set -euo pipefail
+          boards="${IN_BOARDS:-pi5,pi4,pi3,zero2w}"
+          json="$(printf '%s' "$boards" | python3 -c 'import json,sys; b=[x.strip() for x in sys.stdin.read().split(",") if x.strip()]; ok={"pi5","pi4","pi3","zero2w"}; bad=set(b)-ok; assert not bad, bad; print(json.dumps(b))')"
+          tag=""
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "${GITHUB_REF_TYPE}" = tag ]; then tag="$GITHUB_REF_NAME"; fi
+          if [ -n "${IN_TAG:-}" ]; then tag="$IN_TAG"; fi
+          if [ -n "$tag" ]; then
+            case "$tag" in pi-bridge-v[0-9]*) ;; *) echo "::error::not a pi-bridge-v* tag: $tag"; exit 1 ;; esac
+            version="${tag#pi-bridge-v}"
+          else
+            version="0.0.0-dev.g${GITHUB_SHA::8}"
+          fi
+          {
+            echo "boards=$json"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$([ -n "$tag" ] && echo true || echo false)"
+            # main pushes validate the image only; dispatch/tags may build the flasher.
+            echo "flasher=$([ "$GITHUB_REF" = refs/heads/main ] && echo false || echo "${IN_FLASHER:-true}")"
+            echo "vm_test=${IN_VM:-true}"
+            echo "artifacts=$([ "$GITHUB_REF" = refs/heads/main ] && echo false || echo true)"
+          } >>"$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  image:
+    needs: setup
+    runs-on: ubuntu-24.04-arm # native aarch64: no cross/QEMU for the NixOS build
+    environment: CI # CACHIX_AUTH_TOKEN
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJSON(needs.setup.outputs.boards) }}
+    env:
+      BOARD: ${{ matrix.board }}
+      VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://nixos-raspberrypi.cachix.org
+            extra-trusted-public-keys = nixos-raspberrypi.cachix.org-1:4iMO9LXa8BqhU+Rpg6LQKiGa2lsNh/j2oiYLNOQ5sPI=
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: fugstudio
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build the SD image
+        run: |
+          set -euo pipefail
+          nix build "./pi/bridge/image#image-$BOARD" -L --out-link result-img
+          nix build "./pi/bridge/image#toplevel-$BOARD" --out-link result-top
+          ls -l result-img/sd-image/
+
+      - name: Size breakdown
+        run: |
+          set -euo pipefail
+          img="$(ls result-img/sd-image/*.img)"
+          {
+            echo "### Splanc bridge image: $BOARD"
+            echo
+            echo "Raw image: **$(du -m "$img" | cut -f1) MB** (\`$(basename "$img")\`)"
+            echo
+            nix path-info -r --json ./result-top | python3 pi/bridge/image/closure_top.py 25 --markdown
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Compress + checksum
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          name="splanc-bridge-$BOARD-$VERSION.img.zst"
+          nix run nixpkgs#zstd -- -T0 -19 -q -c result-img/sd-image/*.img >"out/$name"
+          (cd out && sha256sum "$name" | tee "$name.sha256")
+          mb=$(( $(stat -c %s "out/$name") / 1000000 ))
+          echo "Compressed: **$mb MB** (\`$name\`)" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Budget: well under 1 GB to download. Warn early, fail before it gets there.
+          if [ "$mb" -gt 1000 ]; then echo "::error::$name is $mb MB (budget: 1000 MB)"; exit 1; fi
+          if [ "$mb" -gt 700 ]; then echo "::warning::$name is $mb MB (warning at 700 MB)"; fi
+
+      - name: Upload image (run artifact)
+        if: needs.setup.outputs.artifacts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.board }}
+          path: out/*
+          retention-days: 7
+          compression-level: 0 # already zstd
+
+  vm-test:
+    needs: setup
+    if: needs.setup.outputs.vm_test == 'true'
+    runs-on: ubuntu-24.04-arm
+    environment: CI
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          # No /dev/kvm on these runners: the test's QEMU falls back to TCG.
+          extra-conf: |
+            experimental-features = nix-command flakes
+            system-features = kvm big-parallel nixos-test benchmark
+      - uses: cachix/cachix-action@v15
+        with:
+          name: fugstudio
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: QEMU smoke test (generic aarch64 VM, same appliance modules)
+        run: nix build ./pi/bridge/image#checks.aarch64-linux.vm -L --out-link result-vm
+      - name: HDMI page rendered in the VM
+        run: |
+          ls -l result-vm/
+          echo "The bridge's HDMI status page as rendered inside the VM is in the vm-hdmi artifact." >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-hdmi
+          path: result-vm/hdmi.png
+          retention-days: 7
+
+  flasher:
+    needs: setup
+    if: needs.setup.outputs.flasher == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15 # Apple silicon
+            build: bash pi/bridge/flasher/packaging/build_app.sh
+          - os: macos-15-intel
+            build: bash pi/bridge/flasher/packaging/build_app.sh
+          - os: windows-2022
+            build: powershell -ExecutionPolicy Bypass -File pi/bridge/flasher/packaging/build_app.ps1
+          - os: ubuntu-22.04 # older glibc: the AppImage runs on more distros
+            build: bash pi/bridge/flasher/packaging/build_app.sh
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.14' } # stdlib compression.zstd
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Build the flasher
+        env:
+          FLASHER_VERSION: ${{ needs.setup.outputs.version }}
+          PYTHON: python
+          # Code signing — optional, from repository secrets (none are set today,
+          # so builds are unsigned / ad-hoc signed; docs/pi-bridge.md tells users
+          # how to open them). To sign: add MAC_CSC_LINK + MAC_CSC_KEY_PASSWORD
+          # (Developer ID Application .p12, base64) and APPLE_ID +
+          # APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (notarization), and/or
+          # WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD (Authenticode .pfx, base64).
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+        run: ${{ matrix.build }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flasher-${{ matrix.os }}
+          path: |
+            pi/bridge/flasher/electron/dist/*.dmg
+            pi/bridge/flasher/electron/dist/*.exe
+            pi/bridge/flasher/electron/dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [setup, image, flasher]
+    # Every image built, and the flasher too unless this run skipped it.
+    if: >-
+      always() && needs.setup.outputs.publish == 'true' && needs.image.result == 'success' &&
+      (needs.flasher.result == 'success' || needs.flasher.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: assets, merge-multiple: true }
+      - name: Create the release (if needed) and upload, with retries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.setup.outputs.tag }}
+          VERSION: ${{ needs.setup.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -l assets
+          if ! gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            cat >notes.md <<EOF
+          Splanc bridge $VERSION: a ready-to-flash Raspberry Pi SD image that runs the Splanc cloud bridge, and the **Splanc Bridge Flasher** desktop app that writes it.
+
+          **Most people:** download the flasher for your computer below, open it, pick your Pi, enter your WiFi, pick the SD card. See [docs/pi-bridge.md](https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md).
+
+          The flasher is not code-signed yet: on macOS, open it once via System Settings > Privacy & Security > Open Anyway; on Windows, SmartScreen > More info > Run anyway.
+          EOF
+            gh release create "$TAG" -R "$REPO" --title "Splanc bridge $VERSION" --notes-file notes.md --latest=false --verify-tag
+          fi
+          for f in assets/*; do
+            for attempt in 1 2 3 4 5; do
+              echo "uploading $(basename "$f") (attempt $attempt)"
+              if gh release upload "$TAG" "$f" -R "$REPO" --clobber; then break; fi
+              if [ "$attempt" -eq 5 ]; then echo "::error::failed to upload $f"; exit 1; fi
+              sleep $((attempt * 30))
+            done
+          done

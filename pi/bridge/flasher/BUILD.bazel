@@ -1,0 +1,37 @@
+"""pi/bridge/flasher — Splanc Bridge Flasher, the desktop app that writes a Splanc
+bridge SD card (pi/bridge/README.md, "The flasher").
+
+Electron window (electron/) + a Python sidecar (sidecar.py, splanc_flasher/)
+frozen with PyInstaller; packaged per OS by packaging/build_app.{sh,ps1} in CI
+(.github/workflows/pi-bridge-image.yml), not by Bazel. Bazel runs the engine's
+unit tests:
+
+  :flasher_test   disk filtering/safety, the elevated raw writer + read-back,
+                  NetworkManager keyfile + settings rendering (round-tripped
+                  through the image's own parser), release lookup, download +
+                  checksum (+ zstd unpack when a zstd module is available), the
+                  sidecar protocol
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+py_library(
+    name = "splanc_flasher",
+    srcs = glob(["splanc_flasher/*.py"]) + ["sidecar.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "flasher_test",
+    size = "small",
+    srcs = glob(["tests/*.py"]),
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":splanc_flasher",
+        "//pi/bridge/image:splanc_image",
+        "@rules_requirements//python",
+        requirement("pytest"),
+    ],
+)

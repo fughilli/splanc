@@ -1,15 +1,16 @@
 # Set up a Splanc bridge on a Raspberry Pi
 
 A **Splanc bridge** is a small always-on computer on your home network that connects your
-Splanc fixtures to the Splanc cloud relay. With it, the app (or an AI agent) can reach your lights
-from anywhere, not only from the same Wi-Fi. A Raspberry Pi works well as a bridge. It runs with no
-keyboard or mouse, and it shows its pairing code and status on two screens:
+Splanc fixtures to the Splanc cloud relay. With it, the app (or an AI agent in the cloud) can
+reach your lights from anywhere, not only from the same Wi-Fi. A Raspberry Pi makes a good bridge.
+It runs with no keyboard or mouse, and it shows its pairing code and status on two screens:
 
 - a TV or monitor plugged into its HDMI port;
 - a small OLED add-on board (optional).
 
-You flash a memory card, boot the Pi and run **one command**. The steps below take about 15
-minutes, and most of that is waiting.
+Setting one up takes about 10 minutes and **no terminal**: the **Splanc Bridge Flasher** app
+downloads the Splanc bridge system, asks for your Wi-Fi, and writes it all to a microSD card. You
+put the card in the Pi, power it on, and read the pairing code off its screen.
 
 ![The HDMI status page while the bridge waits to be paired](img/pi-bridge/hdmi-pairing.png)
 
@@ -17,82 +18,94 @@ minutes, and most of that is waiting.
 
 | Item                       | Notes                                                                                                                                                                                                                                                                                                         |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Raspberry Pi               | Pi 4 or Pi 5 recommended. A Pi 3B/3B+ or Pi Zero 2 W works too.                                                                                                                                                                                                                                               |
+| Raspberry Pi               | **Pi 5** or **Pi 4** (or Pi 400) recommended. A Pi 3 (B, B+, A+) or Pi Zero 2 W works too.                                                                                                                                                                                                                    |
 | Power supply               | The official supply for your model (USB-C 5 V 3 A for a Pi 4; 5 V 5 A for a Pi 5).                                                                                                                                                                                                                            |
-| microSD card               | 8 GB or larger.                                                                                                                                                                                                                                                                                               |
-| Network                    | Wi-Fi or Ethernet, on the **same network as your fixtures**.                                                                                                                                                                                                                                                  |
+| microSD card               | 4 GB or larger. Everything on it is erased.                                                                                                                                                                                                                                                                   |
+| Network                    | Wi-Fi or Ethernet, on the **same network as your fixtures**. A Pi 3 or Zero 2 W only sees 2.4 GHz Wi-Fi.                                                                                                                                                                                                      |
 | HDMI screen (optional)     | Any TV or monitor. A Pi 4/5 needs a micro-HDMI cable; a Zero 2 W needs mini-HDMI.                                                                                                                                                                                                                             |
 | OLED HAT (optional)        | **Waveshare 1.3inch OLED HAT** (128×64, SH1106, with a 5-way joystick and three keys; e.g. Amazon B07VCYTPRK). It plugs onto the Pi's 40-pin header, so it needs no wiring or soldering. A Zero 2 W needs a version with the header already soldered on ("WH"). Leave the HAT's factory SPI setting as it is. |
-| A computer with an SD slot | To run Raspberry Pi Imager once.                                                                                                                                                                                                                                                                              |
+| A computer with an SD slot | A Mac, Windows PC or Linux PC (a USB card reader is fine), to run the Splanc Bridge Flasher.                                                                                                                                                                                                                  |
 
-You need at least one of the two screens to read the pairing code from the Pi itself. You can also
-read it over SSH with `splanc-bridge status`.
+You need at least one of the two screens to read the pairing code from the Pi.
 
-## 1. Flash Raspberry Pi OS with Raspberry Pi Imager
+## 1. Get the Splanc Bridge Flasher
 
-1. Install **Raspberry Pi Imager** from <https://www.raspberrypi.com/software/> and open it.
-2. **Choose Device**: pick your Pi model.
-3. **Choose OS**: _Raspberry Pi OS (other)_ ▸ **Raspberry Pi OS Lite (64-bit)**. The bridge needs no
-   desktop. The 32-bit Lite image works too, and a desktop image is also fine.
-4. **Choose Storage**: pick your microSD card, then **Next**.
-5. When asked _"Would you like to apply OS customisation settings?"_, choose **Edit Settings**. On
-   the **General** tab:
-   - **Set hostname**: `splanc-bridge`
-   - **Set username and password**: choose your own.
-   - **Configure wireless LAN**: your Wi-Fi name and password, and your **Wireless LAN country**.
-     Skip this if you use Ethernet.
-   - **Set locale settings**: your time zone.
-6. On the **Services** tab, tick **Enable SSH** (password authentication is fine). Click **Save**,
-   then **Yes** to apply the settings, then **Yes** to write the card.
+Download it from the newest **Splanc bridge** release on
+[the releases page](https://github.com/fughilli/splanc/releases) (the releases named "Splanc
+bridge …", tagged `pi-bridge-v…`):
 
-## 2. Boot the Pi
+| Your computer               | File                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| Mac with Apple silicon (M…) | `Splanc-Bridge-Flasher-<version>-mac-arm64.dmg`         |
+| Mac with an Intel processor | `Splanc-Bridge-Flasher-<version>-mac-x64.dmg`           |
+| Windows                     | `Splanc-Bridge-Flasher-<version>-win-x64.exe`           |
+| Linux                       | `Splanc-Bridge-Flasher-<version>-linux-x86_64.AppImage` |
 
-If you have the OLED HAT, fit it onto the Pi's header first, with the Pi unplugged. Plug in the
-HDMI screen if you use one. Then insert the card and connect power. The first boot takes a minute
-or two, because the Pi expands the file system and joins your Wi-Fi.
+The app isn't code-signed yet, so the first time you open it your computer asks you to confirm:
 
-## 3. Run the installer
+- **macOS:** open the `.dmg` and drag **Splanc Bridge Flasher** into **Applications**. Open it;
+  macOS says it "cannot be opened" or "could not verify" it. Click **Done** (or **OK**), open
+  **System Settings ▸ Privacy & Security**, scroll down to the message about Splanc Bridge
+  Flasher and click **Open Anyway**, then **Open**. You only do this once.
+- **Windows:** run the `.exe`. If **Windows protected your PC** appears, click **More info**, then
+  **Run anyway**. It installs for your user and opens.
+- **Linux:** in your file manager, right-click the `.AppImage` ▸ **Properties** ▸ **Permissions**,
+  tick **Allow executing file as program**, then double-click it.
 
-From your computer, open a terminal and log in to the Pi. Use the username you set in Imager:
+## 2. Write the card
 
-```sh
-ssh yourname@splanc-bridge.local
-```
+Put the microSD card in your computer and open the flasher.
 
-On the Pi, run:
+1. **Pi**: choose your Raspberry Pi model. The flasher always offers the newest Splanc bridge
+   release.
 
-```sh
-curl -fsSL https://splanc.io/bridge/install.sh | sudo sh
-```
+   ![Choosing the Pi model](img/pi-bridge/flasher-board.png)
 
-The installer:
+2. **WiFi**: type your Wi-Fi name and password, and check the **WiFi country** (it sets which
+   channels the Pi may use). Tick **Hidden network** if your network doesn't broadcast its name,
+   or **No WiFi** if you'll plug in an Ethernet cable. You can also give the Pi a name; it then
+   shows up on your network as `<name>.local` (the default is `splanc-bridge.local`).
 
-- installs Node.js and the Splanc bridge, checking each download against its published checksum;
-- installs the screen service;
-- switches on the OLED HAT's SPI interface;
-- starts everything.
+   ![Wi-Fi and name](img/pi-bridge/flasher-wifi.png)
 
-When it finishes, it prints the bridge status, including the **pairing code**. From now on, the Pi
-starts the bridge by itself every time it boots, even with no keyboard, screen or login. The
-bridge finds your fixtures on the network by itself.
+   The Wi-Fi details go only onto the card. On its first boot the Pi moves the password into its
+   own protected storage and deletes it from the card.
 
-Installer options are passed after `sh -s --`. For example:
+3. **SD card**: pick your card. Only removable disks are listed, never your computer's own
+   drive, and the flasher asks again if a disk looks too big to be an SD card. Click
+   **Erase and write**, confirm, and enter your computer's password when it asks (writing a card
+   needs it).
 
-```sh
-curl -fsSL https://splanc.io/bridge/install.sh | sudo sh -s -- --oled off
-```
+   ![Choosing the card](img/pi-bridge/flasher-card.png)
 
-| Option                       | Effect                                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------------------------- |
-| `--oled auto\|spi\|i2c\|off` | OLED HAT mode. `auto` is the default: it finds the HAT by itself. `off` skips the SPI setup. |
-| `--relay URL`                | Use a different relay. By default, the bridge uses its built-in relay.                       |
-| `--no-start`                 | Install without starting the services.                                                       |
+4. The flasher downloads the image (about 450 MB, checked against its published checksum),
+   writes the card, **reads it back to check every byte**, and saves your Wi-Fi settings onto it.
+   This takes a few minutes. Keep the card in until it says it's ready.
+
+   ![Writing](img/pi-bridge/flasher-write.png)
+
+   ![Done](img/pi-bridge/flasher-done.png)
+
+On Windows, a message may offer to format a drive on the card: choose **Cancel**. That drive is
+the Pi's system partition, which Windows can't read.
+
+## 3. Boot the Pi
+
+With the Pi unplugged, fit the OLED HAT onto its header if you have one, and plug in the HDMI
+screen if you use one. Insert the card and connect power. In about a minute the screens show
+**Ready to pair** with a code like `ABCD-EFGH`. (The first boot takes a little longer: the Pi
+grows its file system to fill the card.)
+
+The bridge starts by itself every time the Pi powers on. It finds your fixtures on the network by
+itself.
 
 ## 4. Pair
 
-Open the address shown under the code (or scan the QR code) on your phone, and enter the code. The
-code expires after a few minutes. Press **KEY1** on the HAT, or run `splanc-bridge new-code`, to
-get a fresh one.
+To use the bridge from a cloud AI agent (Claude, ChatGPT, …), follow
+[Use Splanc from a cloud agent](guides/cloud-agent.md): you give the agent the relay address and,
+when it asks you to sign in, type the code from the Pi's screen.
+
+The code expires after a few minutes. Press **KEY1** on the HAT for a fresh one.
 
 ## What the screens show
 
@@ -108,9 +121,6 @@ After pairing, it shows how many clients are connected. Along the bottom are:
 - **Fixtures**: the players the bridge found, with a green or red dot for online or not;
 - **Paired clients**: how many apps are paired with this bridge;
 - **Network**: the Pi's address, the relay and the bridge ID.
-
-The page takes over console 8. With a keyboard plugged in, press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F1</kbd>
-to get a login prompt, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F8</kbd> to return to the status page.
 
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
@@ -142,7 +152,7 @@ Any key wakes it. That first press only wakes the screen and does nothing else.
 | Not paired         | No app is paired, and no code is showing. Press **KEY1** for a code.                                    |
 | Ready to pair      | A pairing code is waiting to be used.                                                                   |
 | Paired             | One or more apps are paired.                                                                            |
-| Error              | The bridge reported a problem. The message is on screen; see `splanc-bridge logs` for details.          |
+| Error              | The bridge reported a problem; the message is on screen.                                                |
 
 ## OLED HAT buttons
 
@@ -159,9 +169,101 @@ After a joystick press, the pages stop rotating for 30 seconds.
 
 ![Holding KEY3, the revoke confirm screen, a button result, and the paired home page](img/pi-bridge/oled-overlays.png)
 
-## Managing the bridge
+## Updates
 
-Log in over SSH and use `splanc-bridge`:
+- **The Splanc software updates itself.** About two minutes after it boots and then once a day,
+  the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
+  checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
+  stays on the card too.
+- **The Pi's operating system** is updated by writing the card again with the flasher when a new
+  Splanc bridge release comes out. Writing the card starts fresh, so you pair your agents again
+  afterwards. (An in-place system update is planned.)
+
+## Changing settings later
+
+Put the card in your computer: its boot partition (it may be called `FIRMWARE` or `bootfs`) has a
+file **`splanc-bridge.conf`** you can edit with any text editor. The Pi reads it every time it
+boots.
+
+| Setting                    | What it does                                                          |
+| -------------------------- | --------------------------------------------------------------------- |
+| `HOSTNAME=splanc-bridge`   | The Pi's name on your network (`<name>.local`).                       |
+| `WIFI_COUNTRY=US`          | Two-letter country code for Wi-Fi channels.                           |
+| `SPLANC_RELAY=`            | The relay to use (empty: Splanc's).                                   |
+| `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                          |
+| `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down. |
+| `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
+| `SPLANC_AUTO_UPDATE=1`     | `0` turns the daily Splanc updates off.                               |
+
+To join a different Wi-Fi network, write the card again with the flasher (and pair again).
+
+## Troubleshooting
+
+**The card doesn't appear in the flasher**: make sure it's inserted all the way and shows up on
+your computer. Card readers built into some laptops count as internal on macOS; use a USB card
+reader instead.
+
+**macOS: "macOS blocked raw disk access"**: open **System Settings ▸ Privacy & Security ▸ Full
+Disk Access**, turn on **Splanc Bridge Flasher** (add it with **+** from Applications if it isn't
+listed), quit and reopen the flasher, and write again.
+
+**"What was read back from the card differs from the image"**: the card or the card reader is
+faulty, or the card is a counterfeit that reports more space than it has. Try another card.
+
+**The download fails or is "damaged"**: check your internet connection and try again. The
+flasher refuses any image whose checksum doesn't match the published one.
+
+**The Pi never shows up on the network / stays "Offline"**: check the Wi-Fi name and password
+(they are case-sensitive) and the country, and that a Pi 3 or Zero 2 W is near a 2.4 GHz network.
+Write the card again with the right details. Ethernet always works without settings.
+
+**The HDMI screen stays black or shows a login prompt**: make sure the screen was plugged in when
+the Pi booted (or reboot it with the screen connected).
+
+**The OLED stays dark or the picture is upside down**: check the HAT is seated on all 40 pins;
+for an upside-down picture set `OLED_ROTATE=0` in `splanc-bridge.conf`. If you changed the HAT's
+resistors to I2C, set `OLED=i2c`.
+
+**The screen says "has no bridge yet. Checking for an update…"**: the card has a Splanc release
+from before the cloud bridge existed. Leave the Pi connected to the internet: it updates itself
+within a few minutes, then shows a pairing code.
+
+**No fixtures found**: the Pi must be on the same network as the fixtures. Guest Wi-Fi networks
+often isolate devices from each other, and some mesh systems block the multicast traffic that
+discovery uses. Try Ethernet, or put the Pi and the fixtures on the main network.
+
+## For power users
+
+### SSH
+
+The bridge image has no password login at all. To log in, paste your SSH public key into the
+flasher's **Advanced ▸ SSH public key** box (or put it in `authorized_keys` on the card's boot
+partition). Then `ssh root@splanc-bridge.local` works, and `splanc-bridge status`, `new-code`,
+`identify`, `revoke-all`, `logs`, `update`, `restart` and `version` are available.
+
+### Install on Raspberry Pi OS instead
+
+If you'd rather keep a Raspberry Pi OS install you manage yourself, the same bridge and screens
+install with one command. Flash **Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager
+(**Edit Settings**: hostname `splanc-bridge`, your user and Wi-Fi, and **Enable SSH**), boot it,
+then from your computer:
+
+```sh
+ssh yourname@splanc-bridge.local
+curl -fsSL https://splanc.io/bridge/install.sh | sudo sh
+```
+
+The installer installs a pinned Node.js and the Splanc bridge (checking each download against its
+published checksum) and the screen service, switches on the OLED HAT's SPI interface and starts
+everything. Options go after `sh -s --`:
+
+| Option                       | Effect                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------- |
+| `--oled auto\|spi\|i2c\|off` | OLED HAT mode. `auto` is the default: it finds the HAT by itself. `off` skips the SPI setup. |
+| `--relay URL`                | Use a different relay. By default, the bridge uses its built-in relay.                       |
+| `--no-start`                 | Install without starting the services.                                                       |
+
+Manage it over SSH:
 
 ```sh
 splanc-bridge status            # state, code, fixtures, clients
@@ -175,68 +277,24 @@ sudo splanc-bridge config       # edit settings, then restart
 sudo splanc-bridge uninstall    # remove it (add --purge to also delete settings and pairing data)
 ```
 
-**Updates are automatic.** Once a day, the bridge checks splanc.io for a new release. If there is
-one, it downloads it, checks its checksum, installs it and restarts. The previous version is kept
-on disk. To turn automatic updates off, set `SPLANC_AUTO_UPDATE=0` with `sudo splanc-bridge config`.
-
-**Settings** are in `/etc/splanc-bridge/bridge.env`, and updates keep them. Your pairing data is in
-`/var/lib/splanc-bridge`. The settings are:
-
-- `SPLANC_RELAY`: the relay to use.
-- `OLED`: the OLED HAT mode (`auto`, `spi`, `i2c` or `off`).
-- `OLED_ROTATE`: `0`–`3`, in steps of 90°. Use `0` if the picture is upside down.
-- `SPLANC_DISPLAY_HDMI`: `auto` or `off`.
-- `SPLANC_AUTO_UPDATE`: `1` to update automatically, `0` not to.
-
-## Troubleshooting
-
-**`ssh: Could not resolve hostname splanc-bridge.local`**: wait another minute after the first
-boot. If it still fails, find the Pi's IP address in your router's device list and use
-`ssh yourname@<ip>`. If the Pi never shows up, check the Wi-Fi name, password and country you set
-in Imager. The Pi 3B and Zero 2 W only use 2.4 GHz Wi-Fi.
-
-**The installer says "Splanc X predates the Pi bridge"**: the newest Splanc release came out before
-Pi bridge support was added. Try again after the next release.
-
-**The HDMI screen shows a login prompt or stays black**:
-
-1. Make sure the screen was plugged in when the Pi booted.
-2. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F8</kbd> with a keyboard.
-3. Check `splanc-bridge logs` for `HDMI framebuffer …`.
-4. If the screen is plugged in after boot, or isn't detected, force a mode: add
-   `video=HDMI-A-1:1920x1080@60D` to the end of the single line in `/boot/firmware/cmdline.txt`,
-   then reboot.
-
-**The OLED stays dark**: check that `ls /dev/spidev0.0` lists the device. If it doesn't, run
-`sudo reboot` once; the SPI setting is in `/boot/firmware/config.txt`. Then check
-`splanc-bridge logs` for `OLED HAT on spi`. If you changed the HAT's resistors to I2C, set
-`OLED=i2c`.
-
-**The OLED picture is upside down**: set `OLED_ROTATE=0`. The default is `2`.
-
-**"Waiting for bridge" never goes away**: the bridge service isn't running. Run
-`systemctl status splanc-bridge` and `splanc-bridge logs`.
-
-**"Offline"**: the Pi has no internet access, or the relay is down. Your fixtures still work from
-the app on the same Wi-Fi.
-
-**No fixtures found**: the Pi must be on the same network as the fixtures. Guest Wi-Fi networks
-often isolate devices from each other. Some mesh systems block the multicast traffic that discovery
-uses. Try Ethernet, or put the Pi and the fixtures on the main network.
-
-## What the installer changes
-
-For the curious, or if you want to undo it by hand:
+Updates are automatic (daily, sha256-checked; `SPLANC_AUTO_UPDATE=0` turns them off). Settings
+are in `/etc/splanc-bridge/bridge.env` (the same keys as `splanc-bridge.conf` above) and your
+pairing data in `/var/lib/splanc-bridge`. The installer writes:
 
 - `/opt/splanc-bridge/`: a pinned Node.js, the Splanc agent bundle (the current and the previous
-  version), and a Python environment for the screens.
-- Python packages: `luma.oled`, `luma.core` and `segno`, pinned by hash in
-  `pi/bridge/display/requirements.lock`. Pillow, gpiozero, lgpio and spidev come from apt.
-- systemd units: `splanc-bridge.service`, `splanc-display.service` and
-  `splanc-bridge-update.timer`, all running as the `splanc` system user.
-- `/etc/splanc-bridge/bridge.env` and `/usr/local/bin/splanc-bridge`.
+  version), and a Python environment for the screens (`luma.oled`, `luma.core` and `segno`,
+  pinned by hash in `pi/bridge/display/requirements.lock`; Pillow, gpiozero, lgpio and spidev
+  from apt);
+- systemd units `splanc-bridge.service`, `splanc-display.service` and
+  `splanc-bridge-update.timer`, running as the `splanc` system user;
+- `/etc/splanc-bridge/bridge.env` and `/usr/local/bin/splanc-bridge`;
 - `/boot/firmware/config.txt`: `dtparam=spi=on`, plus pull-ups on the HAT's key pins
-  (`gpio=6,19,5,26,13,21,20,16=pu`). The installer skips this with `--oled off`.
+  (`gpio=6,19,5,26,13,21,20,16=pu`), skipped with `--oled off`.
 
-Developer notes (layout, tests, the bridge contract) are in
+The HDMI page takes over console 8: with a keyboard, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F1</kbd>
+gets a login prompt and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F8</kbd> returns to the page. If a
+screen plugged in after boot isn't detected, add `video=HDMI-A-1:1920x1080@60D` to the end of the
+line in `/boot/firmware/cmdline.txt`.
+
+Developer notes (the image, the flasher, the bridge contract, tests) are in
 [`pi/bridge/README.md`](../pi/bridge/README.md).

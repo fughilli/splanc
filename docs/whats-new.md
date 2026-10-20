@@ -45,6 +45,29 @@ Design, the vendor build's re-issue races it avoids, and the measured cost:
   `export_map` tool / `splanc-agent export-map`. See
   [the user guide](user-guide.md#exporting-a-map-to-other-software).
 
+### Splanc bridge SD image + Splanc Bridge Flasher (no terminal)
+
+- **Splanc Bridge Flasher** (macOS, Windows, Linux): a desktop app that writes
+  a Splanc bridge microSD card. Pick the Pi model, type the Wi-Fi name and
+  password (plus the Wi-Fi country and, optionally, a name for the Pi), pick
+  the card. It downloads the newest image, checks its sha256, writes the card,
+  reads it back to check every byte, and puts the Wi-Fi settings on it. Boot
+  the Pi and the pairing code is on its HDMI screen or OLED HAT. Only removable
+  disks are ever offered. Guide:
+  [Set up a Splanc bridge on a Raspberry Pi](pi-bridge.md).
+- **Splanc bridge SD image** for the Pi 5, Pi 4, Pi 3 and Zero 2 W: a small
+  NixOS system that runs the bridge and the screens from power-on, with no
+  login. It applies the flasher's settings at boot (and moves the Wi-Fi
+  password off the card), and updates the Splanc agent by itself
+  (sha256-checked, from splanc.io/agent/latest.json).
+- **Own release track:** `pi-bridge-v*` releases carry the images
+  (`splanc-bridge-<board>-<ver>.img.zst` + `.sha256`) and the flasher
+  installers, built by `.github/workflows/pi-bridge-image.yml`, separate from
+  `firmware-v*` and `app-v*`. Details:
+  [pi/bridge/README.md](../pi/bridge/README.md).
+- The `curl … | sudo sh` installer below stays, for Raspberry Pi OS installs you
+  manage yourself.
+
 ### A Raspberry Pi as a Splanc bridge
 
 - **One-command Pi bridge appliance:** flash Raspberry Pi OS Lite with Imager

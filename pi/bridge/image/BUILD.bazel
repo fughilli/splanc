@@ -1,0 +1,34 @@
+"""pi/bridge/image — the Splanc bridge Raspberry Pi SD image (pi/bridge/README.md, "The SD image").
+
+A Nix flake (flake.nix, nix/), not built by Bazel: CI builds it on a native arm64
+runner (.github/workflows/pi-bridge-image.yml) and publishes it on `pi-bridge-v*`
+tags. Bazel covers the on-device Python the image runs:
+
+  :splanc_image     bootconfig (apply the flasher's boot-partition settings) +
+                    selfupdate (verified agent bundle updates)
+  :image_py_test    their unit tests
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "splanc_image",
+    srcs = glob(["splanc_image/*.py"]),
+    imports = ["."],
+)
+
+py_test(
+    name = "image_py_test",
+    size = "small",
+    srcs = glob(["tests/*.py"]),
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":splanc_image",
+        "@rules_requirements//python",
+        requirement("pytest"),
+    ],
+)

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'"
+    />
+    <title>Splanc Bridge Flasher</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <img class="logo" src="logo.png" alt="" width="32" height="32" />
+      <div>
+        <h1>Splanc Bridge Flasher</h1>
+        <p class="dim" id="subtitle">Set up a Raspberry Pi as your Splanc cloud bridge — no terminal needed.</p>
+      </div>
+    </header>
+
+    <ol class="steps" id="steps">
+      <li data-step="board"><span>1</span>Pi</li>
+      <li data-step="wifi"><span>2</span>WiFi</li>
+      <li data-step="card"><span>3</span>SD card</li>
+      <li data-step="write"><span>4</span>Write</li>
+    </ol>
+
+    <main>
+      <!-- 1. board -->
+      <section class="pane" id="pane-board">
+        <h2>Which Raspberry Pi is this for?</h2>
+        <p class="dim" id="release-line">Looking for the latest Splanc bridge image…</p>
+        <div class="cards" id="boards"></div>
+        <div class="notice err hidden" id="release-error">
+          <p id="release-error-text"></p>
+          <div class="row">
+            <button class="k-btn ghost" id="retry-release">Try again</button>
+            <button class="k-btn ghost" id="use-file">Use an image file…</button>
+          </div>
+        </div>
+        <footer class="actions">
+          <span class="dim small" id="local-image"></span>
+          <button class="k-btn" id="board-next" disabled>Next</button>
+        </footer>
+      </section>
+
+      <!-- 2. wifi + name -->
+      <section class="pane hidden" id="pane-wifi">
+        <h2>Which WiFi should it join?</h2>
+        <p class="dim">The Pi needs the internet to reach your cloud agent. These details are saved only on the SD card.</p>
+        <form id="wifi-form" autocomplete="off" novalidate>
+          <div class="field" data-field="ssid">
+            <label for="ssid">Network name (SSID)</label>
+            <input id="ssid" name="ssid" spellcheck="false" maxlength="64" />
+            <p class="err-text"></p>
+          </div>
+          <div class="field" data-field="psk">
+            <label for="psk">Password</label>
+            <div class="pw">
+              <input id="psk" name="psk" type="password" spellcheck="false" maxlength="64" />
+              <button type="button" class="k-btn ghost tiny" id="show-psk">Show</button>
+            </div>
+            <p class="err-text"></p>
+            <p class="hint">Leave empty for an open network.</p>
+          </div>
+          <div class="row checks">
+            <label class="check"><input type="checkbox" id="hidden" /> Hidden network</label>
+            <label class="check"><input type="checkbox" id="ethernet-only" /> No WiFi — I’ll plug in an Ethernet cable</label>
+          </div>
+          <div class="grid2">
+            <div class="field" data-field="country">
+              <label for="country">WiFi country</label>
+              <input id="country" name="country" list="countries" maxlength="40" placeholder="US — United States" />
+              <datalist id="countries"></datalist>
+              <p class="err-text"></p>
+            </div>
+            <div class="field" data-field="device_name">
+              <label for="device-name">Name this Pi <span class="dim">(optional)</span></label>
+              <input id="device-name" name="device_name" maxlength="63" placeholder="splanc-bridge" />
+              <p class="err-text"></p>
+              <p class="hint" id="hostname-preview">On your network as <b>splanc-bridge.local</b></p>
+            </div>
+          </div>
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="field" data-field="relay">
+              <label for="relay">Relay URL <span class="dim">(leave empty for Splanc’s)</span></label>
+              <input id="relay" name="relay" spellcheck="false" placeholder="wss://…" />
+              <p class="err-text"></p>
+            </div>
+            <div class="field" data-field="ssh_key">
+              <label for="ssh-key">SSH public key <span class="dim">(only if you want to log in; no password login exists)</span></label>
+              <textarea id="ssh-key" name="ssh_key" rows="2" spellcheck="false" placeholder="ssh-ed25519 AAAA… you@laptop"></textarea>
+              <p class="err-text"></p>
+            </div>
+          </details>
+        </form>
+        <footer class="actions">
+          <button class="k-btn ghost" data-back="board">Back</button>
+          <button class="k-btn" id="wifi-next">Next</button>
+        </footer>
+      </section>
+
+      <!-- 3. card -->
+      <section class="pane hidden" id="pane-card">
+        <h2>Pick the SD card</h2>
+        <p class="dim">Insert a microSD card (4 GB or larger). Only removable disks are shown. <b>Everything on it will be erased.</b></p>
+        <div class="disks" id="disks"></div>
+        <footer class="actions">
+          <button class="k-btn ghost" data-back="wifi">Back</button>
+          <button class="k-btn danger" id="card-write" disabled>Erase and write</button>
+        </footer>
+      </section>
+
+      <!-- 4. progress -->
+      <section class="pane hidden" id="pane-write">
+        <h2 id="write-title">Writing the card…</h2>
+        <p class="dim" id="write-message">Starting…</p>
+        <div class="bar"><div id="bar-fill"></div></div>
+        <ul class="stages" id="stages">
+          <li data-stage="download">Download the image</li>
+          <li data-stage="verify">Check the download</li>
+          <li data-stage="unpack">Unpack</li>
+          <li data-stage="write">Write the card</li>
+          <li data-stage="check">Check the card</li>
+          <li data-stage="configure">Save your WiFi and settings</li>
+        </ul>
+        <footer class="actions">
+          <span class="dim small">Keep the card in until this finishes.</span>
+          <button class="k-btn ghost" id="cancel">Cancel</button>
+        </footer>
+      </section>
+
+      <!-- 5. done -->
+      <section class="pane hidden" id="pane-done">
+        <div class="done-mark" aria-hidden="true">✓</div>
+        <h2>Your Splanc bridge card is ready</h2>
+        <ol class="howto">
+          <li>Take the card out and put it in your Raspberry Pi.</li>
+          <li>Connect an HDMI screen or the 1.3″ OLED HAT (either works), then plug in power.</li>
+          <li>In about a minute the screen shows a <b>pairing code</b>.</li>
+          <li>Give that code to your cloud agent — the guide shows how.</li>
+        </ol>
+        <p class="dim" id="done-host"></p>
+        <p class="dim small" id="done-win-note"></p>
+        <footer class="actions">
+          <button class="k-btn ghost" id="again">Write another card</button>
+          <button class="k-btn" id="open-guide">Open the cloud agent guide</button>
+        </footer>
+      </section>
+
+      <!-- error -->
+      <section class="pane hidden" id="pane-error">
+        <h2>That didn’t work</h2>
+        <p class="notice err" id="error-text"></p>
+        <footer class="actions">
+          <button class="k-btn ghost" id="error-help">Help</button>
+          <button class="k-btn" id="error-back">Back</button>
+        </footer>
+      </section>
+    </main>
+    <script src="countries.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
