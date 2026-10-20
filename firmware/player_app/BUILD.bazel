@@ -16,6 +16,7 @@ load("@embedded//rules:resources.bzl", "c_resource_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
@@ -766,5 +767,39 @@ cc_test(
     deps = [
         ":ble_address",
         "@rules_requirements//cc:case",
+    ],
+)
+
+# Static stack-bound gate: each task's worst case over the shipped ELF's call graph
+# (//tools/stack_bound; manifest stack_bound.json: indirect edges, never-returning
+# paths, dynamic-allocation allowances, accepted vendor cycles) must fit its
+# reserved stack (read from main.cpp / serial_log.h) with margin.
+filegroup(
+    name = "esp32c6_netstack_elf",
+    srcs = [":esp32c6_netstack"],
+    output_group = "elf",
+)
+
+py_test(
+    name = "stack_bound_test",
+    srcs = ["tests/test_stack_bound.py"],
+    data = [
+        "main.cpp",
+        "serial_log.h",
+        "stack_bound.json",
+        ":esp32c6_netstack_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELF": "$(rlocationpath :esp32c6_netstack_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+    },
+    main = "tests/test_stack_bound.py",
+    # The bound is a property of the one shipped ELF, so one host checks it: the
+    # Linux CI job. (The macOS runner's riscv objdump exits 101 with no output.)
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//tools/stack_bound:stack_bound_lib",
+        "@rules_python//python/runfiles",
     ],
 )

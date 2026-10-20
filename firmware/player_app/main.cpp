@@ -133,11 +133,9 @@ size_t lm_jit_region_size(void) { return kJitRegionSize; }
 // ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
 // ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
 // static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
-// callbacks) is ~10 KB: netstack_loop -> TLS read/handshake -> bio_send -> the vendor
-// WiFi TX path (its own ~4.2 KB ppTxFragmentProc frame; the netstack's TX layers build one
-// in-place frame, no per-layer stack buffer). Measured high-water on the ram_audit worst
-// case: 4.8 KB. 14 KB is ~1.4x the bound; re-derive it (objdump prologues + call graph)
-// before growing a frame.
+// callbacks) is ~9.7 KB (stack_bound_test, which gates every task's stack against its
+// bound: the protocol-handler path; the netstack's TX layers build one in-place frame, no
+// per-layer stack buffer). Measured high-water on the ram_audit worst case: 4.8 KB.
 SET_LOOP_TASK_STACK_SIZE(14 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
@@ -270,14 +268,14 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-// render: static bound ~3.3 KB (render_once -> lm_fx_update -> fx_rebuild_topo's
+// render: static bound ~3.3 KB (stack_bound_test; render_once -> lm_fx_update -> fx_rebuild_topo's
 // ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
 // jump tables + ROM soft-float leaves, and JIT segments use no machine stack), so
 // 5 KB is ~1.5x. The measured high-water (~0.8 KB) is NOT a sizing basis.
 static const uint32_t kRenderTaskStack = 5120;
-// xmit: just stages/sends the LED frame; static bound ~2.4 KB (dominated by the
-// C++ unwind path off a Log() call), measured ~0.5 KB.
-static const uint32_t kXmitTaskStack = 3072;
+// xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test),
+// measured ~0.5 KB.
+static const uint32_t kXmitTaskStack = 2048;
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than

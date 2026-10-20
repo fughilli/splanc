@@ -22,7 +22,7 @@ import sys
 import time
 
 from hitl_client import Reservation
-from provision import HarnessError, dut_target, ensure_booted, provision_dut
+from provision import HarnessError, ble_advertising, dut_target, ensure_booted, provision_dut
 from tls_churn_core import ERROR, OK, classify, sequential_churn_verdict, tally
 
 _BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
@@ -48,7 +48,7 @@ def flash(res, bundle, monitor_seconds=6.0):
     if proc.returncode != 0:
         raise HarnessError(f"hitl-flash exited {proc.returncode}")
     log = ensure_booted(res, log, monitor_seconds)
-    if BLE_MARKER not in log:
+    if not ble_advertising(log):
         raise HarnessError(f"BLE never came up (no {BLE_MARKER!r})")
     print("[flash] OK — booted + BLE advertising", flush=True)
     return log

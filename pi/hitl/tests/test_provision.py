@@ -9,6 +9,7 @@ import pytest
 from provision import (
     BOOT_ATTEMPTS,
     HarnessError,
+    ble_advertising,
     ensure_booted,
     in_download_mode,
     provision_backoff,
@@ -241,3 +242,15 @@ def test_wire_provision_rejects_ssid_with_space():
     with pytest.raises(HarnessError) as e:
         wire_provision_dut(WireRes(LEASE_NO_ACK), "has space", "pw", timeout=5)
     assert "space" in str(e.value)
+
+
+def test_ble_advertising_accepts_either_boot_marker():
+    # The one-shot line, or the periodic status line in Advertising (6) / Connected (7):
+    # the netstack's non-blocking serial can drop the one-shot line in the boot burst.
+    assert ble_advertising('[ble] advertising "Led Widget" as d8:e6 (Improv)')
+    assert ble_advertising("[t=4649] [ble] link state=6 connected=0 leased=0")
+    assert ble_advertising("[t=9] [ble] link state=7 connected=1 leased=0")
+    # Still bringing the controller up (states 0..5, 8..12): not yet advertising.
+    assert not ble_advertising("[t=1] [ble] link state=5 connected=0 leased=0")
+    assert not ble_advertising("[t=1] [ble] link state=12 connected=0 leased=0")
+    assert not ble_advertising("")

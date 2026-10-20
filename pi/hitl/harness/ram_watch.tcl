@@ -8,6 +8,11 @@
 # ($heads = &registered_heaps from the flashed ELF; it moves with every build.)
 # Stops when /tmp/ram_watch.stop exists. Outputs under /tmp/ram_watch/.
 #
+# Dumps are ARMED by /tmp/ram_watch.arm (the harness touches it once provisioning
+# is done); the minimum is tracked from the start either way. A dump halts the core
+# for ~46 s, and a halt that long inside the WiFi join (DHCP window) ends in a TG0
+# watchdog reset after resume — which once read as a firmware "hang".
+#
 # heap_t layout (heap_caps.c, from DWARF): caps[3] @0, start @12, end @16,
 # heap_mux @20, heap (multi_heap_info*) @28, next @32. multi_heap_info:
 # free_bytes @4, minimum_free_bytes @8.
@@ -52,7 +57,7 @@ while {![file exists /tmp/ram_watch.stop]} {
     if {$sum < $best} {
         set best $sum
         logline "low sum=$sum per_heap=$parts"
-        if {$sum < $thresh && $sum <= $dumped - $step} {
+        if {$sum < $thresh && $sum <= $dumped - $step && [file exists /tmp/ram_watch.arm]} {
             halt 3000
             # Re-read under halt: the dump's own heap state.
             set hs 0

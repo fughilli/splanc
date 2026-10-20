@@ -1,5 +1,6 @@
 # Additive: lets the firmware consumer replace the esp32c6 sections.ld (IRAM->flash
-# placement) without rebuilding the prebuilt SDK. Fold upstream on the next bump.
+# placement) without rebuilding the prebuilt SDK, and re-exports the RISC-V objdump.
+# Fold upstream on the next bump.
 diff -ruN a/ld/BUILD.bazel b/ld/BUILD.bazel
 --- a/ld/BUILD.bazel	1970-01-01 00:00:00.000000000 +0000
 +++ b/ld/BUILD.bazel	2026-10-19 17:45:42.318744330 +0000
@@ -63,3 +64,18 @@ diff -ruN a/nix/arduino_esp32.BUILD b/nix/arduino_esp32.BUILD
          "@$(location :sdk_link_dirs)",
          "@$(location :ld_flags)",
          "@$(location :ld_scripts)",
+diff -ruN a/tools/BUILD.bazel b/tools/BUILD.bazel
+--- a/tools/BUILD.bazel	1970-01-01 00:00:00.000000000 +0000
++++ b/tools/BUILD.bazel	2026-10-19 18:14:21.955769629 +0000
+@@ -0,0 +1,11 @@
++"""Host tools from the embedded toolchains, re-exported for consumers (their
++repos are internal to this module's extensions)."""
++
++package(default_visibility = ["//visibility:public"])
++
++# riscv32-esp-elf-objdump: disassembles the ESP32-C6/C3 firmware ELFs (e.g. for
++# a static stack-depth bound).
++alias(
++    name = "riscv_objdump",
++    actual = "@riscv_gcc//:objdump",
++)

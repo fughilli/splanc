@@ -83,12 +83,19 @@ def _watcher(res: Reservation, args, out: dict) -> threading.Thread:
     """Run ram_watch.tcl in the container until /tmp/ram_watch.stop appears,
     retrying the attach: the C6's debug module sometimes reports a stuck abstract
     command on the first examine of a running core."""
+    script = os.path.basename(args.watch_tcl)
+    if args.hang:
+        sets = f'-c "set ticks {args.ticks:#x}" '
+    else:
+        sets = (
+            f'-c "set thresh {args.thresh}" -c "set step {args.step}" '
+            f'-c "set heads {args.heads:#x}" '
+        )
     cmd = (
-        "rm -rf /tmp/ram_watch /tmp/ram_watch.stop; mkdir -p /tmp/ram_watch; "
+        "rm -rf /tmp/ram_watch /tmp/ram_watch.stop /tmp/ram_watch.arm; mkdir -p /tmp/ram_watch; "
         "for i in 1 2 3 4 5 6; do "
-        f'hitl-jtag -c "set thresh {args.thresh}" -c "set step {args.step}" '
-        f'-c "set heads {args.heads:#x}" '
-        "-f /tmp/ram_watch.tcl > /tmp/ram_watch/openocd.log 2>&1 && break; "
+        f"hitl-jtag {sets}"
+        f"-f /tmp/{script} > /tmp/ram_watch/openocd.log 2>&1 && break; "
         "[ -e /tmp/ram_watch.stop ] && break; echo attach-retry $i >> /tmp/ram_watch/retries; "
         "sleep 3; done"
     )
@@ -111,6 +118,11 @@ def main() -> int:
     ap.add_argument("--bundle", default=default_flashbundle())
     ap.add_argument("--watch-tcl", default=_runfile("_main/pi/hitl/harness/ram_watch.tcl"))
     ap.add_argument(
+        "--hang",
+        action="store_true",
+        help="catch a hard hang instead (hang_watch.tcl): halt + dump when the tick stops",
+    )
+    ap.add_argument(
         "--elf",
         default=_runfile("_main/firmware/player_app/esp32c6_netstack.elf"),
         help="ELF the bundle was built from (for the heap list address)",
@@ -126,6 +138,9 @@ def main() -> int:
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
     args = ap.parse_args()
+    if args.hang:
+        args.watch_tcl = _runfile("_main/pi/hitl/harness/hang_watch.tcl")
+        args.ticks = elf_symbol(args.elf, "xTickCount") if args.elf else None
     args.heads = elf_symbol(args.elf, "registered_heaps") if args.elf else None
     if args.heads is None:
         ap.error(f"registered_heaps not found in --elf {args.elf}")
@@ -142,6 +157,7 @@ def main() -> int:
     fxb = compile_fx_src(default_fx_compile(), bars_effect_src(args.tex_width, args.tex_height))
     res = Reservation(server=args.server, owner=args.owner, device=args.device)
     res.acquire()
+    watcher = None
     try:
         ssid, password = res.wifi() or ("", "")
         res.scp_to([args.bundle, args.watch_tcl], "/tmp/")
@@ -155,20 +171,29 @@ def main() -> int:
         watcher = _watcher(res, args, wout)
         time.sleep(8)  # attach before the BLE + first-handshake peak
         redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
+        # Arm the dumps only now: a ~46 s halt inside the WiFi join ends in a watchdog
+        # reset. The minimum (first wss handshake) comes after this point.
+        res.ssh("touch /tmp/ram_watch.arm", capture=True, timeout=30)
         host, port = dut_target(redirect, "wss")
         _log(f"[dut] {host}:{port}")
         with res.forward(host, port) as local_port:
             result = asyncio.run(_drive(f"wss://localhost:{local_port}/ws", True, args, fxb))
         _log(f"[scenario] {result['result_line']}")
-        time.sleep(3)
-        res.ssh("touch /tmp/ram_watch.stop", capture=True, timeout=30)
-        watcher.join(timeout=120)
-        for name in ("log.txt", "openocd.log", "retries", "hp.bin", "lp.bin", "regs.txt"):
-            ok = _fetch(res, f"/tmp/ram_watch/{name}", os.path.join(args.out, name))
-            _log(f"[fetch] {name}: {'ok' if ok else 'missing'}")
         return 0
     finally:
-        res.release()
+        # Collect the watcher's output even when the scenario failed — with
+        # --hang, a failure is exactly when the dump exists.
+        try:
+            time.sleep(3)
+            res.ssh("touch /tmp/ram_watch.stop", capture=True, timeout=30)
+            if watcher is not None:
+                watcher.join(timeout=120)
+            names = ("log.txt", "openocd.log", "retries", "hp.bin", "lp.bin", "regs.txt", "pcs.txt")
+            for name in names:
+                ok = _fetch(res, f"/tmp/ram_watch/{name}", os.path.join(args.out, name))
+                _log(f"[fetch] {name}: {'ok' if ok else 'missing'}")
+        finally:
+            res.release()
 
 
 if __name__ == "__main__":
