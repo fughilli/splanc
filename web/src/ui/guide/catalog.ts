@@ -341,7 +341,39 @@ export const GUIDE_TOPICS: GuideTopic[] = [
             "the full extraction options.",
           "**Send to / pull from a device** so the fixture and the app agree on the map.",
           "**Jump to Effects** to start animating this fixture.",
+          "**Export** the LED map for other show software — a CSV for TouchDesigner or a " +
+            "Chromatik (LX Studio) fixture file. See below.",
           "**Edit metadata** — name, tags, and folder.",
+        ],
+      },
+      {
+        heading: "Exporting a map to other software",
+        body: [
+          "**Export** opens a sheet with two formats. Both have one entry per LED in output " +
+            "order, so entry N is the LED at output index N. The file is named after the map " +
+            "plus today's date. On iPhone and iPad it opens the share sheet; choose **Save to Files**.",
+        ],
+        bullets: [
+          "**CSV (TouchDesigner, spreadsheets)** — columns " +
+            "`index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`. " +
+            "Positions are in **metres**. " +
+            "In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's " +
+            "Points DAT. You get one point per LED, numbered by `index`, and the other columns " +
+            "become point attributes.",
+          "**Chromatik fixture (.lxf)** — copy it into the Fixtures folder under your Chromatik " +
+            "home directory and add it from the Fixture Chooser. Its points follow output order " +
+            "(one component per channel). A **Scale** parameter sets units per metre: the default " +
+            "100 means centimetres; set 1 for metres or 39.37 for inches.",
+          "**Unmapped LEDs** still get an entry so the indices line up. They have `mapped = 0`, " +
+            "and their position is interpolated between their mapped neighbours (clamped at the " +
+            "ends), the same place the device renders them.",
+          "**Channels** — maps don't store a channel layout. If a connected device's per-channel " +
+            "LED counts add up to this map's LED count, the export uses them. Otherwise every LED " +
+            "is on channel 0. `segment` is the topology segment (-1 if none) and `arclength` is " +
+            "the LED's distance along it in metres.",
+          "**Axes** — Splanc maps are +Y up, right-handed, which matches TouchDesigner and " +
+            "Chromatik, so nothing needs converting. For Z-up tools such as Blender, pick " +
+            "**Z up** before exporting the CSV.",
         ],
       },
       {

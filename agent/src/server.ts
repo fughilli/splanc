@@ -20,6 +20,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { z } from "zod";
 
 import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
+import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
 import { renderPng, preview, type CompileOutcome } from "./fxhost";
@@ -201,6 +202,18 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(shape(await hub.each(sel, (s) => s.identify()), true))),
+  );
+  server.registerTool(
+    "export_map",
+    {
+      description:
+        "A fixture's LED map as a file for other show software: format csv (default) = TouchDesigner Points DAT " +
+        "(index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength; metres, +y up; load in a " +
+        "Table DAT -> DAT to SOP), or lxf = a Chromatik/LX Studio fixture. One row/point per LED in output order; " +
+        "unmapped LEDs are interpolated with mapped=0. up=z rewrites the CSV to +z up. Returns filename + content.",
+      inputSchema: { format: z.enum(["csv", "lxf"]).optional(), up: z.enum(["y", "z"]).optional(), players },
+    },
+    ({ format, up, players: sel }) => guard(async () => ok(await fan(sel, (s) => exportMap(s, format ?? "csv", up ?? "y")))),
   );
   server.registerTool(
     "set_room",
@@ -712,6 +725,21 @@ async function fixtureMap(s: DeviceSession) {
     frame: b.map?.frame,
     leds: (b.map?.leds ?? []).map((l) => ({ id: l.id, xyz: l.xyz, confidence: l.confidence })),
     unmapped: b.map?.unmapped ?? [],
+  };
+}
+
+async function exportMap(s: DeviceSession, format: "csv" | "lxf", up: "y" | "z") {
+  const b = await s.mappingBundle();
+  if (!b.map || b.map.ledCount === 0) throw new ToolError("this player has no stored map (map it in the app first)");
+  const dev = await s.device();
+  const channels = (dev["channels"] as { ledCount: number }[]).map((c) => c.ledCount);
+  const name = String(dev["name"] ?? "") || "fixture";
+  const opts = { name, topology: b.topology ?? null, channels, up };
+  return {
+    format,
+    filename: exportFileName(name, format),
+    leds: b.map.ledCount,
+    content: format === "lxf" ? mapToLxf(b.map, opts) : mapToCsv(b.map, opts),
   };
 }
 

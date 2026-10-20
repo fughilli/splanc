@@ -33,7 +33,9 @@ With several targets the result is one entry per player (`ok`, `result` or
 3. Read `splanc://fixture/summary` (one player) or `splanc://room/<room>` (every
    fixture in the room's shared frame: per-fixture and combined bounding boxes).
    Read `splanc://player/<id>/fixture/map` / `topology` only when an effect needs
-   the actual geometry (see `geometry.md`).
+   the actual geometry (see `geometry.md`). If the user wants the map in other
+   show software, `export_map {format: "csv"|"lxf"}` returns a TouchDesigner
+   CSV or a Chromatik `.lxf` (filename + content) to save for them.
 4. Read `splanc://effect/active` (or call `list_uniforms`): which effect is
    running and what its knobs are.
 

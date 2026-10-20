@@ -71,3 +71,12 @@ test("exit status: tool error / all failed = 1, some failed = 2, else 0", () => 
   assert.equal(exitCode(false, [JSON.stringify({ players: [{ name: "Desk" }] })]), 0);
   assert.equal(exitCode(false, ["not json", JSON.stringify({ level: 0.5 })]), 0);
 });
+
+test("export-map maps onto export_map", () => {
+  assert.deepEqual(call("export-map"), { tool: "export_map", args: {} });
+  assert.deepEqual(call("export-map", "--format", "lxf", "--up", "z", "--players", "Desk"), {
+    tool: "export_map",
+    args: { format: "lxf", up: "z", players: "Desk" },
+  });
+  assert.match(USAGE, /export-map/);
+});
