@@ -1,0 +1,715 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Use Splanc from a cloud agent" href="guides/cloud-agent.html"><link rel="prev" title="Getting started" href="../README.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Set up a Splanc bridge on a Raspberry Pi - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/pi-bridge.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/pi-bridge.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="set-up-a-splanc-bridge-on-a-raspberry-pi">
+<h1>Set up a Splanc bridge on a Raspberry Pi<a class="headerlink" href="#set-up-a-splanc-bridge-on-a-raspberry-pi" title="Link to this heading">¶</a></h1>
+<p>A <strong>Splanc bridge</strong> is a small always-on computer on your home network that connects your
+Splanc fixtures to the Splanc cloud relay. With it, the app (or an AI agent) can reach your lights
+from anywhere, not only from the same Wi-Fi. A Raspberry Pi works well as a bridge. It runs with no
+keyboard or mouse, and it shows its pairing code and status on two screens:</p>
+<ul class="simple">
+<li><p>a TV or monitor plugged into its HDMI port;</p></li>
+<li><p>a small OLED add-on board (optional).</p></li>
+</ul>
+<p>You flash a memory card, boot the Pi and run <strong>one command</strong>. The steps below take about 15
+minutes, and most of that is waiting.</p>
+<p><img alt="The HDMI status page while the bridge waits to be paired" src="docs/img/pi-bridge/hdmi-pairing.png" /></p>
+<section id="what-you-need">
+<h2>What you need<a class="headerlink" href="#what-you-need" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Raspberry Pi</p></td>
+<td><p>Pi 4 or Pi 5 recommended. A Pi 3B/3B+ or Pi Zero 2 W works too.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Power supply</p></td>
+<td><p>The official supply for your model (USB-C 5 V 3 A for a Pi 4; 5 V 5 A for a Pi 5).</p></td>
+</tr>
+<tr class="row-even"><td><p>microSD card</p></td>
+<td><p>8 GB or larger.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Network</p></td>
+<td><p>Wi-Fi or Ethernet, on the <strong>same network as your fixtures</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p>HDMI screen (optional)</p></td>
+<td><p>Any TV or monitor. A Pi 4/5 needs a micro-HDMI cable; a Zero 2 W needs mini-HDMI.</p></td>
+</tr>
+<tr class="row-odd"><td><p>OLED HAT (optional)</p></td>
+<td><p><strong>Waveshare 1.3inch OLED HAT</strong> (128×64, SH1106, with a 5-way joystick and three keys; e.g. Amazon B07VCYTPRK). It plugs onto the Pi’s 40-pin header, so it needs no wiring or soldering. A Zero 2 W needs a version with the header already soldered on (“WH”). Leave the HAT’s factory SPI setting as it is.</p></td>
+</tr>
+<tr class="row-even"><td><p>A computer with an SD slot</p></td>
+<td><p>To run Raspberry Pi Imager once.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>You need at least one of the two screens to read the pairing code from the Pi itself. You can also
+read it over SSH with <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">status</span></code>.</p>
+</section>
+<section id="flash-raspberry-pi-os-with-raspberry-pi-imager">
+<h2>1. Flash Raspberry Pi OS with Raspberry Pi Imager<a class="headerlink" href="#flash-raspberry-pi-os-with-raspberry-pi-imager" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Install <strong>Raspberry Pi Imager</strong> from <a class="reference external" href="https://www.raspberrypi.com/software/">https://www.raspberrypi.com/software/</a> and open it.</p></li>
+<li><p><strong>Choose Device</strong>: pick your Pi model.</p></li>
+<li><p><strong>Choose OS</strong>: <em>Raspberry Pi OS (other)</em> ▸ <strong>Raspberry Pi OS Lite (64-bit)</strong>. The bridge needs no
+desktop. The 32-bit Lite image works too, and a desktop image is also fine.</p></li>
+<li><p><strong>Choose Storage</strong>: pick your microSD card, then <strong>Next</strong>.</p></li>
+<li><p>When asked <em>“Would you like to apply OS customisation settings?”</em>, choose <strong>Edit Settings</strong>. On
+the <strong>General</strong> tab:</p>
+<ul class="simple">
+<li><p><strong>Set hostname</strong>: <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span></code></p></li>
+<li><p><strong>Set username and password</strong>: choose your own.</p></li>
+<li><p><strong>Configure wireless LAN</strong>: your Wi-Fi name and password, and your <strong>Wireless LAN country</strong>.
+Skip this if you use Ethernet.</p></li>
+<li><p><strong>Set locale settings</strong>: your time zone.</p></li>
+</ul>
+</li>
+<li><p>On the <strong>Services</strong> tab, tick <strong>Enable SSH</strong> (password authentication is fine). Click <strong>Save</strong>,
+then <strong>Yes</strong> to apply the settings, then <strong>Yes</strong> to write the card.</p></li>
+</ol>
+</section>
+<section id="boot-the-pi">
+<h2>2. Boot the Pi<a class="headerlink" href="#boot-the-pi" title="Link to this heading">¶</a></h2>
+<p>If you have the OLED HAT, fit it onto the Pi’s header first, with the Pi unplugged. Plug in the
+HDMI screen if you use one. Then insert the card and connect power. The first boot takes a minute
+or two, because the Pi expands the file system and joins your Wi-Fi.</p>
+</section>
+<section id="run-the-installer">
+<h2>3. Run the installer<a class="headerlink" href="#run-the-installer" title="Link to this heading">¶</a></h2>
+<p>From your computer, open a terminal and log in to the Pi. Use the username you set in Imager:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>ssh<span class="w"> </span>yourname@splanc-bridge.local
+</pre></div>
+</div>
+<p>On the Pi, run:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://splanc.io/bridge/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>sh
+</pre></div>
+</div>
+<p>The installer:</p>
+<ul class="simple">
+<li><p>installs Node.js and the Splanc bridge, checking each download against its published checksum;</p></li>
+<li><p>installs the screen service;</p></li>
+<li><p>switches on the OLED HAT’s SPI interface;</p></li>
+<li><p>starts everything.</p></li>
+</ul>
+<p>When it finishes, it prints the bridge status, including the <strong>pairing code</strong>. From now on, the Pi
+starts the bridge by itself every time it boots, even with no keyboard, screen or login. The
+bridge finds your fixtures on the network by itself.</p>
+<p>Installer options are passed after <code class="docutils literal notranslate"><span class="pre">sh</span> <span class="pre">-s</span> <span class="pre">--</span></code>. For example:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://splanc.io/bridge/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sudo<span class="w"> </span>sh<span class="w"> </span>-s<span class="w"> </span>--<span class="w"> </span>--oled<span class="w"> </span>off
+</pre></div>
+</div>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--oled</span> <span class="pre">auto|spi|i2c|off</span></code></p></td>
+<td><p>OLED HAT mode. <code class="docutils literal notranslate"><span class="pre">auto</span></code> is the default: it finds the HAT by itself. <code class="docutils literal notranslate"><span class="pre">off</span></code> skips the SPI setup.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--relay</span> <span class="pre">URL</span></code></p></td>
+<td><p>Use a different relay. By default, the bridge uses its built-in relay.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--no-start</span></code></p></td>
+<td><p>Install without starting the services.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="pair">
+<h2>4. Pair<a class="headerlink" href="#pair" title="Link to this heading">¶</a></h2>
+<p>Open the address shown under the code (or scan the QR code) on your phone, and enter the code. The
+code expires after a few minutes. Press <strong>KEY1</strong> on the HAT, or run <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">new-code</span></code>, to
+get a fresh one.</p>
+</section>
+<section id="what-the-screens-show">
+<h2>What the screens show<a class="headerlink" href="#what-the-screens-show" title="Link to this heading">¶</a></h2>
+<p><strong>HDMI</strong>: a full-screen status page, which updates by itself. While a code is waiting to be used,
+the page shows:</p>
+<ul class="simple">
+<li><p>the code, in large letters;</p></li>
+<li><p>a QR code of the pairing link;</p></li>
+<li><p>how long until the code expires.</p></li>
+</ul>
+<p>After pairing, it shows how many clients are connected. Along the bottom are:</p>
+<ul class="simple">
+<li><p><strong>Fixtures</strong>: the players the bridge found, with a green or red dot for online or not;</p></li>
+<li><p><strong>Paired clients</strong>: how many apps are paired with this bridge;</p></li>
+<li><p><strong>Network</strong>: the Pi’s address, the relay and the bridge ID.</p></li>
+</ul>
+<p>The page takes over console 8. With a keyboard plugged in, press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F1</kbd>
+to get a login prompt, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F8</kbd> to return to the status page.</p>
+<p><img alt="HDMI after pairing" src="docs/img/pi-bridge/hdmi-paired.png" /></p>
+<p><strong>OLED HAT</strong>: four pages, which rotate every 8 seconds:</p>
+<ol class="arabic simple">
+<li><p><strong>Home</strong>: the state, the pairing code in large letters, the short pairing link, the time left
+and the number of clients.</p></li>
+<li><p><strong>Scan to pair</strong>: a QR code of the pairing link.</p></li>
+<li><p><strong>Fixtures</strong>: up to four players, with ● for online and × for offline.</p></li>
+<li><p><strong>Network</strong>: the IP address, the relay, the number of clients and the bridge ID.</p></li>
+</ol>
+<p><img alt="OLED pages" src="docs/img/pi-bridge/oled-pages.png" /></p>
+<p>To protect the OLED from burn-in, it behaves as follows:</p>
+<ul class="simple">
+<li><p>the image moves by one pixel every minute;</p></li>
+<li><p>the screen dims after 2 minutes without a button press or a change;</p></li>
+<li><p>the screen turns off after 30 minutes, but only while no pairing code is showing.</p></li>
+</ul>
+<p>Any key wakes it. That first press only wakes the screen and does nothing else.</p>
+<section id="states">
+<h3>States<a class="headerlink" href="#states" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Shown as</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Waiting for bridge</p></td>
+<td><p>The bridge service isn’t running yet (or has stopped).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Starting</p></td>
+<td><p>The bridge is starting up.</p></td>
+</tr>
+<tr class="row-even"><td><p>Offline</p></td>
+<td><p>The bridge can’t reach the relay (no internet). Fixtures on your network still work from the local app.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Not paired</p></td>
+<td><p>No app is paired, and no code is showing. Press <strong>KEY1</strong> for a code.</p></td>
+</tr>
+<tr class="row-even"><td><p>Ready to pair</p></td>
+<td><p>A pairing code is waiting to be used.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Paired</p></td>
+<td><p>One or more apps are paired.</p></td>
+</tr>
+<tr class="row-even"><td><p>Error</p></td>
+<td><p>The bridge reported a problem. The message is on screen; see <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">logs</span></code> for details.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="oled-hat-buttons">
+<h2>OLED HAT buttons<a class="headerlink" href="#oled-hat-buttons" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Button</p></th>
+<th class="head"><p>Action</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>KEY1</strong></p></td>
+<td><p>Get a new pairing code.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>KEY2</strong></p></td>
+<td><p>Identify fixtures (every fixture flashes so you can tell them apart).</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>KEY3</strong>, held for 5 seconds</p></td>
+<td><p>Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press <strong>KEY3</strong> again to confirm. Any other key, or 10 seconds of waiting, cancels.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Joystick right / down</p></td>
+<td><p>Next page.</p></td>
+</tr>
+<tr class="row-even"><td><p>Joystick left / up</p></td>
+<td><p>Previous page.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Joystick press</p></td>
+<td><p>Back to the home page.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>After a joystick press, the pages stop rotating for 30 seconds.</p>
+<p><img alt="Holding KEY3, the revoke confirm screen, a button result, and the paired home page" src="docs/img/pi-bridge/oled-overlays.png" /></p>
+</section>
+<section id="managing-the-bridge">
+<h2>Managing the bridge<a class="headerlink" href="#managing-the-bridge" title="Link to this heading">¶</a></h2>
+<p>Log in over SSH and use <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span></code>:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>splanc-bridge<span class="w"> </span>status<span class="w">            </span><span class="c1"># state, code, fixtures, clients</span>
+splanc-bridge<span class="w"> </span>new-code<span class="w">          </span><span class="c1"># a fresh pairing code</span>
+splanc-bridge<span class="w"> </span>identify<span class="w">          </span><span class="c1"># flash every fixture</span>
+splanc-bridge<span class="w"> </span>revoke-all<span class="w">        </span><span class="c1"># unpair every client (asks first)</span>
+splanc-bridge<span class="w"> </span>logs<span class="w">              </span><span class="c1"># recent logs; add -f to follow</span>
+sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>restart
+sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>update<span class="w">       </span><span class="c1"># install the latest release now</span>
+sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>config<span class="w">       </span><span class="c1"># edit settings, then restart</span>
+sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>uninstall<span class="w">    </span><span class="c1"># remove it (add --purge to also delete settings and pairing data)</span>
+</pre></div>
+</div>
+<p><strong>Updates are automatic.</strong> Once a day, the bridge checks splanc.io for a new release. If there is
+one, it downloads it, checks its checksum, installs it and restarts. The previous version is kept
+on disk. To turn automatic updates off, set <code class="docutils literal notranslate"><span class="pre">SPLANC_AUTO_UPDATE=0</span></code> with <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-bridge</span> <span class="pre">config</span></code>.</p>
+<p><strong>Settings</strong> are in <code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code>, and updates keep them. Your pairing data is in
+<code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-bridge</span></code>. The settings are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">SPLANC_RELAY</span></code>: the relay to use.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OLED</span></code>: the OLED HAT mode (<code class="docutils literal notranslate"><span class="pre">auto</span></code>, <code class="docutils literal notranslate"><span class="pre">spi</span></code>, <code class="docutils literal notranslate"><span class="pre">i2c</span></code> or <code class="docutils literal notranslate"><span class="pre">off</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OLED_ROTATE</span></code>: <code class="docutils literal notranslate"><span class="pre">0</span></code>–<code class="docutils literal notranslate"><span class="pre">3</span></code>, in steps of 90°. Use <code class="docutils literal notranslate"><span class="pre">0</span></code> if the picture is upside down.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPLANC_DISPLAY_HDMI</span></code>: <code class="docutils literal notranslate"><span class="pre">auto</span></code> or <code class="docutils literal notranslate"><span class="pre">off</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SPLANC_AUTO_UPDATE</span></code>: <code class="docutils literal notranslate"><span class="pre">1</span></code> to update automatically, <code class="docutils literal notranslate"><span class="pre">0</span></code> not to.</p></li>
+</ul>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">¶</a></h2>
+<p><strong><code class="docutils literal notranslate"><span class="pre">ssh:</span> <span class="pre">Could</span> <span class="pre">not</span> <span class="pre">resolve</span> <span class="pre">hostname</span> <span class="pre">splanc-bridge.local</span></code></strong>: wait another minute after the first
+boot. If it still fails, find the Pi’s IP address in your router’s device list and use
+<code class="docutils literal notranslate"><span class="pre">ssh</span> <span class="pre">yourname&#64;&lt;ip&gt;</span></code>. If the Pi never shows up, check the Wi-Fi name, password and country you set
+in Imager. The Pi 3B and Zero 2 W only use 2.4 GHz Wi-Fi.</p>
+<p><strong>The installer says “Splanc X predates the Pi bridge”</strong>: the newest Splanc release came out before
+Pi bridge support was added. Try again after the next release.</p>
+<p><strong>The HDMI screen shows a login prompt or stays black</strong>:</p>
+<ol class="arabic simple">
+<li><p>Make sure the screen was plugged in when the Pi booted.</p></li>
+<li><p>Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F8</kbd> with a keyboard.</p></li>
+<li><p>Check <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">logs</span></code> for <code class="docutils literal notranslate"><span class="pre">HDMI</span> <span class="pre">framebuffer</span> <span class="pre">…</span></code>.</p></li>
+<li><p>If the screen is plugged in after boot, or isn’t detected, force a mode: add
+<code class="docutils literal notranslate"><span class="pre">video=HDMI-A-1:1920x1080&#64;60D</span></code> to the end of the single line in <code class="docutils literal notranslate"><span class="pre">/boot/firmware/cmdline.txt</span></code>,
+then reboot.</p></li>
+</ol>
+<p><strong>The OLED stays dark</strong>: check that <code class="docutils literal notranslate"><span class="pre">ls</span> <span class="pre">/dev/spidev0.0</span></code> lists the device. If it doesn’t, run
+<code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">reboot</span></code> once; the SPI setting is in <code class="docutils literal notranslate"><span class="pre">/boot/firmware/config.txt</span></code>. Then check
+<code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">logs</span></code> for <code class="docutils literal notranslate"><span class="pre">OLED</span> <span class="pre">HAT</span> <span class="pre">on</span> <span class="pre">spi</span></code>. If you changed the HAT’s resistors to I2C, set
+<code class="docutils literal notranslate"><span class="pre">OLED=i2c</span></code>.</p>
+<p><strong>The OLED picture is upside down</strong>: set <code class="docutils literal notranslate"><span class="pre">OLED_ROTATE=0</span></code>. The default is <code class="docutils literal notranslate"><span class="pre">2</span></code>.</p>
+<p><strong>“Waiting for bridge” never goes away</strong>: the bridge service isn’t running. Run
+<code class="docutils literal notranslate"><span class="pre">systemctl</span> <span class="pre">status</span> <span class="pre">splanc-bridge</span></code> and <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">logs</span></code>.</p>
+<p><strong>“Offline”</strong>: the Pi has no internet access, or the relay is down. Your fixtures still work from
+the app on the same Wi-Fi.</p>
+<p><strong>No fixtures found</strong>: the Pi must be on the same network as the fixtures. Guest Wi-Fi networks
+often isolate devices from each other. Some mesh systems block the multicast traffic that discovery
+uses. Try Ethernet, or put the Pi and the fixtures on the main network.</p>
+</section>
+<section id="what-the-installer-changes">
+<h2>What the installer changes<a class="headerlink" href="#what-the-installer-changes" title="Link to this heading">¶</a></h2>
+<p>For the curious, or if you want to undo it by hand:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">/opt/splanc-bridge/</span></code>: a pinned Node.js, the Splanc agent bundle (the current and the previous
+version), and a Python environment for the screens.</p></li>
+<li><p>Python packages: <code class="docutils literal notranslate"><span class="pre">luma.oled</span></code>, <code class="docutils literal notranslate"><span class="pre">luma.core</span></code> and <code class="docutils literal notranslate"><span class="pre">segno</span></code>, pinned by hash in
+<code class="docutils literal notranslate"><span class="pre">pi/bridge/display/requirements.lock</span></code>. Pillow, gpiozero, lgpio and spidev come from apt.</p></li>
+<li><p>systemd units: <code class="docutils literal notranslate"><span class="pre">splanc-bridge.service</span></code>, <code class="docutils literal notranslate"><span class="pre">splanc-display.service</span></code> and
+<code class="docutils literal notranslate"><span class="pre">splanc-bridge-update.timer</span></code>, all running as the <code class="docutils literal notranslate"><span class="pre">splanc</span></code> system user.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code> and <code class="docutils literal notranslate"><span class="pre">/usr/local/bin/splanc-bridge</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/boot/firmware/config.txt</span></code>: <code class="docutils literal notranslate"><span class="pre">dtparam=spi=on</span></code>, plus pull-ups on the HAT’s key pins
+(<code class="docutils literal notranslate"><span class="pre">gpio=6,19,5,26,13,21,20,16=pu</span></code>). The installer skips this with <code class="docutils literal notranslate"><span class="pre">--oled</span> <span class="pre">off</span></code>.</p></li>
+</ul>
+<p>Developer notes (layout, tests, the bridge contract) are in
+<a class="reference internal" href="#../pi/bridge/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/bridge/README.md</span></code></span></a>.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="guides/cloud-agent.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Use Splanc from a cloud agent</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../README.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Getting started</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Set up a Splanc bridge on a Raspberry Pi</a><ul>
+<li><a class="reference internal" href="#what-you-need">What you need</a></li>
+<li><a class="reference internal" href="#flash-raspberry-pi-os-with-raspberry-pi-imager">1. Flash Raspberry Pi OS with Raspberry Pi Imager</a></li>
+<li><a class="reference internal" href="#boot-the-pi">2. Boot the Pi</a></li>
+<li><a class="reference internal" href="#run-the-installer">3. Run the installer</a></li>
+<li><a class="reference internal" href="#pair">4. Pair</a></li>
+<li><a class="reference internal" href="#what-the-screens-show">What the screens show</a><ul>
+<li><a class="reference internal" href="#states">States</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#oled-hat-buttons">OLED HAT buttons</a></li>
+<li><a class="reference internal" href="#managing-the-bridge">Managing the bridge</a></li>
+<li><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>
+<li><a class="reference internal" href="#what-the-installer-changes">What the installer changes</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>

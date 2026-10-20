@@ -229,6 +229,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
@@ -572,6 +573,18 @@ tab.</p></li>
 <p>Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or
 the Device tab) any time to reopen the device sheet.</p>
 </section>
+<section id="the-device-s-security-certificate">
+<h4>The device’s security certificate<a class="headerlink" href="#the-device-s-security-certificate" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Each device creates its <strong>own</strong> security certificate the first time it starts (it takes well under
+a second), and keeps it for life. Your browser asks you to trust it once per device.</p></li>
+<li><p>The app remembers each device’s certificate. If a device you know shows up with a <strong>different</strong>
+one, the device sheet warns you: that is expected only after a factory reset (its flash erased).
+Tap <strong>I reset it — trust the new certificate</strong> if you did; otherwise disconnect.</p></li>
+<li><p>Devices updated from older firmware get their own certificate on the first start after the update;
+the app switches to it without a warning.</p></li>
+</ul>
+</section>
 </section>
 <section id="managing-devices">
 <h3>Managing devices<a class="headerlink" href="#managing-devices" title="Link to this heading">¶</a></h3>
@@ -762,6 +775,7 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#devices">Devices</a><ul>
 <li><a class="reference internal" href="#connecting-a-device">Connecting a device</a><ul>
 <li><a class="reference internal" href="#ways-to-add-a-device">Ways to add a device</a></li>
+<li><a class="reference internal" href="#the-device-s-security-certificate">The device’s security certificate</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#managing-devices">Managing devices</a><ul>

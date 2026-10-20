@@ -229,6 +229,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
@@ -348,7 +349,8 @@ for every layer (see <code class="docutils literal notranslate"><span class="pre
 <ul>
 <li><p>our own RX ring and STA MLME;</p></li>
 <li><p>the WPA2 4-way handshake, with CCMP on the AES accelerator;</p></li>
-<li><p>DHCP, ARP and TCP;</p></li>
+<li><p>DHCP, ARP and TCP, plus a rate-limited ICMP echo responder (<code class="docutils literal notranslate"><span class="pre">ping</span></code>; 10/s,
+burst 5, up to 1472 data bytes; see <code class="docutils literal notranslate"><span class="pre">firmware/player_app/icmp_echo.h</span></code>);</p></li>
 <li><p>a bounded HTTP server;</p></li>
 <li><p>the BLE HCI/L2CAP/ATT/GATT layers and the coexistence arbiter.</p></li>
 </ul>
