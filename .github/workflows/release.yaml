@@ -83,6 +83,13 @@ jobs:
           echo "AGENT_BUNDLE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/splanc-agent-${VER}.tgz" >> "$GITHUB_ENV"
           echo "AGENT_BUNDLE_SHA256=$(cut -d' ' -f1 "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256")" >> "$GITHUB_ENV"
 
+      # Diagnostic: the tracked-file changes the workspace status command sees.
+      # A dirty stamp drops the agent bundle from the firmware's manifest, so log
+      # what (if anything) would make it dirty (tools/build_info/status.sh ignores
+      # MODULE.bazel.lock, which Bazel itself rewrites).
+      - name: Show tracked-file changes (dirty-stamp diagnostic)
+        run: git status --porcelain --untracked-files=no
+
       # The vendor player firmware was deprecated/removed; only the heapless-netstack
       # variant ships now. (The webapp's release source still recognizes an
       # esp32c6-vendor-*.tar for OLD releases; new releases carry only -netstack-.)

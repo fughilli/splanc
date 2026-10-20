@@ -19,7 +19,10 @@ short=$(git rev-parse --short=8 HEAD 2>/dev/null || echo unknown)
 # CI step routinely drops artifacts in the workspace (e.g. the site build
 # stages _site/ and downloads _flashbundle/ before this runs), and those must
 # NOT make an otherwise-pristine checkout report dirty (FUG-126 review).
-if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+# MODULE.bazel.lock is excluded too: Bazel rewrites that tracked file during
+# module resolution, BEFORE it runs this script, so every CI release build would
+# self-dirty (and a dirty firmware drops the agent bundle from its manifest).
+if [ -n "$(git status --porcelain --untracked-files=no -- . ':(exclude)MODULE.bazel.lock' 2>/dev/null)" ]; then
   dirty=1
   dirty_json=true
 else
