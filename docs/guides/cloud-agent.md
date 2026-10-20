@@ -51,12 +51,16 @@ for a pairing code. Without a screen, read the code with:
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl status
 ```
 
-The code lasts 10 minutes and works once. For a new one: the Pi's button, or
-`splanc-agent bridge-ctl new-code`. An unpaired bridge makes new codes by itself during its
-first hour; after that, ask for one.
+The code is under `status.pairing.code` (`ABCD-EFGH`). It lasts 10 minutes and works once. For
+a new one: the Pi's button, or `npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl new-code`
+(it prints the code). An unpaired bridge makes new codes by itself during its first hour, until
+one is used; after that, ask for one. Off the Pi image, `bridge-ctl` finds the bridge's control
+socket by itself (it falls back to `$XDG_RUNTIME_DIR/splanc-bridge/`, else `/tmp/splanc-bridge/`, when
+`/run/splanc-bridge/` isn't writable); run it as the same user as the bridge.
 
 Players discovery can't see (different subnet, multicast blocked): add `--host <ip>` (repeat it
-for each).
+for each; `<ip>:<port>` works too). Players found once are remembered, so later starts reconnect
+without `--host`.
 
 ## 2. Add Splanc to your agent
 
@@ -81,8 +85,9 @@ is no account and no password.
   header `Authorization: Bearer <token>`. That page also shows the exact `claude mcp add …
 --header` command.
 
-Each agent (or each person) pairs once with its own code; the bridge's screen shows **Paired**
-and how many cloud sessions are connected.
+Each agent (or each person) pairs once with its own code: after the first one, get the next code
+with the button or `bridge-ctl new-code`. The bridge's screen shows **Paired** and how many cloud
+sessions are connected.
 
 ## 3. Ask
 
@@ -119,6 +124,11 @@ previews). It can't re-flash, re-map or rewire anything.
   its screen or `bridge-ctl status`.
 - **"That code isn't valid or has expired"**: codes last 10 minutes and work once. Get a new one.
 - **"Too many wrong codes"**: wait 10 minutes.
+- **The agent says the bridge disconnected mid-call**: the bridge restarted or lost its connection
+  during a long tool (a ramp, a measurement). It reconnects by itself; ask again.
+- **The bridge says another bridge using this identity connected**: two machines run the bridge
+  with the same `bridge.json` (copied, or the old machine still running after a move). Stop one;
+  the other reconnects within a few minutes.
 - **The bridge says its signature was rejected**: the bridge computer's clock is off by more than
   5 minutes. Fix the time (NTP) and it reconnects.
 - **No players listed**: the bridge must be on the same network as the players; try
