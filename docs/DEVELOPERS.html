@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#learn-more">Learn more</a></li>
@@ -243,14 +247,24 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -317,6 +331,12 @@ how the site is assembled. The individual source docs below remain the source of
 truth — editing them updates the site.</p>
 <p>Start with the durable design and reference docs before changing subsystems:</p>
 <ul class="simple">
+<li><p><strong><a class="reference internal" href="docs/manifesto.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/manifesto.md</span></code></span></a></strong> — <em>why</em> the system is built the
+way it is (a microcontroller instead of Art-Net, our own wireless stack, no
+heap, model checking, a thin device and a fat agent bridge). Read it before
+proposing to undo one of those decisions.</p></li>
+<li><p><strong><a class="reference internal" href="docs/whats-new.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/whats-new.md</span></code></span></a></strong> — recent notable changes, with
+links to their PRs and design notes.</p></li>
 <li><p><strong><a class="reference internal" href="led-mapper-design.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code></span></a></strong> — the durable spec. Read §0
 (how to use it), §6 (modules), §7 (data contracts / wire protocol), §9 (phased
 build plan). Everything else hangs off this.</p></li>
@@ -348,6 +368,18 @@ measured cycles) from the HITL goldens; regenerate with
 <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:gen_fx_vm_perf_doc</span></code> (CI freshness-gates it — never edit by hand).</p></li>
 <li><p><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">mbedtls-dynamic-buffers.md</span></code></span></a> — the
 TLS-on-C6 memory work (dynamic record buffers, EC cert).</p></li>
+<li><p><a class="reference internal" href="docs/design/ram-budget.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">ram-budget.md</span></code></span></a> — where the C6’s SRAM goes, the
+<code class="docutils literal notranslate"><span class="pre">.ram_chart</span></code> audit, and the reduction roadmap with measured results.</p></li>
+<li><p><a class="reference internal" href="docs/design/memory-regions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">memory-regions.md</span></code></span></a> — heap-free regions
+(<code class="docutils literal notranslate"><span class="pre">firmware/region</span></code>) and the reachability-checked memory-mode model
+(<code class="docutils literal notranslate"><span class="pre">firmware/sysmode</span></code>).</p></li>
+<li><p><a class="reference internal" href="docs/design/heap-census.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">heap-census.md</span></code></span></a> — attributing every post-boot
+heap allocation, read over JTAG.</p></li>
+<li><p><a class="reference internal" href="docs/design/kani-bazel.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">kani-bazel.md</span></code></span></a> — Kani proofs as hermetic Bazel
+tests (<code class="docutils literal notranslate"><span class="pre">rust_kani_test</span></code>) and the upstream proposal.</p></li>
+<li><p><a class="reference internal" href="docs/design/agent-multi-fixture.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">agent-multi-fixture.md</span></code></span></a> — the
+multi-fixture agent hub: discovery, rooms, poses, shared time base, the
+splanc.io entry point.</p></li>
 <li><p><a class="reference internal" href="docs/design/app-ux-overhaul.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">app-ux-overhaul.md</span></code></span></a> — the PWA UX design.</p></li>
 </ul>
 </li>
@@ -355,6 +387,9 @@ TLS-on-C6 memory work (dynamic record buffers, EC cert).</p></li>
 <ul>
 <li><p><a class="reference internal" href="docs/decisions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">decisions.md</span></code></span></a> — build-system pins, protocol defaults,
 and other durable decisions with rationale.</p></li>
+<li><p><a class="reference internal" href="docs/requirements-driven-development.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">requirements-driven-development.md</span></code></span></a>
+— the requirements model (<code class="docutils literal notranslate"><span class="pre">requirements/requirements.yaml</span></code>) and how tests
+trace to it.</p></li>
 <li><p><a class="reference internal" href="docs/runbook.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">runbook.md</span></code></span></a> — bootstrap, lockfile updates, prerequisites.</p></li>
 <li><p><a class="reference internal" href="docs/vio-exploration.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">vio-exploration.md</span></code></span></a> — the visual-inertial solver
 narrative + measured findings (§1–§12).</p></li>
@@ -411,29 +446,64 @@ color-correction.</p></li>
 </section>
 <section id="the-firmware-firmware">
 <h3>The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)<a class="headerlink" href="#the-firmware-firmware" title="Link to this heading">¶</a></h3>
-<p>A set of <code class="docutils literal notranslate"><span class="pre">no_std</span></code> Rust crates (portable session/effects/topology logic) linked
-into one C++/Arduino app via a C ABI. <strong>The target MCU is the ESP32-C6.</strong> (An
-RP2350 Rust triple is wired into the toolchain, but there is no RP2350 board target
-or source path yet — see the caveat below.)</p>
+<p>A set of <code class="docutils literal notranslate"><span class="pre">no_std</span></code> Rust crates (portable session/effects/topology/network logic)
+linked into one C++/Arduino app via a C ABI. <strong>The target MCU is the ESP32-C6</strong>
+(an ESP32-C3 build links and boots too). An RP2350 Rust triple is wired into the
+toolchain, but there is no RP2350 board target or source path yet (see the caveat
+below). The shipped image is the <strong>heapless-netstack</strong> build
+(<code class="docutils literal notranslate"><span class="pre">esp32c6_netstack</span></code>): everything above the vendor’s PHY/lower-MAC blobs is ours.</p>
 <ul class="simple">
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">player_app/</span></code></strong> — the on-device app (<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code> + <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>). Drives WS2812B
-LEDs via FastLED over the C6 RMT peripheral; runs the effects VM; serves a
-control server on <strong>both</strong> a plain <code class="docutils literal notranslate"><span class="pre">ws://:81</span></code> (bring-up) and a TLS <code class="docutils literal notranslate"><span class="pre">wss://:443</span></code>
-(mbedtls + an EC P-256 dev cert generated at build time, re-issued on-device with
-the live IP as a SAN so the hosted https app can connect without mixed-content).
-Wi-Fi provisioning is Improv over BLE; the board boots AP+STA then demotes to STA
-to reclaim heap for the TLS handshake. Effects arrive as <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> over the control
-channel; textures/uniforms are streamed in and dequantized into the arena.
-Board-agnostic host builds of <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code> (<code class="docutils literal notranslate"><span class="pre">player_ffi_host</span></code>) let the FFI and
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">player_app/</span></code></strong> — the on-device app (<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>):</p>
+<ul>
+<li><p>Drives WS2812 LEDs with its own driver (<code class="docutils literal notranslate"><span class="pre">ws2812.h</span></code>): PARLIO + GDMA on the
+C6, RMT on the C3.</p></li>
+<li><p>Runs the effects VM and its RV32 JIT.</p></li>
+<li><p>Serves the control protocol over TLS <code class="docutils literal notranslate"><span class="pre">wss://:443</span></code>, using an EC P-256 cert
+issued on-device for the live IP and <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.local</span></code>, and over BLE.</p></li>
+<li><p>Provisions Wi-Fi with Improv over BLE. BLE stays advertising beside wss
+(requirement PR-38).</p></li>
+<li><p>Publishes <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/.well-known/splanc.json</span></code> and answers mDNS <code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code>,
+for the agent bridge.</p></li>
+<li><p>Takes effects as <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> over the control channel. Textures and uniforms
+stream in and are dequantized into the arena.</p></li>
+<li><p>Builds <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code> for the host as well (<code class="docutils literal notranslate"><span class="pre">player_ffi_host</span></code>), so the FFI and
 golden-frame tests run under <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code> with no hardware.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">fx_vm/</span></code></strong> — the effects bytecode VM (see <a class="reference internal" href="EFFECTS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">EFFECTS.md</span></code></span></a>); builds
-for the C6 and to wasm for the browser preview.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">pulse/</span></code>, <code class="docutils literal notranslate"><span class="pre">pattern/</span></code>, <code class="docutils literal notranslate"><span class="pre">player/</span></code>, <code class="docutils literal notranslate"><span class="pre">store/</span></code>, <code class="docutils literal notranslate"><span class="pre">arena/</span></code>, <code class="docutils literal notranslate"><span class="pre">landing/</span></code></strong> — the
-topology-aware pulse/flood effects (also wasm), the hue-code pattern generator
-(golden-tested against the phone decoder), the transport-free session state
-machine, decode-into-arena persistence, the bump allocator, and the on-device
-Soft-AP landing page.</p></li>
 </ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">netstack/</span></code>, <code class="docutils literal notranslate"><span class="pre">blehost/</span></code></strong> — the heapless Wi-Fi (MLME, WPA2, DHCP, ARP, TCP,
+HTTP) and BLE (HCI to GATT) stacks, with no allocation after init
+(<a class="reference internal" href="#./firmware/netstack/DESIGN.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">firmware/netstack/DESIGN.md</span></code></span></a>).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">fx_vm/</span></code>, <code class="docutils literal notranslate"><span class="pre">fx_jit/</span></code></strong> — the effects bytecode VM (see
+<a class="reference internal" href="EFFECTS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">EFFECTS.md</span></code></span></a>), for the C6 and as wasm for the browser
+preview, and the load-time RV32 JIT. <strong><code class="docutils literal notranslate"><span class="pre">osc/</span></code></strong> handles OSC input onto uniforms.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">region/</span></code>, <code class="docutils literal notranslate"><span class="pre">sysmode/</span></code>, <code class="docutils literal notranslate"><span class="pre">sysheap/</span></code></strong> — fixed pools, slabs and mode-union
+regions (with Kani proofs); the reachability-checked memory-mode model that the
+firmware tracks; and the heap wrappers behind the post-boot census. See
+<a class="reference internal" href="docs/design/memory-regions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/memory-regions.md</span></code></span></a>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">pattern/</span></code>, <code class="docutils literal notranslate"><span class="pre">player/</span></code>, <code class="docutils literal notranslate"><span class="pre">store/</span></code>, <code class="docutils literal notranslate"><span class="pre">arena/</span></code>, <code class="docutils literal notranslate"><span class="pre">landing/</span></code></strong>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">pattern</span></code>: the hue-code pattern generator, golden-tested against the phone
+decoder;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">player</span></code>: the transport-free session state machine;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">store</span></code>: decode-into-arena persistence;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">arena</span></code>: the bump allocator;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">landing</span></code>: the on-device Soft-AP landing page.</p></li>
+</ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">pulse/</span></code></strong> — the topology pulse/flood simulator, now used only by the web
+simulator (<code class="docutils literal notranslate"><span class="pre">pulse_web</span></code>). The firmware no longer has native playback, so every
+show is an FX effect.</p></li>
+</ul>
+<p><strong>Memory is a checked budget.</strong> Every by-value protobuf envelope, task stack and
+static is accounted for. The shared heap’s worst case is measured on HITL
+(<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>), and two CI gates keep it that way:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">//firmware/sysmode</span></code> reachability: no reachable mode exceeds the budget;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//firmware/player_app:stack_bound_test</span></code>: each task’s static worst-case stack
+bound fits its reservation.</p></li>
+</ul>
+<p>See <a class="reference internal" href="docs/design/ram-budget.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/ram-budget.md</span></code></span></a>.</p>
 <p>The firmware build rules, platform constraints, and vendored Arduino/ESP libraries
 (FastLED, BLE, Wi-Fi, webserver, mbedtls/TLS, partitions) come from a separate
 Bazel module, <strong><code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">fughilli/embedded</span></code>), pinned via <code class="docutils literal notranslate"><span class="pre">archive_override</span></code>
@@ -445,7 +515,13 @@ from Nix, <strong>Nix is a hard prerequisite</strong> (below).</p>
 <ul class="simple">
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code></strong> — the single source of truth for the wire protocol: JSON
 schemas + <code class="docutils literal notranslate"><span class="pre">proto/ledmapper.proto</span></code> → generated Python and TypeScript bindings,
-byte-pinned by a freshness check.</p></li>
+byte-pinned by a freshness check. Rust gets micropb structs plus zero-copy
+views from <strong><code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code></strong> (a self-contained <code class="docutils literal notranslate"><span class="pre">no_std</span></code> protobuf view generator
+meant for separate publication); the firmware decodes every request in place.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">agent/</span></code></strong> — the AI-agent bridge: an MCP server + one-shot CLI over a hub
+that discovers and drives every player on the LAN (rooms, poses, shared time
+base). Released as <code class="docutils literal notranslate"><span class="pre">splanc-agent-&lt;ver&gt;.tgz</span></code> with each firmware release and
+served from splanc.io — see <a class="reference internal" href="#./agent/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">agent/README.md</span></code></span></a>.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">solver/</span></code></strong> — the visual-inertial solver in Rust: native on the Pi, wasm in a
 phone Web Worker.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">pi/</span></code></strong> — the Raspberry Pi path (<code class="docutils literal notranslate"><span class="pre">led_driver</span></code>, <code class="docutils literal notranslate"><span class="pre">server</span></code>, <code class="docutils literal notranslate"><span class="pre">reconstruction</span></code>,
@@ -481,7 +557,7 @@ common build stays light — it compiles mbedtls and the Arduino core from sourc
 The image builds cleanly in-container now; you just have to name it:</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># ESP32-C6 firmware image + flash bundle (the image target carries tags=[&quot;manual&quot;],</span>
 <span class="c1"># so it is excluded from `//...` and built explicitly):</span>
-bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/player_app:esp32c6<span class="w"> </span>//firmware/player_app:esp32c6_flashbundle
+bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/player_app:esp32c6_netstack<span class="w"> </span>//firmware/player_app:esp32c6_netstack_flashbundle
 </pre></div>
 </div>
 <p>Other useful targets:</p>
@@ -493,8 +569,8 @@ bazel<span class="w"> </span>build<span class="w"> </span>//firmware/fx_vm:fx_vm
 <p><strong>CI (<code class="docutils literal notranslate"><span class="pre">.github/workflows/test.yaml</span></code>)</strong> runs three jobs on every PR/push to <code class="docutils literal notranslate"><span class="pre">main</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">test</span></code> — the light path: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//...</span></code> (does not build the firmware image).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">firmware</span></code> — builds <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:esp32c6</span></code> and the flash bundle
-explicitly, so firmware compile/link breakage is still caught, and uploads the
+<li><p><code class="docutils literal notranslate"><span class="pre">firmware</span></code> — builds the <code class="docutils literal notranslate"><span class="pre">esp32c6_netstack</span></code> (and <code class="docutils literal notranslate"><span class="pre">esp32c3_netstack</span></code>) flash
+bundles explicitly, so firmware compile/link breakage is still caught, and uploads the
 bundle artifact (also staged under <code class="docutils literal notranslate"><span class="pre">/firmware/</span></code> for in-browser USB flashing).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">lint</span></code> — the pre-commit gate (<code class="docutils literal notranslate"><span class="pre">prek</span></code>/pre-commit, byte-identical to the local
 hooks).</p></li>
@@ -523,8 +599,13 @@ bazel<span class="w"> </span>run<span class="w"> </span>//pi/reconstruction:reco
 bazel<span class="w"> </span>run<span class="w"> </span>//web:serve<span class="w">         </span><span class="c1"># https://0.0.0.0:8443</span>
 </pre></div>
 </div>
-<p>The web app deploys to Cloudflare Pages (ledmapper.pages.dev) via
-<code class="docutils literal notranslate"><span class="pre">//web:deploy_cloudflare</span></code>.</p>
+<p>The web app deploys to Cloudflare Pages (ledmapper.pages.dev, splanc.pages.dev)
+via <code class="docutils literal notranslate"><span class="pre">//web:deploy_cloudflare</span></code>. Every <code class="docutils literal notranslate"><span class="pre">app-v*</span></code> tag also publishes a GitHub Release
+carrying the built tree as <code class="docutils literal notranslate"><span class="pre">splanc-webapp-&lt;ver&gt;.tar.gz</span></code> (+ <code class="docutils literal notranslate"><span class="pre">.sha256</span></code>); the
+splanc.io site (Studio-Fug/splanc.io) stages the newest one at
+<a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a>, so it follows app releases without a manual bump. The
+same site serves the agent entry point (<code class="docutils literal notranslate"><span class="pre">/AGENTS.md</span></code>, <code class="docutils literal notranslate"><span class="pre">/llms.txt</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/agent/splanc-agent.tgz</span></code>) from the newest <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> release’s agent bundle.</p>
 <p>When developing inside claude-container, in-container servers are published as
 <strong>named services</strong> (<code class="docutils literal notranslate"><span class="pre">.claude-container-overlay/overlay.json</span></code>) instead of fixed
 host ports, so any number of worktree containers can run concurrently: the sim
@@ -599,7 +680,18 @@ the gray-code pattern.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">rename_wss</span></code></strong> — the cert-restart regression: renaming re-issues the cert and
 restarts the TLS server; this hammers reconnects and reports time-to-recovery.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">video_stream</span></code></strong> — streams a scrolling pattern and asserts a sustained ≥10 FPS.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">loaded_tls_netstack</span></code></strong> — fresh TLS handshakes on a heap loaded with a 512-LED
+map + texture effect (the FUG-71 failure mode).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code></strong> — the same worst case under a non-halting JTAG heap watcher
+(<code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code>); dumps SRAM at the minimum watermark and reads the heap
+census / sysmode counters at the end. <code class="docutils literal notranslate"><span class="pre">--hang</span></code> adds <code class="docutils literal notranslate"><span class="pre">hang_watch.tcl</span></code>, which
+freezes the core on a stopped tick before the watchdog can erase the evidence.
+Dumps are armed only after provisioning (a ~46 s halt during the Wi-Fi join
+causes a watchdog reset that looks like a firmware hang).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">time_base_skew</span></code></strong> — two analyzer-tapped DUTs on one shared epoch; asserts
+inter-fixture skew &lt; 20 ms.</p></li>
 </ul>
+<p>Every HITL failure carries the DUT’s serial log (the <code class="docutils literal notranslate"><span class="pre">hitl-serial-logs</span></code> artifact).</p>
 </section>
 <section id="fx-performance-benchmark-regression-gate">
 <h3>FX performance benchmark &amp; regression gate<a class="headerlink" href="#fx-performance-benchmark-regression-gate" title="Link to this heading">¶</a></h3>
@@ -725,28 +817,37 @@ server usually clears by pointing bazel at a fresh <code class="docutils literal
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">firmware/fx_vm/</span></code></p></td>
 <td><p>effects bytecode VM (Rust, <code class="docutils literal notranslate"><span class="pre">no_std</span></code>) — runs on device and, as wasm, in the browser preview</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">agent/</span></code></p></td>
+<td><p>AI-agent bridge: MCP server + CLI hub over every player on the LAN; the release bundle + splanc.io site files</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">oss/pbview/</span></code></p></td>
+<td><p>zero-copy <code class="docutils literal notranslate"><span class="pre">no_std</span></code> protobuf views + generator (self-contained, for separate publication)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">requirements/</span></code></p></td>
+<td><p>the requirements model (<code class="docutils literal notranslate"><span class="pre">requirements.yaml</span></code>) the tests trace to</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code></p></td>
 <td><p>the GLSL-ish effect language → <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode compiler (Rust)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">solver/</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">solver/</span></code></p></td>
 <td><p>visual-inertial solver (Rust): native on the Pi, wasm in a phone Web Worker</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pi/</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pi/</span></code></p></td>
 <td><p>Raspberry Pi path: <code class="docutils literal notranslate"><span class="pre">led_driver</span></code>, <code class="docutils literal notranslate"><span class="pre">server</span></code>, <code class="docutils literal notranslate"><span class="pre">reconstruction</span></code>, <code class="docutils literal notranslate"><span class="pre">provisioning</span></code> (Nix/NixOS)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code></p></td>
 <td><p>hardware-in-the-loop test rigs: Go daemon + CLI + Python harness</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code></p></td>
 <td><p>wire protocol: JSON schemas → generated Python + TS bindings (byte-pinned by a freshness check)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code></p></td>
 <td><p>synthetic detection-log generator for hardware-free testing</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tools/</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tools/</span></code></p></td>
 <td><p>host-side dev/bench helpers (flash server, BLE onboarder, headless-browser driver, sim studio, TouchDesigner plugin)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">docs/</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">docs/</span></code></p></td>
 <td><p>design docs, decisions log, runbook, exploration notes</p></td>
 </tr>
 </tbody>
@@ -761,7 +862,9 @@ server usually clears by pointing bazel at a fresh <code class="docutils literal
 <li><p><strong>Wire protocol:</strong> <code class="docutils literal notranslate"><span class="pre">shared/protocol/schemas/*.json</span></code> (authoritative); regenerate
 bindings with <code class="docutils literal notranslate"><span class="pre">python3</span> <span class="pre">shared/protocol/codegen.py</span></code>
 (<code class="docutils literal notranslate"><span class="pre">//shared/protocol:codegen_freshness</span></code> fails the build if they drift).</p></li>
-<li><p><strong>Decisions &amp; runbook:</strong> <code class="docutils literal notranslate"><span class="pre">docs/decisions.md</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/runbook.md</span></code>.</p></li>
+<li><p><strong>Decisions &amp; runbook:</strong> <code class="docutils literal notranslate"><span class="pre">docs/decisions.md</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/runbook.md</span></code>; the reasoning
+behind the big ones: <code class="docutils literal notranslate"><span class="pre">docs/manifesto.md</span></code>.</p></li>
+<li><p><strong>Agent bridge:</strong> <code class="docutils literal notranslate"><span class="pre">agent/README.md</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/agent-multi-fixture.md</span></code>.</p></li>
 <li><p><strong>HITL:</strong> <code class="docutils literal notranslate"><span class="pre">pi/hitl/README.md</span></code>, <code class="docutils literal notranslate"><span class="pre">pi/hitl/DESIGN.md</span></code>.</p></li>
 <li><p><strong>Project history:</strong> <code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code>; roadmap: <code class="docutils literal notranslate"><span class="pre">next_steps.md</span></code>.</p></li>
 </ul>

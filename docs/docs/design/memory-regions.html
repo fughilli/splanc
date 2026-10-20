@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Post-boot heap census" href="heap-census.html"><link rel="prev" title="RAM budget (ESP32-C6 player)" href="ram-budget.html">
         <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
@@ -237,20 +241,30 @@
 <li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -333,7 +347,7 @@
 <li><p>The guard’s drop runs the variant’s leak check (<code class="docutils literal notranslate"><span class="pre">Variant::leaked</span></code>, e.g. “every pool full again”) and records <code class="docutils literal notranslate"><span class="pre">ExitStatus::Leaked(n)</span></code>. A forgotten slot, or a blob that never freed, is caught at the transition instead of surfacing later as fragmentation.</p></li>
 </ul>
 </li>
-<li><p><strong>Proofs.</strong> Kani harnesses (<code class="docutils literal notranslate"><span class="pre">firmware/region/kani.sh</span></code>, outside Bazel) prove for all ≤ 6-op sequences that:</p>
+<li><p><strong>Proofs.</strong> Kani harnesses (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//firmware/region:region_kani</span></code>, hermetic; see <a class="reference internal" href="kani-bazel.html"><span class="std std-doc">kani-bazel.md</span></a>) prove for all ≤ 6-op sequences that:</p>
 <ul>
 <li><p>slots never alias;</p></li>
 <li><p>alloc succeeds iff a slot is free;</p></li>
@@ -392,16 +406,31 @@
 </tbody>
 </table>
 </div>
+<p>Each later layout change re-pinned the test in its own PR: +3,072 B for the
+room-frame cache (#280), +4,096 B for the 12 KB topology arena (#291), then 73
+states and 164,975 B with deck B and keypoints (#285, which adds the <code class="docutils literal notranslate"><span class="pre">fx_aux</span></code>
+deck-B / video union and the keypoint buffers to the cost table). Since #291 the
+budget subtracts <code class="docutils literal notranslate"><span class="pre">STATICS_ADDED_SINCE_MEASURED</span></code>: statics added after the
+measured image were counted as free heap there, so they shrink the headroom
+instead of inflating the budget. Since #285 that constant is derived
+(<code class="docutils literal notranslate"><span class="pre">ALL_MODE_STATICS</span> <span class="pre">-</span> <span class="pre">MEASURED_STATICS</span></code>), so a new static cannot be left out.</p>
 <p>Today’s layout holds about 152 KB for these components, because every static is resident regardless of state. A mode-union layout needs only the worst live set, which under PR-38 has nearly everything live at once, so the union saves little by itself (~1 KB):</p>
 <ul class="simple">
-<li><p><strong>The next lever is the scan residue:</strong> 20 KB of vendor scan, lwIP and event-loop heap that never frees.</p></li>
+<li><p><strong>The next lever is the scan residue:</strong> 20 KB of vendor scan, lwIP and event-loop heap that never frees. <em>(Since freed by #266: no <code class="docutils literal notranslate"><span class="pre">esp_netif_init</span></code>, the event loop deleted after the scan, no NVS mirror.)</em></p></li>
 </ul>
 </section>
 <section id="integration-plan">
 <h2>Integration plan<a class="headerlink" href="#integration-plan" title="Link to this heading">¶</a></h2>
 <p>Ordered by bytes recovered per effort:</p>
 <ol class="arabic simple">
-<li><p><strong>Drive the firmware’s mode switches through <code class="docutils literal notranslate"><span class="pre">sysmode::step</span></code>.</strong> Call it from loopTask at the BLE/wss/upload/effect edges. Log refusals at first, then enforce them.</p></li>
+<li><p><strong>Drive the firmware’s mode switches through <code class="docutils literal notranslate"><span class="pre">sysmode::step</span></code>.</strong> <em>(log-only: done)</em></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sysmode::observe::Tracker</span></code> tracks the device by OBSERVATION: each loop, <code class="docutils literal notranslate"><span class="pre">mode_observe()</span></code> (main.cpp) hands <code class="docutils literal notranslate"><span class="pre">lm_mode_observe</span></code> the transport’s facts (credentials, lease, BLE central, wss, upload window); the player adds its own (capture / counting probe, effect loaded, set_texture frames within 2 s over wss, map stored). The tracker derives the model events axis by axis and applies each through <code class="docutils literal notranslate"><span class="pre">step</span></code>.</p></li>
+<li><p>A refusal is logged once per (state, event, reason) and forced so tracking continues; counters live in the <code class="docutils literal notranslate"><span class="pre">LM_MODE</span></code> static (<code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code> reads it over JTAG at the end of a <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> run) and on the serial status line (<code class="docutils literal notranslate"><span class="pre">mode=state/accepted/refused/unmodeled</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">observe_test</span></code> is the model-vs-firmware agreement test (the HITL scenarios’ observation sequences track with zero refusals). Wiring it up corrected two model errors: wired <code class="docutils literal notranslate"><span class="pre">PROV</span></code> provisioning needs no central (<code class="docutils literal notranslate"><span class="pre">Event::WiredCredentials</span></code>), and a restored boot is unprovisioned (credentials are RAM-only).</p></li>
+<li><p>Next: enforce — gate the switches that the firmware initiates (effect load during an upload, video without wss) on <code class="docutils literal notranslate"><span class="pre">step</span></code> instead of only observing them.</p></li>
+</ul>
+</li>
 <li><p><strong>Freeze trap.</strong> Revive <code class="docutils literal notranslate"><span class="pre">firmware/sysheap</span></code>’s <code class="docutils literal notranslate"><span class="pre">--wrap</span></code> of malloc/heap_caps.</p>
 <ul class="simple">
 <li><p>After <code class="docutils literal notranslate"><span class="pre">setup()</span></code>, record the caller PC and size of any IDF-heap allocation in a census ring, read over JTAG by <code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code>, so the DUT isn’t disturbed.</p></li>
@@ -410,12 +439,12 @@
 </li>
 <li><p><strong>Activity union.</strong> Put <code class="docutils literal notranslate"><span class="pre">ModeRegion&lt;ActivityStore&gt;</span></code> over the effect statics (FX_ARENA, FX_VM, FX_BYTES, JIT, LUT, OSC) and use the upload/mapping scratch. Video’s FX_TEX_PREV is a sub-variant of Effect.</p></li>
 <li><p><strong>BLE controller slab:</strong> wrap <code class="docutils literal notranslate"><span class="pre">bt_osi_mem_*</span></code> into a bounded <code class="docutils literal notranslate"><span class="pre">Slab</span></code> so the controller’s own allocations are isolated from the shared heap (the controller stays up: PR-38).</p></li>
-<li><p><strong>TLS slab.</strong> Add <code class="docutils literal notranslate"><span class="pre">MBEDTLS_PLATFORM_MEMORY</span></code> + <code class="docutils literal notranslate"><span class="pre">mbedtls_platform_set_calloc_free</span></code> into a <code class="docutils literal notranslate"><span class="pre">Slab</span></code>. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap.</p></li>
-<li><p><strong>Scan residue.</strong> Scan with the netstack’s own MLME, or <code class="docutils literal notranslate"><span class="pre">esp_wifi_deinit</span></code> after the scan, and drop <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>/lwIP/event-loop tasks. Then set <code class="docutils literal notranslate"><span class="pre">scan_residue</span></code> live only in <code class="docutils literal notranslate"><span class="pre">Wifi::Scanning</span></code>.</p></li>
+<li><p><strong>TLS slab.</strong> Add <code class="docutils literal notranslate"><span class="pre">MBEDTLS_PLATFORM_MEMORY</span></code> + <code class="docutils literal notranslate"><span class="pre">mbedtls_platform_set_calloc_free</span></code> into a <code class="docutils literal notranslate"><span class="pre">Slab</span></code>. This removes the contiguous 6.5 KB record-buffer requirement from the shared heap. <em>(Done in #272: <code class="docutils literal notranslate"><span class="pre">firmware/player_app/tls_region.cpp</span></code>, with 2 × 6,912 B record slots plus a 10 KB private TLSF region and a counted shared-heap fallback.)</em></p></li>
+<li><p><strong>Scan residue.</strong> Scan with the netstack’s own MLME, or <code class="docutils literal notranslate"><span class="pre">esp_wifi_deinit</span></code> after the scan, and drop <code class="docutils literal notranslate"><span class="pre">esp_netif</span></code>/lwIP/event-loop tasks. Then set <code class="docutils literal notranslate"><span class="pre">scan_residue</span></code> live only in <code class="docutils literal notranslate"><span class="pre">Wifi::Scanning</span></code>. <em>(The lwIP, event-loop and NVS parts are done in #266. The vendor scan itself and the model’s <code class="docutils literal notranslate"><span class="pre">scan_residue</span></code> cost remain.)</em></p></li>
 <li><p><strong>CI gates:</strong></p>
 <ul class="simple">
 <li><p>this test;</p></li>
-<li><p>a static stack bound over the ELF (<code class="docutils literal notranslate"><span class="pre">objdump</span></code> prologues + call graph + a checked-in manifest of indirect edges);</p></li>
+<li><p>a static stack bound over the ELF (<code class="docutils literal notranslate"><span class="pre">objdump</span></code> prologues + call graph + a checked-in manifest of indirect edges) <em>(done in #270: <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:stack_bound_test</span></code>)</em>;</p></li>
 <li><p>the <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> HITL watermark run, asserting zero post-freeze allocations and per-region minimum-free margins.</p></li>
 </ul>
 </li>
@@ -429,8 +458,26 @@
       <footer>
         
         <div class="related-pages">
-          
-          
+          <a class="next-page" href="heap-census.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Post-boot heap census</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="ram-budget.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">RAM budget (ESP32-C6 player)</div>
+                
+              </div>
+            </a>
         </div>
         <div class="bottom-of-page">
           <div class="left-details">

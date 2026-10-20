@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
@@ -243,14 +247,24 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -382,7 +396,7 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 <td><p>default 10%, sweep16 15%</p></td>
 </tr>
 <tr class="row-even"><td><p>Fit residual</p></td>
-<td><p>±81.4%</p></td>
+<td><p>±69.0%</p></td>
 </tr>
 <tr class="row-odd"><td><p>Held-out accuracy</p></td>
 <td><p>RMS 7.8% · mean 6.5% · max 15.8% · R² 0.985</p></td>
@@ -406,20 +420,20 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 </thead>
 <tbody>
 <tr class="row-even"><td><p>update_fixed</p></td>
-<td><p>396144.6</p></td>
-<td><p>2475903.8</p></td>
+<td><p>401167.6</p></td>
+<td><p>2507297.6</p></td>
 </tr>
 <tr class="row-odd"><td><p>shade_fixed</p></td>
-<td><p>2199.2</p></td>
-<td><p>13744.8</p></td>
+<td><p>2168.9</p></td>
+<td><p>13555.4</p></td>
 </tr>
 <tr class="row-even"><td><p>show_fixed</p></td>
-<td><p>52672.1</p></td>
-<td><p>329200.4</p></td>
+<td><p>48146.3</p></td>
+<td><p>300914.6</p></td>
 </tr>
 <tr class="row-odd"><td><p>show_per_led</p></td>
-<td><p>1945.8</p></td>
-<td><p>12161.0</p></td>
+<td><p>1980.0</p></td>
+<td><p>12374.9</p></td>
 </tr>
 </tbody>
 </table>
@@ -441,173 +455,173 @@ benchmark actually exercised). Sorted by cost.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>BinMath:pow</p></td>
-<td><p>1922.16</p></td>
-<td><p>12013.48</p></td>
+<td><p>1922.01</p></td>
+<td><p>12012.59</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hsv2Rgb</p></td>
-<td><p>1384.70</p></td>
-<td><p>8654.37</p></td>
+<td><p>1384.58</p></td>
+<td><p>8653.63</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:tan</p></td>
-<td><p>1352.35</p></td>
-<td><p>8452.16</p></td>
+<td><p>1352.20</p></td>
+<td><p>8451.27</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:atan2</p></td>
-<td><p>1154.06</p></td>
-<td><p>7212.85</p></td>
+<td><p>1153.91</p></td>
+<td><p>7211.96</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Cross</p></td>
-<td><p>1013.15</p></td>
-<td><p>6332.18</p></td>
+<td><p>1013.01</p></td>
+<td><p>6331.29</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:exp</p></td>
-<td><p>902.29</p></td>
-<td><p>5639.32</p></td>
+<td><p>902.23</p></td>
+<td><p>5638.91</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:log</p></td>
-<td><p>847.87</p></td>
-<td><p>5299.19</p></td>
+<td><p>847.90</p></td>
+<td><p>5299.37</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Smoothstep</p></td>
-<td><p>824.22</p></td>
-<td><p>5151.39</p></td>
+<td><p>824.18</p></td>
+<td><p>5151.09</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sqrt</p></td>
-<td><p>727.35</p></td>
-<td><p>4545.96</p></td>
+<td><p>727.21</p></td>
+<td><p>4545.07</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:mod</p></td>
-<td><p>704.62</p></td>
-<td><p>4403.89</p></td>
+<td><p>704.48</p></td>
+<td><p>4403.00</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:cos</p></td>
-<td><p>691.74</p></td>
-<td><p>4323.39</p></td>
+<td><p>691.60</p></td>
+<td><p>4322.50</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Palette</p></td>
-<td><p>653.30</p></td>
-<td><p>4083.11</p></td>
+<td><p>653.16</p></td>
+<td><p>4082.22</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sin</p></td>
-<td><p>617.96</p></td>
-<td><p>3862.28</p></td>
+<td><p>617.82</p></td>
+<td><p>3861.39</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Normalize</p></td>
-<td><p>557.24</p></td>
-<td><p>3482.76</p></td>
+<td><p>557.19</p></td>
+<td><p>3482.47</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Distance</p></td>
-<td><p>529.69</p></td>
-<td><p>3310.57</p></td>
+<td><p>529.64</p></td>
+<td><p>3310.28</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Div</p></td>
-<td><p>459.48</p></td>
-<td><p>2871.73</p></td>
+<td><p>459.34</p></td>
+<td><p>2870.85</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:ceil</p></td>
-<td><p>457.02</p></td>
-<td><p>2856.39</p></td>
+<td><p>456.88</p></td>
+<td><p>2855.50</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Mix</p></td>
-<td><p>419.63</p></td>
-<td><p>2622.70</p></td>
+<td><p>419.59</p></td>
+<td><p>2622.45</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Length</p></td>
-<td><p>390.48</p></td>
-<td><p>2440.51</p></td>
+<td><p>390.43</p></td>
+<td><p>2440.21</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:fract</p></td>
-<td><p>382.45</p></td>
-<td><p>2390.32</p></td>
+<td><p>382.31</p></td>
+<td><p>2389.44</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Clamp</p></td>
-<td><p>375.04</p></td>
-<td><p>2344.01</p></td>
+<td><p>374.96</p></td>
+<td><p>2343.51</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hash3</p></td>
-<td><p>365.89</p></td>
-<td><p>2286.80</p></td>
+<td><p>365.75</p></td>
+<td><p>2285.92</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Mul</p></td>
-<td><p>315.18</p></td>
-<td><p>1969.87</p></td>
+<td><p>315.01</p></td>
+<td><p>1968.80</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Add</p></td>
-<td><p>313.81</p></td>
-<td><p>1961.31</p></td>
+<td><p>313.64</p></td>
+<td><p>1960.25</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Sub</p></td>
-<td><p>313.58</p></td>
-<td><p>1959.87</p></td>
+<td><p>313.44</p></td>
+<td><p>1958.98</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:floor</p></td>
-<td><p>301.88</p></td>
-<td><p>1886.73</p></td>
+<td><p>301.73</p></td>
+<td><p>1885.84</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath:step</p></td>
-<td><p>298.32</p></td>
-<td><p>1864.52</p></td>
+<td><p>298.18</p></td>
+<td><p>1863.64</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:min</p></td>
-<td><p>292.50</p></td>
-<td><p>1828.10</p></td>
+<td><p>292.35</p></td>
+<td><p>1827.22</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath:max</p></td>
-<td><p>291.41</p></td>
-<td><p>1821.34</p></td>
+<td><p>291.27</p></td>
+<td><p>1820.45</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Dot</p></td>
-<td><p>241.84</p></td>
-<td><p>1511.47</p></td>
+<td><p>241.80</p></td>
+<td><p>1511.23</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Hash1</p></td>
-<td><p>228.41</p></td>
-<td><p>1427.59</p></td>
+<td><p>228.27</p></td>
+<td><p>1426.70</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:sign</p></td>
-<td><p>178.22</p></td>
-<td><p>1113.89</p></td>
+<td><p>178.08</p></td>
+<td><p>1113.00</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:abs</p></td>
-<td><p>154.53</p></td>
-<td><p>965.81</p></td>
+<td><p>154.39</p></td>
+<td><p>964.92</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Neg</p></td>
-<td><p>144.74</p></td>
-<td><p>904.64</p></td>
+<td><p>144.51</p></td>
+<td><p>903.16</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath</p></td>
@@ -820,7 +834,7 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>clamp32M</p></td>
 <td><p>128</p></td>
 <td><p>62.14</p></td>
-<td><p>66.86</p></td>
+<td><p>66.85</p></td>
 <td><p>+7.6%</p></td>
 <td><p>9.94M</p></td>
 <td><p>10.70M</p></td>
@@ -836,7 +850,7 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>expf2M</p></td>
 <td><p>128</p></td>
 <td><p>69.19</p></td>
-<td><p>70.77</p></td>
+<td><p>70.76</p></td>
 <td><p>+2.3%</p></td>
 <td><p>11.07M</p></td>
 <td><p>11.32M</p></td>
@@ -868,7 +882,7 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>neg2M</p></td>
 <td><p>128</p></td>
 <td><p>13.59</p></td>
-<td><p>15.74</p></td>
+<td><p>15.73</p></td>
 <td><p>+15.8%</p></td>
 <td><p>2.17M</p></td>
 <td><p>2.52M</p></td>
@@ -905,8 +919,8 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 <tr class="row-odd"><td><p>sweep16</p></td>
 <td><p>fit</p></td>
 <td><p>16</p></td>
-<td><p>42,589</p></td>
-<td><p>53,587</p></td>
+<td><p>50,259</p></td>
+<td><p>44,761</p></td>
 </tr>
 <tr class="row-even"><td><p>sweep256</p></td>
 <td><p>fit</p></td>

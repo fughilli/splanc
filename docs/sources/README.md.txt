@@ -12,8 +12,8 @@
   <a href="https://splanc.grafana.net/public-dashboards/0ce888d9584940a6845438d376555b51"><img
     src="https://img.shields.io/badge/HITL%20status-Grafana-f46800?logo=grafana&logoColor=white"
     alt="HITL status" /></a>
-  <a href="https://ledmapper.pages.dev"><img
-    src="https://img.shields.io/badge/live%20app-ledmapper.pages.dev-084de7"
+  <a href="https://splanc.io/app"><img
+    src="https://img.shields.io/badge/live%20app-splanc.io%2Fapp-084de7"
     alt="Live app" /></a>
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
@@ -47,7 +47,7 @@ camera path and the LED positions together.
 
 The app is a PWA — nothing to install:
 
-**→ <https://ledmapper.pages.dev>**
+**→ <https://splanc.io/app>**
 
 1. **Onboard your controller.** Starting from a brand-new ESP32-C6 dev board?
    Flash the firmware onto it straight from the PWA over USB (desktop
@@ -60,6 +60,23 @@ The app is a PWA — nothing to install:
    (skeleton extraction, junction cleanup) and send the map to the device.
 4. **Design effects.** Open the effects editor, pick or write an effect, preview
    it against your map, and send it to the controller to play for real.
+
+## Ask an AI agent
+
+Splanc players can also be driven by an AI agent. Tell an agent that has a shell
+and Node.js 20 or later _"Use splanc.io to set the mood of the room"_. It reads
+<https://splanc.io/AGENTS.md> and finds every Splanc fixture on your LAN. It
+treats them as one room, with a shared room frame and clock, and can tweak the
+running effect's knobs or write, preview and deploy a new effect.
+
+To install it as an MCP server once:
+
+```sh
+claude mcp add splanc -- npx -y https://splanc.io/agent/splanc-agent.tgz
+```
+
+There is no LAN authentication, so anyone on your network can drive the lights.
+See [`agent/README.md`](./agent/README.md).
 
 ## Hardware
 
@@ -92,6 +109,10 @@ The app is a PWA — nothing to install:
 
 - **Using the app:** [`docs/user-guide.md`](./docs/user-guide.md) — a walkthrough of
   every feature (also an interactive tutorial in the app, from Settings ▸ Help)
+- **Why it's built this way:** [the Splanc manifesto](./docs/manifesto.md):
+  a microcontroller instead of Art-Net boxes, our own wireless stack, no heap,
+  and model checking for an LED controller.
+- **What's new:** [`docs/whats-new.md`](./docs/whats-new.md)
 - **Contributing & building from source:** [`DEVELOPERS.md`](./DEVELOPERS.md)
 - **Design & architecture:** [`led-mapper-design.md`](./led-mapper-design.md) —
   the durable spec — plus [`docs/`](./docs)

@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Memory regions and the mode model (ESP32-C6 player)" href="memory-regions.html"><link rel="prev" title="ESP32-based LED Mapping + Playback — Build Plan" href="../esp32-led-mapping-plan.html">
         <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
@@ -237,20 +241,30 @@
 <li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Reference</span></p>
-<ul>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -388,11 +402,20 @@ call graph (objdump prologues + direct calls + the mbedtls bio/RNG
 callbacks), not the measured high-water (which understates paths a run
 didn’t take — render measures 0.8 KiB against a 7.4 KiB bound):
 loopTask 48 → 20 KiB (bound ~13.5 KiB, measured 12.9 KiB on the
-<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> worst case), xmit 8 → 3 KiB; render stays 8 KiB until
-<code class="docutils literal notranslate"><span class="pre">lm_playback_step</span></code>’s ~4 KiB frame shrinks. Our tasks (render/xmit/logdrain)
-use static stacks (<code class="docutils literal notranslate"><span class="pre">xTaskCreateStatic</span></code>), off the shared heap. Next fat
-frames on loopTask: the BLE host’s <code class="docutils literal notranslate"><span class="pre">ns_ble_on_hci</span></code> / <code class="docutils literal notranslate"><span class="pre">ImprovService::new</span></code>
-(~4.5 KiB each).</p>
+<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> worst case), xmit 8 → 3 KiB. Our tasks (render/xmit/logdrain)
+use static stacks (<code class="docutils literal notranslate"><span class="pre">xTaskCreateStatic</span></code>), off the shared heap.</p>
+<p>Since then:</p>
+<ul class="simple">
+<li><p>Removing native pulse/flood playback took <code class="docutils literal notranslate"><span class="pre">lm_playback_step</span></code>’s ~4 KiB
+frame out of render (its bound went 7.4 → 3.3 KiB), so render is 8 → 5 KiB.</p></li>
+<li><p>Zero-copy TX (#267) dropped the per-layer frame buffers from every TLS
+write, so loopTask is 20 → 14 KiB.</p></li>
+<li><p>The static bound is now a CI gate (<code class="docutils literal notranslate"><span class="pre">//tools/stack_bound</span></code>,
+<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:stack_bound_test</span></code>, manifest in
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/stack_bound.json</span></code>). It fails when <code class="docutils literal notranslate"><span class="pre">(bound</span> <span class="pre">+</span> <span class="pre">256</span> <span class="pre">B</span> <span class="pre">ISR)</span> <span class="pre">×</span> <span class="pre">1.25</span></code> exceeds a task’s stack. Current figures: loopTask 9.7 of
+14 KiB, render 3.2 of 5, xmit 0.9 of 2, logdrain 0.7 of 2 (the last two
+trimmed from 3 KiB).</p></li>
+</ul>
 <p>The netstack transports dispatch every message IN PLACE (WS reassembly
 buffer / BLE frame), so <code class="docutils literal notranslate"><span class="pre">rx</span></code> only stages frames read back off flash and
 shrank 12 → 4.5 KiB on that build.</p>
@@ -400,6 +423,60 @@ shrank 12 → 4.5 KiB on that build.</p>
 handshake → 512-LED map + texture effect → loaded handshakes): minimum free
 heap 1.6 KiB → 54 KiB; free with the map loaded 23.6 → 67 KiB; largest
 block 13.8 → 45 KiB.</p>
+<p><strong>Running total</strong> (same scenario, HITL rig-2). Each row is the before → after
+that its PR reported; other PRs landed between rows, so a row’s “before”
+need not equal the previous row’s “after”:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Step</p></th>
+<th class="head"><p>Change</p></th>
+<th class="head text-right"><p>Min free heap</p></th>
+<th class="head text-right"><p>Free with the 512-LED map loaded</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>v1.6.0</p></td>
+<td><p>baseline</p></td>
+<td class="text-right"><p>1.6 KiB</p></td>
+<td class="text-right"><p>23.6 KiB</p></td>
+</tr>
+<tr class="row-odd"><td><p>#262</p></td>
+<td><p>zero-copy envelopes, in-place dispatch, stacks from a static bound</p></td>
+<td class="text-right"><p>54 KiB</p></td>
+<td class="text-right"><p>67 KiB</p></td>
+</tr>
+<tr class="row-even"><td><p>#266</p></td>
+<td><p>vendor scan residue freed (no lwIP task, event loop deleted after the scan, no NVS mirror); cold SDK code moved from IRAM to flash (<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 114,910 → 97,512 B)</p></td>
+<td class="text-right"><p>61.3 → 82.9 KB</p></td>
+<td class="text-right"><p>95.8 KB</p></td>
+</tr>
+<tr class="row-odd"><td><p>#267</p></td>
+<td><p>zero-copy TX; loopTask 20 → 14 KiB</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>95.8 → 106.7 KB</p></td>
+</tr>
+<tr class="row-even"><td><p>#272</p></td>
+<td><p>mbedTLS in its own 24 KiB region (2 × 6,912 B record slots + a 10 KB TLSF region)</p></td>
+<td class="text-right"><p>~90 → ~87 KB</p></td>
+<td class="text-right"><p>~116 → ~95 KB</p></td>
+</tr>
+<tr class="row-odd"><td><p>#291</p></td>
+<td><p>exact-size topology decode (count, then fill) into one shared vertex array; <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code> 8 → 12 KB, capacity 16·J + 24·S + 12·V bytes (a 27 / 51 / 206 scan takes 4,128 B, ~880 vertices of headroom at 27 J / 51 S; beyond it <code class="docutils literal notranslate"><span class="pre">map_too_large</span></code>)</p></td>
+<td class="text-right"><p>+4 KB static, not re-measured on this scenario</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p>#285</p></td>
+<td><p>FX deck B + uniform keypoints: +6.5 KB static (<code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> with its morph state, the video/deck-B aux union 8,192 → 11,436 B, <code class="docutils literal notranslate"><span class="pre">KP_IO</span></code>); the per-LED fx shade entry (<code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code>, <code class="docutils literal notranslate"><span class="pre">Program::parse</span></code>, <code class="docutils literal notranslate"><span class="pre">Vm::run_shade_bounded</span></code>) pinned in IRAM (<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 97,512 → 99,704 B, +2,192)</p></td>
+<td class="text-right"><p>not re-measured on this scenario (fx_keypoints HITL, final tip: min free 72.7 KB (72,672 B) with both decks + a wss session; the ~1.9 KB below the previous run is the IRAM pin)</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>#272 deliberately <em>reserves</em> 24 KiB that a session used to take from the
+shared heap. In exchange, a handshake can no longer fail on a fragmented
+heap, and the shared heap stops churning on TLS records.</p>
 </li>
 <li><p><strong>Lazily heap-allocate the FX buffers</strong> (<code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> + <code class="docutils literal notranslate"><span class="pre">FX_TEX_PREV</span></code> +
 <code class="docutils literal notranslate"><span class="pre">FX_BYTES</span></code>): these are <code class="docutils literal notranslate"><span class="pre">static</span> <span class="pre">mut</span></code> arrays reserved for the whole process, but
@@ -419,6 +496,14 @@ machine (<code class="docutils literal notranslate"><span class="pre">//firmware
 <a class="reference internal" href="memory-regions.html"><span class="std std-doc">memory-regions.md</span></a>. Item 4 (lazy FX buffers) becomes the
 activity union there, with no allocator. <em>(crate + model landed; firmware
 integration follow-up)</em></p></li>
+<li><p><strong>Post-boot heap census</strong> — every allocation after <code class="docutils literal notranslate"><span class="pre">setup()</span></code> attributed to
+its call site, read over JTAG (<code class="docutils literal notranslate"><span class="pre">--//firmware/player_app:heap_census_enabled</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>): <a class="reference internal" href="heap-census.html"><span class="std std-doc">heap-census.md</span></a>. First run: mbedTLS’s
+per-record 6.5 KB buffers are 93% of post-boot bytes; littlefs <code class="docutils literal notranslate"><span class="pre">fopen</span></code>’s 4 KB
+stdio buffer is the other large-block churn. <em>(log-only; migrations next)</em></p></li>
+</ul>
+</li>
 </ol>
 </section>
 </section>
@@ -428,8 +513,26 @@ integration follow-up)</em></p></li>
       <footer>
         
         <div class="related-pages">
-          
-          
+          <a class="next-page" href="memory-regions.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Memory regions and the mode model (ESP32-C6 player)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../esp32-led-mapping-plan.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">ESP32-based LED Mapping + Playback — Build Plan</div>
+                
+              </div>
+            </a>
         </div>
         <div class="bottom-of-page">
           <div class="left-details">

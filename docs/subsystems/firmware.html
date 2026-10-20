@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
@@ -243,14 +247,24 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -299,55 +313,174 @@
         <article role="main" id="furo-main-content">
           <section id="the-firmware-firmware">
 <h1>The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)<a class="headerlink" href="#the-firmware-firmware" title="Link to this heading">¶</a></h1>
-<p>A set of <code class="docutils literal notranslate"><span class="pre">no_std</span></code> Rust crates (portable session / effects / topology logic)
-linked into one C++/Arduino app via a C ABI. <strong>The target MCU is the
-ESP32-C6.</strong> It drives the LEDs, serves the control channel, and runs effects on
-the device.</p>
+<p>A set of <code class="docutils literal notranslate"><span class="pre">no_std</span></code> Rust crates (portable session / effects / topology / network
+logic) linked into one C++/Arduino app via a C ABI. <strong>The target MCU is the
+ESP32-C6</strong> (an ESP32-C3 build links and boots too). It drives the LEDs, serves
+the control channel over Wi-Fi and BLE, and runs effects on the device. The
+shipped image is the <strong>heapless-netstack</strong> build: everything above the vendor’s
+PHY/lower-MAC blobs is ours. <a class="reference internal" href="../docs/manifesto.html"><span class="doc">The Splanc manifesto</span></a> explains why.</p>
 <section id="crates">
 <h2>Crates<a class="headerlink" href="#crates" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">player_app/</span></code></strong> — the on-device app (<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code> + <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>). Drives WS2812B
-LEDs via FastLED over the C6 RMT peripheral; runs the effects VM; serves a
-control server on <strong>both</strong> a plain <code class="docutils literal notranslate"><span class="pre">ws://:81</span></code> (bring-up) and a TLS <code class="docutils literal notranslate"><span class="pre">wss://:443</span></code>
-(mbedtls + an EC P-256 dev cert generated at build time and re-issued on-device
-with the live IP as a SAN, so the hosted HTTPS app can connect without
-mixed-content). Wi-Fi provisioning is Improv over BLE; the board boots AP+STA
-then demotes to STA to reclaim heap for the TLS handshake. Effects arrive as
-<code class="docutils literal notranslate"><span class="pre">.fxb</span></code> over the control channel; textures / uniforms are streamed in and
-dequantized into the arena. Board-agnostic host builds of <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>
-(<code class="docutils literal notranslate"><span class="pre">player_ffi_host</span></code>) let the FFI and golden-frame tests run under <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code>
-with no hardware.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">fx_vm/</span></code></strong> — the effects bytecode VM (see <a class="reference internal" href="../EFFECTS.html"><span class="doc">The splanc effects engine</span></a>); builds for the
-C6 and to wasm for the browser preview.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">pulse/</span></code>, <code class="docutils literal notranslate"><span class="pre">pattern/</span></code>, <code class="docutils literal notranslate"><span class="pre">player/</span></code>, <code class="docutils literal notranslate"><span class="pre">store/</span></code>, <code class="docutils literal notranslate"><span class="pre">arena/</span></code>, <code class="docutils literal notranslate"><span class="pre">landing/</span></code></strong> — the
-topology-aware pulse / flood effects (also wasm), the hue-code pattern
-generator (golden-tested against the phone decoder), the transport-free session
-state machine, decode-into-arena persistence, the bump allocator, and the
-on-device Soft-AP landing page.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">player_app/</span></code></strong> — the on-device app (<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>):</p>
+<ul>
+<li><p>Drives WS2812 LEDs with its own driver (<code class="docutils literal notranslate"><span class="pre">ws2812.h</span></code>): PARLIO + GDMA on the
+C6 and RMT on the C3, with no FastLED.</p></li>
+<li><p>Runs the effects VM (plus the RV32 JIT).</p></li>
+<li><p>Serves the control protocol over <code class="docutils literal notranslate"><span class="pre">wss://:443</span></code>. The TLS cert is an EC P-256
+cert issued on-device for the live IP and <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.local</span></code>. The same protocol
+is also served over BLE (the BLE player transport).</p></li>
+<li><p>Handles Wi-Fi provisioning with Improv over BLE. BLE stays up beside wss
+(requirement PR-38).</p></li>
+<li><p>Takes effects as <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> over the control channel. Textures and uniforms
+stream in and are dequantized into the arena.</p></li>
+<li><p>Builds <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code> for the host as well (<code class="docutils literal notranslate"><span class="pre">player_ffi_host</span></code>), so the FFI, the
+golden-frame and the agent-surface tests run under <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code> with no
+hardware.</p></li>
 </ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">netstack/</span></code></strong> — the heapless Wi-Fi + BLE stack, with a fixed-capacity buffer
+for every layer (see <code class="docutils literal notranslate"><span class="pre">firmware/netstack/DESIGN.md</span></code>):</p>
+<ul>
+<li><p>our own RX ring and STA MLME;</p></li>
+<li><p>the WPA2 4-way handshake, with CCMP on the AES accelerator;</p></li>
+<li><p>DHCP, ARP and TCP;</p></li>
+<li><p>a bounded HTTP server;</p></li>
+<li><p>the BLE HCI/L2CAP/ATT/GATT layers and the coexistence arbiter.</p></li>
+</ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">blehost/</span></code></strong> — the heapless BLE host over the vendor controller (it replaced
+Bluedroid’s ~43 KiB permanent heap draw).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">fx_vm/</span></code>, <code class="docutils literal notranslate"><span class="pre">fx_jit/</span></code></strong> — the effects bytecode VM (see <a class="reference internal" href="../EFFECTS.html"><span class="doc">The splanc effects engine</span></a>),
+built for the C6 and to wasm for the browser preview, and the load-time RV32
+JIT for hot integer blocks.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">osc/</span></code></strong> — native OSC input mapped onto an effect’s uniforms.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">region/</span></code>, <code class="docutils literal notranslate"><span class="pre">sysmode/</span></code>, <code class="docutils literal notranslate"><span class="pre">sysheap/</span></code></strong> — the memory discipline:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">region</span></code> provides fixed pools, slabs and mode-union regions, with Kani
+proofs;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sysmode</span></code> is the reachability-checked model of the device’s memory modes,
+which the firmware tracks at run time;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sysheap</span></code> holds the heap wrappers behind the post-boot heap census.</p></li>
+</ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">pattern/</span></code>, <code class="docutils literal notranslate"><span class="pre">player/</span></code>, <code class="docutils literal notranslate"><span class="pre">store/</span></code>, <code class="docutils literal notranslate"><span class="pre">arena/</span></code>, <code class="docutils literal notranslate"><span class="pre">landing/</span></code></strong>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">pattern</span></code>: the hue-code pattern generator, golden-tested against the phone
+decoder;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">player</span></code>: the transport-free session state machine;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">store</span></code>: decode-into-arena persistence;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">arena</span></code>: the bump allocator;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">landing</span></code>: the on-device Soft-AP landing page.</p></li>
+</ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">pulse/</span></code></strong> — the old topology pulse/flood simulator. It is now used only by
+the web simulator (<code class="docutils literal notranslate"><span class="pre">pulse_web</span></code>). The firmware’s native pulse/flood playback
+was removed, so every show is an FX effect. <code class="docutils literal notranslate"><span class="pre">set_playback</span></code> accepts only <code class="docutils literal notranslate"><span class="pre">&quot;off&quot;</span></code>
+and refuses a named effect with <code class="docutils literal notranslate"><span class="pre">unsupported_effect</span></code>.</p></li>
+</ul>
+</section>
+<section id="memory-budgets-that-are-checked-not-hoped-for">
+<h2>Memory: budgets that are checked, not hoped for<a class="headerlink" href="#memory-budgets-that-are-checked-not-hoped-for" title="Link to this heading">¶</a></h2>
+<p>The C6 has 512 KiB of SRAM. The player keeps the shared IDF heap for what the
+vendor blobs need, and moves everything else to fixed, audited storage. On the
+<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> HITL worst case, the minimum free heap went from 1.6 KiB to about
+87 KiB, with 24 KiB more set aside as a dedicated TLS region. The pieces, each
+with its own design note:</p>
+<ul class="simple">
+<li><p><strong>Zero-copy protocol:</strong> requests are decoded in place with
+<a class="reference internal" href="protocol.html"><span class="std std-doc">pbview</span></a> views, and fat reply arms (the board catalog) are
+spliced in already encoded. The firmware <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> is 656 B (it was
+4,104 B).</p></li>
+<li><p><strong>Stacks sized from a static bound:</strong> <code class="docutils literal notranslate"><span class="pre">//tools/stack_bound</span></code> walks the
+shipped ELF’s call graph, using <code class="docutils literal notranslate"><span class="pre">firmware/player_app/stack_bound.json</span></code> for the
+edges the binary can’t show. <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:stack_bound_test</span></code> fails
+when <code class="docutils literal notranslate"><span class="pre">(bound</span> <span class="pre">+</span> <span class="pre">256</span> <span class="pre">B</span> <span class="pre">ISR)</span> <span class="pre">×</span> <span class="pre">1.25</span></code> exceeds a task’s stack. The current sizes
+are loopTask 14 KiB, render 5 KiB, and xmit / logdrain 2 KiB each.</p></li>
+<li><p><strong>Less vendor residue:</strong> the boot scan’s event loop is deleted, and there is
+no lwIP task and no NVS mirror. Dead or cold SDK code is moved from IRAM to
+flash by rewriting the SDK’s <code class="docutils literal notranslate"><span class="pre">sections.ld</span></code> (<code class="docutils literal notranslate"><span class="pre">firmware/player_app/ld/</span></code>, rules
+in <code class="docutils literal notranslate"><span class="pre">esp32c6_iram_to_flash.txt</span></code>), which took <code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> from 114,910 to
+97,512 B. The same file’s <code class="docutils literal notranslate"><span class="pre">iram:</span></code> rules pin hot code back in: the per-LED
+shade entry (<code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code>, <code class="docutils literal notranslate"><span class="pre">Program::parse</span></code>, <code class="docutils literal notranslate"><span class="pre">Vm::run_shade_bounded</span></code>, #285)
+brings it to 99,704 B.</p></li>
+<li><p><strong>An exact-size topology arena:</strong> a topology upload is decoded in two passes
+(count, then fill exactly) into the 12 KB <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code>, which needs
+16·J + 24·S + 12·V bytes for J junctions, S segments and V polyline vertices
+(#291). An upload past it fails with <code class="docutils literal notranslate"><span class="pre">map_too_large</span></code>.</p></li>
+<li><p><strong>mbedTLS in its own region:</strong> <code class="docutils literal notranslate"><span class="pre">tls_region.cpp</span></code> has 2 × 6,912 B
+record-buffer slots and a 10 KB private TLSF region. It falls back to the
+shared heap if they run out, and counts each fallback (<code class="docutils literal notranslate"><span class="pre">fb=</span></code> on the status
+line).</p></li>
+<li><p><strong>littlefs files open unbuffered</strong>, so there is no 4 KB stdio buffer per
+<code class="docutils literal notranslate"><span class="pre">fopen</span></code>.</p></li>
+<li><p><strong>Diagnostics:</strong> the <code class="docutils literal notranslate"><span class="pre">.ram_chart</span></code> static audit; a post-boot heap census
+(<code class="docutils literal notranslate"><span class="pre">--//firmware/player_app:heap_census_enabled</span></code>, read over JTAG); and the
+<code class="docutils literal notranslate"><span class="pre">LM_MODE</span></code> sysmode counters.</p></li>
+</ul>
+<p>Design notes: <a class="reference internal" href="../docs/design/ram-budget.html"><span class="doc">RAM budget (ESP32-C6 player)</span></a>,
+<a class="reference internal" href="../docs/design/memory-regions.html"><span class="doc">Memory regions and the mode model (ESP32-C6 player)</span></a>, <a class="reference internal" href="../docs/design/heap-census.html"><span class="doc">Post-boot heap census</span></a>,
+<a class="reference internal" href="../docs/design/kani-bazel.html"><span class="doc">Kani under Bazel</span></a>.</p>
+</section>
+<section id="discovery-and-the-agent-surface">
+<h2>Discovery and the agent surface<a class="headerlink" href="#discovery-and-the-agent-surface" title="Link to this heading">¶</a></h2>
+<p>For the agent bridge (<a class="reference internal" href="agent.html"><span class="doc">The agent bridge (agent/)</span></a>), the player advertises itself and
+describes what it serves:</p>
+<ul class="simple">
+<li><p><strong>mDNS:</strong> it answers <code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code> with SRV/TXT/A records (crate
+<code class="docutils literal notranslate"><span class="pre">firmware/mdns</span></code>). TXT carries <code class="docutils literal notranslate"><span class="pre">id</span></code>, <code class="docutils literal notranslate"><span class="pre">name</span></code>, <code class="docutils literal notranslate"><span class="pre">fw</span></code> and the manifest path.</p></li>
+<li><p><strong>The manifest:</strong> <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/.well-known/splanc.json</span></code> on the HTTPS server returns
+the device identity, the firmware version, the protocol features, the
+<code class="docutils literal notranslate"><span class="pre">fxb_format</span></code>, the TLS cert’s SHA-256 pin and the release’s agent bundle.
+Release builds name that bundle via <code class="docutils literal notranslate"><span class="pre">--//firmware/player_app:agent_bundle_url</span></code>
+/ <code class="docutils literal notranslate"><span class="pre">:agent_bundle_sha256</span></code>.</p></li>
+<li><p><strong>The welcome message:</strong> <code class="docutils literal notranslate"><span class="pre">Welcome.features</span></code> / <code class="docutils literal notranslate"><span class="pre">fxb_format</span></code> let clients
+feature-detect instead of parsing versions.</p></li>
+<li><p><strong>The room frame:</strong> it stores a fixture pose (<code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code>, persisted)
+and a shared time base (<code class="docutils literal notranslate"><span class="pre">set_time_base</span></code>), and keeps a 6 B/LED room-frame
+cache for effects that read <code class="docutils literal notranslate"><span class="pre">led.room</span></code>.</p></li>
+</ul>
+</section>
+<section id="decks-and-keypoints">
+<h2>Decks and keypoints<a class="headerlink" href="#decks-and-keypoints" title="Link to this heading">¶</a></h2>
+<p>The player runs two effects at once (deck A and deck B) and crossfades their
+per-LED output (<code class="docutils literal notranslate"><span class="pre">set_crossfade</span></code>, linear RGB or HSV). Deck B’s VM and <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>
+buffer share one region with the video-texture delta buffer (<code class="docutils literal notranslate"><span class="pre">FX_AUX</span></code>), so
+loading deck B ends a video stream. Deck B is interpreted and not persisted.</p>
+<p>Uniform keypoints (named looks per effect) live in littlefs under <code class="docutils literal notranslate"><span class="pre">/lfs/kp/</span></code>,
+one power-loss-safe file each, at most 16 per effect. The <code class="docutils literal notranslate"><span class="pre">firmware/keypoint</span></code>
+crate owns the record format, the per-uniform blend rules and the morph; the
+morph advances once per frame inside <code class="docutils literal notranslate"><span class="pre">lm_fx_update</span></code>, and a fader-rate blend
+reads no flash. Design: <a class="reference internal" href="../docs/design/uniform-keypoints.html"><span class="doc">FX decks, crossfade and uniform keypoints</span></a>.</p>
 </section>
 <section id="the-embedded-module-nix">
 <h2>The <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> module &amp; Nix<a class="headerlink" href="#the-embedded-module-nix" title="Link to this heading">¶</a></h2>
-<p>The firmware build rules, platform constraints, and vendored Arduino/ESP
-libraries (FastLED, BLE, Wi-Fi, webserver, mbedtls/TLS, partitions) come from a
-separate Bazel module, <strong><code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">fughilli/embedded</span></code>), pinned via
-<code class="docutils literal notranslate"><span class="pre">archive_override</span></code> in <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code>. Because <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> sources its toolchains
-and Arduino cores from Nix, <strong>Nix is a hard prerequisite</strong>.</p>
+<p>The firmware build rules, platform constraints and vendored Arduino/ESP
+libraries come from a separate Bazel module, <strong><code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code></strong>
+(<code class="docutils literal notranslate"><span class="pre">fughilli/embedded</span></code>). It is pinned via <code class="docutils literal notranslate"><span class="pre">archive_override</span></code> in <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code>,
+with additive patches under <code class="docutils literal notranslate"><span class="pre">patches/</span></code> (for example the <code class="docutils literal notranslate"><span class="pre">sections.ld</span></code>
+override and the riscv <code class="docutils literal notranslate"><span class="pre">objdump</span></code> the stack gate uses). Because <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>
+sources its toolchains and Arduino cores from Nix, <strong>Nix is a hard
+prerequisite</strong>.</p>
 </section>
 <section id="build-test-flash">
 <h2>Build, test &amp; flash<a class="headerlink" href="#build-test-flash" title="Link to this heading">¶</a></h2>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Build the ESP32-C6 image (carries tags=[&quot;manual&quot;], excluded from //...):</span>
-bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/player_app:esp32c6
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Build the ESP32-C6 image + flash bundle (tags=[&quot;manual&quot;], excluded from //...):</span>
+bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/player_app:esp32c6_netstack<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>//firmware/player_app:esp32c6_netstack_flashbundle
 
-<span class="c1"># The flashable bundle:</span>
-bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/player_app:esp32c6_flashbundle
+<span class="c1"># Static RAM attribution, and the stack gate:</span>
+bazel<span class="w"> </span>run<span class="w"> </span>//firmware/player_app:esp32c6_netstack.ram_chart
+bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/player_app:stack_bound_test
 
-<span class="c1"># Host-side VM + golden-frame tests (no hardware):</span>
-bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/fx_vm:fx_vm_test
+<span class="c1"># Host-side VM + golden-frame tests, the mode model (no hardware):</span>
+bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/fx_vm:fx_vm_test<span class="w"> </span>//firmware/sysmode/...
 </pre></div>
 </div>
-<p>Flashing runs from a host with the board attached — see <a class="reference internal" href="../DEVELOPERS.html"><span class="doc">Developing splanc</span></a>
-(HITL) and the on-device details in <a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html"><span class="doc">Design: MbedTLS from source with dynamic buffers (&#64;embedded)</span></a>.</p>
+<p>Flashing runs from a host with the board attached, or from the app over USB
+(Web Serial on desktop, WebUSB on Android). See <a class="reference internal" href="../DEVELOPERS.html"><span class="doc">Developing splanc</span></a> (HITL)
+and the TLS details in <a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html"><span class="doc">Design: MbedTLS from source with dynamic buffers (&#64;embedded)</span></a>.</p>
 </section>
 </section>
 
@@ -408,6 +541,9 @@ bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span
             <ul>
 <li><a class="reference internal" href="#">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a><ul>
 <li><a class="reference internal" href="#crates">Crates</a></li>
+<li><a class="reference internal" href="#memory-budgets-that-are-checked-not-hoped-for">Memory: budgets that are checked, not hoped for</a></li>
+<li><a class="reference internal" href="#discovery-and-the-agent-surface">Discovery and the agent surface</a></li>
+<li><a class="reference internal" href="#decks-and-keypoints">Decks and keypoints</a></li>
 <li><a class="reference internal" href="#the-embedded-module-nix">The <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> module &amp; Nix</a></li>
 <li><a class="reference internal" href="#build-test-flash">Build, test &amp; flash</a></li>
 </ul>

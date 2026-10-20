@@ -55,15 +55,17 @@ slot bit-for-bit).
 Per-frame and per-LED inputs are exposed as globals (each compiles to a `LoadCtx`
 opcode):
 
-| Identifier                       | Type      | Meaning                                                                  |
-| -------------------------------- | --------- | ------------------------------------------------------------------------ |
-| `time`, `dt`, `frame`            | float     | seconds, delta seconds, frame counter                                    |
-| `led.pos`                        | vec3      | LED position (x, y, z)                                                   |
-| `led.idx`, `led.count`           | int/float | LED index, total live LED count                                          |
-| `led.seg`, `led.s`, `led.branch` | int/float | segment id, position along segment, branch id                            |
-| `led.dist`                       | float     | geodesic distance 0..1 from the topology root (or a `flood_from` source) |
-| `led.uv`                         | vec2      | per-LED texture coordinate (top-down projection to 0..1)                 |
-| `imu.accel`, `imu.gyro`          | vec3      | device IMU (when driven)                                                 |
+| Identifier                       | Type      | Meaning                                                                    |
+| -------------------------------- | --------- | -------------------------------------------------------------------------- |
+| `time`, `dt`, `frame`            | float     | seconds, delta seconds, frame counter                                      |
+| `led.pos`                        | vec3      | LED position (x, y, z)                                                     |
+| `led.idx`, `led.count`           | int/float | LED index, total live LED count                                            |
+| `led.seg`, `led.s`, `led.branch` | int/float | segment id, position along segment, branch id                              |
+| `led.dist`                       | float     | geodesic distance 0..1 from the topology root (or a `flood_from` source)   |
+| `led.uv`                         | vec2      | per-LED texture coordinate (top-down projection to 0..1)                   |
+| `led.room`                       | vec3      | LED position in the shared room frame, metres (== `led.pos` while unposed) |
+| `room.min`, `room.max`           | vec3      | room bounding box (the host's, else this fixture's own room-frame box)     |
+| `imu.accel`, `imu.gyro`          | vec3      | device IMU (when driven)                                                   |
 
 ### Declarations
 
@@ -216,7 +218,16 @@ Operands follow inline in the code stream, little-endian.
 Function ids for `UnMath`: `sin cos abs floor ceil fract sqrt exp log sign tan`
 (0–10). For `BinMath`: `min max pow mod step atan2` (0–5). Context ids for
 `LoadCtx`: time, dt, frame, led.pos(3), led.idx, led.count, led.seg, led.s,
-led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2).
+led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2), led.room(3),
+room.min(3), room.max(3). A program reading the room frame sets `.fxb` flags bit
+0x08 (`FLAG_USES_ROOM`) so the host fetches it only then.
+
+`time` is seconds since the effect started — or, once a host sends
+`set_time_base { epoch_ms }` (the multi-fixture shared time base, in the device's
+own clock), `(now - epoch_ms) / 1000`, held at 0 before the epoch, so fixtures
+animate in step. A fixture's room pose (`set_fixture_pose`: translation, rotation
+quaternion, scale) maps each LED as `room = t + R(q) * (scale * pos)`; the device
+caches it per LED in millimetres (6 B/LED).
 
 ## The `.fxb` container
 
@@ -404,8 +415,15 @@ There are two call paths:
   compile, and return the compile result — ok/diagnostics/uniforms/disassembly so
   the model can self-repair), `capture_preview` (render the live `FxPreview` canvas
   to a PNG returned as a vision block), `estimate_performance` (run the cost model
-  and report headroom), and `list_midi_controls` / `set_midi_mapping`. Each user
-  turn includes the current source and the latest compile summary as context.
+  and report headroom), `measure_on_device` (offered only while a fixture with
+  the `perf` feature is connected: run the current script there for
+  `seconds` (1–10, default 3), optionally at given `uniforms`, and return the
+  measured frame time mean / p95 / max, per-window means and the estimate's
+  error band next to it), and `list_midi_controls` / `set_midi_mapping`. The
+  prompt tells the model to iterate with the estimate, confirm on the device
+  before calling a performance goal met, and trust the measurement when the two
+  disagree. Each user turn includes the current source and the latest compile
+  summary as context.
 
 So every AI-authored effect is compiled by the real wasm compiler and (optionally)
 previewed by the real VM before it ever reaches the device — the same path a

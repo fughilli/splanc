@@ -22,6 +22,13 @@ truth — editing them updates the site.
 
 Start with the durable design and reference docs before changing subsystems:
 
+- **[`docs/manifesto.md`](./docs/manifesto.md)** — _why_ the system is built the
+  way it is (a microcontroller instead of Art-Net, our own wireless stack, no
+  heap, model checking, a thin device and a fat agent bridge). Read it before
+  proposing to undo one of those decisions.
+- **[`docs/whats-new.md`](./docs/whats-new.md)** — recent notable changes, with
+  links to their PRs and design notes.
+
 - **[`led-mapper-design.md`](./led-mapper-design.md)** — the durable spec. Read §0
   (how to use it), §6 (modules), §7 (data contracts / wire protocol), §9 (phased
   build plan). Everything else hangs off this.
@@ -52,10 +59,25 @@ Start with the durable design and reference docs before changing subsystems:
     `bazel run //web:gen_fx_vm_perf_doc` (CI freshness-gates it — never edit by hand).
   - [`mbedtls-dynamic-buffers.md`](./docs/design/mbedtls-dynamic-buffers.md) — the
     TLS-on-C6 memory work (dynamic record buffers, EC cert).
+  - [`ram-budget.md`](./docs/design/ram-budget.md) — where the C6's SRAM goes, the
+    `.ram_chart` audit, and the reduction roadmap with measured results.
+  - [`memory-regions.md`](./docs/design/memory-regions.md) — heap-free regions
+    (`firmware/region`) and the reachability-checked memory-mode model
+    (`firmware/sysmode`).
+  - [`heap-census.md`](./docs/design/heap-census.md) — attributing every post-boot
+    heap allocation, read over JTAG.
+  - [`kani-bazel.md`](./docs/design/kani-bazel.md) — Kani proofs as hermetic Bazel
+    tests (`rust_kani_test`) and the upstream proposal.
+  - [`agent-multi-fixture.md`](./docs/design/agent-multi-fixture.md) — the
+    multi-fixture agent hub: discovery, rooms, poses, shared time base, the
+    splanc.io entry point.
   - [`app-ux-overhaul.md`](./docs/design/app-ux-overhaul.md) — the PWA UX design.
 - **`docs/`** — operational and exploratory notes:
   - [`decisions.md`](./docs/decisions.md) — build-system pins, protocol defaults,
     and other durable decisions with rationale.
+  - [`requirements-driven-development.md`](./docs/requirements-driven-development.md)
+    — the requirements model (`requirements/requirements.yaml`) and how tests
+    trace to it.
   - [`runbook.md`](./docs/runbook.md) — bootstrap, lockfile updates, prerequisites.
   - [`vio-exploration.md`](./docs/vio-exploration.md) — the visual-inertial solver
     narrative + measured findings (§1–§12).
@@ -110,28 +132,58 @@ are served alongside and loaded at runtime.
 
 ### The firmware (`firmware/`)
 
-A set of `no_std` Rust crates (portable session/effects/topology logic) linked
-into one C++/Arduino app via a C ABI. **The target MCU is the ESP32-C6.** (An
-RP2350 Rust triple is wired into the toolchain, but there is no RP2350 board target
-or source path yet — see the caveat below.)
+A set of `no_std` Rust crates (portable session/effects/topology/network logic)
+linked into one C++/Arduino app via a C ABI. **The target MCU is the ESP32-C6**
+(an ESP32-C3 build links and boots too). An RP2350 Rust triple is wired into the
+toolchain, but there is no RP2350 board target or source path yet (see the caveat
+below). The shipped image is the **heapless-netstack** build
+(`esp32c6_netstack`): everything above the vendor's PHY/lower-MAC blobs is ours.
 
-- **`player_app/`** — the on-device app (`main.cpp` + `ffi.rs`). Drives WS2812B
-  LEDs via FastLED over the C6 RMT peripheral; runs the effects VM; serves a
-  control server on **both** a plain `ws://:81` (bring-up) and a TLS `wss://:443`
-  (mbedtls + an EC P-256 dev cert generated at build time, re-issued on-device with
-  the live IP as a SAN so the hosted https app can connect without mixed-content).
-  Wi-Fi provisioning is Improv over BLE; the board boots AP+STA then demotes to STA
-  to reclaim heap for the TLS handshake. Effects arrive as `.fxb` over the control
-  channel; textures/uniforms are streamed in and dequantized into the arena.
-  Board-agnostic host builds of `ffi.rs` (`player_ffi_host`) let the FFI and
-  golden-frame tests run under `bazel test` with no hardware.
-- **`fx_vm/`** — the effects bytecode VM (see [`EFFECTS.md`](./EFFECTS.md)); builds
-  for the C6 and to wasm for the browser preview.
-- **`pulse/`, `pattern/`, `player/`, `store/`, `arena/`, `landing/`** — the
-  topology-aware pulse/flood effects (also wasm), the hue-code pattern generator
-  (golden-tested against the phone decoder), the transport-free session state
-  machine, decode-into-arena persistence, the bump allocator, and the on-device
-  Soft-AP landing page.
+- **`player_app/`** — the on-device app (`main.cpp`, `netstack_transport.cpp`,
+  `ffi.rs`):
+  - Drives WS2812 LEDs with its own driver (`ws2812.h`): PARLIO + GDMA on the
+    C6, RMT on the C3.
+  - Runs the effects VM and its RV32 JIT.
+  - Serves the control protocol over TLS `wss://:443`, using an EC P-256 cert
+    issued on-device for the live IP and `<name>.local`, and over BLE.
+  - Provisions Wi-Fi with Improv over BLE. BLE stays advertising beside wss
+    (requirement PR-38).
+  - Publishes `GET /.well-known/splanc.json` and answers mDNS `_splanc._tcp`,
+    for the agent bridge.
+  - Takes effects as `.fxb` over the control channel. Textures and uniforms
+    stream in and are dequantized into the arena.
+  - Builds `ffi.rs` for the host as well (`player_ffi_host`), so the FFI and
+    golden-frame tests run under `bazel test` with no hardware.
+- **`netstack/`, `blehost/`** — the heapless Wi-Fi (MLME, WPA2, DHCP, ARP, TCP,
+  HTTP) and BLE (HCI to GATT) stacks, with no allocation after init
+  ([`firmware/netstack/DESIGN.md`](./firmware/netstack/DESIGN.md)).
+- **`fx_vm/`, `fx_jit/`** — the effects bytecode VM (see
+  [`EFFECTS.md`](./EFFECTS.md)), for the C6 and as wasm for the browser
+  preview, and the load-time RV32 JIT. **`osc/`** handles OSC input onto uniforms.
+- **`region/`, `sysmode/`, `sysheap/`** — fixed pools, slabs and mode-union
+  regions (with Kani proofs); the reachability-checked memory-mode model that the
+  firmware tracks; and the heap wrappers behind the post-boot census. See
+  [`docs/design/memory-regions.md`](./docs/design/memory-regions.md).
+- **`pattern/`, `player/`, `store/`, `arena/`, `landing/`**:
+  - `pattern`: the hue-code pattern generator, golden-tested against the phone
+    decoder;
+  - `player`: the transport-free session state machine;
+  - `store`: decode-into-arena persistence;
+  - `arena`: the bump allocator;
+  - `landing`: the on-device Soft-AP landing page.
+- **`pulse/`** — the topology pulse/flood simulator, now used only by the web
+  simulator (`pulse_web`). The firmware no longer has native playback, so every
+  show is an FX effect.
+
+**Memory is a checked budget.** Every by-value protobuf envelope, task stack and
+static is accounted for. The shared heap's worst case is measured on HITL
+(`ram_audit`), and two CI gates keep it that way:
+
+- `//firmware/sysmode` reachability: no reachable mode exceeds the budget;
+- `//firmware/player_app:stack_bound_test`: each task's static worst-case stack
+  bound fits its reservation.
+
+See [`docs/design/ram-budget.md`](./docs/design/ram-budget.md).
 
 The firmware build rules, platform constraints, and vendored Arduino/ESP libraries
 (FastLED, BLE, Wi-Fi, webserver, mbedtls/TLS, partitions) come from a separate
@@ -143,7 +195,13 @@ from Nix, **Nix is a hard prerequisite** (below).
 
 - **`shared/protocol/`** — the single source of truth for the wire protocol: JSON
   schemas + `proto/ledmapper.proto` → generated Python and TypeScript bindings,
-  byte-pinned by a freshness check.
+  byte-pinned by a freshness check. Rust gets micropb structs plus zero-copy
+  views from **`oss/pbview`** (a self-contained `no_std` protobuf view generator
+  meant for separate publication); the firmware decodes every request in place.
+- **`agent/`** — the AI-agent bridge: an MCP server + one-shot CLI over a hub
+  that discovers and drives every player on the LAN (rooms, poses, shared time
+  base). Released as `splanc-agent-<ver>.tgz` with each firmware release and
+  served from splanc.io — see [`agent/README.md`](./agent/README.md).
 - **`solver/`** — the visual-inertial solver in Rust: native on the Pi, wasm in a
   phone Web Worker.
 - **`pi/`** — the Raspberry Pi path (`led_driver`, `server`, `reconstruction`,
@@ -178,7 +236,7 @@ The image builds cleanly in-container now; you just have to name it:
 ```sh
 # ESP32-C6 firmware image + flash bundle (the image target carries tags=["manual"],
 # so it is excluded from `//...` and built explicitly):
-bazel build -c opt //firmware/player_app:esp32c6 //firmware/player_app:esp32c6_flashbundle
+bazel build -c opt //firmware/player_app:esp32c6_netstack //firmware/player_app:esp32c6_netstack_flashbundle
 ```
 
 Other useful targets:
@@ -192,8 +250,8 @@ bazel build //firmware/fx_vm:fx_vm_web       # the VM wasm bundle the editor loa
 **CI (`.github/workflows/test.yaml`)** runs three jobs on every PR/push to `main`:
 
 - `test` — the light path: `bazel test //...` (does not build the firmware image).
-- `firmware` — builds `//firmware/player_app:esp32c6` and the flash bundle
-  explicitly, so firmware compile/link breakage is still caught, and uploads the
+- `firmware` — builds the `esp32c6_netstack` (and `esp32c3_netstack`) flash
+  bundles explicitly, so firmware compile/link breakage is still caught, and uploads the
   bundle artifact (also staged under `/firmware/` for in-browser USB flashing).
 - `lint` — the pre-commit gate (`prek`/pre-commit, byte-identical to the local
   hooks).
@@ -224,8 +282,13 @@ bazel run //pi/reconstruction:reconstruct -- /tmp/log.json -o /tmp/map.json
 bazel run //web:serve         # https://0.0.0.0:8443
 ```
 
-The web app deploys to Cloudflare Pages (ledmapper.pages.dev) via
-`//web:deploy_cloudflare`.
+The web app deploys to Cloudflare Pages (ledmapper.pages.dev, splanc.pages.dev)
+via `//web:deploy_cloudflare`. Every `app-v*` tag also publishes a GitHub Release
+carrying the built tree as `splanc-webapp-<ver>.tar.gz` (+ `.sha256`); the
+splanc.io site (Studio-Fug/splanc.io) stages the newest one at
+<https://splanc.io/app>, so it follows app releases without a manual bump. The
+same site serves the agent entry point (`/AGENTS.md`, `/llms.txt`,
+`/agent/splanc-agent.tgz`) from the newest `firmware-v*` release's agent bundle.
 
 When developing inside claude-container, in-container servers are published as
 **named services** (`.claude-container-overlay/overlay.json`) instead of fixed
@@ -281,6 +344,18 @@ DUT onto the rig's AP, then exercises its slice over wss:
 - **`rename_wss`** — the cert-restart regression: renaming re-issues the cert and
   restarts the TLS server; this hammers reconnects and reports time-to-recovery.
 - **`video_stream`** — streams a scrolling pattern and asserts a sustained ≥10 FPS.
+- **`loaded_tls_netstack`** — fresh TLS handshakes on a heap loaded with a 512-LED
+  map + texture effect (the FUG-71 failure mode).
+- **`ram_audit`** — the same worst case under a non-halting JTAG heap watcher
+  (`ram_watch.tcl`); dumps SRAM at the minimum watermark and reads the heap
+  census / sysmode counters at the end. `--hang` adds `hang_watch.tcl`, which
+  freezes the core on a stopped tick before the watchdog can erase the evidence.
+  Dumps are armed only after provisioning (a ~46 s halt during the Wi-Fi join
+  causes a watchdog reset that looks like a firmware hang).
+- **`time_base_skew`** — two analyzer-tapped DUTs on one shared epoch; asserts
+  inter-fixture skew < 20 ms.
+
+Every HITL failure carries the DUT's serial log (the `hitl-serial-logs` artifact).
 
 ### FX performance benchmark & regression gate
 
@@ -397,6 +472,9 @@ pool by carrying the tailnet tag.
 | `web/`              | phone capture app + effects editor + virtual LED wall (Vite/TS) — [README](./web/README.md)                          |
 | `firmware/`         | ESP32-C6 player firmware: LED driver, wss control server, effects execution                                          |
 | `firmware/fx_vm/`   | effects bytecode VM (Rust, `no_std`) — runs on device and, as wasm, in the browser preview                           |
+| `agent/`            | AI-agent bridge: MCP server + CLI hub over every player on the LAN; the release bundle + splanc.io site files        |
+| `oss/pbview/`       | zero-copy `no_std` protobuf views + generator (self-contained, for separate publication)                             |
+| `requirements/`     | the requirements model (`requirements.yaml`) the tests trace to                                                      |
 | `fx_compiler/`      | the GLSL-ish effect language → `.fxb` bytecode compiler (Rust)                                                       |
 | `solver/`           | visual-inertial solver (Rust): native on the Pi, wasm in a phone Web Worker                                          |
 | `pi/`               | Raspberry Pi path: `led_driver`, `server`, `reconstruction`, `provisioning` (Nix/NixOS)                              |
@@ -413,6 +491,8 @@ pool by carrying the tailnet tag.
 - **Wire protocol:** `shared/protocol/schemas/*.json` (authoritative); regenerate
   bindings with `python3 shared/protocol/codegen.py`
   (`//shared/protocol:codegen_freshness` fails the build if they drift).
-- **Decisions & runbook:** `docs/decisions.md`, `docs/runbook.md`.
+- **Decisions & runbook:** `docs/decisions.md`, `docs/runbook.md`; the reasoning
+  behind the big ones: `docs/manifesto.md`.
+- **Agent bridge:** `agent/README.md`, `docs/design/agent-multi-fixture.md`.
 - **HITL:** `pi/hitl/README.md`, `pi/hitl/DESIGN.md`.
 - **Project history:** `WORKLOG.md`; roadmap: `next_steps.md`.
