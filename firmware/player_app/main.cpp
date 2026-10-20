@@ -2557,11 +2557,20 @@ static void provisioning_poll() {
 // counters in LM_MODE keep the full tally for a JTAG read - and the firmware's behaviour is
 // unchanged. Cheap when nothing changed (a few compares).
 static void mode_observe() {
+  // Every 10 ms, not every 1 ms loop, and a try-lock, never a wait: render_task holds the
+  // player mutex for a whole frame, and loopTask (same priority) blocking on it every
+  // tick cost ~3k cycles per tick inside long frames (fx_bench addM +43k/frame). The
+  // inputs are levels, not edges, and change on 100 ms+ scales, so a skipped or busy
+  // loop just observes on a later one.
+  static uint32_t last_ms = 0;
+  uint32_t now = millis();
+  if (now - last_ms < 10) return;
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  last_ms = now;
   LmNetObserved net = {netstack_creds_ready(), netstack_leased(), improv_ble_central_connected(),
                        netstack_ws_open(), upload_active};
   LmModeRefusal r[4];
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
-  uint32_t n = lm_mode_observe(&net, (int64_t)millis(), r, 4);
+  uint32_t n = lm_mode_observe(&net, (int64_t)now, r, 4);
   xSemaphoreGive(player_mutex);
   static uint32_t logged[32];
   static uint8_t nlogged = 0;
