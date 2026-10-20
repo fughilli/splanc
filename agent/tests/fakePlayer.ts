@@ -42,6 +42,30 @@ export class FakePlayer {
   /** Error codes to answer whole request types with. */
   refuse = new Map<string, { code: string; message: string }>();
   perf = { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
+  /** The fake device clock = this process's performance.now() + this. */
+  clockOffsetMs = 0;
+  /** Delay before each time_sync_pong (simulated one-way latency). */
+  pingDelayMs = 0;
+  /** Manifest features (see agentManifest). */
+  features: string[] = ["effects", "perf", "textures", "stored_map"];
+
+  constructor(opts: { name?: string; mac?: string; fwVersion?: string } = {}) {
+    if (opts.name) this.name = opts.name;
+    if (opts.mac) this.mac = opts.mac;
+    if (opts.fwVersion) this.fwVersion = opts.fwVersion;
+  }
+
+  /** Serve a splanc-agent/1 manifest describing this player. */
+  serveManifest(extra: Record<string, unknown> = {}): void {
+    this.manifest = {
+      schema: "splanc-agent/1",
+      device: { id: this.mac, name: this.name, board: "ESP32-C6 SuperMini" },
+      firmware: { version: this.fwVersion },
+      protocol: { ws_path: "/ws", features: this.features },
+      tls: { cert_sha256: TEST_CERT_SHA256 },
+      ...extra,
+    };
+  }
   private server!: https.Server;
   private wss!: WebSocketServer;
   private uploads = new Map<number, string[]>();
@@ -200,6 +224,16 @@ export class FakePlayer {
       }
       case "set_texture":
         return;
+      case "time_sync_ping": {
+        // The device clock: this process's clock shifted by clockOffsetMs.
+        const t1 = performance.now() + this.clockOffsetMs;
+        const pong = { type: "time_sync_pong", t0: m["t0"] as number, t1, t2: t1 };
+        if (this.pingDelayMs > 0) {
+          setTimeout(() => this.reply(ws, pong), this.pingDelayMs);
+          return;
+        }
+        return this.reply(ws, pong);
+      }
       default:
         return this.reply(ws, { type: "error", code: "unsupported", message: `fake player: ${m.type}` });
     }

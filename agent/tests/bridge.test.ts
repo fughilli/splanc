@@ -282,12 +282,22 @@ describe("mcp", () => {
     }
     assert.ok(!names.includes("set_playback"));
     const resources = (await client.listResources()).resources.map((r) => r.uri).sort();
+    const id = encodeURIComponent(player.mac);
+    // The spec URIs (aliasing the default player), plus the hub's per-player,
+    // players and room resources.
     assert.deepEqual(resources, [
       "splanc://device",
       "splanc://effect/active",
       "splanc://fixture/map",
       "splanc://fixture/summary",
       "splanc://fixture/topology",
+      `splanc://player/${id}/device`,
+      `splanc://player/${id}/effect/active`,
+      `splanc://player/${id}/fixture/map`,
+      `splanc://player/${id}/fixture/summary`,
+      `splanc://player/${id}/fixture/topology`,
+      "splanc://players",
+      "splanc://room/all",
     ]);
     const c = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT } });
     const parsed = JSON.parse((c.content as { text: string }[])[0]!.text);

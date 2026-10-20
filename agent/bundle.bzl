@@ -1,7 +1,11 @@
 """The agent bundle: splanc-agent-<ver>.tgz + its sha256 (spec "Bundle layout").
 
     splanc-agent-<ver>/
-      bundle.json   proto/   mcp/   compiler/   simulator/   skill/
+      bundle.json   package.json   proto/   mcp/   compiler/   simulator/   skill/
+      site/         the website's agent entry point, rendered here (README "Site files")
+
+package.json makes the tgz an npm package with a `splanc-agent` bin, so
+`npx -y <url of the tgz>` runs the hub with no install step.
 
 The version comes from the //agent:bundle_version build setting (the release
 workflow passes the firmware tag's version; local builds say 0.0.0-dev, which
@@ -32,6 +36,10 @@ digest = hashlib.sha256(open(out, "rb").read()).hexdigest()
 open(sha, "w").write(digest + "  " + os.path.basename(out) + "\\n")
 """
 
+def _strip(f, prefix):
+    rel = f.short_path
+    return rel[len(prefix):] if prefix and rel.startswith(prefix) else f.basename
+
 def _agent_bundle_impl(ctx):
     ver = ctx.attr.version[BuildSettingInfo].value
     stem = "splanc-agent-" + ver
@@ -54,6 +62,55 @@ def _agent_bundle_impl(ctx):
         "skill": "skill/SKILL.md",
     }, indent = "  ") + "\n")
 
+    pkg = ctx.actions.declare_file(ctx.label.name + ".package.json")
+    ctx.actions.write(pkg, json.encode_indent({
+        "name": "@splanc/agent",
+        "version": ver,
+        "description": "Splanc hub: drive every Splanc LED player on the LAN from an AI agent (MCP server + CLI).",
+        "type": "module",
+        "bin": {"splanc-agent": "mcp/splanc-agent.mjs"},
+        "engines": {"node": ">=20"},
+        "license": "UNLICENSED",
+    }, indent = "  ") + "\n")
+
+    # The site files, rendered from the bundle's own sources so the website can't
+    # drift from what it installs. The tgz's sha256 can't be inside the tgz:
+    # latest.json says null and the site's stager fills it from the .sha256 asset.
+    base = ctx.attr.site_base[BuildSettingInfo].value.rstrip("/")
+    tgz_url = base + "/agent/splanc-agent.tgz"
+    skill_rel = [_strip(f, ctx.attr.skill_strip) for f in ctx.files.skill]
+    subs = {
+        "{{BASE_URL}}": base,
+        "{{TGZ_URL}}": tgz_url,
+        "{{NPX}}": "npx -y " + tgz_url,
+        "{{VERSION}}": ver,
+        "{{FIRMWARE_MIN}}": ver,
+        "{{FIRMWARE_MAX}}": ver,
+        "{{SKILL_INDEX}}": "\n".join(["- [{r}]({b}/agent/skill/{r})".format(r = r, b = base) for r in sorted(skill_rel)]),
+    }
+    site = []  # (path under site/, file)
+    for t in ctx.files.site_templates:
+        name = t.basename.removesuffix(".tmpl")
+        out = ctx.actions.declare_file(ctx.label.name + ".site/" + name)
+        ctx.actions.expand_template(template = t, output = out, substitutions = subs)
+        site.append((".well-known/mcp/server.json" if name == "server.json" else name, out))
+    latest = ctx.actions.declare_file(ctx.label.name + ".site/latest.json")
+    ctx.actions.write(latest, json.encode_indent({
+        "schema": "splanc-agent-latest/1",
+        "version": ver,
+        "release": "firmware-v" + ver,
+        "url": tgz_url,
+        "asset": stem + ".tgz",
+        "sha256": None,
+        "firmware": {"min": ver, "max": ver},
+        "install": {
+            "mcp": "claude mcp add splanc -- npx -y " + tgz_url,
+            "cli": "npx -y " + tgz_url + " list-players",
+        },
+        "skill": base + "/agent/skill/SKILL.md",
+    }, indent = "  ") + "\n")
+    site.append(("agent/latest.json", latest))
+
     # (destination dir in the bundle, files or tree artifacts, strip prefix)
     groups = [
         ("mcp", [ctx.file.mcp], None),
@@ -64,7 +121,12 @@ def _agent_bundle_impl(ctx):
     ]
     cmds = ["set -eu", "R=$(mktemp -d)", "B=\"$R/" + stem + "\"", "mkdir -p \"$B\""]
     cmds.append("cp {} \"$B/bundle.json\"".format(manifest.path))
-    inputs = [manifest]
+    cmds.append("cp {} \"$B/package.json\"".format(pkg.path))
+    inputs = [manifest, pkg]
+    site += [("agent/skill/" + r, f) for f, r in zip(ctx.files.skill, skill_rel)]
+    for rel, f in site:
+        inputs.append(f)
+        cmds.append("mkdir -p \"$(dirname \"$B/site/{r}\")\" && cp -L {s} \"$B/site/{r}\"".format(r = rel, s = f.path))
     for dest, files, strip in groups:
         for f in files:
             inputs.append(f)
@@ -81,6 +143,7 @@ def _agent_bundle_impl(ctx):
             cmds.append("mkdir -p \"$(dirname \"$B/{d}/{r}\")\" && cp -L {s} \"$B/{d}/{r}\"".format(d = dest, r = rel, s = f.path))
     cmds += [
         "chmod -R u+rwX,go+rX \"$B\"",
+        "chmod 0755 \"$B/mcp/splanc-agent.mjs\"",
         # Reproducible (sorted entries, zero mtimes/owners, no gzip timestamp) and
         # portable: Python's tarfile, not GNU tar's --sort/--mtime (macOS ships
         # bsdtar) or sha256sum (absent on macOS).
@@ -105,6 +168,8 @@ agent_bundle = rule(
         "proto": attr.label(mandatory = True, allow_single_file = True),
         "simulator": attr.label(mandatory = True, doc = "fx_vm wasm package (dir)"),
         "skill": attr.label_list(allow_files = True),
+        "site_base": attr.label(mandatory = True, doc = "string_flag: the website the site files name"),
+        "site_templates": attr.label_list(allow_files = [".tmpl"], doc = "AGENTS.md / llms.txt / server.json templates"),
         "skill_strip": attr.string(doc = "short_path prefix stripped from skill files"),
         "version": attr.label(mandatory = True),
     },

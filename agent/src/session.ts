@@ -15,15 +15,19 @@
 
 import { ClientMessageSchema, SetUniformsSchema } from "../../web/src/gen/ledmapper_pb";
 import { LedMapperClient, ServerErrorReply, type SocketFactory } from "../../web/src/net/client";
-import type {
-  EffectUniformsMessage,
-  HardwareConfigStateMessage,
-  MappingBundle,
-  PerfReportMessage,
-  UniformValueFlat,
+import type { ClientMessage } from "@ledmapper/protocol";
+import {
+  encodeClient,
+  type EffectUniformsMessage,
+  type HardwareConfigStateMessage,
+  type MappingBundle,
+  type PerfReportMessage,
+  type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
-import { compile } from "./fxhost";
+import type { Pose } from "./config";
+import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
+import type { ClockSync } from "./timesync";
 import {
   describe,
   lerpValues,
@@ -74,6 +78,8 @@ export interface SessionOptions {
   /** Max uniform stream rate for ramps, Hz (spec: configurable; default 20). */
   streamHz?: number;
   connectTimeoutMs?: number;
+  /** The host compiler/VM matching this player's firmware (default: the bundle's). */
+  toolchain?: Toolchain;
 }
 
 interface Deployed {
@@ -101,10 +107,15 @@ export class DeviceSession {
   readonly sentTypes: string[] = [];
   /** Forbidden message types something tried to send (and the guard refused). */
   readonly blockedTypes: string[] = [];
+  /** The host compiler/VM for this player's firmware (the hub sets it). */
+  toolchain: Toolchain | undefined;
+  /** The last clock sync against this player. */
+  clock: ClockSync | null = null;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
     this.streamHz = opts.streamHz ?? 20;
+    this.toolchain = opts.toolchain;
     const factory: SocketFactory = (url) => {
       const s = opts.socketFactory(url);
       const send = s.send.bind(s);
@@ -263,8 +274,12 @@ export class DeviceSession {
   async setBrightness(level: number): Promise<number> {
     if (!(level >= 0 && level <= 1)) throw new ToolError("level must be within 0..1");
     const w = await this.run(() => this.client.setBrightness(level));
-    return (w as unknown as { brightness?: number }).brightness ?? level;
+    this.lastBrightness = (w as unknown as { brightness?: number }).brightness ?? level;
+    return this.lastBrightness;
   }
+
+  /** The brightness last set through this session (Welcome's is from connect time). */
+  private lastBrightness: number | undefined;
 
   async setDeviceName(name: string, confirm: boolean): Promise<string> {
     if (!confirm) {
@@ -334,9 +349,25 @@ export class DeviceSession {
     return { steps, final };
   }
 
-  /** Compile, then upload + (optionally) activate. Remembers what it replaced. */
-  async deployEffect(effectId: string, source: string, activate: boolean) {
-    const c = await compile(source);
+  /** Resolves this player's toolchain on first compile (the hub sets it: picking
+   * one may fetch the player's bundle, which only compile/preview need). */
+  toolchainLoader: (() => Promise<Toolchain>) | undefined;
+
+  /** This player's host compiler/VM (undefined: the bundle's own). */
+  async getToolchain(): Promise<Toolchain | undefined> {
+    if (this.toolchain === undefined && this.toolchainLoader) this.toolchain = await this.toolchainLoader();
+    return this.toolchain;
+  }
+
+  /** Compile with this player's toolchain (no device traffic). */
+  async compile(source: string): Promise<CompileOutcome> {
+    return compile(source, await this.getToolchain());
+  }
+
+  /** Compile, then upload + (optionally) activate. Remembers what it replaced.
+   * `compiled` skips the compile when the caller already has this player's build. */
+  async deployEffect(effectId: string, source: string, activate: boolean, compiled?: CompileOutcome) {
+    const c = compiled ?? (await this.compile(source));
     if (!c.ok) {
       const d = c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n");
       throw new ToolError(`the effect doesn't compile:\n${d}`);
@@ -415,6 +446,91 @@ export class DeviceSession {
           ? "over budget: roll back (set_effect / rollback) and simplify"
           : "within budget",
     };
+  }
+
+  // -- room ------------------------------------------------------------------------
+
+  /** Estimate this player's clock offset (TimeSyncPing/Pong, min-RTT of `rounds`). */
+  async syncClock(rounds = 6): Promise<ClockSync> {
+    const s = await this.run(() => this.client.syncClock(rounds));
+    this.clock = { offsetMs: s.offsetMs, rttMs: s.rttMs, at: performance.now() };
+    return this.clock;
+  }
+
+  /** Whether this build's protocol can encode a message (newer device-side arms
+   * are feature-detected on BOTH ends: the firmware advertises the feature, and
+   * this bundle's regenerated proto + CLIENT_ARMS carry the arm and its fields). */
+  static encodable(msg: Record<string, unknown> & { type: string }): boolean {
+    try {
+      encodeClient(msg as unknown as ClientMessage);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Fire-and-forget a feature-gated message; false when either end can't. */
+  private async sendGated(feature: string, msg: Record<string, unknown> & { type: string }): Promise<boolean> {
+    if (!this.has(feature) || !DeviceSession.encodable(msg)) return false;
+    await this.run(async () => {
+      const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
+      if (!ok) throw new ToolError("the player connection is down");
+    });
+    return true;
+  }
+
+  /** Set the effect clock's epoch, in this player's clock (the shared time base).
+   * Returns false when the firmware or this bundle's protocol can't. */
+  setTimeBase(epochDeviceMs: number): Promise<boolean> {
+    return this.sendGated("time_base", { type: "set_time_base", epochMs: Math.round(epochDeviceMs) });
+  }
+
+  /** Store the fixture's room pose ON the device (feature `fixture_pose`). Returns
+   * false when it can't — the hub then keeps the pose itself. */
+  setFixturePose(pose: Pose): Promise<boolean> {
+    return this.sendGated("fixture_pose", {
+      type: "set_fixture_pose",
+      // SetFixturePose { FixturePose pose = 1; ...; optional bool commit = 3 }.
+      pose: { room: pose.room, translation: pose.translation, rotation: pose.rotation, scale: pose.scale },
+      commit: true,
+    });
+  }
+
+  /** Blink this fixture so a person can say which one it is: brightness dips to
+   * 5% and back `times` times, then the previous brightness is restored. Works over
+   * any running effect (SetBrightness is runtime-only). */
+  async identify(times = 3, opts: { sleep?: (ms: number) => Promise<void> } = {}): Promise<Record<string, unknown>> {
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const before = this.lastBrightness ?? (this.welcome as unknown as { brightness?: number }).brightness ?? 1;
+    const high = Math.max(before, 0.6);
+    try {
+      for (let i = 0; i < times; i++) {
+        await this.run(() => this.client.setBrightness(0.05));
+        await sleep(350);
+        await this.run(() => this.client.setBrightness(high));
+        await sleep(350);
+      }
+    } finally {
+      await this.run(() => this.client.setBrightness(before)).catch(() => undefined);
+    }
+    return { blinked: times, brightness_restored: before };
+  }
+
+  /** LEDs this player drives: the stored map's count, else the board's max. */
+  async ledCount(): Promise<number> {
+    try {
+      const b = await this.mappingBundle();
+      const n = b.map?.ledCount ?? b.map?.leds?.length ?? 0;
+      if (n > 0) return n;
+    } catch {
+      // no stored map
+    }
+    try {
+      const hw = await this.run(() => this.client.getHardwareConfig());
+      return hw.board?.maxLeds || 256;
+    } catch {
+      return 256;
+    }
   }
 
   // -- textures ------------------------------------------------------------------
