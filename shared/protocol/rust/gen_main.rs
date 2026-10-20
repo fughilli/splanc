@@ -151,6 +151,18 @@ fn main() -> std::io::Result<()> {
     // handful of texture buffers; 8 covers any realistic effect in both
     // profiles.
     g.configure(".ledmapper.v1.EffectUniforms.textures", Config::new().max_len(8));
+    // The effect's uniform manifest (compiler JSON) + one live value per uniform.
+    // The firmware encodes this reply ZERO-COPY (ffi.rs handle_get_effect_uniforms,
+    // the manifest spliced straight from the .fxb), so its profile stubs both; the
+    // host profile decodes a real effect's manifest (bounded by the 4 KiB .fxb).
+    g.configure(
+        ".ledmapper.v1.EffectUniforms.manifest",
+        Config::new().max_bytes(if firmware { 1 } else { 4096 }),
+    );
+    g.configure(
+        ".ledmapper.v1.EffectUniforms.current",
+        Config::new().max_len(if firmware { 1 } else { 64 }),
+    );
 
     // Static board capabilities the firmware ENCODES into hardware_config_state.
     // The C6 has GPIO0..30, so 31 pins covers the worst case; a handful of LED
@@ -171,6 +183,19 @@ fn main() -> std::io::Result<()> {
         g.configure(
             ".ledmapper.v1.HardwareConfigState.board",
             Config::new().skip(true),
+        );
+    }
+
+    // Welcome.features: a handful of short feature names. The firmware splices its
+    // static list in at encode time (Player::encode_reply, like the board
+    // descriptor), so its profile drops the field instead of carrying ~150 B of
+    // inline strings in every by-value ServerMessage.
+    if firmware {
+        g.configure(".ledmapper.v1.Welcome.features", Config::new().skip(true));
+    } else {
+        g.configure(
+            ".ledmapper.v1.Welcome.features",
+            Config::new().max_len(16).max_bytes(32),
         );
     }
 

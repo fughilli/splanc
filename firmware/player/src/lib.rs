@@ -353,6 +353,13 @@ pub struct Player {
     /// Whether the descriptor itself sets `led_channels` / `max_leds` (else the
     /// runtime output caps fill them in).
     board_caps_sets: (bool, bool),
+    /// Protocol features this firmware serves (welcome.features + the agent
+    /// manifest), set at boot by [`Player::set_features`]. Spliced into the
+    /// welcome at encode time like the board descriptor (the firmware profile
+    /// carries no inline feature strings).
+    features: &'static [&'static str],
+    /// The .fxb format version the effects VM accepts (welcome.fxb_format).
+    fxb_format: u32,
     /// Output capacity the firmware build actually has (parallel LED channels,
     /// total LEDs across them), set at boot via [`Player::set_output_caps`].
     /// Reported in `hardware_config_state.board` where the descriptor leaves
@@ -389,6 +396,8 @@ impl Player {
             hw_config_commit: true,
             board_caps: None,
             board_caps_sets: (false, false),
+            features: &[],
+            fxb_format: 0,
             out_channels: 0,
             out_max_leds: 0,
         }
@@ -524,7 +533,8 @@ impl Player {
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
-            | CMsg::GetEffectUniforms(_) => {
+            | CMsg::GetEffectUniforms(_)
+            | CMsg::ListEffects(_) => {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
@@ -913,6 +923,16 @@ impl Player {
         self.device_name.as_str()
     }
 
+    /// The hardware id (MAC) and release version echoed in `welcome` — what the
+    /// firmware advertises in its mDNS TXT record.
+    pub fn mac(&self) -> &str {
+        self.mac.as_str()
+    }
+
+    pub fn fw_version(&self) -> &str {
+        self.fw_version.as_str()
+    }
+
     /// Generation counter bumped on every `set_color_correction`; the firmware
     /// polls it (like the device name) to notice a profile change.
     pub fn color_correction_gen(&self) -> u32 {
@@ -950,6 +970,7 @@ impl Player {
             r#fw_git_commit: self.fw_git_commit.clone(),
             r#fw_git_dirty: self.fw_git_dirty,
             r#fw_version: self.fw_version.clone(),
+            r#fxb_format: self.fxb_format,
             ..Default::default()
         };
         w.set_brightness(self.output_brightness as f64);
@@ -1025,6 +1046,11 @@ impl Player {
         use micropb::{MessageEncode, PbEncoder, PbWrite, Tag, WIRE_TYPE_LEN};
         let cap = out.len();
         let mut w: &mut [u8] = out;
+        if let Some(SMsg::Welcome(wl)) = &reply.r#msg {
+            if !self.features.is_empty() {
+                return self.encode_welcome(wl, out);
+            }
+        }
         let board = match &reply.r#msg {
             Some(SMsg::HardwareConfigState(st)) => self.board_extra().map(|e| (st, e)),
             _ => None,
@@ -1048,6 +1074,46 @@ impl Player {
         w.pb_write(caps).ok()?;
         w.pb_write(&extra[..en]).ok()?;
         Some(cap - w.len())
+    }
+
+    /// A welcome with `features` (field 10, repeated string) spliced in after the
+    /// struct's own fields.
+    fn encode_welcome(&self, wl: &pb::Welcome, out: &mut [u8]) -> Option<usize> {
+        use micropb::size::sizeof_varint32;
+        use micropb::{MessageEncode, PbEncoder, Tag, WIRE_TYPE_LEN};
+        let cap = out.len();
+        let mut w: &mut [u8] = out;
+        let feats: usize = self
+            .features
+            .iter()
+            .map(|f| 1 + sizeof_varint32(f.len() as u32) + f.len())
+            .sum();
+        let inner = wl.compute_size() + feats;
+        {
+            let mut enc = PbEncoder::new(&mut w);
+            // ServerMessage.welcome = 1; Welcome.features = 10.
+            enc.encode_tag(Tag::from_parts(1, WIRE_TYPE_LEN)).ok()?;
+            enc.encode_varint32(inner as u32).ok()?;
+            wl.encode(&mut enc).ok()?;
+            for f in self.features {
+                enc.encode_tag(Tag::from_parts(10, WIRE_TYPE_LEN)).ok()?;
+                enc.encode_string(f).ok()?;
+            }
+        }
+        Some(cap - w.len())
+    }
+
+    /// Declare the protocol features this firmware serves and the .fxb format
+    /// its VM accepts; echoed in every welcome (and the agent manifest). Call
+    /// once at boot.
+    pub fn set_features(&mut self, features: &'static [&'static str], fxb_format: u32) {
+        self.features = features;
+        self.fxb_format = fxb_format;
+    }
+
+    /// The features declared by [`Player::set_features`].
+    pub fn features(&self) -> &'static [&'static str] {
+        self.features
     }
 
     /// The device's current color correction as a `color_correction_state` reply
@@ -1379,4 +1445,190 @@ fn error(code: &str, message: &str) -> pb::ServerMessage {
         },
     };
     reply(SMsg::Error(e))
+}
+
+// -- agent discovery manifest (/.well-known/splanc.json) -------------------------
+
+/// What the firmware (not the session core) knows for the agent manifest: the
+/// TLS certificate pin and the build's agent-bundle location.
+pub struct ManifestExtras<'a> {
+    /// SHA-256 of the DER TLS certificate, lowercase hex ("" = unknown).
+    pub tls_cert_sha256: &'a str,
+    /// Agent bundle URL from the release pipeline ("" = derive it for a release
+    /// build: the firmware-v<version> GitHub release asset).
+    pub bundle_url: &'a str,
+    /// The bundle's SHA-256, lowercase hex ("" = not published with this build).
+    pub bundle_sha256: &'a str,
+}
+
+/// The npm package of the agent's MCP bridge (`npx -y <pkg>@<version>`).
+pub const AGENT_PACKAGE: &str = "@splanc/agent";
+
+/// A bounded JSON writer over a byte buffer: `ok` turns false on overflow.
+struct Json<'a> {
+    out: &'a mut [u8],
+    n: usize,
+    ok: bool,
+}
+
+impl Json<'_> {
+    fn raw(&mut self, s: &str) {
+        let b = s.as_bytes();
+        if self.n + b.len() > self.out.len() {
+            self.ok = false;
+            return;
+        }
+        self.out[self.n..self.n + b.len()].copy_from_slice(b);
+        self.n += b.len();
+    }
+
+    /// A quoted, escaped JSON string.
+    fn str(&mut self, s: &str) {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        self.raw("\"");
+        for c in s.chars() {
+            match c {
+                '"' => self.raw("\\\""),
+                '\\' => self.raw("\\\\"),
+                c if (c as u32) < 0x20 => {
+                    let v = c as u32;
+                    let esc = [b'\\', b'u', b'0', b'0', HEX[(v >> 4) as usize], HEX[(v & 15) as usize]];
+                    self.raw(core::str::from_utf8(&esc).unwrap_or(""));
+                }
+                c => {
+                    let mut buf = [0u8; 4];
+                    self.raw(c.encode_utf8(&mut buf));
+                }
+            }
+        }
+        self.raw("\"");
+    }
+
+    fn uint(&mut self, v: u32) {
+        let mut buf = [0u8; 10];
+        let mut i = buf.len();
+        let mut v = v;
+        loop {
+            i -= 1;
+            buf[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        }
+        self.raw(core::str::from_utf8(&buf[i..]).unwrap_or("0"));
+    }
+}
+
+/// A clean release version ("1.2.0"): the only builds with a published bundle.
+fn is_release_version(v: &str) -> bool {
+    let mut parts = 0;
+    for p in v.split('.') {
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        parts += 1;
+    }
+    parts == 3 && v != "0.0.0"
+}
+
+/// The board name (BoardCapabilities.board = 1) from the encoded descriptor.
+fn board_name(caps: &[u8]) -> &str {
+    let mut o = 0;
+    let varint = |o: &mut usize| -> Option<u64> {
+        let mut v = 0u64;
+        for shift in (0..64).step_by(7) {
+            let b = *caps.get(*o)?;
+            *o += 1;
+            v |= u64::from(b & 0x7f) << shift;
+            if b & 0x80 == 0 {
+                return Some(v);
+            }
+        }
+        None
+    };
+    while o < caps.len() {
+        let Some(key) = varint(&mut o) else { return "" };
+        match key & 7 {
+            0 => {
+                if varint(&mut o).is_none() {
+                    return "";
+                }
+            }
+            1 => o += 8,
+            5 => o += 4,
+            2 => {
+                let Some(l) = varint(&mut o) else { return "" };
+                let (start, end) = (o, o.saturating_add(l as usize));
+                if key >> 3 == 1 {
+                    return caps
+                        .get(start..end)
+                        .and_then(|b| core::str::from_utf8(b).ok())
+                        .unwrap_or("");
+                }
+                o = end;
+            }
+            _ => return "",
+        }
+    }
+    ""
+}
+
+impl Player {
+    /// Render the agent discovery manifest (`GET /.well-known/splanc.json`, schema
+    /// "splanc-agent/1") into `out`, returning its length (None if it doesn't fit).
+    /// Device fields mirror the welcome so a bridge can check that the /ws it
+    /// reaches is the same player. Only a clean release build names a bundle; a
+    /// dev or dirty build reports `"bundle": null` (the bridge then needs a local
+    /// path override).
+    pub fn agent_manifest(&self, out: &mut [u8], x: &ManifestExtras) -> Option<usize> {
+        let mut j = Json { out, n: 0, ok: true };
+        let version = self.fw_version.as_str();
+        j.raw("{\"schema\":\"splanc-agent/1\",\"device\":{\"id\":");
+        j.str(self.mac.as_str());
+        j.raw(",\"name\":");
+        j.str(self.device_name.as_str());
+        j.raw(",\"board\":");
+        j.str(self.board_caps.map(board_name).unwrap_or(""));
+        j.raw("},\"firmware\":{\"version\":");
+        j.str(version);
+        j.raw(",\"commit\":");
+        j.str(self.fw_git_commit.as_str());
+        j.raw(if self.fw_git_dirty { ",\"dirty\":true}" } else { ",\"dirty\":false}" });
+        j.raw(",\"protocol\":{\"package\":\"ledmapper.v1\",\"ws_path\":\"/ws\",\"profile\":\"core\",\"features\":[");
+        for (i, f) in self.features.iter().enumerate() {
+            if i > 0 {
+                j.raw(",");
+            }
+            j.str(f);
+        }
+        j.raw("],\"fxb_format\":");
+        j.uint(self.fxb_format);
+        j.raw("},\"tls\":{\"cert_sha256\":");
+        j.str(x.tls_cert_sha256);
+        j.raw("},\"bundle\":");
+        if is_release_version(version) && !self.fw_git_dirty {
+            j.raw("{\"url\":");
+            if x.bundle_url.is_empty() {
+                j.raw("\"https://github.com/fughilli/splanc/releases/download/firmware-v");
+                j.raw(version);
+                j.raw("/splanc-agent-");
+                j.raw(version);
+                j.raw(".tgz\"");
+            } else {
+                j.str(x.bundle_url);
+            }
+            j.raw(",\"sha256\":");
+            j.str(x.bundle_sha256);
+            j.raw(",\"mcp\":{\"command\":\"npx\",\"args\":[\"-y\",\"");
+            j.raw(AGENT_PACKAGE);
+            j.raw("@");
+            j.raw(version);
+            j.raw("\",\"--host\",\"{host}\"]}}");
+        } else {
+            j.raw("null");
+        }
+        j.raw("}");
+        j.ok.then_some(j.n)
+    }
 }

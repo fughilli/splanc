@@ -86,6 +86,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetEffect(_)
         | CMsg::SetUniforms(_)
         | CMsg::GetEffectUniforms(_)
+        | CMsg::ListEffects(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, and output brightness all reply welcome.
@@ -138,6 +139,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetHardwareConfig(_) => "set_hardware_config",
         CMsg::GetHardwareConfig(_) => "get_hardware_config",
         CMsg::GetColorCorrection(_) => "get_color_correction",
+        CMsg::ListEffects(_) => "list_effects",
     }
 }
 

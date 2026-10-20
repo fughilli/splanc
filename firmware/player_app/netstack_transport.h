@@ -42,4 +42,17 @@ uint32_t netstack_rekey_count(void);
 // length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 
+// PROVIDED BY main.cpp. Render the agent discovery manifest (GET
+// /.well-known/splanc.json) into the app's tx buffer and set *body to it. `cert_sha256`
+// is the TLS certificate's SHA-256 (lowercase hex, NUL-terminated). Returns the JSON
+// length (>0), or <0 when it doesn't fit.
+int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body);
+
+// PROVIDED BY main.cpp. mDNS (_splanc._tcp, under the player mutex): with `query`, answer
+// one UDP:5353 datagram from `src_port` (*unicast: reply to the querier, not the group);
+// with query == nullptr, render the unsolicited announcement. `ip` = our IPv4 address.
+// Writes the DNS message into `out`; returns its length, 0 = nothing to send, <0 = error.
+int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const uint8_t *ip,
+                  uint8_t *out, size_t cap, bool *unicast);
+
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_

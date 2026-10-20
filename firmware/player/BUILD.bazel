@@ -61,6 +61,21 @@ rust_test(
     ],
 )
 
+# The agent-discovery surface: welcome.features/fxb_format and the
+# /.well-known/splanc.json manifest renderer.
+rust_test(
+    name = "agent_manifest_test",
+    srcs = ["tests/agent_manifest.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    deps = [
+        ":player",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
 rust_test(
     name = "arena_upload_test",
     srcs = ["tests/arena_upload.rs"],

@@ -451,6 +451,11 @@ export interface WelcomeMessage {
    * or "0.0.0-dev"), stamped in via Bazel --stamp. Empty on older
    * firmware / an unstamped build. */
   fwVersion: string;
+  /** Protocol features the firmware serves (e.g. "effects", "uniform_commit",
+   * "list_effects"); also in /.well-known/splanc.json. Empty on older firmware. */
+  features: string[];
+  /** .fxb bytecode format version the device's VM accepts; 0 on older firmware. */
+  fxbFormat: number;
 }
 
 /** Reply to stop_mapping with solveOnHost=false: capture stopped + log

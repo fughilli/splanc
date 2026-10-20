@@ -23,6 +23,7 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
+#include <mbedtls/sha256.h>
 #include "ws_codec.h"        // RFC6455 server codec
 #include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
 #include "improv_codec.h"    // IMPROV_STATE_* constants
@@ -569,17 +570,88 @@ static const uint8_t *neighbor_mac(const uint8_t *dst_ip) {
 
 // Transmit an IP packet. Zero-copy when `ip` is already tx_ip_slot() (the TCP pump sites
 // write there); any other buffer is copied into the slot.
-void send_ip(const uint8_t *ip, int iplen) {
+// Transmit an IP packet to L2 destination `da` (a3; the AP relays it there).
+static void send_ip_l2(const uint8_t *ip, int iplen, const uint8_t *da) {
   if (iplen < 0 || iplen > (int)kTxIpCap) return;
   if (ip != tx_ip_slot()) memmove(tx_ip_slot(), ip, iplen);
   uint8_t *payload = g_txf + kTxL2;
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
   memcpy(payload, llc, 8);
-  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=DA (peer's MAC, else BSSID)
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=DA
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, neighbor_mac(ip + 16), 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, da, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   tx_l2(hdr, payload, 8 + iplen, nullptr);
+}
+
+// Transmit an IP packet to its destination: the peer's MAC, else the BSSID (gateway).
+void send_ip(const uint8_t *ip, int iplen) { send_ip_l2(ip, iplen, neighbor_mac(ip + 16)); }
+
+// ---- mDNS (_splanc._tcp) ------------------------------------------------------------
+// The responder itself is the Rust firmware/mdns crate (via lm_mdns_reply in main.cpp,
+// under the player mutex); this is the UDP/IGMP plumbing. Group-addressed TX (the
+// 224.0.0.251 replies, the announcement, the IGMP report) only while no wss is live —
+// a broadcast/multicast frame interleaved with an established wss drops the peer's
+// session (the same rule as the gratuitous ARP). Unicast replies are always safe.
+extern bool g_ws_up;  // the WS session is live (defined with the TLS server below)
+static const uint8_t kMdnsGroup[4] = {224, 0, 0, 251};
+static const uint8_t kMdnsMac[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+constexpr int kUdpPayloadOff = 20 + 8;  // IPv4 (no options) + UDP, in tx_ip_slot()
+
+// Wrap the `len` bytes already at tx_ip_slot()+kUdpPayloadOff in IPv4+UDP (from our
+// leased IP) and send them to dst:dport (L2 `da`, or the neighbor/gateway when null).
+static void send_udp_slot(const uint8_t *dst, uint16_t sport, uint16_t dport, int len,
+                          uint8_t ttl, const uint8_t *da) {
+  uint8_t *ip = tx_ip_slot();
+  const int udp_len = 8 + len, ip_len = 20 + udp_len;
+  ip[0] = 0x45; ip[1] = 0; ip[2] = ip_len >> 8; ip[3] = ip_len & 0xff;
+  ip[4] = 0; ip[5] = 0; ip[6] = 0x40; ip[7] = 0;  // id, DF
+  ip[8] = ttl; ip[9] = 17; ip[10] = 0; ip[11] = 0;
+  memcpy(ip + 12, g_offer_ip, 4); memcpy(ip + 16, dst, 4);
+  uint16_t c = ip_csum(ip, 20); ip[10] = c >> 8; ip[11] = c & 0xff;
+  uint8_t *u = ip + 20;
+  u[0] = sport >> 8; u[1] = sport & 0xff; u[2] = dport >> 8; u[3] = dport & 0xff;
+  u[4] = udp_len >> 8; u[5] = udp_len & 0xff; u[6] = 0; u[7] = 0;
+  // UDP checksum over the pseudo-header + datagram (0 would mean "none"; send a real one).
+  uint32_t sum = 0;
+  for (int i = 12; i < 20; i += 2) sum += (ip[i] << 8) | ip[i + 1];
+  sum += 17 + udp_len;
+  for (int i = 0; i + 1 < udp_len; i += 2) sum += (u[i] << 8) | u[i + 1];
+  if (udp_len & 1) sum += u[udp_len - 1] << 8;
+  while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+  uint16_t uc = ~sum & 0xffff;
+  if (uc == 0) uc = 0xffff;
+  u[6] = uc >> 8; u[7] = uc & 0xff;
+  if (da) send_ip_l2(ip, ip_len, da); else send_ip(ip, ip_len);
+}
+
+// IGMPv2 Membership Report for 224.0.0.251 (TTL 1, Router Alert), so an IGMP-snooping
+// AP forwards the mDNS group to us. Group-addressed: callers gate it like the announce.
+static void send_igmp_mdns_report() {
+  uint8_t *ip = tx_ip_slot();
+  const int ip_len = 24 + 8;
+  ip[0] = 0x46; ip[1] = 0xc0; ip[2] = 0; ip[3] = ip_len;  // IHL=6 (Router Alert), CS6
+  ip[4] = 0; ip[5] = 0; ip[6] = 0; ip[7] = 0;
+  ip[8] = 1; ip[9] = 2; ip[10] = 0; ip[11] = 0;          // TTL 1, proto IGMP
+  memcpy(ip + 12, g_offer_ip, 4); memcpy(ip + 16, kMdnsGroup, 4);
+  ip[20] = 0x94; ip[21] = 0x04; ip[22] = 0; ip[23] = 0;  // Router Alert (RFC 2113)
+  uint16_t c = ip_csum(ip, 24); ip[10] = c >> 8; ip[11] = c & 0xff;
+  uint8_t *g = ip + 24;
+  g[0] = 0x16; g[1] = 0; g[2] = 0; g[3] = 0; memcpy(g + 4, kMdnsGroup, 4);
+  uint16_t gc = ip_csum(g, 8); g[2] = gc >> 8; g[3] = gc & 0xff;
+  send_ip_l2(ip, ip_len, kMdnsMac);
+}
+
+static uint32_t g_mdns_replies = 0, g_mdns_announces = 0;
+
+// Announce every record on the group (RFC 6762 §8.3); caller gates on no live wss.
+static void send_mdns_announce() {
+  int n = lm_mdns_reply(nullptr, 0, 5353, g_offer_ip, tx_ip_slot() + kUdpPayloadOff,
+                        kTxIpCap - kUdpPayloadOff, nullptr);
+  if (n > 0) {
+    send_udp_slot(kMdnsGroup, 5353, 5353, n, 255, kMdnsMac);
+    g_mdns_announces++;
+  }
 }
 
 // CCMP-encrypt + transmit an EAPOL-Key frame to the AP over the established link — the
@@ -788,6 +860,25 @@ void handle_l3(const uint8_t *pt, int pl) {
     const int udplen = (udp[4] << 8) | udp[5];
     if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+    if (dport == 5353 && g_leased) { // mDNS query (multicast group or unicast to us)
+      bool unicast = false;
+      int n = lm_mdns_reply(udp + 8, (size_t)(udplen - 8), sport, g_offer_ip,
+                            tx_ip_slot() + kUdpPayloadOff, kTxIpCap - kUdpPayloadOff, &unicast);
+      if (n > 0) {
+        const uint8_t src_ip[4] = {ip[12], ip[13], ip[14], ip[15]};
+        const bool group = !unicast && !g_ws_up;
+        if (group) {
+          send_udp_slot(kMdnsGroup, 5353, 5353, n, 255, kMdnsMac);
+        } else {
+          // A QU / legacy query, or a live wss (no group-addressed TX): answer the querier.
+          send_udp_slot(src_ip, 5353, sport, n, 255, nullptr);
+        }
+        if (g_mdns_replies++ < 8)
+          Serial.printf("[mdns] answered %u.%u.%u.%u:%u (%s, %d B)\n", src_ip[0], src_ip[1],
+                        src_ip[2], src_ip[3], sport, group ? "multicast" : "unicast", n);
+      }
+      return;
+    }
     if (sport == 67 && dport == 68) { // DHCP server -> client
       const uint8_t *dh = udp + 8;
       // A different DUT's broadcast ACK must never replace our IP or server ID.
@@ -879,6 +970,9 @@ static const char TLS_KEY[] =
 mbedtls_ssl_context g_ssl;
 mbedtls_ssl_config g_conf;
 mbedtls_x509_crt g_srvcert;
+// SHA-256 of the served certificate's DER, lowercase hex: the agent manifest's
+// tls.cert_sha256, so a bridge can pin the self-signed cert it discovers.
+static char g_cert_sha256[65];
 mbedtls_pk_context g_pk;
 bool g_tls_setup = false;
 bool g_tls_hs = false;
@@ -927,6 +1021,16 @@ void tls_init() {
   mbedtls_ssl_conf_rng(&g_conf, tls_rng, nullptr);
   mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
   mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
+  if (r == 0) {
+    uint8_t d[32];
+    mbedtls_sha256(g_srvcert.raw.p, g_srvcert.raw.len, d, 0);
+    static const char kHex[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+      g_cert_sha256[2 * i] = kHex[d[i] >> 4];
+      g_cert_sha256[2 * i + 1] = kHex[d[i] & 15];
+    }
+    g_cert_sha256[64] = 0;
+  }
   int r3 = mbedtls_ssl_setup(&g_ssl, &g_conf);
   mbedtls_ssl_set_bio(&g_ssl, nullptr, bio_send, bio_recv, nullptr);
   g_tls_setup = true;
@@ -1062,6 +1166,26 @@ static bool ws_pump() {
       g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
       if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
       char key[80];
+      // GET /.well-known/splanc.json: the agent discovery manifest (device identity,
+      // firmware, protocol features, cert pin, agent bundle). One-shot like the cert page.
+      static const char kManifestGet[] = "GET /.well-known/splanc.json";
+      if (strncmp((char *)g_ws_rx, kManifestGet, sizeof kManifestGet - 1) == 0 &&
+          (g_ws_rx[sizeof kManifestGet - 1] == ' ' || g_ws_rx[sizeof kManifestGet - 1] == '?')) {
+        const uint8_t *body = nullptr;
+        int bn = lm_agent_manifest_body(g_cert_sha256, &body);
+        char hdr[192];
+        int hn = bn > 0 ? snprintf(hdr, sizeof hdr,
+                                   "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                   "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n"
+                                   "Content-Length: %d\r\nConnection: close\r\n\r\n", bn)
+                        : snprintf(hdr, sizeof hdr,
+                                   "HTTP/1.1 500 Internal Server Error\r\n"
+                                   "Content-Length: 0\r\nConnection: close\r\n\r\n");
+        g_responding = true;
+        tls_write_all((const uint8_t *)hdr, hn);
+        if (bn > 0) tls_write_all(body, (size_t)bn);
+        return false;
+      }
       if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) {
         // Not a WebSocket upgrade — this is the browser's plain GET / for the cert-trust
         // landing (the webapp's certApprovalUrl points at https://<host>/). Serve the same
@@ -1748,6 +1872,20 @@ void netstack_loop() {
     if (st == DONE && g_leased && idle && millis() - garp_ms > 3000) {
       garp_ms = millis();
       send_gratuitous_arp();
+    }
+    // mDNS: join the group + announce on a (new) lease — three announcements 1 s apart
+    // (RFC 6762 §8.3), then refresh every 60 s (an IGMP-snooping AP ages out a silent
+    // member in ~260 s) — all only while idle, like the gratuitous ARP.
+    static uint32_t mdns_ms = 0, mdns_sent = 0;
+    static uint8_t mdns_ip[4] = {0};
+    if (memcmp(mdns_ip, g_offer_ip, 4) != 0) { memcpy(mdns_ip, g_offer_ip, 4); mdns_sent = 0; }
+    if (st == DONE && g_leased && idle && millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u)) {
+      mdns_ms = millis();
+      send_igmp_mdns_report();
+      send_mdns_announce();
+      if (mdns_sent++ == 0)
+        Serial.printf("[mdns] announcing _splanc._tcp on %u.%u.%u.%u\n", g_offer_ip[0],
+                      g_offer_ip[1], g_offer_ip[2], g_offer_ip[3]);
     }
   }
   // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo

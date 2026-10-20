@@ -441,6 +441,8 @@ class WelcomeMessage(_StrictModel):
     fwGitCommit: str = ""
     fwGitDirty: bool = False
     fwVersion: str = ""
+    features: List[str] = Field(default_factory=list)
+    fxbFormat: int = 0
 
 
 class MappingStoppedMessage(_StrictModel):

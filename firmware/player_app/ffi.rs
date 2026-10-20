@@ -682,6 +682,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         // The render buffer (FX_TOPO_CAP == LM_MAX_LEDS) is shared by every
         // output channel, so it's the cap on the SUM of the channel counts.
         p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, FX_TOPO_CAP as u32);
+        p.set_features(FEATURES, ledmapper_fx_vm::FORMAT_VERSION as u32);
         *addr_of_mut!(PLAYER) = Some(p);
     }
 }
@@ -740,6 +741,117 @@ pub unsafe extern "C" fn lm_player_set_build_info(
         core::str::from_utf8(core::slice::from_raw_parts(version, version_len)).unwrap_or("")
     };
     player().set_build_info(commit_s, dirty, version_s);
+}
+
+/// The device's mDNS service: `<name>._splanc._tcp.local` on the wss/HTTPS port,
+/// host `splanc-<mac tail>.local`, TXT id/name/fw/path — from the player's live
+/// identity, so a rename is advertised on the next reply.
+unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
+    let p = player();
+    let mut hb = [0u8; 13];
+    let host = ledmapper_mdns::host_label(p.mac(), &mut hb);
+    let txt = [
+        ("id", p.mac()),
+        ("name", p.device_name()),
+        ("fw", p.fw_version()),
+        ("path", "/.well-known/splanc.json"),
+    ];
+    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), port: 443, ip, txt: &txt };
+    f(&svc)
+}
+
+/// Answer one mDNS datagram received on UDP:5353 from `src_port`. Writes the reply
+/// DNS message into `out` and returns its length (0 = nothing to answer, -2 = too
+/// small); `*unicast` is set when the reply goes back to the querier's address and
+/// port instead of 224.0.0.251:5353. `ip` is our IPv4 address (4 bytes).
+///
+/// # Safety
+/// `query`/`ip`/`out`/`unicast` point to readable/writable memory of the stated sizes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mdns_respond(
+    query: *const u8,
+    qlen: usize,
+    src_port: u16,
+    ip: *const u8,
+    out: *mut u8,
+    cap: usize,
+    unicast: *mut bool,
+) -> i32 {
+    if query.is_null() || ip.is_null() || out.is_null() || unicast.is_null() {
+        return -1;
+    }
+    let q = core::slice::from_raw_parts(query, qlen);
+    let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
+    let o = core::slice::from_raw_parts_mut(out, cap);
+    match with_mdns_service(ip, |s| ledmapper_mdns::respond(q, src_port, s, o)) {
+        Some(r) => {
+            *unicast = r.dest == ledmapper_mdns::Dest::Unicast;
+            r.len as i32
+        }
+        None => 0,
+    }
+}
+
+/// An unsolicited mDNS announcement of every record (for 224.0.0.251:5353): the
+/// DNS message into `out`; returns its length or -2 when it doesn't fit.
+///
+/// # Safety
+/// `ip` points to 4 readable bytes, `out` to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_mdns_announce(ip: *const u8, out: *mut u8, cap: usize) -> i32 {
+    if ip.is_null() || out.is_null() {
+        return -1;
+    }
+    let ip = [*ip, *ip.add(1), *ip.add(2), *ip.add(3)];
+    let o = core::slice::from_raw_parts_mut(out, cap);
+    match with_mdns_service(ip, |s| ledmapper_mdns::announce(s, o)) {
+        Some(n) => n as i32,
+        None => -2,
+    }
+}
+
+/// A C (ptr, len) UTF-8 argument as &str ("" when null / not UTF-8).
+unsafe fn str_arg<'a>(p: *const u8, len: usize) -> &'a str {
+    if p.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(p, len)).unwrap_or("")
+    }
+}
+
+/// Render the agent discovery manifest (`GET /.well-known/splanc.json`) into
+/// `out`; returns its length, or -2 when it doesn't fit. `cert_sha256` is the
+/// TLS certificate's SHA-256 (hex) for the bridge to pin; `bundle_url` /
+/// `bundle_sha256` are the build's agent-bundle stamps (empty = derive the URL
+/// for a release build / no hash). Device + firmware fields come from the
+/// player (they mirror the welcome).
+///
+/// # Safety
+/// `out` points to `cap` writable bytes; each string argument to its length in
+/// readable bytes (or is null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_agent_manifest(
+    out: *mut u8,
+    cap: usize,
+    cert_sha256: *const u8,
+    cert_len: usize,
+    bundle_url: *const u8,
+    url_len: usize,
+    bundle_sha256: *const u8,
+    sha_len: usize,
+) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let x = ledmapper_player::ManifestExtras {
+        tls_cert_sha256: str_arg(cert_sha256, cert_len),
+        bundle_url: str_arg(bundle_url, url_len),
+        bundle_sha256: str_arg(bundle_sha256, sha_len),
+    };
+    match player().agent_manifest(core::slice::from_raw_parts_mut(out, cap), &x) {
+        Some(n) => n as i32,
+        None => -2,
+    }
 }
 
 /// Copy the player's CURRENT display name into `out` (cap bytes); returns the
@@ -999,7 +1111,10 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SUBMIT_EFFECT) => handle_submit_effect(frame),
         Some(ARM_SET_EFFECT) => handle_set_effect(frame),
         Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
-        Some(ARM_GET_EFFECT_UNIFORMS) => handle_get_effect_uniforms(frame),
+        // Encoded ZERO-COPY into `out`: the manifest is effect-sized (well past
+        // the firmware profile's inline bytes cap), so it's spliced from the .fxb.
+        Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(out, out_cap),
+        Some(ARM_LIST_EFFECTS) => handle_list_effects(),
         // Perf-monitoring arms: configure the instrumentation tier / push
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
@@ -1431,6 +1546,13 @@ const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
 const ARM_SET_JIT: u32 = 32;
+const ARM_LIST_EFFECTS: u32 = 36;
+
+/// The protocol features this firmware serves: welcome.features and the agent
+/// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
+/// infer them from fw_version.
+pub const FEATURES: &[&str] =
+    &["effects", "perf", "textures", "stored_map", "uniform_commit", "list_effects"];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through
@@ -1818,10 +1940,26 @@ unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
     player().playback_reply()
 }
 
+/// Whether the last set_uniforms asked to be persisted (SetUniforms.commit; unset =
+/// true, the old always-persist behaviour). main.cpp reads it to skip the
+/// coalesced save of an uncommitted (live-only) update.
+static mut UNIFORMS_COMMIT: bool = true;
+
+/// Whether the set_uniforms just handled should be persisted (see `UNIFORMS_COMMIT`).
+///
+/// # Safety
+/// Single firmware thread, after `lm_player_handle`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_uniforms_commit() -> bool {
+    UNIFORMS_COMMIT
+}
+
 /// set_uniforms: apply every UniformValue{slot, value[]} to the VM. Reply:
 /// playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
+    UNIFORMS_COMMIT = true;
     if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
+        UNIFORMS_COMMIT = m.commit().unwrap_or(true);
         for uv in m.values() {
             // UniformValue { slot, repeated float value } — packed or not.
             let mut vals = [0.0f32; 4];
@@ -1838,39 +1976,137 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
     player().playback_reply()
 }
 
-/// get_effect_uniforms: build an EffectUniforms reply carrying the active
-/// effect's manifest bytes. `current` uniform values aren't tracked back out
-/// (the app holds them); left empty. Error `no_effect` when nothing is loaded.
-unsafe fn handle_get_effect_uniforms(_frame: &[u8]) -> pb::ServerMessage {
-    if !lm_fx_active() {
-        return fx_error("no_effect", "no active effect to describe");
-    }
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
-    let Ok(prog) = Program::parse(bytes) else {
-        return fx_error("no_effect", "no active effect to describe");
-    };
-    let mut m = pb::EffectUniforms::default();
-    let _ = m.r#manifest.extend_from_slice(prog.manifest);
-    // Advertise the declared 2D textures (buffer kind=1) so a texture source
-    // can learn the exact dimensions set_texture requires — a mismatch is
-    // silently dropped, so without this a client is left guessing.
-    for i in 0..prog.n_buffers as usize {
-        if m.r#textures.len() >= m.r#textures.capacity() {
-            break;
+/// A protobuf writer over the reply buffer that can also just count (for the
+/// length prefix of a message written in place). `n` is bytes written/counted;
+/// `ok` turns false when a real write would overflow.
+struct PbOut<'a> {
+    buf: Option<&'a mut [u8]>,
+    n: usize,
+    ok: bool,
+}
+
+impl PbOut<'_> {
+    fn byte(&mut self, b: u8) {
+        if let Some(buf) = self.buf.as_deref_mut() {
+            match buf.get_mut(self.n) {
+                Some(slot) => *slot = b,
+                None => self.ok = false,
+            }
         }
-        if let Some(d) = prog.buf_desc(i) {
-            if d.kind == 1 {
-                let t = pb::TexturePort {
-                    r#index: i as u32,
-                    r#width: d.w as u32,
-                    r#height: d.h as u32,
-                    r#elem: d.elem as u32,
-                };
-                let _ = m.r#textures.push(t);
+        self.n += 1;
+    }
+    fn varint(&mut self, mut v: u64) {
+        loop {
+            let b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                self.byte(b);
+                return;
+            }
+            self.byte(b | 0x80);
+        }
+    }
+    fn key(&mut self, field: u32, wire: u8) {
+        self.varint(((field as u64) << 3) | wire as u64);
+    }
+    fn uint(&mut self, field: u32, v: u64) {
+        self.key(field, 0);
+        self.varint(v);
+    }
+    fn bytes(&mut self, field: u32, b: &[u8]) {
+        self.key(field, 2);
+        self.varint(b.len() as u64);
+        for &x in b {
+            self.byte(x);
+        }
+    }
+}
+
+/// The EffectUniforms fields (effect_id, manifest, current, textures) of the
+/// loaded effect, into `w`.
+unsafe fn write_effect_uniforms(w: &mut PbOut, prog: &Program) {
+    let id = &(*addr_of!(FX_ID))[..FX_ID_LEN];
+    if !id.is_empty() {
+        w.bytes(1, id);
+    }
+    w.bytes(2, prog.manifest);
+    // current = 3: each manifest uniform's live value, read back from the VM.
+    if let Some(vm) = (*addr_of!(FX_VM)).as_ref() {
+        for p in (*addr_of!(OSC_TABLE)).ports() {
+            let (slot, width) = (p.slot as usize, p.width as usize);
+            let Some(vals) = vm.uniforms.get(slot..slot + width) else { continue };
+            // UniformValue { uint32 slot = 1; repeated float value = 2 [packed]; }
+            let slot_len = 1 + varint_len(slot as u64);
+            let inner = slot_len + 1 + varint_len((width * 4) as u64) + width * 4;
+            w.key(3, 2);
+            w.varint(inner as u64);
+            w.uint(1, slot as u64);
+            w.key(2, 2);
+            w.varint((width * 4) as u64);
+            for v in vals {
+                for b in v.to_le_bytes() {
+                    w.byte(b);
+                }
             }
         }
     }
-    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::EffectUniforms(m)) }
+    // textures = 4: the declared 2D textures (buffer kind=1), so a texture source
+    // learns the exact dimensions set_texture requires (a mismatch is dropped).
+    for i in 0..prog.n_buffers as usize {
+        let Some(d) = prog.buf_desc(i) else { continue };
+        if d.kind != 1 {
+            continue;
+        }
+        let fields = [(1, i as u64), (2, d.w as u64), (3, d.h as u64), (4, d.elem as u64)];
+        let inner: usize = fields.iter().map(|&(_, v)| 1 + varint_len(v)).sum();
+        w.key(4, 2);
+        w.varint(inner as u64);
+        for (f, v) in fields {
+            w.uint(f, v);
+        }
+    }
+}
+
+/// get_effect_uniforms: the active effect's EffectUniforms (its id, the uniform
+/// manifest from its .fxb, each uniform's current value, its texture ports),
+/// encoded straight into `out` — the manifest is effect-sized, well past the
+/// firmware profile's inline bytes cap. Error `no_effect` when nothing is loaded.
+unsafe fn handle_get_effect_uniforms(out: *mut u8, out_cap: usize) -> i32 {
+    let no_effect = || encode_reply(&fx_error("no_effect", "no active effect to describe"), out, out_cap);
+    if !lm_fx_active() {
+        return no_effect();
+    }
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return no_effect();
+    };
+    // Count the message, then write ServerMessage.effect_uniforms = 16 around it.
+    let mut count = PbOut { buf: None, n: 0, ok: true };
+    write_effect_uniforms(&mut count, &prog);
+    let mut w = PbOut { buf: Some(core::slice::from_raw_parts_mut(out, out_cap)), n: 0, ok: true };
+    w.key(16, 2);
+    w.varint(count.n as u64);
+    write_effect_uniforms(&mut w, &prog);
+    if w.ok {
+        w.n as i32
+    } else {
+        -2
+    }
+}
+
+/// list_effects: the device's single effect slot (the loaded .fxb, which is the
+/// persisted one: boot replays it), as an EffectList.
+unsafe fn handle_list_effects() -> pb::ServerMessage {
+    let mut list = pb::EffectList::default();
+    if FX_LEN > 0 {
+        let mut e = pb::StoredEffect::default();
+        let id = core::str::from_utf8(&(*addr_of!(FX_ID))[..FX_ID_LEN]).unwrap_or("");
+        let _ = e.r#effect_id.push_str(id);
+        e.r#fxb_bytes = FX_LEN as u32;
+        e.r#active = lm_fx_active();
+        let _ = list.r#effects.push(e);
+    }
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::EffectList(list)) }
 }
 
 fn fx_error(code: &str, message: &str) -> pb::ServerMessage {

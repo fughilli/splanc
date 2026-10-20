@@ -33,7 +33,9 @@
         "deviceName",
         "fwGitCommit",
         "fwGitDirty",
-        "fwVersion"
+        "fwVersion",
+        "features",
+        "fxbFormat"
       ],
       "properties": {
         "type": { "const": "welcome" },
@@ -62,6 +64,16 @@
         "fwVersion": {
           "type": "string",
           "description": "Release version the firmware was built at, from the nearest firmware-v* tag (e.g. \"1.2.0\", or \"1.2.0-<n>-g<sha>\" ahead of it, or \"0.0.0-dev\"), stamped in at build time via Bazel --stamp alongside the commit. Empty from older firmware or an unstamped build."
+        },
+        "features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Protocol features this firmware serves, so a client needn't infer them from fwVersion: \"effects\", \"perf\", \"textures\", \"stored_map\", \"uniform_commit\" (set_uniforms.commit), \"list_effects\" (list_effects). The same list is in the /.well-known/splanc.json manifest. Empty from older firmware."
+        },
+        "fxbFormat": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The .fxb bytecode format version (the .fxb header's version byte) the device's effects VM accepts. 0 from older firmware (which accepts 1)."
         }
       }
     },

@@ -393,7 +393,9 @@
         "deviceName": "Led Widget A1B2C3",
         "fwGitCommit": "",
         "fwGitDirty": false,
-        "fwVersion": ""
+        "fwVersion": "",
+        "features": [],
+        "fxbFormat": 0
       }
     },
     {
@@ -417,7 +419,9 @@
         "deviceName": "Led Widget A1B2C3",
         "fwGitCommit": "0123456789abcdef0123456789abcdef01234567",
         "fwGitDirty": true,
-        "fwVersion": ""
+        "fwVersion": "",
+        "features": [],
+        "fxbFormat": 0
       }
     },
     {
