@@ -134,14 +134,19 @@ function completion(json, tools) {
   const m = choice?.message;
   if (json?.error || !obj(m) || m.role !== "assistant") return null;
   if (m.refusal || choice.finish_reason === "content_filter") return { refusal: true };
-  const calls = m.tool_calls;
+  // Provider aggregators may retain streaming indices or other transport fields.
+  // Validate and forward only the tool-call fields consumed by the client.
+  const calls = m.tool_calls == null ? undefined : Array.isArray(m.tool_calls) ? m.tool_calls.map(c => ({
+    id: c?.id, type: c?.type,
+    function: { name: c?.function?.name, arguments: c?.function?.arguments },
+  })) : m.tool_calls;
   const requested = new Set((tools ?? []).map(t => t.function.name));
   if (calls !== undefined && (!Array.isArray(calls) || calls.length > 8 ||
       !calls.every(c => validToolCall(c) && requested.has(c.function.name)))) return null;
   if (!["stop", "tool_calls"].includes(choice.finish_reason)) return null; // Never execute truncated/failed edits.
   if (!(typeof m.content === "string" && m.content.trim()) && !calls?.length) return null;
   return {
-    choices: [{ message: { role: "assistant", content: m.content ?? "", ...(calls?.length ? { tool_calls: calls } : {}) },
+    choices: [{ message: { role: "assistant", content: typeof m.content === "string" ? m.content : "", ...(calls?.length ? { tool_calls: calls } : {}) },
       finish_reason: calls?.length ? "tool_calls" : "stop" }],
   };
 }
@@ -257,6 +262,12 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");
           if (json?.choices?.[0]?.finish_reason === "length") diagnostic.outcome = "output_limit";
+          const message = json?.choices?.[0]?.message;
+          if (!json) diagnostic.outcome = "invalid_json";
+          else if (!obj(message)) diagnostic.outcome = "missing_message";
+          else if (message.role !== "assistant") diagnostic.outcome = "invalid_role";
+          else if (message.tool_calls?.length) diagnostic.outcome = "invalid_tool_calls";
+          else if (diagnostic.outcome !== "output_limit") diagnostic.outcome = "empty_or_invalid_finish";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
           if (parsed) return reply(200, { ...parsed, model });
