@@ -39,7 +39,7 @@ mkbundle() { # version [no-pi-bridge]
     cp -RL "$SRC/bin" "$SRC/display" "$SRC/systemd" "$SRC/install.sh" "$b/pi-bridge/"
   fi
   tar -czf "$T/splanc-agent-$1.tgz" -C "$T/b-$1" "splanc-agent-$1"
-  (cd "$T" && sha256sum "splanc-agent-$1.tgz" >"splanc-agent-$1.tgz.sha256")
+  (cd "$T" && { sha256sum "splanc-agent-$1.tgz" 2>/dev/null || shasum -a 256 "splanc-agent-$1.tgz"; } >"splanc-agent-$1.tgz.sha256")
   echo "$T/splanc-agent-$1.tgz"
 }
 

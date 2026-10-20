@@ -76,7 +76,7 @@ update() {
   fi
   echo "updating $cur -> $ver"
   curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/bundle.tgz" "$url" || die "download failed: $url"
-  [ "$(sha256sum "$tmp/bundle.tgz" | cut -d' ' -f1)" = "$sha" ] || die "bundle failed its sha256 check"
+  [ "$( (sha256sum "$tmp/bundle.tgz" 2>/dev/null || shasum -a 256 "$tmp/bundle.tgz") | cut -d' ' -f1)" = "$sha" ] || die "bundle failed its sha256 check"
   echo "$sha  bundle.tgz" >"$tmp/bundle.tgz.sha256"
   mkdir "$tmp/x"
   tar -xzf "$tmp/bundle.tgz" -C "$tmp/x" --no-same-owner

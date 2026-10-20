@@ -55,7 +55,10 @@ die() {
   printf '\033[31merror:\033[0m %s\n' "$*" >&2
   exit 1
 }
-sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+# sha256sum is coreutils (Pi OS); shasum covers macOS, where the tests also run.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
 
 fetch() { # url dest
   curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 -o "$2" "$1" || die "download failed: $1"

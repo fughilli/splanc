@@ -71,4 +71,7 @@ sh_test(
     size = "small",
     srcs = ["tests/installer_test.sh"],
     data = [":bundle_files"],
+    # The installer only ever runs on Pi OS (Debian); its fake-root test leans on
+    # GNU userland, so skip it on the macOS CI lane.
+    target_compatible_with = ["@platforms//os:linux"],
 )

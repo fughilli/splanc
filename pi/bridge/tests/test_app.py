@@ -1,6 +1,7 @@
 """End to end against the fake bridge: status file -> screens, buttons -> socket."""
 
 import os
+import tempfile
 import time
 
 import pytest
@@ -56,9 +57,11 @@ def test_control_roundtrip(bridge):
         control.send("identify", path=bridge.control_path)
 
 
-def test_control_no_bridge(tmp_path):
-    with pytest.raises(control.ControlError, match="not running"):
-        control.send("identify", path=str(tmp_path / "nope.sock"))
+def test_control_no_bridge():
+    # A short dir: macOS caps AF_UNIX paths at 104 bytes and its pytest tmp_path is longer.
+    with tempfile.TemporaryDirectory(dir="/tmp") as d:
+        with pytest.raises(control.ControlError, match="not running"):
+            control.send("identify", path=os.path.join(d, "nope.sock"))
 
 
 def test_screens_follow_status_and_buttons_drive_bridge(bridge, tmp_path, buttons, clock):
