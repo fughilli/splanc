@@ -583,6 +583,24 @@ describe("tunnel + revocation", () => {
     }
   });
 
+  test("/pair answers a script (Accept: application/json) in JSON, errors too", async () => {
+    const post = (code: string) =>
+      fetch(`${relay}/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "cf-connecting-ip": "198.51.100.77" },
+        body: new URLSearchParams({ pairing_code: code }),
+      });
+    const bad = await post("ZZZZ-ZZZZ");
+    assert.equal(bad.status, 400);
+    assert.match(bad.headers.get("content-type") ?? "", /application\/json/);
+    assert.equal(((await bad.json()) as { error: string }).error, "invalid_grant");
+    const malformed = await post("12");
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { error: string }).error, "invalid_request");
+    // The page itself names the full connector URL.
+    assert.ok((await (await fetch(`${relay}/pair`)).text()).includes(`<code>${relay}/mcp</code>`));
+  });
+
   test("tokens are stored only as hashes", async () => {
     const { link, frames } = await echoBridge();
     try {

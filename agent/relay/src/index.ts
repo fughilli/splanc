@@ -328,19 +328,23 @@ async function revoke(req: Request, env: Env, origin: string): Promise<Response>
 // -- manual pairing ------------------------------------------------------------------------
 
 async function pair(req: Request, env: Env, origin: string): Promise<Response> {
-  if (req.method !== "POST") return pairForm(new URL(req.url).searchParams.get("code") ?? "");
+  if (req.method !== "POST") return pairForm(origin, new URL(req.url).searchParams.get("code") ?? "");
   const form = await formOrJson(req);
+  // A script (Accept: application/json) gets JSON back, errors included.
+  const wantsJson = (req.headers.get("accept") ?? "").includes("application/json");
+  const fail = (code: string, error: string, message: string, status: number) =>
+    wantsJson ? json({ error, error_description: message }, status) : pairForm(origin, code, message, status);
   const code = normalizePairingCode(form["pairing_code"] ?? "");
-  if (!code) return pairForm(form["pairing_code"] ?? "", "A pairing code is 8 letters and digits, like ABCD-EFGH.", 400);
+  if (!code) return fail(form["pairing_code"] ?? "", "invalid_request", "A pairing code is 8 letters and digits, like ABCD-EFGH.", 400);
   const r = await dir<{ bridge?: string }>(env, "/code/redeem", { code, ip: clientIp(req) });
-  if (r.status === 429) return pairForm("", "Too many wrong codes. Wait a few minutes, then try again.", 429);
-  if (!r.body.bridge) return pairForm("", "That code isn't valid or has expired. Get a new one on the bridge.", 400);
+  if (r.status === 429) return fail("", "slow_down", "Too many wrong codes. Wait a few minutes, then try again.", 429);
+  if (!r.body.bridge) return fail("", "invalid_grant", "That code isn't valid or has expired. Get a new one on the bridge.", 400);
   const t = await toBridge(env, r.body.bridge, origin, "/pair/token", {
     method: "POST",
     body: JSON.stringify({ label: form["label"] ?? "" }),
   });
   const { token: tok } = (await t.json()) as { token: string };
-  if ((req.headers.get("accept") ?? "").includes("application/json")) return json({ token: tok, mcp_url: `${origin}/mcp` });
+  if (wantsJson) return json({ token: tok, mcp_url: `${origin}/mcp` });
   return tokenPage(origin, tok);
 }
 
