@@ -24,7 +24,7 @@ The IDF heap is first-fit TLSF over variable-size blocks, so its worst case depe
 - **`ModeRegion<S>`.** One storage, typed by `S`, normally a `#[repr(C)] union` of the variants, so its size is `max(variants)`. The mutex *is* the budget: a state holding two variants at once can't be represented.
   - `enter(init)` takes `&mut self` and returns a `Guard`. Everything allocated from the variant borrows the guard, so switching while any of it is alive is a **borrow-check error**; a `compile_fail` doctest pins this.
   - The guard's drop runs the variant's leak check (`Variant::leaked`, e.g. "every pool full again") and records `ExitStatus::Leaked(n)`. A forgotten slot, or a blob that never freed, is caught at the transition instead of surfacing later as fragmentation.
-- **Proofs.** Kani harnesses (`firmware/region/kani.sh`, outside Bazel) prove for all ≤ 6-op sequences that:
+- **Proofs.** Kani harnesses (`bazel test //firmware/region:region_kani`, hermetic; see [kani-bazel.md](kani-bazel.md)) prove for all ≤ 6-op sequences that:
   - slots never alias;
   - alloc succeeds iff a slot is free;
   - free + live = N;

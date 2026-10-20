@@ -1,0 +1,6 @@
+# Hermetic Kani for Bazel: repositories.bzl (the @kani bundle) + defs.bzl
+# (rust_kani_test). See docs/design/kani-bazel.md.
+exports_files([
+    "defs.bzl",
+    "repositories.bzl",
+])
