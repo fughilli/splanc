@@ -61,6 +61,8 @@ export interface LanBridgeOptions {
   refreshMs?: number;
   /** Ask for pairing codes by itself while unpaired, for this long after start (default 1 h). */
   autoPairMs?: number;
+  /** At most one automatic code request this often (default 30 s). */
+  autoPairIntervalMs?: number;
   /** A session idle this long is closed (default 30 min). */
   sessionIdleMs?: number;
   /** Also print each tool's progress here (the service log). */
@@ -183,7 +185,7 @@ export class LanBridge {
     const nowMs = Date.now();
     const l = this.link;
     // A code is only shown while connected: offline, the display can't promise it works.
-    const pairing = l.online && l.pairing && l.pairing.expires_at * 1000 > nowMs ? l.pairing : null;
+    const pairing = !this.stopping && l.online && l.pairing && l.pairing.expires_at * 1000 > nowMs ? l.pairing : null;
     let state: BridgeState;
     if (this.fatal) state = "error";
     else if (this.stopping) state = "offline";
@@ -235,12 +237,23 @@ export class LanBridge {
   // -- pairing -------------------------------------------------------------------------
 
   private autoRequested: number | null = null;
+  /** The live code last seen, to tell a redeemed code from an expired one. */
+  private shownCode: Pairing | null = null;
+  /** A code was redeemed: someone is pairing, so stop making codes by ourselves. */
+  private redeemed = false;
 
   private maybeAutoPair(): void {
     const l = this.link;
     const pairing = l.pairing && l.pairing.expires_at * 1000 > Date.now();
     if (this.pairTimer) clearTimeout(this.pairTimer);
     this.pairTimer = null;
+    if (l.online && !pairing && this.shownCode && this.shownCode.expires_at * 1000 > Date.now() + 1000) {
+      // The code vanished before it expired: it was redeemed. Its credential is
+      // issued a moment later (credentials are still 0 in between), and a fresh code
+      // requested in that gap would leave a paired bridge showing a code.
+      this.redeemed = true;
+    }
+    if (l.online) this.shownCode = pairing ? l.pairing : null;
     if (pairing) {
       // Repaint (state pairing -> unpaired/paired) right when the code expires.
       this.pairTimer = setTimeout(() => {
@@ -251,9 +264,10 @@ export class LanBridge {
       return;
     }
     const window = this.opts.autoPairMs ?? 60 * 60_000;
-    if (!l.online || l.credentials > 0 || Date.now() - this.started > window) return;
+    if (!l.online || l.credentials > 0 || this.redeemed || Date.now() - this.started > window) return;
     // At most one automatic request per 30 s (a refused request must not loop).
-    if (this.autoRequested && Date.now() - this.autoRequested < 30_000) return;
+    const every = this.opts.autoPairIntervalMs ?? 30_000;
+    if (this.autoRequested && Date.now() - this.autoRequested < every) return;
     this.autoRequested = Date.now();
     l.send({ t: "new_code" });
   }
