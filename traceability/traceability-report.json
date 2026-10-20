@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1478,
-    "gaps": 35
+    "test_cases": 1476,
+    "gaps": 36
   },
   "levels": [
     {
@@ -7127,6 +7127,12 @@
       "kind": "no-implementation",
       "entity": "PR-38",
       "message": "no source annotation implements it",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:ble_player_e2e_netstack",
+      "message": "//pi/hitl/harness:ble_player_e2e_netstack pi/hitl/harness/ble_player_e2e_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
