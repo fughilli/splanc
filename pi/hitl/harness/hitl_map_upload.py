@@ -164,12 +164,15 @@ async def _pull_bundle(sock, chunk_len: int = 1024) -> tuple[bytes, bool]:
     return assembled, has_topology
 
 
-async def _run(ws_url: str, n_leds: int, insecure: bool) -> bool:
+async def _run(ws_url: str, n_leds: int, insecure: bool, shape: str = "12,12,20") -> bool:
     """Drive the large-map upload + read-back check; True on PASS. Raises on
     setup failures (test errors, distinct from the assertion failing)."""
     map_id = "__fug74"
     map_flat = synth_output_map(n_leds, map_id)
-    topo_flat = synth_topology(n_leds, map_id)
+    n_branch, n_segments, pts_per_seg = (int(v) for v in shape.split(","))
+    topo_flat = synth_topology(
+        n_leds, map_id, n_segments=n_segments, pts_per_seg=pts_per_seg, n_branch=n_branch
+    )
 
     # A freshly-provisioned board is still bringing up wss:443: after a cold
     # --erase-fs flash it reformats littlefs, joins WiFi, re-issues the LAN cert
@@ -224,7 +227,7 @@ async def _run(ws_url: str, n_leds: int, insecure: bool) -> bool:
 def run_on_hardware(args) -> bool:
     # An explicit --device-ws reachable from here skips the rig entirely.
     if args.device_ws:
-        return asyncio.run(_run(args.device_ws, args.led_count, args.insecure))
+        return asyncio.run(_run(args.device_ws, args.led_count, args.insecure, args.topology))
 
     from hitl_client import Reservation
     from provision import dut_target, provision_dut
@@ -260,7 +263,7 @@ def run_on_hardware(args) -> bool:
             # can't starve this transfer under concurrent load. Best-effort: a rig
             # without the lock dir runs unserialized, as today.
             with res.ap_lock("map upload+readback"):
-                return asyncio.run(_run(ws_url, args.led_count, args.insecure))
+                return asyncio.run(_run(ws_url, args.led_count, args.insecure, args.topology))
     finally:
         res.release()
 
@@ -286,6 +289,12 @@ def main() -> None:
         type=int,
         default=256,
         help="LEDs in the synthetic map (256 = firmware cap ≈ 15 KB, the FUG-74 OOM size)",
+    )
+    ap.add_argument(
+        "--topology",
+        default="12,12,20",
+        help="synthetic topology shape BRANCH_POINTS,SEGMENTS,POINTS_PER_SEGMENT "
+        "(e.g. 27,51,4 for a 462-LED field scan)",
     )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))

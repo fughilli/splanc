@@ -151,6 +151,25 @@ impl<'m> Arena<'m> {
         // `cur`'s &mut is consumed by this call, so the extended &mut is unique.
         Some(unsafe { core::slice::from_raw_parts_mut(base, new_len) })
     }
+
+    /// Give back the unused tail of `cur` (keeping its first `keep` `T`s) when
+    /// `cur` is the arena's most-recent allocation; otherwise a no-op. Returns
+    /// whether the bytes were reclaimed. Lets a growable list that finished
+    /// short of its doubled capacity cost only its live size.
+    pub fn shrink_tail<T>(&self, cur: &[MaybeUninit<T>], keep: usize) -> bool {
+        let cap = cur.len();
+        if keep >= cap {
+            return false;
+        }
+        let Some(start) = (cur.as_ptr() as usize).checked_sub(self.base as usize) else {
+            return false;
+        };
+        if start + cap * size_of::<T>() != self.used.get() {
+            return false; // something was allocated after `cur`
+        }
+        self.used.set(start + keep * size_of::<T>());
+        true
+    }
 }
 
 // SAFETY: the raw base pointer is only a borrow of the 'm buffer.
@@ -229,8 +248,10 @@ impl<'a, 'm, T: Copy> ArenaVec<'a, 'm, T> {
         unsafe { &*(core::ptr::from_ref(&self.items[..self.len]) as *const [T]) }
     }
 
-    /// Finish building: the initialized prefix, borrowing the arena.
+    /// Finish building: the initialized prefix, borrowing the arena. Unused
+    /// capacity goes back to the arena when this vec is still its tail.
     pub fn into_slice(self) -> &'a [T] {
+        self.arena.shrink_tail(self.items, self.len);
         // SAFETY: as in as_slice; the region lives as long as the arena
         // borrow 'a and is never handed out again by the bump allocator.
         unsafe { &*(core::ptr::from_ref(&self.items[..self.len]) as *const [T]) }
@@ -252,6 +273,26 @@ mod tests {
         assert_eq!(b.as_ptr() as usize % align_of::<u64>(), 0);
         let a_range = a.as_ptr() as usize..a.as_ptr() as usize + 3;
         assert!(!a_range.contains(&(b.as_ptr() as usize)));
+    }
+
+    #[test]
+    fn into_slice_returns_unused_tail_capacity() {
+        let mut buf = [0u8; 256];
+        let arena = Arena::new(&mut buf);
+        let mut v = ArenaVec::<u32>::new(&arena);
+        for i in 0..3 {
+            v.push(i).unwrap();
+        }
+        assert_eq!(v.capacity(), 8, "min capacity");
+        assert_eq!(v.into_slice(), &[0, 1, 2]);
+        assert_eq!(arena.used(), 12, "only the live 3 x u32 stay allocated");
+        // Not at the tail: nothing to reclaim, the slice is untouched.
+        let mut a = ArenaVec::<u32>::new(&arena);
+        a.push(7).unwrap();
+        let _later = arena.alloc_uninit_slice::<u8>(1).unwrap();
+        let before = arena.used();
+        assert_eq!(a.into_slice(), &[7]);
+        assert_eq!(arena.used(), before);
     }
 
     #[test]

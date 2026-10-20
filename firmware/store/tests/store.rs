@@ -20,8 +20,9 @@ use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_store::{
     decode_submit_map, decode_submit_map_streamed, decode_submit_topology,
-    decode_submit_topology_streamed, envelope_arm, parse_upload_chunk, BlobStore, BlockReader,
-    ChunkedReader, StoreError, StoredAssociation, StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_topology_streamed, envelope_arm, parse_upload_chunk, topology_counts, BlobStore,
+    BlockReader, ChunkedReader, StoreError, StoredAssociation, StoredBranchPoint, StoredLed,
+    StoredSegment, TopoCounts, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageEncode, PbEncoder};
 use std::collections::HashMap;
@@ -122,6 +123,73 @@ fn submit_topology_frame(
     let mut submit = pb::SubmitTopology::default();
     submit.set_topology(*topo);
     encode_client(pb::ClientMessage_::Msg::SubmitTopology(submit))
+}
+
+// Hand-rolled wire encoding for topology shapes past the host micropb caps
+// (Topology.segments max_len 32): the same fields, numbered per ledmapper.proto.
+fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push((v as u8) | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+fn put_int(out: &mut Vec<u8>, field: u32, v: i32) {
+    put_varint(out, u64::from(field << 3));
+    put_varint(out, v as i64 as u64);
+}
+fn put_double(out: &mut Vec<u8>, field: u32, v: f64) {
+    put_varint(out, u64::from(field << 3 | 1));
+    out.extend_from_slice(&v.to_le_bytes());
+}
+fn put_len(out: &mut Vec<u8>, field: u32, body: &[u8]) {
+    put_varint(out, u64::from(field << 3 | 2));
+    put_varint(out, body.len() as u64);
+    out.extend_from_slice(body);
+}
+fn packed_doubles(v: &[f64]) -> Vec<u8> {
+    v.iter().flat_map(|d| d.to_le_bytes()).collect()
+}
+
+/// Like [`submit_topology_frame`], but segment `s` carries `pts[s]` polyline
+/// points (real scans have uneven segments) and any count is allowed.
+fn submit_topology_frame_shaped(n_leds: usize, pts: &[usize], n_branch: usize) -> Vec<u8> {
+    let n_segments = pts.len();
+    let mut topo = Vec::new();
+    put_len(&mut topo, 1, b"m-test");
+    for i in 0..n_branch {
+        let mut bp = Vec::new();
+        put_int(&mut bp, 1, i as i32);
+        put_len(&mut bp, 2, &packed_doubles(&[i as f64 * 0.01, 0.1, -(i as f64) * 0.01]));
+        put_len(&mut topo, 2, &bp);
+    }
+    for (s, &n) in pts.iter().enumerate() {
+        let mut seg = Vec::new();
+        put_int(&mut seg, 1, s as i32);
+        put_int(&mut seg, 2, s as i32);
+        put_int(&mut seg, 3, if s + 1 < n_segments { s as i32 + 1 } else { -1 });
+        for p in 0..n {
+            let t = p as f64 / n as f64;
+            let mut v = Vec::new();
+            put_len(&mut v, 1, &packed_doubles(&[t, 0.02 * s as f64, -t]));
+            put_len(&mut seg, 4, &v);
+        }
+        put_double(&mut seg, 5, 1.0);
+        put_len(&mut topo, 3, &seg);
+    }
+    for i in 0..n_leds {
+        let mut a = Vec::new();
+        put_int(&mut a, 1, i as i32);
+        put_int(&mut a, 2, (i % n_segments.max(1)) as i32);
+        put_double(&mut a, 3, i as f64 * 0.001);
+        put_double(&mut a, 4, 0.003);
+        put_len(&mut topo, 4, &a);
+    }
+    let mut submit = Vec::new();
+    put_len(&mut submit, 1, &topo);
+    let mut frame = Vec::new();
+    put_len(&mut frame, ARM_SUBMIT_TOPOLOGY, &submit);
+    frame
 }
 
 fn chunks(bytes: &[u8], size: usize) -> Vec<&[u8]> {
@@ -317,8 +385,10 @@ fn streamed_topology_matches_the_arena_decode() {
     let mut sbuf = vec![0u8; 16 * 1024];
     let sarena = Arena::new(&mut sbuf);
     let mut assocs: Vec<StoredAssociation> = Vec::new();
+    let mut reader = frame.as_slice();
     let geom = decode_submit_topology_streamed(
-        frame.as_slice(),
+        &mut reader,
+        |r: &mut &[u8]| *r = frame.as_slice(),
         frame.len(),
         &sarena,
         |a: &StoredAssociation| {
@@ -339,6 +409,127 @@ fn streamed_topology_matches_the_arena_decode() {
         "segment geometry stays small ({} bytes)",
         sarena.used()
     );
+}
+
+/// Exact-size streamed decode of `frame` into an `arena_bytes` arena: the
+/// geometry (or the error), the arena bytes used, and the associations seen.
+fn stream_topology(
+    frame: &[u8],
+    arena_bytes: usize,
+) -> (Result<(Vec<StoredBranchPoint>, Vec<OwnedSegment>), StoreError>, usize, usize) {
+    let mut buf = vec![0u8; arena_bytes];
+    let arena = Arena::new(&mut buf);
+    let mut n_assoc = 0usize;
+    let mut reader = frame;
+    let res = decode_submit_topology_streamed(
+        &mut reader,
+        |r: &mut &[u8]| *r = frame,
+        frame.len(),
+        &arena,
+        |_: &StoredAssociation| {
+            n_assoc += 1;
+            Ok(())
+        },
+    )
+    .map(|g| (g.branch_points.to_vec(), g.segments.iter().map(OwnedSegment::from).collect()));
+    (res, arena.used(), n_assoc)
+}
+
+/// A StoredSegment with its polyline copied out of the arena.
+#[derive(Debug, PartialEq)]
+struct OwnedSegment {
+    id: u32,
+    a: i32,
+    b: i32,
+    length: f32,
+    polyline: Vec<[f32; 3]>,
+}
+
+impl From<&StoredSegment<'_>> for OwnedSegment {
+    fn from(s: &StoredSegment<'_>) -> Self {
+        OwnedSegment { id: s.id, a: s.a, b: s.b, length: s.length, polyline: s.polyline.to_vec() }
+    }
+}
+
+/// The scan from the field report: 462 LEDs, 27 junctions, 51 segments, 206
+/// polyline vertices (49 segments of 4 points + 2 of 5). It failed with
+/// map_too_large on the 8 KB grow-and-leak arena (~8.3 KB needed there).
+fn field_scan_frame() -> Vec<u8> {
+    let mut pts = vec![4usize; 51];
+    pts[0] = 5;
+    pts[1] = 5;
+    assert_eq!(pts.iter().sum::<usize>(), 206);
+    submit_topology_frame_shaped(462, &pts, 27)
+}
+
+#[test]
+fn a_462_led_27_junction_scan_fits_the_topology_arena() {
+    let frame = field_scan_frame();
+    let mut rbuf = vec![0u8; 64 * 1024];
+    let rarena = Arena::new(&mut rbuf);
+    let want = decode_submit_topology(frame.as_slice(), frame.len(), &rarena).expect("reference");
+
+    let counts = topology_counts(frame.as_slice(), frame.len()).expect("counts");
+    assert_eq!(counts, TopoCounts { branch_points: 27, segments: 51, vertices: 206 });
+
+    let (geom, used, n_assoc) = stream_topology(&frame, 12 * 1024);
+    let (bps, segs) = geom.expect("fits the 12 KB arena");
+    eprintln!("462-LED scan: {used} arena bytes (formula {})", counts.arena_bytes());
+    assert_eq!(n_assoc, 462, "every association streamed exactly once (pass 2 only)");
+    assert_eq!(bps.as_slice(), want.branch_points);
+    let want_segs: Vec<OwnedSegment> = want.segments.iter().map(OwnedSegment::from).collect();
+    assert_eq!(segs, want_segs, "geometry == the reference decode");
+    // Exactly the live geometry (+ alignment padding), not ~2x churn.
+    assert!(used >= counts.arena_bytes() && used <= counts.arena_bytes() + 8, "used {used}");
+    // On the C6 (32-bit pointers, StoredSegment = 24 B) this shape is
+    // 16·27 + 24·51 + 12·206 = 4,128 B; a 64-bit host's segments are 32 B.
+    let seg = core::mem::size_of::<StoredSegment<'static>>();
+    assert_eq!(used, 16 * 27 + seg * 51 + 12 * 206, "exact for this shape");
+    assert_eq!(16 * 27 + 24 * 51 + 12 * 206, 4_128);
+}
+
+#[test]
+fn the_field_scan_now_fits_even_the_old_8kb_arena() {
+    let (geom, used, _) = stream_topology(&field_scan_frame(), 8 * 1024);
+    assert!(geom.is_ok(), "8 KB fits it once the decode is exact-size ({used} B used)");
+}
+
+#[test]
+fn exact_size_decode_matches_the_reference_over_random_shapes() {
+    // Deterministic LCG: uneven segments (incl. empty polylines), branch-point
+    // and LED counts, compared field-for-field with the arena decoder.
+    let mut s: u64 = 0x5eed_1234;
+    let mut next = |m: u64| {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((s >> 33) % m) as usize
+    };
+    for _ in 0..60 {
+        let n_seg = next(40);
+        let pts: Vec<usize> = (0..n_seg).map(|_| next(9)).collect();
+        let n_branch = next(30);
+        let n_leds = next(300);
+        let frame = submit_topology_frame_shaped(n_leds, &pts, n_branch);
+        let mut rbuf = vec![0u8; 128 * 1024];
+        let rarena = Arena::new(&mut rbuf);
+        let want = decode_submit_topology(frame.as_slice(), frame.len(), &rarena).expect("reference");
+        let (geom, used, n_assoc) = stream_topology(&frame, 32 * 1024);
+        let (bps, segs) = geom.expect("decodes");
+        assert_eq!(bps.as_slice(), want.branch_points);
+        let want_segs: Vec<OwnedSegment> = want.segments.iter().map(OwnedSegment::from).collect();
+        assert_eq!(segs, want_segs, "shape {pts:?}");
+        assert_eq!(n_assoc, want.associations.len());
+        let c = TopoCounts { branch_points: n_branch, segments: n_seg, vertices: pts.iter().sum() };
+        assert!(used <= c.arena_bytes() + 8, "used {used} vs {}", c.arena_bytes());
+    }
+}
+
+#[test]
+fn a_topology_too_big_for_the_arena_is_arena_full_not_a_panic() {
+    // 1,000 vertices = 12 KB of vertices alone: over a 12 KB arena.
+    let frame = submit_topology_frame_shaped(16, &vec![10; 100], 4);
+    let (geom, _, n_assoc) = stream_topology(&frame, 12 * 1024);
+    assert!(matches!(geom, Err(StoreError::ArenaFull)), "{geom:?}");
+    assert_eq!(n_assoc, 0, "rejected before any association is streamed");
 }
 
 #[test]

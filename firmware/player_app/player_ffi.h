@@ -151,8 +151,14 @@ int32_t lm_encode_chunk_ack(uint32_t upload_id, uint32_t seq, uint8_t *out,
 
 // Refill callback for lm_decode_upload_stream: write up to `cap` bytes at `buf`
 // from the caller's source (a LittleFS read of the reassembled upload) and
-// return how many; 0 signals EOF. Not called again after returning 0.
+// return how many; 0 signals EOF. Not called again after returning 0 until a
+// rewind.
 typedef size_t (*LmRefill)(void *ctx, uint8_t *buf, size_t cap);
+
+// Rewind callback for lm_decode_upload_stream: reset the source so the next
+// refill returns the frame's first byte again. A topology is decoded in two
+// passes (count, then exact-size fill) and rewinds once between them.
+typedef void (*LmRewind)(void *ctx);
 
 // Decode a reassembled upload frame streamed in block-by-block via `refill`, so
 // a whole ~15 KB submit_map is never resident (the player keeps it on flash).
@@ -160,8 +166,9 @@ typedef size_t (*LmRefill)(void *ctx, uint8_t *buf, size_t cap);
 // `total_len` is the frame's exact length. Populates the stored map/topology
 // exactly like the in-RAM path; returns the encoded reply (result_ready/error)
 // in out, its length, or -2 if the reply doesn't fit.
-int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, void *ctx,
-                                size_t total_len, uint8_t *out, size_t out_cap);
+int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, LmRewind rewind,
+                                void *ctx, size_t total_len, uint8_t *out,
+                                size_t out_cap);
 
 // Render-side accessors (pure reads, polled by the LED frame loop). All
 // integer so the loop touches no f64 (the C6 RISC-V FPU is single-precision

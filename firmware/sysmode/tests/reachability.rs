@@ -186,4 +186,5 @@ fn live_set_fits_the_budget() {
 
 const PINNED_STATES: usize = 57;
 // +3,072 B: FX_LED_ROOM (multi-fixture room-frame cache, #280).
-const PINNED_WORST: usize = 154_285;
+// +4,096 B: the topology arena ARENA_MEM grew 8 -> 12 KB (exact-size decode).
+const PINNED_WORST: usize = 158_381;

@@ -177,6 +177,10 @@ struct Flash<'a> {
     largest_request: usize,
 }
 
+extern "C" fn rewind(ctx: *mut c_void) {
+    unsafe { (*(ctx as *mut Flash)).pos = 0 };
+}
+
 extern "C" fn refill(ctx: *mut c_void, buf: *mut u8, cap: usize) -> usize {
     let f = unsafe { &mut *(ctx as *mut Flash) };
     f.calls += 1;
@@ -196,6 +200,7 @@ fn stream_decode_map(frame: &[u8]) -> (SMsg, usize, usize) {
         lm_decode_upload_stream(
             ARM_SUBMIT_MAP,
             refill,
+            rewind,
             &mut src as *mut Flash as *mut c_void,
             frame.len(),
             tx.as_mut_ptr(),
