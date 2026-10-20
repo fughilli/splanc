@@ -460,6 +460,11 @@ need not equal the previous row’s “after”:</p>
 <td class="text-right"><p>~90 → ~87 KB</p></td>
 <td class="text-right"><p>~116 → ~95 KB</p></td>
 </tr>
+<tr class="row-odd"><td><p>#285</p></td>
+<td><p>FX deck B + uniform keypoints: +6.5 KB static (<code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> with its morph state, the video/deck-B aux union 8,192 → 11,436 B, <code class="docutils literal notranslate"><span class="pre">KP_IO</span></code>); the per-LED fx shade entry (<code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code>, <code class="docutils literal notranslate"><span class="pre">Program::parse</span></code>, <code class="docutils literal notranslate"><span class="pre">Vm::run_shade_bounded</span></code>) pinned in IRAM (<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 97,512 → 99,704 B, +2,192)</p></td>
+<td class="text-right"><p>not re-measured on this scenario (fx_keypoints HITL: min free 74.6 KB with both decks + a wss session)</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
 </tbody>
 </table>
 </div>
