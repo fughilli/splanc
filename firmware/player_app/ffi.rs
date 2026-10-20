@@ -4042,6 +4042,7 @@ pub unsafe extern "C" fn lm_fx_shade(idx: u32, x: f32, y: f32, z: f32, rgb: *mut
 }
 
 /// The two-deck shade + crossfade blend (deck B loaded).
+#[cold]
 #[inline(never)]
 unsafe fn fx_shade_decks(idx: u32, x: f32, y: f32, z: f32, rgb: *mut u8) -> bool {
     let t = FX_XF_POS;
