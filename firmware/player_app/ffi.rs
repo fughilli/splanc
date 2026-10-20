@@ -302,6 +302,16 @@ static mut FX_F_LEDS: u32 = 0;
 // per-LED shade sweep copies them (no soft-float per LED) — FUG-122.
 static mut FX_F_TIME_FIX: i32 = 0;
 static mut FX_F_DT_FIX: i32 = 0;
+/// The whole shade() Frame, built ONCE per frame by lm_fx_update. Building it per
+/// LED (`FxFrame { .., ..Default::default() }`) costs a ROM memset of its ~70-byte
+/// tail on every LED once the struct outgrew LLVM's inline-zeroing threshold (the
+/// room fields did it: +~230 cycles/LED on fx_bench), so shade() borrows this.
+static mut FX_SHADE_FRAME: Option<FxFrame> = None;
+/// Per-LED shade() scratch, reused across LEDs: lm_fx_shade overwrites every field
+/// the loaded program can read (the base fields always, the fixed / room mirrors
+/// when FX_USES_CTXFIX / FX_USES_ROOM say it reads them), so it needn't re-zero the
+/// struct per LED. Reset on lm_fx_load so no previous effect's values leak.
+static mut FX_SHADE_LED: Option<FxLed> = None;
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
@@ -2827,6 +2837,8 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
     FX_USES_UV = prog.uses_uv();
     FX_USES_ROOM = prog.uses_room();
+    *addr_of_mut!(FX_SHADE_FRAME) = None;
+    *addr_of_mut!(FX_SHADE_LED) = None;
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -3093,6 +3105,7 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     // an all-float shader pays nothing at all (FUG-122).
     FX_F_TIME_FIX = q16_16(time_s);
     FX_F_DT_FIX = q16_16(dt_s);
+    *addr_of_mut!(FX_SHADE_FRAME) = Some(f);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
@@ -3142,24 +3155,11 @@ pub unsafe extern "C" fn lm_fx_shade(
     let Ok(prog) = Program::parse(bytes) else {
         return false;
     };
-    // Reuse the frame context captured by lm_fx_update so `time`/`dt`/`frame`
-    // are the same as update() — shaders animate off `time` in shade().
-    let f = FxFrame {
-        time: FX_F_TIME,
-        dt: FX_F_DT,
-        frame: FX_F_FRAME,
-        led_count: FX_F_LEDS,
-        // Cheap int copies of the once-per-frame conversions — NO per-LED
-        // soft-float (FUG-122; this was the fx_bench overhead regression).
-        time_fix: FX_F_TIME_FIX,
-        dt_fix: FX_F_DT_FIX,
-        room_posed: FX_ROOM_POSED,
-        room_min: FX_ROOM_MIN,
-        room_max: FX_ROOM_MAX,
-        room_min_fix: FX_ROOM_MIN_FIX,
-        room_max_fix: FX_ROOM_MAX_FIX,
-        ..Default::default()
-    };
+    // Borrow the frame context lm_fx_update built for this frame, so `time`/`dt`/
+    // `frame` are the same as update() (shaders animate off `time` in shade()) and
+    // nothing frame-wide is rebuilt per LED. Before the first update() of a fresh
+    // effect, a zero Frame (the render loop always updates first).
+    let f: &FxFrame = (*addr_of_mut!(FX_SHADE_FRAME)).get_or_insert_with(FxFrame::default);
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
@@ -3175,16 +3175,15 @@ pub unsafe extern "C" fn lm_fx_shade(
     } else {
         [0.0, 0.0]
     };
-    let mut led = FxLed {
-        pos: [x, y, z],
-        idx,
-        seg: t.seg as i32,
-        s: t.s,
-        branch: t.branch,
-        dist: t.dist,
-        uv,
-        ..Default::default()
-    };
+    // Overwrite the reused scratch field by field — no per-LED struct re-zero.
+    let led: &mut FxLed = (*addr_of_mut!(FX_SHADE_LED)).get_or_insert_with(FxLed::default);
+    led.pos = [x, y, z];
+    led.idx = idx;
+    led.seg = t.seg as i32;
+    led.s = t.s;
+    led.branch = t.branch;
+    led.dist = t.dist;
+    led.uv = uv;
     // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the loaded
     // effect actually reads them (FUG-122), so an all-float shader pays zero
     // per-LED overhead and the resident cache never grows. Positions come from
@@ -3206,7 +3205,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
         let ((r, g, b), outcome, c): ((u8, u8, u8), Outcome, FxCounters) =
-            vm.run_shade_counted(&prog, &f, &led, &fx_budget());
+            vm.run_shade_counted(&prog, f, led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(c.instrs);
         if c.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = c.stack_max;
@@ -3218,7 +3217,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         }
         outcome
     } else {
-        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
+        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, f, led, &fx_budget());
         if outcome == Outcome::Ok {
             *rgb = r;
             *rgb.add(1) = g;
