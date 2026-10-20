@@ -24,12 +24,21 @@ import {
   editorContext,
   type ChatMessage,
   type MidiMappingCall,
+  type MeasureOnDeviceCall,
 } from "../../effects/ai/generate";
 import { isAiConfigured } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { costTableStore } from "../../store/costTableStore";
 import { builtinCostsToPrompt } from "../../effects/perfContext";
+import { estimateFrameTime } from "../../effects/costModel";
+import {
+  canMeasure,
+  measureOnDevice,
+  perfDeviceFromClient,
+  resolveUniforms,
+  withDeviceLock,
+} from "../../effects/devicePerf";
 import { isDrivable, MidiRouter } from "../../midi/router";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
@@ -76,6 +85,8 @@ export function AcidModeScreen(router: Router): Screen {
   let currentTopo: LedTopology | null = null;
   let topoToken = 0;
   let lastBytecode: Uint8Array | null = null;
+  /** The program last uploaded to the device (measure_on_device skips re-upload). */
+  let uploadedFxb: Uint8Array | null = null;
   let lastUniforms: FxUniform[] = [];
   let currentSource = "";
   let startT = 0;
@@ -294,6 +305,9 @@ export function AcidModeScreen(router: Router): Screen {
           onListMidi: async () => midiListSummary(),
           onSetMidiMapping: async (mappings) => applyMidiMappings(mappings),
           onEstimatePerformance: async () => estimateFleetReport(),
+          ...(canMeasure(perfDeviceFromClient(appState.client))
+            ? { onMeasureOnDevice: async (args: MeasureOnDeviceCall) => measureOnFixture(args) }
+            : {}),
         },
         deviceCosts,
         ACID_SYSTEM,
@@ -346,7 +360,8 @@ export function AcidModeScreen(router: Router): Screen {
     const c = appState.client;
     if (c?.isConnected) {
       try {
-        await c.submitEffect(ACID_EFFECT_ID, r.bytecode, true);
+        await withDeviceLock(() => c.submitEffect(ACID_EFFECT_ID, r.bytecode, true));
+        uploadedFxb = r.bytecode;
         const defaults = r.uniforms.map((u) => ({ slot: u.slot, value: u.default }));
         if (defaults.length > 0) c.setUniforms(defaults);
         deviceNote = "uploaded + now playing on your device";
@@ -455,6 +470,30 @@ export function AcidModeScreen(router: Router): Screen {
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
     return describeFleet(estimateAcrossDevices(lastBytecode, targets));
+  }
+
+  /** measure_on_device: set_script already uploads, so this usually just
+   * captures the device's perf stream for the playing program. */
+  async function measureOnFixture(args: MeasureOnDeviceCall): Promise<string> {
+    const bytecode = lastBytecode;
+    if (bytecode === null) return "Nothing compiles yet — author an effect first.";
+    const { table, stored } = await costTableStore.resolveTable();
+    const { values, unknown } = resolveUniforms(args.uniforms, lastUniforms);
+    const r = await measureOnDevice(perfDeviceFromClient(appState.client), {
+      effectId: ACID_EFFECT_ID,
+      bytecode,
+      alreadyRunning: uploadedFxb === bytecode,
+      seconds: args.seconds,
+      uniforms: values,
+      table,
+      calibrated: stored !== null,
+      predict: (ledCount) => {
+        const est = estimateFrameTime({ bytecode, ledCount, table });
+        return { totalMs: est.totalMs, lowMs: est.errorBand.lowMs, highMs: est.errorBand.highMs };
+      },
+    });
+    if (r.deployed) uploadedFxb = bytecode;
+    return unknown.length > 0 ? `${r.text}\n(Ignored unknown uniforms: ${unknown.join(", ")}.)` : r.text;
   }
 
   // -- map + animation loop ---------------------------------------------------

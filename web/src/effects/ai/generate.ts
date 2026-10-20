@@ -14,7 +14,7 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
-import { baseChatSystem, selectTools } from "./chatPrompt";
+import { DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
 import { stripCodeFence } from "./providers/wllamaProtocol";
 import { isMobileUserAgent } from "../../flash/env";
 import {
@@ -323,6 +323,29 @@ export interface MidiMappingCall {
   invert?: boolean;
 }
 
+/** measure_on_device arguments (all optional). */
+export interface MeasureOnDeviceCall {
+  seconds?: number;
+  uniforms?: { name: string; value: number[] }[];
+}
+
+/** Coerce the model's measure_on_device input (tolerating a bare number value). */
+export function parseMeasureCall(input: unknown): MeasureOnDeviceCall {
+  const o = (input ?? {}) as { seconds?: unknown; uniforms?: unknown };
+  const out: MeasureOnDeviceCall = {};
+  if (typeof o.seconds === "number" && Number.isFinite(o.seconds)) out.seconds = o.seconds;
+  if (Array.isArray(o.uniforms)) {
+    out.uniforms = o.uniforms.flatMap((u) => {
+      const e = u as { name?: unknown; value?: unknown };
+      if (typeof e.name !== "string") return [];
+      const v = typeof e.value === "number" ? [e.value] : Array.isArray(e.value) ? e.value : [];
+      const nums = v.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+      return nums.length > 0 ? [{ name: e.name, value: nums }] : [];
+    });
+  }
+  return out;
+}
+
 /** Client-side fulfillment of the two tools + streaming hooks. The editor
  * supplies these so the AI can act on the live editor + preview. */
 export interface ChatHooks {
@@ -345,6 +368,11 @@ export interface ChatHooks {
    * the binding device, and hot opcodes). Optional — omit to disable the perf
    * tool for this turn (e.g. when nothing compiles). */
   onEstimatePerformance?: () => Promise<string>;
+  /** The model asked to MEASURE the current program on the connected fixture
+   * (`measure_on_device`). Return the measured summary text. Optional — supply
+   * it only while a perf-capable fixture is connected; omitting it withholds the
+   * tool (and its prompt guidance) for this turn. */
+  onMeasureOnDevice?: (args: MeasureOnDeviceCall) => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** Live status label as the response streams — "Thinking…", a fixed tool verb,
@@ -447,12 +475,17 @@ export async function chatTurn(
   let system = baseChatSystem(provider.id);
   if (deviceCosts) system += `\n\n${deviceCosts}`;
   if (systemExtra) system += `\n\n${systemExtra}`;
+  // The on-fixture tool's guidance rides only with the tool (and never on the
+  // condensed local-model prompt, which already says to use perf tools on ask).
+  const devicePerf = hooks.onMeasureOnDevice !== undefined;
+  if (devicePerf && provider.id !== "wllama") system += `\n\n${DEVICE_PERF_GUIDE}`;
   // Advertise only tools the active provider can fulfill (see selectTools): the
   // vision `capture_preview` is withheld when the model can't see images, the
   // perf/MIDI groups only when the caller supplies their hooks, and nothing at
   // all when the provider has no tool-calling (the chat then runs plain-text).
   const tools = selectTools(caps, {
     perf: hooks.onEstimatePerformance !== undefined,
+    devicePerf,
     midi: hooks.onListMidi !== undefined && hooks.onSetMidiMapping !== undefined,
   });
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -537,6 +570,13 @@ export async function chatTurn(
           });
         } else if (tu.name === "estimate_performance" && hooks.onEstimatePerformance) {
           const summary = await hooks.onEstimatePerformance();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "measure_on_device" && hooks.onMeasureOnDevice) {
+          const summary = await hooks.onMeasureOnDevice(parseMeasureCall(tu.input));
           results.push({
             type: "tool_result",
             tool_use_id: tu.id,

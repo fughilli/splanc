@@ -43,6 +43,7 @@ import {
   type ChatMessage,
   type ChatTraceEvent,
   type MidiMappingCall,
+  type MeasureOnDeviceCall,
 } from "../../effects/ai/generate";
 import { isAiConfigured, getAiConfig } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
@@ -51,6 +52,13 @@ import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../..
 import { budgetFromEstimate } from "../../effects/budget";
 import { costTableStore } from "../../store/costTableStore";
 import { builtinCostsToPrompt } from "../../effects/perfContext";
+import {
+  canMeasure,
+  measureOnDevice,
+  perfDeviceFromClient,
+  resolveUniforms,
+  withDeviceLock,
+} from "../../effects/devicePerf";
 import { BudgetBar } from "./budgetBar";
 import { MidiRouter, isDrivable } from "../../midi/router";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
@@ -1331,6 +1339,43 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     return describeFleet(fleet);
   }
 
+  /** measure_on_device: run the latest compile on the connected fixture and
+   * report the measured perf stream (devicePerf.ts), next to the estimate. */
+  async function measureCurrentOnDevice(args: MeasureOnDeviceCall): Promise<string> {
+    const bytecode = lastBytecode;
+    if (bytecode === null) {
+      return "No compiled program to measure — the current source does not compile. Fix it (set_script) first.";
+    }
+    const { table, stored } = await costTableStore.resolveTable();
+    const { values, unknown } = resolveUniforms(args.uniforms, lastUniforms);
+    // The panel's current values (as a Push sends them), with the model's
+    // operating point on top — the device starts an upload from defaults.
+    const bySlot = new Map(panel.values().map((v) => [v.slot, v] as const));
+    for (const v of values) bySlot.set(v.slot, v);
+    const result = await measureOnDevice(perfDeviceFromClient(appState.client), {
+      effectId,
+      bytecode,
+      alreadyRunning: runningEffectId === effectId && bytesEqual(bytecode, lastPushedFxb),
+      seconds: args.seconds,
+      uniforms: [...bySlot.values()],
+      table,
+      calibrated: stored !== null,
+      predict: (ledCount) => {
+        const est = estimateFrameTime({ bytecode, ledCount, table });
+        return { totalMs: est.totalMs, lowMs: est.errorBand.lowMs, highMs: est.errorBand.highMs };
+      },
+    });
+    // The fixture now runs this workspace's program (same as a manual Push).
+    if (result.deployed) {
+      lastPushedFxb = bytecode;
+      runningEffectId = effectId;
+      refreshMismatch();
+    }
+    return unknown.length > 0
+      ? `${result.text}\n(Ignored unknown uniforms: ${unknown.join(", ")}.)`
+      : result.text;
+  }
+
   /** Shared body: ground the turn in the editor context, run the tool loop. */
   async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
@@ -1410,6 +1455,16 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           setChatStatus("Running a performance pass…");
           return estimateFleetReport();
         },
+        // Offered only while a perf-capable fixture is connected (else the
+        // tool and its prompt guidance are withheld for this turn).
+        ...(!screenOpts.demo && canMeasure(perfDeviceFromClient(appState.client))
+          ? {
+              onMeasureOnDevice: async (args: MeasureOnDeviceCall) => {
+                setChatStatus("Measuring on the fixture…");
+                return measureCurrentOnDevice(args);
+              },
+            }
+          : {}),
         onToolUse: () => undefined,
         onTrace: onChatTrace,
         },
@@ -1460,6 +1515,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // Upload already-compiled bytecode + the current uniforms to the device. Shared
   // by the manual Push button and the auto-push-on-compile path.
   async function pushBytecode(bytecode: Uint8Array): Promise<void> {
+    // Serialized with measure_on_device: an upload mid-capture would mix two
+    // programs' perf windows.
+    return withDeviceLock(() => pushBytecodeNow(bytecode));
+  }
+
+  async function pushBytecodeNow(bytecode: Uint8Array): Promise<void> {
     const c = appState.client;
     if (!c?.isConnected) return;
     devStatus.textContent = "Uploading…";
