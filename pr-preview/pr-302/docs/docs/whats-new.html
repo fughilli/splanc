@@ -493,7 +493,7 @@ allowed memory lever.</p></li>
 <section id="tooling-hitl-and-releases">
 <h3>Tooling, HITL and releases<a class="headerlink" href="#tooling-hitl-and-releases" title="Link to this heading">¶</a></h3>
 <ul class="simple">
-<li><p><strong>The netstack answers <code class="docutils literal notranslate"><span class="pre">ping</span></code></strong> (#TBD): ICMP echo requests to the player’s own
+<li><p><strong>The netstack answers <code class="docutils literal notranslate"><span class="pre">ping</span></code></strong> (#302): ICMP echo requests to the player’s own
 IP get a reply, rate-limited to 10/s (burst 5) so a flood can’t starve the
 LEDs or TLS. Broadcast/multicast pings and fragments are ignored; up to 1472
 data bytes (one 1500-byte MTU packet) are echoed.</p></li>
