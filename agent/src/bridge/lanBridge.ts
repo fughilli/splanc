@@ -117,10 +117,13 @@ export class LanBridge {
     this.controlPath = writablePath(opts.controlPath ?? process.env["SPLANC_BRIDGE_CONTROL"], DEFAULT_CONTROL_PATH, "control.sock", this.log);
   }
 
-  async start(): Promise<void> {
+  /** Start serving; `connect: false` keeps the link down (no relay configured:
+   * the status file and control socket still work, and say why). */
+  async start(opts: { connect?: boolean } = {}): Promise<void> {
     this.stopping = false;
     this.writeStatus(true);
     await this.listenControl();
+    if (opts.connect === false) return;
     this.link.onChange = () => {
       this.maybeAutoPair();
       this.writeStatus();

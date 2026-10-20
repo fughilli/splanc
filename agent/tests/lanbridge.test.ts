@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 
 import { LanBridge, type BridgeStatus } from "../src/bridge/lanBridge";
-import { RelayLink } from "../src/bridge/relayLink";
+import { DEFAULT_RELAY_URL, RelayLink, relayUrl } from "../src/bridge/relayLink";
 import { Hub } from "../src/hub";
 import { RelayHost } from "../src/relayHost";
 import { FakePlayer, yFixture } from "./fakePlayer";
@@ -143,6 +143,37 @@ describe("display contract", () => {
     // No credentials left: unpaired (or already showing a fresh code).
     await until(() => ["unpaired", "pairing"].includes(readStatus().state), "unpaired after revoke");
     assert.equal(link.credentials, 0);
+  });
+});
+
+describe("configuration", () => {
+  test("relay URL: --relay, else SPLANC_RELAY, else the built-in default", () => {
+    assert.equal(relayUrl("https://a.example/", { SPLANC_RELAY: "https://b.example" }), "https://a.example");
+    assert.equal(relayUrl(undefined, { SPLANC_RELAY: "https://b.example" }), "https://b.example");
+    assert.equal(relayUrl(undefined, {}), DEFAULT_RELAY_URL);
+  });
+
+  test("no relay: the bridge stays up and its status says why", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "splanc-norelay-"));
+    const statusPath = join(dir, "status.json");
+    const { identity } = tempIdentity();
+    const idle = new LanBridge({
+      link: new RelayLink({ relay: "", identity }),
+      hub,
+      statusPath,
+      controlPath: join(dir, "control.sock"),
+      refreshMs: 0,
+    });
+    await idle.start({ connect: false });
+    idle.setFatal("no relay configured");
+    try {
+      const s = JSON.parse(readFileSync(statusPath, "utf8")) as BridgeStatus;
+      assert.equal(s.state, "error");
+      assert.equal(s.error, "no relay configured");
+      assert.equal(s.relay, "");
+    } finally {
+      await idle.stop();
+    }
   });
 });
 

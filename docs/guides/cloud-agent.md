@@ -37,7 +37,9 @@ On any other computer:
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay <relay>
 ```
 
-It finds your players (mDNS, then a scan of the local network), connects to the relay, and asks
+(`--relay` can be left out once the public relay's address is built in, or set `SPLANC_RELAY`;
+on the Pi image that goes in `/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
+then a scan of the local network), connects to the relay, and asks
 for a pairing code. Without a screen, read the code with:
 
 ```sh

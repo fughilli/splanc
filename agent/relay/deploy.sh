@@ -45,4 +45,5 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/mcp" -H 'content-ty
   exit 1
 }
 echo "relay is up. MCP endpoint for connectors: $url/mcp"
+echo "make it the bridges' default: DEFAULT_RELAY_URL = \"$url\" in agent/src/bridge/relayLink.ts"
 echo "run a bridge against it:  npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay $url"

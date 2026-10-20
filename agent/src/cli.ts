@@ -21,7 +21,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { BridgeIdentity, defaultStateDir } from "./bridge/identity";
 import { DEFAULT_CONTROL_PATH, LanBridge, controlSocketCandidates } from "./bridge/lanBridge";
-import { RelayLink } from "./bridge/relayLink";
+import { RelayLink, relayUrl } from "./bridge/relayLink";
 import { browse } from "./discovery";
 import { setFxHostRoot } from "./fxhost";
 import { Hub } from "./hub";
@@ -138,8 +138,7 @@ async function oneShot(p: Parsed, root: string): Promise<number> {
 
 /** `splanc-agent bridge`: serve this LAN's players to cloud agents through a relay. */
 async function runBridge(p: Parsed, root: string): Promise<void> {
-  const relay = flag(p, "relay") ?? process.env["SPLANC_RELAY_URL"];
-  if (!relay) throw new Error("bridge: pass --relay <url> (or set SPLANC_RELAY_URL)");
+  const relay = relayUrl(flag(p, "relay"));
   const identity = new BridgeIdentity(flag(p, "state-dir") ?? defaultStateDir());
   const hub = makeHub(p, root);
   setFxHostRoot(root); // the wasm loads on the first compile/preview
@@ -148,8 +147,15 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
   const status = flag(p, "status");
   const control = flag(p, "control");
   const bridge = new LanBridge({ link, hub, root, log, echo: log, ...(status ? { statusPath: status } : {}), ...(control ? { controlPath: control } : {}) });
-  await bridge.start();
-  log(`bridge: relay ${link.relay}; status ${bridge.statusPath}; control ${bridge.controlPath}`);
+  if (!relay) {
+    // Stay up (a service would only crash-loop) and say what's missing.
+    await bridge.start({ connect: false });
+    bridge.setFatal("no relay configured: pass --relay <url> or set SPLANC_RELAY (e.g. in /etc/splanc-bridge/bridge.env)");
+    log("bridge: no relay configured (--relay / SPLANC_RELAY); waiting");
+  } else {
+    await bridge.start();
+  }
+  log(`bridge: relay ${link.relay || "(none)"}; status ${bridge.statusPath}; control ${bridge.controlPath}`);
   const stop = () => {
     log("bridge: stopping");
     void bridge.stop().finally(() => {

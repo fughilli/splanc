@@ -49,7 +49,8 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   help                                 this text
 
 Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
-  bridge --relay <url>                 serve this LAN's players to cloud agents through a relay
+  bridge [--relay <url>]               serve this LAN's players to cloud agents through a relay
+                                       (default: $SPLANC_RELAY, else the Splanc relay)
          [--state-dir d] [--status f] [--control sock]   (plus --host/--no-mdns/--pin as above)
   bridge-ctl new-code|revoke-all|identify|status   control a running bridge (its unix socket)
   relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]

@@ -29,7 +29,12 @@ hosting bill.
         └─ Splanc players on the LAN
 ```
 
-- **Bridge** (`splanc-agent bridge --relay <url>`): the existing hub plus `LanBridge`. It keeps
+- **Bridge** (`splanc-agent bridge [--relay <url>]`; the relay defaults to `$SPLANC_RELAY`, then
+  the built-in `DEFAULT_RELAY_URL` in `agent/src/bridge/relayLink.ts`, which is set to the
+  deployed Worker's URL; with none configured the bridge stays up with `state: "error"`): the
+  existing hub plus `LanBridge`. Its identity lives in `$SPLANC_BRIDGE_STATE_DIR`, else systemd's
+  `$STATE_DIRECTORY`, else `~/.local/state/splanc`. The Pi appliance (`pi/bridge/`) runs it from
+  `splanc-bridge.service` with `/etc/splanc-bridge/bridge.env`. It keeps
   one outbound WebSocket to the relay (`RelayLink`: register once, connect with a signed
   timestamp, reconnect with capped exponential backoff and jitter, liveness pings). Each HTTP
   request the relay tunnels is handed to the MCP SDK's own Streamable HTTP server transport

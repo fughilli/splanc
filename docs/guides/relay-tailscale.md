@@ -152,6 +152,10 @@ sudo systemctl enable --now splanc-relay splanc-bridge
 sudo tailscale funnel --bg 8787    # or: sudo tailscale serve --bg 8787
 ```
 
+On the Pi bridge appliance (`pi/bridge/`), skip the bridge unit above: it already runs one. Point
+it at your relay with `SPLANC_RELAY=http://127.0.0.1:8787` in `/etc/splanc-bridge/bridge.env`,
+then `sudo systemctl restart splanc-bridge`.
+
 Pin a bundle version instead of the moving `splanc-agent.tgz` if you want upgrades to be
 deliberate: the release assets are `splanc-agent-<version>.tgz` on GitHub.
 

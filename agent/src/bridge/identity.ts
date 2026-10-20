@@ -20,6 +20,9 @@ interface StateFile {
 export function defaultStateDir(): string {
   const env = process.env["SPLANC_BRIDGE_STATE_DIR"];
   if (env) return env;
+  // systemd's StateDirectory= (the Pi appliance's unit: /var/lib/splanc-bridge).
+  const unit = process.env["STATE_DIRECTORY"]?.split(":")[0];
+  if (unit) return unit;
   const xdg = process.env["XDG_STATE_HOME"];
   return join(xdg || join(homedir(), ".local", "state"), "splanc");
 }
