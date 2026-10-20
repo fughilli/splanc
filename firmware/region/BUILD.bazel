@@ -4,6 +4,7 @@ rules make mutually exclusive features share storage. no_std, zero-dependency;
 Kani proofs live under #[cfg(kani)] (see README.md)."""
 
 load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
+load("//tools/kani:defs.bzl", "rust_kani_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -25,4 +26,30 @@ rust_test(
 rust_doc_test(
     name = "region_doc_test",
     crate = ":region",
+)
+
+# The Kani proofs (#[cfg(kani)] in src/lib.rs), hermetic under Bazel: bounded
+# model checking of the pool bookkeeping (no aliasing, alloc iff free, count
+# conserved) and slab routing. Manual: the first run fetches the ~200 MB Kani
+# bundle, and pool_bookkeeping takes a few minutes of CBMC.
+#   bazel test //firmware/region:region_kani
+rust_kani_test(
+    name = "region_kani",
+    size = "large",
+    crate = ":region",
+    tags = [
+        "kani",
+        "manual",
+    ],
+)
+
+# Just the fast slab proof (~1 s of CBMC): a quick check that the Kani setup works.
+rust_kani_test(
+    name = "region_kani_slab",
+    crate = ":region",
+    harnesses = ["slab_fits_and_routes"],
+    tags = [
+        "kani",
+        "manual",
+    ],
 )

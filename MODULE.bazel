@@ -631,6 +631,16 @@ rules_ts_ext.deps(
 use_repo(rules_ts_ext, "npm_typescript")
 
 # ---------------------------------------------------------------------------
+# Kani (Rust bounded model checker): the release bundle + its pinned nightly
+# rustc libs, assembled like `cargo kani setup` but hermetic and sha-pinned, for
+# //tools/kani:defs.bzl rust_kani_test (e.g. //firmware/region:region_kani).
+# Fetched lazily: only a Kani test target pulls the ~200 MB download.
+# ---------------------------------------------------------------------------
+kani_bundle = use_repo_rule("//tools/kani:repositories.bzl", "kani_bundle")
+
+kani_bundle(name = "kani")
+
+# ---------------------------------------------------------------------------
 # TouchDesigner custom operators (FUG-78, //tools/touchdesigner).
 # The Derivative C++ SDK headers ship inside the public CustomOperatorSamples
 # repo. We fetch them at build time so the plugin build is self-contained on a
