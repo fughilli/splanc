@@ -222,6 +222,9 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
               max_tokens: Math.min(body.max_tokens ?? 4000, 4000),
+              // MiniMax defaults to max reasoning; this is an interactive editor.
+              // The other two models support disabling optional reasoning.
+              reasoning: model === "minimax/minimax-m3.1-flash:free" ? { effort: "low" } : { enabled: false },
               ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
               provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
             }),
@@ -231,7 +234,11 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
             return error(503, "upstream_redirect");
           }
           let json;
-          try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch { /* Treat malformed upstream output as unavailable. */ }
+          try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch (e) {
+            // A 200 response can send headers and then stall. Preserve the
+            // deadline classification instead of calling an aborted body JSON.
+            if (attempt.signal.aborted) throw e;
+          }
           if (total.signal.aborted) break;
           const status = result.ok && json?.error ? Number(json.error.code) || 502 : result.status;
           diagnostic.status = status;
