@@ -554,6 +554,23 @@ identical artifacts.</p></li>
 the fields (<code class="docutils literal notranslate"><span class="pre">name,</span> <span class="pre">type,</span> <span class="pre">ui_kind,</span> <span class="pre">min,</span> <span class="pre">max,</span> <span class="pre">step,</span> <span class="pre">default|options</span></code>). The
 compiler is the only thing that produces it; the editor and preview never
 synthesize one.</p></li>
+<li><p><strong>Agent-facing manifest fields.</strong> Each uniform’s object also carries an explicit
+<code class="docutils literal notranslate"><span class="pre">min</span></code>/<code class="docutils literal notranslate"><span class="pre">max</span></code> (a slider’s range; <code class="docutils literal notranslate"><span class="pre">0..1</span></code> for a toggle or colour; <code class="docutils literal notranslate"><span class="pre">0..n-1</span></code> for a
+dropdown) so an agent can clamp without knowing the UI vocabulary, an optional
+<code class="docutils literal notranslate"><span class="pre">unit</span></code> from a string after the UI annotation
+(<code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">float</span> <span class="pre">speed</span> <span class="pre">:</span> <span class="pre">0..5</span> <span class="pre">&quot;m/s&quot;</span> <span class="pre">=</span> <span class="pre">1.0;</span></code>), and an optional <code class="docutils literal notranslate"><span class="pre">doc</span></code> taken from
+the uniform’s <code class="docutils literal notranslate"><span class="pre">//</span></code> comment: a comment trailing the declaration on its last line,
+else the block of own-line comments directly above it (a blank line breaks the
+block). Docs are JSON-escaped and cut at <code class="docutils literal notranslate"><span class="pre">MAX_UNIFORM_DOC</span></code> (120 B) because the
+manifest rides inside the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>. <code class="docutils literal notranslate"><span class="pre">doc</span></code> is emitted <strong>last</strong> in each object: the
+device’s port table (<code class="docutils literal notranslate"><span class="pre">ledmapper_osc::parse_manifest</span></code>) is a tolerant key
+scanner, not a JSON parser, and must never meet free text before <code class="docutils literal notranslate"><span class="pre">name</span></code>/<code class="docutils literal notranslate"><span class="pre">slot</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">.fxb</span></code> format version.</strong> The header’s version byte (offset 4, after <code class="docutils literal notranslate"><span class="pre">FXB1</span></code>) is
+named <code class="docutils literal notranslate"><span class="pre">fx_vm::FORMAT_VERSION</span></code> (= <code class="docutils literal notranslate"><span class="pre">fx_compiler::FXB_FORMAT_VERSION</span></code>, pinned
+equal by a test). The VM rejects any other value and the firmware answers
+<code class="docutils literal notranslate"><span class="pre">bad_fxb</span></code>; the device reports the version it runs in <code class="docutils literal notranslate"><span class="pre">welcome.fxb_format</span></code> and in
+<code class="docutils literal notranslate"><span class="pre">/.well-known/splanc.json</span></code> (<code class="docutils literal notranslate"><span class="pre">protocol.fxb_format</span></code>), so a host toolchain can check
+it emits what the device runs. Bump it only for an incompatible bytecode change.</p></li>
 <li><p>The result is <strong>cached</strong> by the editor keyed on source text, so the linter and
 the preview trigger share one compile per idle tick (no double work).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">stats</span></code> feeds the status line (“214 ops”) and later the offline perf estimate

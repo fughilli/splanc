@@ -419,6 +419,14 @@ machine (<code class="docutils literal notranslate"><span class="pre">//firmware
 <a class="reference internal" href="memory-regions.html"><span class="std std-doc">memory-regions.md</span></a>. Item 4 (lazy FX buffers) becomes the
 activity union there, with no allocator. <em>(crate + model landed; firmware
 integration follow-up)</em></p></li>
+<li><p><strong>Post-boot heap census</strong> — every allocation after <code class="docutils literal notranslate"><span class="pre">setup()</span></code> attributed to
+its call site, read over JTAG (<code class="docutils literal notranslate"><span class="pre">--//firmware/player_app:heap_census_enabled</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>): <a class="reference internal" href="heap-census.html"><span class="std std-doc">heap-census.md</span></a>. First run: mbedTLS’s
+per-record 6.5 KB buffers are 93% of post-boot bytes; littlefs <code class="docutils literal notranslate"><span class="pre">fopen</span></code>’s 4 KB
+stdio buffer is the other large-block churn. <em>(log-only; migrations next)</em></p></li>
+</ul>
+</li>
 </ol>
 </section>
 </section>

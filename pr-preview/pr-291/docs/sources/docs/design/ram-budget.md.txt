@@ -122,3 +122,8 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    [memory-regions.md](memory-regions.md). Item 4 (lazy FX buffers) becomes the
    activity union there, with no allocator. *(crate + model landed; firmware
    integration follow-up)*
+7. **Post-boot heap census** — every allocation after `setup()` attributed to
+   its call site, read over JTAG (`--//firmware/player_app:heap_census_enabled`
+   + `ram_audit`): [heap-census.md](heap-census.md). First run: mbedTLS's
+   per-record 6.5 KB buffers are 93% of post-boot bytes; littlefs `fopen`'s 4 KB
+   stdio buffer is the other large-block churn. *(log-only; migrations next)*

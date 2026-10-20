@@ -380,6 +380,14 @@ opcode):</p>
 <td><p>vec2</p></td>
 <td><p>per-LED texture coordinate (top-down projection to 0..1)</p></td>
 </tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">led.room</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>LED position in the shared room frame, metres (== <code class="docutils literal notranslate"><span class="pre">led.pos</span></code> while unposed)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">room.min</span></code>, <code class="docutils literal notranslate"><span class="pre">room.max</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>room bounding box (the host’s, else this fixture’s own room-frame box)</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">imu.accel</span></code>, <code class="docutils literal notranslate"><span class="pre">imu.gyro</span></code></p></td>
 <td><p>vec3</p></td>
 <td><p>device IMU (when driven)</p></td>
@@ -729,7 +737,15 @@ Operands follow inline in the code stream, little-endian.</p>
 <p>Function ids for <code class="docutils literal notranslate"><span class="pre">UnMath</span></code>: <code class="docutils literal notranslate"><span class="pre">sin</span> <span class="pre">cos</span> <span class="pre">abs</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">sqrt</span> <span class="pre">exp</span> <span class="pre">log</span> <span class="pre">sign</span> <span class="pre">tan</span></code>
 (0–10). For <code class="docutils literal notranslate"><span class="pre">BinMath</span></code>: <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">pow</span> <span class="pre">mod</span> <span class="pre">step</span> <span class="pre">atan2</span></code> (0–5). Context ids for
 <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>: time, dt, frame, led.pos(3), led.idx, led.count, led.seg, led.s,
-led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2).</p>
+led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2), led.room(3),
+room.min(3), room.max(3). A program reading the room frame sets <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> flags bit
+0x08 (<code class="docutils literal notranslate"><span class="pre">FLAG_USES_ROOM</span></code>) so the host fetches it only then.</p>
+<p><code class="docutils literal notranslate"><span class="pre">time</span></code> is seconds since the effect started — or, once a host sends
+<code class="docutils literal notranslate"><span class="pre">set_time_base</span> <span class="pre">{</span> <span class="pre">epoch_ms</span> <span class="pre">}</span></code> (the multi-fixture shared time base, in the device’s
+own clock), <code class="docutils literal notranslate"><span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch_ms)</span> <span class="pre">/</span> <span class="pre">1000</span></code>, held at 0 before the epoch, so fixtures
+animate in step. A fixture’s room pose (<code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code>: translation, rotation
+quaternion, scale) maps each LED as <code class="docutils literal notranslate"><span class="pre">room</span> <span class="pre">=</span> <span class="pre">t</span> <span class="pre">+</span> <span class="pre">R(q)</span> <span class="pre">*</span> <span class="pre">(scale</span> <span class="pre">*</span> <span class="pre">pos)</span></code>; the device
+caches it per LED in millimetres (6 B/LED).</p>
 </section>
 <section id="the-fxb-container">
 <h2>The <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> container<a class="headerlink" href="#the-fxb-container" title="Link to this heading">¶</a></h2>

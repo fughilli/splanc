@@ -333,7 +333,7 @@
 <li><p>The guard’s drop runs the variant’s leak check (<code class="docutils literal notranslate"><span class="pre">Variant::leaked</span></code>, e.g. “every pool full again”) and records <code class="docutils literal notranslate"><span class="pre">ExitStatus::Leaked(n)</span></code>. A forgotten slot, or a blob that never freed, is caught at the transition instead of surfacing later as fragmentation.</p></li>
 </ul>
 </li>
-<li><p><strong>Proofs.</strong> Kani harnesses (<code class="docutils literal notranslate"><span class="pre">firmware/region/kani.sh</span></code>, outside Bazel) prove for all ≤ 6-op sequences that:</p>
+<li><p><strong>Proofs.</strong> Kani harnesses (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//firmware/region:region_kani</span></code>, hermetic; see <a class="reference internal" href="kani-bazel.html"><span class="std std-doc">kani-bazel.md</span></a>) prove for all ≤ 6-op sequences that:</p>
 <ul>
 <li><p>slots never alias;</p></li>
 <li><p>alloc succeeds iff a slot is free;</p></li>
@@ -401,7 +401,14 @@
 <h2>Integration plan<a class="headerlink" href="#integration-plan" title="Link to this heading">¶</a></h2>
 <p>Ordered by bytes recovered per effort:</p>
 <ol class="arabic simple">
-<li><p><strong>Drive the firmware’s mode switches through <code class="docutils literal notranslate"><span class="pre">sysmode::step</span></code>.</strong> Call it from loopTask at the BLE/wss/upload/effect edges. Log refusals at first, then enforce them.</p></li>
+<li><p><strong>Drive the firmware’s mode switches through <code class="docutils literal notranslate"><span class="pre">sysmode::step</span></code>.</strong> <em>(log-only: done)</em></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sysmode::observe::Tracker</span></code> tracks the device by OBSERVATION: each loop, <code class="docutils literal notranslate"><span class="pre">mode_observe()</span></code> (main.cpp) hands <code class="docutils literal notranslate"><span class="pre">lm_mode_observe</span></code> the transport’s facts (credentials, lease, BLE central, wss, upload window); the player adds its own (capture / counting probe, effect loaded, set_texture frames within 2 s over wss, map stored). The tracker derives the model events axis by axis and applies each through <code class="docutils literal notranslate"><span class="pre">step</span></code>.</p></li>
+<li><p>A refusal is logged once per (state, event, reason) and forced so tracking continues; counters live in the <code class="docutils literal notranslate"><span class="pre">LM_MODE</span></code> static (<code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code> reads it over JTAG at the end of a <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> run) and on the serial status line (<code class="docutils literal notranslate"><span class="pre">mode=state/accepted/refused/unmodeled</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">observe_test</span></code> is the model-vs-firmware agreement test (the HITL scenarios’ observation sequences track with zero refusals). Wiring it up corrected two model errors: wired <code class="docutils literal notranslate"><span class="pre">PROV</span></code> provisioning needs no central (<code class="docutils literal notranslate"><span class="pre">Event::WiredCredentials</span></code>), and a restored boot is unprovisioned (credentials are RAM-only).</p></li>
+<li><p>Next: enforce — gate the switches that the firmware initiates (effect load during an upload, video without wss) on <code class="docutils literal notranslate"><span class="pre">step</span></code> instead of only observing them.</p></li>
+</ul>
+</li>
 <li><p><strong>Freeze trap.</strong> Revive <code class="docutils literal notranslate"><span class="pre">firmware/sysheap</span></code>’s <code class="docutils literal notranslate"><span class="pre">--wrap</span></code> of malloc/heap_caps.</p>
 <ul class="simple">
 <li><p>After <code class="docutils literal notranslate"><span class="pre">setup()</span></code>, record the caller PC and size of any IDF-heap allocation in a census ring, read over JTAG by <code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code>, so the DUT isn’t disturbed.</p></li>
