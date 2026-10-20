@@ -44,13 +44,6 @@
     },
     {
       "kind": "unverified",
-      "entity": "PR-7",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
       "entity": "PR-8",
       "message": "no test evidence",
       "route": "autonomous",
@@ -71,34 +64,20 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-11",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-12",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-13",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
-      "kind": "pyramid",
+      "kind": "under-verified",
       "entity": "PR-13",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -108,32 +87,20 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-15",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-16",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-17",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-18",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -143,11 +110,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-20",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "stale",
@@ -163,14 +131,6 @@
       "message": "demands hil but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
       "demanded_level": "hil",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-22",
-      "message": "only passing evidence is against an older build",
-      "route": "autonomous",
-      "demanded_level": "simulation",
       "provided_level": "hitl"
     },
     {
@@ -205,11 +165,12 @@
       "provided_level": "hitl"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-27",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -219,20 +180,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "stale",
+      "kind": "under-verified",
       "entity": "PR-29",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-29",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -250,21 +203,7 @@
     },
     {
       "kind": "unverified",
-      "entity": "PR-32",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
       "entity": "PR-33",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-34",
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
@@ -293,18 +232,12 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-37",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-38",
-      "message": "no test evidence",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
     },
     {
       "kind": "no-implementation",
@@ -321,7 +254,7 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-2",
-      "message": "high risk; mitigation is OPEN",
+      "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
     {
@@ -339,12 +272,6 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-5",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-9",
       "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     }

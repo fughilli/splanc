@@ -9,17 +9,17 @@
     "user_needs": 8,
     "user_needs_validated": 0,
     "requirements": 38,
-    "requirements_verified": 1,
-    "requirements_under_verified": 7,
+    "requirements_verified": 9,
+    "requirements_under_verified": 12,
     "requirements_partial": 0,
     "requirements_failed": 0,
-    "requirements_unverified": 30,
+    "requirements_unverified": 17,
     "risks": 12,
-    "risks_mitigated": 0,
+    "risks_mitigated": 3,
     "mitigations": 12,
-    "mitigations_verified": 0,
-    "test_cases": 19,
-    "gaps": 49
+    "mitigations_verified": 3,
+    "test_cases": 1044,
+    "gaps": 38
   },
   "levels": [
     {
@@ -51,7 +51,7 @@
     {
       "id": "UN-1",
       "title": "Create, preview and tune effects quickly on desktop and mobile",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need to create, preview, and tune effects quickly on desktop and mobile with responsive controls and efficient layouts.",
       "requirements": [
         "PR-1",
@@ -66,7 +66,7 @@
     {
       "id": "UN-2",
       "title": "Understandable, non-blocking, trustworthy AI + remapping workflows",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need AI-assisted workflows and control remapping that are understandable, non-blocking, and trustworthy.",
       "requirements": [
         "PR-5",
@@ -79,7 +79,7 @@
     {
       "id": "UN-3",
       "title": "Drive effects from external inputs without extra hardware",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need to drive effects from external inputs such as cameras and TouchDesigner without unnecessary hardware dependencies.",
       "requirements": [
         "PR-9",
@@ -120,7 +120,7 @@
     {
       "id": "UN-6",
       "title": "Acceptable quality and predictable performance on device",
-      "status": "UNVALIDATED",
+      "status": "PARTIAL",
       "description": "Users need acceptable visual quality and predictable runtime performance on constrained device hardware.",
       "requirements": [
         "PR-17",
@@ -487,10 +487,26 @@
     {
       "id": "PR-7",
       "title": "Control remapping to semantic effect inputs without editing source",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Control remapping shall let users map hardware controls to semantic effect inputs without rewriting effect source code.",
+      "evidence": [
+        {
+          "name": "//web:midiStore_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:midiStore_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:midi_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:midi_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-2"
       ],
@@ -719,10 +735,660 @@
     {
       "id": "PR-11",
       "title": "Capture, reconstruct, upload, import/export and conflict handling",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "The mapping workflow shall support capture, reconstruction, upload, import, export, and conflict handling for topology maps.",
+      "evidence": [
+        {
+          "name": "pi.server.tests.test_codebook::test_bit_period_override",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[1-1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[1000-10]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[1023-10]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[1024-11]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[2-2]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[3-2]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[63-6]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_bits_covers_offset_code_space_plus_fec[64-7]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_fec_none_transmits_the_bare_data_word",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_fixed_fields_and_default_period",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_invalid_led_count_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_matches_design_doc_example",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_unknown_fec_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_configure_renegotiates_mid_capture",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_configure_without_session_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_detections_require_active_session",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_exposure_reports_logged_with_session",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_idle_reports_inactive",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_resets_after_stop",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_solves_continuously_single_flight",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_survives_solve_failure",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_active_reports_session_epoch_and_led_count",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_after_stop_reports_inactive",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_idle_reports_inactive_with_default_codebook",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_solve_status_idle_and_running",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_hello_returns_welcome",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_imu_batches_and_poseless_records_persist_in_the_log",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_live_decimation_bounds_views_and_keeps_pose_spread",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_malformed_message_returns_error",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_playback_off_is_universal_other_effects_unsupported_until_phase_g",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_second_capture_on_one_connection_gets_its_own_log",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_counting_pattern_empty_blocks_clears",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_counting_pattern_latches_and_acks",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_led_count_persists_and_defaults_channel_zero",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_snapshot_carries_imu_for_the_live_solver",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_adopts_client_symbols_and_rate",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_uses_requested_led_count",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_without_options_uses_server_defaults",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_triggers_reconstruction_and_result_ready",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_without_host_solve_persists_but_skips_reconstruction",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_without_session_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_map_persists_and_acks_result_ready",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_map_without_store_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_topology_for_unknown_map_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_topology_persists_next_to_its_map",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_time_sync_pong_timestamps",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_welcome_carries_solver_bench_score",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[configure]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[detections]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[exposure_report]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_live_map]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_pattern]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_playback]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_solve_status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[hello]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[imu_batch]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_counting_pattern0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_counting_pattern1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_led_count0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_led_count1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_playback0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_playback1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[start_mapping0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[start_mapping1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[stop_mapping0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[stop_mapping1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[submit_map]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[submit_topology]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[time_sync_ping]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_poseless_record_decodes_with_pose_absent_then_none",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[counting_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[counting_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[error]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[led_count_state]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[live_mapFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[live_mapTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[mapping_started]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[mapping_stopped]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[pattern_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[pattern_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[playback_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[playback_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[result_ready]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[solve_status0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[solve_status1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[time_sync_pong]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[welcome0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[welcome1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_trajectory_reshapes_between_nested_arrays_and_vec3",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_undecodable_frame_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_exposure_without_session_is_dropped",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_map_store_save_json_and_csv",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_reconfigure_swaps_params_and_restamps_epoch",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_reconfigure_without_session_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_start_persist_and_clear",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_status_proxies",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_status_without_session_is_zero",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "//web:exposure_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:exposure_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:intrinsics_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:intrinsics_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:mapBundle_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:mapBundle_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:mapTransform_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:mapTransform_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:pinhole_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:pinhole_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:placement_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:placement_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-4"
       ],
@@ -918,10 +1584,42 @@
     {
       "id": "PR-12",
       "title": "Tolerate larger installations (batching, scale-aware, recovery)",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The mapping workflow shall tolerate larger installations through batching, scale-aware upload behavior, and recovery-oriented handling of reconstruction interruptions.",
+      "evidence": [
+        {
+          "name": "pi.server.tests.test_large_install_scale::test_final_solve_that_dies_leaves_the_server_ready_for_the_next_capture",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_large_install_scale::test_installation_scale_capture_streams_as_many_batches_into_one_ordered_session",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_large_install_scale::test_interim_solve_input_stays_bounded_per_led_as_the_capture_grows",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_large_install_scale::test_interim_solve_interrupted_by_stop_is_never_adopted_by_the_next_capture",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_large_install_scale::test_slow_interim_solve_on_a_growing_session_never_stacks_more_solves",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        }
+      ],
       "demanded_level": "hitl",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-4",
         "UN-7"
@@ -1091,6 +1789,20 @@
       "description": "The browser experience shall support device provisioning, rename, discovery, LAN connection, and direct connection by available connection modes.",
       "evidence": [
         {
+          "name": "//firmware/player_app:improv_codec_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:improv_codec_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/player_app:ws_codec_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:ws_codec_test",
+          "kind": "target"
+        },
+        {
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
@@ -1110,10 +1822,235 @@
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
           "stale": true
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_configure_renegotiates_mid_capture",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_configure_without_session_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_detections_require_active_session",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_exposure_reports_logged_with_session",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_idle_reports_inactive",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_resets_after_stop",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_solves_continuously_single_flight",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_live_map_survives_solve_failure",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_active_reports_session_epoch_and_led_count",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_after_stop_reports_inactive",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_pattern_idle_reports_inactive_with_default_codebook",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_get_solve_status_idle_and_running",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_hello_returns_welcome",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_imu_batches_and_poseless_records_persist_in_the_log",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_live_decimation_bounds_views_and_keeps_pose_spread",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_malformed_message_returns_error",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_playback_off_is_universal_other_effects_unsupported_until_phase_g",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_second_capture_on_one_connection_gets_its_own_log",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_counting_pattern_empty_blocks_clears",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_counting_pattern_latches_and_acks",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_set_led_count_persists_and_defaults_channel_zero",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_snapshot_carries_imu_for_the_live_solver",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_adopts_client_symbols_and_rate",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_uses_requested_led_count",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_without_options_uses_server_defaults",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_triggers_reconstruction_and_result_ready",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_without_host_solve_persists_but_skips_reconstruction",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_stop_without_session_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_map_persists_and_acks_result_ready",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_map_without_store_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_topology_for_unknown_map_errors",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_submit_topology_persists_next_to_its_map",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_time_sync_pong_timestamps",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_welcome_carries_solver_bench_score",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "//web:clocksync_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:clocksync_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:improv_provision_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:improv_provision_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:improv_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:improv_test",
+          "kind": "target"
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -1126,8 +2063,6 @@
         "pi/hitl",
         "web"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -1333,10 +2268,26 @@
     {
       "id": "PR-15",
       "title": "Browser firmware update detects hardware and flashes compatible image",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "The browser-based firmware update flow shall detect hardware appropriately and flash compatible firmware images for the detected target.",
+      "evidence": [
+        {
+          "name": "//web:flashManifest_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashManifest_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:flashUsb_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashUsb_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -1386,10 +2337,26 @@
     {
       "id": "PR-16",
       "title": "Cross-platform browser flashing with safe fallback",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "The product shall support browser-based flashing across supported client platforms and provide safe fallback behavior where support is limited.",
+      "evidence": [
+        {
+          "name": "//web:flashEnv_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashEnv_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:flashUsb_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashUsb_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -1439,10 +2406,26 @@
     {
       "id": "PR-17",
       "title": "Effect runtime capability + calibrated performance-estimation inputs",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The runtime shall support effect execution features needed by the documented effect system, including embedded/runtime type support and calibrated performance estimation inputs.",
+      "evidence": [
+        {
+          "name": "//web:fxTopology_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:fxTopology_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:fxbTextures_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:fxbTextures_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-6"
       ],
@@ -1536,10 +2519,40 @@
     {
       "id": "PR-18",
       "title": "Performance visibility against device budget",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The system shall provide users with performance visibility sufficient to understand whether an effect is likely to run within device budget.",
+      "evidence": [
+        {
+          "name": "//web:budget_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:budget_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:costModel_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:costModel_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:executionProfile_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:executionProfile_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:profileValidation_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:profileValidation_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-6"
       ],
@@ -1652,10 +2665,26 @@
     {
       "id": "PR-20",
       "title": "Visual output calibration (color correction)",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The product shall support visual output calibration features such as color correction where documented.",
+      "evidence": [
+        {
+          "name": "//firmware/player_app:color_correction_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/player_app:color_correction_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:colorCorrection_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:colorCorrection_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-6"
       ],
@@ -1834,7 +2863,7 @@
     {
       "id": "PR-22",
       "title": "Preserve user work across transient disconnects",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
       "evidence": [
         {
@@ -1843,10 +2872,58 @@
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
           "stale": true
+        },
+        {
+          "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_exposure_without_session_is_dropped",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_map_store_save_json_and_csv",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_reconfigure_swaps_params_and_restamps_epoch",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_reconfigure_without_session_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_start_persist_and_clear",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_status_proxies",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_session::test_status_without_session_is_zero",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
         }
       ],
       "demanded_level": "simulation",
-      "provided_level": "hitl",
+      "provided_level": "simulation",
       "satisfies": [
         "UN-4",
         "UN-7"
@@ -1857,7 +2934,6 @@
         "pi/server",
         "web"
       ],
-      "stale": true,
       "implemented_in": [
         {
           "ids": [
@@ -2270,11 +3346,20 @@
     {
       "id": "PR-27",
       "title": "Calibrate and cover the effect performance model",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "Expand coverage of modeled operations, calibrate the cost model, validate against held-out workloads, and expose budget visibility so the model does not give false confidence.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "//web:costModel_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:costModel_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "hil",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-6"
       ],
@@ -2496,10 +3581,24 @@
           "level": "hitl",
           "target": "//pi/hitl/harness:e2e_netstack",
           "stale": true
+        },
+        {
+          "name": "//web:clocksync_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:clocksync_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:improv_provision_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:improv_provision_test",
+          "kind": "target"
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -2513,8 +3612,6 @@
         "pi/hitl",
         "web"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -2869,11 +3966,27 @@
     {
       "id": "PR-32",
       "title": "Detect flashing capability and provide fallback transports",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Detect platform capability, support alternate transport strategies where feasible, and provide clear fallback behavior so browser flashing is usable across client platforms.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "//web:flashEnv_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashEnv_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:flashUsb_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:flashUsb_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5"
       ],
@@ -2983,11 +4096,311 @@
     {
       "id": "PR-34",
       "title": "Pin the wire schema with cross-language conformance tests",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Strengthen schema ownership and compatibility tests, validate payload dimensions/boundaries, and add cross-language conformance tests so binary schema/protocol drift cannot cause catastrophic allocations or corruption.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[configure]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[detections]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[exposure_report]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_live_map]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_pattern]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_playback]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_solve_status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[get_status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[hello]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[imu_batch]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_counting_pattern0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_counting_pattern1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_led_count0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_led_count1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_playback0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[set_playback1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[start_mapping0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[start_mapping1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[stop_mapping0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[stop_mapping1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[submit_map]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[submit_topology]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_client_roundtrip[time_sync_ping]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_poseless_record_decodes_with_pose_absent_then_none",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[counting_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[counting_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[error]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[led_count_state]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[live_mapFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[live_mapTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[mapping_started]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[mapping_stopped]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[pattern_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[pattern_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[playback_stateFalse]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[playback_stateTrue]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[result_ready]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[solve_status0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[solve_status1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[status]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[time_sync_pong]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[welcome0]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_server_roundtrip[welcome1]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_trajectory_reshapes_between_nested_arrays_and_vec3",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_proto_wire::test_undecodable_frame_raises",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "//web:fec_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:fec_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:gray_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:gray_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:pinhole_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:pinhole_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:proto_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:proto_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-3",
         "UN-4",
@@ -3264,11 +4677,20 @@
     {
       "id": "PR-37",
       "title": "UI regression coverage for state, visibility and layout",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Regression coverage for settings persistence, visibility, focus, tooltip/banner behavior, and responsive layout so UI state inconsistency or obstruction cannot block primary tasks.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "//web:appearance_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:appearance_test",
+          "kind": "target"
+        }
+      ],
       "demanded_level": "simulation",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-1",
         "UN-2"
@@ -3321,10 +4743,18 @@
     {
       "id": "PR-38",
       "title": "BLE and Wi-Fi (wss) transports coexist",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "The device shall keep its BLE service (Improv provisioning and the BLE player transport) advertising and connectable while a wss session is live, and shall serve a BLE central and a wss client concurrently. Memory budgets shall hold both at once: making the radios mutually exclusive (tearing down the BLE controller for a wss session, or refusing wss while BLE is up) is not an allowed memory-reduction strategy. Dropping the vestigial post-provisioning BLE link when a wss client first appears is permitted, provided the device keeps advertising and accepts a new central during the session. Product decision, 2026-10-19.",
+      "evidence": [
+        {
+          "name": "reachability_test::ble_and_wss_coexist",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/sysmode:reachability_test"
+        }
+      ],
       "demanded_level": "hitl",
-      "provided_level": null,
+      "provided_level": "simulation",
       "satisfies": [
         "UN-5",
         "UN-7"
@@ -3368,7 +4798,7 @@
     {
       "id": "MIT-2",
       "title": "Calibrate and cover the effect performance model",
-      "status": "UNVERIFIED",
+      "status": "PARTIAL",
       "description": "Risk control for RISK-2 (Effect performance model gives false confidence); FUG-88 prose mitigation, specified as PR-27.",
       "type": null,
       "mitigates": [
@@ -3443,7 +4873,7 @@
     {
       "id": "MIT-7",
       "title": "Detect flashing capability and provide fallback transports",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-7 (Browser flashing unavailable/unreliable on important platforms); FUG-88 prose mitigation, specified as PR-32.",
       "type": null,
       "mitigates": [
@@ -3473,7 +4903,7 @@
     {
       "id": "MIT-9",
       "title": "Pin the wire schema with cross-language conformance tests",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-9 (Binary schema or protocol drift across components); FUG-88 prose mitigation, specified as PR-34.",
       "type": null,
       "mitigates": [
@@ -3518,7 +4948,7 @@
     {
       "id": "MIT-12",
       "title": "UI regression coverage for state, visibility and layout",
-      "status": "UNVERIFIED",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-12 (UI state inconsistency or obstruction blocks primary tasks); FUG-88 prose mitigation, specified as PR-37.",
       "type": null,
       "mitigates": [
@@ -3550,7 +4980,7 @@
     {
       "id": "RISK-2",
       "title": "Effect performance model gives false confidence",
-      "status": "OPEN",
+      "status": "PARTIAL",
       "description": "The model allows effects that exceed realistic runtime budget, undermining UN-6 and indirectly threatening UN-7.",
       "residual": "Bounded by held-out validation, but the cost model only tracks reality as well as its device calibration (PR-27 is HIL-demanded).",
       "severity": "high",
@@ -3619,7 +5049,7 @@
     {
       "id": "RISK-7",
       "title": "Browser flashing unavailable/unreliable on important platforms",
-      "status": "OPEN",
+      "status": "MITIGATED",
       "description": "Harms UN-5 (e.g. Android browser flashing).",
       "severity": "medium",
       "likelihood": null,
@@ -3645,7 +5075,7 @@
     {
       "id": "RISK-9",
       "title": "Binary schema or protocol drift across components",
-      "status": "OPEN",
+      "status": "MITIGATED",
       "description": "Causes catastrophic allocations or corrupted behavior, harming UN-3, UN-4, UN-6, UN-7.",
       "residual": "Cross-language conformance tests catch drift at simulation level; the residual is schema changes shipped without regenerating a consumer.",
       "severity": "high",
@@ -3686,7 +5116,7 @@
     {
       "id": "RISK-12",
       "title": "UI state inconsistency or obstruction blocks primary tasks",
-      "status": "OPEN",
+      "status": "MITIGATED",
       "description": "Confuses users and blocks primary tasks, harming UN-1 and UN-2.",
       "severity": "low",
       "likelihood": null,
@@ -3700,15 +5130,15 @@
   "test_methods": [],
   "modules": {
     "firmware": "PARTIAL",
-    "fx_compiler": "UNVERIFIED",
+    "fx_compiler": "PARTIAL",
     "pi/hitl": "PARTIAL",
-    "pi/led_driver": "UNVERIFIED",
-    "pi/reconstruction": "UNVERIFIED",
+    "pi/led_driver": "VERIFIED",
+    "pi/reconstruction": "PARTIAL",
     "pi/server": "PARTIAL",
     "requirements": "PARTIAL",
-    "shared/protocol": "UNVERIFIED",
-    "shared/simulator": "UNVERIFIED",
-    "solver": "UNVERIFIED",
+    "shared/protocol": "VERIFIED",
+    "shared/simulator": "VERIFIED",
+    "solver": "VERIFIED",
     "tools": "UNVERIFIED",
     "web": "PARTIAL"
   },
@@ -3717,14 +5147,11 @@
     "RISK-2",
     "RISK-3",
     "RISK-4",
-    "RISK-5",
-    "RISK-9"
+    "RISK-5"
   ],
   "pyramid_violations": [
-    "PR-13",
     "PR-21",
     "PR-26",
-    "PR-29",
     "PR-35"
   ],
   "unknown_evidence": {},
@@ -3773,13 +5200,6 @@
     },
     {
       "kind": "unverified",
-      "entity": "PR-7",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
       "entity": "PR-8",
       "message": "no test evidence",
       "route": "autonomous",
@@ -3800,34 +5220,20 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-11",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-12",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-13",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
-      "kind": "pyramid",
+      "kind": "under-verified",
       "entity": "PR-13",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -3837,32 +5243,20 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-15",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-16",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-17",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-18",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -3872,11 +5266,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-20",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "stale",
@@ -3892,14 +5287,6 @@
       "message": "demands hil but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
       "demanded_level": "hil",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-22",
-      "message": "only passing evidence is against an older build",
-      "route": "autonomous",
-      "demanded_level": "simulation",
       "provided_level": "hitl"
     },
     {
@@ -3934,11 +5321,12 @@
       "provided_level": "hitl"
     },
     {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-27",
-      "message": "no test evidence",
+      "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hil"
+      "demanded_level": "hil",
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -3948,20 +5336,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "stale",
+      "kind": "under-verified",
       "entity": "PR-29",
-      "message": "only passing evidence is against an older build",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-29",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "provided_level": "simulation"
     },
     {
       "kind": "unverified",
@@ -3979,21 +5359,7 @@
     },
     {
       "kind": "unverified",
-      "entity": "PR-32",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
       "entity": "PR-33",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-34",
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
@@ -4022,18 +5388,12 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "unverified",
-      "entity": "PR-37",
-      "message": "no test evidence",
-      "route": "autonomous",
-      "demanded_level": "simulation"
-    },
-    {
-      "kind": "unverified",
+      "kind": "under-verified",
       "entity": "PR-38",
-      "message": "no test evidence",
+      "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
     },
     {
       "kind": "no-implementation",
@@ -4050,7 +5410,7 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-2",
-      "message": "high risk; mitigation is OPEN",
+      "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
     {
@@ -4068,12 +5428,6 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-5",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-9",
       "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     }
