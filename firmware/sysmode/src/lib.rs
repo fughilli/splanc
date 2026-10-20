@@ -23,6 +23,8 @@
 
 #![no_std]
 
+pub mod observe;
+
 /// WiFi bring-up. The vendor driver runs the boot scan; after the join the
 /// netstack owns the radio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -79,6 +81,9 @@ pub enum Event {
     BleDisconnect,
     /// Improv delivered WiFi credentials.
     ImprovCredentials,
+    /// The wired serial console delivered credentials (`PROV <ssid> <pass>`, the
+    /// no-BLE HITL path) — needs no central.
+    WiredCredentials,
     /// The vendor scan + join finished.
     Joined,
     /// The AP dropped us; the netstack rejoins (no vendor rescan).
@@ -98,10 +103,11 @@ pub enum Event {
 }
 
 impl Event {
-    pub const ALL: [Event; 16] = [
+    pub const ALL: [Event; 17] = [
         Event::BleConnect,
         Event::BleDisconnect,
         Event::ImprovCredentials,
+        Event::WiredCredentials,
         Event::Joined,
         Event::LinkLost,
         Event::WssOpen,
@@ -142,10 +148,11 @@ impl SysMode {
         map: false,
     };
 
-    /// Power-on with stored credentials, map and effect: fs_replay restores the
-    /// map + effect before the network is up, then the scan starts.
+    /// Power-on with a stored map and effect: fs_replay restores them before the
+    /// network is up. WiFi credentials are RAM-only on the netstack build, so the
+    /// device still waits for Improv / the wired console.
     pub const BOOT_RESTORED: SysMode = SysMode {
-        wifi: Wifi::Scanning,
+        wifi: Wifi::Unprovisioned,
         ble: Ble::Advertising,
         wss: false,
         activity: Activity::Effect { video: false },
@@ -180,6 +187,12 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
         }
         Event::ImprovCredentials => {
             if s.ble != Ble::Connected || s.wifi != Wifi::Unprovisioned {
+                return Err(Refuse::NotApplicable);
+            }
+            n.wifi = Wifi::Scanning;
+        }
+        Event::WiredCredentials => {
+            if s.wifi != Wifi::Unprovisioned {
                 return Err(Refuse::NotApplicable);
             }
             n.wifi = Wifi::Scanning;
