@@ -206,3 +206,28 @@ describe("reconnect", () => {
     assert.equal(readStatus().error, null);
   });
 });
+
+describe("pairing edge cases (live-relay E2E findings)", () => {
+  test("two bridges with one identity don't evict each other every second", async () => {
+    const { identity } = tempIdentity();
+    const fast = { baseMs: 20, maxMs: 100 };
+    const a = new RelayLink({ relay, identity, backoff: fast, replacedBackoff: { baseMs: 60_000, maxMs: 60_000 } });
+    const b = new RelayLink({ relay, identity, backoff: fast, replacedBackoff: { baseMs: 60_000, maxMs: 60_000 } });
+    a.start();
+    try {
+      await until(() => a.online, "a online");
+      b.start();
+      await until(() => b.online && a.phase === "offline", "b took over");
+      assert.match(a.lastError ?? "", /another bridge using this identity/);
+      await new Promise((res) => setTimeout(res, 600));
+      // With the plain backoff (20 ms) they would have swapped ~30 times by now.
+      assert.equal(a.connects, 1);
+      assert.equal(b.connects, 1);
+      assert.equal(a.replaced, 1);
+      assert.ok(b.online);
+    } finally {
+      a.stop();
+      b.stop();
+    }
+  });
+});
