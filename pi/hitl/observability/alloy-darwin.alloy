@@ -1,0 +1,38 @@
+// Grafana Alloy configuration for the Mac (darwin) HITL host — the macOS
+// counterpart of alloy.alloy, run by alloy-darwin.nix as a launchd daemon.
+//
+// Identical push path to the Linux rigs (scrape the reservation daemon on
+// :8087, remote_write to Grafana Cloud, `rig` label from HITL_RIG), MINUS the
+// host block: prometheus.exporter.unix's collectors are Linux-only. The daemon
+// already self-reports hitl_host_load1 / hitl_host_memory_* (darwin sysctl), so
+// the hitl-rigs dashboard's host panels still get a minimal view of the Mac.
+// Keep the remote_write + hitl_managerd blocks in step with alloy.alloy.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_PROM_KEY")
+    }
+  }
+
+  external_labels = {
+    rig = sys.env("HITL_RIG"),
+  }
+}
+
+prometheus.scrape "hitl_managerd" {
+  targets = [
+    { "__address__" = "127.0.0.1:8087", "job" = "hitl-managerd" },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}

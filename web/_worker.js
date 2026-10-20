@@ -134,14 +134,19 @@ function completion(json, tools) {
   const m = choice?.message;
   if (json?.error || !obj(m) || m.role !== "assistant") return null;
   if (m.refusal || choice.finish_reason === "content_filter") return { refusal: true };
-  const calls = m.tool_calls;
+  // Provider aggregators may retain streaming indices or other transport fields.
+  // Validate and forward only the tool-call fields consumed by the client.
+  const calls = m.tool_calls == null ? undefined : Array.isArray(m.tool_calls) ? m.tool_calls.map(c => ({
+    id: c?.id, type: c?.type,
+    function: { name: c?.function?.name, arguments: c?.function?.arguments },
+  })) : m.tool_calls;
   const requested = new Set((tools ?? []).map(t => t.function.name));
   if (calls !== undefined && (!Array.isArray(calls) || calls.length > 8 ||
       !calls.every(c => validToolCall(c) && requested.has(c.function.name)))) return null;
   if (!["stop", "tool_calls"].includes(choice.finish_reason)) return null; // Never execute truncated/failed edits.
   if (!(typeof m.content === "string" && m.content.trim()) && !calls?.length) return null;
   return {
-    choices: [{ message: { role: "assistant", content: m.content ?? "", ...(calls?.length ? { tool_calls: calls } : {}) },
+    choices: [{ message: { role: "assistant", content: typeof m.content === "string" ? m.content : "", ...(calls?.length ? { tool_calls: calls } : {}) },
       finish_reason: calls?.length ? "tool_calls" : "stop" }],
   };
 }
@@ -199,45 +204,82 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
       }
       if (!validPayload(body)) return error(400, "invalid_request");
+      const attempts = [];
       for (const model of FREE_DEMO_MODELS) {
         if (total.signal.aborted) break;
+        const diagnostic = { model, outcome: "pending" };
+        attempts.push(diagnostic);
         const attempt = new AbortController();
         const stop = () => attempt.abort();
         total.signal.addEventListener("abort", stop, { once: true });
         const timer = setTimeout(stop, attemptMs);
         try {
           const result = await fetchImpl("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST", redirect: "error", signal: attempt.signal,
+            // Workers supports manual/follow, not the Fetch standard error mode.
+            // Never follow a redirect carrying the server credential.
+            method: "POST", redirect: "manual", signal: attempt.signal,
             headers: { authorization: `Bearer ${env.OPENROUTER_API_KEY}`, "content-type": "application/json",
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
               max_tokens: Math.min(body.max_tokens ?? 4000, 4000),
+              // MiniMax defaults to max reasoning; this is an interactive editor.
+              // The other two models support disabling optional reasoning.
+              reasoning: model === "minimax/minimax-m3.1-flash:free" ? { effort: "low" } : { enabled: false },
               ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
               provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
             }),
           });
+          if (result.status >= 300 && result.status < 400) {
+            await result.body?.cancel();
+            return error(503, "upstream_redirect");
+          }
           let json;
-          try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch { /* Treat malformed upstream output as unavailable. */ }
+          try { json = await boundedJson(result, BODY_LIMIT, attempt.signal); } catch (e) {
+            // A 200 response can send headers and then stall. Preserve the
+            // deadline classification instead of calling an aborted body JSON.
+            if (attempt.signal.aborted) throw e;
+          }
           if (total.signal.aborted) break;
           const status = result.ok && json?.error ? Number(json.error.code) || 502 : result.status;
+          diagnostic.status = status;
+          diagnostic.outcome = status >= 400 ? "upstream_error" : "invalid_completion";
           if (status === 429) {
+            diagnostic.outcome = "rate_limited";
             // Only an explicitly identified provider quota may use a different model.
             // A platform quota (or ambiguous 429) stops immediately, never key-rotates.
-            const providerQuota = json?.error?.metadata?.provider_name &&
-              Number(json?.error?.metadata?.provider_code) === 429;
-            if (!providerQuota || result.headers.has("x-ratelimit-remaining")) {
-              const retry = result.headers.get("retry-after");
-              return error(429, "shared_allowance", retry ? { "retry-after": retry } : { "retry-after": "60" });
+            const metadata = json?.error?.metadata;
+            const provider = metadata?.provider_name;
+            const providerQuota = typeof provider === "string" && provider.trim() && provider.toLowerCase() !== "openrouter" && (
+              Number(metadata.provider_code) === 429 ||
+              ["rate_limited", "rate_limit_exceeded"].includes(metadata.provider_code) ||
+              metadata.error_type === "rate_limit_exceeded" ||
+              (json.error.message === "Provider returned error" && typeof metadata.raw === "string")
+            );
+            const quotaHeaders = new Headers(obj(metadata?.headers) ? metadata.headers : {});
+            const exhausted = h => h.has("x-ratelimit-remaining") && Number(h.get("x-ratelimit-remaining")) === 0;
+            const platformQuota = exhausted(result.headers) || exhausted(quotaHeaders) ||
+              String(metadata?.limit_source ?? "").startsWith("openrouter_");
+            if (!providerQuota || platformQuota) {
+              const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
+              return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
             continue;
           }
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");
+          if (json?.choices?.[0]?.finish_reason === "length") diagnostic.outcome = "output_limit";
+          const message = json?.choices?.[0]?.message;
+          if (!json) diagnostic.outcome = "invalid_json";
+          else if (!obj(message)) diagnostic.outcome = "missing_message";
+          else if (message.role !== "assistant") diagnostic.outcome = "invalid_role";
+          else if (message.tool_calls?.length) diagnostic.outcome = "invalid_tool_calls";
+          else if (diagnostic.outcome !== "output_limit") diagnostic.outcome = "empty_or_invalid_finish";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
           if (parsed) return reply(200, { ...parsed, model });
         } catch {
+          diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
           // Network failures/attempt deadlines may try the next free model.
           // A visitor cancellation or overall deadline exits below.
         } finally {
@@ -245,8 +287,11 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           total.signal.removeEventListener("abort", stop);
         }
       }
-      return error(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503,
-        request.signal.aborted ? "cancelled" : "models_unavailable");
+      // Fixed model IDs, numeric status and our own outcome vocabulary only.
+      // Never expose provider raw payloads, prompts, generated code or credentials.
+      return reply(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503, {
+        error: { code: request.signal.aborted ? "cancelled" : "models_unavailable" }, attempts,
+      });
     } finally {
       clearTimeout(deadline);
       request.signal.removeEventListener("abort", cancel);

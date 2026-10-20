@@ -41,7 +41,7 @@ test('locks upstream/model/price/output and preserves tool/image history', async
   assert.equal(result.status, 200);
   assert.equal(sent.target, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(sent.init.headers.authorization, 'Bearer unit-test-secret');
-  assert.equal(sent.init.redirect, 'error');
+  assert.equal(sent.init.redirect, 'manual');
   assert.equal(sent.body.model, FREE_DEMO_MODELS[0]);
   assert.equal(sent.body.max_tokens, 4000);
   assert.deepEqual(sent.body.provider.max_price, { prompt: 0, completion: 0, request: 0, image: 0 });
@@ -162,4 +162,93 @@ test('deadline cancels a stalled upload and releases its stream', async () => {
   const relay = createDemoRelay({ totalMs: 10, fetchImpl: () => assert.fail('upload incomplete') });
   assert.equal((await relay(request, env)).status, 504);
   assert.equal(cancelled, true);
+});
+
+// Cloudflare Workers rejects redirect:error synchronously, unlike Node fetch.
+test('uses a Workers-compatible redirect mode and rejects every redirect without forwarding credentials', async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    let calls = 0;
+    const relay = createDemoRelay({ fetchImpl: async (url, init) => {
+      calls++;
+      if (init.redirect === 'error') throw new TypeError('Unsupported redirect mode');
+      assert.equal(init.redirect, 'manual');
+      assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions');
+      return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:'Do not accept redirect body'},finish_reason:'stop'}]}), { status, headers: { location: 'https://untrusted.invalid' } });
+    } });
+    const response = await relay(req(), env);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {error:{code:'upstream_redirect'}});
+    assert.equal(calls, 1);
+  }
+});
+
+test('documented typed and legacy provider capacity errors use another model', async () => {
+  for (const metadata of [
+    {provider_name:'Example',error_type:'rate_limit_exceeded',provider_code:'rate_limited'},
+    {provider_name:'Example',provider_code:'rate_limit_exceeded'},
+    {provider_name:'Example',raw:'temporarily rate limited upstream'},
+  ]) {
+    let calls=0;
+    const relay=createDemoRelay({fetchImpl:async()=>++calls===1 ? Response.json({error:{code:429,message:'Provider returned error',metadata}},{status:429}) : success()});
+    assert.equal((await relay(req(),env)).status,200);
+    assert.equal(calls,2);
+  }
+});
+test('platform quota overrides provider metadata and never rotates models', async () => {
+  for (const extra of [
+    {headers:{'X-RateLimit-Remaining':'0','Retry-After':'300'}},
+    {limit_source:'openrouter_free_daily'},
+  ]) {
+    let calls=0;
+    const relay=createDemoRelay({fetchImpl:async()=>{calls++;return failure(429,{provider_name:'Example',provider_code:'rate_limited',...extra});}});
+    const response=await relay(req(),env);
+    assert.equal(response.status,429);assert.equal(calls,1);
+    assert.deepEqual(await response.json(),{error:{code:'rate_limited',scope:'platform'}});
+  }
+});
+
+test('exhausted fallback diagnostics expose only fixed models, status and safe outcomes', async () => {
+  const relay=createDemoRelay({fetchImpl:async()=>failure(503,{raw:'private upstream payload'})});
+  const response=await relay(req(),env);
+  const body=await response.json();
+  assert.deepEqual(body,{error:{code:'models_unavailable'},attempts:FREE_DEMO_MODELS.map(model=>({model,outcome:'upstream_error',status:503}))});
+  assert(!JSON.stringify(body).includes('private upstream payload'));
+  assert(!JSON.stringify(body).includes(env.OPENROUTER_API_KEY));
+});
+
+test('provider transport fields are discarded while validated tool calls remain usable', async () => {
+  const call={id:'call_1',type:'function',function:{name:'set_script',arguments:'{"source":"blue"}'}};
+  const relay=createDemoRelay({fetchImpl:async()=>Response.json({choices:[{finish_reason:'tool_calls',message:{role:'assistant',content:null,tool_calls:[{...call,index:0,function:{...call.function,transport_metadata:'discard'}}]}}]})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,200);
+  assert.deepEqual((await response.json()).choices[0].message.tool_calls,[call]);
+});
+
+test('nullable tool-call field is normal on a plain assistant reply', async () => {
+  const relay=createDemoRelay({fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done',tool_calls:null}}]})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).choices[0].message.content,'Done');
+});
+
+
+test('interactive reasoning policy survives fallback without raising token or price caps', async () => {
+  const sent=[];
+  const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
+  assert.equal((await relay(req(),env)).status,503);
+  assert.deepEqual(sent.map(x=>x.reasoning),[{effort:'low'},{enabled:false},{enabled:false}]);
+  assert(sent.every(x=>x.max_tokens===4000));
+  assert(sent.every(x=>Object.values(x.provider.max_price).every(price=>price===0)));
+});
+
+test('200 headers followed by a stalled body report timeout and cancel each stream', async () => {
+  let cancelled=0;
+  const relay=createDemoRelay({attemptMs:10,totalMs:1000,fetchImpl:async()=>new Response(new ReadableStream({
+    start(c){c.enqueue(new TextEncoder().encode(' '));},cancel(){cancelled++;},
+  }),{headers:{'content-type':'application/json'}})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,503);
+  assert.equal(cancelled,3);
+  const result=await response.json();
+  assert.deepEqual(result.attempts,FREE_DEMO_MODELS.map(model=>({model,outcome:'timeout'})));
 });
