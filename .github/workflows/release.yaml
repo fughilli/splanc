@@ -88,7 +88,10 @@ jobs:
       # esp32c6-vendor-*.tar for OLD releases; new releases carry only -netstack-.)
       - name: Build the netstack flashbundle
         run: |
+          # The discovery manifest names this release's agent bundle (built above).
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            --//firmware/player_app:agent_bundle_url="${AGENT_BUNDLE_URL}" \
+            --//firmware/player_app:agent_bundle_sha256="${AGENT_BUNDLE_SHA256}" \
             //firmware/player_app:esp32c6_netstack_flashbundle
 
       # Rename to a versioned, variant-tagged asset name the webapp's release source
