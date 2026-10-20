@@ -551,6 +551,38 @@ describe("tunnel + revocation", () => {
     }
   });
 
+  test("a streamed reply cut off by the bridge dropping ends with a JSON-RPC error for the call", async () => {
+    resetRegistrationLimit();
+    const { identity } = tempIdentity();
+    const link = new RelayLink({ relay, identity, backoff: { baseMs: 20, maxMs: 200 } });
+    const frames: RelayFrame[] = [];
+    link.onFrame = (f) => {
+      frames.push(f);
+      if (f.t !== "req") return;
+      // A slow tool: headers + a progress notification, then the bridge dies.
+      link.send({ t: "res", id: f.id, status: 200, headers: { "content-type": "text/event-stream" } });
+      link.send({ t: "chunk", id: f.id, data: 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n' });
+      setTimeout(() => link.stop(), 100);
+    };
+    link.start();
+    try {
+      await until(() => link.online, "online");
+      const { tokens } = await connectorFlow(relay, await codeFor(link, frames));
+      const r = await mcpPost(relay, tokens["access_token"]!, { jsonrpc: "2.0", id: 42, method: "tools/call" });
+      assert.equal(r.status, 200);
+      const text = await r.text(); // ends (doesn't hang) once the bridge is gone
+      const last = text.trim().split("\n\n").at(-1)!;
+      const msg = JSON.parse(last.split("\n").find((l) => l.startsWith("data: "))!.slice(6)) as {
+        id: number;
+        error: { message: string };
+      };
+      assert.equal(msg.id, 42);
+      assert.match(msg.error.message, /bridge disconnected/);
+    } finally {
+      link.stop();
+    }
+  });
+
   test("tokens are stored only as hashes", async () => {
     const { link, frames } = await echoBridge();
     try {

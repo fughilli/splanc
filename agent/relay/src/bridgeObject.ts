@@ -88,9 +88,44 @@ interface Pending {
   resolve: (r: Response) => void;
   timer: ReturnType<typeof setTimeout>;
   stream?: ReadableStreamDefaultController<Uint8Array>;
+  /** JSON-RPC request ids in the tunnelled body (answered if the stream breaks). */
+  ids: (string | number)[];
 }
 
 const enc = new TextEncoder();
+
+/** The ids of the JSON-RPC requests (not notifications) in a POST body. */
+export function requestIds(body: string): (string | number)[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return [];
+  }
+  const ids: (string | number)[] = [];
+  for (const m of Array.isArray(parsed) ? parsed : [parsed]) {
+    const r = m as { method?: unknown; id?: unknown } | null;
+    if (r && typeof r.method === "string" && (typeof r.id === "string" || typeof r.id === "number")) ids.push(r.id);
+  }
+  return ids;
+}
+
+/** End a streamed (SSE) reply the bridge can no longer finish: answer each request
+ * in it with a JSON-RPC error, so the client fails the call now with the reason
+ * instead of waiting out its own timeout on a stream that ended with no response. */
+function breakStream(p: Pending, why: string): void {
+  const c = p.stream!;
+  try {
+    for (const id of p.ids) {
+      const msg = { jsonrpc: "2.0", id, error: { code: -32000, message: `Splanc relay: ${why}; retry the request` } };
+      c.enqueue(enc.encode(`event: message\ndata: ${JSON.stringify(msg)}\n\n`));
+    }
+    if (p.ids.length) c.close();
+    else c.error(new Error(why));
+  } catch {
+    // cancelled already
+  }
+}
 
 const json = (obj: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(obj), {
@@ -315,13 +350,8 @@ export class BridgeObject {
   private failAll(status: number, why: string): void {
     for (const [id, p] of [...this.pending]) {
       this.finish(id);
-      if (p.stream) {
-        try {
-          p.stream.error(new Error(why));
-        } catch {
-          // done
-        }
-      } else p.resolve(rpcError(status, `Splanc relay: ${why}; retry the request`));
+      if (p.stream) breakStream(p, why);
+      else p.resolve(rpcError(status, `Splanc relay: ${why}; retry the request`));
     }
   }
 
@@ -379,10 +409,10 @@ export class BridgeObject {
         const p = this.pending.get(id);
         this.finish(id);
         this.send({ t: "cancel", id });
-        if (p?.stream) p.stream.error(new Error("timed out"));
+        if (p?.stream) breakStream(p, "the bridge did not finish in time");
         else resolve(rpcError(504, "the bridge did not answer in time"));
       }, REQUEST_TIMEOUT_MS);
-      this.pending.set(id, { resolve, timer });
+      this.pending.set(id, { resolve, timer, ids: req.method === "POST" ? requestIds(body) : [] });
       try {
         ws.send(JSON.stringify({ t: "req", id, method: req.method, headers, body } satisfies RelayFrame));
       } catch {
