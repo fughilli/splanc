@@ -230,3 +230,25 @@ test('nullable tool-call field is normal on a plain assistant reply', async () =
   assert.equal(response.status,200);
   assert.equal((await response.json()).choices[0].message.content,'Done');
 });
+
+
+test('interactive reasoning policy survives fallback without raising token or price caps', async () => {
+  const sent=[];
+  const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
+  assert.equal((await relay(req(),env)).status,503);
+  assert.deepEqual(sent.map(x=>x.reasoning),[{effort:'low'},{enabled:false},{enabled:false}]);
+  assert(sent.every(x=>x.max_tokens===4000));
+  assert(sent.every(x=>Object.values(x.provider.max_price).every(price=>price===0)));
+});
+
+test('200 headers followed by a stalled body report timeout and cancel each stream', async () => {
+  let cancelled=0;
+  const relay=createDemoRelay({attemptMs:10,totalMs:1000,fetchImpl:async()=>new Response(new ReadableStream({
+    start(c){c.enqueue(new TextEncoder().encode(' '));},cancel(){cancelled++;},
+  }),{headers:{'content-type':'application/json'}})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,503);
+  assert.equal(cancelled,3);
+  const result=await response.json();
+  assert.deepEqual(result.attempts,FREE_DEMO_MODELS.map(model=>({model,outcome:'timeout'})));
+});

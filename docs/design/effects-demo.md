@@ -1,12 +1,11 @@
 # Website effects playground
 
-Status, 2026-10-19: the operator approved the OpenRouter visitor-data flow and
-confirmed the Cloudflare secret. The guided workspace and relay merged in #275;
-full main CI (39332926193) and web deployment (39336232316) passed. The first live
-check exposed a Workers runtime incompatibility: `redirect: "error"` throws before
-sending any upstream request. The follow-up uses `manual` and rejects every 3xx
-without forwarding credentials. Production inference is being rechecked; mocked
-checks are not model-quality results.
+Status, 2026-10-19: the guided workspace is live through the website's Meet
+Splanc scene links. All three entry links, editable scene copies, the three core
+panes and all eight tour steps passed a production browser check. The configured
+relay successfully used MiniMax to edit an effect, compile it and request preview
+images. Its concluding response then timed out; complete live vision-loop
+validation remains pending. Mocked tests are not model-quality results.
 
 ## Entry and layout
 
@@ -66,7 +65,13 @@ The relay fixes exactly three `:free` model IDs server-side, prohibit paid
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
 limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
-4,000 output tokens, 45 seconds per provider and 100 seconds overall. Price caps
+4,000 output tokens, 45 seconds per provider and 100 seconds overall. The
+[model catalog](https://openrouter.ai/api/v1/models) reports MiniMax's default
+reasoning effort as `max`; the interactive relay explicitly uses its supported
+`low` setting. Nemotron and Gemma disable optional reasoning. This retains the
+same free models and budgets while avoiding the default deep-reasoning latency.
+A response whose headers arrive but whose body stalls is classified as a timeout,
+not malformed JSON. Price caps
 cover input, output, requests and images at zero. Inline preview images only;
 remote image URLs and visitor-supplied routing overrides are rejected.
 
@@ -98,9 +103,12 @@ BYOK access. Do not promise unlimited free AI or use a paid model silently.
 - Full app Test CI passed on the merged workspace revision, with 194 tests and a
   complete matching compiler/VM artifact. A web-only deployment published it to
   Cloudflare and GitHub Pages without releasing firmware or TestFlight builds.
-- The production endpoint confirms configuration presence. Live model inference
-  failed before dispatch because Workers does not implement redirect error mode;
-  the fix and live edit/compile/preview check are in progress.
+- The production endpoint confirms configuration presence. The live MiniMax loop
+  performed set_script (6.9 s), compiled successfully, then capture_preview (1.5 s).
+  A second preview request took 42.7 s; the subsequent body reads hit the two
+  45-second deadlines, and Gemma was provider-rate-limited. Low reasoning is now
+  explicit and aborted response bodies are diagnosed correctly. A final live
+  edit/compile/preview/conclusion check remains required.
 - The website update preserves automatic app/agent release tracking while requiring
   a tested app revision containing this demo. Newer compatible releases should
   supersede that baseline. Three individual models have not been benchmarked.
