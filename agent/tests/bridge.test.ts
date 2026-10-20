@@ -157,9 +157,11 @@ describe("effects", () => {
     session = await connect(["uniform_commit"]);
     assert.ok(session.has("uniform_commit"));
     await session.deployEffect("rain1", EFFECT, true);
+    await new Promise((r) => setTimeout(r, 50));
+    const before = player.received.length;
     await session.rampUniforms({ rain: 1 }, 0.2, { hz: 10, sleep: noSleep });
     await new Promise((r) => setTimeout(r, 50));
-    const sets = player.received.filter((m) => m.type === "set_uniforms");
+    const sets = player.received.slice(before).filter((m) => m.type === "set_uniforms");
     assert.equal(sets.length, 2);
     if (!COMMIT_IN_PROTO) for (const m of sets) assert.ok(!m["commit"], "no commit field on the wire");
     else assert.equal(sets.at(-1)!["commit"], true);
@@ -167,6 +169,7 @@ describe("effects", () => {
 
   test("ramp streams uncommitted steps, then one final set of the targets", async () => {
     await session.deployEffect("rain1", EFFECT, true);
+    await new Promise((res) => setTimeout(res, 50)); // the deploy's defaults land first
     const before = player.received.length;
     const r = await session.rampUniforms({ rain: 1 }, 1, { hz: 10, sleep: noSleep });
     assert.equal(r.steps, 10);
@@ -190,6 +193,51 @@ describe("effects", () => {
     player.refuse.set("set_brightness", { code: "unsupported", message: "no brightness" });
     await assert.rejects(session.setBrightness(0.5), /firmware \(1\.6\.0\) doesn't support this/);
 
+  });
+
+  test("deploy sends the declared defaults right after the submit (the VM starts uniforms at 0)", async () => {
+    await session.deployEffect("rain1", EFFECT, true);
+    await new Promise((r) => setTimeout(r, 50));
+    const types = player.types();
+    const submit = types.lastIndexOf("submit_effect");
+    assert.ok(submit >= 0);
+    assert.equal(types[submit + 1], "set_uniforms", "set_uniforms follows the submit");
+    const m = player.received[submit + 1]!;
+    assert.deepEqual(m["values"], [
+      { slot: 0, value: [Math.fround(0.2)] },
+      { slot: 1, value: [Math.fround(0.2), Math.fround(0.6), 1] },
+      { slot: 4, value: [0] },
+    ]);
+    assert.ok(!m["commit"], "defaults go out uncommitted");
+    // list_uniforms reflects them (not 0).
+    const l = await session.listUniforms();
+    const rain = (l["uniforms"] as { name: string; current: unknown }[]).find((u) => u.name === "rain")!;
+    assert.deepEqual(rain.current, [Math.fround(0.2)]);
+    // A deploy without activate doesn't touch the running effect's uniforms.
+    const n = player.types().filter((t) => t === "set_uniforms").length;
+    await session.deployEffect("staged", EFFECT_B, false);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(player.types().filter((t) => t === "set_uniforms").length, n);
+  });
+
+  test("rollback restores the previous effect's last-known uniforms (defaults where unset)", async () => {
+    await session.deployEffect("a", EFFECT, true);
+    await session.setUniforms({ rain: 0.9 });
+    await session.deployEffect("b", EFFECT_B, true);
+    await new Promise((r) => setTimeout(r, 50));
+    const before = player.received.length;
+    await session.rollback();
+    await new Promise((r) => setTimeout(r, 50));
+    const after = player.received.slice(before);
+    const types = after.map((m) => m.type);
+    const submit = types.lastIndexOf("submit_effect");
+    assert.equal(types[submit + 1], "set_uniforms");
+    assert.deepEqual(after[submit + 1]!["values"], [
+      { slot: 0, value: [Math.fround(0.9)] },
+      { slot: 1, value: [Math.fround(0.2), Math.fround(0.6), 1] },
+      { slot: 4, value: [0] },
+    ]);
+    assert.deepEqual(player.effect?.current.find((c) => c.slot === 0)?.value, [Math.fround(0.9)]);
   });
 
   test("rollback re-deploys the previous effect", async () => {

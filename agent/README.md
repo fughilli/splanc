@@ -91,9 +91,14 @@ otherwise `{results: [{player, ok, result|error}], summary}`.
 
 CLI: `splanc-agent <command>` runs one tool (dashes for underscores: `list-players`,
 `set-uniforms k=v`, `ramp-uniforms k=v --seconds 20` (waits), `deploy-effect <id>
---file f.fx`, `preview-effect --file f.fx --out dir`, `room`, `skill [file]`,
-`tools`, `call <tool> '<json>'`, …; header of `src/cli.ts`), prints the JSON
-result, exits 1 on a tool error.
+--file f.fx`, `preview-effect --file f.fx --out dir`, `list-keypoints`,
+`save-keypoint <name> [k=v...]`, `get-keypoint <name>`, `recall-keypoint <name>
+[--seconds s] [--commit]`, `blend-keypoints a=0.7 b=0.3 [--seconds s]`,
+`delete-keypoint <name>`, `room`, `skill [file]`, `tools`, `call <tool> '<json>'`,
+…; `splanc-agent help`, from `USAGE` in `src/cliArgs.ts`) and prints the JSON
+result. Exit status: 0 on success; 1 on a tool error or when every targeted
+player failed; 2 when only some did. An empty `list-players` carries a hint to
+pass `--host <ip>` (discovery is mDNS + a local /24 sweep).
 
 Deliberately absent: `set_playback` / `splanc://playback` (native pulse/flood
 was removed; every show is an FX effect), and anything that sends

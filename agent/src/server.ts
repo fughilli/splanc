@@ -667,6 +667,14 @@ async function playersView(hub: Hub): Promise<Record<string, unknown>> {
       ...(hub.toolchainNote(p.id) ? { compiler: hub.toolchainNote(p.id) } : {}),
     })),
     rooms: hub.config.groups,
+    ...(all.length === 0
+      ? {
+          hint:
+            "no players found. Discovery uses mDNS and a sweep of this machine's local /24 subnets, so a player on " +
+            "another subnet (or behind a network that blocks mDNS) can't be seen: pass --host <ip> (CLI, " +
+            "repeatable) or call add_player {host: <ip>}.",
+        }
+      : {}),
     ...(all.length > 1 && Object.keys(hub.config.groups).length === 0
       ? {
           hint:
