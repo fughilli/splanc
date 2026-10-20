@@ -129,9 +129,27 @@ function defaultLayout(): Persisted {
   };
 }
 
-function loadPersisted(): Persisted {
+export type LayoutPreset = "effects-demo";
+
+/** Presets are ordinary dock state, rendered and edited by the same workspace. */
+function presetLayout(preset?: LayoutPreset): Persisted {
+  if (preset !== "effects-demo") return defaultLayout();
+  return {
+    v: 2, center: "preview",
+    docks: { left: ["uniforms"], right: ["chat"], top: [], bottom: ["code", "midi", "video", "diagnostics", "disasm"] },
+    active: { left: "uniforms", right: "chat", top: null, bottom: "code" },
+    edgeSizes: { left: 0.22, right: 0.34, top: 0.25, bottom: 0.3 },
+    hidden: [],
+    ndock: { preview: "top", uniforms: "center", chat: "bottom", code: "center",
+      midi: "center", video: "center", diagnostics: "center", disasm: "center" },
+    nactive: { top: "preview", center: "uniforms", bottom: "chat" },
+    nsize: { top: 0.38, center: 0.24, bottom: 0.38 },
+  };
+}
+
+function loadPersisted(storageKey: string | null = STORAGE_KEY): Persisted {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = storageKey ? localStorage.getItem(storageKey) : null;
     if (!raw) return defaultLayout();
     const p = JSON.parse(raw) as Partial<Persisted>;
     if (p.v !== 2 || !p.docks) return defaultLayout();
@@ -182,8 +200,10 @@ function loadPersisted(): Persisted {
 }
 
 interface Opts {
-  /** Website playground: reserve Preview, Uniforms and AI chat, without touching saved docks. */
-  demo?: boolean;
+  /** Optional starting/reset arrangement for a deep link or canned workspace. */
+  preset?: LayoutPreset;
+  /** A separate persistence scope, or null for a temporary arrangement. */
+  storageKey?: string | null;
   panes: PaneSpec[];
   /** Called after any relayout (DOM re-parent) or viewport resize, so the screen
    * can recompute the MapView canvas backing store. */
@@ -208,8 +228,6 @@ export class FxLayout {
   private readonly onMedia: () => void;
   private readonly onWinResize: () => void;
   private mounted = false;
-  private demoTab = "code";
-  private demoToolsOpen = false;
   private resizeTimer: number | null = null;
 
   // Reusable pane-wrapper nodes (one per pane id, stable across relayouts).
@@ -223,7 +241,7 @@ export class FxLayout {
     this.opts = opts;
     this.order = opts.panes.map((p) => p.id);
     for (const p of opts.panes) this.panes.set(p.id, p);
-    this.state = opts.demo ? defaultLayout() : loadPersisted();
+    this.state = opts.preset ? presetLayout(opts.preset) : loadPersisted(opts.storageKey);
     this.reconcileState();
 
     this.root = document.createElement("div");
@@ -312,7 +330,6 @@ export class FxLayout {
   }
 
   isVisible(id: string): boolean {
-    if (this.opts.demo) return this.panes.has(id);
     return !this.state.hidden.includes(id);
   }
 
@@ -343,7 +360,6 @@ export class FxLayout {
   }
 
   setVisible(id: string, on: boolean): void {
-    if (this.opts.demo) { if (on) this.revealPane(id); return; }
     const has = this.state.hidden.includes(id);
     if (on && has) this.state.hidden = this.state.hidden.filter((x) => x !== id);
     else if (!on && !has) this.state.hidden.push(id);
@@ -367,14 +383,6 @@ export class FxLayout {
   /** Reveal and front a pane, including one already open behind another tab. */
   revealPane(id: string): void {
     if (!this.panes.has(id)) return;
-    if (this.opts.demo) {
-      if (!["preview", "uniforms", "chat"].includes(id)) {
-        this.demoTab = id;
-        this.demoToolsOpen = true;
-        this.render();
-      }
-      return;
-    }
     this.state.hidden = this.state.hidden.filter((pane) => pane !== id);
     const region = this.state.ndock[id];
     if (region) this.state.nactive[region] = id;
@@ -385,9 +393,9 @@ export class FxLayout {
   }
 
   private persist(): void {
-    if (this.opts.demo) return;
+    if (this.opts.storageKey === null) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+      localStorage.setItem(this.opts.storageKey ?? STORAGE_KEY, JSON.stringify(this.state));
     } catch {
       /* storage full / disabled — the layout still works this session */
     }
@@ -395,7 +403,6 @@ export class FxLayout {
 
   /** Snap a pane to a dock (edge) or make it the center. */
   relocate(id: string, dock: Dock): void {
-    if (this.opts.demo) return;
     if (dock === "center") {
       // Displace the current center to the pane's former edge (or right).
       const from = this.edgeOf(id);
@@ -428,7 +435,6 @@ export class FxLayout {
 
   /** NARROW: move a pane into a vertical region and front it there. */
   relocateNarrow(id: string, region: NRegion): void {
-    if (this.opts.demo) return;
     this.state.ndock[id] = region;
     if (!this.state.hidden.includes(id)) this.state.nactive[region] = id;
     for (const r of NREGIONS) this.healNActive(r);
@@ -436,12 +442,9 @@ export class FxLayout {
     this.render();
   }
 
-  /** Restore the built-in default arrangement (both wide and narrow) and forget
-   * any persisted customization. */
+  /** Restore this workspace's preset/default for both wide and narrow docks. */
   resetLayout(): void {
-    this.demoTab = "code";
-    this.demoToolsOpen = false;
-    this.state = defaultLayout();
+    this.state = presetLayout(this.opts.preset);
     this.reconcileState();
     this.persist();
     this.render();
@@ -478,69 +481,11 @@ export class FxLayout {
     const narrow = this.mql.matches;
     this.root.classList.toggle("fxlayout--narrow", narrow);
     this.root.classList.toggle("fxlayout--wide", !narrow);
-    if (this.opts.demo) this.renderDemo();
-    else if (narrow) this.renderNarrow();
+    if (narrow) this.renderNarrow();
     else this.renderWide();
     this.placeCollapseToggle();
     // Panes moved DOM parents — recompute canvas + notify the screen.
     requestAnimationFrame(() => this.opts.onRelayout());
-  }
-
-  /** A stable three-pane playground plus the advanced tools. No close/move
-   * affordances: these three panels must remain visible, even while touring. */
-  private renderDemo(): void {
-    const grid = document.createElement("div");
-    grid.className = "fxlayout-demo" + (this.demoToolsOpen ? " fxlayout-demo--tools-open" : "");
-    for (const id of ["preview", "uniforms", "chat"]) {
-      const wrapper = this.wrappers.get(id);
-      if (!wrapper) continue;
-      wrapper.setHeaderVisible(true);
-      wrapper.setControlsVisible(false);
-      grid.appendChild(wrapper.attach());
-    }
-    const tools = document.createElement("div");
-    tools.className = "fxlayout-demo-tools";
-    const tabs = document.createElement("div");
-    tabs.className = "fxlayout-tablist fxlayout-demo-tabs";
-    tabs.setAttribute("role", "tablist");
-    tabs.setAttribute("aria-label", "Effects tools");
-    const ids = this.order.filter(id => !["preview", "uniforms", "chat"].includes(id));
-    for (const id of ids) {
-      const tab = document.createElement("button");
-      const selected = this.demoTab === id;
-      tab.type = "button";
-      tab.className = "fxlayout-tab" + (selected ? " fxlayout-tab--active" : "");
-      tab.dataset.pane = id;
-      tab.textContent = this.panes.get(id)!.title;
-      tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-selected", String(selected));
-      tab.tabIndex = selected ? 0 : -1;
-      tab.addEventListener("keydown", event => {
-        const current = ids.indexOf(id);
-        const next = event.key === "ArrowRight" ? (current + 1) % ids.length
-          : event.key === "ArrowLeft" ? (current + ids.length - 1) % ids.length
-          : event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : -1;
-        if (next < 0) return;
-        event.preventDefault();
-        const target = ids[next]!;
-        this.revealPane(target);
-        this.root.querySelector<HTMLButtonElement>(`button[data-pane="${target}"]`)?.focus();
-      });
-      tab.addEventListener("click", () => this.revealPane(id));
-      tabs.appendChild(tab);
-    }
-    const collapse = document.createElement("button");
-    collapse.type = "button";
-    collapse.className = "fxlayout-demo-collapse";
-    collapse.textContent = "Close tools";
-    collapse.addEventListener("click", () => { this.demoToolsOpen = false; this.render(); });
-    tabs.appendChild(collapse);
-    tools.appendChild(tabs);
-    const pane = this.wrapped(this.demoTab, false);
-    pane.setAttribute("role", "tabpanel");
-    tools.appendChild(pane);
-    grid.appendChild(tools);
-    this.root.appendChild(grid);
   }
 
   /** Re-render (e.g. after the drawer collapse state changed, so the in-strip
@@ -1008,7 +953,6 @@ export class FxLayout {
    * or a top/center/bottom region on narrow. A quick tap is left alone (so a tab
    * still switches), and the click that would follow a drag is suppressed. */
   attachDragHandle(el: HTMLElement, id: string): void {
-    if (this.opts.demo) return;
     el.classList.add("fxlayout-draghandle");
     let timer: number | null = null;
     let sx = 0;

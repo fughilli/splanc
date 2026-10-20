@@ -10,7 +10,7 @@ export const EFFECTS_TOUR_STEPS = [
   { pane: "midi", title: "MIDI", body: "Connect knobs, faders and buttons to your effect’s controls." },
   { pane: "video", title: "Video", body: "Use a camera or video file as an input texture for your effect." },
   { pane: "diagnostics", title: "Device", body: "Check compile errors and send your effect to connected hardware. The demo needs no device." },
-  { pane: "disasm", title: "Disassembly", body: "Inspect the compiled instructions. Done returns to Preview, Uniforms, AI chat and Code." },
+  { pane: "disasm", title: "Disassembly", body: "Inspect the compiled instructions. Done restores the starting workspace." },
 ] as const;
 
 export function mountEffectsTour(layout: FxLayout): () => void {
