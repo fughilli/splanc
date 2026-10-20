@@ -97,7 +97,10 @@ test("AGENTS.md names only tools the server has", async () => {
   // CLI commands named in AGENTS.md are the tools' dashed names (or skill/tools/help).
   for (const m of read("site/AGENTS.md").matchAll(/npx -y \S+ ([a-z-]+)/g)) {
     const cmd = m[1]!;
-    assert.ok(["skill", "tools", "help"].includes(cmd) || tools.has(cmd.replace(/-/g, "_")), `CLI command ${cmd}`);
+    assert.ok(
+      ["skill", "tools", "help", "bridge", "bridge-ctl", "relay"].includes(cmd) || tools.has(cmd.replace(/-/g, "_")),
+      `CLI command ${cmd}`,
+    );
   }
   await c.close();
 });

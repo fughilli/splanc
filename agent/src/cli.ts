@@ -10,7 +10,8 @@
  * Logs go to stderr (stdout is the MCP channel / the JSON result).
  */
 
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,11 +19,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+import { BridgeIdentity, defaultStateDir } from "./bridge/identity";
+import { DEFAULT_CONTROL_PATH, LanBridge, controlSocketCandidates } from "./bridge/lanBridge";
+import { RelayLink } from "./bridge/relayLink";
 import { browse } from "./discovery";
 import { setFxHostRoot } from "./fxhost";
 import { Hub } from "./hub";
 import { exitCode, flag, parseArgs, toCall, USAGE, type Parsed } from "./cliArgs";
 import { ms, setProgressSink } from "./progress";
+import { RelayHost } from "./relayHost";
 import { createServer, VERSION } from "./server";
 import { readBundleInfo } from "./toolchain";
 
@@ -131,11 +136,98 @@ async function oneShot(p: Parsed, root: string): Promise<number> {
   }
 }
 
+/** `splanc-agent bridge`: serve this LAN's players to cloud agents through a relay. */
+async function runBridge(p: Parsed, root: string): Promise<void> {
+  const relay = flag(p, "relay") ?? process.env["SPLANC_RELAY_URL"];
+  if (!relay) throw new Error("bridge: pass --relay <url> (or set SPLANC_RELAY_URL)");
+  const identity = new BridgeIdentity(flag(p, "state-dir") ?? defaultStateDir());
+  const hub = makeHub(p, root);
+  setFxHostRoot(root); // the wasm loads on the first compile/preview
+  setProgressSink(log); // background discovery/warmup progress -> stderr
+  const link = new RelayLink({ relay, identity, log });
+  const status = flag(p, "status");
+  const control = flag(p, "control");
+  const bridge = new LanBridge({ link, hub, root, log, echo: log, ...(status ? { statusPath: status } : {}), ...(control ? { controlPath: control } : {}) });
+  await bridge.start();
+  log(`bridge: relay ${link.relay}; status ${bridge.statusPath}; control ${bridge.controlPath}`);
+  const stop = () => {
+    log("bridge: stopping");
+    void bridge.stop().finally(() => {
+      hub.close();
+      process.exit(0);
+    });
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
+const CTL: Record<string, string> = {
+  "new-code": "new_pairing_code",
+  "new-pairing-code": "new_pairing_code",
+  "revoke-all": "revoke_all",
+  identify: "identify",
+  status: "status",
+};
+
+/** `splanc-agent bridge-ctl <new-code|revoke-all|identify|status>`: talk to a running bridge. */
+async function bridgeCtl(p: Parsed): Promise<number> {
+  const cmd = CTL[p.positional[1] ?? ""];
+  if (!cmd) throw new Error(`bridge-ctl: one of ${Object.keys(CTL).join(", ")}`);
+  const path =
+    flag(p, "control") ?? controlSocketCandidates().find((c) => existsSync(c)) ?? DEFAULT_CONTROL_PATH;
+  const reply = await new Promise<string>((resolve, reject) => {
+    const c = net.connect(path, () => c.write(`${JSON.stringify({ cmd })}\n`));
+    let buf = "";
+    c.setEncoding("utf8");
+    c.on("data", (d: string) => {
+      buf += d;
+      const i = buf.indexOf("\n");
+      if (i >= 0) {
+        c.end();
+        resolve(buf.slice(0, i));
+      }
+    });
+    c.on("error", (e) => reject(new Error(`can't reach the bridge at ${path}: ${e.message}`)));
+    c.setTimeout(30_000, () => {
+      c.destroy();
+      reject(new Error("the bridge didn't answer"));
+    });
+  });
+  console.log(JSON.stringify(JSON.parse(reply), null, 2));
+  return (JSON.parse(reply) as { ok?: boolean }).ok ? 0 : 1;
+}
+
+/** `splanc-agent relay`: host the relay yourself (docs/guides/relay-tailscale.md). */
+async function runRelay(p: Parsed): Promise<void> {
+  const dataDir = flag(p, "data-dir") ?? join(defaultStateDir(), "relay");
+  const publicUrl = flag(p, "public-url") ?? process.env["SPLANC_RELAY_PUBLIC_URL"];
+  const host = new RelayHost({
+    port: Number(flag(p, "port") ?? 8787),
+    host: flag(p, "listen") ?? "127.0.0.1",
+    dataFile: join(dataDir, "relay.json"),
+    trustProxy: flag(p, "trust-proxy") === "true",
+    ...(publicUrl ? { publicUrl } : {}),
+    log,
+  });
+  const url = await host.listen();
+  log(`relay: listening on ${url}${publicUrl ? ` (public: ${publicUrl})` : ""}; data in ${dataDir}`);
+  log(`relay: MCP endpoint ${publicUrl ?? url}/mcp`);
+  const stop = () => void host.close().finally(() => process.exit(0));
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
 async function main(): Promise<void> {
   const p = parseArgs(process.argv.slice(2));
   const root = bundleRoot(p);
   if (p.positional[0] === "help" || flag(p, "help")) {
     process.stdout.write(USAGE);
+    return;
+  }
+  if (p.positional[0] === "bridge") return runBridge(p, root);
+  if (p.positional[0] === "relay") return runRelay(p);
+  if (p.positional[0] === "bridge-ctl") {
+    process.exitCode = await bridgeCtl(p);
     return;
   }
   if (flag(p, "list")) {

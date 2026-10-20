@@ -45,6 +45,7 @@ mbedtls dynamic buffers <../docs/design/mbedtls-dynamic-buffers>
 :maxdepth: 1
 
 Multi-fixture agent hub <../docs/design/agent-multi-fixture>
+Cloud relay + LAN bridge <../docs/design/cloud-relay>
 ```
 
 ## App & platform

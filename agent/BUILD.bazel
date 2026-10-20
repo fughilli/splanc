@@ -10,7 +10,8 @@ Targets:
   :wasm             compiler/ + simulator/ (the wasm packages, bundle layout)
   :bundle           splanc-agent-<ver>.tgz + .sha256 (release asset)
   :<name>_test      one per tests/*.test.ts (fake TLS player; examples compile+preview;
-                    the shipped .mjs end to end over stdio)
+                    the shipped .mjs end to end over stdio; the cloud relay + LAN
+                    bridge: relay_test, lanbridge_test, relay_e2e_test)
   :typecheck_test   tsc --noEmit over src/ + tests/ (+ the reused web modules)
 
 Release: `bazel build -c opt //agent:bundle --//agent:bundle_version=<X.Y.Z>`
@@ -45,13 +46,18 @@ string_flag(
 
 SRCS = glob(["src/**/*.ts"])
 
+# The cloud relay Worker (docs/design/cloud-relay.md). Its code is bundled into the
+# bridge too: `splanc-agent relay` hosts it on Node (src/relayHost.ts), and the
+# tests run it in process. Cloudflare deploys it with wrangler (relay/deploy.sh).
+RELAY_SRCS = glob(["relay/src/**/*.ts"])
+
 TESTS = glob(["tests/*.test.ts"])
 
 # Everything a Vite (rolldown) build of the bridge reads. The tsconfig chain is
 # DECLARED for the same reason as //web:dist (rolldown resolves a tsconfig by
 # walking up from each source in the bin tree): ours, web's (in
 # //web:agent_reuse_srcs, for the reused web/src modules) and the shared base.
-BUILD_INPUTS = SRCS + [
+BUILD_INPUTS = SRCS + RELAY_SRCS + [
     "package.json",
     "tsconfig.json",
     "vite.config.ts",

@@ -25,6 +25,11 @@ agent/
   src/server.ts      MCP resources + tools (zod schemas)
   src/uniforms.ts    name -> slot resolution, width/range checks, ramp interpolation
   src/fxhost.ts      host compile + preview (the editor's compiler + VM wasm), PNG render
+  src/bridge/        `splanc-agent bridge`: the hub served to cloud agents through the relay
+                     (relayLink.ts outbound socket + backoff, lanBridge.ts MCP sessions +
+                     status file + control socket, identity.ts Ed25519 key)
+  src/relayHost.ts   `splanc-agent relay`: the relay Worker on Node (self-hosting, tests)
+  relay/             the cloud relay: Cloudflare Worker + Durable Objects (wrangler.toml, deploy.sh)
   skill/             SKILL.md, effect-language.md, uniforms-and-ui.md, geometry.md, examples/*.fx
   site/              AGENTS.md / llms.txt / server.json templates (rendered into the bundle's site/)
   tests/             fake TLS players; bridge, hub (N players), examples, stdio, CLI, site tests
@@ -108,6 +113,23 @@ Progress: every phase (`discovering (2 known + mDNS)…`, `connecting Kitchen (1
 is reported through `src/progress.ts` (per call, via AsyncLocalStorage): the MCP server sends it as
 `notifications/progress` when the call carries a `progressToken` and as `notifications/message` log
 lines (it declares the `logging` capability); the CLI prints it to stderr.
+
+## Cloud agents: bridge + relay
+
+Hosted agents can't see the LAN. `splanc-agent bridge --relay <url>` runs the hub on an
+always-on LAN host (a Pi, or anything with Node 20+) and keeps an outbound WebSocket to the
+relay, which serves it as a remote MCP endpoint, `<relay>/mcp` (Streamable HTTP, OAuth sign-in
+with the pairing code shown on the bridge, or a bearer token from `<relay>/pair`). The bridge
+writes `/run/splanc-bridge/status.json` and listens on `/run/splanc-bridge/control.sock` for
+its display (`splanc-agent bridge-ctl new-code|revoke-all|identify|status`). `splanc-agent relay`
+hosts the relay yourself (e.g. behind `tailscale funnel`). Design, wire protocol, display
+contract, threat model and free-tier budget:
+[docs/design/cloud-relay.md](../docs/design/cloud-relay.md); user guides:
+[cloud agent](../docs/guides/cloud-agent.md), [Tailscale](../docs/guides/relay-tailscale.md).
+
+```sh
+claude mcp add --transport http splanc <relay>/mcp     # then /mcp -> Authenticate (pairing code)
+```
 
 ## Surface
 
@@ -261,4 +283,7 @@ progress notifications),
 `examples_test` (every skill example compiles and previews, non-black, animated),
 `stdio_test` (the shipped `.mjs` over stdio), `cli_test` (the shipped `.mjs` as a
 one-shot CLI vs two fake players), `site_test` (the bundle's site/ files and npm
-packaging), `typecheck_test`.
+packaging), `relay_test` (the relay Worker under the Node host: OAuth, pairing codes, rate
+limits, revocation, the tunnel), `lanbridge_test` (status file, control socket, reconnect),
+`relay_e2e_test` (MCP client -> relay -> bridge -> fake players; `SPLANC_E2E_RELAY=<url>` runs
+it against `wrangler dev` or the deployed relay), `typecheck_test`.

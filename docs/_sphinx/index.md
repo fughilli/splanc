@@ -119,6 +119,8 @@ subsystems/index
 DEVELOPERS
 Getting started <README>
 Raspberry Pi bridge <docs/pi-bridge>
+Use Splanc from a cloud agent <docs/guides/cloud-agent>
+Run your own relay with Tailscale <docs/guides/relay-tailscale>
 docs/runbook
 Roadmap <next_steps>
 ```

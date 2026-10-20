@@ -7,9 +7,10 @@
 // fetches it server-side (no CORS there) and re-serves it with
 // Access-Control-Allow-Origin. Locked to this repo's release URLs — not an open proxy.
 //
-// The effects demo endpoint below relays only approved free models. Every other
-// request passes through to the static site via env.ASSETS, so the app,
-// wasm bundles, and SPA fallback behave exactly as before.
+// The effects demo endpoint below relays only approved free models. On
+// splanc.pages.dev every other request 301s to https://splanc.io/app (retiredOrigin,
+// below); on other hosts (ledmapper.pages.dev) it passes through to the static site
+// via env.ASSETS.
 //
 // Advanced mode (one _worker.js) is used instead of a functions/ directory because
 // `wrangler pages deploy <dir>` did not compile a nested functions/ dir on this
@@ -301,11 +302,46 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
 }
 const demoAi = createDemoRelay();
 
+// splanc.pages.dev is retired as an app origin: the app lives at https://splanc.io/app
+// (GitHub Pages). Every non-API path there 301s to the same path under splanc.io/app,
+// except the agent entry points, which live at the splanc.io root. The API routes
+// above keep working (the app on splanc.io calls them by absolute URL). Preview
+// deployments (<hash>.splanc.pages.dev) redirect too; ledmapper.pages.dev is left
+// alone (firmware's landing page still names it).
+const RETIRED_HOST = /(^|\.)splanc\.pages\.dev$/;
+const SITE_ROOT_PATH = /^\/(AGENTS\.md|llms\.txt|agent(\/|$)|\.well-known(\/|$))/;
+// A browser that installed the PWA from this origin keeps serving it from its
+// service worker without asking the network, and a service worker script can't be
+// redirected. So /sw.js answers with a worker that unregisters itself and reloads its
+// pages, which then hit the network and the redirect.
+const RETIRE_SW = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (e) => e.waitUntil((async () => {
+  await self.registration.unregister();
+  for (const c of await self.clients.matchAll({ type: "window" })) c.navigate(c.url);
+})()));
+`;
+
+export function retiredOrigin(url) {
+  if (!RETIRED_HOST.test(url.hostname)) return null;
+  if (url.pathname === "/sw.js") {
+    return new Response(RETIRE_SW, {
+      headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  const base = SITE_ROOT_PATH.test(url.pathname) ? "https://splanc.io" : "https://splanc.io/app";
+  return new Response(null, {
+    status: 301,
+    headers: { location: `${base}${url.pathname}${url.search}`, "cache-control": "public, max-age=86400" },
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === DEMO_PATH) return demoAi(request, env);
     if (url.pathname === "/gh-asset") return ghAsset(request);
+    const moved = retiredOrigin(url);
+    if (moved) return moved;
     // Everything else is the static site (env.ASSETS honors the SPA not-found rule).
     return env.ASSETS.fetch(request);
   },
