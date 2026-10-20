@@ -18,6 +18,8 @@ export function narrateTool(name: string): string {
       return "👀 Taking a look at how it's landing…";
     case "estimate_performance":
       return "⏱️ Making sure it'll run buttery-smooth…";
+    case "measure_on_device":
+      return "💡 Timing it on your actual lights…";
     case "list_midi_controls":
       return "🎛️ Seeing what knobs you've got…";
     case "set_midi_mapping":

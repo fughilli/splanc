@@ -431,12 +431,18 @@ export class DeviceSession {
     const maxCycles = Math.max(...live.map((r) => r.frameCyclesMax));
     const overruns = live.reduce((s, r) => s + r.overruns, 0);
     const budget = last.budgetCycles;
+    const toMs = (c: number) => (last.cpuHz > 0 ? +((c / last.cpuHz) * 1000).toFixed(2) : null);
     return {
       effect_id: last.effectId,
       reports: live.length,
       budget_cycles: budget,
       frame_cycles_mean: Math.round(meanCycles),
       frame_cycles_max: maxCycles,
+      // The same numbers in ms, and per window (one per ~1 s report), so stability
+      // and drift are visible — compare with estimate_effect's estimate_ms.
+      frame_ms_mean: toMs(meanCycles),
+      frame_ms_max: toMs(maxCycles),
+      window_means_ms: live.map((r) => toMs(r.frameCyclesMean)),
       budget_used: budget > 0 ? +(meanCycles / budget).toFixed(3) : null,
       overruns,
       heap_free: last.heapFree,

@@ -342,6 +342,41 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string 
       }),
   );
   server.registerTool(
+    "estimate_effect",
+    {
+      description:
+        "OFFLINE frame-cost estimate (the cost model; instant, touches nothing on the device) of effect source on " +
+        "each selected player: estimated frame ms and fraction of the frame budget at that player's LED count, plus " +
+        "the hottest opcodes. Iterate with this, then confirm with deploy_effect + measure_effect (the real numbers; " +
+        "the estimate models the interpreter and is uncalibrated).",
+      inputSchema: { source: z.string(), players },
+    },
+    ({ source, players: sel }) =>
+      guard(async () => {
+        const out = await hub.each(sel, async (s, p) => {
+          const c = await s.compile(source);
+          if (!c.ok) {
+            throw new ToolError(
+              `the effect doesn't compile:\n${c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n")}`,
+            );
+          }
+          const leds = await s.ledCount();
+          const d = estimateAcrossDevices(c.fxb, [
+            { key: p.id, label: p.name, table: defaultCostTable(), ledCount: leds, calibrated: false },
+          ]).devices[0]!;
+          return {
+            leds,
+            estimate_ms: +d.estimate.totalMs.toFixed(2),
+            band_ms: [+d.estimate.errorBand.lowMs.toFixed(2), +d.estimate.errorBand.highMs.toFixed(2)],
+            budget_used: Number.isFinite(d.budget.fraction) ? +d.budget.fraction.toFixed(2) : null,
+            hot_opcodes: d.estimate.hotOpcodes.slice(0, 6).map((h) => `${h.op} ${Math.round(h.fraction * 100)}%`),
+            model: "uncalibrated default (wide error)",
+          };
+        });
+        return ok(shape(out, sel !== undefined));
+      }),
+  );
+  server.registerTool(
     "preview_effect",
     {
       description:

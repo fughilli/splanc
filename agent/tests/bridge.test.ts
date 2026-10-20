@@ -217,6 +217,8 @@ describe("effects", () => {
     const m = await session.measureEffect(1, { sleep: noSleep });
     assert.equal(m["verdict"], "within budget");
     assert.equal(m["budget_cycles"], 5_333_333);
+    assert.equal(typeof m["frame_ms_mean"], "number");
+    assert.ok(Array.isArray(m["window_means_ms"]) && (m["window_means_ms"] as unknown[]).length >= 1);
     assert.equal(player.types().at(-1), "set_perf");
     assert.equal(player.received.at(-1)!["mode"], "OFF");
     player.perf.overruns = 3;
@@ -302,6 +304,17 @@ describe("mcp", () => {
     const c = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT } });
     const parsed = JSON.parse((c.content as { text: string }[])[0]!.text);
     assert.equal(parsed.ok, true);
+    // The offline estimate: no device traffic, ms + budget at the player's LED count.
+    const before = player.received.length;
+    const e = await client.callTool({ name: "estimate_effect", arguments: { source: EFFECT } });
+    const est = JSON.parse((e.content as { text: string }[])[0]!.text);
+    assert.equal(e.isError ?? false, false, JSON.stringify(est));
+    assert.ok(est.estimate_ms > 0 && est.leds > 0, JSON.stringify(est));
+    assert.equal(est.band_ms.length, 2);
+    assert.ok(
+      player.received.slice(before).every((m) => m.type !== "submit_effect" && m.type !== "set_perf"),
+      "estimate_effect touches nothing that changes the device",
+    );
     const p = await client.callTool({ name: "preview_effect", arguments: { source: EFFECT, times: [0, 0.5] } });
     const content = p.content as { type: string; mimeType?: string; data?: string; text?: string }[];
     assert.equal(content.filter((x) => x.type === "image").length, 2);

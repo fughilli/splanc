@@ -50,6 +50,8 @@ function toolLabel(name: string): string {
       return "Taking a screenshot of the preview…";
     case "estimate_performance":
       return "Running a performance pass…";
+    case "measure_on_device":
+      return "Measuring on the fixture…";
     case "list_midi_controls":
       return "Reading MIDI controls…";
     case "set_midi_mapping":

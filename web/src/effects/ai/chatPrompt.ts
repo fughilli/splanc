@@ -71,6 +71,50 @@ export const PERF_TOOLS = [
   },
 ] as const;
 
+/** On-fixture measurement, added only when a perf-capable fixture is connected
+ * (the editor supplies the hook). The ground truth to estimate_performance's
+ * cheap offline loop. */
+export const DEVICE_PERF_TOOLS = [
+  {
+    name: "measure_on_device",
+    description:
+      "MEASURE the CURRENT compiled effect on the connected fixture: runs it there with " +
+      "perf instrumentation for a few seconds and returns the real frame time (mean / p95 / " +
+      "max over the capture, per-window means), % of the FX budget, the update/shade/show " +
+      "split, and how it compares with the offline estimate. Slower than " +
+      "estimate_performance (seconds, and it replaces what the fixture is running), so " +
+      "iterate offline first and call this to confirm. set_script first.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        seconds: { type: "number", description: "Capture window, 1-10 s (default 3)." },
+        uniforms: {
+          type: "array",
+          description: "Optional operating point to hold during the capture.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string" },
+              value: { type: "array", items: { type: "number" } },
+            },
+            required: ["name", "value"],
+          },
+        },
+      },
+    },
+  },
+] as const;
+
+/** Appended to the system prompt only when measure_on_device is offered, so a
+ * turn without a fixture (and the tiny local-model prompt) pays nothing. */
+export const DEVICE_PERF_GUIDE =
+  "A fixture is connected: measure_on_device gives the REAL on-device numbers. Iterate with " +
+  "estimate_performance (instant, offline), then confirm with measure_on_device before saying a " +
+  "performance goal is met. When the two disagree, optimize against the measurement (the estimate " +
+  "models the interpreter; the device may JIT) and report measured numbers.";
+
 /** MIDI tools, added to the tool list only when the editor supplies the hooks
  * (i.e. when a MIDI mapping context exists). Kept separate so a plain effect
  * chat isn't advertised MIDI it can't fulfill. */
@@ -163,13 +207,14 @@ export function baseChatSystem(providerId: string): string {
  * app's tool-use loop and the eval harness both use. */
 export function selectTools(
   caps: { tools: boolean; vision: boolean },
-  opts: { perf: boolean; midi: boolean },
+  opts: { perf: boolean; midi: boolean; devicePerf?: boolean },
 ): ToolDef[] {
   if (!caps.tools) return [];
   const base = caps.vision ? TOOLS : TOOLS.filter((t) => t.name !== "capture_preview");
   return [
     ...base,
     ...(opts.perf ? PERF_TOOLS : []),
+    ...(opts.devicePerf ? DEVICE_PERF_TOOLS : []),
     ...(opts.midi ? MIDI_TOOLS : []),
   ];
 }

@@ -69,8 +69,11 @@ bridge checks width and range and tells you the declared names if you miss.
    everywhere. A player holds one effect at a time; the hub remembers the
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
-   vs budget. Over budget → it rolls back; simplify (see "Performance" in
-   `effect-language.md`) and repeat from 2.
+   vs budget (mean/max ms and per-window means). Over budget → it rolls back;
+   simplify (see "Performance" in `effect-language.md`) and repeat from 2.
+   Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
+   nothing), then deploy + `measure_effect` to confirm — when they disagree, trust
+   the measurement.
 6. Report what you changed and which uniforms the user can now tweak.
 
 `rollback_effect` restores whatever ran before your last deploy;

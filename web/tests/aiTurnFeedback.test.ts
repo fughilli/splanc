@@ -363,3 +363,49 @@ test("a slow on-device CPU turn narrates prefill then generation progress until 
   mock.timers.tick(20_000);
   assert.equal(status.length, seen, "no progress ticks after the turn ended");
 });
+
+test("measure_on_device is offered (with its guidance) only when the editor supplies the hook, and dispatches its args", async () => {
+  useAnthropic();
+  // Without a connected fixture: no tool, no guidance.
+  serve(sse(anthropicSse([{ type: "text", parts: ["ok"] }], "end_turn")));
+  await chatTurn([{ role: "user", content: "hi" }], editorHooks({ onEstimatePerformance: async () => "est" }));
+  const plain = sent[0]!.body as unknown as { system: unknown; tools: { name: string }[] };
+  assert.ok(!plain.tools.some((t) => t.name === "measure_on_device"));
+  assert.ok(!JSON.stringify(plain.system).includes("measure_on_device"));
+
+  // With one: advertised, guided, and fulfilled with the parsed arguments.
+  sent = [];
+  serve(
+    sse(
+      anthropicSse(
+        [
+          {
+            type: "tool_use",
+            id: "tu1",
+            name: "measure_on_device",
+            input: { seconds: 2, uniforms: [{ name: "speed", value: 3 }] },
+          },
+        ],
+        "tool_use",
+      ),
+    ),
+    sse(anthropicSse([{ type: "text", parts: ["measured"] }], "end_turn")),
+  );
+  const calls: unknown[] = [];
+  const final = await chatTurn(
+    [{ role: "user", content: "make it faster" }],
+    editorHooks({
+      onEstimatePerformance: async () => "est",
+      onMeasureOnDevice: async (args) => {
+        calls.push(args);
+        return "Measured ON THE FIXTURE: frame mean 4.00 ms";
+      },
+    }),
+  );
+  assert.equal(final, "measured");
+  const req = sent[0]!.body as unknown as { system: unknown; tools: { name: string }[] };
+  assert.ok(req.tools.some((t) => t.name === "measure_on_device"));
+  assert.ok(JSON.stringify(req.system).includes("confirm with measure_on_device"));
+  assert.deepEqual(calls, [{ seconds: 2, uniforms: [{ name: "speed", value: [3] }] }]);
+  assert.ok(JSON.stringify(sent[1]!.body.messages).includes("frame mean 4.00 ms"));
+});

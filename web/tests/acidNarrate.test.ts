@@ -15,6 +15,7 @@ test("every real tool has a distinct, non-empty narration", () => {
     "set_script",
     "capture_preview",
     "estimate_performance",
+    "measure_on_device",
     "list_midi_controls",
     "set_midi_mapping",
   ];
