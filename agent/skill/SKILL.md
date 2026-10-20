@@ -112,11 +112,15 @@ heaviest look.
 
 ## Without MCP: the CLI
 
-The same hub runs one tool per invocation and prints JSON (exit 1 on error):
+The same hub runs one tool per invocation and prints JSON (exit 1 on an error
+or when every targeted player failed, 2 when only some did):
 `splanc-agent list-players`, `splanc-agent ramp-uniforms rain=0.8 --seconds 20
 --players living`, `splanc-agent preview-effect --file fx.fx --out /tmp/p`,
-`splanc-agent deploy-effect calm --file calm.fx`, `splanc-agent skill <file>`;
-`splanc-agent tools` lists everything. (Installed: `npx -y
+`splanc-agent deploy-effect calm --file calm.fx`, `splanc-agent save-keypoint
+dusk`, `splanc-agent recall-keypoint dusk --seconds 10`, `splanc-agent
+blend-keypoints calm=0.7 storm=0.3`, `splanc-agent skill <file>`;
+`splanc-agent help` lists the commands, `splanc-agent tools` every tool. No
+players found → pass `--host <ip>`. (Installed: `npx -y
 https://splanc.io/agent/splanc-agent.tgz <command>`.)
 
 ## Textures

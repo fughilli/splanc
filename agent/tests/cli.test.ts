@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 
+import { KEYPOINTS_IN_PROTO } from "../src/session";
 import { FakePlayer, yFixture } from "./fakePlayer";
 
 const WASM_ROOT = resolve(process.env["AGENT_WASM_ROOT"] ?? "wasm");
@@ -46,6 +47,7 @@ before(async () => {
   for (const [i, name] of ["Desk", "Shelf"].entries()) {
     const p = new FakePlayer({ name, mac: `CC:FD:49:00:01:0${i}` });
     p.bundle = yFixture();
+    p.features.push("keypoints");
     await p.start();
     p.serveManifest();
     ps.push(p);
@@ -80,6 +82,30 @@ test("set-brightness fans out; an unknown player exits 1 with the error", async 
   assert.match(r.out, /no player or room "attic"/);
 });
 
+test("exit status: some players failed = 2, every targeted player failed = 1", async () => {
+  try {
+    ps[1]!.refuse.set("set_brightness", { code: "unsupported", message: "no brightness" });
+    let r = await run(["set-brightness", "0.3"]);
+    assert.equal(r.code, 2, r.out + r.err);
+    assert.match(JSON.parse(r.out).summary, /1 ok, 1 failed/);
+    r = await run(["set-brightness", "0.3", "--players", "Shelf"]);
+    assert.equal(r.code, 1, "the only targeted player failed");
+    ps[0]!.refuse.set("set_brightness", { code: "unsupported", message: "no brightness" });
+    r = await run(["set-brightness", "0.3"]);
+    assert.equal(r.code, 1, r.out + r.err);
+  } finally {
+    for (const p of ps) p.refuse.delete("set_brightness");
+  }
+});
+
+test("help lists the commands (keypoints included)", async () => {
+  const r = await run(["help"]);
+  assert.equal(r.code, 0, r.err);
+  for (const c of ["deploy-effect", "save-keypoint", "recall-keypoint", "blend-keypoints", "Exit status"]) {
+    assert.ok(r.out.includes(c), c);
+  }
+});
+
 test("deploy-effect --file, ramp-uniforms waits, preview --out writes PNGs", async () => {
   const fx = join(SCRATCH, "mood.fx");
   writeFileSync(fx, EFFECT);
@@ -95,6 +121,31 @@ test("deploy-effect --file, ramp-uniforms waits, preview --out writes PNGs", asy
   assert.equal(r.code, 0, r.out + r.err);
   assert.deepEqual(readdirSync(out).sort(), ["frame-0.png", "frame-1.png"]);
   assert.equal(JSON.parse(r.out).room.total_leds, 60);
+});
+
+test("keypoint commands: save, list, get, recall, blend, delete", { skip: !KEYPOINTS_IN_PROTO }, async () => {
+  const d = ["--players", "Desk"];
+  let r = await run(["save-keypoint", "calm", "rain=0.1", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  r = await run(["save-keypoint", "storm", "rain=1", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  r = await run(["list-keypoints", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  const listed = JSON.parse(r.out).results[0].result.keypoints.map((k: { name: string }) => k.name);
+  assert.deepEqual(listed, ["calm", "storm"]);
+  r = await run(["get-keypoint", "storm", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.deepEqual(JSON.parse(r.out).results[0].result.values, { rain: 1 });
+  r = await run(["recall-keypoint", "storm", "--seconds", "2", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.equal(ps[0]!.blends.at(-1)!["seconds"], 2);
+  r = await run(["blend-keypoints", "calm=3", "storm=1", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.deepEqual(JSON.parse(r.out).results[0].result.weights, { calm: 0.75, storm: 0.25 });
+  r = await run(["delete-keypoint", "calm", ...d]);
+  assert.equal(r.code, 0, r.out + r.err);
+  r = await run(["get-keypoint", "calm", ...d]);
+  assert.equal(r.code, 1, "every targeted player failed");
 });
 
 test("room: the shared-frame view", async () => {

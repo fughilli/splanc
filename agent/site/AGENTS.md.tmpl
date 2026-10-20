@@ -17,11 +17,18 @@ You need: Node.js >= 20 and a machine on the same LAN as the lights.
 {{NPX}} ramp-uniforms warmth=0.8 --seconds 20     # a smooth, watchable change
 {{NPX}} preview-effect --file calm.fx --out /tmp/p # render on the real maps (PNGs)
 {{NPX}} deploy-effect calm --file calm.fx         # budget-checked, then deployed
+{{NPX}} save-keypoint dusk                        # keep the current look by name
+{{NPX}} recall-keypoint dusk --seconds 10         # glide back to it later
 ```
 
-Every command prints JSON and exits non-zero on failure. Device commands take
-`--players <name|room|all>` (default: the only player, or all players when they
-form one room). `{{NPX}} tools` lists the full surface.
+Every command prints JSON. Exit status: 0 on success, 1 on an error or when
+every targeted player failed, 2 when only some did (the JSON names each
+player's error). Device commands take `--players <name|room|all>` (default: the
+only player, or all players when they form one room). `list-players` finds
+players by mDNS and a sweep of the local /24s; if it finds none, pass
+`--host <ip>`. `{{NPX}} help` lists the commands (keypoints: `list-`, `save-`,
+`get-`, `recall-`, `delete-keypoint`, `blend-keypoints`); `{{NPX}} tools` the
+full tool surface.
 
 ## Long-lived: as an MCP server
 

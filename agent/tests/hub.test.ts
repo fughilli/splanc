@@ -173,6 +173,12 @@ describe("registry", () => {
     const r = await call(c, "set_brightness", { level: 0.5 });
     assert.ok(r.isError);
     assert.match(r.text, /no Splanc players found/);
+    // list_players isn't an error with nothing found, but says how to add one.
+    const l = await call(c, "list_players");
+    assert.equal(l.isError, false);
+    assert.deepEqual(l.json.players, []);
+    assert.match(l.json.hint, /--host <ip>/);
+    assert.match(l.json.hint, /mDNS/);
     hub.close();
   });
 });
