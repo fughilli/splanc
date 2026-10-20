@@ -223,3 +223,10 @@ test('provider transport fields are discarded while validated tool calls remain 
   assert.equal(response.status,200);
   assert.deepEqual((await response.json()).choices[0].message.tool_calls,[call]);
 });
+
+test('nullable tool-call field is normal on a plain assistant reply', async () => {
+  const relay=createDemoRelay({fetchImpl:async()=>Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done',tool_calls:null}}]})});
+  const response=await relay(req(),env);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).choices[0].message.content,'Done');
+});

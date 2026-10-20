@@ -136,7 +136,7 @@ function completion(json, tools) {
   if (m.refusal || choice.finish_reason === "content_filter") return { refusal: true };
   // Provider aggregators may retain streaming indices or other transport fields.
   // Validate and forward only the tool-call fields consumed by the client.
-  const calls = Array.isArray(m.tool_calls) ? m.tool_calls.map(c => ({
+  const calls = m.tool_calls == null ? undefined : Array.isArray(m.tool_calls) ? m.tool_calls.map(c => ({
     id: c?.id, type: c?.type,
     function: { name: c?.function?.name, arguments: c?.function?.arguments },
   })) : m.tool_calls;
