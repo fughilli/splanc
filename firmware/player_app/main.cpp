@@ -2354,6 +2354,9 @@ void setup() {
 #endif
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();
+#if defined(LM_NETSTACK)
+  lm_mode_boot();  // memory-mode tracking starts from what the replay restored
+#endif
   // Bring up the color-correction LUT (from flash if present, else the default)
   // before the render task starts, so the first frame is already corrected.
   color_correction_begin();
@@ -2547,6 +2550,35 @@ static void provisioning_poll() {
 }
 #endif  // !LM_NETSTACK
 
+#if defined(LM_NETSTACK)
+// Track the device through the memory-mode model (docs/design/memory-regions.md), LOG-ONLY:
+// each loop hands lm_mode_observe what the transport can see; the player side adds its own
+// facts. A transition the model refuses is logged ONCE per (state, event, reason) - the
+// counters in LM_MODE keep the full tally for a JTAG read - and the firmware's behaviour is
+// unchanged. Cheap when nothing changed (a few compares).
+static void mode_observe() {
+  LmNetObserved net = {netstack_creds_ready(), netstack_leased(), improv_ble_central_connected(),
+                       netstack_ws_open(), upload_active};
+  LmModeRefusal r[4];
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  uint32_t n = lm_mode_observe(&net, (int64_t)millis(), r, 4);
+  xSemaphoreGive(player_mutex);
+  static uint32_t logged[32];
+  static uint8_t nlogged = 0;
+  for (uint32_t i = 0; i < n && i < 4; i++) {
+    uint32_t key = r[i].state << 16 | r[i].event << 8 | r[i].why;
+    bool seen = false;
+    for (uint8_t k = 0; k < nlogged; k++) seen |= logged[k] == key;
+    if (seen || nlogged >= sizeof logged / sizeof logged[0]) continue;
+    logged[nlogged++] = key;
+    // state bits: 0-1 wifi (0 unprov, 1 scan, 2 joined), 2 ble central, 3 wss,
+    // 4-6 activity (0 idle, 1 mapping, 2 effect, 3 +video, 4 upload), 7 map.
+    Log().printf("[mode] model refused event=%u why=%u in state=0x%02x (log-only)\n",
+                 (unsigned)r[i].event, (unsigned)r[i].why, (unsigned)r[i].state);
+  }
+}
+#endif
+
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
@@ -2582,6 +2614,7 @@ void loop() {
   }
 #else
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+  mode_observe();
 #endif
   if (fs_ok) {
     flush_fx_sel_save();
@@ -2615,13 +2648,16 @@ void loop() {
 #else
     // tls=<small-region peak>/<size> slots=<peak>/<n> big=<largest request> fb=<fallbacks>:
     // the TLS region's high-waters, to size it (tls_region.h).
+    // mode=: the memory-mode tracker (state code, accepted / refused / unmodeled events).
     const TlsRegionStats &tls = tls_region_stats();
     Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u rekeys=%u "
-                 "tls=%u/%u slots=%u/%u big=%u fb=%u\n",
+                 "tls=%u/%u slots=%u/%u big=%u fb=%u mode=0x%02x/%u/%u/%u\n",
                  map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
                  (unsigned)esp_get_minimum_free_heap_size(), (unsigned)netstack_rekey_count(),
                  (unsigned)tls.small_peak, (unsigned)tls.small_size, (unsigned)tls.slots_peak,
-                 (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks);
+                 (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks,
+                 (unsigned)LM_MODE.state, (unsigned)LM_MODE.accepted, (unsigned)LM_MODE.refused,
+                 (unsigned)LM_MODE.unmodeled);
 #endif
   }
   delay(1);

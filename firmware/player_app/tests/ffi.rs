@@ -631,3 +631,29 @@ fn full_device_flow_through_the_c_abi() {
     unsafe { lm_fx_set_active(false) };
     assert_eq!(ingest(&osc_msg("/k", "f", &0.5f32.to_be_bytes())), 0, "no active effect -> inert");
 }
+
+/// The memory-mode tracker through the C ABI: provisioning + a wss session
+/// track with no refusals and the counters land in LM_MODE; a session with no
+/// network is refused (log-only: reported, counted, and the state still follows).
+#[test]
+fn mode_tracker_over_the_ffi() {
+    use ledmapper_player_ffi::{lm_mode_boot, lm_mode_observe, LmModeRefusal, LmNetObserved, LM_MODE};
+    lm_player_init(64);
+    unsafe { lm_mode_boot() };
+    let net = |creds, leased, ble, wss| LmNetObserved { creds, leased, ble_connected: ble, wss, upload: false };
+    let mut out = [LmModeRefusal { state: 0, event: 0, why: 0 }, LmModeRefusal { state: 0, event: 0, why: 0 }];
+    for (t, n) in [net(false, false, true, false), net(true, false, true, false), net(true, true, true, false),
+                   net(true, true, true, true), net(true, true, false, true)].iter().enumerate()
+    {
+        let refused = unsafe { lm_mode_observe(n, t as i64 * 100, out.as_mut_ptr(), out.len()) };
+        assert_eq!(refused, 0, "step {t}");
+    }
+    let stats = unsafe { core::ptr::addr_of!(LM_MODE).read() };
+    assert!(stats.accepted >= 5 && stats.refused == 0, "{stats:?}");
+
+    unsafe { lm_mode_boot() };
+    let refused = unsafe { lm_mode_observe(&net(false, false, false, true), 0, out.as_mut_ptr(), out.len()) };
+    assert_eq!(refused, 1);
+    assert_eq!(out[0].why, 2, "NotJoined");
+    assert_eq!(unsafe { core::ptr::addr_of!(LM_MODE).read() }.refused, 1);
+}

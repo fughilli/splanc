@@ -31,6 +31,11 @@ bool netstack_ws_send(uint8_t *data, size_t len);
 // True when a WS client is upgraded (for gating unsolicited pushes).
 bool netstack_ws_open(void);
 
+// Facts for the memory-mode tracker (lm_mode_observe): WiFi credentials committed, and a
+// DHCP lease held.
+bool netstack_creds_ready(void);
+bool netstack_leased(void);
+
 // Count of AP group-key rekeys serviced this session (surfaced in the status line so a
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);

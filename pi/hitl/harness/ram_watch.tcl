@@ -85,4 +85,10 @@ if {[info exists census_addr]} {
     dump_image $out/census.bin $census_addr $census_size
     logline "census dumped ($census_size B @ $census_addr)"
 }
+# The firmware's memory-mode tracker counters (LM_MODE, ledmapper_sysmode
+# observe::Stats: polls accepted refused refused_by_kind[4] unmodeled state
+# last_refusal), read once at the end — no reporting from the DUT itself.
+if {[info exists mode] && $mode != 0} {
+    logline "LM_MODE [read_memory $mode 32 10]"
+}
 shutdown
