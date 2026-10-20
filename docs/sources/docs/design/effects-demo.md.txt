@@ -15,16 +15,19 @@ into an editable local effect and the route is replaced with that copy's ID.
 Reload keeps the same copy. The original scene, camera and uniform defaults are
 preserved. Ordinary effect links keep the existing customizable workspace.
 
-Desktop: Preview and Uniforms above Code/tools and AI chat. Phone: Preview,
-Uniforms and AI chat stay stacked, with an expandable tools section underneath.
-The three core panes cannot be hidden or put behind another tab in this preset.
-Normal saved docks are neither loaded nor overwritten. Existing configured AI
-providers are respected; the free provider is the unconfigured demo's
-default only.
+The link selects the `effects-demo` preset in the existing FxLayout dock engine.
+On desktop, Preview is the center, Uniforms the left dock, AI chat the right dock,
+and Code/MIDI/Video/Device/Disassembly occupy the bottom tab group. On phones,
+Preview, Uniforms and AI chat are initially fronted in the existing top/center/
+bottom regions; the tool tabs share the center region. All normal move, resize,
+hide and recall controls work. There is no demo-specific renderer or locked pane.
+The preset uses a temporary persistence scope, leaving the visitor's normal saved
+layout intact. Existing configured AI providers are respected; the free provider
+is the unconfigured demo's default only.
 
 The lower-left invitation starts a short local tour of Preview, Uniforms, AI chat,
 Code, MIDI, Video, Device and Disassembly. Done, Skip and Escape reset the preset
-(Code selected; phone tools collapsed). Navigating away disposes the overlay and
+(Code selected on desktop; Preview, Uniforms and AI chat fronted on phones). Navigating away disposes the overlay and
 invitation. The general app tour is not prompted over this demo tour.
 
 ## Free model research
@@ -150,3 +153,26 @@ regressions and pinned Miniflare/workerd checks, then replaces only `_worker.js`
 It records distinct static/worker source revisions in `worker-deployment.json`.
 The static app and its compiler/VM stay matched; GitHub Pages is not republished
 for this mode. Any app, native source or dependency change requires a full build.
+
+
+## Tour visibility and bounded previews
+
+The invitation uses larger bold text, a gold border and one smooth highlight every
+six seconds. It stays still during hover/focus and under reduced-motion preferences.
+Finishing or skipping the tour resets the same normal dock preset.
+
+The free demo previously resent every full-resolution PNG on every tool round,
+which could exceed the relay's 2 MiB request cap after a few captures. Captures are
+now JPEG, at most 960 pixels on the longest edge and 256 KiB of encoded text. Only
+the latest image is sent; earlier image entries become textual markers. Existing chat persistence already removes image pixels on save, so
+refreshing retains the text/tool history without resending old large images. Tool-call
+IDs, results, code and chat text are retained, and saved history is not mutated.
+The capture waits for the refreshed frame before encoding. Other configured
+providers keep their full-resolution capture path. Oversized text histories are
+caught before sending with guidance to use New chat; server limits stay intact.
+
+Regression evidence: six synthetic 700 KB preview images previously exceeded
+4 MB; the filtered request retains one image below 1 MB and all tool pairs. A
+real desktop browser at device pixel ratio 3 completed a mocked seven-request
+edit/five-preview/conclusion flow: requests remained below 223 KB and the current
+JPEG under 196 KB. This verifies transport and local compilation, not model output.
