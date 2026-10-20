@@ -39,8 +39,15 @@ echo "seeding grafana creds -> root@$HOST:/var/lib/hitl/grafana.env"
 scp -i "$DEPLOY_KEY" -o IdentitiesOnly=yes "$ENV_FILE" "root@$HOST:/var/lib/hitl/grafana.env"
 "${SSH[@]}" "root@$HOST" '
   chmod 600 /var/lib/hitl/grafana.env
-  # The unit is gated on this file via ConditionPathExists; restart picks it up
-  # now that it exists (start if it was never running).
-  systemctl restart hitl-alloy.service 2>/dev/null || systemctl start hitl-alloy.service
-  systemctl --no-pager --lines=0 status hitl-alloy.service | head -3'
+  if [ "$(uname -s)" = Darwin ]; then
+    # The Mac (observability/alloy-darwin.nix): a launchd daemon whose wrapper
+    # idles until this file exists; kickstart it now that it does.
+    launchctl kickstart -k system/org.nixos.hitl-alloy
+    launchctl print system/org.nixos.hitl-alloy | grep -E "state|pid" | head -3
+  else
+    # Linux rigs: the unit is gated on this file via ConditionPathExists; restart
+    # picks it up now that it exists (start if it was never running).
+    systemctl restart hitl-alloy.service 2>/dev/null || systemctl start hitl-alloy.service
+    systemctl --no-pager --lines=0 status hitl-alloy.service | head -3
+  fi'
 echo "done."

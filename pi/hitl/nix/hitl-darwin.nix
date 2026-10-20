@@ -183,6 +183,10 @@ let
   macHost = config.networking.hostName or "mac-mini";
 in
 {
+  # Push this host's reservation-daemon metrics to Grafana Cloud (launchd Alloy;
+  # dormant until //pi/hitl:seed_grafana drops in the creds).
+  imports = [ ../observability/alloy-darwin.nix ];
+
   #### The reservation daemon (launchd) ######################################
   # Runs the darwin backend on :8087 (the fleet-wide reservation port). KeepAlive
   # restarts it on crash; RunAtLoad starts it at boot. Logs to /var/log so a
