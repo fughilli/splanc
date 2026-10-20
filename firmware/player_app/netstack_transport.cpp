@@ -27,6 +27,7 @@
 #include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
 #include "improv_codec.h"    // IMPROV_STATE_* constants
 #include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
+#include "tls_region.h"         // mbedtls's own memory region
 #include "dhcp_reply.h"
 
 extern "C" {
@@ -913,6 +914,7 @@ static int bio_recv(void *, unsigned char *buf, size_t len) {
 }
 
 void tls_init() {
+  tls_region_install();  // mbedtls allocates from its own region from here on
   mbedtls_ssl_init(&g_ssl);
   mbedtls_ssl_config_init(&g_conf);
   mbedtls_x509_crt_init(&g_srvcert);
