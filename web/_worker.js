@@ -7,7 +7,8 @@
 // fetches it server-side (no CORS there) and re-serves it with
 // Access-Control-Allow-Origin. Locked to this repo's release URLs — not an open proxy.
 //
-// The effects demo endpoint below relays only approved free models. On
+// The effects demo endpoint below relays only approved free models. The cloud relay's
+// public paths (RELAY_PATHS, below) are forwarded to the splanc-relay Worker. On
 // splanc.pages.dev every other request 301s to https://splanc.io/app (retiredOrigin,
 // below); on other hosts (ledmapper.pages.dev) it passes through to the static site
 // via env.ASSETS.
@@ -302,6 +303,27 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
 }
 const demoAi = createDemoRelay();
 
+// The cloud relay (agent/relay, docs/design/cloud-relay.md) is its own Worker; its
+// public address is https://splanc.pages.dev so it carries no account name. These
+// paths go to it through the RELAY service binding on the splanc Pages project, with
+// the request URL unchanged: the relay derives its OAuth issuer and MCP URLs from it.
+// The relay's landing page (/) and the other .well-known paths stay with the site.
+export const RELAY_PATHS = new Set([
+  "/mcp", "/healthz", "/register", "/authorize", "/token", "/revoke", "/pair",
+  "/bridge/register", "/bridge/connect",
+  "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
+  "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+]);
+
+export function relayRoute(request, url, env) {
+  if (!RELAY_HOST.test(url.hostname)) return null;
+  if (!RELAY_PATHS.has(url.pathname.replace(/\/+$/, ""))) return null;
+  if (!env.RELAY) return new Response(JSON.stringify({ error: "relay not bound" }), {
+    status: 503, headers: { "content-type": "application/json" },
+  });
+  return env.RELAY.fetch(request);
+}
+
 // splanc.pages.dev is retired as an app origin: the app lives at https://splanc.io/app
 // (GitHub Pages). Every non-API path there 301s to the same path under splanc.io/app,
 // except the agent entry points, which live at the splanc.io root. The API routes
@@ -309,6 +331,8 @@ const demoAi = createDemoRelay();
 // deployments (<hash>.splanc.pages.dev) redirect too; ledmapper.pages.dev is left
 // alone (firmware's landing page still names it).
 const RETIRED_HOST = /(^|\.)splanc\.pages\.dev$/;
+// Production only: preview deployments (<hash>.splanc.pages.dev) have no binding.
+const RELAY_HOST = /^splanc\.pages\.dev$/;
 const SITE_ROOT_PATH = /^\/(AGENTS\.md|llms\.txt|agent(\/|$)|\.well-known(\/|$))/;
 // A browser that installed the PWA from this origin keeps serving it from its
 // service worker without asking the network, and a service worker script can't be
@@ -340,6 +364,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === DEMO_PATH) return demoAi(request, env);
     if (url.pathname === "/gh-asset") return ghAsset(request);
+    const relayed = relayRoute(request, url, env);
+    if (relayed) return relayed;
     const moved = retiredOrigin(url);
     if (moved) return moved;
     // Everything else is the static site (env.ASSETS honors the SPA not-found rule).

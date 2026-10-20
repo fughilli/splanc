@@ -31,7 +31,7 @@ hosting bill.
 
 - **Bridge** (`splanc-agent bridge [--relay <url>]`; the relay defaults to `$SPLANC_RELAY`, then
   the built-in `DEFAULT_RELAY_URL` in `agent/src/bridge/relayLink.ts`, which is set to the
-  deployed Worker's URL, `https://splanc-relay.kbalke.workers.dev`; with none configured the bridge stays up with `state: "error"`): the
+  deployed Worker's URL, `https://splanc.pages.dev`; with none configured the bridge stays up with `state: "error"`): the
   existing hub plus `LanBridge`. Its identity lives in `$SPLANC_BRIDGE_STATE_DIR`, else systemd's
   `$STATE_DIRECTORY`, else `~/.local/state/splanc`. The Pi appliance (`pi/bridge/`) runs it from
   `splanc-bridge.service` with `/etc/splanc-bridge/bridge.env`. It keeps
@@ -251,6 +251,12 @@ per-request storage writes, and token checks cached per wake period.
 - Cloudflare: `agent/relay/wrangler.toml` deploys Worker `splanc-relay` to
   `https://splanc-relay.<account subdomain>.workers.dev` (`agent/relay/deploy.sh`, or the
   "Deploy cloud relay" workflow). splanc.io's DNS stays where it is; no custom domain is needed.
+- Public address: `https://splanc.pages.dev`. The splanc Pages project has a service binding
+  `RELAY` → `splanc-relay`, and `web/_worker.js` forwards the relay's paths (`RELAY_PATHS`:
+  `/mcp`, `/pair`, the OAuth endpoints and metadata, `/bridge/*`) through it with the URL
+  unchanged, so the relay's issuer and MCP URLs come out as `splanc.pages.dev`. The workers.dev
+  address keeps working and names itself. The binding lives in the Pages project settings
+  (not in the repo); a deploy without it answers those paths with `503 relay not bound`.
   The token needs Account → Workers Scripts → Edit (the Pages-only deploy token can't).
 - Self-hosted: `splanc-agent relay` runs the same Worker code on Node (`RelayHost`: Durable
   Object storage in memory, persisted to a JSON file; sockets never hibernate). Expose it with

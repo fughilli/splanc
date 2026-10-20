@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { createDemoRelay, FREE_DEMO_MODELS } from '../_worker.js';
+import worker, { createDemoRelay, FREE_DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
 const tool = { type: 'function', function: { name: 'set_script', description: 'Edit an effect', parameters: { type: 'object' } } };
@@ -281,4 +281,31 @@ test('200 headers followed by a stalled body report timeout and cancel each stre
   assert.equal(cancelled,3);
   const result=await response.json();
   assert.deepEqual(result.attempts,FREE_DEMO_MODELS.map(model=>({model,outcome:'timeout'})));
+});
+
+test('splanc.pages.dev forwards the cloud relay paths to the RELAY binding, URL unchanged', async () => {
+  const seen = [];
+  const env = {
+    RELAY: { fetch: async (req) => { seen.push(req.url); return new Response('relay'); } },
+    ASSETS: { fetch: async () => assert.fail('relay paths must not reach the static site') },
+  };
+  for (const p of RELAY_PATHS) {
+    const r = await worker.fetch(new Request(`https://splanc.pages.dev${p}?id=x`), env);
+    assert.equal(await r.text(), 'relay', p);
+  }
+  assert.equal(seen[0], 'https://splanc.pages.dev/mcp?id=x');
+  assert.equal(await (await worker.fetch(new Request('https://splanc.pages.dev/mcp/'), env)).text(), 'relay');
+
+  // The site keeps its root, its other .well-known files and the APIs.
+  const loc = async (u) => (await worker.fetch(new Request(u), env)).headers.get('location');
+  assert.equal(await loc('https://splanc.pages.dev/'), 'https://splanc.io/app/');
+  assert.equal(await loc('https://splanc.pages.dev/.well-known/mcp/server.json'), 'https://splanc.io/.well-known/mcp/server.json');
+  assert.equal(await loc('https://splanc.pages.dev/mcpx'), 'https://splanc.io/app/mcpx');
+  // Previews and other projects have no binding: they never forward.
+  assert.equal(await loc('https://abc123.splanc.pages.dev/mcp'), 'https://splanc.io/app/mcp');
+  const other = await worker.fetch(new Request('https://ledmapper.pages.dev/mcp'), { ASSETS: { fetch: async () => new Response('static') } });
+  assert.equal(await other.text(), 'static');
+  // A missing binding is a clear 503, not the app.
+  const unbound = await worker.fetch(new Request('https://splanc.pages.dev/mcp'), { ASSETS: env.ASSETS });
+  assert.equal(unbound.status, 503);
 });
