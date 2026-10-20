@@ -22,8 +22,8 @@ splanc.io).
   with your Wi-Fi, no terminal needed, and the Pi shows its state and pairing code on its screen
   ([Set up a Splanc bridge on a Raspberry Pi](../pi-bridge.md)). Any Linux, macOS or Windows
   machine with Node.js 20 or newer works too.
-- The relay's address. The public Splanc relay runs at a `workers.dev` address
-  (`https://splanc-relay.<name>.workers.dev`, published on splanc.io). You can also run your own:
+- The relay's address. The public Splanc relay is `https://splanc-relay.kbalke.workers.dev`,
+  and bridges use it unless you name another. You can also run your own:
   see [Run your own relay with Tailscale](relay-tailscale.md).
 
 Below, `<relay>` stands for that address.
