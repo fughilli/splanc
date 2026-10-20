@@ -3552,7 +3552,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_workloads.rs",
-          "line": 197,
+          "line": 202,
           "symbol": "fn a_map_at_the_full_led_cap_uploads_in_small_windows_and_decodes_off_flash"
         },
         {
@@ -3561,7 +3561,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_workloads.rs",
-          "line": 220,
+          "line": 225,
           "symbol": "fn a_realistic_scan_topology_is_stored_beside_its_map_and_plays"
         },
         {
@@ -3570,7 +3570,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_workloads.rs",
-          "line": 264,
+          "line": 269,
           "symbol": "fn an_effect_with_per_led_state_renders_every_led_at_the_cap"
         }
       ]
@@ -4276,7 +4276,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 212,
+          "line": 217,
           "symbol": "fn uploads_decode_through_one_small_block_whatever_their_size"
         },
         {
@@ -4285,7 +4285,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 231,
+          "line": 236,
           "symbol": "fn an_upload_past_the_storage_arena_is_refused_rolled_back_and_recoverable"
         },
         {
@@ -4294,7 +4294,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 259,
+          "line": 264,
           "symbol": "fn an_effect_past_the_effect_buffer_is_refused_and_the_running_one_keeps_rendering"
         },
         {
@@ -4303,7 +4303,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 277,
+          "line": 282,
           "symbol": "fn video_frames_past_the_texture_buffer_are_dropped_and_frames_within_it_apply"
         },
         {
@@ -4312,7 +4312,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 309,
+          "line": 314,
           "symbol": "fn heap_figures_handed_to_the_core_are_carried_in_the_polled_and_pushed_perf_report"
         },
         {
@@ -4321,7 +4321,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 335,
+          "line": 340,
           "symbol": "fn map_leds_past_the_led_cap_are_validated_but_never_stored"
         },
         {
@@ -4330,7 +4330,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 392,
+          "line": 397,
           "symbol": "fn narrow_buffers_keep_per_led_state_in_a_quarter_of_the_memory"
         },
         {
@@ -4339,7 +4339,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 407,
+          "line": 412,
           "symbol": "fn effect_buffers_past_the_fx_arena_are_clamped_never_written_out_of_bounds"
         }
       ]
