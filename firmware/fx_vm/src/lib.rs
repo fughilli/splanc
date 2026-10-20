@@ -2863,61 +2863,6 @@ pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
     unit_from_hash(h)
 }
 
-/// 8-bit RGB → HSV (0..1, hue wrapping at 1). Grey reports hue 0, saturation 0.
-fn rgb2hsv(c: Rgb) -> (f32, f32, f32) {
-    let (r, g, b) = (c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let d = max - min;
-    let s = if max <= 0.0 { 0.0 } else { d / max };
-    let h = if d <= 0.0 {
-        0.0
-    } else if max == r {
-        ((g - b) / d) / 6.0
-    } else if max == g {
-        ((b - r) / d + 2.0) / 6.0
-    } else {
-        ((r - g) / d + 4.0) / 6.0
-    };
-    (fractf(h), s, max)
-}
-
-/// Blend two 8-bit RGB colours by `t` (0 = all `a`, 1 = all `b`) for the FX
-/// deck crossfader (docs/design/uniform-keypoints.md). `mode` 0 = linear RGB
-/// (per-channel lerp); 1 = HSV: hue along the SHORTEST arc of the colour wheel,
-/// saturation and value lerped (a grey end borrows the other end's hue, so a
-/// fade from white doesn't sweep through red). Exact at `t <= 0` / `t >= 1`, so a
-/// parked crossfader never perturbs a deck.
-pub fn blend_rgb8(a: Rgb, b: Rgb, t: f32, mode: u32) -> Rgb {
-    if t <= 0.0 || t.is_nan() {
-        return a;
-    }
-    if t >= 1.0 {
-        return b;
-    }
-    let q = |v: f32| (clamp01(v) * 255.0 + 0.5) as u8;
-    if mode == 1 {
-        let (mut ha, sa, va) = rgb2hsv(a);
-        let (mut hb, sb, vb) = rgb2hsv(b);
-        if sa <= 1e-4 {
-            ha = hb;
-        } else if sb <= 1e-4 {
-            hb = ha;
-        }
-        let mut dh = hb - ha;
-        if dh > 0.5 {
-            dh -= 1.0;
-        } else if dh < -0.5 {
-            dh += 1.0;
-        }
-        let (r, g, bl) = hsv2rgb(fractf(ha + t * dh), sa + t * (sb - sa), va + t * (vb - va));
-        (q(r), q(g), q(bl))
-    } else {
-        let l = |x: u8, y: u8| (x as f32 + t * (y as f32 - x as f32) + 0.5) as u8;
-        (l(a.0, b.0), l(a.1, b.1), l(a.2, b.2))
-    }
-}
-
 fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h6 = fractf(h) * 6.0;
     let c = v * s;

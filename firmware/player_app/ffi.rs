@@ -3823,16 +3823,17 @@ static mut FX_XF_MODE: u32 = 0;
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_count: u32) -> bool {
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
-    if !(0..N_DECKS).any(|d| deck(d).is_some_and(|p| (*p).loaded())) {
+    let b_loaded = FX_AUX_OWNER == AuxOwner::DeckB;
+    if !(*addr_of!(DECK_A)).loaded() && !b_loaded {
         return false;
     }
-    let pl = player();
-    FX_XF_POS = pl.crossfade();
-    FX_XF_MODE = pl.crossfade_mode();
+    if b_loaded {
+        fx_latch_crossfade();
+    }
     // The room frame follows the map and the pose: rebuild when either changed
     // (only for effects that read it — the rest never pay the sweep).
-    let uses_room = (0..N_DECKS).any(|d| deck(d).is_some_and(|p| (*p).loaded() && (*p).uses_room));
-    if uses_room && (!FX_ROOM_READY || FX_ROOM_GEN != pl.fixture_pose_gen()) {
+    let uses_room = DECK_A.uses_room || (b_loaded && deck(DECK_B_IDX).is_some_and(|p| (*p).uses_room));
+    if uses_room && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
         fx_rebuild_room();
     }
     let f = FxFrame {
@@ -3873,38 +3874,67 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_INSTR_UPDATE = 0;
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
-    for d in 0..N_DECKS {
-        let Some(p) = deck(d) else { continue };
-        if !(*p).renders() {
-            continue;
-        }
-        let bytes = &(*p).bytes[..(*p).len];
-        let Ok(prog) = Program::parse(bytes) else { continue };
-        let Some(vm) = (*p).vm.as_mut() else { continue };
-        // A keypoint morph moves the uniforms first, so this frame's update and
-        // shade see the same in-between position.
-        if let Some(v) = (*p).morph.advance(dt_s) {
-            (*p).morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
-        }
-        let outcome = if PERF_MODE == PERF_FULL {
-            // FULL: pay the counted VM path so instr_update / stack_max are real.
-            let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
-            FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
-            FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
-            oc
-        } else {
-            // BASIC/OFF: the plain path — no per-opcode counting overhead.
-            vm.run_update_bounded(&prog, &f, &fx_budget())
-        };
-        if d == DECK_A_IDX {
-            FX_LAST_UPDATE_OUTCOME = outcome as u32;
+    if let Some(oc) = fx_update_deck(addr_of_mut!(DECK_A), &f, dt_s) {
+        FX_LAST_UPDATE_OUTCOME = oc as u32;
+    }
+    if b_loaded {
+        if let Some(p) = deck(DECK_B_IDX) {
+            fx_update_deck(p, &f, dt_s);
         }
     }
     true
 }
 
+/// Latch the crossfade for this frame's blend (only read with deck B loaded).
+#[cold]
+#[inline(never)]
+unsafe fn fx_latch_crossfade() {
+    let pl = player();
+    FX_XF_POS = pl.crossfade();
+    FX_XF_MODE = pl.crossfade_mode();
+}
+
+/// Run one deck's update() for this frame (advancing its keypoint morph first);
+/// None when the deck doesn't render.
+#[inline(always)]
+unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Outcome> {
+    if !(*p).renders() {
+        return None;
+    }
+    let bytes = &(*p).bytes[..(*p).len];
+    let prog = Program::parse(bytes).ok()?;
+    let vm = (*p).vm.as_mut()?;
+    // A keypoint morph moves the uniforms first, so this frame's update and
+    // shade see the same in-between position (out of line: rarely running).
+    if (*p).morph.running() {
+        fx_advance_morph(p, dt_s);
+    }
+    Some(if PERF_MODE == PERF_FULL {
+        // FULL: pay the counted VM path so instr_update / stack_max are real.
+        let (oc, c) = vm.run_update_counted(&prog, f, &fx_budget());
+        FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
+        FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
+        oc
+    } else {
+        // BASIC/OFF: the plain path — no per-opcode counting overhead.
+        vm.run_update_bounded(&prog, f, &fx_budget())
+    })
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn fx_advance_morph(p: *mut DeckState, dt_s: f32) {
+    if let (Some(v), Some(vm)) = ((*p).morph.advance(dt_s), (*p).vm.as_mut()) {
+        (*p).morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
+    }
+}
+
 /// Shade one LED on deck `p`: run `shade(led)` → rgb. None when the deck has no
 /// program OR the invocation was cancelled by a bounded-execution guard.
+// Inlined into both lm_fx_shade paths: the single-deck one must stay exactly the
+// one-function hot path it was (fx_bench measures it; an extra call frame and a
+// second hot code block per LED cost several percent through the flash cache).
+#[inline(always)]
 unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> Option<Rgb8> {
     let bytes = &(*p).bytes[..(*p).len];
     // &mut: run_shade writes the VM's resident scratch (stack/locals) in place
@@ -3986,6 +4016,25 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
 /// `rgb` must point to 3 writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_shade(idx: u32, x: f32, y: f32, z: f32, rgb: *mut u8) -> bool {
+    // The common case — deck B not loaded (the aux region is free or holds a
+    // video stream): deck A alone, straight through.
+    if FX_AUX_OWNER != AuxOwner::DeckB {
+        return match fx_shade_one(addr_of_mut!(DECK_A), idx, x, y, z) {
+            Some((r, g, b)) => {
+                *rgb = r;
+                *rgb.add(1) = g;
+                *rgb.add(2) = b;
+                true
+            }
+            None => false,
+        };
+    }
+    fx_shade_decks(idx, x, y, z, rgb)
+}
+
+/// The two-deck shade + crossfade blend (deck B loaded).
+#[inline(never)]
+unsafe fn fx_shade_decks(idx: u32, x: f32, y: f32, z: f32, rgb: *mut u8) -> bool {
     let t = FX_XF_POS;
     let a = (*addr_of!(DECK_A)).renders();
     let b = deck_renders(DECK_B_IDX);
@@ -3995,7 +4044,7 @@ pub unsafe extern "C" fn lm_fx_shade(idx: u32, x: f32, y: f32, z: f32, rgb: *mut
         _ => None,
     };
     let (r, g, bl) = match (ca, cb) {
-        (Some(ca), Some(cb)) => ledmapper_fx_vm::blend_rgb8(ca, cb, t, FX_XF_MODE),
+        (Some(ca), Some(cb)) => kp::blend_rgb8(ca, cb, t, FX_XF_MODE),
         (Some(c), None) | (None, Some(c)) => c,
         (None, None) => return false,
     };

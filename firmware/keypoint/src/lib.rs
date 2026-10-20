@@ -516,6 +516,38 @@ pub fn hue_lerp(a: f32, b: f32, t: f32) -> f32 {
     fract(a + t * d)
 }
 
+/// Blend two 8-bit RGB colours by `t` (0 = all `a`, 1 = all `b`) — the FX deck
+/// crossfader (docs/design/uniform-keypoints.md). `mode` [`COLOR_RGB`] =
+/// per-channel lerp; [`COLOR_HSV`] = hue along the SHORTEST arc, saturation and
+/// value lerped (a grey end borrows the other end's hue, so a fade from white
+/// doesn't sweep through red). Exact at `t <= 0` / `t >= 1`, so a parked
+/// crossfader never perturbs a deck. (Here, not in fx_vm: the VM crate's code
+/// layout is what fx_bench measures.)
+pub fn blend_rgb8(a: (u8, u8, u8), b: (u8, u8, u8), t: f32, mode: u32) -> (u8, u8, u8) {
+    if t <= 0.0 || t.is_nan() {
+        return a;
+    }
+    if t >= 1.0 {
+        return b;
+    }
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    if mode == COLOR_HSV {
+        let f = |c: (u8, u8, u8)| rgb_to_hsv(c.0 as f32 / 255.0, c.1 as f32 / 255.0, c.2 as f32 / 255.0);
+        let (mut ha, sa, va) = f(a);
+        let (mut hb, sb, vb) = f(b);
+        if sa <= 1e-4 {
+            ha = hb;
+        } else if sb <= 1e-4 {
+            hb = ha;
+        }
+        let (r, g, bl) = hsv_to_rgb(hue_lerp(ha, hb, t), sa + t * (sb - sa), va + t * (vb - va));
+        (q(r), q(g), q(bl))
+    } else {
+        let l = |x: u8, y: u8| (x as f32 + t * (y as f32 - x as f32) + 0.5) as u8;
+        (l(a.0, b.0), l(a.1, b.1), l(a.2, b.2))
+    }
+}
+
 /// Colour blend space for `color` uniforms.
 pub const COLOR_RGB: u32 = 0;
 pub const COLOR_HSV: u32 = 1;

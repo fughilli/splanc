@@ -872,38 +872,12 @@ static void fs_replay(const char *path) {
   rx_len = 0;
 }
 
-// Uniform keypoint store hooks (ffi.rs lm_kp_set_store): one small file per
-// keypoint under the FS base, named by the fx layer ("kp_<effect>.<n>"), written
-// power-loss-safe through fs_write_file.
-static bool kp_path(char *path, size_t cap, const uint8_t *name, size_t len) {
-  int n = snprintf(path, cap, "%s/%.*s", kFsBase, (int)len, (const char *)name);
-  return n > 0 && (size_t)n < cap;
-}
-
-static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
-  char path[48];
-  if (!kp_path(path, sizeof path, name, len)) return -1;
-  FILE *f = fs_open(path, "rb");
-  if (f == nullptr) return -1;
-  size_t got = fread(buf, 1, cap, f);
-  fclose(f);
-  return got > 0 ? (int32_t)got : -1;
-}
-
-static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n) {
-  char path[48];
-  if (!kp_path(path, sizeof path, name, len)) return false;
-  fs_write_file(path, buf, n);
-  FILE *f = fs_open(path, "rb");  // fs_write_file logs, not returns, a failure
-  if (f == nullptr) return false;
-  fclose(f);
-  return true;
-}
-
-static void kp_fs_remove(const uint8_t *name, size_t len) {
-  char path[48];
-  if (kp_path(path, sizeof path, name, len)) remove(path);
-}
+// Uniform keypoint store hooks (ffi.rs lm_kp_set_store), defined at the end of
+// this file: kept out of the code before render_once so its flash layout (and
+// the fx_bench hot loop's cache behaviour) doesn't move.
+static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
+static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
+static void kp_fs_remove(const uint8_t *name, size_t len);
 
 // Mount the LittleFS store and restore a previously-mapped fixture: the map
 // first (sets the stored id), then its topology (validated against that id).
@@ -2723,4 +2697,37 @@ void loop() {
 #endif
   }
   delay(1);
+}
+
+// Uniform keypoint store hooks (ffi.rs lm_kp_set_store): one small file per
+// keypoint under the FS base, named by the fx layer ("kp_<effect>.<n>"), written
+// power-loss-safe through fs_write_file.
+static bool kp_path(char *path, size_t cap, const uint8_t *name, size_t len) {
+  int n = snprintf(path, cap, "%s/%.*s", kFsBase, (int)len, (const char *)name);
+  return n > 0 && (size_t)n < cap;
+}
+
+static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
+  char path[48];
+  if (!kp_path(path, sizeof path, name, len)) return -1;
+  FILE *f = fs_open(path, "rb");
+  if (f == nullptr) return -1;
+  size_t got = fread(buf, 1, cap, f);
+  fclose(f);
+  return got > 0 ? (int32_t)got : -1;
+}
+
+static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n) {
+  char path[48];
+  if (!kp_path(path, sizeof path, name, len)) return false;
+  fs_write_file(path, buf, n);
+  FILE *f = fs_open(path, "rb");  // fs_write_file logs, not returns, a failure
+  if (f == nullptr) return false;
+  fclose(f);
+  return true;
+}
+
+static void kp_fs_remove(const uint8_t *name, size_t len) {
+  char path[48];
+  if (kp_path(path, sizeof path, name, len)) remove(path);
 }
