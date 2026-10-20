@@ -317,6 +317,26 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="export-a-map-to-touchdesigner-or-chromatik">
+<h3>Export a map to TouchDesigner or Chromatik<a class="headerlink" href="#export-a-map-to-touchdesigner-or-chromatik" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><strong>Export map</strong> in the mapping workspace downloads the fixture’s LED positions,
+one entry per LED in output order. Two formats:</p>
+<ul class="simple">
+<li><p>a <strong>CSV</strong> laid out as a TouchDesigner Points DAT
+(<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</span></code>,
+metres, +Y up). Load it in a Table DAT and feed a DAT to SOP, no editing.</p></li>
+<li><p>a <strong>Chromatik <code class="docutils literal notranslate"><span class="pre">.lxf</span></code></strong> fixture (<code class="docutils literal notranslate"><span class="pre">points</span></code> components per channel, with a
+<code class="docutils literal notranslate"><span class="pre">Scale</span></code> parameter that defaults to centimetres).</p></li>
+</ul>
+<p>Unmapped LEDs keep their index with <code class="docutils literal notranslate"><span class="pre">mapped=0</span></code> and an interpolated position.
+A Z-up option covers Blender-style tools. On iOS the file goes through the
+share sheet (“Save to Files”). Agents get the same files from the bridge’s
+<code class="docutils literal notranslate"><span class="pre">export_map</span></code> tool / <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">export-map</span></code>. See
+<a class="reference internal" href="user-guide.html#exporting-a-map-to-other-software"><span class="std std-ref">the user guide</span></a>.</p>
+</li>
+</ul>
+</section>
 <section id="ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room">
 <h3>AI agents can drive Splanc (“Use splanc.io to set the mood of the room”)<a class="headerlink" href="#ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room" title="Link to this heading">¶</a></h3>
 <ul>
@@ -552,6 +572,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#export-a-map-to-touchdesigner-or-chromatik">Export a map to TouchDesigner or Chromatik</a></li>
 <li><a class="reference internal" href="#ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room">AI agents can drive Splanc (“Use splanc.io to set the mood of the room”)</a></li>
 <li><a class="reference internal" href="#saved-looks-uniform-keypoints-two-decks-and-a-crossfade">Saved looks: uniform keypoints, two decks and a crossfade</a></li>
 <li><a class="reference internal" href="#effect-authoring-measure-on-the-fixture-not-just-in-the-model">Effect authoring: measure on the fixture, not just in the model</a></li>

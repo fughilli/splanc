@@ -458,7 +458,35 @@ refine and use the map.</p>
 handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
 <li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
 <li><p><strong>Jump to Effects</strong> to start animating this fixture.</p></li>
+<li><p><strong>Export</strong> the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
+Studio) fixture file. See below.</p></li>
 <li><p><strong>Edit metadata</strong> — name, tags, and folder.</p></li>
+</ul>
+</section>
+<section id="exporting-a-map-to-other-software">
+<h4>Exporting a map to other software<a class="headerlink" href="#exporting-a-map-to-other-software" title="Link to this heading">¶</a></h4>
+<p><strong>Export</strong> opens a sheet with two formats. Both have one entry per LED in output order, so entry N
+is the LED at output index N. The file is named after the map plus today’s date. On iPhone and iPad
+it opens the share sheet; choose <strong>Save to Files</strong>.</p>
+<ul class="simple">
+<li><p><strong>CSV (TouchDesigner, spreadsheets)</strong> — columns
+<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</span></code>. Positions are in
+<strong>metres</strong>. In TouchDesigner, point a Table DAT’s File at the CSV and wire it into a DAT to SOP’s
+Points DAT. You get one point per LED, numbered by <code class="docutils literal notranslate"><span class="pre">index</span></code>, and the other columns become point
+attributes.</p></li>
+<li><p><strong>Chromatik fixture (.lxf)</strong> — copy it into the Fixtures folder under your Chromatik home
+directory and add it from the Fixture Chooser. Its points follow output order (one component per
+channel). A <strong>Scale</strong> parameter sets units per metre: the default 100 means centimetres; set 1 for
+metres or 39.37 for inches.</p></li>
+<li><p><strong>Unmapped LEDs</strong> still get an entry so the indices line up. They have <code class="docutils literal notranslate"><span class="pre">mapped</span> <span class="pre">=</span> <span class="pre">0</span></code>, and their
+position is interpolated between their mapped neighbours (clamped at the ends), the same place the
+device renders them.</p></li>
+<li><p><strong>Channels</strong> — maps don’t store a channel layout. If a connected device’s per-channel LED counts
+add up to this map’s LED count, the export uses them. Otherwise every LED is on channel 0.
+<code class="docutils literal notranslate"><span class="pre">segment</span></code> is the topology segment (-1 if none) and <code class="docutils literal notranslate"><span class="pre">arclength</span></code> is the LED’s distance along it in
+metres.</p></li>
+<li><p><strong>Axes</strong> — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
+nothing needs converting. For Z-up tools such as Blender, pick <strong>Z up</strong> before exporting the CSV.</p></li>
 </ul>
 <p>The 3D view honors the render knobs in Settings ▸ Appearance (LED size, glow, background, ground
 grid, and axes triad).</p>
@@ -712,6 +740,7 @@ source, and lists the open-source components the app ships.</p>
 </li>
 <li><a class="reference internal" href="#the-mapping-workspace">The mapping workspace</a><ul>
 <li><a class="reference internal" href="#what-you-can-do-here">What you can do here</a></li>
+<li><a class="reference internal" href="#exporting-a-map-to-other-software">Exporting a map to other software</a></li>
 </ul>
 </li>
 </ul>
