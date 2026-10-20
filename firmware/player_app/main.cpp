@@ -820,6 +820,10 @@ static size_t upload_refill(void *ctx, uint8_t *buf, size_t cap) {
   return fread(buf, 1, cap, static_cast<FILE *>(ctx));
 }
 
+// Rewind callback: back to the frame's first byte (a topology decodes in two
+// passes over the file).
+static void upload_rewind(void *ctx) { fseek(static_cast<FILE *>(ctx), 0, SEEK_SET); }
+
 // Replay a persisted frame through the session core on boot — the SAME decode a
 // live upload takes. map/topology can be big, so they stream off flash block by
 // block (no whole-frame buffer); everything else (effect, selection, uniforms)
@@ -840,7 +844,7 @@ static void fs_replay(const char *path) {
   const int32_t arm = lm_envelope_arm(hdr, hn);
   int64_t now = (int64_t)millis();
   if (arm == kArmSubmitMap || arm == kArmSubmitTopology) {
-    lm_decode_upload_stream(arm, upload_refill, f, (size_t)n, tx, sizeof tx);  // reply discarded
+    lm_decode_upload_stream(arm, upload_refill, upload_rewind, f, (size_t)n, tx, sizeof tx);  // reply discarded
     Log().printf("littlefs: restored %s (%ld B, streamed)\n", path, n);
   } else if ((size_t)n <= kRxCap) {
     size_t got = fread(rx, 1, (size_t)n, f);
@@ -1088,7 +1092,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   const int32_t arm = (upload_kind == 1) ? kArmSubmitTopology : kArmSubmitMap;
   int64_t now = (int64_t)millis();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  int32_t n = lm_decode_upload_stream(arm, upload_refill, f, upload_total, tx, sizeof tx);
+  int32_t n = lm_decode_upload_stream(arm, upload_refill, upload_rewind, f, upload_total, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
   fclose(f);
   poll_device_rename();

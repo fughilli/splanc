@@ -294,6 +294,13 @@ impl<'b, F: FnMut(&mut [u8]) -> usize> BlockReader<'b, F> {
     pub fn new(buf: &'b mut [u8], fill: F) -> Self {
         BlockReader { fill, buf, len: 0, off: 0 }
     }
+
+    /// Drop any buffered bytes, for after the caller has rewound the source:
+    /// the next read refills from the source's (new) position.
+    pub fn reset(&mut self) {
+        self.len = 0;
+        self.off = 0;
+    }
 }
 
 impl<F: FnMut(&mut [u8]) -> usize> PbRead for BlockReader<'_, F> {
@@ -665,39 +672,109 @@ where
     Ok((map_id, led_count))
 }
 
-/// Streaming decode of `submit_topology`: branch points + segments (few — one
-/// per segment) accumulate in `arena`, while each per-LED association is handed
-/// to `sink`. Returns the resident geometry (map_id, branch_points, segments).
-pub fn decode_submit_topology_streamed<'a, R, F>(
-    reader: R,
+/// Element counts of a topology's resident geometry: pass 1 of the exact-size
+/// streaming decode.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TopoCounts {
+    pub branch_points: usize,
+    pub segments: usize,
+    /// Polyline vertices summed over every segment.
+    pub vertices: usize,
+}
+
+impl TopoCounts {
+    /// Arena bytes the exact-size decode needs for this shape (alignment
+    /// padding between the three arrays aside: at most a few bytes).
+    pub const fn arena_bytes(&self) -> usize {
+        self.branch_points * size_of::<StoredBranchPoint>()
+            + self.segments * size_of::<StoredSegment<'static>>()
+            + self.vertices * size_of::<[f32; 3]>()
+    }
+}
+
+/// Streaming decode of `submit_topology` in two passes over the same bytes:
+/// pass 1 counts branch points, segments and polyline vertices (no
+/// allocation); `rewind` then resets `reader` to the frame's first byte, and
+/// pass 2 decodes into three EXACTLY-sized arena arrays — branch points,
+/// segments, and one contiguous vertex array that each segment's polyline is a
+/// slice of. Per-LED associations are handed to `sink` (pass 2 only), never
+/// stored. Exact sizing keeps the arena at the live geometry size
+/// ([`TopoCounts::arena_bytes`]) instead of ~2x for grow-and-leak lists
+/// interleaved with per-segment polylines. Returns the resident geometry.
+pub fn decode_submit_topology_streamed<'a, R, W, F>(
+    reader: &mut R,
+    mut rewind: W,
     frame_len: usize,
     arena: &'a Arena<'_>,
     mut sink: F,
 ) -> Result<StoredTopoGeom<'a>, StoreError>
 where
     R: PbRead<Error = Infallible>,
+    W: FnMut(&mut R),
     F: FnMut(&StoredAssociation) -> Result<(), StoreError>,
 {
-    let mut dec = PbDecoder::new(reader);
+    let counts = topology_counts(&mut *reader, frame_len)?;
+    rewind(reader);
     let mut geom = None;
+    with_topology(&mut *reader, frame_len, |dec, len| {
+        geom = Some(decode_topology_streamed(dec, len, counts, arena, &mut sink)?);
+        Ok(())
+    })?;
+    geom.ok_or(StoreError::Malformed("submit_topology without topology"))
+}
+
+/// Pass 1 of [`decode_submit_topology_streamed`]: the geometry's element counts.
+pub fn topology_counts<R>(reader: R, frame_len: usize) -> Result<TopoCounts, StoreError>
+where
+    R: PbRead<Error = Infallible>,
+{
+    let mut c = TopoCounts::default();
+    with_topology(reader, frame_len, |dec, len| {
+        walk(dec, len, |field, wt, dec| match field {
+            2 => {
+                c.branch_points += 1;
+                skip(dec, wt)
+            }
+            3 => {
+                c.segments += 1;
+                len_record(dec, |len, dec| {
+                    walk(dec, len, |f, wt, dec| {
+                        if f == 4 {
+                            c.vertices += 1;
+                        }
+                        skip(dec, wt)
+                    })
+                })
+            }
+            _ => skip(dec, wt),
+        })
+    })?;
+    Ok(c)
+}
+
+/// Walk a submit_topology envelope to its `Topology` record and run `body` over
+/// it (once per topology on the wire).
+fn with_topology<R, B>(reader: R, frame_len: usize, mut body: B) -> Result<(), StoreError>
+where
+    R: PbRead<Error = Infallible>,
+    B: FnMut(&mut Dec<R>, usize) -> Result<(), StoreError>,
+{
+    let mut dec = PbDecoder::new(reader);
     walk(&mut dec, frame_len, |field, _wt, dec| match field {
         ARM_SUBMIT_TOPOLOGY => len_record(dec, |len, dec| {
             walk(dec, len, |f, wt, dec| match f {
-                1 => len_record(dec, |len, dec| {
-                    geom = Some(decode_topology_streamed(dec, len, arena, &mut sink)?);
-                    Ok(())
-                }),
+                1 => len_record(dec, |len, dec| body(dec, len)),
                 _ => skip(dec, wt),
             })
         }),
         _ => Err(StoreError::Malformed("frame is not submit_topology")),
-    })?;
-    geom.ok_or(StoreError::Malformed("submit_topology without topology"))
+    })
 }
 
 fn decode_topology_streamed<'a, R, F>(
     dec: &mut Dec<R>,
     len: usize,
+    counts: TopoCounts,
     arena: &'a Arena<'_>,
     sink: &mut F,
 ) -> Result<StoredTopoGeom<'a>, StoreError>
@@ -705,9 +782,15 @@ where
     R: PbRead<Error = Infallible>,
     F: FnMut(&StoredAssociation) -> Result<(), StoreError>,
 {
+    const CHANGED: StoreError = StoreError::Malformed("topology changed between decode passes");
     let mut map_id = Str64::new();
-    let mut branch_points = ArenaVec::<StoredBranchPoint>::new(arena);
-    let mut segments = ArenaVec::<StoredSegment<'a>>::new(arena);
+    // All three arrays up front, each exactly sized: nothing interleaves with a
+    // growing list, so nothing is reallocated or leaked.
+    let mut branch_points = ArenaVec::<StoredBranchPoint>::with_exact_capacity(arena, counts.branch_points)?;
+    let mut segments = ArenaVec::<StoredSegment<'a>>::with_exact_capacity(arena, counts.segments)?;
+    let verts = arena.alloc_uninit_slice::<[f32; 3]>(counts.vertices)?;
+    let verts_base = verts.as_mut_ptr().cast::<[f32; 3]>();
+    let mut n_verts = 0usize;
     walk(dec, len, |field, wt, dec| match field {
         1 => {
             dec.decode_string(&mut map_id, micropb::Presence::Implicit)?;
@@ -726,7 +809,7 @@ where
                 })?;
                 Ok(bp)
             })?;
-            branch_points.push(bp)?;
+            branch_points.push(bp).map_err(|_| CHANGED)?;
             Ok(())
         }
         3 => {
@@ -734,7 +817,7 @@ where
                 let mut id = 0u32;
                 let (mut a, mut b) = (0i32, 0i32);
                 let mut length = 0f32;
-                let mut polyline = ArenaVec::<[f32; 3]>::new(arena);
+                let start = n_verts;
                 walk(dec, len, |f, wt, dec| match f {
                     1 => {
                         id = dec.decode_int32()?.max(0) as u32;
@@ -757,7 +840,13 @@ where
                             })?;
                             Ok(p)
                         })?;
-                        polyline.push(p)?;
+                        if n_verts >= counts.vertices {
+                            return Err(CHANGED);
+                        }
+                        // SAFETY: n_verts < counts.vertices, the length of the
+                        // `verts` allocation; each slot is written exactly once.
+                        unsafe { verts_base.add(n_verts).write(p) };
+                        n_verts += 1;
                         Ok(())
                     }
                     5 => {
@@ -766,9 +855,14 @@ where
                     }
                     _ => skip(dec, wt),
                 })?;
-                Ok(StoredSegment { id, a, b, length, polyline: polyline.into_slice() })
+                // SAFETY: [start, n_verts) was just written above, lies inside
+                // the `verts` arena allocation (borrowed for 'a), and is never
+                // written again — later segments take later slots.
+                let polyline: &'a [[f32; 3]] =
+                    unsafe { core::slice::from_raw_parts(verts_base.add(start), n_verts - start) };
+                Ok(StoredSegment { id, a, b, length, polyline })
             })?;
-            segments.push(seg)?;
+            segments.push(seg).map_err(|_| CHANGED)?;
             Ok(())
         }
         4 => {

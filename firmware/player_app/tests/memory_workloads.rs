@@ -141,6 +141,10 @@ struct Flash<'a> {
     pos: usize,
 }
 
+extern "C" fn rewind(ctx: *mut c_void) {
+    unsafe { (*(ctx as *mut Flash)).pos = 0 };
+}
+
 extern "C" fn refill(ctx: *mut c_void, buf: *mut u8, cap: usize) -> usize {
     let f = unsafe { &mut *(ctx as *mut Flash) };
     let n = cap.min(f.data.len() - f.pos);
@@ -182,6 +186,7 @@ fn upload_sharded(frame: &[u8], kind: pb::UploadChunk_::Kind, arm: i32) -> SMsg 
         lm_decode_upload_stream(
             arm,
             refill,
+            rewind,
             &mut src as *mut Flash as *mut c_void,
             flash.len(),
             tx.as_mut_ptr(),

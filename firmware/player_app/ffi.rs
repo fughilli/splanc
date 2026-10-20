@@ -46,22 +46,18 @@ fn client_arm(frame: &[u8]) -> Option<CArm<'_>> {
     pv::ClientMessageView::parse(frame).ok()?.msg()
 }
 
-/// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
-/// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
-/// 256-LED cap (~16 B/LED → ~4 KB map; with topology + bump-arena grow-churn the
-/// worst case is ~16 KB). Trimmed 96 KiB → 32 KiB → **16 KiB**: on the C6 the
-/// TLS handshake needs a ~17 KB contiguous heap block for its record buffer and
-/// the cert-page load was OOMing (alloc(17058) failed → -0x7F00) even after the
-/// soft-AP drop, so every KB of .bss reclaimed here is handshake headroom. 16 KB
-/// matches the worst-case decode with no spare margin — a full 256-LED upload
-/// that churns past it gets the bounded ArenaFull ("map_too_large"), not a
-/// crash; today's maps are ~150 LEDs and fit comfortably.
-// Flash-backed storage: the arena no longer holds the per-LED map + topology
-// (those stream straight into the resident per-LED caches below). It holds ONLY
-// the small per-segment topology GEOMETRY (branch points + segments + polylines,
-// one entry each — independent of LED count), so 8 KB is ample and the arena no
-// longer scales with the strip length.
-const ARENA_BYTES: usize = 8 * 1024;
+/// The resident topology GEOMETRY: branch points, segments and their polyline
+/// vertices. The per-LED map and associations never land here — they stream
+/// straight into the per-LED caches below — so this doesn't scale with LED
+/// count, only with the scan's shape. Reset wholesale per topology upload.
+///
+/// The decode is exact-size (two passes: count, then fill three exactly-sized
+/// arrays), so a topology of J branch points, S segments and V polyline
+/// vertices needs `16·J + 24·S + 12·V` bytes (+ ≤ 8 B alignment;
+/// `ledmapper_store::TopoCounts::arena_bytes`). 12 KB fits e.g. J = 27,
+/// S = 51, V = 206 (a 462-LED scan, ~4.1 KB) about 3x over. Beyond it, an
+/// upload gets the bounded ArenaFull ("map_too_large"), never a crash.
+const ARENA_BYTES: usize = 12 * 1024;
 
 static mut ARENA_MEM: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
 static mut ARENA: Option<Arena<'static>> = None;
@@ -1131,7 +1127,7 @@ pub unsafe extern "C" fn lm_player_handle(
     let frame = core::slice::from_raw_parts(data, len);
     let reply = match envelope_arm(frame) {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
-        Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, frame.len()),
+        Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, |r: &mut &[u8]| *r = frame, frame.len()),
         // Dump the stored map+topology (it lives in the arena, not the session
         // core) back out to the phone, one MappingBundle byte-window per call.
         // Encoded ZERO-COPY straight into `out` (never a fat by-value
@@ -1225,14 +1221,17 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
 /// A topology upload STREAMS the per-LED associations into FX_LED_TOPO (seg holds
 /// the raw segment_id until the first render frame resolves it to a segment
 /// index) and keeps only the small per-segment geometry resident in the arena.
-/// A failed / rejected decode rolls the whole thing back.
+/// A failed / rejected decode rolls the whole thing back. The decode reads the
+/// frame twice (count, then fill exactly-sized arrays); `rewind` resets `reader`
+/// to the frame's first byte between the passes.
 unsafe fn handle_topology_upload<R: PbRead<Error = Infallible>>(
-    reader: R,
+    mut reader: R,
+    rewind: impl FnMut(&mut R),
     total: usize,
 ) -> pb::ServerMessage {
     reset_topo_cache();
     arena_mut().reset();
-    let res = decode_submit_topology_streamed(reader, total, arena_ref(), |a: &StoredAssociation| {
+    let res = decode_submit_topology_streamed(&mut reader, rewind, total, arena_ref(), |a: &StoredAssociation| {
         let i = a.led_id as usize;
         if i < FX_TOPO_CAP && a.segment_id <= i16::MAX as u32 {
             (*addr_of_mut!(FX_LED_TOPO))[i] = FxLedTopo {
@@ -1526,15 +1525,21 @@ pub unsafe extern "C" fn lm_encode_chunk_ack(
 
 /// Refill callback for [`lm_decode_upload_stream`]: fill up to `cap` bytes at
 /// `buf` from the caller's source (a LittleFS read), returning the count, or 0
-/// at EOF. Never called again after it returns 0.
+/// at EOF. Not called again after it returns 0 until a `rewind`.
 pub type LmRefill = extern "C" fn(ctx: *mut c_void, buf: *mut u8, cap: usize) -> usize;
+
+/// Rewind callback for [`lm_decode_upload_stream`]: reset the caller's source so
+/// the next `refill` returns the frame's first byte again (a LittleFS seek to 0).
+pub type LmRewind = extern "C" fn(ctx: *mut c_void);
 
 /// Decode a reassembled upload frame that the caller streams in block-by-block
 /// via `refill` — so a whole ~15 KB submit_map is never resident (the C6 keeps
 /// it on flash, not in a big static buffer). `arm` selects the decoder
 /// (ARM_SUBMIT_MAP / ARM_SUBMIT_TOPOLOGY); `total_len` is the frame's exact byte
-/// length. Populates MAP/TOPO exactly like the in-RAM path and returns the
-/// encoded reply (result_ready / error) in `out`.
+/// length. A topology is read twice (count, then exact-size fill), with
+/// `rewind` between the passes; a map is read once. Populates MAP/TOPO exactly
+/// like the in-RAM path and returns the encoded reply (result_ready / error) in
+/// `out`.
 ///
 /// # Safety
 /// `refill` must write ≤ `cap` bytes; `out` must point to `out_cap` bytes.
@@ -1542,6 +1547,7 @@ pub type LmRefill = extern "C" fn(ctx: *mut c_void, buf: *mut u8, cap: usize) ->
 pub unsafe extern "C" fn lm_decode_upload_stream(
     arm: i32,
     refill: LmRefill,
+    rewind: LmRewind,
     ctx: *mut c_void,
     total_len: usize,
     out: *mut u8,
@@ -1556,7 +1562,14 @@ pub unsafe extern "C" fn lm_decode_upload_stream(
     });
     let reply = match arm as u32 {
         ARM_SUBMIT_MAP => handle_map_upload(reader, total_len),
-        ARM_SUBMIT_TOPOLOGY => handle_topology_upload(reader, total_len),
+        ARM_SUBMIT_TOPOLOGY => handle_topology_upload(
+            reader,
+            |r: &mut BlockReader<_>| {
+                rewind(ctx);
+                r.reset();
+            },
+            total_len,
+        ),
         _ => upload_malformed(),
     };
     encode_reply(&reply, out, out_cap)

@@ -366,11 +366,11 @@ pub mod cost {
     pub const SCAN_STATIC: usize = 960;
 
     // -- stored map ---------------------------------------------------------------
-    /// ARENA_MEM 8,192 (topology geometry) + FX_LED_TOPO 10,240 + FX_LED_POS
+    /// ARENA_MEM 12,288 (topology geometry) + FX_LED_TOPO 10,240 + FX_LED_POS
     /// 6,144 + FX_LED_MAPPED 32 + FX_LED_ROOM 3,072 (i16 mm x3 x 512 LEDs, the
     /// room-frame cache for multi-fixture effects) (nm): the per-LED caches the
     /// map decodes into.
-    pub const MAP_STORE_STATIC: usize = 8_192 + 10_240 + 6_144 + 32 + 3_072;
+    pub const MAP_STORE_STATIC: usize = 12_288 + 10_240 + 6_144 + 32 + 3_072;
 
     // -- activity -------------------------------------------------------------------
     /// The loaded fx VM: FX_ARENA 24,576 + FX_VM 5,120 + FX_BYTES 4,096 + JIT
@@ -406,9 +406,15 @@ pub mod cost {
     /// handshake in both runs).
     pub const HEAP_AT_MIN: usize = BLE_CONTROLLER_HEAP + BLE_LINK_HEAP + TLS_SESSION_HEAP + SCAN_RESIDUE_HEAP;
 
+    /// Statics added to ALL_MODE_STATICS since MIN_FREE_MEASURED was taken: the
+    /// image that measured it had them as free heap, so they move from "free"
+    /// to "static" rather than adding RAM. ARENA_MEM 8 KB -> 12 KB (+4,096).
+    pub const STATICS_ADDED_SINCE_MEASURED: usize = 4_096;
+
     /// The RAM that exists for mode-dependent components: what they occupy in
     /// today's layout at the measured minimum, plus what was still free there.
-    pub const BUDGET: usize = ALL_MODE_STATICS + HEAP_AT_MIN + MIN_FREE_MEASURED;
+    pub const BUDGET: usize =
+        ALL_MODE_STATICS + HEAP_AT_MIN + MIN_FREE_MEASURED - STATICS_ADDED_SINCE_MEASURED;
 }
 
 /// One mode-dependent component live in a state.
