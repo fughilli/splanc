@@ -208,5 +208,26 @@ fn main() -> std::io::Result<()> {
         g.configure(".ledmapper.v1.Welcome.pose", Config::new().skip(true));
     }
 
+    // Uniform keypoints (docs/design/uniform-keypoints.md). The firmware reads the
+    // requests IN PLACE (pbview) and encodes both replies zero-copy (ffi.rs), so its
+    // profile drops every repeated field from the by-value envelopes; the host
+    // profile carries a full effect's worth (16 keypoints, 32 uniforms).
+    g.configure(".ledmapper.v1.KeypointInfo.name", Config::new().max_bytes(32));
+    g.configure(".ledmapper.v1.Keypoint.name", Config::new().max_bytes(32));
+    g.configure(".ledmapper.v1.KeypointValue.uniform", Config::new().max_bytes(24));
+    for (field, host_len) in [
+        (".ledmapper.v1.KeypointList.keypoints", 16),
+        (".ledmapper.v1.Keypoint.values", 32),
+        (".ledmapper.v1.Keypoint.slots", 32),
+        (".ledmapper.v1.SaveKeypoint.values", 32),
+        (".ledmapper.v1.BlendKeypoints.weights", 4),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else {
+            g.configure(field, Config::new().max_len(host_len));
+        }
+    }
+
     g.compile_fdset_file(&args[1], &args[2])
 }

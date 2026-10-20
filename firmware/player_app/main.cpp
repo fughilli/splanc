@@ -380,6 +380,7 @@ static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
+static const int32_t kArmBlendKeypoints = 44;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -796,21 +797,35 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     remove(kTopoPath);  // the previous topology no longer matches this map
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
-  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
-    // A validated effect upload: persist the raw .fxb frame (the effect
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect &&
+             lm_fx_last_deck() == 0) {
+    // A validated deck-A effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
-    // selection/uniforms (they belong to the old effect).
+    // selection/uniforms (they belong to the old effect). Deck B is runtime-only
+    // (docs/design/uniform-keypoints.md): a show re-cues it.
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
   } else if (reply_arm == kArmWelcome && req_arm == kArmSetFixturePose) {
     // A validated room pose (or a clear): persist the frame unless commit=false.
     if (lm_fixture_pose_commit()) fs_write_file(kPosePath, req, req_len);
   } else if (reply_arm == kArmPlaybackState &&
-             (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
-    // Effect selection / live uniforms — coalesced (live tuning fires rapidly).
-    // A set_uniforms with commit=false is a live preview: applied, not saved.
+             (req_arm == kArmSetEffect || req_arm == kArmSetUniforms) &&
+             lm_fx_last_deck() == 0) {
+    // Deck-A effect selection / live uniforms — coalesced (live tuning fires
+    // rapidly). A set_uniforms with commit=false is a live preview: not saved.
     if (req_arm == kArmSetUniforms && !lm_set_uniforms_commit()) return;
     queue_fx_sel_save(req, req_len);
+  } else if (reply_arm == kArmPlaybackState && req_arm == kArmBlendKeypoints &&
+             lm_kp_commit()) {
+    // A committed keypoint blend: persist its TARGET as a set_uniforms frame
+    // (encoded by the fx layer), through the same coalesced save — so a blend
+    // that is still morphing persists where it is going, not where it is.
+    int32_t n = lm_kp_commit_frame(pending_fx_sel, sizeof pending_fx_sel);
+    if (n > 0) {
+      pending_fx_sel_len = (size_t)n;
+      fx_sel_dirty = true;
+      fx_sel_dirty_at = millis();
+    }
   }
 }
 
@@ -857,6 +872,13 @@ static void fs_replay(const char *path) {
   rx_len = 0;
 }
 
+// Uniform keypoint store hooks (ffi.rs lm_kp_set_store), defined at the end of
+// this file: kept out of the code before render_once so its flash layout (and
+// the fx_bench hot loop's cache behaviour) doesn't move.
+static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
+static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
+static void kp_fs_remove(const uint8_t *name, size_t len);
+
 // Mount the LittleFS store and restore a previously-mapped fixture: the map
 // first (sets the stored id), then its topology (validated against that id).
 // Runs in setup() before the render task starts, so no player_mutex is needed.
@@ -871,6 +893,7 @@ static void fs_begin_and_restore() {
     return;
   }
   fs_ok = true;
+  lm_kp_set_store(kp_fs_read, kp_fs_write, kp_fs_remove);
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
   remove(kLegacyPlaybackPath);
@@ -2674,4 +2697,37 @@ void loop() {
 #endif
   }
   delay(1);
+}
+
+// Uniform keypoint store hooks (ffi.rs lm_kp_set_store): one small file per
+// keypoint under the FS base, named by the fx layer ("kp_<effect>.<n>"), written
+// power-loss-safe through fs_write_file.
+static bool kp_path(char *path, size_t cap, const uint8_t *name, size_t len) {
+  int n = snprintf(path, cap, "%s/%.*s", kFsBase, (int)len, (const char *)name);
+  return n > 0 && (size_t)n < cap;
+}
+
+static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap) {
+  char path[48];
+  if (!kp_path(path, sizeof path, name, len)) return -1;
+  FILE *f = fs_open(path, "rb");
+  if (f == nullptr) return -1;
+  size_t got = fread(buf, 1, cap, f);
+  fclose(f);
+  return got > 0 ? (int32_t)got : -1;
+}
+
+static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n) {
+  char path[48];
+  if (!kp_path(path, sizeof path, name, len)) return false;
+  fs_write_file(path, buf, n);
+  FILE *f = fs_open(path, "rb");  // fs_write_file logs, not returns, a failure
+  if (f == nullptr) return false;
+  fclose(f);
+  return true;
+}
+
+static void kp_fs_remove(const uint8_t *name, size_t len) {
+  char path[48];
+  if (kp_path(path, sizeof path, name, len)) remove(path);
 }

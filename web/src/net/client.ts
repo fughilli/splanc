@@ -45,8 +45,12 @@ import {
   type ColorCorrectionStateMessage,
   type ColorOrder,
   decodeMappingBundle,
+  type BlendOptions,
   type EffectListMessage,
   type EffectUniformsMessage,
+  type KeypointListMessage,
+  type KeypointMessage,
+  type KeypointWeightFlat,
   type FixturePoseFlat,
   type HardwareConfigStateMessage,
   type MappingBundle,
@@ -565,11 +569,13 @@ export class LedMapperClient {
 
   /** Upload a compiled effect (`.fxb` = bytecode + embedded uniform manifest)
    * to the connected device. `activate` makes it the running effect on receipt
-   * (the editor's "Send to device" path). Reply: result_ready (id=effectId). */
+   * (the editor's "Send to device" path). `deck` (FUG-110) cues it onto FX deck
+   * A (0, default) or B (1) for crossfading. Reply: result_ready (id=effectId). */
   async submitEffect(
     effectId: string,
     fxb: Uint8Array,
     activate = true,
+    deck = 0,
   ): Promise<ResultReadyMessage> {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
@@ -579,34 +585,121 @@ export class LedMapperClient {
       effectId,
       fxb,
       activate,
+      deck,
     } as unknown as ClientMessage);
   }
 
-  /** Select the active effect by id ("" or "off" clears it). Reply:
-   * playback_state. */
-  async setEffect(effectId: string): Promise<PlaybackStateMessage> {
+  /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
+   * targets deck A (0, default) or B (1). Reply: playback_state. */
+  async setEffect(effectId: string, deck = 0): Promise<PlaybackStateMessage> {
     return (await this.request(
-      { type: "set_effect", effectId } as unknown as ClientMessage,
+      { type: "set_effect", effectId, deck } as unknown as ClientMessage,
       "playback_state",
     )) as PlaybackStateMessage;
   }
 
   /**
-   * Push live uniform values on the active effect (slider drags). Fire-and-forget
-   * on purpose: a live push has no reply worth awaiting, and — crucially — it must
-   * NOT go through the single-flight request() path. request() rejects (and never
-   * sends) a second call while a prior reply of the same type is still pending, so
-   * a rapid drag (many set_uniforms, each awaiting one ~50-200ms playback_state)
-   * had all-but-the-first-per-window SILENTLY DROPPED before hitting the wire —
+   * Push live uniform values on a deck's effect (slider drags). `deck` (FUG-110)
+   * targets deck A (0, default) or B (1). Fire-and-forget on purpose: a live push
+   * has no reply worth awaiting, and — crucially — it must NOT go through the
+   * single-flight request() path. request() rejects (and never sends) a second
+   * call while a prior reply of the same type is still pending, so a rapid drag
+   * (many set_uniforms, each awaiting one ~50-200ms playback_state) had
+   * all-but-the-first-per-window SILENTLY DROPPED before hitting the wire —
    * frequently including the final value the user let go on. The device applies
    * each set_uniforms it receives in order (TCP, no coalescing), so just send them
    * all and the last one wins. Returns false if the socket isn't open.
    */
-  setUniforms(values: UniformValueFlat[], commit?: boolean): boolean {
+  setUniforms(values: UniformValueFlat[], commit?: boolean, deck = 0): boolean {
     // `commit: false` applies the values live without persisting them (honoured by
     // firmware advertising "uniform_commit"; omitted = persist, today's behaviour).
-    const msg = commit === undefined ? { type: "set_uniforms", values } : { type: "set_uniforms", values, commit };
+    // `deck` targets FX deck A (0, default) or B (1) on firmware advertising "decks".
+    const msg: Record<string, unknown> = { type: "set_uniforms", values };
+    if (commit !== undefined) msg.commit = commit;
+    if (deck) msg.deck = deck;
     return this.send(msg as unknown as ClientMessage);
+  }
+
+  /** Set the global FX crossfade: `position` 0.0 (all deck A) .. 1.0 (all deck
+   * B), `mode` 0 = linear RGB, 1 = HSV. The device blends the two decks' per-LED
+   * output. Runtime-only (a reboot returns to 0.0 / RGB). Reply: welcome (echoes
+   * the applied crossfade). */
+  async setCrossfade(position: number, mode = 0): Promise<WelcomeMessage> {
+    const p = Math.min(1, Math.max(0, position));
+    return (await this.request(
+      { type: "set_crossfade", position: p, mode } as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
+  }
+
+  /** Fire-and-forget crossfade (a fader drag at MIDI rate: no single-flight
+   * request, the last one wins — like setUniforms). */
+  sendCrossfade(position: number, mode = 0): boolean {
+    const p = Math.min(1, Math.max(0, position));
+    return this.send({ type: "set_crossfade", position: p, mode } as unknown as ClientMessage);
+  }
+
+  // -- Uniform keypoints (docs/design/uniform-keypoints.md) ------------------
+
+  /** Save (or overwrite by name) a keypoint of the effect on `deck`. Omit
+   * `values` to save the device's live uniforms. Reply: keypoint_list. */
+  async saveKeypoint(name: string, deck = 0, values?: UniformValueFlat[]): Promise<KeypointListMessage> {
+    return (await this.request(
+      { type: "save_keypoint", name, deck, ...(values ? { values } : {}) } as unknown as ClientMessage,
+      "keypoint_list",
+    )) as unknown as KeypointListMessage;
+  }
+
+  /** Delete a keypoint by name. Reply: keypoint_list. */
+  async deleteKeypoint(name: string, deck = 0, effectId?: string): Promise<KeypointListMessage> {
+    return (await this.request(
+      {
+        type: "delete_keypoint",
+        name,
+        deck,
+        ...(effectId !== undefined ? { effectId } : {}),
+      } as unknown as ClientMessage,
+      "keypoint_list",
+    )) as unknown as KeypointListMessage;
+  }
+
+  /** List an effect's keypoints (the one on `deck`, or `effectId`). */
+  async listKeypoints(deck = 0, effectId?: string): Promise<KeypointListMessage> {
+    return (await this.request(
+      {
+        type: "list_keypoints",
+        deck,
+        ...(effectId !== undefined ? { effectId } : {}),
+      } as unknown as ClientMessage,
+      "keypoint_list",
+    )) as unknown as KeypointListMessage;
+  }
+
+  /** One keypoint's values (by uniform name, and resolved to slots). */
+  async getKeypoint(name: string, deck = 0, effectId?: string): Promise<KeypointMessage> {
+    return (await this.request(
+      {
+        type: "get_keypoint",
+        name,
+        deck,
+        ...(effectId !== undefined ? { effectId } : {}),
+      } as unknown as ClientMessage,
+      "keypoint",
+    )) as unknown as KeypointMessage;
+  }
+
+  /** Blend a deck's uniforms toward a weighted mix of keypoints, on the device.
+   * `seconds` > 0 morphs there; 0 applies at once. Fire-and-forget (the fader /
+   * MIDI path: the last one wins); errors arrive as an `error` message. */
+  blendKeypoints(weights: KeypointWeightFlat[], opts: BlendOptions = {}): boolean {
+    return this.send({
+      type: "blend_keypoints",
+      weights,
+      deck: opts.deck ?? 0,
+      seconds: opts.seconds ?? 0,
+      colorMode: opts.colorMode ?? 0,
+      ...(opts.commit ? { commit: true } : {}),
+    } as unknown as ClientMessage);
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-
@@ -790,12 +883,14 @@ export class LedMapperClient {
   }
 
   /** Fetch an effect's uniform manifest + current live values for UI
-   * hydration. Omit `effectId` for the active effect. Reply: effect_uniforms. */
-  async getEffectUniforms(effectId?: string): Promise<EffectUniformsMessage> {
+   * hydration. Omit `effectId` for the active effect. `deck` (FUG-110) targets
+   * deck A (0, default) or B (1). Reply: effect_uniforms. */
+  async getEffectUniforms(effectId?: string, deck = 0): Promise<EffectUniformsMessage> {
     return (await this.request(
       {
         type: "get_effect_uniforms",
         ...(effectId !== undefined ? { effectId } : {}),
+        deck,
       } as unknown as ClientMessage,
       "effect_uniforms",
     )) as unknown as EffectUniformsMessage;

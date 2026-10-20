@@ -63,8 +63,13 @@ fn invariants_hold_in_every_reachable_state() {
         let why = || format!("state {s:?} via {:?}", trace(&seen, s));
         // A wss session needs the network; video needs the wss transport.
         assert!(!s.wss || s.wifi == Wifi::Joined, "{}", why());
-        if s.activity == (Activity::Effect { video: true }) {
-            assert!(s.wss, "video without wss: {}", why());
+        if let Activity::Effect { video, deck_b } = s.activity {
+            assert!(!video || s.wss, "video without wss: {}", why());
+            // The aux region holds ONE of video / deck B (ffi.rs FxAux).
+            assert!(!(video && deck_b), "video and deck B share the aux region: {}", why());
+            if deck_b {
+                assert!(step(s, Event::VideoStart).is_err(), "{}", why());
+            }
         }
         // Upload and an effect never coexist (product decision): the activity
         // is ONE value, and loading an effect mid-upload is refused.
@@ -184,7 +189,9 @@ fn live_set_fits_the_budget() {
     );
 }
 
-const PINNED_STATES: usize = 57;
 // +3,072 B: FX_LED_ROOM (multi-fixture room-frame cache, #280).
-// +4,096 B: the topology arena ARENA_MEM grew 8 -> 12 KB (exact-size decode).
-const PINNED_WORST: usize = 158_381;
+// +4,096 B: the topology arena ARENA_MEM grew 8 -> 12 KB (exact-size decode, #291).
+// fx-keypoints: deck B + the video/deck-B aux union (16 more states) and the
+// keypoint statics (+6,594 B in the worst live set).
+const PINNED_STATES: usize = 73;
+const PINNED_WORST: usize = 164_975;

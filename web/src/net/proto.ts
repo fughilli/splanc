@@ -61,6 +61,12 @@ const CLIENT_ARMS: Record<string, string> = {
   list_effects: "listEffects",
   set_fixture_pose: "setFixturePose",
   set_time_base: "setTimeBase",
+  set_crossfade: "setCrossfade",
+  save_keypoint: "saveKeypoint",
+  delete_keypoint: "deleteKeypoint",
+  list_keypoints: "listKeypoints",
+  get_keypoint: "getKeypoint",
+  blend_keypoints: "blendKeypoints",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -84,6 +90,8 @@ const SERVER_ARMS: Record<string, string> = {
   hardware_config_state: "hardwareConfigState",
   color_correction_state: "colorCorrectionState",
   effect_list: "effectList",
+  keypoint_list: "keypointList",
+  keypoint: "keypoint",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -282,12 +290,14 @@ export interface UniformValueFlat {
   value: number[];
 }
 
-/** Upload a compiled effect (proto SubmitEffect). */
+/** Upload a compiled effect (proto SubmitEffect). `deck` (FUG-110): 0 = A
+ * (default), 1 = B — which of the two concurrent FX decks to load onto. */
 export interface SubmitEffectMessage {
   type: "submit_effect";
   effectId: string;
   fxb: Uint8Array;
   activate: boolean;
+  deck?: number;
 }
 
 /** Stream a video frame into a loaded effect's 2D texture (proto SetTexture).
@@ -304,13 +314,16 @@ export interface SetTextureMessage {
   palette?: number[];
 }
 
-/** Select the active effect by id (proto SetEffect). */
+/** Select the active effect by id (proto SetEffect). `deck` (FUG-110): 0 = A
+ * (default), 1 = B. */
 export interface SetEffectMessage {
   type: "set_effect";
   effectId: string;
+  deck?: number;
 }
 
-/** Push live uniform values on the active effect (proto SetUniforms). */
+/** Push live uniform values on a deck's effect (proto SetUniforms). `deck`
+ * (FUG-110): 0 = A (default), 1 = B. */
 export interface SetUniformsMessage {
   type: "set_uniforms";
   values: UniformValueFlat[];
@@ -318,21 +331,35 @@ export interface SetUniformsMessage {
    * ramp uncommitted and commit once at the end. Firmware advertising the
    * "uniform_commit" feature honours it; older firmware always persists. */
   commit?: boolean;
+  deck?: number;
 }
 
-/** Request an effect's manifest + current values (proto GetEffectUniforms). */
+/** Request an effect's manifest + current values (proto GetEffectUniforms).
+ * `deck` (FUG-110): 0 = A (default), 1 = B. */
 export interface GetEffectUniformsMessage {
   type: "get_effect_uniforms";
   effectId?: string;
+  deck?: number;
 }
 
 /** Reply to get_effect_uniforms (proto EffectUniforms). `manifest` is the raw
- * compiler-emitted uniform-manifest JSON bytes. */
+ * compiler-emitted uniform-manifest JSON bytes. `deck` (FUG-110) echoes which
+ * deck it describes. */
 export interface EffectUniformsMessage {
   type: "effect_uniforms";
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+  deck?: number;
+}
+
+/** Set the global FX crossfade (proto SetCrossfade, FUG-110). `position` is
+ * 0.0 (all deck A) .. 1.0 (all deck B); `mode` is 0 = linear RGB, 1 = linear
+ * HSV. Reply: welcome. */
+export interface SetCrossfadeMessage {
+  type: "set_crossfade";
+  position: number;
+  mode: number;
 }
 
 // -- Hardware-config arms (flat shapes) -------------------------------------
@@ -465,6 +492,60 @@ export interface StoredEffectFlat {
   fxbBytes: number;
   /** Whether it is the active (rendering) effect. */
   active: boolean;
+  /** The FX deck it is loaded on (0 = A, 1 = B). */
+  deck?: number;
+}
+
+// -- Uniform keypoints (docs/design/uniform-keypoints.md) --------------------
+
+/** One stored keypoint in a list (proto KeypointInfo). `stale` = saved against
+ * another build of the effect (still recalls, by uniform name). */
+export interface KeypointInfoFlat {
+  index: number;
+  name: string;
+  stale: boolean;
+}
+
+/** Reply to save/delete/list_keypoints (proto KeypointList). */
+export interface KeypointListMessage {
+  type: "keypoint_list";
+  effectId: string;
+  deck?: number;
+  keypoints: KeypointInfoFlat[];
+  capacity: number;
+}
+
+/** A stored value by uniform name (proto KeypointValue). */
+export interface KeypointValueFlat {
+  uniform: string;
+  value: number[];
+}
+
+/** Reply to get_keypoint (proto Keypoint). */
+export interface KeypointMessage {
+  type: "keypoint";
+  effectId: string;
+  index: number;
+  name: string;
+  stale: boolean;
+  values: KeypointValueFlat[];
+  /** The same values resolved to the loaded effect's slots. */
+  slots: UniformValueFlat[];
+}
+
+/** One term of a keypoint blend (proto KeypointWeight). */
+export interface KeypointWeightFlat {
+  name: string;
+  weight: number;
+}
+
+/** blend_keypoints options: `seconds` > 0 morphs; `colorMode` 0 = linear RGB,
+ * 1 = HSV; `commit` persists the target (deck A). */
+export interface BlendOptions {
+  deck?: number;
+  seconds?: number;
+  colorMode?: number;
+  commit?: boolean;
 }
 
 /** Reply to list_effects (proto EffectList). */

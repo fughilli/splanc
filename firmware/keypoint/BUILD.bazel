@@ -1,0 +1,24 @@
+"""Uniform keypoints: manifest blend rules, the on-device parameter-space blend /
+morph, and the littlefs record format (docs/design/uniform-keypoints.md).
+
+no_std, zero-dependency — linked into the player app (//firmware/player_app), which
+owns the decks, the VM binding and the filesystem hooks. Host-tested in :keypoint_test.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "keypoint",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_keypoint",
+    edition = "2021",
+)
+
+rust_test(
+    name = "keypoint_test",
+    srcs = ["tests/keypoint.rs"],
+    edition = "2021",
+    deps = [":keypoint"],
+)
