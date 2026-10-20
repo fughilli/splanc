@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Subsystems" href="subsystems/index.html"><link rel="prev" title="splanc developer documentation" href="index.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Subsystems" href="subsystems/index.html"><link rel="prev" title="What’s new" href="docs/whats-new.html">
         <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#learn-more">Learn more</a></li>
@@ -246,11 +250,20 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -319,9 +332,9 @@ solver, and the original <strong>Raspberry Pi</strong> path that the design grew
 
     subgraph Ctrl[&quot;🔌 Controller — firmware (firmware/)&quot;]
         pat[&quot;Hue-code pattern&lt;br/&gt;generator&quot;]
-        leds[&quot;WS2812B LEDs&lt;br/&gt;(RMT peripheral)&quot;]
+        leds[&quot;WS2812 LEDs&lt;br/&gt;(PARLIO + GDMA)&quot;]
         vm[&quot;Effects VM&lt;br/&gt;(fx_vm)&quot;]
-        wss[&quot;Control server&lt;br/&gt;ws:// + wss://&quot;]
+        wss[&quot;Control server&lt;br/&gt;wss:// + BLE&quot;]
         pat --&gt; leds
         vm --&gt; leds
         wss --&gt; vm
@@ -441,6 +454,26 @@ rationale in <a class="reference internal" href="docs/design/effects-runtime.htm
 <a class="reference internal" href="docs/design/effects-compiler.html"><span class="doc">Design: Effects compiler (editor + wasm compile + AI generation)</span></a>,
 and measured on-device numbers in <a class="reference internal" href="docs/fx-vm-performance.html"><span class="doc">FX-VM performance</span></a>.</p>
 </section>
+<section id="the-agent-path">
+<h2>The agent path<a class="headerlink" href="#the-agent-path" title="Link to this heading">¶</a></h2>
+<p>The same control protocol that the app speaks is also the interface for AI
+agents. The <code class="docutils literal notranslate"><span class="pre">agent/</span></code> hub is an MCP server and CLI. It finds every player on the
+LAN (mDNS <code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code>, then each player’s <code class="docutils literal notranslate"><span class="pre">/.well-known/splanc.json</span></code>
+manifest), compiles and previews effects with the toolchain matching each
+player’s firmware, checks frame budgets, and deploys across the whole room. Each
+fixture has a pose in a shared room frame (<code class="docutils literal notranslate"><span class="pre">led.room</span></code>), and every player gets
+one time base, so a single effect spans several fixtures in step.</p>
+<pre  class="mermaid">
+        flowchart LR
+    a[&quot;AI agent&quot;] -- &quot;MCP / CLI&quot; --&gt; hub[&quot;agent hub&lt;br/&gt;(agent/)&quot;]
+    hub -- &quot;mDNS + manifest&quot; --&gt; d1[&quot;player 1&quot;]
+    hub -- &quot;mDNS + manifest&quot; --&gt; d2[&quot;player 2&quot;]
+    hub -- &quot;wss: .fxb · uniforms ·&lt;br/&gt;pose · time base&quot; --&gt; d1
+    hub -- &quot;wss&quot; --&gt; d2
+    </pre><p>The device stays thin (render, persist, advertise) and the intelligence lives
+in the bridge; <a class="reference internal" href="subsystems/agent.html"><span class="doc">The agent bridge (agent/)</span></a> has the details and
+<a class="reference internal" href="docs/manifesto.html"><span class="doc">The Splanc manifesto</span></a> the reasoning.</p>
+</section>
 <section id="where-to-go-next">
 <h2>Where to go next<a class="headerlink" href="#where-to-go-next" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -449,6 +482,7 @@ targets.</p></li>
 <li><p><a class="reference internal" href="DEVELOPERS.html"><span class="doc">Developing splanc</span></a> — build, test, and run the pipeline (with or without
 hardware).</p></li>
 <li><p><a class="reference internal" href="led-mapper-design.html"><span class="doc">LED Mapper — Design Doc (Android-first)</span></a> — the full design spec and module breakdown.</p></li>
+<li><p><a class="reference internal" href="docs/manifesto.html"><span class="doc">The Splanc manifesto</span></a> — why the system is built the way it is.</p></li>
 </ul>
 </section>
 </section>
@@ -467,14 +501,14 @@ hardware).</p></li>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="index.html">
+          <a class="prev-page" href="docs/whats-new.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Home</div>
+                <div class="title">What’s new</div>
                 
               </div>
             </a>
@@ -514,6 +548,7 @@ hardware).</p></li>
 <li><a class="reference internal" href="#the-fixtures-splanc-maps">The fixtures splanc maps</a></li>
 <li><a class="reference internal" href="#how-a-map-is-recovered">How a map is recovered</a></li>
 <li><a class="reference internal" href="#the-effects-path">The effects path</a></li>
+<li><a class="reference internal" href="#the-agent-path">The agent path</a></li>
 <li><a class="reference internal" href="#where-to-go-next">Where to go next</a></li>
 </ul>
 </li>

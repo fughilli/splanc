@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,6 +225,7 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
@@ -246,11 +250,20 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -314,6 +327,37 @@ both halves of the system agree by construction.</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">shared/protocol/python/ledmapper_protocol/_generated.py</span></code> — the generated
 Pydantic models (<code class="docutils literal notranslate"><span class="pre">OutputMap</span></code>, <code class="docutils literal notranslate"><span class="pre">LedEntry</span></code>, detection records, …).</p></li>
 </ul>
+</section>
+<section id="rust-bindings-two-decoders">
+<h2>Rust bindings: two decoders<a class="headerlink" href="#rust-bindings-two-decoders" title="Link to this heading">¶</a></h2>
+<p>The Rust side (<code class="docutils literal notranslate"><span class="pre">shared/protocol/rust/</span></code>) builds <code class="docutils literal notranslate"><span class="pre">ledmapper.proto</span></code> two ways:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ledmapper_pb</span></code> / <code class="docutils literal notranslate"><span class="pre">ledmapper_pb_fw</span></code></strong> — micropb structs. The <code class="docutils literal notranslate"><span class="pre">_fw</span></code> profile
+is the firmware’s capacity profile, which caps the repeated fields and skips
+the fat arms. These are used for encoding replies and on the host.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ledmapper_view</span></code></strong> — zero-copy <a class="reference external" href="https://github.com/fughilli/splanc/tree/main/oss/pbview">pbview</a>
+views (<code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code>, <code class="docutils literal notranslate"><span class="pre">pbview_library</span></code>). A view is a borrowed two-word handle
+with lazy accessors over the wire bytes. <code class="docutils literal notranslate"><span class="pre">parse</span></code> validates once, and there is
+no allocation, no <code class="docutils literal notranslate"><span class="pre">unsafe</span></code> and no panic on any input. The firmware decodes
+<strong>every</strong> <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> in place from the RX frame
+(<code class="docutils literal notranslate"><span class="pre">Player::handle_frame</span></code> → <code class="docutils literal notranslate"><span class="pre">ClientMessageView</span></code>). That way no by-value envelope,
+sized by its largest arm, lands on a task stack.</p></li>
+</ul>
+<p>Fat reply arms the firmware profile drops are spliced into the reply
+already encoded (<code class="docutils literal notranslate"><span class="pre">Player::encode_reply</span></code>). Examples are the board-capabilities
+catalog, <code class="docutils literal notranslate"><span class="pre">Welcome.features</span></code> and the fixture pose. <code class="docutils literal notranslate"><span class="pre">envelope_size_test</span></code> pins
+the by-value sizes (<code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> 656 B on the firmware).</p>
+<p><code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code> is self-contained (its own README, Cargo workspace and tests,
+including fuzzing) so it can be published separately.</p>
+</section>
+<section id="versioning-and-feature-detection">
+<h2>Versioning and feature detection<a class="headerlink" href="#versioning-and-feature-detection" title="Link to this heading">¶</a></h2>
+<p>The protocol only grows additively (new optional fields and new oneof arms),
+and clients feature-detect instead of comparing versions. <code class="docutils literal notranslate"><span class="pre">Welcome.features</span></code>
+lists what the firmware serves, for example <code class="docutils literal notranslate"><span class="pre">effects</span></code>, <code class="docutils literal notranslate"><span class="pre">uniform_commit</span></code>,
+<code class="docutils literal notranslate"><span class="pre">list_effects</span></code>, <code class="docutils literal notranslate"><span class="pre">fixture_pose</span></code> and <code class="docutils literal notranslate"><span class="pre">time_base</span></code>. <code class="docutils literal notranslate"><span class="pre">Welcome.fxb_format</span></code> is the
+<code class="docutils literal notranslate"><span class="pre">.fxb</span></code> version the VM accepts. The agent bridge and the app both read them; see
+<a class="reference internal" href="agent.html"><span class="doc">The agent bridge (agent/)</span></a>.</p>
 </section>
 <section id="freshness-gate">
 <h2>Freshness gate<a class="headerlink" href="#freshness-gate" title="Link to this heading">¶</a></h2>
@@ -386,6 +430,8 @@ well-worn change — see <a class="reference internal" href="../DEVELOPERS.html"
             <ul>
 <li><a class="reference internal" href="#">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a><ul>
 <li><a class="reference internal" href="#key-files">Key files</a></li>
+<li><a class="reference internal" href="#rust-bindings-two-decoders">Rust bindings: two decoders</a></li>
+<li><a class="reference internal" href="#versioning-and-feature-detection">Versioning and feature detection</a></li>
 <li><a class="reference internal" href="#freshness-gate">Freshness gate</a></li>
 </ul>
 </li>
