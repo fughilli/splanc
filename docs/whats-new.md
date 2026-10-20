@@ -166,6 +166,10 @@ handshake → 512-LED map and texture effect → loaded handshakes). Detail in
 
 ### Tooling, HITL and releases
 
+- **The netstack answers `ping`** (#302): ICMP echo requests to the player's own
+  IP get a reply, rate-limited to 10/s (burst 5) so a flood can't starve the
+  LEDs or TLS. Broadcast/multicast pings and fragments are ignored; up to 1472
+  data bytes (one 1500-byte MTU packet) are echoed.
 - **`ram_audit --hang`** (#270): catches a hard hang over JTAG before the
   watchdog erases it. RAM dumps are armed only after provisioning, because a
   ~46 s halt during the Wi-Fi join resets the board.

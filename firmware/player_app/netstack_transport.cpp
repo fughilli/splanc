@@ -30,6 +30,7 @@
 #include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
 #include "tls_region.h"         // mbedtls's own memory region
 #include "dhcp_reply.h"
+#include "icmp_echo.h"
 
 extern "C" {
 void ns_mac_rx_install();
@@ -546,9 +547,11 @@ static Neighbor g_neigh[4];
 static uint8_t g_neigh_next = 0;
 static uint8_t g_rx_sa[6];
 static bool g_rx_sa_ok = false;
+static bool g_rx_l2_group = false;  // A1 (RA) was broadcast/multicast: never answer ICMP
 
 // Record the SA of the frame about to be handed to handle_l3 (FromDS: A3 = SA).
 static void note_rx_sa(const uint8_t *frame) {
+  g_rx_l2_group = frame[4] & 0x01;
   g_rx_sa_ok = (frame[1] & 0x03) == 0x02 && memcmp(frame + 16, OUR_MAC, 6) != 0;
   if (g_rx_sa_ok) memcpy(g_rx_sa, frame + 16, 6);
 }
@@ -721,7 +724,8 @@ void install_hw_key() {
                 rd(0x600A4814), rd(0x600A4800), rd(0x600A4810), rd(0x600A5804 + SLOT * 40), g_trc);
 }
 
-// Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
+// Parse an L2 payload (LLC/SNAP + IPv4): ICMP echo (requests answered, replies to our
+// gateway pings logged), TCP, mDNS and DHCP responses.
 // Works for both software-decrypted and hardware-decrypted (plaintext) frames.
 // Reply to an ARP request for our IP. The gateway revalidates its ARP cache with a
 // UNICAST probe to our MAC (pairwise-encrypted, so we can decrypt it) — without a reply
@@ -788,6 +792,44 @@ void send_gratuitous_arp() {
   tx_l2(hdr, payload, 8 + 28, "gratuitous ARP");
 }
 
+// Answer an ICMP echo request (`ping <device-ip>`). icmp_echo.h validates it (our unicast
+// IP, no fragments, checksums, <= kIcmpEchoMaxData data bytes); group-addressed frames are
+// dropped here (no smurf amplification). The reply is built in place in the TX IP slot and
+// leaves through send_ip — the same unicast path (and neighbor-table next hop: the
+// requester's own MAC, or the gateway's for an off-subnet peer) as our TCP segments.
+// Unicast, so it is safe beside a live wss. Rate-limited to 10/s (burst 5) so a ping flood
+// can't eat the loopTask time LED output, TLS and the watchdog need; no heap, ~24 B state.
+static IcmpRateLimiter g_icmp_rl;
+static uint32_t g_icmp_replied = 0, g_icmp_limited = 0, g_icmp_dropped = 0;
+static void answer_icmp_echo(const uint8_t *ip, int avail) {
+  const IcmpEcho v = g_rx_l2_group ? IcmpEcho::kNotForUs
+                                   : icmp_echo_check(ip, (size_t)avail, g_offer_ip);
+  bool sent = false;
+  if (v == IcmpEcho::kOk && g_icmp_rl.take((uint32_t)millis())) {
+    const size_t n = icmp_echo_build_reply(ip, g_offer_ip, tx_ip_slot(), kTxIpCap);
+    if (n > 0) {
+      send_ip(tx_ip_slot(), (int)n);
+      sent = true;
+      if (g_icmp_replied++ < 4) {
+        const uint8_t *ic = ip + (ip[0] & 0x0f) * 4;
+        Serial.printf("[icmp] echo reply -> %u.%u.%u.%u seq=%u (%u B)\n", ip[12], ip[13],
+                      ip[14], ip[15], (ic[6] << 8) | ic[7], (unsigned)n);
+      }
+    }
+  }
+  if (sent) return;
+  if (v == IcmpEcho::kOk) g_icmp_limited++;
+  else g_icmp_dropped++;
+  // A flood never floods the console: one summary at most every 5 s, only when dropping.
+  static uint32_t last_log = 0;
+  if (millis() - last_log > 5000) {
+    last_log = millis();
+    Serial.printf("[icmp] replied=%u rate_limited=%u dropped=%u (last verdict %u)\n",
+                  (unsigned)g_icmp_replied, (unsigned)g_icmp_limited, (unsigned)g_icmp_dropped,
+                  (unsigned)v);
+  }
+}
+
 void handle_l3(const uint8_t *pt, int pl) {
   // EAPOL-Key (ethertype 0x888E) over the established, encrypted link: the AP's periodic
   // GROUP-KEY REKEY (message 1). If we ignore it, the authenticator times out the Group
@@ -852,6 +894,8 @@ void handle_l3(const uint8_t *pt, int pl) {
     if (ic[0] == 0) // echo reply
       Serial.printf("*** PING REPLY from %u.%u.%u.%u seq=%u — IP round-trip over heapless WiFi ***\n",
                     ip[12], ip[13], ip[14], ip[15], (ic[6] << 8) | ic[7]);
+    else if (ic[0] == 8 && g_leased) // echo request: answer it (policy + cap in icmp_echo.h)
+      answer_icmp_echo(ip, pl - 8);
   } else if (pl > 8 + 28 && ip[9] == 17) { // UDP
     const int ihl = (ip[0] & 0x0f) * 4;
     const int iplen = (ip[2] << 8) | ip[3];
@@ -1114,7 +1158,7 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
       // several RTO/backoff cycles to recover before giving up. The clock resets on ANY
       // progress (above), so a slow-but-alive peer never trips it — only ZERO ACKs for the
       // whole window. Bounded to 3s (was 8s): this loop runs on loopTask, so while it spins
-      // NOTHING else in the netstack is serviced — no RX, no ICMP, no reconnect-accept. A
+      // only pump_link_once's RX is serviced — no main-loop work, no reconnect-accept. A
       // faster give-up caps that deafness (fx_bench saw a fast effect fill the window and a
       // reply-write spin ~8s, going deaf mid-sweep); 3s is still many RTO/backoff cycles.
       uint32_t now = (uint32_t)millis();
