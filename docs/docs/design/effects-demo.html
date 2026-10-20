@@ -299,13 +299,12 @@
         <article role="main" id="furo-main-content">
           <section id="website-effects-playground">
 <h1>Website effects playground<a class="headerlink" href="#website-effects-playground" title="Link to this heading">¶</a></h1>
-<p>Status, 2026-10-19: the operator approved the OpenRouter visitor-data flow and
-confirmed the Cloudflare secret. The guided workspace and relay merged in #275;
-full main CI (39332926193) and web deployment (39336232316) passed. The first live
-check exposed a Workers runtime incompatibility: <code class="docutils literal notranslate"><span class="pre">redirect:</span> <span class="pre">&quot;error&quot;</span></code> throws before
-sending any upstream request. The follow-up uses <code class="docutils literal notranslate"><span class="pre">manual</span></code> and rejects every 3xx
-without forwarding credentials. Production inference is being rechecked; mocked
-checks are not model-quality results.</p>
+<p>Status, 2026-10-19: the guided workspace is live through the website’s Meet
+Splanc scene links. All three entry links, editable scene copies, the three core
+panes and all eight tour steps passed a production browser check. The configured
+relay successfully used MiniMax to edit an effect, compile it and request preview
+images. Its concluding response then timed out; complete live vision-loop
+validation remains pending. Mocked tests are not model-quality results.</p>
 <section id="entry-and-layout">
 <h2>Entry and layout<a class="headerlink" href="#entry-and-layout" title="Link to this heading">¶</a></h2>
 <p>The Meet Splanc scene’s Try it link adds <code class="docutils literal notranslate"><span class="pre">?workspace=demo</span></code> to the hash route:
@@ -377,7 +376,13 @@ compile/tool results and preview images only when capture_preview is requested.<
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
 limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
-4,000 output tokens, 45 seconds per provider and 100 seconds overall. Price caps
+4,000 output tokens, 45 seconds per provider and 100 seconds overall. The
+<a class="reference external" href="https://openrouter.ai/api/v1/models">model catalog</a> reports MiniMax’s default
+reasoning effort as <code class="docutils literal notranslate"><span class="pre">max</span></code>; the interactive relay explicitly uses its supported
+<code class="docutils literal notranslate"><span class="pre">low</span></code> setting. Nemotron and Gemma disable optional reasoning. This retains the
+same free models and budgets while avoiding the default deep-reasoning latency.
+A response whose headers arrive but whose body stalls is classified as a timeout,
+not malformed JSON. Price caps
 cover input, output, requests and images at zero. Inline preview images only;
 remote image URLs and visitor-supplied routing overrides are rejected.</p>
 <p>The local burst guard allows 24 requests/minute/IP, two concurrent requests/IP,
@@ -407,9 +412,12 @@ responses and uses the redirect mode supported by Cloudflare Workers.</p></li>
 <li><p>Full app Test CI passed on the merged workspace revision, with 194 tests and a
 complete matching compiler/VM artifact. A web-only deployment published it to
 Cloudflare and GitHub Pages without releasing firmware or TestFlight builds.</p></li>
-<li><p>The production endpoint confirms configuration presence. Live model inference
-failed before dispatch because Workers does not implement redirect error mode;
-the fix and live edit/compile/preview check are in progress.</p></li>
+<li><p>The production endpoint confirms configuration presence. The live MiniMax loop
+performed set_script (6.9 s), compiled successfully, then capture_preview (1.5 s).
+A second preview request took 42.7 s; the subsequent body reads hit the two
+45-second deadlines, and Gemma was provider-rate-limited. Low reasoning is now
+explicit and aborted response bodies are diagnosed correctly. A final live
+edit/compile/preview/conclusion check remains required.</p></li>
 <li><p>The website update preserves automatic app/agent release tracking while requiring
 a tested app revision containing this demo. Newer compatible releases should
 supersede that baseline. Three individual models have not been benchmarked.</p></li>
@@ -437,6 +445,22 @@ or live relay validation.</p></li>
 pane dimensions were corrected during review. Logs/screenshots are local-only
 under .ledmapper, not committed generated artifacts.</p></li>
 </ul>
+</section>
+<section id="relay-only-operational-updates">
+<h2>Relay-only operational updates<a class="headerlink" href="#relay-only-operational-updates" title="Link to this heading">¶</a></h2>
+<p>The deployed browser reached OpenRouter after the redirect fix, but returned a
+429. Its shared/platform vs provider scope was not distinguishable in the old
+sanitation. Provider fallback now accepts OpenRouter’s documented typed
+<code class="docutils literal notranslate"><span class="pre">rate_limited</span></code>/<code class="docutils literal notranslate"><span class="pre">rate_limit_exceeded</span></code> and explicit legacy provider error metadata.
+Exhausted platform headers or an OpenRouter limit source still stop the chain;
+ambiguous limits stop too. No key rotation or paid fallback is used.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Deploy</span> <span class="pre">tested</span> <span class="pre">web</span> <span class="pre">app</span></code> has an optional <code class="docutils literal notranslate"><span class="pre">worker_only</span></code> mode. It retains the entire
+successful main Test artifact, requires the diff from that artifact to contain
+only the Worker, its tests, this document and the deployment workflow, runs Node
+regressions and pinned Miniflare/workerd checks, then replaces only <code class="docutils literal notranslate"><span class="pre">_worker.js</span></code>.
+It records distinct static/worker source revisions in <code class="docutils literal notranslate"><span class="pre">worker-deployment.json</span></code>.
+The static app and its compiler/VM stay matched; GitHub Pages is not republished
+for this mode. Any app, native source or dependency change requires a full build.</p>
 </section>
 </section>
 
@@ -483,6 +507,7 @@ under .ledmapper, not committed generated artifacts.</p></li>
 <li><a class="reference internal" href="#approved-relay">Approved relay</a></li>
 <li><a class="reference internal" href="#release-verification">Release verification</a></li>
 <li><a class="reference internal" href="#validation-completed-locally">Validation completed locally</a></li>
+<li><a class="reference internal" href="#relay-only-operational-updates">Relay-only operational updates</a></li>
 </ul>
 </li>
 </ul>
