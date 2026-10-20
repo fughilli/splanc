@@ -153,6 +153,11 @@ agent_bundle(
     # format version): read it from the compiler once the device PR versions .fxb.
     fxb_format = "FXB1",
     mcp = ":mcp",
+    # The Raspberry Pi bridge appliance (pi/bridge/README.md): pi-bridge/ in the
+    # bundle, and its installer at <site>/bridge/install.sh.
+    pi_bridge = ["//pi/bridge:bundle_files"],
+    pi_bridge_installer = "//pi/bridge:install.sh",
+    pi_bridge_strip = "pi/bridge/",
     proto = "//shared/protocol/proto:ledmapper.proto",
     simulator = "//firmware/fx_vm:fx_vm_web",
     site_base = ":site_base",

@@ -67,6 +67,17 @@ test("the site's skill mirrors the bundle's, byte for byte, and is indexed", () 
   }
 });
 
+test("the Pi bridge appliance: pi-bridge/ in the bundle, its installer on the site", () => {
+  assert.equal(read("site/bridge/install.sh"), read("pi-bridge/install.sh"));
+  assert.match(read("pi-bridge/install.sh"), /^#!\/bin\/sh\n/);
+  for (const f of ["bin/splanc-bridge", "bin/splanc-bridge-run", "display/requirements.lock", "display/splanc_display/main.py"]) {
+    assert.ok(read(`pi-bridge/${f}`).length > 0, `pi-bridge/${f}`);
+  }
+  for (const u of ["splanc-bridge.service", "splanc-display.service", "splanc-bridge-update.service", "splanc-bridge-update.timer"]) {
+    assert.match(read(`pi-bridge/systemd/${u}`), /^\[(Unit|Timer)\]$/m, u);
+  }
+});
+
 test("npx packaging: package.json bin -> the executable .mjs with a shebang", () => {
   const pkg = JSON.parse(read("package.json"));
   assert.equal(pkg.bin["splanc-agent"], "mcp/splanc-agent.mjs");

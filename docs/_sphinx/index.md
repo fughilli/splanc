@@ -118,6 +118,7 @@ subsystems/index
 
 DEVELOPERS
 Getting started <README>
+Raspberry Pi bridge <docs/pi-bridge>
 docs/runbook
 Roadmap <next_steps>
 ```

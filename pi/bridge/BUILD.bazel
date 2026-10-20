@@ -1,0 +1,77 @@
+"""pi/bridge — the Raspberry Pi "Splanc bridge" appliance (README.md).
+
+A Pi on the LAN running `splanc-agent bridge` headless, with its pairing code and
+status on HDMI and on a Waveshare 1.3" OLED HAT. Ships inside the agent bundle
+(//agent:bundle -> pi-bridge/, and site/bridge/install.sh for splanc.io); the Pi
+gets it with `curl -fsSL https://splanc.io/bridge/install.sh | sudo sh`.
+
+Targets:
+  :splanc_display   the display service (Python; Pillow + segno here, plus
+                    luma.oled/gpiozero on the Pi — see display/requirements.lock)
+  :display_test     renderer, status, button state machine, hardware seams, and
+                    end to end against the fake bridge; writes PNGs of every
+                    screen to the test's undeclared outputs
+  :installer_test   install.sh into a fake root (install/upgrade/refusals/uninstall)
+  :render_gallery   `bazel run //pi/bridge:render_gallery -- <dir>`: review PNGs
+  :bundle_files     what //agent:bundle packs as pi-bridge/
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["install.sh"])
+
+py_library(
+    name = "splanc_display",
+    srcs = glob(["display/splanc_display/*.py"]),
+    imports = ["display"],
+    deps = [
+        requirement("pillow"),
+        requirement("segno"),
+    ],
+)
+
+py_test(
+    name = "display_test",
+    size = "small",
+    srcs = glob(["tests/*.py"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":splanc_display",
+        "@rules_requirements//python",
+        requirement("pytest"),
+    ],
+)
+
+py_binary(
+    name = "render_gallery",
+    srcs = ["tools/render_gallery.py"],
+    deps = [":splanc_display"],
+)
+
+filegroup(
+    name = "bundle_files",
+    srcs = [
+        "display/requirements.lock",
+        "install.sh",
+    ] + glob([
+        "bin/*",
+        "display/splanc_display/*.py",
+        "systemd/*",
+    ]),
+)
+
+sh_test(
+    name = "installer_test",
+    size = "small",
+    srcs = ["tests/installer_test.sh"],
+    data = [":bundle_files"],
+    # The installer only ever runs on Pi OS (Debian); its fake-root test leans on
+    # GNU userland, so skip it on the macOS CI lane.
+    target_compatible_with = ["@platforms//os:linux"],
+)

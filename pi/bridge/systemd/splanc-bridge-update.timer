@@ -1,0 +1,13 @@
+# Daily check for a new Splanc release (set SPLANC_AUTO_UPDATE=0 in
+# /etc/splanc-bridge/bridge.env to turn automatic updates off).
+[Unit]
+Description=Daily Splanc bridge update check
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

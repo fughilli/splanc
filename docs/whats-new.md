@@ -22,6 +22,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   `export_map` tool / `splanc-agent export-map`. See
   [the user guide](user-guide.md#exporting-a-map-to-other-software).
 
+### A Raspberry Pi as a Splanc bridge
+
+- **One-command Pi bridge appliance:** flash Raspberry Pi OS Lite with Imager
+  (Wi-Fi and SSH preset), boot, then run
+  `curl -fsSL https://splanc.io/bridge/install.sh | sudo sh`. The Pi runs the
+  Splanc cloud bridge headless and starts it on every boot. It updates itself
+  daily, checking each release's sha256. Guide:
+  [Set up a Splanc bridge on a Raspberry Pi](pi-bridge.md).
+- **Status screens:** a full-screen HDMI page (no desktop needed) shows the
+  pairing code, a QR code, the fixtures, the clients and the network. A Waveshare
+  1.3" OLED HAT shows pages of the same information. Its keys work as follows:
+  KEY1 gets a new code, KEY2 identifies fixtures, and holding KEY3 then
+  confirming revokes all clients. The joystick pages through the screens.
+- **Built in:** the installer and display service live in `pi/bridge/` and ship
+  inside the agent bundle (`pi-bridge/`, plus `site/bridge/install.sh`). Details:
+  [pi/bridge/README.md](../pi/bridge/README.md).
+
 ### AI agents can drive Splanc ("Use splanc.io to set the mood of the room")
 
 - **Agent bridge + bundle** (#274): `agent/` is an MCP server (stdio) and a

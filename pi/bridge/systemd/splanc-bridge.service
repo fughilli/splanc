@@ -1,0 +1,52 @@
+# Splanc cloud bridge: `splanc-agent bridge` (Node), installed by pi/bridge/install.sh.
+# Settings: /etc/splanc-bridge/bridge.env (values there override the defaults below).
+[Unit]
+Description=Splanc cloud bridge
+Documentation=https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=splanc
+Group=splanc
+Environment=SPLANC_BRIDGE_STATUS=/run/splanc-bridge/status.json
+Environment=SPLANC_BRIDGE_CONTROL=/run/splanc-bridge/control.sock
+Environment=SPLANC_CONFIG_DIR=/var/lib/splanc-bridge/config
+Environment=SPLANC_CACHE_DIR=/var/cache/splanc-bridge
+Environment=HOME=/var/lib/splanc-bridge
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/splanc-bridge/bridge.env
+ExecStart=/opt/splanc-bridge/agent/current/pi-bridge/bin/splanc-bridge-run
+# /run/splanc-bridge (status.json + control.sock); removed when the bridge stops,
+# which the display shows as "Waiting for bridge".
+RuntimeDirectory=splanc-bridge
+RuntimeDirectoryMode=0750
+# status.json 0660 / control.sock 0770: readable + usable by the splanc group,
+# which the installer adds the installing (sudo) user to.
+UMask=0007
+StateDirectory=splanc-bridge
+StateDirectoryMode=0700
+CacheDirectory=splanc-bridge
+Restart=always
+RestartSec=5
+# Hardening (Node's JIT needs W+X pages, so no MemoryDenyWriteExecute).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+# Splanc bridge screens: HDMI status page (/dev/fb0 on VT 8) + Waveshare 1.3"
+# OLED HAT (SPI/I2C + buttons). Installed by pi/bridge/install.sh.
+# Settings: /etc/splanc-bridge/bridge.env (OLED=, OLED_ROTATE=, SPLANC_DISPLAY_HDMI=).
+[Unit]
+Description=Splanc bridge screens (HDMI + OLED HAT)
+Documentation=https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md
+After=splanc-bridge.service systemd-user-sessions.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=splanc
+Group=splanc
+# video (/dev/fb0), tty (/dev/tty8), gpio/spi/i2c (HAT) are added to the user by
+# the installer (only the groups that exist on this system).
+Environment=SPLANC_BRIDGE_STATUS=/run/splanc-bridge/status.json
+Environment=SPLANC_BRIDGE_CONTROL=/run/splanc-bridge/control.sock
+Environment=PYTHONPATH=/opt/splanc-bridge/agent/current/pi-bridge/display
+Environment=PYTHONUNBUFFERED=1
+# lgpio (gpiozero's Pi 5-capable backend) writes notify pipes in its working dir.
+Environment=LG_WD=/run/splanc-display
+EnvironmentFile=-/etc/splanc-bridge/bridge.env
+WorkingDirectory=/run/splanc-display
+RuntimeDirectory=splanc-display
+ExecStart=/opt/splanc-bridge/venv/bin/python3 -m splanc_display.main
+# Switch to VT 8 and put it in graphics mode so the console doesn't draw over us.
+AmbientCapabilities=CAP_SYS_TTY_CONFIG
+CapabilityBoundingSet=CAP_SYS_TTY_CONFIG
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
