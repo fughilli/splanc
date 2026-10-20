@@ -48,6 +48,14 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   call <tool> '<json>'                 any tool by its MCP name
   help                                 this text
 
+Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
+  bridge [--relay <url>]               serve this LAN's players to cloud agents through a relay
+                                       (default: $SPLANC_RELAY, else the Splanc relay)
+         [--state-dir d] [--status f] [--control sock]   (plus --host/--no-mdns/--pin as above)
+  bridge-ctl new-code|revoke-all|identify|status   control a running bridge (its unix socket)
+  relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]
+                                       host the relay yourself (e.g. behind tailscale funnel)
+
 Every device command takes --players <name|room|mac|all>[,...] (default: the
 only player, or all of them when they form one room); keypoint commands also
 take --deck 0|1 (FX deck A/B, default 0).
@@ -93,6 +101,7 @@ const BOOL = new Set([
   "include-colors",
   "help",
   "quiet",
+  "trust-proxy",
 ]);
 
 export function parseArgs(argv: string[]): Parsed {

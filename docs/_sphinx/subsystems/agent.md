@@ -34,6 +34,11 @@ flowchart LR
     hub --> p2
 ```
 
+Agents in the cloud reach the same hub through a **bridge**: `splanc-agent bridge`
+on an always-on LAN host, connected out to the cloud relay, which serves it as a
+remote MCP connector paired with a code on the bridge's screen
+({doc}`../docs/guides/cloud-agent`, {doc}`../docs/design/cloud-relay`).
+
 ## What the hub does
 
 - **Discovery.** It browses `_splanc._tcp` over mDNS and remembers players it

@@ -179,6 +179,12 @@ The device stays thin (render, persist, advertise) and the intelligence lives
 in the bridge; {doc}`subsystems/agent` has the details and
 {doc}`docs/manifesto` the reasoning.
 
+Agents that run in the cloud can't see the LAN. For them, `splanc-agent bridge`
+runs the same hub on an always-on LAN host and keeps an outbound WebSocket to
+the cloud relay (a Cloudflare Worker with one Durable Object per bridge), which
+exposes it as a remote MCP server that pairs with a code shown on the bridge.
+See {doc}`docs/design/cloud-relay` and {doc}`docs/guides/cloud-agent`.
+
 ## Where to go next
 
 - {doc}`subsystems/index` — a per-component tour with entry points and build

@@ -148,10 +148,40 @@ test('rate budgets recover after the window; optional edge limiter fails closed'
 });
 
 test('static assets and existing worker routes remain separate', async () => {
-  const r = await worker.fetch(new Request('https://splanc.pages.dev/anything'), { ASSETS: { fetch: async () => new Response('static') } });
+  const r = await worker.fetch(new Request('https://ledmapper.pages.dev/anything'), { ASSETS: { fetch: async () => new Response('static') } });
   assert.equal(await r.text(), 'static');
   const gh = await worker.fetch(new Request('https://splanc.pages.dev/gh-asset?url=https://evil.example'), {});
   assert.equal(gh.status, 400);
+});
+
+test('splanc.pages.dev is retired: app paths 301 to splanc.io/app, agent files to the root, APIs stay', async () => {
+  const noAssets = { ASSETS: { fetch: async () => assert.fail('retired origin must not serve the app') } };
+  const loc = async (u) => {
+    const r = await worker.fetch(new Request(u), noAssets);
+    assert.equal(r.status, 301, u);
+    return r.headers.get('location');
+  };
+  assert.equal(await loc('https://splanc.pages.dev/'), 'https://splanc.io/app/');
+  assert.equal(await loc('https://splanc.pages.dev/effects.html?x=1#y'), 'https://splanc.io/app/effects.html?x=1');
+  assert.equal(await loc('https://splanc.pages.dev/?url=wss://10.0.0.5/ws'), 'https://splanc.io/app/?url=wss://10.0.0.5/ws');
+  assert.equal(await loc('https://splanc.pages.dev/fx-vm/fx_vm_wasm_pkg_bg.wasm'), 'https://splanc.io/app/fx-vm/fx_vm_wasm_pkg_bg.wasm');
+  assert.equal(await loc('https://abc123.splanc.pages.dev/user-guide/'), 'https://splanc.io/app/user-guide/');
+  assert.equal(await loc('https://splanc.pages.dev/AGENTS.md'), 'https://splanc.io/AGENTS.md');
+  assert.equal(await loc('https://splanc.pages.dev/agent/latest.json'), 'https://splanc.io/agent/latest.json');
+  assert.equal(await loc('https://splanc.pages.dev/.well-known/mcp/server.json'), 'https://splanc.io/.well-known/mcp/server.json');
+  // An installed PWA's service worker is replaced by one that unregisters itself.
+  const sw = await worker.fetch(new Request('https://splanc.pages.dev/sw.js'), noAssets);
+  assert.equal(sw.status, 200);
+  assert.match(sw.headers.get('content-type'), /javascript/);
+  assert.match(await sw.text(), /registration\.unregister\(\)/);
+  // The API routes keep answering on the retired host.
+  const gh = await worker.fetch(new Request('https://splanc.pages.dev/gh-asset?url=https://evil.example'), noAssets);
+  assert.equal(gh.status, 400);
+  const demo = await worker.fetch(new Request(url, { headers: { origin: 'https://splanc.io' } }), { ...noAssets, ...env });
+  assert.equal(demo.status, 200);
+  // Look-alike hosts are not retired.
+  const other = await worker.fetch(new Request('https://notsplanc.pages.dev/'), { ASSETS: { fetch: async () => new Response('static') } });
+  assert.equal(await other.text(), 'static');
 });
 
 

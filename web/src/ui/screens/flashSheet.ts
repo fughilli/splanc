@@ -127,7 +127,7 @@ export async function openFlashSheet(): Promise<void> {
     sheet.body.append(
       note("Flashing a brand-new device over USB isn't supported on iPhone or iPad."),
       intro(
-        "To provision a board for the first time, open splanc.pages.dev on a desktop or laptop " +
+        "To provision a board for the first time, open splanc.io/app on a desktop or laptop " +
           "computer (Chrome or Edge) and use its flash tool. Once the device has joined your " +
           "Wi-Fi, you can add and control it here.",
       ),

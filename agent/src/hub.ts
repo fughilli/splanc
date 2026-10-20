@@ -366,6 +366,11 @@ export class Hub {
     );
   }
 
+  /** A /ws session to this player is open. */
+  isConnected(id: string): boolean {
+    return this.sessions.has(id);
+  }
+
   toolchainNote(id: string): string | undefined {
     return this.choice.get(id)?.note;
   }

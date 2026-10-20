@@ -1,0 +1,31 @@
+# The Splanc cloud relay (docs/design/cloud-relay.md): one Worker + two
+# SQLite-backed Durable Object classes, all on the Workers Free plan.
+#
+#   local:   pnpm dlx wrangler@4 dev --config agent/relay/wrangler.toml
+#   deploy:  agent/relay/deploy.sh   (needs a token with Workers Scripts: Edit)
+#
+# Served at https://splanc-relay.<account subdomain>.workers.dev (no custom
+# domain: splanc.io's DNS stays at its current registrar).
+
+name = "splanc-relay"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+workers_dev = true
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "BRIDGE"
+class_name = "BridgeObject"
+
+[[durable_objects.bindings]]
+name = "DIRECTORY"
+class_name = "Directory"
+
+# Free plan: SQLite-backed Durable Objects only.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BridgeObject", "Directory"]
+
+[observability]
+enabled = true
+head_sampling_rate = 0.05

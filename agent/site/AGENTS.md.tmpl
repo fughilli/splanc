@@ -63,6 +63,21 @@ claude mcp add splanc -- {{NPX}}
 `notifications/progress` when the call carries a progress token, and log
 messages otherwise.
 
+## In the cloud (you can't reach the LAN)
+
+Running in a hosted environment (claude.ai, ChatGPT, a cloud sandbox)? The CLI
+above can't see the user's lights from there.
+
+- If the user has added a Splanc connector, you already have the tools above as
+  MCP tools, served by their bridge: start with `list_players`.
+- If not, ask the user to set up a Splanc **bridge** on their network (the Pi
+  image, or `{{NPX}} bridge --relay <relay url>` on any always-on computer
+  there) and add `<relay url>/mcp` as a custom connector, signing in with the
+  pairing code on the bridge's screen. Guide:
+  https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md
+- A tool error saying the bridge is offline means the user's bridge isn't
+  running or has no internet; say so rather than retrying in a loop.
+
 ## "Set the mood of the room" — the first-contact flow
 
 1. `list_players`. One player: just go. Several and no rooms yet: tools target
@@ -81,7 +96,8 @@ messages otherwise.
 - You can't rewire, re-map or recalibrate fixtures — that's the Splanc app's job.
 - Rename a player (`set_device_name`) only when the user asks, with `confirm`.
 - There is no authentication on the LAN: anyone on it can drive the lights. Don't
-  expose the hub beyond the user's machine.
+  expose the hub beyond the user's machine; the bridge (`{{NPX}} bridge`) is the
+  supported way to reach it from outside (paired agents only, through a relay).
 - Firmware too old for a feature → say so and point the user at the app's update.
 
 ## Reference

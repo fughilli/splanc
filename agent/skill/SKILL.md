@@ -135,6 +135,15 @@ bundle on every call, so for more than a couple of calls install it once with
 it reached, so after the first call each one costs a single connection (~1 s on
 the player's small chip); `list-players` from memory costs none.
 
+**From the cloud.** If your Splanc tools come from a connector (a remote MCP
+server at a relay URL ending in `/mcp`) rather than a local command, you are
+reaching the user's lights through their Splanc bridge: a computer on their
+network running the same hub. The tools and resources are the same; players are
+what the bridge sees; `add_player` takes addresses as seen from the user's LAN.
+An error saying the bridge is offline means the bridge isn't running or has no
+internet: tell the user, don't retry in a loop. A user without a bridge can set
+one up: docs/guides/cloud-agent.md in the Splanc repository.
+
 ## Textures
 
 Effects that declare `texture vec3 img(W, H);` can be fed live frames:
