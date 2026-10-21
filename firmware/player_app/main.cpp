@@ -1605,12 +1605,16 @@ static uint32_t render_once() {
     // autoscaled frame rate never stretches a ramp). Costed into the frame.
     static uint32_t ramp_cyc_max = 0;
     static uint32_t ramp_n_max = 0;
+    static uint32_t ramp_cyc_sum = 0;  // mean = sum / ticks (the max is ISR-inflated)
+    static uint32_t ramp_ticks = 0;
     uint32_t ramp_n = lm_ramp_tick((int64_t)now);
     uint32_t c_update_start = esp_cpu_get_cycle_count();
     if (ramp_n > 0) {
       uint32_t rc = c_update_start - c_frame_start;
       if (rc > ramp_cyc_max) ramp_cyc_max = rc;
       if (ramp_n > ramp_n_max) ramp_n_max = ramp_n;
+      ramp_cyc_sum += rc;
+      ramp_ticks++;
     }
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
@@ -1648,11 +1652,14 @@ static uint32_t render_once() {
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
                      fx_time_s, this_seq, kOc[oc <= 2 ? oc : 0], shade_bad, n);
         if (ramp_n_max > 0) {
-          // Worst ramp tick this second: things moved + CPU cycles (160/us).
-          Log().printf("[ramp] now=%u n=%u cyc=%u\n", (unsigned)now, (unsigned)ramp_n_max,
-                       (unsigned)ramp_cyc_max);
+          // Ramp ticks this second: things moved, worst + mean CPU cycles (160/us).
+          Log().printf("[ramp] now=%u n=%u cyc=%u mean=%u ticks=%u\n", (unsigned)now,
+                       (unsigned)ramp_n_max, (unsigned)ramp_cyc_max,
+                       (unsigned)(ramp_ticks ? ramp_cyc_sum / ramp_ticks : 0), (unsigned)ramp_ticks);
           ramp_cyc_max = 0;
           ramp_n_max = 0;
+          ramp_cyc_sum = 0;
+          ramp_ticks = 0;
         }
       }
     } else {
