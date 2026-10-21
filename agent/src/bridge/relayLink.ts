@@ -10,6 +10,7 @@ import WebSocket from "ws";
 
 import {
   BRIDGE_AUTH_HEADER,
+  CLOSE_REPLACED,
   CONNECT_BAD_SIGNATURE,
   CONNECT_UNKNOWN_BRIDGE,
   PING,
@@ -46,6 +47,10 @@ export interface RelayLinkOptions {
   identity: BridgeIdentity;
   log?: (...a: unknown[]) => void;
   backoff?: Backoff;
+  /** Backoff after another bridge with this identity took the connection over
+   * (close 4001): default 5 min doubling to 1 h, so two copies of one bridge.json
+   * don't evict each other every second (each connect is a billed relay request). */
+  replacedBackoff?: Backoff;
   /** Liveness check interval (default 30 s). */
   pingMs?: number;
   /** Seconds since the epoch (tests). */
@@ -68,6 +73,8 @@ export class RelayLink {
   attempts = 0;
   /** Successful connections so far (tests). */
   connects = 0;
+  /** Times another connection for this bridge id replaced ours. */
+  replaced = 0;
   onFrame: (f: RelayFrame) => void = () => undefined;
   onChange: () => void = () => undefined;
 
@@ -79,6 +86,7 @@ export class RelayLink {
   private lastRx = 0;
   private readonly log: (...a: unknown[]) => void;
   private readonly backoff: Backoff;
+  private readonly replacedBackoff: Backoff;
   private readonly pingMs: number;
   private readonly nowS: () => number;
 
@@ -86,6 +94,7 @@ export class RelayLink {
     this.relay = opts.relay.replace(/\/+$/, "");
     this.log = opts.log ?? (() => undefined);
     this.backoff = opts.backoff ?? { baseMs: 1000, maxMs: 60_000 };
+    this.replacedBackoff = opts.replacedBackoff ?? { baseMs: 5 * 60_000, maxMs: 60 * 60_000 };
     this.pingMs = opts.pingMs ?? 30_000;
     this.nowS = opts.nowS ?? (() => Math.floor(Date.now() / 1000));
   }
@@ -141,14 +150,14 @@ export class RelayLink {
     return j.bridge_id;
   }
 
-  private retry(why: string): void {
+  private retry(why: string, delayMs?: number): void {
     this.stopPinger();
     this.ws = null;
     this.hello = null;
     if (this.stopped) return;
-    const d = backoffDelay(this.attempts++, this.backoff);
+    const d = delayMs ?? backoffDelay(this.attempts++, this.backoff);
     this.set("offline", why);
-    this.log(`relay: ${why}; retrying in ${(d / 1000).toFixed(1)} s`);
+    this.log(`relay: ${why}; retrying in ${d >= 60_000 ? `${(d / 60_000).toFixed(1)} min` : `${(d / 1000).toFixed(1)} s`}`);
     this.timer = setTimeout(() => void this.connect(), d);
     this.timer.unref?.();
   }
@@ -226,6 +235,16 @@ export class RelayLink {
     ws.on("close", (code, reason) => {
       if (this.ws !== ws || settled) return;
       settled = true;
+      if (code === CLOSE_REPLACED) {
+        // A live process connected as this bridge (a half-open old socket of ours
+        // would never hear this close). Reconnecting right away would evict it, and
+        // it us, about once a second, forever: back off for minutes instead.
+        this.retry(
+          "another bridge using this identity connected (is bridge.json copied to a second machine? stop one of them)",
+          backoffDelay(this.replaced++, this.replacedBackoff),
+        );
+        return;
+      }
       this.retry(`connection closed (${code}${reason.length ? ` ${reason.toString()}` : ""})`);
     });
     ws.on("error", (e) => {

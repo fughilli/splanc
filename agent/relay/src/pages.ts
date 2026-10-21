@@ -99,12 +99,12 @@ export function oauthErrorPage(message: string, status = 400): Response {
   return page("Can't connect", `<h1>Can't connect</h1><p class="err">${esc(message)}</p>`, status);
 }
 
-export function pairForm(code: string, error?: string, status = 200): Response {
+export function pairForm(origin: string, code: string, error?: string, status = 200): Response {
   return page(
     "Pair a Splanc bridge",
     `<h1>Get a token for your Splanc bridge</h1>
 <p>For agents whose MCP settings take a <b>bearer token</b> (an <code>Authorization</code> header).
-If your agent has a "sign in" / OAuth button, add <code>/mcp</code> as a connector instead: it asks for this same code.</p>
+If your agent has a "sign in" / OAuth button, add <code>${esc(origin)}/mcp</code> as a connector instead: it asks for this same code.</p>
 ${error ? `<p class="err">${esc(error)}</p>` : ""}
 <form method="post" action="/pair">
 <label for="code">Pairing code (on your bridge's screen)</label>

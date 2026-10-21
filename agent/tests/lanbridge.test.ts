@@ -206,3 +206,61 @@ describe("reconnect", () => {
     assert.equal(readStatus().error, null);
   });
 });
+
+describe("pairing edge cases (live-relay E2E findings)", () => {
+  test("redeeming the first code doesn't make a fresh one; a stopped bridge shows no code", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "splanc-redeem-"));
+    const statusPath = join(dir, "status.json");
+    const { identity } = tempIdentity();
+    // No throttle on automatic codes: the redeem -> credential gap (credentials 0,
+    // no code) is then always visible to the auto-pairing logic.
+    const l = new RelayLink({ relay, identity, backoff: { baseMs: 50, maxMs: 400 } });
+    const b = new LanBridge({ link: l, hub, statusPath, controlPath: join(dir, "c.sock"), refreshMs: 0, autoPairIntervalMs: 0 });
+    const st = () => JSON.parse(readFileSync(statusPath, "utf8")) as BridgeStatus;
+    await b.start();
+    try {
+      const code = (await until(() => st().pairing, "an automatic code")).code;
+      const r = await fetch(`${relay}/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+        body: new URLSearchParams({ pairing_code: code }),
+      });
+      assert.equal(r.status, 200);
+      await until(() => l.credentials === 1, "paired");
+      await new Promise((res) => setTimeout(res, 300)); // room for a stray new_code round trip
+      assert.equal(l.pairing, null, "no new code after the redeem");
+      assert.equal(st().state, "paired");
+      // A code on request still works, and a stopped bridge doesn't keep showing it.
+      const n = await b.newPairingCode();
+      assert.equal(n["ok"], true);
+      await until(() => st().state === "pairing", "showing the requested code");
+    } finally {
+      await b.stop();
+    }
+    assert.equal(st().state, "offline");
+    assert.equal(st().pairing, null);
+  });
+
+  test("two bridges with one identity don't evict each other every second", async () => {
+    const { identity } = tempIdentity();
+    const fast = { baseMs: 20, maxMs: 100 };
+    const a = new RelayLink({ relay, identity, backoff: fast, replacedBackoff: { baseMs: 60_000, maxMs: 60_000 } });
+    const b = new RelayLink({ relay, identity, backoff: fast, replacedBackoff: { baseMs: 60_000, maxMs: 60_000 } });
+    a.start();
+    try {
+      await until(() => a.online, "a online");
+      b.start();
+      await until(() => b.online && a.phase === "offline", "b took over");
+      assert.match(a.lastError ?? "", /another bridge using this identity/);
+      await new Promise((res) => setTimeout(res, 600));
+      // With the plain backoff (20 ms) they would have swapped ~30 times by now.
+      assert.equal(a.connects, 1);
+      assert.equal(b.connects, 1);
+      assert.equal(a.replaced, 1);
+      assert.ok(b.online);
+    } finally {
+      a.stop();
+      b.stop();
+    }
+  });
+});

@@ -92,7 +92,11 @@ Connect: `GET <relay>/bridge/connect?id=<bridge_id>` with header
 `x-splanc-bridge-auth: <unix seconds>.<b64url Ed25519 sig of "splanc-bridge-connect\n<id>\n<ts>">`.
 The timestamp must be within ±300 s of the relay's clock. Refusals happen before the upgrade:
 `404` = unknown bridge (the bridge registers again), `401` = bad or stale signature. A newer
-connection for the same bridge replaces the older one (closed with `4001`).
+connection for the same bridge replaces the older one (closed with `4001`). A bridge that hears
+`4001` knows another live process holds its identity (a half-open old socket of its own would
+never hear the close), so it backs off 5 min doubling to 1 h instead of 1 s: two copies of one
+`bridge.json` would otherwise evict each other about once a second, a billed connect each time
+(~80 k requests/day).
 
 Registration: `POST /bridge/register {public_key, ts, sig}` where `public_key` is the raw 32-byte
 Ed25519 key (base64url) and `sig` signs `"splanc-bridge-register\n<public_key>\n<ts>"` (proof of
@@ -119,7 +123,10 @@ Incoming messages are what the Durable Object is billed for, so the bridge coale
 whose stream ends within 400 ms (most of them) goes out as ONE `res` frame with the whole SSE
 body; a slower one switches to `res` + `chunk`s + `end`, forwarded live (the relay sets
 `x-accel-buffering: no`). Request bodies are capped at 4 MiB; at most 32 requests in flight per
-bridge.
+bridge. When the bridge drops (or the 10 min timeout hits) with requests in flight, a reply not
+started yet gets a `502`/`504` JSON-RPC error; a streamed reply already under way gets one last
+SSE event, a JSON-RPC error for each request id in its body, and ends, so the client fails the
+call at once instead of waiting out its own timeout.
 
 Session ids are the SDK's: an unknown `mcp-session-id` (the bridge restarted) gets `404`, and
 the client initializes again, as the spec says. Sessions idle for 30 min are closed.
@@ -137,8 +144,10 @@ Bridges pair headlessly with a short code shown on the bridge's display.
   `ABCD-EFGH`, valid 10 minutes, single use, one live code per bridge (a new code replaces the
   old). Input is case- and separator-insensitive.
 - **When codes appear**: an unpaired bridge asks for a code by itself as soon as it connects and
-  again when one expires, for its first hour of uptime; after that (or once paired) a code comes
-  only on request: the display's button, or `splanc-agent bridge-ctl new-code`.
+  again when one expires, for its first hour of uptime; after that (or once paired, or once a
+  code has been redeemed) a code comes only on request: the display's button, or
+  `splanc-agent bridge-ctl new-code`. (Redeeming clears the code a moment before the credential
+  exists; a bridge that asked again in that gap would end up paired and still showing a code.)
 - **Redeeming**, either way:
   1. **OAuth connector (preferred)**. The user adds `<relay>/mcp` as a custom connector. The
      client discovers the authorization server (RFC 9728 → RFC 8414), registers (Client ID
@@ -148,7 +157,9 @@ Bridges pair headlessly with a short code shown on the bridge's display.
      PKCE challenge and resource, and the client exchanges it at `/token`. No account, no
      password, nothing to copy.
   2. **Bearer token** for clients that only take headers: `/pair` (code → `spl_pt_…`), shown
-     once, never expires, revocable.
+     once, never expires, revocable. With `Accept: application/json` it answers
+     `{token, mcp_url}`, and errors as `{error, error_description}` (`invalid_request`,
+     `invalid_grant`, `slow_down`).
 - **Tokens**: `spl_<kind>_<bridge id>_<43-char secret>`; kinds `at` (access, 24 h), `rt`
   (refresh, 90 days, rotated on every use), `pt` (personal), `ac` (authorization code, 5 min,
   single use). The relay stores only `SHA-256(secret)`. The bridge id in the token routes the
