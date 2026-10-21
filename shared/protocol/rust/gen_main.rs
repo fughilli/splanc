@@ -195,7 +195,7 @@ fn main() -> std::io::Result<()> {
     } else {
         g.configure(
             ".ledmapper.v1.Welcome.features",
-            Config::new().max_len(16).max_bytes(32),
+            Config::new().max_len(24).max_bytes(32),
         );
     }
 
@@ -247,6 +247,9 @@ fn main() -> std::io::Result<()> {
             ".ledmapper.v1.DriverState.exports",
             ".ledmapper.v1.DriverState.last_poll",
             ".ledmapper.v1.SubmitDriver.fxb",
+            ".ledmapper.v1.SensorState.rest_up_imu",
+            ".ledmapper.v1.SensorState.mount_quat",
+            ".ledmapper.v1.CaptureProfile.map_id",
         ] {
             g.configure(field, Config::new().skip(true));
         }
@@ -258,6 +261,7 @@ fn main() -> std::io::Result<()> {
         g.configure(".ledmapper.v1.DriverExport.name", Config::new().max_bytes(24));
         g.configure(".ledmapper.v1.DriverState.last_poll", Config::new().max_bytes(16));
         g.configure(".ledmapper.v1.SubmitDriver.fxb", Config::new().max_bytes(1024));
+        g.configure(".ledmapper.v1.CaptureProfile.map_id", Config::new().max_bytes(64));
     }
 
     g.compile_fdset_file(&args[1], &args[2])

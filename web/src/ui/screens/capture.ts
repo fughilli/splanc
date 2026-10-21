@@ -74,6 +74,14 @@ import { recenterToCentroid } from "../../geom/mapTransform";
 import { concatObservations, fuseMaps } from "../../geom/fuseMaps";
 import { liveUnion } from "../../geom/liveUnion";
 import { appState } from "../app/state";
+import {
+  applyProfile,
+  buildProfile,
+  postMappingPose,
+  profileForMap,
+  type CaptureKnobs,
+  type ProfiledRun,
+} from "../../capture/captureProfile";
 import { Button, IconButton, Slider, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 
@@ -213,6 +221,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // observations are loaded at mount.
   const supplementId = routeQuery?.get("supplement") ?? null;
   let priorMap: OutputMap | null = null;
+  // The stored map's capture profile, when this run re-captures a mapped
+  // fixture (supplement / IMU re-localisation): reused instead of re-asking or
+  // re-probing (sensor-core.md §7.5).
+  let profileRun: ProfiledRun | null = null;
+  // What this run used, recorded on the device after a successful first map.
+  let profileDraft: { knobs: CaptureKnobs; symbols?: number; bitPeriodMs: number; brightness?: number } | null =
+    null;
   let priorObs: CaptureObservations | null = null;
 
   // -- full-screen layout (design doc §4.2). The camera <video> is prepended to
@@ -583,6 +598,33 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     regChip.classList.add(`capture-regchip--${reg.tone}`);
   }
 
+  /** After a first map is stored on the device: record its capture profile
+   * there (and in the library), and take pose 1 of the IMU calibration for free
+   * — the map is gravity-levelled and the fixture hasn't moved — so a fixture
+   * with an IMU is tilt-calibrated to its new map (sensor-core.md §7). Older
+   * firmware answers "unsupported"; both steps are best-effort. */
+  async function afterMapStored(c: NonNullable<ReturnType<typeof client>>, id: string, mapId: string): Promise<void> {
+    try {
+      if (profileDraft !== null) {
+        const p = buildProfile(mapId, profileDraft.knobs, profileDraft, Date.now());
+        await mapStore.setCaptureProfile(id, p).catch(() => {});
+        await c.setCaptureProfile(p);
+      }
+    } catch {
+      /* firmware without capture profiles */
+    }
+    try {
+      const s = await c.getSensors();
+      const pose = postMappingPose(s, Date.now());
+      if (pose === null) return;
+      await c.setSensorMount(pose.q, { residualDeg: pose.residualDeg, poses: 1, yawResolved: false, atMs: pose.atMs });
+      await mapStore.setImuCalibration(id, pose);
+      toast("Motion sensor levelled to the new map — Calibrate IMU on the map to fix its heading too.");
+    } catch {
+      /* no sensor core on this firmware */
+    }
+  }
+
   async function startCapture(): Promise<void> {
     if (driverActive()) setDriverCaptureError(null);
     const c = client();
@@ -605,6 +647,37 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       priorMap = rec.map;
       priorObs = obs;
+      // Reuse the capture settings that produced this map, if the device still
+      // holds them for it. Older firmware / a pre-profile map: defaults.
+      try {
+        const stored = profileForMap(await c.getCaptureProfile(), rec.map.mapId);
+        profileRun = applyProfile(
+          {
+            diffuse,
+            strideSpacing,
+            anchorDensity,
+            threshold: detectorOpts.threshold,
+            downscale: detectorOpts.downscale,
+            ...(detectorOpts.localContrast ? { lcGain: detectorOpts.localContrast.gain } : {}),
+          },
+          stored,
+        );
+        if (profileRun.applied !== null) {
+          const k = profileRun.knobs;
+          diffuse = k.diffuse;
+          strideSpacing = k.strideSpacing;
+          anchorDensity = k.anchorDensity;
+          detectorOpts = {
+            ...detectorOpts,
+            threshold: k.threshold,
+            downscale: k.downscale,
+            ...(k.diffuse && k.lcGain !== undefined ? { localContrast: { gain: k.lcGain } } : {}),
+          };
+          toast("Reusing this map's capture settings");
+        }
+      } catch {
+        profileRun = null; // firmware without capture profiles
+      }
       projOverlay.supplement = true;
       applyLiveSolve(null); // base map alone until the live solve registers
       guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
@@ -696,8 +769,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // negotiate the capture configuration.
       const monitor = new ExposureMonitor();
       let lastAmbient: number | null = null;
-      guideEl.textContent = "Measuring light…";
-      await new Promise<void>((resolve) => {
+      const skipProbe = profileRun?.skipProbe === true;
+      if (!skipProbe) guideEl.textContent = "Measuring light…";
+      if (!skipProbe) await new Promise<void>((resolve) => {
         const deadline = setTimeout(resolve, 2500);
         let t0 = -1;
         capture!.onFrame((f) => {
@@ -726,15 +800,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const config = {
         ...(forcedSymbols !== null
           ? { symbols: forcedSymbols }
-          : recommended !== null
-            ? { symbols: recommended.symbols }
-            : {}),
+          : profileRun?.symbols !== undefined
+            ? { symbols: profileRun.symbols }
+            : recommended !== null
+              ? { symbols: recommended.symbols }
+              : {}),
         ...(forcedBitMs !== null
           ? { bitPeriodMs: forcedBitMs }
-          : recommended !== null
-            ? { bitPeriodMs: recommended.bitPeriodMs }
+          : profileRun?.bitPeriodMs !== undefined
+            ? { bitPeriodMs: profileRun.bitPeriodMs }
+            : recommended !== null
+              ? { bitPeriodMs: recommended.bitPeriodMs }
+              : {}),
+        ...(forcedBrightness !== null
+          ? { brightness: forcedBrightness }
+          : profileRun?.brightness !== undefined
+            ? { brightness: profileRun.brightness }
             : {}),
-        ...(forcedBrightness !== null ? { brightness: forcedBrightness } : {}),
         // Diffuse mode: start on phase 0 of the stride schedule; the tick below
         // rotates the phase. Firmware masks all but the phase's sparse subset.
         ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
@@ -745,6 +827,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       mappingStarted = true;
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
+      profileDraft = {
+        knobs: {
+          diffuse,
+          strideSpacing,
+          anchorDensity,
+          threshold: detector.threshold,
+          downscale: detector.downscale,
+          ...(detectorOpts.localContrast ? { lcGain: detectorOpts.localContrast.gain } : {}),
+        },
+        ...(config.symbols !== undefined ? { symbols: config.symbols } : {}),
+        bitPeriodMs: params.bitPeriodMs,
+        ...(params.brightness !== undefined ? { brightness: params.brightness } : {}),
+      };
       if (initialExposure !== null) {
         void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
       }
@@ -1291,6 +1386,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           pendingBrightness = wantBright;
         }
         syncManualSliders(params.brightness ?? 1, servoedExposure);
+        if (profileDraft !== null) {
+          profileDraft.bitPeriodMs = params.bitPeriodMs;
+          if (params.brightness !== undefined) profileDraft.brightness = params.brightness;
+        }
 
         // Diffuse capture: rotate the stride phase so every LED eventually lands
         // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
@@ -1627,6 +1726,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         };
         const id = await mapStore.create({ map, source: "capture", observations });
         appState.setSelectedMap(id);
+        if (pushedToDevice) void afterMapStored(c, id, map.mapId);
         toast(
           pushedToDevice
             ? `Saved ${map.leds.length} LEDs`

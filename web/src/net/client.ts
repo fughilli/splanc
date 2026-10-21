@@ -69,6 +69,7 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
+import type { CaptureProfileFlat } from "../capture/captureProfile";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
@@ -871,6 +872,49 @@ export class LedMapperClient {
     return normalizeSensorState(r);
   }
 
+  /** Install the IMU -> map extrinsic R_fi (sensor-core.md §7; feature
+   * "imu_extrinsic"). Applied at the sensor's next sample: poll getSensors
+   * until calibrationSeq advances. */
+  async setSensorMount(
+    quat: number[],
+    meta: { residualDeg: number; poses: number; yawResolved: boolean; atMs?: number },
+  ): Promise<SensorStateMessage> {
+    const r = (await this.request(
+      {
+        type: "set_sensor_mount",
+        quat,
+        residualDeg: meta.residualDeg,
+        poses: meta.poses,
+        yawResolved: meta.yawResolved,
+        calibratedAtMs: String(meta.atMs ?? Date.now()),
+      } as unknown as ClientMessage,
+      "sensor_state",
+    )) as unknown as Partial<SensorStateMessage>;
+    return normalizeSensorState(r);
+  }
+
+  /** Store the capture profile next to the device's map (feature
+   * "capture_profile"); the device drops it when a new map is uploaded. */
+  async setCaptureProfile(profile: CaptureProfileFlat): Promise<CaptureProfileFlat> {
+    const r = (await this.request(
+      {
+        type: "set_capture_profile",
+        profile: { ...profile, capturedAtMs: String(profile.capturedAtMs) },
+      } as unknown as ClientMessage,
+      "capture_profile",
+    )) as unknown as Partial<CaptureProfileFlat>;
+    return normalizeProfile(r);
+  }
+
+  /** The stored map's capture profile (mapId "" = none stored). */
+  async getCaptureProfile(): Promise<CaptureProfileFlat> {
+    const r = (await this.request(
+      { type: "get_capture_profile" } as unknown as ClientMessage,
+      "capture_profile",
+    )) as unknown as Partial<CaptureProfileFlat>;
+    return normalizeProfile(r);
+  }
+
   /** Probe the sensor I2C bus (FUG-107 "drivers" feature): ACKing addresses. */
   async scanI2c(): Promise<number[]> {
     const r = (await this.request(
@@ -1375,6 +1419,15 @@ function normalizeSensorState(r: Partial<SensorStateMessage>): SensorStateMessag
     calibrationSeq: r.calibrationSeq ?? 0,
     calibrationResult: r.calibrationResult ?? "",
     intGpio: r.intGpio ?? -1,
+    restUpImu: r.restUpImu ?? [],
+    restUpSigmaDeg: r.restUpSigmaDeg ?? 0,
+    restSamples: r.restSamples ?? 0,
+    mountQuat: r.mountQuat ?? [],
+    mountExtrinsic: r.mountExtrinsic ?? false,
+    mountYawResolved: r.mountYawResolved ?? false,
+    mountPoses: r.mountPoses ?? 0,
+    mountResidualDeg: r.mountResidualDeg ?? 0,
+    mountCalibratedAtMs: Number(r.mountCalibratedAtMs ?? 0),
   };
 }
 
@@ -1394,5 +1447,21 @@ function normalizeDriverState(r: Partial<DriverStateMessage>): DriverStateMessag
     heapBytes: r.heapBytes ?? 0,
     jitterUsMax: r.jitterUsMax ?? 0,
     feedImu: r.feedImu ?? false,
+  };
+}
+
+function normalizeProfile(r: Partial<CaptureProfileFlat>): CaptureProfileFlat {
+  return {
+    mapId: r.mapId ?? "",
+    diffuse: r.diffuse ?? false,
+    strideSpacing: r.strideSpacing ?? 0,
+    anchorDensity: r.anchorDensity ?? 0,
+    symbols: r.symbols ?? 0,
+    bitPeriodMs: r.bitPeriodMs ?? 0,
+    brightness: r.brightness ?? 0,
+    detectThreshold: r.detectThreshold ?? 0,
+    downscale: r.downscale ?? 0,
+    lcGain: r.lcGain ?? 0,
+    capturedAtMs: Number(r.capturedAtMs ?? 0),
   };
 }

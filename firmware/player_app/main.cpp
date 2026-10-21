@@ -743,6 +743,25 @@ static void poll_hardware_config() {
   }
 }
 
+#if defined(LM_SENSORS)
+// Capture profile (sensor-core.md §7.5): persist it to NVS when set_capture_profile
+// or a new map changed it (an atomic NVS entry write; erased when cleared).
+static uint32_t g_cap_prof_gen = 0;
+static void poll_capture_profile() {
+  uint32_t gen = lm_capture_profile_gen();
+  if (gen == g_cap_prof_gen) return;
+  g_cap_prof_gen = gen;
+  uint8_t buf[192];
+  size_t n = lm_capture_profile_get(buf, sizeof buf);
+  if (n > 0) {
+    prefs.putBytes("cap_prof", buf, n);
+  } else if (prefs.isKey("cap_prof")) {
+    prefs.remove("cap_prof");
+  }
+  Log().printf("[sensor] capture profile %s (%u B)\n", n ? "saved" : "cleared", (unsigned)n);
+}
+#endif
+
 // Boot-time hardware config: seed the player + RMT driver from NVS (falling back
 // to the led_config.h defaults). Must run after lm_player_init + prefs.begin and
 // BEFORE render_task starts (so a GPIO reconfigure is a synchronous no-race).
@@ -817,9 +836,14 @@ static void flush_fx_sel_save() {
 // A new map invalidates any stored topology.
 static void persist_if_upload(const uint8_t *req, size_t req_len,
                               const uint8_t *reply, size_t reply_len) {
-  if (!fs_ok) return;
   const int32_t req_arm = lm_envelope_arm(req, req_len);
   const int32_t reply_arm = lm_envelope_arm(reply, reply_len);
+#if defined(LM_SENSORS)
+  // A new map: its capture profile and the IMU extrinsic's yaw no longer apply
+  // (sensor-core.md §7). Live uploads only — the boot replay never gets here.
+  if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) lm_map_replaced();
+#endif
+  if (!fs_ok) return;
   if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) {
     fs_write_file(kMapPath, req, req_len);
     remove(kTopoPath);  // the previous topology no longer matches this map
@@ -1052,6 +1076,9 @@ static void poll_after_message() {
   poll_color_correction();
   poll_brightness();
   poll_hardware_config();
+#if defined(LM_SENSORS)
+  poll_capture_profile();
+#endif
 }
 
 // Dispatch the plain (non-upload) message msg[0..len) through the session core, in
@@ -1158,6 +1185,9 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     } else if (upload_kind == 0) {
       remove(kTopoPath);  // the previous topology no longer matches this map
     }
+#if defined(LM_SENSORS)
+    if (upload_kind == 0) lm_map_replaced();
+#endif
   } else {
     remove(kUploadTmp);
   }
@@ -2529,6 +2559,11 @@ void setup() {
   // Absent sensor = ~1 ms of probing, no residual heap. After the hardware config
   // so a pin shared with an LED output disables the sensor instead.
   {
+    // The stored map's capture profile (§7.5), if any.
+    uint8_t prof[192];
+    size_t prof_len = prefs.isKey("cap_prof") ? prefs.getBytes("cap_prof", prof, sizeof prof) : 0;
+    if (prof_len > 0) lm_capture_profile_seed(prof, prof_len);
+    g_cap_prof_gen = lm_capture_profile_gen();
     uint8_t cal[96];
     size_t cal_len = 0;
     if (prefs.isKey("sens_cal")) cal_len = prefs.getBytes("sens_cal", cal, sizeof cal);

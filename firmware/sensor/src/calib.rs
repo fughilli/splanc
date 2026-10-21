@@ -10,9 +10,13 @@
 use crate::math::{Quat, Vec3};
 
 pub const MAGIC: [u8; 4] = *b"SCAL";
-pub const VERSION: u8 = 1;
-/// magic 4 + version 1 + flags 1 + reserved 2 + 16 f32 + crc 4.
-pub const RECORD_LEN: usize = 8 + 16 * 4 + 4;
+/// v2 adds the extrinsic-calibration metadata (residual, pose count,
+/// timestamp); v1 records still decode (metadata zero).
+pub const VERSION: u8 = 2;
+/// v1: magic 4 + version 1 + flags 1 + reserved 2 + 16 f32 + crc 4.
+pub const RECORD_LEN_V1: usize = 8 + 16 * 4 + 4;
+/// v2: v1's body + calibrated_at (u32 unix seconds) before the crc.
+pub const RECORD_LEN: usize = 8 + 16 * 4 + 4 + 4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Calibration {
@@ -28,11 +32,23 @@ pub struct Calibration {
     pub mount: Quat,
     /// Bit 0: gyro_bias was measured (not a default).
     pub flags: u8,
+    /// Extrinsic (IMU -> fixture) solve quality: RMS residual, degrees.
+    pub mount_residual_deg: f32,
+    /// Poses the extrinsic was solved from (0 = level/manual only).
+    pub mount_poses: u8,
+    /// When the mount was set, unix seconds (0 = unknown).
+    pub calibrated_at: u32,
 }
 
 pub const FLAG_GYRO_BIAS: u8 = 0x01;
 pub const FLAG_ACCEL: u8 = 0x02;
 pub const FLAG_MOUNT: u8 = 0x04;
+/// The mount is a full IMU -> fixture extrinsic (set_sensor_mount), not just
+/// "level".
+pub const FLAG_EXTRINSIC: u8 = 0x08;
+/// The extrinsic's yaw about gravity is resolved (>= 2 non-parallel poses).
+/// Cleared when the LED map is redone: tilt stays valid, yaw does not.
+pub const FLAG_YAW_RESOLVED: u8 = 0x10;
 
 impl Default for Calibration {
     fn default() -> Calibration {
@@ -42,6 +58,9 @@ impl Default for Calibration {
             accel_scale: Vec3::new(1.0, 1.0, 1.0),
             mount: Quat::IDENTITY,
             flags: 0,
+            mount_residual_deg: 0.0,
+            mount_poses: 0,
+            calibrated_at: 0,
         }
     }
 }
@@ -64,7 +83,7 @@ impl Calibration {
         let o = self.accel_offset;
         let s = self.accel_scale;
         let m = self.mount;
-        [g.x, g.y, g.z, o.x, o.y, o.z, s.x, s.y, s.z, m.w, m.x, m.y, m.z, 0.0, 0.0, 0.0]
+        [g.x, g.y, g.z, o.x, o.y, o.z, s.x, s.y, s.z, m.w, m.x, m.y, m.z, self.mount_residual_deg, self.mount_poses as f32, 0.0]
     }
 
     pub fn encode(&self) -> [u8; RECORD_LEN] {
@@ -75,6 +94,7 @@ impl Calibration {
         for (i, f) in self.floats().iter().enumerate() {
             out[8 + 4 * i..12 + 4 * i].copy_from_slice(&f.to_le_bytes());
         }
+        out[RECORD_LEN - 8..RECORD_LEN - 4].copy_from_slice(&self.calibrated_at.to_le_bytes());
         let crc = crc32(&out[..RECORD_LEN - 4]);
         out[RECORD_LEN - 4..].copy_from_slice(&crc.to_le_bytes());
         out
@@ -82,11 +102,16 @@ impl Calibration {
 
     /// `None` for a wrong length/magic/version/CRC or non-finite values.
     pub fn decode(b: &[u8]) -> Option<Calibration> {
-        if b.len() != RECORD_LEN || b[..4] != MAGIC || b[4] != VERSION {
+        let len = match (b.len(), b.get(4)) {
+            (RECORD_LEN_V1, Some(1)) => RECORD_LEN_V1,
+            (RECORD_LEN, Some(2)) => RECORD_LEN,
+            _ => return None,
+        };
+        if b[..4] != MAGIC {
             return None;
         }
-        let crc = u32::from_le_bytes([b[RECORD_LEN - 4], b[RECORD_LEN - 3], b[RECORD_LEN - 2], b[RECORD_LEN - 1]]);
-        if crc32(&b[..RECORD_LEN - 4]) != crc {
+        let crc = u32::from_le_bytes([b[len - 4], b[len - 3], b[len - 2], b[len - 1]]);
+        if crc32(&b[..len - 4]) != crc {
             return None;
         }
         let mut f = [0f32; 16];
@@ -102,6 +127,13 @@ impl Calibration {
             accel_scale: Vec3::new(f[6], f[7], f[8]),
             mount: Quat::new(f[9], f[10], f[11], f[12]).normalized(),
             flags: b[5],
+            mount_residual_deg: if len == RECORD_LEN { f[13] } else { 0.0 },
+            mount_poses: if len == RECORD_LEN { f[14] as u8 } else { 0 },
+            calibrated_at: if len == RECORD_LEN {
+                u32::from_le_bytes([b[len - 8], b[len - 7], b[len - 6], b[len - 5]])
+            } else {
+                0
+            },
         })
     }
 

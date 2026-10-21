@@ -1360,6 +1360,10 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SUBMIT_DRIVER) => return driver_ffi::handle_submit_driver(frame, out, out_cap),
         Some(ARM_REMOVE_DRIVER) => return driver_ffi::handle_remove_driver(out, out_cap),
         Some(ARM_GET_DRIVER_STATE) => return driver_ffi::handle_get_driver_state(out, out_cap),
+        // IMU extrinsic + the capture profile (sensor-core.md §7).
+        Some(ARM_SET_SENSOR_MOUNT) => return sensor_ffi::handle_set_sensor_mount(frame, out, out_cap),
+        Some(ARM_SET_CAPTURE_PROFILE) => return sensor_ffi::handle_set_capture_profile(frame, out, out_cap),
+        Some(ARM_GET_CAPTURE_PROFILE) => return sensor_ffi::handle_get_capture_profile(out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1831,6 +1835,9 @@ const ARM_SCAN_I2C: u32 = 50;
 const ARM_SUBMIT_DRIVER: u32 = 51;
 const ARM_REMOVE_DRIVER: u32 = 52;
 const ARM_GET_DRIVER_STATE: u32 = 53;
+const ARM_SET_SENSOR_MOUNT: u32 = 54;
+const ARM_SET_CAPTURE_PROFILE: u32 = 55;
+const ARM_GET_CAPTURE_PROFILE: u32 = 56;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1852,6 +1859,8 @@ pub const FEATURES: &[&str] =
         "fps",
         "sensors",
         "drivers",
+        "imu_extrinsic",
+        "capture_profile",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.

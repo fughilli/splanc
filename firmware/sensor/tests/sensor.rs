@@ -386,6 +386,7 @@ fn calibration_record_roundtrip_and_rejects_corruption() {
         accel_scale: Vec3::new(1.01, 0.99, 1.0),
         mount: Quat::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), 0.5),
         flags: calib::FLAG_GYRO_BIAS | calib::FLAG_MOUNT,
+        ..Calibration::default()
     };
     let rec = c.encode();
     assert_eq!(rec.len(), calib::RECORD_LEN);
@@ -472,4 +473,78 @@ fn euler_and_atan2() {
         .mul(Quat::from_axis_angle(Vec3::new(1.0, 0.0, 0.0), 0.2));
     let e = q.to_euler();
     assert!((e[0] - 0.2).abs() < 1e-3 && (e[1] + 0.3).abs() < 1e-3 && (e[2] - 0.7).abs() < 1e-3, "{e:?}");
+}
+
+// -- extrinsic calibration (docs/design/sensor-core.md §7) ---------------------------
+
+#[test]
+fn calibration_v2_metadata_and_v1_compat() {
+    let c = Calibration {
+        mount: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0), 0.7),
+        flags: calib::FLAG_MOUNT | calib::FLAG_EXTRINSIC | calib::FLAG_YAW_RESOLVED,
+        mount_residual_deg: 0.8,
+        mount_poses: 3,
+        calibrated_at: 1_792_000_000,
+        ..Calibration::default()
+    };
+    let rec = c.encode();
+    assert_eq!(rec.len(), calib::RECORD_LEN);
+    assert_eq!(rec[4], 2);
+    let d = Calibration::decode(&rec).unwrap();
+    assert_eq!((d.mount_poses, d.calibrated_at, d.mount_residual_deg), (3, 1_792_000_000, 0.8));
+    // A v1 record (fixtures calibrated before this existed) still loads.
+    let mut v1 = [0u8; calib::RECORD_LEN_V1];
+    v1[..4].copy_from_slice(b"SCAL");
+    v1[4] = 1;
+    v1[5] = calib::FLAG_GYRO_BIAS;
+    let one = 1.0f32.to_le_bytes();
+    for i in [6usize, 7, 8, 9] {
+        v1[8 + 4 * i..12 + 4 * i].copy_from_slice(&one); // accel scale 1, mount w 1
+    }
+    let crc = calib::crc32(&v1[..calib::RECORD_LEN_V1 - 4]);
+    v1[calib::RECORD_LEN_V1 - 4..].copy_from_slice(&crc.to_le_bytes());
+    let d1 = Calibration::decode(&v1).expect("v1 decodes");
+    assert_eq!((d1.flags, d1.mount_poses, d1.calibrated_at), (calib::FLAG_GYRO_BIAS, 0, 0));
+    assert!(d1.mount.angle_to(Quat::IDENTITY) < 1e-3);
+}
+
+/// The settled up in the RAW IMU frame (before the mount) is what the app pairs
+/// with the camera's up; an installed extrinsic then makes the fused gravity the
+/// map's -Y and the reported mount equal what was installed.
+#[test]
+fn rest_up_and_installed_extrinsic() {
+    let (mut hub, mut bus, mut t) = running_hub(0x68, 0x68);
+    // IMU mounted so its +x points up.
+    let a = Vec3::new(GRAVITY, 0.0, 0.0);
+    run(&mut hub, &mut bus, &mut t, 150, |_| (a, Vec3::ZERO));
+    let s = hub.snapshot();
+    assert!(s.rest_samples > 50);
+    assert!(Vec3::from_array(s.rest_up_imu).sub(Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-3);
+    assert!(s.rest_up_sigma_deg < 0.5, "{}", s.rest_up_sigma_deg);
+    // R_fi: IMU +x -> map +Y (up), IMU +y -> map +X, IMU +z -> map -Z.
+    // 180° about (1, 1, 0)/sqrt2.
+    let h = core::f32::consts::FRAC_1_SQRT_2;
+    let r_fi = Quat::new(0.0, h, h, 0.0);
+    assert!(r_fi.rotate(Vec3::new(1.0, 0.0, 0.0)).sub(Vec3::new(0.0, 1.0, 0.0)).norm() < 1e-5);
+    hub.set_extrinsic(r_fi, 0.6, 2, true, 1_792_000_000);
+    assert!(hub.take_cal_dirty());
+    // rest_up survives the mount change (still the raw IMU frame).
+    run(&mut hub, &mut bus, &mut t, 80, |_| (a, Vec3::ZERO));
+    let s = hub.snapshot();
+    assert!(Quat::from_array(s.mount_map).angle_to(r_fi) < 1e-3, "{:?}", s.mount_map);
+    assert_ne!(s.cal_flags & calib::FLAG_YAW_RESOLVED, 0);
+    assert!(Vec3::from_array(s.rest_up_imu).sub(Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-3);
+    // Fixture (z-up) down = -z, which the pool maps to map -Y.
+    assert!((s.gravity[2] + 1.0).abs() < 1e-3, "{:?}", s.gravity);
+    // The extrinsic persists with its metadata.
+    let c = Calibration::decode(&hub.calibration().encode()).unwrap();
+    assert_eq!((c.mount_poses, c.calibrated_at), (2, 1_792_000_000));
+    // Redoing the map: yaw no longer resolved, tilt kept.
+    hub.map_changed();
+    assert!(hub.take_cal_dirty());
+    assert_eq!(hub.snapshot().cal_flags & calib::FLAG_YAW_RESOLVED, 0);
+    assert_ne!(hub.snapshot().cal_flags & calib::FLAG_EXTRINSIC, 0);
+    // A plain "level" afterwards drops the extrinsic flags.
+    hub.calibrate(CalAction::Level).unwrap();
+    assert_eq!(hub.snapshot().cal_flags & calib::FLAG_EXTRINSIC, 0);
 }

@@ -68,6 +68,9 @@ copy_to_bin(
     name = "agent_reuse_srcs",
     srcs = [
         "src/assetBase.ts",
+        # Capture profile + IMU extrinsic solve (types used by net/client.ts).
+        "src/capture/captureProfile.ts",
+        "src/geom/imuExtrinsic.ts",
         # The fleet frame-cost estimator (the hub checks every target's budget
         # before a room deploy).
         "src/effects/budget.ts",

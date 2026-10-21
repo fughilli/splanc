@@ -10,8 +10,9 @@ use core::ffi::c_void;
 use fake_mpu::{FakeBus, FakeMpu};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_player_handle, lm_player_init, lm_sensor_begin,
-    lm_sensor_poll, lm_sensor_take_cal_record, LmI2cOps, FEATURES,
+    lm_capture_profile_gen, lm_capture_profile_get, lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update,
+    lm_map_replaced, lm_player_handle, lm_player_init, lm_sensor_begin, lm_sensor_poll, lm_sensor_take_cal_record,
+    LmI2cOps, FEATURES,
 };
 use ledmapper_sensor::{BusError, I2cBus};
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -148,4 +149,91 @@ fn sensor_core_through_the_c_abi() {
     let c = shade0();
     // Levelled: down = sensor -z = map -Y -> green ~0, red/blue ~0.5.
     assert!(c[1] < 0.02 && (c[0] - 0.5).abs() < 0.02 && (c[2] - 0.5).abs() < 0.02, "levelled pool {c:?}");
+
+    // -- §7: the settled raw-IMU up, an installed extrinsic, the capture profile --
+    // (the level above moved the mount: let the rest detector settle again)
+    for _ in 0..80 {
+        bus.dev().produce(up_x, [0; 3], 0);
+        t += 10_000;
+        unsafe { lm_sensor_poll(t) };
+    }
+    let s = sensors();
+    assert!(s.r#rest_samples > 0);
+    assert!((s.r#rest_up_imu[0] - 1.0).abs() < 1e-3, "raw IMU up is +x: {:?}", s.r#rest_up_imu);
+    // R_fi: IMU +x -> map +Y, IMU +y -> map +X, IMU +z -> map -Z.
+    let h = core::f32::consts::FRAC_1_SQRT_2;
+    let mut m = pb::SetSensorMount {
+        r#residual_deg: 0.7,
+        r#poses: 2,
+        r#yaw_resolved: true,
+        r#calibrated_at_ms: 1_792_000_000_000,
+        ..Default::default()
+    };
+    m.r#quat.extend_from_slice(&[0.0, h, h, 0.0]).unwrap();
+    let seq0 = match handle(CMsg::SetSensorMount(m)) {
+        Some(SMsg::SensorState(s)) => s.r#calibration_seq,
+        o => panic!("{o:?}"),
+    };
+    for _ in 0..30 {
+        bus.dev().produce(up_x, [0; 3], 0);
+        t += 10_000;
+        unsafe { lm_sensor_poll(t) };
+    }
+    let s = sensors();
+    assert_eq!(s.r#calibration_seq, seq0 + 1);
+    assert!(s.r#mount_extrinsic && s.r#mount_yaw_resolved);
+    assert_eq!((s.r#mount_poses, s.r#mount_calibrated_at_ms), (2, 1_792_000_000_000));
+    let q = &s.r#mount_quat;
+    assert!((q[0].abs() < 1e-3) && (q[1] - h).abs() < 1e-3 && (q[2] - h).abs() < 1e-3, "{q:?}");
+    // The pool now sees map -Y as down: green ~0 (the effect maps down to rgb).
+    let c = shade0();
+    assert!(c[1] < 0.02 && (c[0] - 0.5).abs() < 0.02, "extrinsic pool {c:?}");
+    // A malformed mount is refused.
+    let mut bad = pb::SetSensorMount::default();
+    bad.r#quat.extend_from_slice(&[3.0, 0.0, 0.0, 0.0]).unwrap();
+    assert!(matches!(handle(CMsg::SetSensorMount(bad)), Some(SMsg::Error(e)) if e.r#code.as_str() == "bad_mount"));
+
+    // Capture profile: none for a fixture mapped before this existed...
+    match handle(CMsg::GetCaptureProfile(pb::GetCaptureProfile::default())) {
+        Some(SMsg::CaptureProfile(p)) => assert_eq!(p.r#map_id.as_str(), ""),
+        o => panic!("{o:?}"),
+    }
+    let gen0 = lm_capture_profile_gen();
+    let mut prof = pb::CaptureProfile {
+        r#diffuse: true,
+        r#stride_spacing: 4,
+        r#anchor_density: 6,
+        r#symbols: 4,
+        r#bit_period_ms: 66,
+        r#brightness: 0.4,
+        r#captured_at_ms: 1_792_000_000_000,
+        ..Default::default()
+    };
+    prof.r#map_id = "m-lamp".parse().unwrap();
+    let mut set = pb::SetCaptureProfile::default();
+    set.set_profile(prof.clone());
+    match handle(CMsg::SetCaptureProfile(set)) {
+        Some(SMsg::CaptureProfile(p)) => assert_eq!(p, prof),
+        o => panic!("{o:?}"),
+    }
+    assert_eq!(lm_capture_profile_gen(), gen0 + 1, "the firmware persists it");
+    let mut buf = [0u8; 192];
+    assert!(unsafe { lm_capture_profile_get(buf.as_mut_ptr(), buf.len()) } > 0);
+    match handle(CMsg::GetCaptureProfile(pb::GetCaptureProfile::default())) {
+        Some(SMsg::CaptureProfile(p)) => {
+            assert!(p.r#diffuse);
+            assert_eq!((p.r#stride_spacing, p.r#map_id.as_str()), (4, "m-lamp"));
+        }
+        o => panic!("{o:?}"),
+    }
+    // ...a new map drops it and un-resolves the extrinsic's yaw (tilt kept).
+    unsafe { lm_map_replaced() };
+    for _ in 0..3 {
+        bus.dev().produce(up_x, [0; 3], 0);
+        t += 10_000;
+        unsafe { lm_sensor_poll(t) };
+    }
+    assert_eq!(unsafe { lm_capture_profile_get(buf.as_mut_ptr(), buf.len()) }, 0);
+    let s = sensors();
+    assert!(s.r#mount_extrinsic && !s.r#mount_yaw_resolved);
 }

@@ -448,8 +448,33 @@ precomputed once per frame.
 
 ## 7. IMU-to-fixture extrinsic calibration (post-mapping step + "Calibrate IMU")
 
-Implementation: its own PR on top of this one (solver, protocol, firmware
-storage, capture-profile reuse). The guided app screen follows it.
+### Implementation status
+
+Implemented here:
+
+- **Solver.** `web/src/geom/imuExtrinsic.ts`: q-method, TRIAD-equivalent for 2
+  poses, gravity-only with a yaw prior, separation and conditioning,
+  leave-one-out outlier detection, and the guidance readout.
+- **Firmware.**
+  - It reports the settled raw-IMU up with its σ and rest count.
+  - `set_sensor_mount` installs R_fi with its quality. This is v2 of the NVS
+    calibration record; v1 records still load.
+  - A new map (live upload only, not the boot replay) clears `yaw_resolved`
+    and drops the capture profile.
+  - It stores the capture profile.
+- **App.**
+  - After a first map is stored, the capture profile goes to the device and
+    the library, and **pose 1 is applied automatically**: a gravity-only,
+    tilt-correct mount, flagged yaw-unresolved.
+  - Supplemental captures reuse the device's profile for that map and skip the
+    light probe when it carries the timing.
+- **Agent.** `read_sensors` shows the calibration state.
+
+**Not yet implemented** (follow-up PR): the guided multi-pose screen of §7.3.
+It needs no new device or solver work. It is a `/capture?calibrate=<mapId>`
+mode that reuses the capture screen's decode, `pnp.ts` and the stored profile,
+adds DeviceMotion averaging for u_c, and drives `solveImuExtrinsic` +
+`set_sensor_mount`.
 
 ### 7.1 The problem
 

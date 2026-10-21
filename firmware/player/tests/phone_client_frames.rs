@@ -100,6 +100,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SubmitDriver(_)
         | CMsg::RemoveDriver(_)
         | CMsg::GetDriverState(_)
+        | CMsg::SetSensorMount(_)
+        | CMsg::SetCaptureProfile(_)
+        | CMsg::GetCaptureProfile(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -175,6 +178,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SubmitDriver(_) => "submit_driver",
         CMsg::RemoveDriver(_) => "remove_driver",
         CMsg::GetDriverState(_) => "get_driver_state",
+        CMsg::SetSensorMount(_) => "set_sensor_mount",
+        CMsg::SetCaptureProfile(_) => "set_capture_profile",
+        CMsg::GetCaptureProfile(_) => "get_capture_profile",
     }
 }
 
