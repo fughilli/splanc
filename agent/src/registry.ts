@@ -549,19 +549,45 @@ export function splitHost(h: string): [string, number] {
   return m && !m[1]!.includes(":") ? [m[1]!, Number(m[2])] : [h, 443];
 }
 
-/** Every host of this machine's local IPv4 /24s (at most two), excluding itself. */
-export function localSweepHosts(): string[] {
+/** Interfaces that are never the players' LAN: VPN / overlay tunnels (Tailscale,
+ * WireGuard, macOS utun, ZeroTier, PPP). */
+const TUNNEL_IFACE = /^(tailscale|utun|tun|tap|wg|zt|ppp|ipsec)/i;
+
+type Iface = { address: string; netmask: string; family: string | number; internal: boolean };
+
+const ipv4 = (a: string): number => a.split(".").reduce((n, o) => n * 256 + (Number(o) & 255), 0);
+const dotted = (n: number): string => [24, 16, 8, 0].map((b) => (n >>> b) & 255).join(".");
+
+/**
+ * Every host of this machine's local IPv4 LANs (at most two), excluding its own addresses:
+ * the interface's subnet when it is a /24 or smaller, else the /24 around the
+ * address. Only on-link LANs: tunnels, Tailscale's CGNAT range (100.64.0.0/10)
+ * and point-to-point /31-/32 addresses are skipped. Sweeping the /24 "around" a
+ * Tailscale /32 sent 254 SYNs into the tailnet, after which EVERY new outbound TCP
+ * connection on the machine went unanswered for ~70 s (the bridge's relay
+ * reconnects, and any client on it: SYN backoff made it a 134 s list_players).
+ */
+export function localSweepHosts(ifaces: NodeJS.Dict<Iface[]> = networkInterfaces()): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const addrs of Object.values(networkInterfaces())) {
+  const mine = new Set(Object.values(ifaces).flatMap((as) => (as ?? []).map((a) => a.address)));
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    if (TUNNEL_IFACE.test(name)) continue;
     for (const a of addrs ?? []) {
-      if (a.family !== "IPv4" || a.internal) continue;
-      const base = a.address.split(".").slice(0, 3).join(".");
-      if (seen.has(base) || seen.size >= 2) continue;
-      seen.add(base);
-      for (let i = 1; i < 255; i++) {
-        const h = `${base}.${i}`;
-        if (h !== a.address) out.push(h);
+      if ((a.family !== "IPv4" && a.family !== 4) || a.internal) continue;
+      const ip = ipv4(a.address);
+      if (ip >>> 22 === ipv4("100.64.0.0") >>> 22) continue; // 100.64.0.0/10: CGNAT / Tailscale
+      const mask = ipv4(a.netmask);
+      const prefix = Math.clz32(~mask); // leading one bits (a contiguous netmask)
+      if (prefix >= 31) continue; // point-to-point: no neighbours to find
+      const net = prefix >= 24 ? (ip & mask) >>> 0 : (ip & 0xffffff00) >>> 0;
+      const size = prefix >= 24 ? 2 ** (32 - prefix) : 256;
+      const key = `${dotted(net)}/${size}`;
+      if (seen.has(key) || seen.size >= 2) continue;
+      seen.add(key);
+      for (let i = 1; i < size - 1; i++) {
+        const h = dotted(net + i);
+        if (!mine.has(h)) out.push(h);
       }
     }
   }
