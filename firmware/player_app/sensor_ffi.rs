@@ -14,7 +14,7 @@
 
 use core::ffi::c_void;
 use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::{fence, AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use ledmapper_sensor::calib::Calibration;
 use ledmapper_sensor::mpu6050::{Config, Variant};
@@ -121,6 +121,7 @@ unsafe fn publish(s: &Snapshot) {
     core::ptr::write_volatile(addr_of_mut!(SNAP), *s);
     fence(Ordering::Release);
     SNAP_SEQ.store(seq.wrapping_add(2), Ordering::Release);
+    SENSOR_LIVE.store(s.state == ledmapper_sensor::State::Running as u8, Ordering::Relaxed);
 }
 
 /// The latest published snapshot (never blocks; see the module doc).
@@ -276,23 +277,27 @@ pub(crate) unsafe fn running_snapshot() -> Option<Snapshot> {
     (s.state == ledmapper_sensor::State::Running as u8).then_some(s)
 }
 
+/// True while the hub is Running (set on every publish): lm_fx_update checks it
+/// inline before touching any sensor code.
+pub static SENSOR_LIVE: AtomicBool = AtomicBool::new(false);
+
 /// `imu.accel` (g, fixture frame — 1.0 straight up at rest) and `imu.gyro`
-/// (rad/s) for the fx Frame, with their Q16.16 mirrors (LoadCtxFix); zeros —
-/// and no soft-float work at all — unless a sensor is running.
-#[allow(clippy::type_complexity)]
-pub(crate) unsafe fn fx_imu() -> ([f32; 3], [f32; 3], [i32; 3], [i32; 3]) {
-    if SNAP_SEQ.load(Ordering::Relaxed) == 0 {
-        return ([0.0; 3], [0.0; 3], [0; 3], [0; 3]); // sensor core never started
-    }
+/// (rad/s) into the fx Frame, with their Q16.16 mirrors (LoadCtxFix). Out of
+/// line + cold: only reached while a sensor runs.
+#[cold]
+#[inline(never)]
+pub(crate) unsafe fn fill_frame_imu(f: &mut ledmapper_fx_vm::Frame) {
     let s = snapshot();
     if s.state != ledmapper_sensor::State::Running as u8 {
-        return ([0.0; 3], [0.0; 3], [0; 3], [0; 3]);
+        return;
     }
     let k = 1.0 / ledmapper_sensor::math::GRAVITY;
     let a = [s.accel[0] * k, s.accel[1] * k, s.accel[2] * k];
-    let g = s.gyro;
     let fx = |v: [f32; 3]| [super::q16_16(v[0]), super::q16_16(v[1]), super::q16_16(v[2])];
-    (a, g, fx(a), fx(g))
+    f.imu_accel = a;
+    f.imu_gyro = s.gyro;
+    f.imu_accel_fix = fx(a);
+    f.imu_gyro_fix = fx(s.gyro);
 }
 
 // -- protocol -----------------------------------------------------------------

@@ -86,6 +86,9 @@ static mut DYN: [Entry; POOL_CAP - SENSOR_ENTRIES.len()] = [EMPTY; POOL_CAP - SE
 static mut DYN_LEN: usize = 0;
 static mut BINDS: [[Bind; MAX_BIND]; N_DECKS] = [[NO_BIND; MAX_BIND]; N_DECKS];
 static mut BIND_N: [u8; N_DECKS] = [0; N_DECKS];
+/// Some deck has a pool binding: lm_fx_update checks this inline and only then
+/// calls into the pool (keeps the no-binding frame free of pool code).
+pub(crate) static mut ANY_BOUND: bool = false;
 /// Any deck reads a sensor entry (gates the per-frame snapshot read).
 static mut BINDS_SENSOR: [bool; N_DECKS] = [false; N_DECKS];
 
@@ -142,6 +145,7 @@ pub(crate) unsafe fn bind(d: usize, manifest: &[u8]) {
     }
     (*addr_of_mut!(BIND_N))[d] = n as u8;
     (*addr_of_mut!(BINDS_SENSOR))[d] = sensor;
+    ANY_BOUND = (*addr_of!(BIND_N)).iter().any(|&k| k > 0);
 }
 
 /// Rebind every loaded deck against its resident manifest.
@@ -221,10 +225,13 @@ pub(crate) unsafe fn for_each_entry(mut f: impl FnMut(&[u8], u8, bool)) {
 }
 
 /// Write every bound, live pool value into its deck's uniforms for this frame.
-/// Render task, under the player mutex, before the decks' update().
+/// Render task, under the player mutex, before the decks' update(); called only
+/// when [`ANY_BOUND`].
 ///
 /// # Safety
 /// See module doc.
+#[cold]
+#[inline(never)]
 pub(crate) unsafe fn apply_frame() {
     let n = *addr_of!(BIND_N);
     if n.iter().all(|&k| k == 0) {

@@ -3997,8 +3997,8 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     if uses_room && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
         fx_rebuild_room();
     }
-    let imu = sensor_ffi::fx_imu();
-    let f = FxFrame {
+    #[allow(unused_mut)]
+    let mut f = FxFrame {
         time: time_s,
         dt: dt_s,
         frame,
@@ -4011,14 +4011,14 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         room_max: FX_ROOM_MAX,
         room_min_fix: FX_ROOM_MIN_FIX,
         room_max_fix: FX_ROOM_MAX_FIX,
-        // imu.accel (g) / imu.gyro (rad/s) from the sensor core's snapshot
-        // (zeros with no sensor — no float work then), plus Q16.16 mirrors.
-        imu_accel: imu.0,
-        imu_gyro: imu.1,
-        imu_accel_fix: imu.2,
-        imu_gyro_fix: imu.3,
         ..Default::default()
     };
+    // imu.accel (g) / imu.gyro (rad/s) + Q16.16 mirrors, only while a sensor
+    // runs: one inline flag load otherwise (the sensor code stays out of the
+    // per-frame cache footprint — fx_bench sweep16 is sensitive to it).
+    if sensor_ffi::SENSOR_LIVE.load(core::sync::atomic::Ordering::Relaxed) {
+        sensor_ffi::fill_frame_imu(&mut f);
+    }
     // Capture the frame context so the per-LED shade() sweep sees the same
     // time/dt/frame (shaders animate off `time` in shade()).
     FX_F_TIME = time_s;
@@ -4044,7 +4044,9 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_STACK_MAX = 0;
     // Live pool values (sensor fusion, driver exports) into their bound uniforms
     // before update(), so update() and every shade() see the same sample.
-    uniform_pool::apply_frame();
+    if uniform_pool::ANY_BOUND {
+        uniform_pool::apply_frame();
+    }
     if let Some(oc) = fx_update_deck(addr_of_mut!(DECK_A), &f, dt_s) {
         FX_LAST_UPDATE_OUTCOME = oc as u32;
     }
