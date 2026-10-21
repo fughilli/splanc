@@ -332,35 +332,44 @@ splanc.io).</p>
 <h2>What you need<a class="headerlink" href="#what-you-need" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>A Splanc player on your Wi-Fi.</p></li>
-<li><p>A bridge: a computer on the same network that stays on. A Raspberry Pi with the Splanc bridge
-image (it shows its state and pairing code on its screen) is the easy option; any Linux, macOS
-or Windows machine with Node.js 20 or newer works too.</p></li>
-<li><p>The relay’s address. The public Splanc relay runs at a <code class="docutils literal notranslate"><span class="pre">workers.dev</span></code> address
-(<code class="docutils literal notranslate"><span class="pre">https://splanc-relay.&lt;name&gt;.workers.dev</span></code>, published on splanc.io). You can also run your own:
+<li><p>A bridge: a computer on the same network that stays on. The easy option is a Raspberry Pi
+with the Splanc bridge image: the <strong>Splanc Bridge Flasher</strong> app writes it to a microSD card
+with your Wi-Fi, no terminal needed, and the Pi shows its state and pairing code on its screen
+(<a class="reference internal" href="../pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>). Any Linux, macOS or Windows
+machine with Node.js 20 or newer works too.</p></li>
+<li><p>The relay’s address. The public Splanc relay is <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev</span></code>,
+and bridges use it unless you name another. You can also run your own:
 see <a class="reference internal" href="relay-tailscale.html"><span class="std std-doc">Run your own relay with Tailscale</span></a>.</p></li>
 </ul>
 <p>Below, <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;</span></code> stands for that address.</p>
 </section>
 <section id="start-the-bridge">
 <h2>1. Start the bridge<a class="headerlink" href="#start-the-bridge" title="Link to this heading">¶</a></h2>
-<p>On the Pi image, the bridge starts by itself; its screen says <strong>Pairing</strong> and shows a code like
-<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>.</p>
+<p>On the Pi image, the bridge starts by itself; its screen says <strong>Ready to pair</strong> and shows a code
+like <code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>. If you haven’t made the card yet, see
+<a class="reference internal" href="../pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>.</p>
 <p>On any other computer:</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge<span class="w"> </span>--relay<span class="w"> </span>&lt;relay&gt;
 </pre></div>
 </div>
-<p>(<code class="docutils literal notranslate"><span class="pre">--relay</span></code> can be left out once the public relay’s address is built in, or set <code class="docutils literal notranslate"><span class="pre">SPLANC_RELAY</span></code>;
-on the Pi image that goes in <code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code>.) It finds your players (mDNS,
+<p>(<code class="docutils literal notranslate"><span class="pre">--relay</span></code> can be left out once the public relay’s address is built in, or set <code class="docutils literal notranslate"><span class="pre">SPLANC_RELAY</span></code>.
+On the Pi image, set it in the flasher’s <strong>Advanced ▸ Relay URL</strong>, or as <code class="docutils literal notranslate"><span class="pre">SPLANC_RELAY=</span></code> in
+<code class="docutils literal notranslate"><span class="pre">splanc-bridge.conf</span></code> on the card’s boot partition; on a Raspberry Pi OS install it goes in
+<code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code>.) It finds your players (mDNS,
 then a scan of the local network), connects to the relay, and asks
 for a pairing code. Without a screen, read the code with:</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge-ctl<span class="w"> </span>status
 </pre></div>
 </div>
-<p>The code lasts 10 minutes and works once. For a new one: the Pi’s button, or
-<code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>. An unpaired bridge makes new codes by itself during its
-first hour; after that, ask for one.</p>
+<p>The code is under <code class="docutils literal notranslate"><span class="pre">status.pairing.code</span></code> (<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>). It lasts 10 minutes and works once. For
+a new one: the Pi’s button, or <code class="docutils literal notranslate"><span class="pre">npx</span> <span class="pre">-y</span> <span class="pre">https://splanc.io/agent/splanc-agent.tgz</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>
+(it prints the code). An unpaired bridge makes new codes by itself during its first hour, until
+one is used; after that, ask for one. Off the Pi image, <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span></code> finds the bridge’s control
+socket by itself (it falls back to <code class="docutils literal notranslate"><span class="pre">$XDG_RUNTIME_DIR/splanc-bridge/</span></code>, else <code class="docutils literal notranslate"><span class="pre">/tmp/splanc-bridge/</span></code>, when
+<code class="docutils literal notranslate"><span class="pre">/run/splanc-bridge/</span></code> isn’t writable); run it as the same user as the bridge.</p>
 <p>Players discovery can’t see (different subnet, multicast blocked): add <code class="docutils literal notranslate"><span class="pre">--host</span> <span class="pre">&lt;ip&gt;</span></code> (repeat it
-for each).</p>
+for each; <code class="docutils literal notranslate"><span class="pre">&lt;ip&gt;:&lt;port&gt;</span></code> works too). Players found once are remembered, so later starts reconnect
+without <code class="docutils literal notranslate"><span class="pre">--host</span></code>.</p>
 </section>
 <section id="add-splanc-to-your-agent">
 <h2>2. Add Splanc to your agent<a class="headerlink" href="#add-splanc-to-your-agent" title="Link to this heading">¶</a></h2>
@@ -370,8 +379,7 @@ is no account and no password.</p>
 <ul>
 <li><p><strong>Claude (claude.ai, desktop and mobile apps)</strong>: Settings → Connectors → Add custom
 connector. Name it “Splanc”, paste <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code>, add it, then press Connect.</p></li>
-<li><p><strong>ChatGPT</strong>: in the connectors settings (developer mode), create a connector with the URL
-<code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> and OAuth authentication.</p></li>
+<li><p><strong>ChatGPT</strong>: see <a class="reference internal" href="#chatgpt">ChatGPT</a> below.</p></li>
 <li><p><strong>Claude Code</strong> (including on the web):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>splanc<span class="w"> </span>&lt;relay&gt;/mcp
 </pre></div>
@@ -382,8 +390,33 @@ connector. Name it “Splanc”, paste <code class="docutils literal notranslate
 the code, and copy the token it shows (once). Give the client the URL <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> and the
 header <code class="docutils literal notranslate"><span class="pre">Authorization:</span> <span class="pre">Bearer</span> <span class="pre">&lt;token&gt;</span></code>. That page also shows the exact <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">mcp</span> <span class="pre">add</span> <span class="pre">…</span> <span class="pre">--header</span></code> command.</p></li>
 </ul>
-<p>Each agent (or each person) pairs once with its own code; the bridge’s screen shows <strong>Paired</strong>
-and how many cloud sessions are connected.</p>
+<p>Each agent (or each person) pairs once with its own code: after the first one, get the next code
+with the button or <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>. The bridge’s screen shows <strong>Paired</strong> and how many cloud
+sessions are connected.</p>
+<section id="chatgpt">
+<h3>ChatGPT<a class="headerlink" href="#chatgpt" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Open <a class="reference external" href="https://chatgpt.com/plugins">chatgpt.com/plugins</a>, press <strong>+</strong>, then <strong>Add custom MCP
+server</strong>.</p></li>
+<li><p>Give it a name (“Splanc”) and a description (“My Splanc lights”).</p></li>
+<li><p>Under <strong>Connection</strong>, enter the server URL <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> (the public relay:
+<code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code>).</p></li>
+<li><p>Authentication: <strong>OAuth</strong>. Leave the client fields empty: ChatGPT registers itself (Client ID
+Metadata Document, or dynamic registration if you pick that). Review the warning and choose
+“I understand and want to continue”.</p></li>
+<li><p>Press <strong>Create as a plugin</strong>, check the discovered tools, and install it.</p></li>
+<li><p>When ChatGPT asks you to sign in, the Splanc page opens: type the pairing code from your bridge
+and press <strong>Connect</strong>.</p></li>
+</ol>
+<p>ChatGPT asks you to confirm each action that changes your lights (brightness, effects, saved
+looks); reading (listing players, uniforms, keypoints, previews, compiling) runs without asking.
+You can let it remember your answer for the rest of a conversation. It keeps its sign-in (a
+refresh token), so you don’t pair again unless you revoke access.</p>
+<p>Which ChatGPT plans can add custom MCP servers is up to OpenAI, and some need <strong>Developer mode</strong>
+switched on in ChatGPT’s settings. Nothing has to be submitted to OpenAI for your own use:
+submission is only for publishing a plugin in ChatGPT’s directory. After a Splanc update that
+changes the tools, press <strong>Refresh</strong> on the plugin and start a new conversation.</p>
+</section>
 </section>
 <section id="ask">
 <h2>3. Ask<a class="headerlink" href="#ask" title="Link to this heading">¶</a></h2>
@@ -391,6 +424,17 @@ and how many cloud sessions are connected.</p>
 fire effect would look like on the porch”. The agent sees every player your bridge sees, rooms
 and all, with the same tools a local agent gets (list players, effects, uniforms, keypoints,
 previews). It can’t re-flash, re-map or rewire anything.</p>
+</section>
+<section id="effects-library">
+<h2>Effects library<a class="headerlink" href="#effects-library" title="Link to this heading">¶</a></h2>
+<p>Your installation keeps a private library of the effects your agents have made: what each looks
+like, its tags and its knobs. When you ask for a new scene or mood, the agent searches the
+library first and reuses or adapts an effect that worked before; anything it deploys is kept
+(with a description), so the library grows with what you ask for. It starts with Splanc’s
+example effects. The library lives in the relay, so it works even while the bridge is off (the
+agent can browse and edit it; it can’t show anything until the bridge is back). It is yours
+only: nothing in it is shared with other users. Ask the agent to “show my effects library”,
+“delete the party effect from the library”, or “make a copy of the ocean effect but stormier”.</p>
 </section>
 <section id="managing-access">
 <h2>Managing access<a class="headerlink" href="#managing-access" title="Link to this heading">¶</a></h2>
@@ -400,7 +444,9 @@ previews). It can’t re-flash, re-map or rewire anything.</p>
 pair again with a new code.</p></li>
 <li><p><strong>Which light is which?</strong> <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">identify</span></code> blinks every fixture.</p></li>
 <li><p><strong>Moving the bridge</strong> to another machine: pair again from the new one (the identity lives in
-<code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc/bridge.json</span></code>; copying it moves the bridge with its pairings).</p></li>
+<code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc/bridge.json</span></code>, or <code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-bridge/bridge.json</span></code> on the Pi;
+copying it moves the bridge with its pairings). Writing a Pi’s card again with the flasher
+gives it a new identity, so pair again after that too.</p></li>
 </ul>
 </section>
 <section id="what-the-screen-status-means">
@@ -442,6 +488,11 @@ pair again with a new code.</p></li>
 its screen or <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span> <span class="pre">status</span></code>.</p></li>
 <li><p><strong>“That code isn’t valid or has expired”</strong>: codes last 10 minutes and work once. Get a new one.</p></li>
 <li><p><strong>“Too many wrong codes”</strong>: wait 10 minutes.</p></li>
+<li><p><strong>The agent says the bridge disconnected mid-call</strong>: the bridge restarted or lost its connection
+during a long tool (a ramp, a measurement). It reconnects by itself; ask again.</p></li>
+<li><p><strong>The bridge says another bridge using this identity connected</strong>: two machines run the bridge
+with the same <code class="docutils literal notranslate"><span class="pre">bridge.json</span></code> (copied, or the old machine still running after a move). Stop one;
+the other reconnects within a few minutes.</p></li>
 <li><p><strong>The bridge says its signature was rejected</strong>: the bridge computer’s clock is off by more than
 5 minutes. Fix the time (NTP) and it reconnects.</p></li>
 <li><p><strong>No players listed</strong>: the bridge must be on the same network as the players; try
@@ -516,8 +567,12 @@ The design and threat model are in <code class="docutils literal notranslate"><s
 <li><a class="reference internal" href="#">Use Splanc from a cloud agent</a><ul>
 <li><a class="reference internal" href="#what-you-need">What you need</a></li>
 <li><a class="reference internal" href="#start-the-bridge">1. Start the bridge</a></li>
-<li><a class="reference internal" href="#add-splanc-to-your-agent">2. Add Splanc to your agent</a></li>
+<li><a class="reference internal" href="#add-splanc-to-your-agent">2. Add Splanc to your agent</a><ul>
+<li><a class="reference internal" href="#chatgpt">ChatGPT</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#ask">3. Ask</a></li>
+<li><a class="reference internal" href="#effects-library">Effects library</a></li>
 <li><a class="reference internal" href="#managing-access">Managing access</a></li>
 <li><a class="reference internal" href="#what-the-screen-status-means">What the screen (status) means</a></li>
 <li><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>

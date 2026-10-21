@@ -321,6 +321,205 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="the-motion-sensor-knows-which-way-the-map-is">
+<h3>The motion sensor knows which way the map is<a class="headerlink" href="#the-motion-sensor-knows-which-way-the-map-is" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Mapping now calibrates the IMU’s tilt for free</strong>: the map is gravity-levelled
+and the fixture stands still while it’s captured, so the sensor’s settled
+“up” is pinned to the map’s +Y as soon as the map is stored; effects tilt the
+right way at once. Heading needs a second, re-oriented pose (the guided
+“Calibrate IMU” screen is next); the solver and device side are in
+(<a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §7</span></a>).</p></li>
+<li><p><strong>Fixtures remember how they were mapped</strong>: diffuse mode, LED stride, code
+timing and brightness are stored on the device with the map, and a later
+supplemental or calibration capture reuses them instead of re-probing.</p></li>
+</ul>
+</section>
+<section id="sensor-drivers-an-agent-can-write">
+<h3>Sensor drivers an agent can write<a class="headerlink" href="#sensor-drivers-an-agent-can-write" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Any I2C sensor, no firmware release.</strong> Agents scan the player’s sensor bus
+(<code class="docutils literal notranslate"><span class="pre">scan_i2c</span></code>), write a small driver in the effect language (<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code> +
+<code class="docutils literal notranslate"><span class="pre">export</span></code>s, <code class="docutils literal notranslate"><span class="pre">i2c_read*</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_write</span></code>), and load it live (<code class="docutils literal notranslate"><span class="pre">deploy_driver</span></code>); every
+export drives the effect uniform of the same name. Supersedes PR #96; the
+native-vs-VM MPU-6050 A/B and when to use which: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §8</span></a>.</p></li>
+</ul>
+</section>
+<section id="fixtures-that-feel-motion-the-sensor-core">
+<h3>Fixtures that feel motion: the sensor core<a class="headerlink" href="#fixtures-that-feel-motion-the-sensor-core" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Wire an MPU-6050 and the player finds it.</strong> At boot the C6 player probes
+its I2C pins (SDA 6 / SCL 7, INT 21 by default) for an MPU-6050-family IMU,
+fuses it on the device (orientation, gravity, linear acceleration, shake and
+tap), and costs nothing when none is fitted.</p></li>
+<li><p><strong>Effects react by name.</strong> Declare <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">vec3</span> <span class="pre">imu_gravity</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_quat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">imu_shake</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_tap</span></code>, … and the firmware drives them every frame; without
+a sensor they stay ordinary knobs. Try <code class="docutils literal notranslate"><span class="pre">agent/skill/examples/imu_tilt.fx</span></code>.</p></li>
+<li><p><strong>Agents can read and calibrate it</strong> (<code class="docutils literal notranslate"><span class="pre">read_sensors</span></code>, <code class="docutils literal notranslate"><span class="pre">calibrate_sensors</span></code>).
+Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md</span></a> (#315).</p></li>
+</ul>
+</section>
+<section id="live-vj-through-your-bridge-every-fixture-from-one-phone">
+<h3>Live VJ through your bridge: every fixture from one phone<a class="headerlink" href="#live-vj-through-your-bridge-every-fixture-from-one-phone" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>⋯ → Live via bridge</strong> in the app pairs with your Splanc bridge (the code on its screen,
+like an agent) and drives <strong>all</strong> its fixtures at once: pick fixtures or rooms, cue effects on
+decks A/B, crossfade, brightness, the effect’s sliders and keypoint pads. A fixture takes one
+connection at a time; the bridge holds them all, so phones and agents can share it.</p></li>
+<li><p><strong>From anywhere</strong> through the relay, or <strong>directly</strong> on the bridge’s network (lower latency:
+~1–2 ms to the bridge instead of a relay round trip); the status pill says which.</p></li>
+<li><p><strong>Show Mode lock</strong> keeps agents (including <code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code>) and other phones off the fixtures you’re
+performing on.</p></li>
+<li><p>Design, numbers and free-tier costs: <a class="reference internal" href="design/live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="the-bridge-follows-players-that-come-back-on-a-new-ip">
+<h3>The bridge follows players that come back on a new IP<a class="headerlink" href="#the-bridge-follows-players-that-come-back-on-a-new-ip" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Players are tracked by device id, not by address.</strong> Players that pick a new
+Wi-Fi MAC on every boot get a new IP each time. A bridge that keeps running
+now finds such a player again by itself, through mDNS or a LAN sweep for its
+manifest, and moves it to the new address. You don’t need to call
+<code class="docutils literal notranslate"><span class="pre">add_player</span></code>. If you call <code class="docutils literal notranslate"><span class="pre">add_player</span></code> with a known player’s new address, that
+player is updated, and its stale old address is dropped. A different
+certificate under a known id is reported as TLS CHANGED.</p></li>
+<li><p><strong>Dead sessions are noticed.</strong> Every player session has a heartbeat. A player
+that vanished fails the call within seconds, with the reason, instead of hanging.
+<code class="docutils literal notranslate"><span class="pre">list_players</span></code> shows each session’s state and when the player was last heard.</p></li>
+<li><p><strong>Errors name the cause.</strong> Tool calls the relay or bridge can’t complete come
+back as tool errors with the reason (bridge disconnected, offline, timed out,
+<code class="docutils literal notranslate"><span class="pre">ECONNREFUSED</span></code>, a stale PERMANENT ARP entry on the bridge…). Before, MCP clients
+showed only “MCP tool call failed”.</p></li>
+</ul>
+</section>
+<section id="agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">
+<h3>Agents crossfade between effects, and look at your fixtures in 3D<a class="headerlink" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code></strong> fades from the running effect to a new one (its source, or an effects-library
+entry by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>) instead of cutting. The bridge
+loads the new effect onto the player’s idle FX deck (the second deck Show Mode uses), then
+glides the crossfade over the seconds you ask for, with a choice of curve (<code class="docutils literal notranslate"><span class="pre">ease</span></code> by default)
+and RGB or HSV blending. With several players or a room, every player fades on one clock, and
+the effects share one time base, so the room changes together.</p></li>
+<li><p><strong>Rollback keeps working.</strong> The effect you faded away from stays loaded on its deck, even
+one the app put there, so <code class="docutils literal notranslate"><span class="pre">rollback_effect</span></code> fades straight back to it (call it again to swap
+forward). <code class="docutils literal notranslate"><span class="pre">list_decks</span></code> shows what is on decks A and B, where the crossfade sits, and which
+deck is live. Uniform and keypoint tools follow the live deck.</p></li>
+<li><p><strong>Deck B is runtime-only</strong>: if a crossfade ends on it, a reboot brings back deck A’s effect.
+<code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> still makes an effect permanent. Both effects render while the fade runs, and
+they share the 24 KB buffer arena, so a too-large pair is refused with that explanation.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">plot_fixture</span></code></strong> returns a PNG of a fixture’s LED map from the front, side, top and an
+isometric view. It shows metres with +Y up, axes, the bounding box, the wiring order, LED index
+hints and a scale bar. Mapped LEDs are dots and interpolated ones are rings. You can colour the
+LEDs by index, solve confidence, segment, channel or one frame of an effect. A room plots every
+fixture at its pose in one scene. The numbers (mapped vs interpolated, bounds) come with it.
+The image is drawn in plain TypeScript, so it works on the Pi bridge, and stays small enough
+for the cloud relay. The CLI has <code class="docutils literal notranslate"><span class="pre">crossfade-to</span></code>, <code class="docutils literal notranslate"><span class="pre">list-decks</span></code> and <code class="docutils literal notranslate"><span class="pre">plot-fixture</span> <span class="pre">--out</span> <span class="pre">&lt;dir&gt;</span></code>.</p></li>
+</ul>
+</section>
+<section id="an-effects-library-that-grows-with-every-scene">
+<h3>An effects library that grows with every scene<a class="headerlink" href="#an-effects-library-that-grows-with-every-scene" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Agents look before they write.</strong> Each installation now keeps a private
+library of effects that worked before: what each looks like, its tags and its
+knobs. Asked for a new scene or mood, the agent searches it first
+(<code class="docutils literal notranslate"><span class="pre">search_effects</span></code>), deploys a match in one call (<code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>)
+or copies and adapts a close one (<code class="docutils literal notranslate"><span class="pre">duplicate_effect</span></code>), and only writes a new
+effect when nothing fits.</p></li>
+<li><p><strong>It fills itself.</strong> Every successful deploy is kept, with its description,
+tags and measured frame cost; the agent is asked to describe any it deployed
+without one. New libraries start with Splanc’s example effects.</p></li>
+<li><p><strong>Served by the cloud relay</strong>, so it’s fast and still browsable while the
+bridge is off. Without the relay (a local agent over stdio or the CLI) the same
+tools keep it in a file in the agent’s state dir. Nothing is shared between
+users. Design: <a class="reference internal" href="design/cloud-relay.html#effects-library"><span class="std std-ref">cloud-relay.md § Effects library</span></a>;
+how to use it: <a class="reference internal" href="guides/cloud-agent.html#effects-library"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="a-good-live-preview-no-longer-ends-in-an-empty-map">
+<h3>A good live preview no longer ends in an empty map<a class="headerlink" href="#a-good-live-preview-no-longer-ends-in-an-empty-map" title="Link to this heading">¶</a></h3>
+<p>Some captures showed the fixture correctly in the live preview, then the final
+solve came back degenerate. The cause: the final solve started over from
+scratch, and on gentle or decode-swapped captures its first scale estimate can
+come out negative. That flips the whole scene behind the camera, and the
+optimizer can’t recover. Each preview solve rolled its own sign, so the preview
+could look right while the final didn’t. Analysis and fix:
+<a class="reference internal" href="design/mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a>.</p>
+<ul class="simple">
+<li><p><strong>The solver rejects an implausible starting scale</strong> and starts from an
+arm’s-length guess instead. The optimizer and the motion data then find the
+real size.</p></li>
+<li><p><strong>The final solve also starts from the best live-preview solve</strong> and keeps
+whichever start solves better.</p></li>
+<li><p><strong>If the final is still degenerate</strong> (it failed, has far fewer LEDs, or
+collapsed) while the preview wasn’t, the app keeps the preview’s map and adds
+a warning that says why.</p></li>
+</ul>
+</section>
+<section id="debug-mode-logs-failed-mapping-runs">
+<h3>Debug mode logs failed mapping runs<a class="headerlink" href="#debug-mode-logs-failed-mapping-runs" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Turn on Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings</strong>, and
+every mapping run that fails, comes out degenerate, or disagrees with its
+preview saves a capture bundle on the phone. <strong>Keep successful runs too</strong>
+saves the rest as well.</p></li>
+<li><p><strong>A bundle holds everything needed to replay the run’s solves exactly</strong>:
+detections, motion data, capture settings, the fixture’s firmware version,
+the preview and final solves with their diagnostics, and the app and solver
+builds.</p></li>
+<li><p><strong>Export or share bundles</strong> from <strong>Settings ▸ Debugging ▸ Mapping capture
+bundles</strong>, as one <code class="docutils literal notranslate"><span class="pre">.splanc-capture.json</span></code> file. A saved map’s <strong>Bundle</strong> tile
+(in debug mode) rebuilds one from a map you already captured.</p></li>
+<li><p><strong>Developers replay a bundle</strong> bit-for-bit through the wasm build with
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//solver:replay_bundle</span> <span class="pre">--</span> <span class="pre">FILE</span></code>, or natively with per-stage
+traces with <code class="docutils literal notranslate"><span class="pre">solver_cli</span> <span class="pre">--replay</span> <span class="pre">FILE</span></code>. See the
+<a class="reference internal" href="user-guide.html#debug-mode-capture-bundles"><span class="std std-ref">user guide</span></a>.</p></li>
+</ul>
+</section>
+<section id="splanc-works-as-a-chatgpt-plugin">
+<h3>Splanc works as a ChatGPT plugin<a class="headerlink" href="#splanc-works-as-a-chatgpt-plugin" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Add <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code></strong> in ChatGPT as a custom MCP server with OAuth, sign in
+with your bridge’s pairing code, and ChatGPT drives your lights. Steps:
+<a class="reference internal" href="guides/cloud-agent.html#chatgpt"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+<li><p><strong>Every agent tool says what it does</strong>: read-only tools (listing, previews, compiling) run
+without a confirmation prompt in ChatGPT; tools that change the lights ask first, and deleting
+or overwriting your saved things is flagged as destructive. The server also gives agents a
+short “how to use Splanc” note.</p></li>
+<li><p><strong>The relay</strong> advertises <code class="docutils literal notranslate"><span class="pre">offline_access</span></code>, so ChatGPT keeps its sign-in, accepts ChatGPT’s
+client metadata document, and ignores scopes it doesn’t use (like <code class="docutils literal notranslate"><span class="pre">openid</span></code>) instead of failing.</p></li>
+</ul>
+</section>
+<section id="show-the-wi-fi-password-while-you-type-it">
+<h3>Show the Wi-Fi password while you type it<a class="headerlink" href="#show-the-wi-fi-password-while-you-type-it" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>An eye button</strong> at the right end of the Wi-Fi password field in the
+add-device sheet shows the password in cleartext, and taps back to hidden.
+It starts hidden, keeps the keyboard open and the cursor where it was, and
+picking a saved network keeps your choice. Phone keyboards no longer
+autocorrect or capitalize the field, and password managers leave it alone.</p></li>
+<li><p><strong>The same button</strong> is on the API key fields in AI settings and on the Splanc
+Bridge Flasher’s Wi-Fi password (which had a text “Show” button).</p></li>
+</ul>
+</section>
+<section id="players-stay-on-wi-fi-across-updates-and-power-cuts">
+<h3>Players stay on Wi-Fi across updates and power cuts<a class="headerlink" href="#players-stay-on-wi-fi-across-updates-and-power-cuts" title="Link to this heading">¶</a></h3>
+<p>Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
+(a power cut, a reset, a firmware update over USB) brought the board back
+unprovisioned, and it had to be put back on the network. Now the credentials are
+saved to NVS once the board has actually joined with them (a mistyped password is
+never saved), and the board rejoins on its own at boot. Re-provisioning the
+network a board is already on keeps the link instead of restarting the join. If
+the saved network wasn’t visible at boot (the router still starting after a power
+cut), the board restarts to rescan on a capped backoff. Design notes:
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/wifi_creds.h</span></code>; HITL gate <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:upgrade_keeps_wifi</span></code>.</p>
+<ul class="simple">
+<li><p><strong>One last re-provision.</strong> A board running a release before this fix has no
+saved credentials to keep, so the update that installs this firmware still needs
+one provision; every update after that keeps them.</p></li>
+<li><p><strong>Factory reset</strong> (a full flash erase) still clears them.</p></li>
+</ul>
+</section>
 <section id="every-player-has-its-own-tls-certificate">
 <h3>Every player has its own TLS certificate<a class="headerlink" href="#every-player-has-its-own-tls-certificate" title="Link to this heading">¶</a></h3>
 <p>Netstack firmware used to serve one shared certificate, and its private key was in
@@ -366,6 +565,31 @@ share sheet (“Save to Files”). Agents get the same files from the bridge’s
 <code class="docutils literal notranslate"><span class="pre">export_map</span></code> tool / <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">export-map</span></code>. See
 <a class="reference internal" href="user-guide.html#exporting-a-map-to-other-software"><span class="std std-ref">the user guide</span></a>.</p>
 </li>
+</ul>
+</section>
+<section id="splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal">
+<h3>Splanc bridge SD image + Splanc Bridge Flasher (no terminal)<a class="headerlink" href="#splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Splanc Bridge Flasher</strong> (macOS, Windows, Linux): a desktop app that writes
+a Splanc bridge microSD card. Pick the Pi model, type the Wi-Fi name and
+password (plus the Wi-Fi country and, optionally, a name for the Pi), pick
+the card. It downloads the newest image, checks its sha256, writes the card,
+reads it back to check every byte, and puts the Wi-Fi settings on it. Boot
+the Pi and the pairing code is on its HDMI screen or OLED HAT. Only removable
+disks are ever offered. Guide:
+<a class="reference internal" href="pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>.</p></li>
+<li><p><strong>Splanc bridge SD image</strong> for the Pi 5, Pi 4, Pi 3 and Zero 2 W: a small
+NixOS system that runs the bridge and the screens from power-on, with no
+login. It applies the flasher’s settings at boot (and moves the Wi-Fi
+password off the card), and updates the Splanc agent by itself
+(sha256-checked, from splanc.io/agent/latest.json).</p></li>
+<li><p><strong>Own release track:</strong> <code class="docutils literal notranslate"><span class="pre">pi-bridge-v*</span></code> releases carry the images
+(<code class="docutils literal notranslate"><span class="pre">splanc-bridge-&lt;board&gt;-&lt;ver&gt;.img.zst</span></code> + <code class="docutils literal notranslate"><span class="pre">.sha256</span></code>) and the flasher
+installers, built by <code class="docutils literal notranslate"><span class="pre">.github/workflows/pi-bridge-image.yml</span></code>, separate from
+<code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> and <code class="docutils literal notranslate"><span class="pre">app-v*</span></code>. Details:
+<a class="reference internal" href="#../pi/bridge/README.md"><span class="xref myst">pi/bridge/README.md</span></a>.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">…</span> <span class="pre">|</span> <span class="pre">sudo</span> <span class="pre">sh</span></code> installer below stays, for Raspberry Pi OS installs you
+manage yourself.</p></li>
 </ul>
 </section>
 <section id="a-raspberry-pi-as-a-splanc-bridge">
@@ -626,8 +850,21 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
+<li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
+<li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>
+<li><a class="reference internal" href="#live-vj-through-your-bridge-every-fixture-from-one-phone">Live VJ through your bridge: every fixture from one phone</a></li>
+<li><a class="reference internal" href="#the-bridge-follows-players-that-come-back-on-a-new-ip">The bridge follows players that come back on a new IP</a></li>
+<li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
+<li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
+<li><a class="reference internal" href="#a-good-live-preview-no-longer-ends-in-an-empty-map">A good live preview no longer ends in an empty map</a></li>
+<li><a class="reference internal" href="#debug-mode-logs-failed-mapping-runs">Debug mode logs failed mapping runs</a></li>
+<li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
+<li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
+<li><a class="reference internal" href="#players-stay-on-wi-fi-across-updates-and-power-cuts">Players stay on Wi-Fi across updates and power cuts</a></li>
 <li><a class="reference internal" href="#every-player-has-its-own-tls-certificate">Every player has its own TLS certificate</a></li>
 <li><a class="reference internal" href="#export-a-map-to-touchdesigner-or-chromatik">Export a map to TouchDesigner or Chromatik</a></li>
+<li><a class="reference internal" href="#splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal">Splanc bridge SD image + Splanc Bridge Flasher (no terminal)</a></li>
 <li><a class="reference internal" href="#a-raspberry-pi-as-a-splanc-bridge">A Raspberry Pi as a Splanc bridge</a></li>
 <li><a class="reference internal" href="#ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room">AI agents can drive Splanc (“Use splanc.io to set the mood of the room”)</a></li>
 <li><a class="reference internal" href="#saved-looks-uniform-keypoints-two-decks-and-a-crossfade">Saved looks: uniform keypoints, two decks and a crossfade</a></li>

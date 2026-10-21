@@ -17,19 +17,22 @@ splanc.io).
 ## What you need
 
 - A Splanc player on your Wi-Fi.
-- A bridge: a computer on the same network that stays on. A Raspberry Pi with the Splanc bridge
-  image (it shows its state and pairing code on its screen) is the easy option; any Linux, macOS
-  or Windows machine with Node.js 20 or newer works too.
-- The relay's address. The public Splanc relay runs at a `workers.dev` address
-  (`https://splanc-relay.<name>.workers.dev`, published on splanc.io). You can also run your own:
+- A bridge: a computer on the same network that stays on. The easy option is a Raspberry Pi
+  with the Splanc bridge image: the **Splanc Bridge Flasher** app writes it to a microSD card
+  with your Wi-Fi, no terminal needed, and the Pi shows its state and pairing code on its screen
+  ([Set up a Splanc bridge on a Raspberry Pi](../pi-bridge.md)). Any Linux, macOS or Windows
+  machine with Node.js 20 or newer works too.
+- The relay's address. The public Splanc relay is `https://splanc.pages.dev`,
+  and bridges use it unless you name another. You can also run your own:
   see [Run your own relay with Tailscale](relay-tailscale.md).
 
 Below, `<relay>` stands for that address.
 
 ## 1. Start the bridge
 
-On the Pi image, the bridge starts by itself; its screen says **Pairing** and shows a code like
-`ABCD-EFGH`.
+On the Pi image, the bridge starts by itself; its screen says **Ready to pair** and shows a code
+like `ABCD-EFGH`. If you haven't made the card yet, see
+[Set up a Splanc bridge on a Raspberry Pi](../pi-bridge.md).
 
 On any other computer:
 
@@ -37,8 +40,10 @@ On any other computer:
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay <relay>
 ```
 
-(`--relay` can be left out once the public relay's address is built in, or set `SPLANC_RELAY`;
-on the Pi image that goes in `/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
+(`--relay` can be left out once the public relay's address is built in, or set `SPLANC_RELAY`.
+On the Pi image, set it in the flasher's **Advanced ▸ Relay URL**, or as `SPLANC_RELAY=` in
+`splanc-bridge.conf` on the card's boot partition; on a Raspberry Pi OS install it goes in
+`/etc/splanc-bridge/bridge.env`.) It finds your players (mDNS,
 then a scan of the local network), connects to the relay, and asks
 for a pairing code. Without a screen, read the code with:
 
@@ -46,12 +51,16 @@ for a pairing code. Without a screen, read the code with:
 npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl status
 ```
 
-The code lasts 10 minutes and works once. For a new one: the Pi's button, or
-`splanc-agent bridge-ctl new-code`. An unpaired bridge makes new codes by itself during its
-first hour; after that, ask for one.
+The code is under `status.pairing.code` (`ABCD-EFGH`). It lasts 10 minutes and works once. For
+a new one: the Pi's button, or `npx -y https://splanc.io/agent/splanc-agent.tgz bridge-ctl new-code`
+(it prints the code). An unpaired bridge makes new codes by itself during its first hour, until
+one is used; after that, ask for one. Off the Pi image, `bridge-ctl` finds the bridge's control
+socket by itself (it falls back to `$XDG_RUNTIME_DIR/splanc-bridge/`, else `/tmp/splanc-bridge/`, when
+`/run/splanc-bridge/` isn't writable); run it as the same user as the bridge.
 
 Players discovery can't see (different subnet, multicast blocked): add `--host <ip>` (repeat it
-for each).
+for each; `<ip>:<port>` works too). Players found once are remembered, so later starts reconnect
+without `--host`.
 
 ## 2. Add Splanc to your agent
 
@@ -61,8 +70,7 @@ is no account and no password.
 
 - **Claude (claude.ai, desktop and mobile apps)**: Settings → Connectors → Add custom
   connector. Name it "Splanc", paste `<relay>/mcp`, add it, then press Connect.
-- **ChatGPT**: in the connectors settings (developer mode), create a connector with the URL
-  `<relay>/mcp` and OAuth authentication.
+- **ChatGPT**: see [ChatGPT](#chatgpt) below.
 - **Claude Code** (including on the web):
 
   ```sh
@@ -76,8 +84,33 @@ is no account and no password.
   header `Authorization: Bearer <token>`. That page also shows the exact `claude mcp add …
 --header` command.
 
-Each agent (or each person) pairs once with its own code; the bridge's screen shows **Paired**
-and how many cloud sessions are connected.
+Each agent (or each person) pairs once with its own code: after the first one, get the next code
+with the button or `bridge-ctl new-code`. The bridge's screen shows **Paired** and how many cloud
+sessions are connected.
+
+### ChatGPT
+
+1. Open [chatgpt.com/plugins](https://chatgpt.com/plugins), press **+**, then **Add custom MCP
+   server**.
+2. Give it a name ("Splanc") and a description ("My Splanc lights").
+3. Under **Connection**, enter the server URL `<relay>/mcp` (the public relay:
+   `https://splanc.pages.dev/mcp`).
+4. Authentication: **OAuth**. Leave the client fields empty: ChatGPT registers itself (Client ID
+   Metadata Document, or dynamic registration if you pick that). Review the warning and choose
+   "I understand and want to continue".
+5. Press **Create as a plugin**, check the discovered tools, and install it.
+6. When ChatGPT asks you to sign in, the Splanc page opens: type the pairing code from your bridge
+   and press **Connect**.
+
+ChatGPT asks you to confirm each action that changes your lights (brightness, effects, saved
+looks); reading (listing players, uniforms, keypoints, previews, compiling) runs without asking.
+You can let it remember your answer for the rest of a conversation. It keeps its sign-in (a
+refresh token), so you don't pair again unless you revoke access.
+
+Which ChatGPT plans can add custom MCP servers is up to OpenAI, and some need **Developer mode**
+switched on in ChatGPT's settings. Nothing has to be submitted to OpenAI for your own use:
+submission is only for publishing a plugin in ChatGPT's directory. After a Splanc update that
+changes the tools, press **Refresh** on the plugin and start a new conversation.
 
 ## 3. Ask
 
@@ -86,6 +119,17 @@ fire effect would look like on the porch". The agent sees every player your brid
 and all, with the same tools a local agent gets (list players, effects, uniforms, keypoints,
 previews). It can't re-flash, re-map or rewire anything.
 
+## Effects library
+
+Your installation keeps a private library of the effects your agents have made: what each looks
+like, its tags and its knobs. When you ask for a new scene or mood, the agent searches the
+library first and reuses or adapts an effect that worked before; anything it deploys is kept
+(with a description), so the library grows with what you ask for. It starts with Splanc's
+example effects. The library lives in the relay, so it works even while the bridge is off (the
+agent can browse and edit it; it can't show anything until the bridge is back). It is yours
+only: nothing in it is shared with other users. Ask the agent to "show my effects library",
+"delete the party effect from the library", or "make a copy of the ocean effect but stormier".
+
 ## Managing access
 
 - **Revoke everything**: the Pi's "revoke all" control, or
@@ -93,7 +137,9 @@ previews). It can't re-flash, re-map or rewire anything.
   pair again with a new code.
 - **Which light is which?** `splanc-agent bridge-ctl identify` blinks every fixture.
 - **Moving the bridge** to another machine: pair again from the new one (the identity lives in
-  `~/.local/state/splanc/bridge.json`; copying it moves the bridge with its pairings).
+  `~/.local/state/splanc/bridge.json`, or `/var/lib/splanc-bridge/bridge.json` on the Pi;
+  copying it moves the bridge with its pairings). Writing a Pi's card again with the flasher
+  gives it a new identity, so pair again after that too.
 
 ## What the screen (status) means
 
@@ -112,6 +158,11 @@ previews). It can't re-flash, re-map or rewire anything.
   its screen or `bridge-ctl status`.
 - **"That code isn't valid or has expired"**: codes last 10 minutes and work once. Get a new one.
 - **"Too many wrong codes"**: wait 10 minutes.
+- **The agent says the bridge disconnected mid-call**: the bridge restarted or lost its connection
+  during a long tool (a ramp, a measurement). It reconnects by itself; ask again.
+- **The bridge says another bridge using this identity connected**: two machines run the bridge
+  with the same `bridge.json` (copied, or the old machine still running after a move). Stop one;
+  the other reconnects within a few minutes.
 - **The bridge says its signature was rejected**: the bridge computer's clock is off by more than
   5 minutes. Fix the time (NTP) and it reconnects.
 - **No players listed**: the bridge must be on the same network as the players; try

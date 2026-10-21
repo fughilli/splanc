@@ -20,9 +20,28 @@ The bridge becomes a hub. It is launched once (`npx -y <latest bundle url>`, or
     cheap, bounded and cancellable.
 
   Explicit `--host` values are added, not exclusive.
+- **Identity is the device id, never the host.** Players move: firmware that
+  picks a random Wi-Fi MAC per boot gets a new DHCP lease after every reboot.
+  A manifest, Welcome or mDNS TXT naming a known id at a new host (discovery,
+  the sweep, `add_player`) moves that player's record there and drops its old
+  address, including an explicit host that pointed at it. A known player that
+  stops answering stays listed as `checked: "unreachable"` with the reason. The
+  sweep then looks for it by id (TCP probes of 1 s, generous because a dozing
+  ESP32 answers ARP/SYN only at its next DTIM wake-up). A certificate other than
+  the one pinned for that id is refused as TLS CHANGED wherever it shows up.
 - **Sessions.** They are lazy, one per player: connect on first use, keep alive
   with the device's single wss slot in mind (one socket per device, ever), and
-  reconnect with backoff.
+  reconnect with backoff. A player that vanishes never closes its socket, so
+  every session has a heartbeat (`agent/src/liveness.ts`). After 20 s of
+  silence idle, or 4 s while a call waits on the player, the hub sends a
+  `time_sync_ping`. Two unanswered pings, with no other traffic, mean dead.
+  A socket that closes and doesn't reconnect within 10 s is also dead. A dead
+  session fails its in-flight calls with the reason, is dropped, and its player
+  is marked unreachable. A background search then runs (mDNS for its TXT id,
+  then a LAN sweep for its manifest), backing off from 2 s to 5 min while any
+  remembered player is missing. A session that has been silent for 10 s is
+  pinged before a tool uses it, so a call made right after a reboot re-finds
+  the player instead of hanging on the dead socket.
 - **Version matching.** Each player's manifest names its bundle. The hub carries
   its own compiler and simulator. For a player whose fw falls outside its
   `bundle.json` range, it fetches that player's bundle (url + sha256 from the
