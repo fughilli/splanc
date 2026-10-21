@@ -54,7 +54,8 @@ hosting bill.
     key for stateless OAuth client ids. It is touched on pairing and OAuth steps only, never on
     MCP calls.
 - The relay **stores no device secrets** and sees only MCP traffic: it forwards JSON-RPC bodies
-  without interpreting them, and a client's relay credential is never passed to the bridge.
+  without interpreting them (except the few messages the [effects library](#effects-library)
+  needs), and a client's relay credential is never passed to the bridge.
 
 Why a tunnel of HTTP rather than relaying JSON-RPC messages: the MCP transport (sessions,
 protocol-version headers, JSON vs SSE replies, error codes) is implemented once, by the SDK, on
@@ -220,6 +221,102 @@ display service in the bridge user's group). Newline-delimited JSON, one reply l
 
 `splanc-agent bridge-ctl new-code|revoke-all|identify|status` is a CLI over the same socket.
 
+## Effects library
+
+A private library of effect programs per installation (per bridge), so an agent asked for a new
+scene or mood can find an effect that already worked instead of writing it again, read and copy
+one to reuse its ideas, and the library grows as the user asks for more. Code:
+`agent/relay/src/library.ts` (entries, validation, search, the tools; no runtime imports),
+`agent/relay/src/mcpLibrary.ts` (the relay's JSON-RPC handling), `agent/src/libraryLocal.ts`
+(the agent's file store and zod schemas).
+
+**Entry**: `id` (`fx_` + 8 base32 chars, stable), `name`, `description` (what it looks like, the
+mood, when to use it), `tags`, `source`, `uniforms` (the compiler's manifest minus slots: name,
+width, ui, default, min, max, unit, doc), `lang` (effect language version, 1), `compiler` (when
+known), `hash` (sha256 of the normalized source), `bytes`, `created_at`, `updated_at`, `uses`
+(successful deploys), `last_used_at`, `parent_id` (duplicates), `origin` (`saved`, `auto` = kept
+from a deploy, `seed` = a built-in example), `needs_description`, `perf` (`estimate` per fixture
+from deploy_effect, `measured` from the next measure_effect).
+
+**Tools** (annotated: search/get read-only; update/delete destructive; all `openWorldHint:
+false`):
+
+| Tool | |
+| --- | --- |
+| `search_effects {query?, tags?, limit?}` | Compact rows (id, name, truncated description, tags, uniform names, uses, last_used), ranked. No query: the whole index, most used first (default 100 rows, max 500). |
+| `get_effect {id}` | The full entry, source included. |
+| `save_effect {name, description, source, tags?, uniforms?, perf?}` | New entry, or (same source hash) the existing entry's metadata updated; an `auto` entry saved this way becomes `saved`. |
+| `duplicate_effect {id, name?, description?}` | A copy with `parent_id` set, full source returned, to adapt and `update_effect`. |
+| `update_effect {id, …}` | Name, description, tags, source (uniforms re-read), uniforms, perf. |
+| `delete_effect {id}` | Gone for good. |
+| `deploy_effect {library_id}` | Deploys an entry in one call; `effect_id` defaults to a slug of its name. `name`/`description`/`tags` on any deploy describe it for the library. |
+
+The tool descriptions and the MCP `instructions` give the agent the workflow: `search_effects`
+first for any new scene or mood; reuse (deploy by `library_id`, tune uniforms) or duplicate and
+adapt; otherwise author, then `save_effect` with a rich description and tags.
+
+**Accumulation**: every successful `deploy_effect` with a source is kept: a use of the entry with
+the same source (or `library_id`), else a new `auto` entry named after the effect id, with a
+placeholder description and `needs_description` (search reports how many; the deploy result's
+second text block says `update_effect` it). A failed deploy (compile error, over budget, every
+player failed) isn't kept.
+
+**Limits**: source ≤ 64 KB, description ≤ 2 KB, name ≤ 80, ≤ 16 tags, ≤ 64 uniforms, perf ≤ 4
+KB; ≤ 500 entries and ≤ 8 MB of source per installation. To make room, `auto` and `seed`
+entries are evicted least recently used first (the save's result lists them); `saved` entries
+never are: a save that would need that is refused with the reason, and a deploy still succeeds
+(its result says it wasn't kept).
+
+**Search**: word tokens (lower case, a light stemmer, stop words dropped) over name (weight 5),
+tags (4), uniform names (2) and description (1, not placeholders); exact or prefix (≥ 3 chars)
+matches, weighted by rarity (idf), scaled by how much of the query matched, plus a small boost
+for use. SQLite FTS5 is available in Durable Object SQLite, but the relay keeps its Durable
+Object state through the storage KV API so the same code runs on the Node host (self-hosted
+relay, tests) and in the agent's file store; at ≤ 500 metadata rows, scoring in memory is
+microseconds, and the index is read once per wake period.
+
+**Where it lives**:
+
+- *Behind the relay* the library is in the bridge's `BridgeObject` storage: `fx:<id>` = an
+  entry's metadata (the search index), `fxs:<id>` = its source (read by id only), `fxk:<name>` =
+  flags (`seeded`, `last_deploy`). New keys in the existing class: no Durable Object migration,
+  nothing changes for paired bridges. The relay serves it itself, so it is fast and works while
+  the bridge is offline:
+  - `tools/call` of a library tool is answered by the Durable Object; nothing crosses the
+    bridge socket.
+  - `tools/list` and `initialize` are forwarded and the reply's response event rewritten: the
+    library tools appended (a bridge tool of the same name replaced), `deploy_effect`'s schema
+    given the library arguments, the library guidance appended to `instructions`. JSON replies
+    stay JSON; SSE replies stay streams (progress events pass straight through; only the event
+    with the response for that request id waits).
+  - `deploy_effect {library_id}`: the relay puts the entry's source and an `effect_id` in the
+    call and strips the library arguments, so any bridge version deploys it. After a successful
+    deploy (and a `measure_effect`), the library is updated and a note added to the result.
+  - Bridge offline: `tools/list` answers the library tools; `initialize` gets a relay session
+    (`Mcp-Session-Id: relay-…`, `serverInfo.name: splanc-relay`, instructions saying the bridge
+    is offline) serving the library, `ping` and notifications (`202`); other calls on it get a
+    JSON-RPC error. Once the bridge is back, that session gets `404` for anything but library
+    calls, so the client initializes again onto the bridge (the spec's session-expiry path).
+    Other calls while offline keep the `503`.
+  - Batches and anything unparseable are tunnelled untouched.
+- *Without the relay* (stdio, the one-shot CLI) the agent serves the same tools from
+  `<state dir>/effects-library.json` (`$SPLANC_BRIDGE_STATE_DIR`, else `$STATE_DIRECTORY`, else
+  `~/.local/state/splanc`), with the same `deploy_effect {library_id}` and accumulation. The
+  bridge (`splanc-agent bridge`) registers no library tools: the relay's library is the one in
+  use (and a self-hosted `splanc-agent relay` keeps it in its data file).
+
+**Seed**: a new library starts with the skill's examples (`agent/skill/examples/*.fx`, copied
+into `librarySeed.ts`; `library_test` checks they match) with descriptions and tags, once.
+Uniform manifests are read from the source's `uniform` declarations the way `fx_compiler`
+parses them (the relay has no compiler); `library_test` checks that against the compiler for
+every example. An agent can pass the compiler's manifest instead.
+
+**Later: a shared library.** This one is private on purpose. An opt-in shared/community library
+(publish an entry; search others') would need moderation (effect source is arbitrary text an
+agent reads: prompt injection, spam, offensive names), per-account quotas, attribution and
+licensing, and takedown. It would live in its own Durable Object class (not in any bridge's), with
+publishing as an explicit user action and results marked as third-party content.
+
 ## Free-tier budget
 
 Workers Free plan limits (Cloudflare docs, checked 2026-10): Worker requests 100,000/day (10 ms
@@ -240,6 +337,8 @@ Costs per action:
 | New pairing code | 0 | 1/20 + 1 | 4 / 3 |
 | Full OAuth connect (register, authorize ×2, token) | 4 | ~6 | ~10 / ~8 |
 | Token refresh (daily per client) | 1 | 2 | 3 / 3 |
+| Library tool call (search, get, save, …) | 1 | 1 (no bridge message) | first per wake: #entries; then 0–1 / 0–2 |
+| Library bookkeeping on a deploy / measure through the relay | 0 (same request) | 0 | first per wake: #entries / 1–3 |
 
 Duration is the binding limit: a Durable Object is billed at 128 MB for every second it is
 awake (while a request is in flight, plus ~10 s before it hibernates). One isolated tool call ≈
@@ -255,7 +354,9 @@ For a household doing a few sessions a day (~40 GB-s), one free account serves a
 bridges. The design choices that keep it there: quick replies coalesced into one message, `405` on
 `GET /mcp`,
 hibernatable bridge sockets with free pings, `401`s answered without a Durable Object, no
-per-request storage writes, and token checks cached per wake period.
+per-request storage writes, and token checks cached per wake period. The effects library adds
+no Worker requests and no socket messages: its calls are answered inside the one Durable Object
+request, its index (≤ 500 small rows) is read once per wake, and a save writes two rows.
 
 ## Hosting
 
@@ -301,6 +402,8 @@ bridge sits on; the bridge's identity key; the relay's free-tier budget.
 | Local users | Control socket mode 0660; status file world-readable (no secrets in it) | Anyone in the bridge's group can mint codes and revoke |
 | Consent page injection / clickjacking | Every value escaped; CSP `default-src 'none'`, `frame-ancestors 'none'`; no scripts | — |
 | SSRF via Client ID Metadata Documents | Only https URLs with a path; 5 s, 16 KiB, no redirects; Workers can't reach private networks | The relay can be made to fetch public URLs (rate-bound by `/authorize` use) |
+| Library abuse (a paired agent filling it) | Size caps per entry and per installation (500 entries, 8 MB); private per bridge, so nothing one user stores reaches another | A paired agent can fill or delete its own user's library |
+| Prompt injection through library entries | Entries are private: only this installation's own agents wrote them | Content an agent saved earlier is read back as data by the next agent |
 | Free-tier exhaustion (DoS) | Unauthenticated requests stop at the Worker; registrations rate-limited per IP and globally | 100 k Worker requests/day is a hard ceiling an attacker can spend; the relay then fails closed until 00:00 UTC |
 
 Not covered: the LAN itself (players have no LAN auth; anything on the LAN can already drive
@@ -314,6 +417,16 @@ them), and the bridge host's own security.
   page, PKCE, single-use codes, confidential clients, tampered client ids, CIMD), refresh
   rotation + reuse detection, `/pair`, RFC 7009, revoke-all, offline `503`, `405` GET, in-flight
   requests failing fast when the bridge drops, no token passthrough, hashes-only storage.
+- `//agent:library_test`: the library on its own and in the stdio/CLI server: validation and
+  caps, search ranking, LRU eviction (saved entries never), dedupe by source hash, duplicate
+  lineage, deploy accumulation and perf, the seed examples, the uniform reader against the real
+  compiler, the relay's DO store and the agent's file store giving identical tool results, the
+  server's tools and schemas matching the relay's.
+- `//agent:relay_library_test`: the relay serving it: library calls answered without a bridge
+  frame, `tools/list`/`initialize` merged over SSE replies, `deploy_effect {library_id}` inlined
+  (and stripped of library arguments), deploys saved and failures not, measurements attached,
+  the offline relay session (a real SDK client) and its `404` once the bridge is back, one
+  library per bridge. `relay_e2e_test` deploys a library entry through the real bridge.
 - `//agent:lanbridge_test`: the display contract (every field, states, atomic writes), every
   control command, reconnect after a dropped socket, `offline` during a relay outage, recovery
   with the same bridge id and credentials after a relay restart.

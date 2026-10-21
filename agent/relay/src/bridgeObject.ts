@@ -21,7 +21,24 @@
 
 import { grantedScope } from "./oauth";
 import { b64url, ed25519Verify, randomSecret, sha256b64url, sha256hex } from "./crypto";
-import { now, upgrade, autoResponse, type DOState, type Env, type HSocket } from "./platform";
+import { EffectLibrary, LIBRARY_TOOL_NAMES, callLibraryTool, deployNoteText, slugEffectId, type EffectMeta, type LibraryStore } from "./library";
+import {
+  RELAY_SESSION_PREFIX,
+  deployPerf,
+  deploySucceeded,
+  mergeTools,
+  parseSingle,
+  relayInitializeResult,
+  rewriteReply,
+  rpcErrorFor,
+  rpcResult,
+  sessionGone,
+  stripDeployArgs,
+  toolResultJson,
+  withLibraryInstructions,
+  type RpcRequest,
+} from "./mcpLibrary";
+import { now, upgrade, autoResponse, type DOState, type DOStorage, type Env, type HSocket } from "./platform";
 import {
   BRIDGE_AUTH_HEADER,
   CLOSE_PROTOCOL,
@@ -388,7 +405,50 @@ export class BridgeObject {
     if (req.method !== "POST" && req.method !== "DELETE") {
       return json({ error: "method not allowed" }, 405, { allow: "POST, DELETE" });
     }
+    const len = Number(req.headers.get("content-length") ?? 0);
+    if (len > MAX_BODY) return rpcError(413, "request body too large");
+    let body = req.method === "POST" ? await req.text() : "";
+    if (body.length > MAX_BODY) return rpcError(413, "request body too large");
+    const sid = req.headers.get("mcp-session-id") ?? "";
+    const relaySession = sid.startsWith(RELAY_SESSION_PREFIX);
     const ws = this.bridge();
+    // The effects library is served here (docs/design/cloud-relay.md, "Effects library").
+    const msg = req.method === "POST" ? parseSingle(body) : null;
+    if (relaySession && req.method === "DELETE") return new Response(null, { status: 204 });
+    if (msg) {
+      const name = msg.method === "tools/call" ? msg.params?.["name"] : undefined;
+      if (typeof name === "string" && LIBRARY_TOOL_NAMES.has(name) && msg.id !== undefined) {
+        return rpcResult(msg.id, await callLibraryTool(await this.library(), name, msg.params?.["arguments"]));
+      }
+      if (relaySession && ws) return sessionGone(); // the bridge is back: initialize again
+      if (relaySession || !ws) {
+        const offline = this.offlineMcp(msg, relaySession);
+        if (offline) return offline;
+      }
+      if (ws && name === "deploy_effect" && msg.id !== undefined) {
+        const prepared = await this.prepareDeploy(msg);
+        if (prepared instanceof Response) return prepared;
+        body = prepared.body;
+        return this.afterDeploy(await this.forward(ws, req, body), msg.id, prepared);
+      }
+      if (ws && name === "measure_effect" && msg.id !== undefined) {
+        return rewriteReply(await this.forward(ws, req, body), msg.id, async (m) => {
+          if (m.result && m.result["isError"] !== true) await (await this.library()).noteMeasure(toolResultJson(m.result));
+          return m;
+        });
+      }
+      if (ws && msg.id !== undefined && (msg.method === "tools/list" || msg.method === "initialize")) {
+        const method = msg.method;
+        const first = !msg.params?.["cursor"];
+        return rewriteReply(await this.forward(ws, req, body), msg.id, (m) => {
+          if (!m.result) return m;
+          if (method === "initialize") return { ...m, result: { ...m.result, instructions: withLibraryInstructions(m.result["instructions"]) } };
+          return first ? { ...m, result: { ...m.result, tools: mergeTools(m.result["tools"]) } } : m;
+        });
+      }
+    } else if (relaySession && req.method === "POST") {
+      return ws ? sessionGone() : rpcErrorFor(null, -32600, "the relay's offline session takes one JSON-RPC message per request", 400);
+    }
     if (!ws) {
       return rpcError(
         503,
@@ -397,11 +457,87 @@ export class BridgeObject {
         { "retry-after": "30" },
       );
     }
-    if (this.pending.size >= MAX_INFLIGHT) return rpcError(429, "too many requests in flight", { "retry-after": "5" });
-    const len = Number(req.headers.get("content-length") ?? 0);
-    if (len > MAX_BODY) return rpcError(413, "request body too large");
-    const body = req.method === "POST" ? await req.text() : "";
-    if (body.length > MAX_BODY) return rpcError(413, "request body too large");
+    return this.forward(ws, req, body);
+  }
+
+  /** What the relay answers by itself while the bridge is offline (or on its own
+   * offline session); null = the usual 503. */
+  private offlineMcp(msg: RpcRequest, relaySession: boolean): Response | null {
+    if (msg.id === undefined) return relaySession ? new Response(null, { status: 202 }) : null;
+    switch (msg.method) {
+      case "initialize": {
+        const session = `${RELAY_SESSION_PREFIX}${b64url(crypto.getRandomValues(new Uint8Array(16)))}`;
+        return rpcResult(msg.id, relayInitializeResult(msg.params, String(WIRE_VERSION)), { "mcp-session-id": session });
+      }
+      case "tools/list":
+        return rpcResult(msg.id, { tools: mergeTools([]) });
+      case "ping":
+        return relaySession ? rpcResult(msg.id, {}) : null;
+      default:
+        return relaySession
+          ? rpcErrorFor(
+              msg.id,
+              -32000,
+              "The Splanc bridge is offline: only the effects library tools work until it is back (then reconnect).",
+            )
+          : null;
+    }
+  }
+
+  private lib: EffectLibrary | null = null;
+
+  private async library(): Promise<EffectLibrary> {
+    this.lib ??= new EffectLibrary(new DOLibraryStore(this.state.storage), { now: () => now(this.env) });
+    return this.lib;
+  }
+
+  /** deploy_effect: resolve library_id to its source here, and strip the library's
+   * arguments (the bridge, perhaps an older one, knows nothing of them). */
+  private async prepareDeploy(msg: RpcRequest): Promise<Response | PreparedDeploy> {
+    const params = msg.params ?? {};
+    const args = { ...((params["arguments"] as Record<string, unknown>) ?? {}) };
+    const meta: PreparedDeploy = {
+      body: "",
+      source: typeof args["source"] === "string" ? (args["source"] as string) : "",
+      library_id: typeof args["library_id"] === "string" ? (args["library_id"] as string) : undefined,
+      effect_id: typeof args["effect_id"] === "string" ? (args["effect_id"] as string) : undefined,
+      name: typeof args["name"] === "string" ? (args["name"] as string) : undefined,
+      description: typeof args["description"] === "string" ? (args["description"] as string) : undefined,
+      tags: Array.isArray(args["tags"]) ? (args["tags"] as string[]).filter((t) => typeof t === "string") : undefined,
+    };
+    if (meta.library_id) {
+      try {
+        const { entry, effectId } = await (await this.library()).forDeploy(meta.library_id, meta.effect_id);
+        if (!meta.source) meta.source = entry.source;
+        args["source"] = meta.source;
+        args["effect_id"] = effectId;
+        meta.effect_id = effectId;
+      } catch (e) {
+        return rpcResult(msg.id!, { isError: true, content: [{ type: "text", text: (e as Error).message }] });
+      }
+    } else if (!args["effect_id"] && meta.source) {
+      args["effect_id"] = slugEffectId(meta.name ?? "", "effect");
+      meta.effect_id = args["effect_id"] as string;
+    }
+    meta.body = JSON.stringify({ ...msg, params: { ...params, arguments: stripDeployArgs(args) } });
+    return meta;
+  }
+
+  /** A successful deploy goes into the library (or counts a use); the library's
+   * note is added to the result as a second text block. */
+  private afterDeploy(res: Response, id: string | number, d: PreparedDeploy): Response {
+    if (!d.source) return res;
+    return rewriteReply(res, id, async (m) => {
+      if (!m.result || !deploySucceeded(m.result)) return m;
+      const note = await (await this.library()).noteDeploy({ ...d, perf: deployPerf(m.result) });
+      const content = Array.isArray(m.result["content"]) ? (m.result["content"] as unknown[]) : [];
+      return { ...m, result: { ...m.result, content: [...content, { type: "text", text: deployNoteText(note) }] } };
+    });
+  }
+
+  /** Tunnel one HTTP request to the bridge; resolves with its reply. */
+  private forward(ws: HSocket, req: Request, body: string): Promise<Response> {
+    if (this.pending.size >= MAX_INFLIGHT) return Promise.resolve(rpcError(429, "too many requests in flight", { "retry-after": "5" }));
     const headers: Record<string, string> = {};
     req.headers.forEach((v, k) => {
       if (FORWARD_REQUEST_HEADERS.includes(k) || k.startsWith(FORWARD_REQUEST_PREFIX)) headers[k] = v;
@@ -620,5 +756,52 @@ export function sameResource(r: string, origin: string): boolean {
     return u.protocol === o.protocol && u.host.toLowerCase() === o.host.toLowerCase() && (path === "/mcp" || path === "");
   } catch {
     return false;
+  }
+}
+
+interface PreparedDeploy {
+  /** The JSON-RPC body forwarded to the bridge. */
+  body: string;
+  source: string;
+  library_id: string | undefined;
+  effect_id: string | undefined;
+  name: string | undefined;
+  description: string | undefined;
+  tags: string[] | undefined;
+}
+
+/**
+ * The effects library in this object's storage (SQLite-backed; the KV API keeps
+ * it on the Node host too): `fx:<id>` = an entry's metadata (the search index,
+ * read once per wake), `fxs:<id>` = its source (read by id only), `fxk:<name>` =
+ * library flags. New keys in the existing class: no Durable Object migration.
+ */
+export class DOLibraryStore implements LibraryStore {
+  constructor(private readonly s: DOStorage) {}
+
+  async loadAll(): Promise<EffectMeta[]> {
+    return [...(await this.s.list<EffectMeta>({ prefix: "fx:" })).values()];
+  }
+
+  getSource(id: string): Promise<string | undefined> {
+    return this.s.get<string>(`fxs:${id}`);
+  }
+
+  async put(meta: EffectMeta, source?: string): Promise<void> {
+    if (source === undefined) await this.s.put(`fx:${meta.id}`, meta);
+    else await this.s.put<unknown>({ [`fx:${meta.id}`]: meta, [`fxs:${meta.id}`]: source });
+  }
+
+  async remove(ids: string[]): Promise<void> {
+    const keys = ids.flatMap((id) => [`fx:${id}`, `fxs:${id}`]);
+    for (let i = 0; i < keys.length; i += 128) await this.s.delete(keys.slice(i, i + 128));
+  }
+
+  getFlag<T>(key: string): Promise<T | undefined> {
+    return this.s.get<T>(`fxk:${key}`);
+  }
+
+  async setFlag<T>(key: string, value: T): Promise<void> {
+    await this.s.put(`fxk:${key}`, value);
   }
 }

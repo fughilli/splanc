@@ -21,12 +21,15 @@ import { z } from "zod";
 
 import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "./annotations";
 
+import { EffectLibrary, LIBRARY_INSTRUCTIONS, deployNoteText, slugEffectId } from "../relay/src/library";
+import { deployPerf, deploySucceeded } from "../relay/src/mcpLibrary";
 import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
 import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
 import { renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
+import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
 import { DeviceSession, ToolError, summarize, type TextureSource } from "./session";
@@ -116,14 +119,28 @@ function withAnnotations(server: McpServer): void {
   };
 }
 
-export function createServer(target: DeviceSession | Hub, opts: { root?: string; echo?: ProgressSink } = {}): McpServer {
+export interface ServerOptions {
+  root?: string;
+  echo?: ProgressSink;
+  /** The effects library this server serves (relay/src/library.ts): the agent's
+   * own (stdio/CLI: libraryLocal.ts). None behind the cloud relay, which holds the
+   * library and serves its tools itself. */
+  library?: EffectLibrary | null;
+}
+
+export function createServer(target: DeviceSession | Hub, opts: ServerOptions = {}): McpServer {
   const hub = target instanceof Hub ? target : Hub.forSession(target, opts.root ?? "");
+  const library = opts.library ?? null;
   const server = new McpServer(
     { name: "splanc-agent", version: VERSION },
-    { capabilities: { logging: {} }, instructions: SERVER_INSTRUCTIONS },
+    {
+      capabilities: { logging: {} },
+      instructions: library ? `${SERVER_INSTRUCTIONS}\n\n${LIBRARY_INSTRUCTIONS}` : SERVER_INSTRUCTIONS,
+    },
   );
   withCallProgress(server, opts.echo);
   withAnnotations(server);
+  if (library) registerLibraryTools(server, library);
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });
@@ -593,17 +610,70 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string;
         "Compile (per firmware) and upload an effect to every selected player; activate=true makes it the running " +
         "effect. Each player's frame cost is estimated first: if any would overrun its budget nothing is deployed " +
         "(force=true deploys anyway). Several players are then put on one shared clock. The previous effect is " +
-        "remembered for rollback_effect.",
-      inputSchema: {
-        effect_id: z.string().min(1).max(32),
-        source: z.string(),
-        activate: z.boolean().optional(),
-        force: z.boolean().optional(),
-        players,
-      },
+        "remembered for rollback_effect." +
+        (library
+          ? " Pass library_id to deploy a library entry (search_effects) instead of source. Successful deploys " +
+            "are kept in the effects library: give name, description and tags."
+          : ""),
+      inputSchema: library
+        ? {
+            effect_id: z.string().min(1).max(32).optional(),
+            source: z.string().optional(),
+            ...DEPLOY_LIBRARY_SHAPE,
+            activate: z.boolean().optional(),
+            force: z.boolean().optional(),
+            players,
+          }
+        : {
+            effect_id: z.string().min(1).max(32),
+            source: z.string(),
+            activate: z.boolean().optional(),
+            force: z.boolean().optional(),
+            players,
+          },
     },
-    ({ effect_id, source, activate, force, players: sel }) =>
+    (args: {
+      effect_id?: string | undefined;
+      source?: string | undefined;
+      library_id?: string | undefined;
+      name?: string | undefined;
+      description?: string | undefined;
+      tags?: string[] | undefined;
+      activate?: boolean | undefined;
+      force?: boolean | undefined;
+      players?: string | string[] | undefined;
+    }) =>
       guard(async () => {
+        let { effect_id, source } = args;
+        if (library && args.library_id) {
+          const r = await library.forDeploy(args.library_id, effect_id);
+          source ??= r.entry.source;
+          effect_id = r.effectId;
+        }
+        if (!source) throw new ToolError("pass `source` (or `library_id`, a library entry from search_effects)");
+        effect_id ??= slugEffectId(args.name ?? "", "effect");
+        const out = await deploy(effect_id, source, args.activate, args.force, args.players);
+        if (!library || !deploySucceeded(out)) return out;
+        const note = await library.noteDeploy({
+          source,
+          library_id: args.library_id,
+          effect_id,
+          name: args.name,
+          description: args.description,
+          tags: args.tags,
+          perf: deployPerf(out),
+        });
+        return { ...out, content: [...out.content, { type: "text" as const, text: deployNoteText(note) }] };
+      }),
+  );
+  const deploy = (
+    effect_id: string,
+    source: string,
+    activate: boolean | undefined,
+    force: boolean | undefined,
+    sel: Selector,
+  ) =>
+      (async () => {
         knownSources.set(effect_id, source);
         // 1. Compile + estimate every target before touching any of them.
         const builds = await hub.each(sel, async (s, p) => {
@@ -625,7 +695,7 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string;
           const held: PlayerResult<unknown>[] = builds.map((b) =>
             b.ok ? { player: b.player, ok: true, result: "not deployed (another player failed)" } : b,
           );
-          return ok(shape(held, sel !== undefined));
+          return ok(shape(held, sel !== undefined)) as ReturnType<typeof ok>;
         }
         const over = builds.filter((b) => !(b.result!.est.budget.fraction <= 1));
         const estimates = Object.fromEntries(
@@ -664,8 +734,7 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string;
             ? out
             : { ...out, estimates, ...(time ? { time_base: time } : {}) },
         );
-      }),
-  );
+      })();
   server.registerTool(
     "set_effect",
     { description: 'Activate the loaded effect by id, or "off" to clear it.', inputSchema: { effect_id: z.string(), players } },
@@ -694,6 +763,9 @@ export function createServer(target: DeviceSession | Hub, opts: { root?: string;
             const m = await s.measureEffect(seconds);
             if (rollback_on_overrun && String(m["verdict"] ?? "").startsWith("over budget")) m["rollback"] = await s.rollback();
             return m;
+          }).then(async (r) => {
+            await library?.noteMeasure(r);
+            return r;
           }),
         ),
       ),

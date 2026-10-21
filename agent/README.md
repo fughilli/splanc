@@ -152,6 +152,13 @@ model, touches nothing), `measure_effect` (windowed on-device perf stream),
 (the stored map as TouchDesigner CSV or a Chromatik `.lxf`, same serializer as
 the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).
+Effects library tools (a private library per installation: entries with a
+description, tags and the uniform manifest; design
+[cloud-relay.md § Effects library](../docs/design/cloud-relay.md#effects-library)):
+`search_effects`, `get_effect`, `save_effect`, `duplicate_effect`,
+`update_effect`, `delete_effect`, and `deploy_effect {library_id}`. Behind the
+cloud relay the relay serves them; stdio and the CLI keep the library in
+`<state dir>/effects-library.json`.
 Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 `forget_player`, `trust_player` (re-trust after a factory reset), `identify_player`
 (blinks), `set_room`, `set_fixture_pose`,

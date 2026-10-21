@@ -5,6 +5,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### An effects library that grows with every scene
+
+- **Agents look before they write.** Each installation now keeps a private
+  library of effects that worked before: what each looks like, its tags and its
+  knobs. Asked for a new scene or mood, the agent searches it first
+  (`search_effects`), deploys a match in one call (`deploy_effect {library_id}`)
+  or copies and adapts a close one (`duplicate_effect`), and only writes a new
+  effect when nothing fits.
+- **It fills itself.** Every successful deploy is kept, with its description,
+  tags and measured frame cost; the agent is asked to describe any it deployed
+  without one. New libraries start with Splanc's example effects.
+- **Served by the cloud relay**, so it's fast and still browsable while the
+  bridge is off. Without the relay (a local agent over stdio or the CLI) the same
+  tools keep it in a file in the agent's state dir. Nothing is shared between
+  users. Design: [cloud-relay.md § Effects library](design/cloud-relay.md#effects-library);
+  how to use it: [cloud-agent.md](guides/cloud-agent.md#effects-library).
+
 ### Splanc works as a ChatGPT plugin
 
 - **Add `https://splanc.pages.dev/mcp`** in ChatGPT as a custom MCP server with OAuth, sign in

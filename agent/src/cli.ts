@@ -28,6 +28,7 @@ import { Hub } from "./hub";
 import { exitCode, flag, parseArgs, toCall, USAGE, type Parsed } from "./cliArgs";
 import { ms, setProgressSink } from "./progress";
 import { RelayHost } from "./relayHost";
+import { localLibrary } from "./libraryLocal";
 import { createServer, VERSION } from "./server";
 import { readBundleInfo } from "./toolchain";
 
@@ -77,7 +78,7 @@ async function oneShot(p: Parsed, root: string): Promise<number> {
   const t0 = performance.now();
   const hub = makeHub(p, root);
   setFxHostRoot(root); // the wasm loads on the first compile/preview, not here
-  const server = createServer(hub);
+  const server = createServer(hub, { library: localLibrary() });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a);
   const client = new Client({ name: "splanc-cli", version: VERSION });
@@ -262,7 +263,7 @@ async function main(): Promise<void> {
     },
     (e: Error) => log(`discovery: ${e.message}`),
   );
-  const server = createServer(hub, { echo: log });
+  const server = createServer(hub, { echo: log, library: localLibrary() });
   await server.connect(new StdioServerTransport());
 }
 
