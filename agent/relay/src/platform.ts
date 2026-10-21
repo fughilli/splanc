@@ -75,12 +75,13 @@ export interface Upgraded {
 }
 
 /** Accept a WebSocket upgrade: Cloudflare's WebSocketPair, or the host's. */
-export function upgrade(env: Env, state: DOState, tags: string[]): Upgraded {
+export function upgrade(env: Env, state: DOState, tags: string[], headers: Record<string, string> = {}): Upgraded {
+  // (The Node host negotiates the subprotocol itself: `ws` picks the first offered.)
   if (env.HOST) return env.HOST.upgrade(state, tags);
   const Pair = (globalThis as unknown as { WebSocketPair: new () => [HSocket, HSocket] }).WebSocketPair;
   const pair = new Pair();
   state.acceptWebSocket(pair[1], tags);
-  return { response: new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit), socket: pair[1] };
+  return { response: new Response(null, { status: 101, webSocket: pair[0], headers } as ResponseInit), socket: pair[1] };
 }
 
 export function autoResponse(env: Env, state: DOState, request: string, response: string): void {

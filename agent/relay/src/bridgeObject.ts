@@ -14,6 +14,11 @@
  * - the tunnel: each MCP HTTP request becomes a `req` frame; `res`/`chunk`/`end`
  *   frames become the HTTP response. Requests in flight keep the object awake;
  *   nothing about them is stored.
+ * - live sessions (docs/design/live-vj-relay.md): the app's WebSockets, accepted
+ *   with the Hibernation API too (tag "app"; attachment {app, fam, label}); their
+ *   text messages pass through to the bridge as `live` frames and back, verbatim.
+ *   Nothing about them is stored either: the routing is in the tags/attachments,
+ *   so it survives hibernation.
  *
  * Only the Worker calls fetch() here; every call carries `x-bridge-id` (this
  * object's name) and `x-relay-origin` (the public origin).
@@ -44,6 +49,13 @@ import { now, upgrade, autoResponse, type DOState, type DOStorage, type Env, typ
 import {
   BRIDGE_AUTH_HEADER,
   CLOSE_PROTOCOL,
+  LIVE_BEARER_PREFIX,
+  LIVE_CLOSE_BRIDGE,
+  LIVE_CLOSE_REVOKED,
+  LIVE_MAX_RATE_HZ,
+  LIVE_SUBPROTOCOL,
+  MAX_LIVE_CLIENTS,
+  MAX_LIVE_MESSAGE,
   CLOSE_REPLACED,
   FORWARD_REQUEST_HEADERS,
   FORWARD_REQUEST_PREFIX,
@@ -187,6 +199,23 @@ export const rpcError = (status: number, message: string, headers: Record<string
 const oauthError = (error: string, description: string, status = 400) =>
   json({ error, error_description: description }, status);
 
+/** The bearer token from a live socket's subprotocol list (`splanc-live.v1, bearer.<tok>`). */
+export function liveToken(protocols: string | null): string | null {
+  if (!protocols) return null;
+  const list = protocols.split(",").map((p) => p.trim());
+  if (!list.includes(LIVE_SUBPROTOCOL)) return null;
+  const b = list.find((p) => p.startsWith(LIVE_BEARER_PREFIX));
+  return b ? b.slice(LIVE_BEARER_PREFIX.length) : null;
+}
+
+/** A live (app) socket's attachment. */
+interface AppAttachment {
+  app: string;
+  fam: string;
+  label: string;
+  at: number;
+}
+
 export function wwwAuthenticate(origin: string, error?: string): string {
   return (
     `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="splanc offline_access"` +
@@ -199,6 +228,8 @@ export class BridgeObject {
   private seq = 0;
   /** token hash -> record (null = known bad), for this wake period. */
   private readonly tokCache = new Map<string, TokRec | null>();
+  /** Live socket rate windows (in memory: a hibernation resets them, which is fine). */
+  private readonly liveRate = new Map<string, { t0: number; n: number; told: boolean }>();
 
   constructor(
     private readonly state: DOState,
@@ -221,6 +252,8 @@ export class BridgeObject {
         return this.connect(req, bid, origin);
       case "/mcp":
         return this.mcp(req, bid, origin);
+      case "/live":
+        return this.live(req, bid, origin);
       case "/oauth/code":
         return this.issueCode(await body(), bid);
       case "/oauth/token":
@@ -312,6 +345,11 @@ export class BridgeObject {
       ws.send(PONG);
       return;
     }
+    const app = appOf(ws);
+    if (app) {
+      this.fromApp(ws, app, message);
+      return;
+    }
     let f: BridgeFrame;
     try {
       f = JSON.parse(message) as BridgeFrame;
@@ -372,15 +410,58 @@ export class BridgeObject {
       case "revoke_all":
         await this.revokeAll();
         return;
+      case "caps": {
+        const a = (ws.deserializeAttachment() ?? {}) as Record<string, unknown>;
+        ws.serializeAttachment({ ...a, live: f.live ?? 0 });
+        // The bridge (re)connected: hand it every live session still open here.
+        for (const s of this.state.getWebSockets("app")) {
+          const x = appOf(s);
+          if (!x) continue;
+          this.send({ t: "live_open", c: x.app, label: x.label, grant: x.fam });
+          trySend(s, JSON.stringify({ t: "relay", bridge: "online" }));
+        }
+        return;
+      }
+      case "live": {
+        const s = this.state.getWebSockets(`app:${f.c}`)[0];
+        if (s) trySend(s, f.d);
+        else this.send({ t: "live_close", c: f.c, reason: "gone" });
+        return;
+      }
+      case "live_close":
+        for (const s of this.state.getWebSockets(`app:${f.c}`)) {
+          try {
+            s.close(f.code ?? LIVE_CLOSE_BRIDGE, (f.reason ?? "closed by the bridge").slice(0, 120));
+          } catch {
+            // closed
+          }
+        }
+        return;
       default:
         return;
     }
   }
 
   async webSocketClose(ws: HSocket, code: number, reason: string): Promise<void> {
+    const app = appOf(ws);
+    if (app) {
+      this.liveRate.delete(app.app);
+      this.send({ t: "live_close", c: app.app });
+      try {
+        ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
+      } catch {
+        // closed
+      }
+      return;
+    }
     // A replaced (older) socket closing must not fail the new one's requests.
     const cur = this.bridge();
-    if (!cur || cur === ws) this.failAll(502, "the bridge disconnected");
+    if (!cur || cur === ws) {
+      this.failAll(502, "the bridge disconnected");
+      // Live sessions stay open: the app shows "bridge offline" and carries on
+      // when the bridge is back (its caps frame re-opens them there).
+      for (const s of this.state.getWebSockets("app")) trySend(s, JSON.stringify({ t: "relay", bridge: "offline" }));
+    }
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
     } catch {
@@ -624,6 +705,75 @@ export class BridgeObject {
     });
   }
 
+  // -- live sessions (docs/design/live-vj-relay.md) ------------------------------------
+
+  private async live(req: Request, bid: string, origin: string): Promise<Response> {
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected a WebSocket" }, 426);
+    const tok = parseToken(liveToken(req.headers.get("sec-websocket-protocol")));
+    const deny = () => json({ error: "invalid_token" }, 401);
+    if (!tok || tok.bridge !== bid || (tok.kind !== "at" && tok.kind !== "pt")) return deny();
+    const rec = await this.lookup(tok.secret);
+    if (!rec || rec.k !== tok.kind || (rec.exp !== null && rec.exp <= this.nowS())) return deny();
+    if (rec.resource && rec.resource !== `${origin}/mcp`) return deny();
+    const b = this.bridge();
+    if (!b) return json({ error: "bridge_offline", error_description: "the bridge is offline" }, 503, { "retry-after": "30" });
+    const caps = (b.deserializeAttachment() ?? {}) as { live?: number };
+    if (!caps.live) {
+      return json({ error: "bridge_outdated", error_description: "this bridge doesn't do live sessions yet: update it" }, 501);
+    }
+    if (this.state.getWebSockets("app").length >= MAX_LIVE_CLIENTS) {
+      return json({ error: "too_many_sessions", error_description: `at most ${MAX_LIVE_CLIENTS} live sessions per bridge` }, 429);
+    }
+    const c = b64url(crypto.getRandomValues(new Uint8Array(9)));
+    const label = (rec.label || (rec.client === "personal" ? "app" : "connector")).slice(0, 80);
+    const { response, socket } = upgrade(this.env, this.state, ["app", `app:${c}`], { "sec-websocket-protocol": LIVE_SUBPROTOCOL });
+    socket.serializeAttachment({ app: c, fam: rec.fam, label, at: now(this.env) } satisfies AppAttachment);
+    autoResponse(this.env, this.state, PING, PONG);
+    this.send({ t: "live_open", c, label, grant: rec.fam });
+    return response;
+  }
+
+  private fromApp(ws: HSocket, app: AppAttachment, message: string): void {
+    if (message.length > MAX_LIVE_MESSAGE) {
+      trySend(ws, JSON.stringify({ t: "relay", error: "message too large" }));
+      return;
+    }
+    // A sliding 1 s window: the app coalesces to <= 30 Hz, so this only trips on a
+    // runaway client, which must not spend the free tier's daily budget.
+    const t = now(this.env);
+    let w = this.liveRate.get(app.app);
+    if (!w || t - w.t0 >= 1000) {
+      w = { t0: t, n: 0, told: false };
+      this.liveRate.set(app.app, w);
+    }
+    if (++w.n > LIVE_MAX_RATE_HZ) {
+      if (!w.told) trySend(ws, JSON.stringify({ t: "relay", error: `rate limited (> ${LIVE_MAX_RATE_HZ} messages/s): dropped` }));
+      w.told = true;
+      return;
+    }
+    const b = this.bridge();
+    if (!b) {
+      trySend(ws, JSON.stringify({ t: "relay", bridge: "offline" }));
+      return;
+    }
+    trySend(b, JSON.stringify({ t: "live", c: app.app, d: message } satisfies RelayFrame));
+  }
+
+  /** Close the live sessions of these grants ("*" = all) and tell the bridge. */
+  private endLive(grants: string[]): void {
+    const all = grants.includes("*");
+    for (const s of this.state.getWebSockets("app")) {
+      const a = appOf(s);
+      if (!a || !(all || grants.includes(a.fam))) continue;
+      try {
+        s.close(LIVE_CLOSE_REVOKED, "credential revoked");
+      } catch {
+        // closed
+      }
+    }
+    this.send({ t: "revoked", grants });
+  }
+
   // -- pairing ---------------------------------------------------------------------------
 
   private async pairing(): Promise<Pairing | null> {
@@ -778,6 +928,7 @@ export class BridgeObject {
     for (const [k, v] of await this.state.storage.list<TokRec>({ prefix: "tok:" })) if (v.fam === fam) dead.push(k);
     for (let i = 0; i < dead.length; i += 128) await this.state.storage.delete(dead.slice(i, i + 128));
     this.tokCache.clear();
+    this.endLive([fam]);
     return dead.length;
   }
 
@@ -798,7 +949,21 @@ export class BridgeObject {
     }
     for (let i = 0; i < keys.length; i += 128) await this.state.storage.delete(keys.slice(i, i + 128));
     this.tokCache.clear();
+    this.endLive(["*"]);
     await this.pushState("all credentials revoked");
+  }
+}
+
+function appOf(ws: HSocket): AppAttachment | null {
+  const a = ws.deserializeAttachment() as Partial<AppAttachment> | null;
+  return a && typeof a.app === "string" ? (a as AppAttachment) : null;
+}
+
+function trySend(ws: HSocket, data: string): void {
+  try {
+    ws.send(data);
+  } catch {
+    // closing: its close handler cleans up
   }
 }
 

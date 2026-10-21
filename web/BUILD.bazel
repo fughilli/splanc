@@ -76,9 +76,11 @@ copy_to_bin(
         "src/fx/preview.ts",
         "src/gen/ledmapper_pb.ts",
         "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)
+        "src/net/bridgeLive.ts",  # the app's live-VJ client (the bridge's live e2e test drives it)
         "src/net/client.ts",
         "src/net/clocksync.ts",
         "src/net/fxbTextures.ts",
+        "src/net/liveProtocol.ts",  # the live (VJ) protocol, shared with the bridge
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)

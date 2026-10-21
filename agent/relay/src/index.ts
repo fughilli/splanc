@@ -10,12 +10,14 @@
  *   /pair                        pairing code -> personal bearer token, by hand
  *   /bridge/register             a bridge registers its Ed25519 key -> bridge id
  *   /bridge/connect?id=          the bridge's outbound WebSocket (signed)
+ *   /live                        an app's live (VJ) WebSocket, passed through to
+ *                                the bridge (docs/design/live-vj-relay.md)
  *
  * The Worker itself is a thin router (the free plan gives it 10 ms CPU per
  * request); signatures, tokens and the tunnel live in the Durable Objects.
  */
 
-import { BridgeObject, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
+import { BridgeObject, liveToken, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
 import { Directory } from "./directory";
 import { SCOPES_SUPPORTED, checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
@@ -92,6 +94,8 @@ export default {
           return json({ ok: true });
         case "/mcp":
           return mcp(req, env, origin);
+        case "/live":
+          return live(req, env, origin);
         case "/.well-known/oauth-protected-resource":
         case "/.well-known/oauth-protected-resource/mcp":
           return json(
@@ -176,6 +180,17 @@ async function mcp(req: Request, env: Env, origin: string): Promise<Response> {
   const headers = new Headers(r.headers);
   for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
   return new Response(r.body, { status: r.status, headers });
+}
+
+// -- live sessions -------------------------------------------------------------------------
+
+async function live(req: Request, env: Env, origin: string): Promise<Response> {
+  if (!originOk(req)) return json({ error: "origin not allowed" }, 403);
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") return json({ error: "expected a WebSocket upgrade" }, 426);
+  const tok = parseToken(liveToken(req.headers.get("sec-websocket-protocol")));
+  // A missing or malformed token is refused here, without waking a Durable Object.
+  if (!tok || (tok.kind !== "at" && tok.kind !== "pt")) return json({ error: "invalid_token" }, 401);
+  return toBridge(env, tok.bridge, origin, "/live", { method: "GET", headers: req.headers });
 }
 
 // -- OAuth ---------------------------------------------------------------------------------

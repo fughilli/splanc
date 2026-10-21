@@ -892,6 +892,35 @@ py_binary(
     ],
 )
 
+# Live VJ through a throwaway bridge on hardware (docs/design/live-vj-relay.md):
+# flash + provision a DUT, run `splanc-agent bridge` locally against --relay, and
+# drive the C6 through the relay and the bridge's LAN endpoint (latency numbers).
+py_binary(
+    name = "live_bridge",
+    srcs = [
+        "hitl_fx_keypoints.py",
+        "hitl_led_capture.py",
+        "hitl_live_bridge.py",
+    ],
+    data = [
+        "ab_demo/kpSolid.fx",
+        "//agent:mcp",
+        "//agent:wasm",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_live_bridge.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # The ELF the netstack flashbundle was linked from (the watcher reads the heap
 # list's address from it).
 filegroup(

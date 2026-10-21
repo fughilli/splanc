@@ -5,6 +5,18 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Live VJ through your bridge: every fixture from one phone
+
+- **⋯ → Live via bridge** in the app pairs with your Splanc bridge (the code on its screen,
+  like an agent) and drives **all** its fixtures at once: pick fixtures or rooms, cue effects on
+  decks A/B, crossfade, brightness, the effect's sliders and keypoint pads. A fixture takes one
+  connection at a time; the bridge holds them all, so phones and agents can share it.
+- **From anywhere** through the relay, or **directly** on the bridge's network (lower latency:
+  ~1–2 ms to the bridge instead of a relay round trip); the status pill says which.
+- **Show Mode lock** keeps agents (including `crossfade_to`) and other phones off the fixtures you're
+  performing on.
+- Design, numbers and free-tier costs: [live-vj-relay.md](design/live-vj-relay.md).
+
 ### The bridge follows players that come back on a new IP
 
 - **Players are tracked by device id, not by address.** Players that pick a new
