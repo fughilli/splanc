@@ -12,7 +12,7 @@
  * Pure functions here; capture.ts wires them in.
  */
 
-import { solveImuExtrinsic, type QuatWxyz, type V3 } from "../geom/imuExtrinsic";
+import { solveImuExtrinsic, type GravityPose, type QuatWxyz, type V3 } from "../geom/imuExtrinsic";
 
 /** Wire shape of proto CaptureProfile (camelCase proto3 JSON). */
 export interface CaptureProfileFlat {
@@ -106,7 +106,7 @@ export function buildProfile(
 export interface ImuCalibrationRecord {
   /** R_fi, IMU -> map, [w, x, y, z]. */
   q: QuatWxyz;
-  poses: { imuUp: V3; fixtureUp: V3; sigmaDeg: number }[];
+  poses: GravityPose[];
   yawResolved: boolean;
   residualDeg: number;
   atMs: number;

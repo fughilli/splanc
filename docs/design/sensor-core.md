@@ -470,11 +470,24 @@ Implemented here:
     light probe when it carries the timing.
 - **Agent.** `read_sensors` shows the calibration state.
 
-**Not yet implemented** (follow-up PR): the guided multi-pose screen of §7.3.
-It needs no new device or solver work. It is a `/capture?calibrate=<mapId>`
-mode that reuses the capture screen's decode, `pnp.ts` and the stored profile,
-adds DeviceMotion averaging for u_c, and drives `solveImuExtrinsic` +
-`set_sensor_mount`.
+**The guided multi-pose screen of §7.3** is in its own PR on top of this one.
+
+- It is a `/capture?calibrate=<mapId>` mode, offered on Map Detail as
+  "Calibrate IMU" when the connected fixture's sensor is running.
+- It reuses the capture screen's code playback, decode and `pnp.ts` lock (the
+  new `ProjectionOverlay.lockedPose`), and the stored capture profile.
+- It averages the phone's DeviceMotion over ~1.2 s and checks that it is still
+  (σ ≤ 3°).
+- Its logic is DOM-free and unit-tested in `web/src/capture/imuCalSession.ts`.
+- **Gating.** A pose can be captured only when:
+  - the fixture is at rest for ≥ 50 samples;
+  - its up is ≥ 45° from every accepted pose;
+  - PnP is locked this frame;
+  - the phone is steady.
+- **Readout.** It shows the pose count (needs 2, recommends 3), the live
+  separation, the current blocker, and the fit (quality, residual, ± heading).
+- **Save** sends `set_sensor_mount` and stores the poses and the solution on the
+  map. A non-"good" fit asks for confirmation first.
 
 ### 7.1 The problem
 

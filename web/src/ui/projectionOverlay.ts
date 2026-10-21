@@ -186,6 +186,13 @@ export class ProjectionOverlay {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
+  /** The camera pose (camera->map, pinhole.ts convention) when the LAST frame
+   * locked; null while unregistered or coasting on a stale lock. The IMU
+   * calibration flow reads it to bring the phone's gravity into the map frame. */
+  get lockedPose(): Pose | null {
+    return this.sinceLock === 0 ? this.lastPose : null;
+  }
+
   /** Forget the current lock (e.g. when the solved map is swapped wholesale). */
   reset(): void {
     this.lastPose = null;
