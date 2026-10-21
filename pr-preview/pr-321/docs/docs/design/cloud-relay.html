@@ -1,0 +1,1076 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="LED-Mapper App — UI/UX Overhaul (Design Doc)" href="app-ux-overhaul.html"><link rel="prev" title="Multi-fixture agent support (“just ask” for a room of players)" href="agent-multi-fixture.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Cloud relay + LAN bridge - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/cloud-relay.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/cloud-relay.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="cloud-relay-lan-bridge">
+<h1>Cloud relay + LAN bridge<a class="headerlink" href="#cloud-relay-lan-bridge" title="Link to this heading">¶</a></h1>
+<p>Status: implemented (relay Worker <code class="docutils literal notranslate"><span class="pre">agent/relay/</span></code>, bridge <code class="docutils literal notranslate"><span class="pre">agent/src/bridge/</span></code>, Node host
+<code class="docutils literal notranslate"><span class="pre">agent/src/relayHost.ts</span></code>). Tests: <code class="docutils literal notranslate"><span class="pre">//agent:relay_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>,
+<code class="docutils literal notranslate"><span class="pre">//agent:relay_e2e_test</span></code>.</p>
+<section id="problem">
+<h2>Problem<a class="headerlink" href="#problem" title="Link to this heading">¶</a></h2>
+<p>Hosted agents (claude.ai, ChatGPT, Claude Code on the web, other cloud agent products) run in
+someone else’s datacenter. They can’t see the user’s LAN, so they can’t reach a Splanc player,
+and they can’t run <code class="docutils literal notranslate"><span class="pre">splanc-agent</span></code> next to it. The player can’t be exposed directly either: it
+serves a self-signed certificate, it has no auth on its LAN socket, and it sits behind NAT.</p>
+<p>The relay lets such an agent add Splanc as a <strong>remote MCP server</strong> (a “custom connector”) and
+drive the user’s fixtures, with no inbound ports, no port forwarding, no account, and no
+hosting bill.</p>
+</section>
+<section id="shape">
+<h2>Shape<a class="headerlink" href="#shape" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span> cloud agent ──HTTPS (MCP Streamable HTTP, Bearer token)──▶ relay (Cloudflare Worker)
+                                                              │  one Durable Object per bridge
+                                                              ▼
+                              bridge&#39;s OUTBOUND WebSocket (wss, signed with its Ed25519 key)
+                                                              │
+                                                              ▼
+ bridge (Raspberry Pi or any LAN host: `splanc-agent bridge`)
+   └─ the hub (agent/src/hub.ts: discovery, one TLS /ws session per player, pinned certs)
+        └─ Splanc players on the LAN
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>Bridge</strong> (<code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge</span> <span class="pre">[--relay</span> <span class="pre">&lt;url&gt;]</span></code>; the relay defaults to <code class="docutils literal notranslate"><span class="pre">$SPLANC_RELAY</span></code>, then
+the built-in <code class="docutils literal notranslate"><span class="pre">DEFAULT_RELAY_URL</span></code> in <code class="docutils literal notranslate"><span class="pre">agent/src/bridge/relayLink.ts</span></code>, which is set to the
+deployed Worker’s URL, <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev</span></code>; with none configured the bridge stays up with <code class="docutils literal notranslate"><span class="pre">state:</span> <span class="pre">&quot;error&quot;</span></code>): the
+existing hub plus <code class="docutils literal notranslate"><span class="pre">LanBridge</span></code>. Its identity lives in <code class="docutils literal notranslate"><span class="pre">$SPLANC_BRIDGE_STATE_DIR</span></code>, else systemd’s
+<code class="docutils literal notranslate"><span class="pre">$STATE_DIRECTORY</span></code>, else <code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc</span></code>. The Pi appliance (<code class="docutils literal notranslate"><span class="pre">pi/bridge/</span></code>) runs it from
+<code class="docutils literal notranslate"><span class="pre">splanc-bridge.service</span></code> with <code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code>. It keeps
+one outbound WebSocket to the relay (<code class="docutils literal notranslate"><span class="pre">RelayLink</span></code>: register once, connect with a signed
+timestamp, reconnect with capped exponential backoff and jitter, liveness pings). Each HTTP
+request the relay tunnels is handed to the MCP SDK’s own Streamable HTTP server transport
+(<code class="docutils literal notranslate"><span class="pre">WebStandardStreamableHTTPServerTransport</span></code>), one transport + <code class="docutils literal notranslate"><span class="pre">McpServer</span></code> per MCP session, all
+sharing one <code class="docutils literal notranslate"><span class="pre">Hub</span></code>, so the device rule “one socket per player” holds no matter how many cloud
+sessions there are. TLS to the players and certificate pinning stay on the LAN. Like the stdio
+server, it discovers and opens every player’s session in the background at startup
+(<code class="docutils literal notranslate"><span class="pre">Hub.warm</span></code>), so a cloud agent’s first call finds them open, and tools’ progress
+notifications and log messages go to the calling cloud session. Players are remembered in
+<code class="docutils literal notranslate"><span class="pre">$SPLANC_CONFIG_DIR/hub.json</span></code> (default <code class="docutils literal notranslate"><span class="pre">~/.config/splanc/hub.json</span></code>): under systemd, point it
+at the unit’s <code class="docutils literal notranslate"><span class="pre">StateDirectory</span></code> so a headless restart reconnects without rediscovery.</p></li>
+<li><p><strong>Relay</strong> (<code class="docutils literal notranslate"><span class="pre">agent/relay/src</span></code>): a Worker (thin router; the free plan gives it 10 ms CPU per
+request) and two SQLite-backed Durable Object classes:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">BridgeObject</span></code>, one per bridge (named by bridge id): the bridge’s public key, its one
+WebSocket (Hibernation API), its credentials (hashed), and the tunnel.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Directory</span></code>, one global instance: pairing code → bridge, rate-limit counters, and the HMAC
+key for stateless OAuth client ids. It is touched on pairing and OAuth steps only, never on
+MCP calls.</p></li>
+</ul>
+</li>
+<li><p>The relay <strong>stores no device secrets</strong> and sees only MCP traffic: it forwards JSON-RPC bodies
+without interpreting them (except the few messages the <a class="reference internal" href="#effects-library">effects library</a>
+needs), and a client’s relay credential is never passed to the bridge.</p></li>
+</ul>
+<p>Why a tunnel of HTTP rather than relaying JSON-RPC messages: the MCP transport (sessions,
+protocol-version headers, JSON vs SSE replies, error codes) is implemented once, by the SDK, on
+the bridge. When MCP revises the transport again (2026-07-28 dropped sessions and the GET
+stream), upgrading the bridge’s SDK is enough; the relay doesn’t change.</p>
+</section>
+<section id="the-relay-s-http-surface">
+<h2>The relay’s HTTP surface<a class="headerlink" href="#the-relay-s-http-surface" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Path</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/mcp</span></code>, <code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/mcp</span></code></p></td>
+<td><p>The MCP endpoint (Streamable HTTP). The bearer token names the bridge.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/mcp</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">405</span></code> (no standalone SSE stream: it would keep a Durable Object awake).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">/.well-known/oauth-protected-resource[/mcp]</span></code></p></td>
+<td><p>RFC 9728 metadata: resource <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code>, AS <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">/.well-known/oauth-authorization-server</span></code></p></td>
+<td><p>RFC 8414 metadata (also at <code class="docutils literal notranslate"><span class="pre">openid-configuration</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/register</span></code></p></td>
+<td><p>RFC 7591 dynamic client registration (stateless, HMAC-signed client id).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET/POST</span> <span class="pre">/authorize</span></code></p></td>
+<td><p>Consent page: “enter the code on your bridge’s screen”.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/token</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">authorization_code</span></code> (PKCE S256 required) and <code class="docutils literal notranslate"><span class="pre">refresh_token</span></code> grants.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/revoke</span></code></p></td>
+<td><p>RFC 7009: revokes the token’s whole grant.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET/POST</span> <span class="pre">/pair</span></code></p></td>
+<td><p>Pairing code → a personal bearer token, for clients that take a header.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/bridge/register</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{public_key,</span> <span class="pre">ts,</span> <span class="pre">sig}</span></code> → <code class="docutils literal notranslate"><span class="pre">{bridge_id}</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/bridge/connect?id=</span></code></p></td>
+<td><p>The bridge’s WebSocket upgrade (header <code class="docutils literal notranslate"><span class="pre">x-splanc-bridge-auth</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true}</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">/mcp</span></code> answers <code class="docutils literal notranslate"><span class="pre">401</span></code> with <code class="docutils literal notranslate"><span class="pre">WWW-Authenticate:</span> <span class="pre">Bearer</span> <span class="pre">resource_metadata=&quot;&lt;relay&gt;/.well-known/</span> <span class="pre">oauth-protected-resource/mcp&quot;</span></code> when there’s no valid token; a malformed or missing token is
+refused by the Worker itself, without waking a Durable Object. A browser <code class="docutils literal notranslate"><span class="pre">Origin</span></code> that isn’t
+https (or local) is refused with <code class="docutils literal notranslate"><span class="pre">403</span></code>; bearer tokens aren’t ambient credentials, so no
+allow-list is needed beyond that. CORS is open so browser-based MCP clients work.</p>
+</section>
+<section id="bridge-socket-protocol">
+<h2>Bridge socket protocol<a class="headerlink" href="#bridge-socket-protocol" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">agent/relay/src/protocol.ts</span></code> (shared by both sides). One JSON object per WebSocket text message.</p>
+<p>Connect: <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">&lt;relay&gt;/bridge/connect?id=&lt;bridge_id&gt;</span></code> with header
+<code class="docutils literal notranslate"><span class="pre">x-splanc-bridge-auth:</span> <span class="pre">&lt;unix</span> <span class="pre">seconds&gt;.&lt;b64url</span> <span class="pre">Ed25519</span> <span class="pre">sig</span> <span class="pre">of</span> <span class="pre">&quot;splanc-bridge-connect\n&lt;id&gt;\n&lt;ts&gt;&quot;&gt;</span></code>.
+The timestamp must be within ±300 s of the relay’s clock. Refusals happen before the upgrade:
+<code class="docutils literal notranslate"><span class="pre">404</span></code> = unknown bridge (the bridge registers again), <code class="docutils literal notranslate"><span class="pre">401</span></code> = bad or stale signature. A newer
+connection for the same bridge replaces the older one (closed with <code class="docutils literal notranslate"><span class="pre">4001</span></code>). A bridge that hears
+<code class="docutils literal notranslate"><span class="pre">4001</span></code> knows another live process holds its identity (a half-open old socket of its own would
+never hear the close), so it backs off 5 min doubling to 1 h instead of 1 s: two copies of one
+<code class="docutils literal notranslate"><span class="pre">bridge.json</span></code> would otherwise evict each other about once a second, a billed connect each time
+(~80 k requests/day).</p>
+<p>Registration: <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/bridge/register</span> <span class="pre">{public_key,</span> <span class="pre">ts,</span> <span class="pre">sig}</span></code> where <code class="docutils literal notranslate"><span class="pre">public_key</span></code> is the raw 32-byte
+Ed25519 key (base64url) and <code class="docutils literal notranslate"><span class="pre">sig</span></code> signs <code class="docutils literal notranslate"><span class="pre">&quot;splanc-bridge-register\n&lt;public_key&gt;\n&lt;ts&gt;&quot;</span></code> (proof of
+possession). The relay picks a random 20-character base32 bridge id.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Direction</p></th>
+<th class="head"><p>Frame</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;bridge_id&quot;,&quot;relay&quot;,&quot;mcp_url&quot;,&quot;credentials&quot;,&quot;pairing&quot;}</span></code></p></td>
+<td><p>Sent on connect.</p></td>
+</tr>
+<tr class="row-odd"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;state&quot;,&quot;credentials&quot;,&quot;pairing&quot;,&quot;reason&quot;}</span></code></p></td>
+<td><p>Credentials or pairing changed.</p></td>
+</tr>
+<tr class="row-even"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;req&quot;,&quot;id&quot;,&quot;method&quot;,&quot;headers&quot;,&quot;body&quot;}</span></code></p></td>
+<td><p>One tunnelled HTTP request.</p></td>
+</tr>
+<tr class="row-odd"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;cancel&quot;,&quot;id&quot;}</span></code></p></td>
+<td><p>The client went away (or the 10 min timeout hit).</p></td>
+</tr>
+<tr class="row-even"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;error&quot;,&quot;for&quot;,&quot;message&quot;}</span></code></p></td>
+<td><p>A bridge request failed (e.g. <code class="docutils literal notranslate"><span class="pre">new_code</span></code> rate-limited).</p></td>
+</tr>
+<tr class="row-odd"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;res&quot;,&quot;id&quot;,&quot;status&quot;,&quot;headers&quot;,&quot;body&quot;,&quot;end&quot;:true}</span></code></p></td>
+<td><p>A whole reply in ONE message.</p></td>
+</tr>
+<tr class="row-even"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;res&quot;,...}</span></code> then <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;chunk&quot;,&quot;id&quot;,&quot;data&quot;}</span></code>… <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;end&quot;,&quot;id&quot;}</span></code></p></td>
+<td><p>A streamed (SSE) reply.</p></td>
+</tr>
+<tr class="row-odd"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;new_code&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;revoke_all&quot;}</span></code></p></td>
+<td><p>Pairing control from the bridge’s local API.</p></td>
+</tr>
+<tr class="row-even"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ping</span></code> (plain text)</p></td>
+<td><p>Liveness fallback; auto-answered <code class="docutils literal notranslate"><span class="pre">pong</span></code> without waking the object.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Tunnelled request headers: <code class="docutils literal notranslate"><span class="pre">accept</span></code>, <code class="docutils literal notranslate"><span class="pre">content-type</span></code>, <code class="docutils literal notranslate"><span class="pre">last-event-id</span></code>, <code class="docutils literal notranslate"><span class="pre">mcp-session-id</span></code>,
+<code class="docutils literal notranslate"><span class="pre">mcp-protocol-version</span></code>, <code class="docutils literal notranslate"><span class="pre">mcp-method</span></code>, <code class="docutils literal notranslate"><span class="pre">mcp-name</span></code>, <code class="docutils literal notranslate"><span class="pre">mcp-param-*</span></code>. <code class="docutils literal notranslate"><span class="pre">Authorization</span></code> is never
+forwarded (no token passthrough). Response headers back: <code class="docutils literal notranslate"><span class="pre">content-type</span></code>, <code class="docutils literal notranslate"><span class="pre">mcp-session-id</span></code>,
+<code class="docutils literal notranslate"><span class="pre">mcp-protocol-version</span></code>, <code class="docutils literal notranslate"><span class="pre">allow</span></code>, <code class="docutils literal notranslate"><span class="pre">cache-control</span></code>. The bridge’s transport answers with SSE, so
+progress notifications and log messages from long tools reach the cloud client as they happen.
+Incoming messages are what the Durable Object is billed for, so the bridge coalesces: a reply
+whose stream ends within 400 ms (most of them) goes out as ONE <code class="docutils literal notranslate"><span class="pre">res</span></code> frame with the whole SSE
+body; a slower one switches to <code class="docutils literal notranslate"><span class="pre">res</span></code> + <code class="docutils literal notranslate"><span class="pre">chunk</span></code>s + <code class="docutils literal notranslate"><span class="pre">end</span></code>, forwarded live (the relay sets
+<code class="docutils literal notranslate"><span class="pre">x-accel-buffering:</span> <span class="pre">no</span></code>). Request bodies are capped at 4 MiB; at most 32 requests in flight per
+bridge. When the bridge drops (or the 10 min timeout hits) with requests in flight, a reply not
+started yet gets a <code class="docutils literal notranslate"><span class="pre">502</span></code>/<code class="docutils literal notranslate"><span class="pre">504</span></code> JSON-RPC error; a streamed reply already under way gets one last
+SSE event, a JSON-RPC error for each request id in its body, and ends, so the client fails the
+call at once instead of waiting out its own timeout.</p>
+<p>Session ids are the SDK’s: an unknown <code class="docutils literal notranslate"><span class="pre">mcp-session-id</span></code> (the bridge restarted) gets <code class="docutils literal notranslate"><span class="pre">404</span></code>, and
+the client initializes again, as the spec says. Sessions idle for 30 min are closed.</p>
+<p>Liveness: the bridge sends a WebSocket protocol ping every 30 s (free: answered by the runtime);
+if nothing has come back for 60 s it also sends the text <code class="docutils literal notranslate"><span class="pre">ping</span></code> (auto-response, answered without
+waking the object); after 90 s of silence it reconnects. Backoff: 1 s doubling to 60 s, ±20 %
+jitter, reset by a successful <code class="docutils literal notranslate"><span class="pre">hello</span></code>.</p>
+</section>
+<section id="pairing">
+<h2>Pairing<a class="headerlink" href="#pairing" title="Link to this heading">¶</a></h2>
+<p>Bridges pair headlessly with a short code shown on the bridge’s display.</p>
+<ul class="simple">
+<li><p><strong>Code</strong>: 8 symbols from a 32-symbol alphabet without <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">O</span> <span class="pre">1</span> <span class="pre">I</span></code> (40 bits), shown as
+<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>, valid 10 minutes, single use, one live code per bridge (a new code replaces the
+old). Input is case- and separator-insensitive.</p></li>
+<li><p><strong>When codes appear</strong>: an unpaired bridge asks for a code by itself as soon as it connects and
+again when one expires, for its first hour of uptime; after that (or once paired, or once a
+code has been redeemed) a code comes only on request: the display’s button, or
+<code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>. (Redeeming clears the code a moment before the credential
+exists; a bridge that asked again in that gap would end up paired and still showing a code.)</p></li>
+<li><p><strong>Redeeming</strong>, either way:</p>
+<ol class="arabic simple">
+<li><p><strong>OAuth connector (preferred)</strong>. The user adds <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> as a custom connector. The
+client discovers the authorization server (RFC 9728 → RFC 8414), registers (Client ID
+Metadata Document, or dynamic registration), and opens <code class="docutils literal notranslate"><span class="pre">/authorize</span></code>. The consent page shows
+the client’s name and where it will redirect, and asks for the code. The code identifies
+the bridge; the relay issues an authorization code bound to the client, redirect URI,
+PKCE challenge and resource, and the client exchanges it at <code class="docutils literal notranslate"><span class="pre">/token</span></code>. No account, no
+password, nothing to copy.</p></li>
+<li><p><strong>Bearer token</strong> for clients that only take headers: <code class="docutils literal notranslate"><span class="pre">/pair</span></code> (code → <code class="docutils literal notranslate"><span class="pre">spl_pt_…</span></code>), shown
+once, never expires, revocable. With <code class="docutils literal notranslate"><span class="pre">Accept:</span> <span class="pre">application/json</span></code> it answers
+<code class="docutils literal notranslate"><span class="pre">{token,</span> <span class="pre">mcp_url}</span></code>, and errors as <code class="docutils literal notranslate"><span class="pre">{error,</span> <span class="pre">error_description}</span></code> (<code class="docutils literal notranslate"><span class="pre">invalid_request</span></code>,
+<code class="docutils literal notranslate"><span class="pre">invalid_grant</span></code>, <code class="docutils literal notranslate"><span class="pre">slow_down</span></code>).</p></li>
+</ol>
+</li>
+<li><p><strong>Tokens</strong>: <code class="docutils literal notranslate"><span class="pre">spl_&lt;kind&gt;_&lt;bridge</span> <span class="pre">id&gt;_&lt;43-char</span> <span class="pre">secret&gt;</span></code>; kinds <code class="docutils literal notranslate"><span class="pre">at</span></code> (access, 24 h), <code class="docutils literal notranslate"><span class="pre">rt</span></code>
+(refresh, 90 days, rotated on every use), <code class="docutils literal notranslate"><span class="pre">pt</span></code> (personal), <code class="docutils literal notranslate"><span class="pre">ac</span></code> (authorization code, 5 min,
+single use). The relay stores only <code class="docutils literal notranslate"><span class="pre">SHA-256(secret)</span></code>. The bridge id in the token routes the
+request to the right Durable Object; the hash is checked there.</p></li>
+<li><p><strong>Refresh reuse detection</strong>: a rotated-out refresh token is remembered (as a hash); if it is
+ever presented again, the whole grant is revoked (someone holds a copy).</p></li>
+<li><p><strong>Revocation</strong>: <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/revoke</span></code> (one grant), or <code class="docutils literal notranslate"><span class="pre">revoke_all</span></code> from the bridge (every credential
+for that bridge; the display’s “revoke all” button). Live MCP sessions on the bridge are
+dropped too.</p></li>
+</ul>
+<p>Client registration is stateless: a DCR client id is
+<code class="docutils literal notranslate"><span class="pre">dcr.&lt;b64url</span> <span class="pre">{redirect_uris,</span> <span class="pre">name,</span> <span class="pre">auth</span> <span class="pre">method}&gt;.&lt;HMAC&gt;</span></code>; a confidential client’s secret is an
+HMAC of its id. Registration spam costs no storage. A <code class="docutils literal notranslate"><span class="pre">client_id</span></code> that is an https URL is
+treated as a Client ID Metadata Document: fetched (≤ 16 KiB, 5 s, no redirects, cached 5 min),
+it must name itself and list the redirect URI. Redirect URIs must be https or loopback http
+(any port on loopback, RFC 8252).</p>
+</section>
+<section id="display-contract-fixed-the-pi-display-image-codes-against-it">
+<h2>Display contract (fixed; the Pi/display image codes against it)<a class="headerlink" href="#display-contract-fixed-the-pi-display-image-codes-against-it" title="Link to this heading">¶</a></h2>
+<p>The bridge writes the status file <strong>atomically</strong> (temp file in the same directory + rename):</p>
+<ul class="simple">
+<li><p>path <code class="docutils literal notranslate"><span class="pre">/run/splanc-bridge/status.json</span></code>, overridable with <code class="docutils literal notranslate"><span class="pre">SPLANC_BRIDGE_STATUS</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">--status</span></code>); when the default directory isn’t writable (not running as a service), the bridge
+falls back to <code class="docutils literal notranslate"><span class="pre">$XDG_RUNTIME_DIR/splanc-bridge/status.json</span></code> and logs it;</p></li>
+<li><p>rewritten on every change and at least every 30 s (<code class="docutils literal notranslate"><span class="pre">updated_at</span></code> is a heartbeat: a display
+can treat a status older than ~90 s as “bridge not running”).</p></li>
+</ul>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">&quot;v&quot;</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">&quot;state&quot;</span><span class="p">:</span><span class="s2">&quot;starting|offline|unpaired|pairing|paired|error&quot;</span><span class="p">,</span><span class="nt">&quot;relay&quot;</span><span class="p">:</span><span class="s2">&quot;&lt;url&gt;&quot;</span><span class="p">,</span><span class="nt">&quot;bridge_id&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">&quot;pairing&quot;</span><span class="p">:{</span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="s2">&quot;ABCD-EFGH&quot;</span><span class="p">,</span><span class="nt">&quot;expires_at&quot;</span><span class="p">:</span><span class="err">&lt;u</span><span class="kc">n</span><span class="err">ix</span><span class="w"> </span><span class="err">s&gt;</span><span class="p">,</span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="s2">&quot;&lt;redeem url&gt;&quot;</span><span class="p">}</span><span class="err">|</span><span class="kc">null</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">&quot;clients&quot;</span><span class="p">:</span><span class="err">&lt;i</span><span class="kc">nt</span><span class="w"> </span><span class="err">co</span><span class="kc">nne</span><span class="err">c</span><span class="kc">te</span><span class="err">d</span><span class="w"> </span><span class="err">cloud</span><span class="w"> </span><span class="err">sessio</span><span class="kc">ns</span><span class="err">&gt;</span><span class="p">,</span><span class="nt">&quot;players&quot;</span><span class="p">:[{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;host&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="kc">true</span><span class="p">}],</span>
+<span class="w"> </span><span class="nt">&quot;lan_ip&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="err">|</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;updated_at&quot;</span><span class="p">:</span><span class="err">&lt;u</span><span class="kc">n</span><span class="err">ix</span><span class="w"> </span><span class="err">s&gt;</span><span class="p">}</span>
+</pre></div>
+</div>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">state</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">starting</span></code>: first connection attempt in progress. <code class="docutils literal notranslate"><span class="pre">offline</span></code>: relay not reachable (or the bridge stopped; see <code class="docutils literal notranslate"><span class="pre">error</span></code>). <code class="docutils literal notranslate"><span class="pre">unpaired</span></code>: connected, no credentials, no live code. <code class="docutils literal notranslate"><span class="pre">pairing</span></code>: a live code is in <code class="docutils literal notranslate"><span class="pre">pairing</span></code>. <code class="docutils literal notranslate"><span class="pre">paired</span></code>: connected, at least one credential. <code class="docutils literal notranslate"><span class="pre">error</span></code>: fatal, see <code class="docutils literal notranslate"><span class="pre">error</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">relay</span></code></p></td>
+<td><p>The relay URL the bridge was started with. The MCP endpoint is <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bridge_id</span></code></p></td>
+<td><p>Assigned by the relay; <code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code> before registration.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pairing</span></code></p></td>
+<td><p>Only while connected and unexpired. <code class="docutils literal notranslate"><span class="pre">url</span></code> is <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/pair?code=&lt;code&gt;</span></code> (good for a QR code).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clients</span></code></p></td>
+<td><p>MCP sessions active in the last 10 minutes.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">players</span></code></p></td>
+<td><p>Every player the hub knows; <code class="docutils literal notranslate"><span class="pre">ok</span></code> = a session is open or it answered discovery in the last 15 min.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">lan_ip</span></code></p></td>
+<td><p>The bridge’s first non-loopback IPv4 address.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">error</span></code></p></td>
+<td><p>Last connection error while <code class="docutils literal notranslate"><span class="pre">offline</span></code>, the fatal error in <code class="docutils literal notranslate"><span class="pre">error</span></code>, else <code class="docutils literal notranslate"><span class="pre">null</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">updated_at</span></code></p></td>
+<td><p>Unix seconds of this write.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Control socket: a unix stream socket at <code class="docutils literal notranslate"><span class="pre">/run/splanc-bridge/control.sock</span></code> (override
+<code class="docutils literal notranslate"><span class="pre">SPLANC_BRIDGE_CONTROL</span></code> or <code class="docutils literal notranslate"><span class="pre">--control</span></code>; same fallback as the status file), mode <code class="docutils literal notranslate"><span class="pre">0660</span></code> (put the
+display service in the bridge user’s group). Newline-delimited JSON, one reply line per command:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Command</p></th>
+<th class="head"><p>Reply</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;new_pairing_code&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;pairing&quot;:{&quot;code&quot;,&quot;expires_at&quot;,&quot;url&quot;}}</span></code>; <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:false,&quot;error&quot;}</span></code> when offline or rate-limited.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;revoke_all&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;revoked&quot;:&lt;n&gt;}</span></code> once the relay confirms; live sessions are dropped.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;identify&quot;}</span></code></p></td>
+<td><p>Blinks every known fixture (brightness dips 3×, then restored): <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;players&quot;:&lt;n&gt;,&quot;results&quot;:[…]}</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;status&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;status&quot;:&lt;the</span> <span class="pre">status</span> <span class="pre">object&gt;}</span></code> (extra; same as the file).</p></td>
+</tr>
+<tr class="row-even"><td><p>anything else</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:false,&quot;error&quot;:&quot;unknown</span> <span class="pre">cmd</span> <span class="pre">…&quot;}</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code|revoke-all|identify|status</span></code> is a CLI over the same socket.</p>
+</section>
+<section id="effects-library">
+<h2>Effects library<a class="headerlink" href="#effects-library" title="Link to this heading">¶</a></h2>
+<p>A private library of effect programs per installation (per bridge), so an agent asked for a new
+scene or mood can find an effect that already worked instead of writing it again, read and copy
+one to reuse its ideas, and the library grows as the user asks for more. Code:
+<code class="docutils literal notranslate"><span class="pre">agent/relay/src/library.ts</span></code> (entries, validation, search, the tools; no runtime imports),
+<code class="docutils literal notranslate"><span class="pre">agent/relay/src/mcpLibrary.ts</span></code> (the relay’s JSON-RPC handling), <code class="docutils literal notranslate"><span class="pre">agent/src/libraryLocal.ts</span></code>
+(the agent’s file store and zod schemas).</p>
+<p><strong>Entry</strong>: <code class="docutils literal notranslate"><span class="pre">id</span></code> (<code class="docutils literal notranslate"><span class="pre">fx_</span></code> + 8 base32 chars, stable), <code class="docutils literal notranslate"><span class="pre">name</span></code>, <code class="docutils literal notranslate"><span class="pre">description</span></code> (what it looks like, the
+mood, when to use it), <code class="docutils literal notranslate"><span class="pre">tags</span></code>, <code class="docutils literal notranslate"><span class="pre">source</span></code>, <code class="docutils literal notranslate"><span class="pre">uniforms</span></code> (the compiler’s manifest minus slots: name,
+width, ui, default, min, max, unit, doc), <code class="docutils literal notranslate"><span class="pre">lang</span></code> (effect language version, 1), <code class="docutils literal notranslate"><span class="pre">compiler</span></code> (when
+known), <code class="docutils literal notranslate"><span class="pre">hash</span></code> (sha256 of the normalized source), <code class="docutils literal notranslate"><span class="pre">bytes</span></code>, <code class="docutils literal notranslate"><span class="pre">created_at</span></code>, <code class="docutils literal notranslate"><span class="pre">updated_at</span></code>, <code class="docutils literal notranslate"><span class="pre">uses</span></code>
+(successful deploys), <code class="docutils literal notranslate"><span class="pre">last_used_at</span></code>, <code class="docutils literal notranslate"><span class="pre">parent_id</span></code> (duplicates), <code class="docutils literal notranslate"><span class="pre">origin</span></code> (<code class="docutils literal notranslate"><span class="pre">saved</span></code>, <code class="docutils literal notranslate"><span class="pre">auto</span></code> = kept
+from a deploy, <code class="docutils literal notranslate"><span class="pre">seed</span></code> = a built-in example), <code class="docutils literal notranslate"><span class="pre">needs_description</span></code>, <code class="docutils literal notranslate"><span class="pre">perf</span></code> (<code class="docutils literal notranslate"><span class="pre">estimate</span></code> per fixture
+from deploy_effect, <code class="docutils literal notranslate"><span class="pre">measured</span></code> from the next measure_effect).</p>
+<p><strong>Tools</strong> (annotated: search/get read-only; update/delete destructive; all <code class="docutils literal notranslate"><span class="pre">openWorldHint:</span> <span class="pre">false</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Tool</p></th>
+<th class="head"><p></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">search_effects</span> <span class="pre">{query?,</span> <span class="pre">tags?,</span> <span class="pre">limit?}</span></code></p></td>
+<td><p>Compact rows (id, name, truncated description, tags, uniform names, uses, last_used), ranked. No query: the whole index, most used first (default 100 rows, max 500).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">get_effect</span> <span class="pre">{id}</span></code></p></td>
+<td><p>The full entry, source included.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">save_effect</span> <span class="pre">{name,</span> <span class="pre">description,</span> <span class="pre">source,</span> <span class="pre">tags?,</span> <span class="pre">uniforms?,</span> <span class="pre">perf?}</span></code></p></td>
+<td><p>New entry, or (same source hash) the existing entry’s metadata updated; an <code class="docutils literal notranslate"><span class="pre">auto</span></code> entry saved this way becomes <code class="docutils literal notranslate"><span class="pre">saved</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">duplicate_effect</span> <span class="pre">{id,</span> <span class="pre">name?,</span> <span class="pre">description?}</span></code></p></td>
+<td><p>A copy with <code class="docutils literal notranslate"><span class="pre">parent_id</span></code> set, full source returned, to adapt and <code class="docutils literal notranslate"><span class="pre">update_effect</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update_effect</span> <span class="pre">{id,</span> <span class="pre">…}</span></code></p></td>
+<td><p>Name, description, tags, source (uniforms re-read), uniforms, perf.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">delete_effect</span> <span class="pre">{id}</span></code></p></td>
+<td><p>Gone for good.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code></p></td>
+<td><p>Deploys an entry in one call; <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> defaults to a slug of its name. <code class="docutils literal notranslate"><span class="pre">name</span></code>/<code class="docutils literal notranslate"><span class="pre">description</span></code>/<code class="docutils literal notranslate"><span class="pre">tags</span></code> on any deploy describe it for the library.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The tool descriptions and the MCP <code class="docutils literal notranslate"><span class="pre">instructions</span></code> give the agent the workflow: <code class="docutils literal notranslate"><span class="pre">search_effects</span></code>
+first for any new scene or mood; reuse (deploy by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>, tune uniforms) or duplicate and
+adapt; otherwise author, then <code class="docutils literal notranslate"><span class="pre">save_effect</span></code> with a rich description and tags.</p>
+<p><strong>Accumulation</strong>: every successful <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> with a source is kept: a use of the entry with
+the same source (or <code class="docutils literal notranslate"><span class="pre">library_id</span></code>), else a new <code class="docutils literal notranslate"><span class="pre">auto</span></code> entry named after the effect id, with a
+placeholder description and <code class="docutils literal notranslate"><span class="pre">needs_description</span></code> (search reports how many; the deploy result’s
+second text block says <code class="docutils literal notranslate"><span class="pre">update_effect</span></code> it). A failed deploy (compile error, over budget, every
+player failed) isn’t kept.</p>
+<p><strong>Limits</strong>: source ≤ 64 KB, description ≤ 2 KB, name ≤ 80, ≤ 16 tags, ≤ 64 uniforms, perf ≤ 4
+KB; ≤ 500 entries and ≤ 8 MB of source per installation. To make room, <code class="docutils literal notranslate"><span class="pre">auto</span></code> and <code class="docutils literal notranslate"><span class="pre">seed</span></code>
+entries are evicted least recently used first (the save’s result lists them); <code class="docutils literal notranslate"><span class="pre">saved</span></code> entries
+never are: a save that would need that is refused with the reason, and a deploy still succeeds
+(its result says it wasn’t kept).</p>
+<p><strong>Search</strong>: word tokens (lower case, a light stemmer, stop words dropped) over name (weight 5),
+tags (4), uniform names (2) and description (1, not placeholders); exact or prefix (≥ 3 chars)
+matches, weighted by rarity (idf), scaled by how much of the query matched, plus a small boost
+for use. SQLite FTS5 is available in Durable Object SQLite, but the relay keeps its Durable
+Object state through the storage KV API so the same code runs on the Node host (self-hosted
+relay, tests) and in the agent’s file store; at ≤ 500 metadata rows, scoring in memory is
+microseconds, and the index is read once per wake period.</p>
+<p><strong>Where it lives</strong>:</p>
+<ul class="simple">
+<li><p><em>Behind the relay</em> the library is in the bridge’s <code class="docutils literal notranslate"><span class="pre">BridgeObject</span></code> storage: <code class="docutils literal notranslate"><span class="pre">fx:&lt;id&gt;</span></code> = an
+entry’s metadata (the search index), <code class="docutils literal notranslate"><span class="pre">fxs:&lt;id&gt;</span></code> = its source (read by id only), <code class="docutils literal notranslate"><span class="pre">fxk:&lt;name&gt;</span></code> =
+flags (<code class="docutils literal notranslate"><span class="pre">seeded</span></code>, <code class="docutils literal notranslate"><span class="pre">last_deploy</span></code>). New keys in the existing class: no Durable Object migration,
+nothing changes for paired bridges. The relay serves it itself, so it is fast and works while
+the bridge is offline:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tools/call</span></code> of a library tool is answered by the Durable Object; nothing crosses the
+bridge socket.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tools/list</span></code> and <code class="docutils literal notranslate"><span class="pre">initialize</span></code> are forwarded and the reply’s response event rewritten: the
+library tools appended (a bridge tool of the same name replaced), <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code>’s schema
+given the library arguments, the library guidance appended to <code class="docutils literal notranslate"><span class="pre">instructions</span></code>. JSON replies
+stay JSON; SSE replies stay streams (progress events pass straight through; only the event
+with the response for that request id waits).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>: the relay puts the entry’s source and an <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> in the
+call and strips the library arguments, so any bridge version deploys it. After a successful
+deploy (and a <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>), the library is updated and a note added to the result.</p></li>
+<li><p>Bridge offline: <code class="docutils literal notranslate"><span class="pre">tools/list</span></code> answers the library tools; <code class="docutils literal notranslate"><span class="pre">initialize</span></code> gets a relay session
+(<code class="docutils literal notranslate"><span class="pre">Mcp-Session-Id:</span> <span class="pre">relay-…</span></code>, <code class="docutils literal notranslate"><span class="pre">serverInfo.name:</span> <span class="pre">splanc-relay</span></code>, instructions saying the bridge
+is offline) serving the library, <code class="docutils literal notranslate"><span class="pre">ping</span></code> and notifications (<code class="docutils literal notranslate"><span class="pre">202</span></code>); other calls on it get a
+JSON-RPC error. Once the bridge is back, that session gets <code class="docutils literal notranslate"><span class="pre">404</span></code> for anything but library
+calls, so the client initializes again onto the bridge (the spec’s session-expiry path).
+Other calls while offline keep the <code class="docutils literal notranslate"><span class="pre">503</span></code>.</p></li>
+<li><p>Batches and anything unparseable are tunnelled untouched.</p></li>
+</ul>
+</li>
+<li><p><em>Without the relay</em> (stdio, the one-shot CLI) the agent serves the same tools from
+<code class="docutils literal notranslate"><span class="pre">&lt;state</span> <span class="pre">dir&gt;/effects-library.json</span></code> (<code class="docutils literal notranslate"><span class="pre">$SPLANC_BRIDGE_STATE_DIR</span></code>, else <code class="docutils literal notranslate"><span class="pre">$STATE_DIRECTORY</span></code>, else
+<code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc</span></code>), with the same <code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code> and accumulation. The
+bridge (<code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge</span></code>) registers no library tools: the relay’s library is the one in
+use (and a self-hosted <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">relay</span></code> keeps it in its data file).</p></li>
+</ul>
+<p><strong>Seed</strong>: a new library starts with the skill’s examples (<code class="docutils literal notranslate"><span class="pre">agent/skill/examples/*.fx</span></code>, copied
+into <code class="docutils literal notranslate"><span class="pre">librarySeed.ts</span></code>; <code class="docutils literal notranslate"><span class="pre">library_test</span></code> checks they match) with descriptions and tags, once.
+Uniform manifests are read from the source’s <code class="docutils literal notranslate"><span class="pre">uniform</span></code> declarations the way <code class="docutils literal notranslate"><span class="pre">fx_compiler</span></code>
+parses them (the relay has no compiler); <code class="docutils literal notranslate"><span class="pre">library_test</span></code> checks that against the compiler for
+every example. An agent can pass the compiler’s manifest instead.</p>
+<p><strong>Later: a shared library.</strong> This one is private on purpose. An opt-in shared/community library
+(publish an entry; search others’) would need moderation (effect source is arbitrary text an
+agent reads: prompt injection, spam, offensive names), per-account quotas, attribution and
+licensing, and takedown. It would live in its own Durable Object class (not in any bridge’s), with
+publishing as an explicit user action and results marked as third-party content.</p>
+</section>
+<section id="free-tier-budget">
+<h2>Free-tier budget<a class="headerlink" href="#free-tier-budget" title="Link to this heading">¶</a></h2>
+<p>Workers Free plan limits (Cloudflare docs, checked 2026-10): Worker requests 100,000/day (10 ms
+CPU each); Durable Objects 100,000 requests/day, 13,000 GB-s/day duration, SQLite 5 M rows
+read/day, 100 k rows written/day, 5 GB stored; incoming WebSocket messages bill 20:1 as
+requests; outgoing messages, protocol pings and auto-responses are free; idle hibernated objects
+bill no duration. Exceeding a limit makes further operations fail until 00:00 UTC; a free account
+is never charged.</p>
+<p>Costs per action:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Action</p></th>
+<th class="head"><p>Worker req</p></th>
+<th class="head"><p>DO req</p></th>
+<th class="head"><p>Rows R / W</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>One MCP message (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/mcp</span></code>)</p></td>
+<td><p>1</p></td>
+<td><p>1 + 1/20 (the bridge’s reply)</p></td>
+<td><p>≤ 1 / 0</p></td>
+</tr>
+<tr class="row-odd"><td><p>Unauthenticated <code class="docutils literal notranslate"><span class="pre">/mcp</span></code> probe</p></td>
+<td><p>1</p></td>
+<td><p>0</p></td>
+<td><p>0 / 0</p></td>
+</tr>
+<tr class="row-even"><td><p>Bridge connect</p></td>
+<td><p>1</p></td>
+<td><p>1</p></td>
+<td><p>2 + #tokens / 0–1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Idle bridge, per day</p></td>
+<td><p>0</p></td>
+<td><p>~0 (pings are free; reconnects 1 each)</p></td>
+<td><p>0 / 0</p></td>
+</tr>
+<tr class="row-even"><td><p>New pairing code</p></td>
+<td><p>0</p></td>
+<td><p>1/20 + 1</p></td>
+<td><p>4 / 3</p></td>
+</tr>
+<tr class="row-odd"><td><p>Full OAuth connect (register, authorize ×2, token)</p></td>
+<td><p>4</p></td>
+<td><p>~6</p></td>
+<td><p>~10 / ~8</p></td>
+</tr>
+<tr class="row-even"><td><p>Token refresh (daily per client)</p></td>
+<td><p>1</p></td>
+<td><p>2</p></td>
+<td><p>3 / 3</p></td>
+</tr>
+<tr class="row-odd"><td><p>Library tool call (search, get, save, …)</p></td>
+<td><p>1</p></td>
+<td><p>1 (no bridge message)</p></td>
+<td><p>first per wake: #entries; then 0–1 / 0–2</p></td>
+</tr>
+<tr class="row-even"><td><p>Library bookkeeping on a deploy / measure through the relay</p></td>
+<td><p>0 (same request)</p></td>
+<td><p>0</p></td>
+<td><p>first per wake: #entries / 1–3</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Duration is the binding limit: a Durable Object is billed at 128 MB for every second it is
+awake (while a request is in flight, plus ~10 s before it hibernates). One isolated tool call ≈
+10–15 s awake ≈ 1.3–1.9 GB-s; calls in a burst share the wake period. 13,000 GB-s/day ≈ 28
+object-hours/day, which is about:</p>
+<ul class="simple">
+<li><p>~7,000 isolated tool calls/day, or ~28 hours of continuous back-to-back agent activity,
+spread over all bridges;</p></li>
+<li><p>by requests: ~95,000 MCP messages/day. A typical session (initialize, list tools, ~20 calls)
+is ~25 messages, so ~3,800 sessions/day if they were short and dense.</p></li>
+</ul>
+<p>For a household doing a few sessions a day (~40 GB-s), one free account serves a few hundred
+bridges. The design choices that keep it there: quick replies coalesced into one message, <code class="docutils literal notranslate"><span class="pre">405</span></code> on
+<code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/mcp</span></code>,
+hibernatable bridge sockets with free pings, <code class="docutils literal notranslate"><span class="pre">401</span></code>s answered without a Durable Object, no
+per-request storage writes, and token checks cached per wake period. The effects library adds
+no Worker requests and no socket messages: its calls are answered inside the one Durable Object
+request, its index (≤ 500 small rows) is read once per wake, and a save writes two rows.</p>
+</section>
+<section id="hosting">
+<h2>Hosting<a class="headerlink" href="#hosting" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Cloudflare: <code class="docutils literal notranslate"><span class="pre">agent/relay/wrangler.toml</span></code> deploys Worker <code class="docutils literal notranslate"><span class="pre">splanc-relay</span></code> to
+<code class="docutils literal notranslate"><span class="pre">https://splanc-relay.&lt;account</span> <span class="pre">subdomain&gt;.workers.dev</span></code> (<code class="docutils literal notranslate"><span class="pre">agent/relay/deploy.sh</span></code>, or the
+“Deploy cloud relay” workflow). splanc.io’s DNS stays where it is; no custom domain is needed.</p></li>
+<li><p>Public address: <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev</span></code>. The splanc Pages project has a service binding
+<code class="docutils literal notranslate"><span class="pre">RELAY</span></code> → <code class="docutils literal notranslate"><span class="pre">splanc-relay</span></code>, and <code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code> forwards the relay’s paths (<code class="docutils literal notranslate"><span class="pre">RELAY_PATHS</span></code>:
+<code class="docutils literal notranslate"><span class="pre">/mcp</span></code>, <code class="docutils literal notranslate"><span class="pre">/pair</span></code>, the OAuth endpoints and metadata, <code class="docutils literal notranslate"><span class="pre">/bridge/*</span></code>) through it with the URL
+unchanged, so the relay’s issuer and MCP URLs come out as <code class="docutils literal notranslate"><span class="pre">splanc.pages.dev</span></code>. The workers.dev
+address keeps working and names itself. The binding lives in the Pages project settings
+(not in the repo); a deploy without it answers those paths with <code class="docutils literal notranslate"><span class="pre">503</span> <span class="pre">relay</span> <span class="pre">not</span> <span class="pre">bound</span></code>.
+The token needs Account → Workers Scripts → Edit (the Pages-only deploy token can’t).</p></li>
+<li><p>Self-hosted: <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">relay</span></code> runs the same Worker code on Node (<code class="docutils literal notranslate"><span class="pre">RelayHost</span></code>: Durable
+Object storage in memory, persisted to a JSON file; sockets never hibernate). Expose it with
+<code class="docutils literal notranslate"><span class="pre">tailscale</span> <span class="pre">funnel</span></code> or <code class="docutils literal notranslate"><span class="pre">tailscale</span> <span class="pre">serve</span></code>; see <a class="reference internal" href="../guides/relay-tailscale.html"><span class="std std-doc">the Tailscale guide</span></a>.</p></li>
+</ul>
+<p>The retired app origin: <code class="docutils literal notranslate"><span class="pre">splanc.pages.dev</span></code> (Cloudflare Pages, <code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code>) now <code class="docutils literal notranslate"><span class="pre">301</span></code>s
+every non-API path to <code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/&lt;path&gt;</span></code> (agent files <code class="docutils literal notranslate"><span class="pre">AGENTS.md</span></code>, <code class="docutils literal notranslate"><span class="pre">llms.txt</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/agent/</span></code>, <code class="docutils literal notranslate"><span class="pre">/.well-known/</span></code> go to the splanc.io root), serves a self-unregistering service worker
+at <code class="docutils literal notranslate"><span class="pre">/sw.js</span></code> so installed copies let go, and keeps <code class="docutils literal notranslate"><span class="pre">/gh-asset</span></code> and <code class="docutils literal notranslate"><span class="pre">/api/demo-ai/…</span></code> working.</p>
+</section>
+<section id="threat-model">
+<h2>Threat model<a class="headerlink" href="#threat-model" title="Link to this heading">¶</a></h2>
+<p>Assets: control of the user’s fixtures (effects, brightness, uniforms, names; never re-flash,
+re-map or rewire: <code class="docutils literal notranslate"><span class="pre">FORBIDDEN_TYPES</span></code> in <code class="docutils literal notranslate"><span class="pre">session.ts</span></code> is enforced on the bridge); the LAN the
+bridge sits on; the bridge’s identity key; the relay’s free-tier budget.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Threat</p></th>
+<th class="head"><p>Mitigation</p></th>
+<th class="head"><p>Residual</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Guessing a pairing code</p></td>
+<td><p>40-bit codes, 10 min, single use; ≤ 10 failures per IP per 10 min; ≤ 300 failures per 10 min globally, checked before lookup</p></td>
+<td><p>With N live codes, a guesser at the global ceiling wins with probability 300·N/2⁴⁰ per 10 min (N = 10: ~10⁻⁴ per year)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Burning the global failure budget</p></td>
+<td><p>—</p></td>
+<td><p>A determined attacker can block pairing for everyone in 10-min windows (retry later; self-host)</p></td>
+</tr>
+<tr class="row-even"><td><p>Someone near the display reads the code</p></td>
+<td><p>Codes show only while unpaired (first hour) or on a button press; <code class="docutils literal notranslate"><span class="pre">clients</span></code> on the display; revoke-all button</p></td>
+<td><p>Physical presence + 10 min = can pair; that is the trust model of a code on a screen</p></td>
+</tr>
+<tr class="row-odd"><td><p>Consent phishing (attacker sends the user an authorize link for the attacker’s client)</p></td>
+<td><p>Consent page names the client and the redirect host, warns on loopback redirects; the user has to type a code from their own device</p></td>
+<td><p>Like any device-code flow, a user who types the code into an attacker’s page grants the attacker access</p></td>
+</tr>
+<tr class="row-even"><td><p>Stolen access token</p></td>
+<td><p>24 h lifetime; hashes only at rest; revocable per grant or all at once</p></td>
+<td><p>Valid until revoked or expired</p></td>
+</tr>
+<tr class="row-odd"><td><p>Stolen refresh token</p></td>
+<td><p>Rotation on every use; reuse of a rotated token revokes the grant</p></td>
+<td><p>The thief wins if they use it first and the user never refreshes again</p></td>
+</tr>
+<tr class="row-even"><td><p>Stolen personal token</p></td>
+<td><p>Never expires by design (headers-only clients); revoke-all</p></td>
+<td><p>User-managed</p></td>
+</tr>
+<tr class="row-odd"><td><p>Token passthrough / confused deputy</p></td>
+<td><p>Tokens are audience-bound to <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> (RFC 8707 <code class="docutils literal notranslate"><span class="pre">resource</span></code> checked); <code class="docutils literal notranslate"><span class="pre">Authorization</span></code> is never forwarded to the bridge</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p>Bridge impersonation</p></td>
+<td><p>Ed25519 key on the bridge (file mode 0600); signed timestamps (±300 s) on connect</p></td>
+<td><p>A captured connect header (TLS makes that hard) replays for 5 min, which only reconnects the real bridge</p></td>
+</tr>
+<tr class="row-odd"><td><p>Relay operator / Cloudflare</p></td>
+<td><p>The relay holds no device keys, Wi-Fi credentials or certificate pins; it sees MCP traffic: tool arguments and results (effect source, fixture maps, player names and LAN addresses)</p></td>
+<td><p>A malicious relay can drive the lights as any connected agent could. Self-host to remove it</p></td>
+</tr>
+<tr class="row-even"><td><p>Bridge as a LAN pivot</p></td>
+<td><p>The bridge speaks only the hub’s MCP tools; no arbitrary HTTP</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">add_player</span></code> / <code class="docutils literal notranslate"><span class="pre">refresh_players</span></code> make the bridge TCP-probe :443 and GET <code class="docutils literal notranslate"><span class="pre">/.well-known/splanc.json</span></code> on hosts an agent names, and sweep its local /24s</p></td>
+</tr>
+<tr class="row-odd"><td><p>Prompt-injected or careless cloud agent</p></td>
+<td><p>The tool surface is bounded (no re-flash/re-map; <code class="docutils literal notranslate"><span class="pre">set_device_name</span></code> and <code class="docutils literal notranslate"><span class="pre">delete_keypoint</span></code> are confirm-gated by the skill)</p></td>
+<td><p>Lights can be set to anything the effect engine can do</p></td>
+</tr>
+<tr class="row-even"><td><p>Local users</p></td>
+<td><p>Control socket mode 0660; status file world-readable (no secrets in it)</p></td>
+<td><p>Anyone in the bridge’s group can mint codes and revoke</p></td>
+</tr>
+<tr class="row-odd"><td><p>Consent page injection / clickjacking</p></td>
+<td><p>Every value escaped; CSP <code class="docutils literal notranslate"><span class="pre">default-src</span> <span class="pre">'none'</span></code>, <code class="docutils literal notranslate"><span class="pre">frame-ancestors</span> <span class="pre">'none'</span></code>; no scripts</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p>SSRF via Client ID Metadata Documents</p></td>
+<td><p>Only https URLs with a path; 5 s, 16 KiB, no redirects; Workers can’t reach private networks</p></td>
+<td><p>The relay can be made to fetch public URLs (rate-bound by <code class="docutils literal notranslate"><span class="pre">/authorize</span></code> use)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Library abuse (a paired agent filling it)</p></td>
+<td><p>Size caps per entry and per installation (500 entries, 8 MB); private per bridge, so nothing one user stores reaches another</p></td>
+<td><p>A paired agent can fill or delete its own user’s library</p></td>
+</tr>
+<tr class="row-even"><td><p>Prompt injection through library entries</p></td>
+<td><p>Entries are private: only this installation’s own agents wrote them</p></td>
+<td><p>Content an agent saved earlier is read back as data by the next agent</p></td>
+</tr>
+<tr class="row-odd"><td><p>Free-tier exhaustion (DoS)</p></td>
+<td><p>Unauthenticated requests stop at the Worker; registrations rate-limited per IP and globally</p></td>
+<td><p>100 k Worker requests/day is a hard ceiling an attacker can spend; the relay then fails closed until 00:00 UTC</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Not covered: the LAN itself (players have no LAN auth; anything on the LAN can already drive
+them), and the bridge host’s own security.</p>
+</section>
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_test</span></code>: the Worker under the Node host: metadata, registration (rate limit,
+proof of possession), signed connect (bad/stale signature, unknown bridge → re-register),
+codes (replacement, single use, expiry, per-IP and global limits), the OAuth flow (consent
+page, PKCE, single-use codes, confidential clients, tampered client ids, CIMD), refresh
+rotation + reuse detection, <code class="docutils literal notranslate"><span class="pre">/pair</span></code>, RFC 7009, revoke-all, offline <code class="docutils literal notranslate"><span class="pre">503</span></code>, <code class="docutils literal notranslate"><span class="pre">405</span></code> GET, in-flight
+requests failing fast when the bridge drops, no token passthrough, hashes-only storage.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:library_test</span></code>: the library on its own and in the stdio/CLI server: validation and
+caps, search ranking, LRU eviction (saved entries never), dedupe by source hash, duplicate
+lineage, deploy accumulation and perf, the seed examples, the uniform reader against the real
+compiler, the relay’s DO store and the agent’s file store giving identical tool results, the
+server’s tools and schemas matching the relay’s.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_library_test</span></code>: the relay serving it: library calls answered without a bridge
+frame, <code class="docutils literal notranslate"><span class="pre">tools/list</span></code>/<code class="docutils literal notranslate"><span class="pre">initialize</span></code> merged over SSE replies, <code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code> inlined
+(and stripped of library arguments), deploys saved and failures not, measurements attached,
+the offline relay session (a real SDK client) and its <code class="docutils literal notranslate"><span class="pre">404</span></code> once the bridge is back, one
+library per bridge. <code class="docutils literal notranslate"><span class="pre">relay_e2e_test</span></code> deploys a library entry through the real bridge.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>: the display contract (every field, states, atomic writes), every
+control command, reconnect after a dropped socket, <code class="docutils literal notranslate"><span class="pre">offline</span></code> during a relay outage, recovery
+with the same bridge id and credentials after a relay restart.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_e2e_test</span></code>: the MCP SDK’s Streamable HTTP client (as a connector) → relay →
+bridge → hub → two fake players; the pairing code read from the status file; tools, resources,
+fan-out; <code class="docutils literal notranslate"><span class="pre">404</span></code> for a stale session after a bridge restart; idle liveness. Set
+<code class="docutils literal notranslate"><span class="pre">SPLANC_E2E_RELAY=&lt;url&gt;</span></code> to run it against <code class="docutils literal notranslate"><span class="pre">wrangler</span> <span class="pre">dev</span></code> (workerd) or the deployed relay.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="app-ux-overhaul.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">LED-Mapper App — UI/UX Overhaul (Design Doc)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="agent-multi-fixture.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Multi-fixture agent support (“just ask” for a room of players)</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Cloud relay + LAN bridge</a><ul>
+<li><a class="reference internal" href="#problem">Problem</a></li>
+<li><a class="reference internal" href="#shape">Shape</a></li>
+<li><a class="reference internal" href="#the-relay-s-http-surface">The relay’s HTTP surface</a></li>
+<li><a class="reference internal" href="#bridge-socket-protocol">Bridge socket protocol</a></li>
+<li><a class="reference internal" href="#pairing">Pairing</a></li>
+<li><a class="reference internal" href="#display-contract-fixed-the-pi-display-image-codes-against-it">Display contract (fixed; the Pi/display image codes against it)</a></li>
+<li><a class="reference internal" href="#effects-library">Effects library</a></li>
+<li><a class="reference internal" href="#free-tier-budget">Free-tier budget</a></li>
+<li><a class="reference internal" href="#hosting">Hosting</a></li>
+<li><a class="reference internal" href="#threat-model">Threat model</a></li>
+<li><a class="reference internal" href="#testing">Testing</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
