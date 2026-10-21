@@ -34,6 +34,8 @@
 #include "icmp_echo.h"
 #include "wifi_creds.h"     // persisted WiFi credentials: restore / persist / rescan decisions
 #include "esp_system.h"     // esp_restart / esp_reset_reason (restart-to-rescan)
+#include "esp_mac.h"        // esp_read_mac: the factory STA MAC
+#include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 
 extern "C" {
 void ns_mac_rx_install();
@@ -157,6 +159,9 @@ bool g_tcp_started = false, g_tcp_requested = false;
 // Set by the DHCP handler when our IP changes under a live listener; consumed at the bind
 // site to clear the stale TLS/WS session on the re-arm (see the drift-fork note at both sites).
 bool g_relisten_new_ip = false;
+// A DHCP renewal ACK arrived: re-announce mDNS once (an IP change already restarts the
+// full 3-announcement burst), so a browser's cache never outlives our lease.
+bool g_mdns_renewed = false;
 // The IP the TCP listener is currently bound to (frozen at the ns_tcp_listen bind site). The
 // drift-fork check compares the committed lease IP against THIS, not g_offer_ip (which the
 // OFFER handler advances to the new IP before the ACK).
@@ -275,6 +280,15 @@ int mgmt_hdr(uint8_t *f, uint8_t fc) {
 int build_auth(uint8_t *f) {
   int n = mgmt_hdr(f, 0xb0);
   f[n++] = 0x00; f[n++] = 0x00; f[n++] = 0x01; f[n++] = 0x00; f[n++] = 0x00; f[n++] = 0x00;
+  return n;
+}
+// Deauthentication (reason 3: STA leaving). Sent once before the first auth of a boot:
+// with a stable (factory) MAC the AP may still hold the previous boot's association
+// for us; an explicit deauth clears it so the fresh auth/assoc/4-way starts clean (we
+// don't negotiate PMF, so the AP accepts this unprotected frame).
+int build_deauth(uint8_t *f) {
+  int n = mgmt_hdr(f, 0xc0);
+  f[n++] = 0x03; f[n++] = 0x00;
   return n;
 }
 int build_assoc(uint8_t *f) {
@@ -981,9 +995,11 @@ void handle_l3(const uint8_t *pt, int pl) {
         if (first)
           Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
                         (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
-        else
+        else {
           Serial.printf("[dhcp] lease RENEWED %u.%u.%u.%u (lease=%us)\n", dh[16], dh[17], dh[18],
                         dh[19], (unsigned)g_lease_secs);
+          g_mdns_renewed = true;
+        }
       }
     }
   }
@@ -1453,11 +1469,16 @@ void netstack_setup() {
   Serial.printf("[netstack] esp_wifi_init(min-bufs)=%d start=%d free=%u dma=%u\n", (int)werr,
                 (int)serr, (unsigned)esp_get_free_heap_size(),
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
+  // Station MAC: the chip's factory STA MAC (efuse), stable across reboots/updates so
+  // the AP's DHCP keeps our lease (sta_mac.h has why the old per-boot random MAC is now
+  // only an opt-in: -DLM_NETSTACK_RANDOM_MAC).
+  uint8_t factory_mac[6] = {0};
+  esp_read_mac(factory_mac, ESP_MAC_WIFI_STA);
   uint8_t rnd[4]; esp_fill_random(rnd, 4);
-  OUR_MAC[0] = 0x02; OUR_MAC[1] = 0x0c; OUR_MAC[2] = 0x6a;
-  OUR_MAC[3] = rnd[0]; OUR_MAC[4] = rnd[1]; OUR_MAC[5] = rnd[2];
-  Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
-                OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
+  bool factory = lm_sta_mac::choose(factory_mac, lm_sta_mac::random_mac_is_build_default(), rnd,
+                                    OUR_MAC);
+  Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
+                OUR_MAC[3], OUR_MAC[4], OUR_MAC[5], factory ? "factory" : "random per boot");
   g_our_mac_ptr = OUR_MAC;
   // Cache every AP in range NOW, while the vendor WiFi RX still works — after the MAC
   // hijack below we own the ring and the vendor scan can't run. scan_latch_ap() (in the
@@ -1916,6 +1937,14 @@ void netstack_loop() {
   // yielded to BLE by coex_update) BEFORE the WiFi-active join, so the join is short + the 4-way's
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
+    static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
+    if (!deauthed && !lm_sta_mac::random_mac_is_build_default()) {
+      deauthed = true;
+      int d = build_deauth(f);
+      ns_mac_send(f, d, 0);
+      Serial.printf("[t=%lu] deauth sent to clear any stale association for our MAC\n",
+                    (unsigned long)millis());
+    }
     t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
   }
   // Join watchdog: auth is re-sent every 200ms above, but the Association Request and the
@@ -2072,7 +2101,23 @@ void netstack_loop() {
     // member in ~260 s) — all only while idle, like the gratuitous ARP.
     static uint32_t mdns_ms = 0, mdns_sent = 0;
     static uint8_t mdns_ip[4] = {0};
-    if (memcmp(mdns_ip, g_offer_ip, 4) != 0) { memcpy(mdns_ip, g_offer_ip, 4); mdns_sent = 0; }
+    if (memcmp(mdns_ip, g_offer_ip, 4) != 0) {
+      // New address (first lease, or a re-DISCOVER / renewal that moved us): restart the
+      // 3-announcement burst so browsers (the bridge) learn the new A record promptly.
+      if (mdns_ip[0] != 0)
+        Serial.printf("[mdns] IP changed %u.%u.%u.%u -> %u.%u.%u.%u — re-announcing\n",
+                      mdns_ip[0], mdns_ip[1], mdns_ip[2], mdns_ip[3], g_offer_ip[0],
+                      g_offer_ip[1], g_offer_ip[2], g_offer_ip[3]);
+      memcpy(mdns_ip, g_offer_ip, 4);
+      mdns_sent = 0;
+      mdns_ms = 0;
+    } else if (g_mdns_renewed) {
+      g_mdns_renewed = false;
+      if (mdns_sent >= 3) {
+        mdns_sent = 2;  // one more announcement on the next idle tick
+        mdns_ms = 0;
+      }
+    }
     if (st == DONE && g_leased && idle && millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u)) {
       mdns_ms = millis();
       send_igmp_mdns_report();

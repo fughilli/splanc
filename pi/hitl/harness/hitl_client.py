@@ -213,7 +213,9 @@ class Reservation:
         # `type` (see _unit_serves), NOT a capability, so it keeps matching the old-daemon
         # c6 DUTs (which are type esp32c6 but carry no chip:* cap).
         self.sku = sku or os.environ.get("HITL_SKU") or None
-        self.device = device  # -> unit (pin by exact name)
+        # -> unit (pin by exact name). $HITL_DEVICE pins it for drivers that take no
+        # --device flag (e.g. an fx_bench A/B on one DUT), like $HITL_SERVER above.
+        self.device = device or os.environ.get("HITL_DEVICE") or None
         self.id: str | None = None
         self.host: str | None = None
         self.port: int | None = None
@@ -249,7 +251,8 @@ class Reservation:
         if not self.id:
             raise ReserveError(f"reserve gave no id: {res}")
         self._start_heartbeat()
-        self._await_active()
+        # $HITL_ACTIVATE_TIMEOUT: how long to sit in a contended rig's FIFO (s).
+        self._await_active(float(os.environ.get("HITL_ACTIVATE_TIMEOUT") or 2400))
         print(f"reserved: id={self.id} on {self.server} unit={self._unit}", flush=True)
         self._serial_start()
 

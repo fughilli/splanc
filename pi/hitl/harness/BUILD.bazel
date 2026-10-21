@@ -113,6 +113,7 @@ py_library(
         "sync.py",
         "time_base_skew_core.py",
         "tls_churn_core.py",
+        "stable_identity_core.py",
         "uniform_bench_core.py",
         "upgrade_keeps_wifi_core.py",
         "video_bench_core.py",
@@ -521,6 +522,34 @@ py_test(
         "//pi/server",
         "@rules_python//python/runfiles",
         requirement("websockets"),
+    ],
+)
+
+# The netstack keeps a stable network identity: the factory station MAC and the same
+# DHCP lease across a reboot, an mDNS announce + unicast answer (A=lease, TXT id) for
+# it, and a prompt clean refusal for an extra TLS client. Pure logic:
+# stable_identity_core.
+py_test(
+    name = "stable_identity",
+    timeout = "eternal",
+    srcs = ["hitl_stable_identity.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_stable_identity.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
     ],
 )
 
