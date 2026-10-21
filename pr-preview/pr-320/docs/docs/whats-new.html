@@ -1,0 +1,799 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Architecture" href="../architecture.html"><link rel="prev" title="The Splanc manifesto" href="manifesto.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>What’s new - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/whats-new.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/whats-new.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="what-s-new">
+<h1>What’s new<a class="headerlink" href="#what-s-new" title="Link to this heading">¶</a></h1>
+<p>Notable changes, newest first. Each entry links the PRs and the doc that covers
+it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
+<section id="october-2026">
+<h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="the-motion-sensor-knows-which-way-the-map-is">
+<h3>The motion sensor knows which way the map is<a class="headerlink" href="#the-motion-sensor-knows-which-way-the-map-is" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Mapping now calibrates the IMU’s tilt for free</strong>: the map is gravity-levelled
+and the fixture stands still while it’s captured, so the sensor’s settled
+“up” is pinned to the map’s +Y as soon as the map is stored; effects tilt the
+right way at once. Heading needs a second, re-oriented pose (the guided
+“Calibrate IMU” screen is next); the solver and device side are in
+(<a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §7</span></a>).</p></li>
+<li><p><strong>Fixtures remember how they were mapped</strong>: diffuse mode, LED stride, code
+timing and brightness are stored on the device with the map, and a later
+supplemental or calibration capture reuses them instead of re-probing.</p></li>
+</ul>
+</section>
+<section id="sensor-drivers-an-agent-can-write">
+<h3>Sensor drivers an agent can write<a class="headerlink" href="#sensor-drivers-an-agent-can-write" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Any I2C sensor, no firmware release.</strong> Agents scan the player’s sensor bus
+(<code class="docutils literal notranslate"><span class="pre">scan_i2c</span></code>), write a small driver in the effect language (<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code> +
+<code class="docutils literal notranslate"><span class="pre">export</span></code>s, <code class="docutils literal notranslate"><span class="pre">i2c_read*</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_write</span></code>), and load it live (<code class="docutils literal notranslate"><span class="pre">deploy_driver</span></code>); every
+export drives the effect uniform of the same name. Supersedes PR #96; the
+native-vs-VM MPU-6050 A/B and when to use which: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §8</span></a>.</p></li>
+</ul>
+</section>
+<section id="fixtures-that-feel-motion-the-sensor-core">
+<h3>Fixtures that feel motion: the sensor core<a class="headerlink" href="#fixtures-that-feel-motion-the-sensor-core" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Wire an MPU-6050 and the player finds it.</strong> At boot the C6 player probes
+its I2C pins (SDA 6 / SCL 7, INT 21 by default) for an MPU-6050-family IMU,
+fuses it on the device (orientation, gravity, linear acceleration, shake and
+tap), and costs nothing when none is fitted.</p></li>
+<li><p><strong>Effects react by name.</strong> Declare <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">vec3</span> <span class="pre">imu_gravity</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_quat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">imu_shake</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_tap</span></code>, … and the firmware drives them every frame; without
+a sensor they stay ordinary knobs. Try <code class="docutils literal notranslate"><span class="pre">agent/skill/examples/imu_tilt.fx</span></code>.</p></li>
+<li><p><strong>Agents can read and calibrate it</strong> (<code class="docutils literal notranslate"><span class="pre">read_sensors</span></code>, <code class="docutils literal notranslate"><span class="pre">calibrate_sensors</span></code>).
+Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md</span></a> (#315).</p></li>
+</ul>
+</section>
+<section id="agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">
+<h3>Agents crossfade between effects, and look at your fixtures in 3D<a class="headerlink" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code></strong> fades from the running effect to a new one (its source, or an effects-library
+entry by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>) instead of cutting. The bridge
+loads the new effect onto the player’s idle FX deck (the second deck Show Mode uses), then
+glides the crossfade over the seconds you ask for, with a choice of curve (<code class="docutils literal notranslate"><span class="pre">ease</span></code> by default)
+and RGB or HSV blending. With several players or a room, every player fades on one clock, and
+the effects share one time base, so the room changes together.</p></li>
+<li><p><strong>Rollback keeps working.</strong> The effect you faded away from stays loaded on its deck, even
+one the app put there, so <code class="docutils literal notranslate"><span class="pre">rollback_effect</span></code> fades straight back to it (call it again to swap
+forward). <code class="docutils literal notranslate"><span class="pre">list_decks</span></code> shows what is on decks A and B, where the crossfade sits, and which
+deck is live. Uniform and keypoint tools follow the live deck.</p></li>
+<li><p><strong>Deck B is runtime-only</strong>: if a crossfade ends on it, a reboot brings back deck A’s effect.
+<code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> still makes an effect permanent. Both effects render while the fade runs, and
+they share the 24 KB buffer arena, so a too-large pair is refused with that explanation.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">plot_fixture</span></code></strong> returns a PNG of a fixture’s LED map from the front, side, top and an
+isometric view. It shows metres with +Y up, axes, the bounding box, the wiring order, LED index
+hints and a scale bar. Mapped LEDs are dots and interpolated ones are rings. You can colour the
+LEDs by index, solve confidence, segment, channel or one frame of an effect. A room plots every
+fixture at its pose in one scene. The numbers (mapped vs interpolated, bounds) come with it.
+The image is drawn in plain TypeScript, so it works on the Pi bridge, and stays small enough
+for the cloud relay. The CLI has <code class="docutils literal notranslate"><span class="pre">crossfade-to</span></code>, <code class="docutils literal notranslate"><span class="pre">list-decks</span></code> and <code class="docutils literal notranslate"><span class="pre">plot-fixture</span> <span class="pre">--out</span> <span class="pre">&lt;dir&gt;</span></code>.</p></li>
+</ul>
+</section>
+<section id="an-effects-library-that-grows-with-every-scene">
+<h3>An effects library that grows with every scene<a class="headerlink" href="#an-effects-library-that-grows-with-every-scene" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Agents look before they write.</strong> Each installation now keeps a private
+library of effects that worked before: what each looks like, its tags and its
+knobs. Asked for a new scene or mood, the agent searches it first
+(<code class="docutils literal notranslate"><span class="pre">search_effects</span></code>), deploys a match in one call (<code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>)
+or copies and adapts a close one (<code class="docutils literal notranslate"><span class="pre">duplicate_effect</span></code>), and only writes a new
+effect when nothing fits.</p></li>
+<li><p><strong>It fills itself.</strong> Every successful deploy is kept, with its description,
+tags and measured frame cost; the agent is asked to describe any it deployed
+without one. New libraries start with Splanc’s example effects.</p></li>
+<li><p><strong>Served by the cloud relay</strong>, so it’s fast and still browsable while the
+bridge is off. Without the relay (a local agent over stdio or the CLI) the same
+tools keep it in a file in the agent’s state dir. Nothing is shared between
+users. Design: <a class="reference internal" href="design/cloud-relay.html#effects-library"><span class="std std-ref">cloud-relay.md § Effects library</span></a>;
+how to use it: <a class="reference internal" href="guides/cloud-agent.html#effects-library"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="splanc-works-as-a-chatgpt-plugin">
+<h3>Splanc works as a ChatGPT plugin<a class="headerlink" href="#splanc-works-as-a-chatgpt-plugin" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Add <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code></strong> in ChatGPT as a custom MCP server with OAuth, sign in
+with your bridge’s pairing code, and ChatGPT drives your lights. Steps:
+<a class="reference internal" href="guides/cloud-agent.html#chatgpt"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+<li><p><strong>Every agent tool says what it does</strong>: read-only tools (listing, previews, compiling) run
+without a confirmation prompt in ChatGPT; tools that change the lights ask first, and deleting
+or overwriting your saved things is flagged as destructive. The server also gives agents a
+short “how to use Splanc” note.</p></li>
+<li><p><strong>The relay</strong> advertises <code class="docutils literal notranslate"><span class="pre">offline_access</span></code>, so ChatGPT keeps its sign-in, accepts ChatGPT’s
+client metadata document, and ignores scopes it doesn’t use (like <code class="docutils literal notranslate"><span class="pre">openid</span></code>) instead of failing.</p></li>
+</ul>
+</section>
+<section id="show-the-wi-fi-password-while-you-type-it">
+<h3>Show the Wi-Fi password while you type it<a class="headerlink" href="#show-the-wi-fi-password-while-you-type-it" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>An eye button</strong> at the right end of the Wi-Fi password field in the
+add-device sheet shows the password in cleartext, and taps back to hidden.
+It starts hidden, keeps the keyboard open and the cursor where it was, and
+picking a saved network keeps your choice. Phone keyboards no longer
+autocorrect or capitalize the field, and password managers leave it alone.</p></li>
+<li><p><strong>The same button</strong> is on the API key fields in AI settings and on the Splanc
+Bridge Flasher’s Wi-Fi password (which had a text “Show” button).</p></li>
+</ul>
+</section>
+<section id="every-player-has-its-own-tls-certificate">
+<h3>Every player has its own TLS certificate<a class="headerlink" href="#every-player-has-its-own-tls-certificate" title="Link to this heading">¶</a></h3>
+<p>Netstack firmware used to serve one shared certificate, and its private key was in
+the open-source tree, so any device could be impersonated. Now each player
+generates its own EC P-256 key and self-signed certificate on first boot. It keeps
+them in littlefs (power-loss-safe) for life: there’s no IP in the cert, so DHCP
+changes don’t rotate it. Only a factory reset (flash erase) makes a new one.
+Design, the vendor build’s re-issue races it avoids, and the measured cost:
+<a class="reference internal" href="design/per-device-cert.html"><span class="std std-doc">per-device-cert.md</span></a>.</p>
+<ul class="simple">
+<li><p><strong>Never serves without a cert.</strong> Generation runs in <code class="docutils literal notranslate"><span class="pre">setup()</span></code> before WiFi
+comes up, and <code class="docutils literal notranslate"><span class="pre">:443</span></code> opens only once the identity is installed. Until then mDNS
+advertises <code class="docutils literal notranslate"><span class="pre">tls=generating</span></code> and the new <code class="docutils literal notranslate"><span class="pre">get_tls_info</span></code> (over BLE too) reports
+<code class="docutils literal notranslate"><span class="pre">generating</span></code>.</p></li>
+<li><p><strong>Trust on first use.</strong></p>
+<ul>
+<li><p>The agent bridge pins each player’s certificate by id in <code class="docutils literal notranslate"><span class="pre">hub.json</span></code>. A
+changed certificate is refused (<code class="docutils literal notranslate"><span class="pre">tls:</span> <span class="pre">CHANGED</span></code>) until <code class="docutils literal notranslate"><span class="pre">trust_player</span></code>.</p></li>
+<li><p>The app remembers each device’s certificate and warns in the device sheet,
+with an “I reset it — trust the new certificate” action.</p></li>
+</ul>
+</li>
+<li><p><strong>Upgrades are quiet.</strong> A device moving off the old shared certificate is
+re-pinned without a warning.</p></li>
+<li><p><strong>The manifest’s <code class="docutils literal notranslate"><span class="pre">tls</span></code> block</strong> now carries <code class="docutils literal notranslate"><span class="pre">state</span></code> and <code class="docutils literal notranslate"><span class="pre">persisted</span></code>.</p></li>
+</ul>
+</section>
+<section id="export-a-map-to-touchdesigner-or-chromatik">
+<h3>Export a map to TouchDesigner or Chromatik<a class="headerlink" href="#export-a-map-to-touchdesigner-or-chromatik" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><strong>Export map</strong> in the mapping workspace downloads the fixture’s LED positions,
+one entry per LED in output order. Two formats:</p>
+<ul class="simple">
+<li><p>a <strong>CSV</strong> laid out as a TouchDesigner Points DAT
+(<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</span></code>,
+metres, +Y up). Load it in a Table DAT and feed a DAT to SOP, no editing.</p></li>
+<li><p>a <strong>Chromatik <code class="docutils literal notranslate"><span class="pre">.lxf</span></code></strong> fixture (<code class="docutils literal notranslate"><span class="pre">points</span></code> components per channel, with a
+<code class="docutils literal notranslate"><span class="pre">Scale</span></code> parameter that defaults to centimetres).</p></li>
+</ul>
+<p>Unmapped LEDs keep their index with <code class="docutils literal notranslate"><span class="pre">mapped=0</span></code> and an interpolated position.
+A Z-up option covers Blender-style tools. On iOS the file goes through the
+share sheet (“Save to Files”). Agents get the same files from the bridge’s
+<code class="docutils literal notranslate"><span class="pre">export_map</span></code> tool / <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">export-map</span></code>. See
+<a class="reference internal" href="user-guide.html#exporting-a-map-to-other-software"><span class="std std-ref">the user guide</span></a>.</p>
+</li>
+</ul>
+</section>
+<section id="splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal">
+<h3>Splanc bridge SD image + Splanc Bridge Flasher (no terminal)<a class="headerlink" href="#splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Splanc Bridge Flasher</strong> (macOS, Windows, Linux): a desktop app that writes
+a Splanc bridge microSD card. Pick the Pi model, type the Wi-Fi name and
+password (plus the Wi-Fi country and, optionally, a name for the Pi), pick
+the card. It downloads the newest image, checks its sha256, writes the card,
+reads it back to check every byte, and puts the Wi-Fi settings on it. Boot
+the Pi and the pairing code is on its HDMI screen or OLED HAT. Only removable
+disks are ever offered. Guide:
+<a class="reference internal" href="pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>.</p></li>
+<li><p><strong>Splanc bridge SD image</strong> for the Pi 5, Pi 4, Pi 3 and Zero 2 W: a small
+NixOS system that runs the bridge and the screens from power-on, with no
+login. It applies the flasher’s settings at boot (and moves the Wi-Fi
+password off the card), and updates the Splanc agent by itself
+(sha256-checked, from splanc.io/agent/latest.json).</p></li>
+<li><p><strong>Own release track:</strong> <code class="docutils literal notranslate"><span class="pre">pi-bridge-v*</span></code> releases carry the images
+(<code class="docutils literal notranslate"><span class="pre">splanc-bridge-&lt;board&gt;-&lt;ver&gt;.img.zst</span></code> + <code class="docutils literal notranslate"><span class="pre">.sha256</span></code>) and the flasher
+installers, built by <code class="docutils literal notranslate"><span class="pre">.github/workflows/pi-bridge-image.yml</span></code>, separate from
+<code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> and <code class="docutils literal notranslate"><span class="pre">app-v*</span></code>. Details:
+<a class="reference internal" href="#../pi/bridge/README.md"><span class="xref myst">pi/bridge/README.md</span></a>.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">…</span> <span class="pre">|</span> <span class="pre">sudo</span> <span class="pre">sh</span></code> installer below stays, for Raspberry Pi OS installs you
+manage yourself.</p></li>
+</ul>
+</section>
+<section id="a-raspberry-pi-as-a-splanc-bridge">
+<h3>A Raspberry Pi as a Splanc bridge<a class="headerlink" href="#a-raspberry-pi-as-a-splanc-bridge" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>One-command Pi bridge appliance:</strong> flash Raspberry Pi OS Lite with Imager
+(Wi-Fi and SSH preset), boot, then run
+<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-fsSL</span> <span class="pre">https://splanc.io/bridge/install.sh</span> <span class="pre">|</span> <span class="pre">sudo</span> <span class="pre">sh</span></code>. The Pi runs the
+Splanc cloud bridge headless and starts it on every boot. It updates itself
+daily, checking each release’s sha256. Guide:
+<a class="reference internal" href="pi-bridge.html"><span class="std std-doc">Set up a Splanc bridge on a Raspberry Pi</span></a>.</p></li>
+<li><p><strong>Status screens:</strong> a full-screen HDMI page (no desktop needed) shows the
+pairing code, a QR code, the fixtures, the clients and the network. A Waveshare
+1.3” OLED HAT shows pages of the same information. Its keys work as follows:
+KEY1 gets a new code, KEY2 identifies fixtures, and holding KEY3 then
+confirming revokes all clients. The joystick pages through the screens.</p></li>
+<li><p><strong>Built in:</strong> the installer and display service live in <code class="docutils literal notranslate"><span class="pre">pi/bridge/</span></code> and ship
+inside the agent bundle (<code class="docutils literal notranslate"><span class="pre">pi-bridge/</span></code>, plus <code class="docutils literal notranslate"><span class="pre">site/bridge/install.sh</span></code>). Details:
+<a class="reference internal" href="#../pi/bridge/README.md"><span class="xref myst">pi/bridge/README.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room">
+<h3>AI agents can drive Splanc (“Use splanc.io to set the mood of the room”)<a class="headerlink" href="#ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><strong>Agent bridge + bundle</strong> (#274): <code class="docutils literal notranslate"><span class="pre">agent/</span></code> is an MCP server (stdio) and a
+one-shot CLI over the same tools. It is shipped as <code class="docutils literal notranslate"><span class="pre">splanc-agent-&lt;ver&gt;.tgz</span></code> on
+every <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> release, along with the matching compiler and simulator
+wasm, the protocol schema and an agent skill. See
+<a class="reference internal" href="#../agent/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">agent/README.md</span></code></span></a>.</p></li>
+<li><p><strong>Multi-fixture hub</strong> (#278): one bridge drives every player on the LAN. It
+covers:</p>
+<ul class="simple">
+<li><p>mDNS browsing, remembered players and a bounded /24 manifest sweep;</p></li>
+<li><p>one socket per player, with parallel fan-out and per-player results;</p></li>
+<li><p>rooms, fixture poses and a shared time base;</p></li>
+<li><p>per-firmware toolchains fetched from each player’s own bundle.</p></li>
+</ul>
+<p>Design: <a class="reference internal" href="design/agent-multi-fixture.html"><span class="std std-doc">agent-multi-fixture.md</span></a>.</p>
+</li>
+<li><p><strong>Device discovery</strong> (#276): <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/.well-known/splanc.json</span></code> (identity,
+firmware, protocol features, <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> format, TLS cert pin, agent bundle), an mDNS
+<code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code> responder on the netstack, plus these protocol additions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Welcome.features</span></code> and <code class="docutils literal notranslate"><span class="pre">fxb_format</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">set_uniforms.commit</span></code> (apply a uniform live without persisting it);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">list_effects</span></code>;</p></li>
+<li><p>a complete <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code>.</p></li>
+</ul>
+</li>
+<li><p><strong>Uniform docs:</strong> <code class="docutils literal notranslate"><span class="pre">doc</span></code>, <code class="docutils literal notranslate"><span class="pre">min</span></code>, <code class="docutils literal notranslate"><span class="pre">max</span></code> and <code class="docutils literal notranslate"><span class="pre">unit</span></code> are now in the effect
+manifest (from the uniform’s source comment).</p></li>
+<li><p><strong>Room frame and shared time</strong> (#280): <code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code> / <code class="docutils literal notranslate"><span class="pre">set_time_base</span></code>,
+the <code class="docutils literal notranslate"><span class="pre">led.room</span></code> / <code class="docutils literal notranslate"><span class="pre">room.min</span></code> / <code class="docutils literal notranslate"><span class="pre">room.max</span></code> effect builtins, and a HITL test that
+measures inter-fixture skew against a 20 ms target. See
+<a class="reference internal" href="../EFFECTS.html"><span class="std std-doc">EFFECTS.md</span></a>.</p></li>
+<li><p><strong>splanc.io entry point:</strong> splanc.io serves <code class="docutils literal notranslate"><span class="pre">/AGENTS.md</span></code>, <code class="docutils literal notranslate"><span class="pre">/llms.txt</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/.well-known/mcp/server.json</span></code> and the newest bundle at
+<code class="docutils literal notranslate"><span class="pre">/agent/splanc-agent.tgz</span></code>. The one-liners are:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>splanc<span class="w"> </span>--<span class="w"> </span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz
+npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>list-players
+</pre></div>
+</div>
+</li>
+<li><p><strong>Keypoint tools for agents</strong> (#286): <code class="docutils literal notranslate"><span class="pre">list_keypoints</span></code>, <code class="docutils literal notranslate"><span class="pre">save_keypoint</span></code>,
+<code class="docutils literal notranslate"><span class="pre">recall_keypoint</span></code>, <code class="docutils literal notranslate"><span class="pre">blend_keypoints</span></code> and <code class="docutils literal notranslate"><span class="pre">delete_keypoint</span></code>, plus each
+player’s keypoints in <code class="docutils literal notranslate"><span class="pre">splanc://effect/active</span></code>. The skill maps “save the look
+as a keypoint” and “morph between moods” onto them. They are gated on the
+<code class="docutils literal notranslate"><span class="pre">keypoints</span></code> feature (see below).</p></li>
+</ul>
+</section>
+<section id="saved-looks-uniform-keypoints-two-decks-and-a-crossfade">
+<h3>Saved looks: uniform keypoints, two decks and a crossfade<a class="headerlink" href="#saved-looks-uniform-keypoints-two-decks-and-a-crossfade" title="Link to this heading">¶</a></h3>
+<p>Supersedes #82 (FUG-110). Design:
+<a class="reference internal" href="design/uniform-keypoints.html"><span class="std std-doc">uniform-keypoints.md</span></a>.</p>
+<ul class="simple">
+<li><p><strong>Keypoints</strong> (#285): a keypoint is a named set of uniform values for one
+effect, a known-good position in its parameter space (“dawn”, “storm”). They
+are stored on the device in littlefs (power-loss-safe, at most 16 per
+effect), so the app, Show Mode and agents all see the same set. Values are
+stored by uniform name, and a keypoint saved against an older build of the
+effect is flagged <code class="docutils literal notranslate"><span class="pre">stale</span></code>.</p></li>
+<li><p><strong>Morphing on the device:</strong> recall a keypoint over N seconds, or blend up to
+four with weights. The device eases the uniforms itself, once per frame, using
+each uniform’s manifest rule (sliders interpolate and clamp to <code class="docutils literal notranslate"><span class="pre">min</span></code>/<code class="docutils literal notranslate"><span class="pre">max</span></code>,
+colours blend in linear RGB or HSV, toggles and dropdowns take the nearest
+source). A live blend never writes flash; saving the blended look is explicit.</p></li>
+<li><p><strong>Two decks + crossfade:</strong> the player runs deck A and deck B at once and
+crossfades their per-LED output (linear RGB or HSV). Deck B shares one memory
+region with the video-texture delta buffer, so <strong>loading deck B ends a video
+stream</strong> on that player. Deck B is interpreted (no JIT) and is not restored
+after a reboot.</p></li>
+<li><p><strong>In the app:</strong> the effect editor and each Show Mode deck (<code class="docutils literal notranslate"><span class="pre">/show</span></code>, from the
+Effects ⋯ menu) carry a keypoint strip: tap a pad to recall it, “＋ Save” to
+store the live uniforms, a morph fader to slide between two pads, long-press
+or right-click to delete. Show Mode’s MIDI layer can map the crossfade, blend
+mode, per-deck play/pause and cue, each deck’s keypoint morph fader, and
+next / previous / save keypoint.</p></li>
+<li><p><strong>Wire:</strong> <code class="docutils literal notranslate"><span class="pre">set_crossfade</span></code> = 39 and the keypoint arms 40–44 (replies
+<code class="docutils literal notranslate"><span class="pre">keypoint_list</span></code> = 22, <code class="docutils literal notranslate"><span class="pre">keypoint</span></code> = 23), a <code class="docutils literal notranslate"><span class="pre">deck</span></code> field on the effect messages,
+and the <code class="docutils literal notranslate"><span class="pre">decks</span></code>, <code class="docutils literal notranslate"><span class="pre">crossfade</span></code> and <code class="docutils literal notranslate"><span class="pre">keypoints</span></code> features. The full table is in
+<a class="reference internal" href="design/uniform-keypoints.html#wire-ledmapper-v1-additive"><span class="std std-ref">uniform-keypoints.md</span></a>.</p></li>
+<li><p><strong>Cost:</strong> +6.5 KB of static RAM, and the per-LED shade entry pinned back in
+IRAM (<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 97,512 → 99,704 B). With both decks and a wss session the
+<code class="docutils literal notranslate"><span class="pre">fx_keypoints</span></code> HITL run measured a 72.7 KB minimum free heap. The <code class="docutils literal notranslate"><span class="pre">sweep16</span></code>
+fx_bench golden was re-baselined (42,589 → 50,259 cycles) on evidence that the
+remaining gap is flash-cache layout, not added work; the evidence is on #285.</p></li>
+</ul>
+</section>
+<section id="effect-authoring-measure-on-the-fixture-not-just-in-the-model">
+<h3>Effect authoring: measure on the fixture, not just in the model<a class="headerlink" href="#effect-authoring-measure-on-the-fixture-not-just-in-the-model" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">measure_on_device</span></code></strong> (#292): the editor’s and Acid Mode’s AI chat can run
+the current script on the connected fixture with full perf reporting and read
+a few seconds of the device’s perf stream (mean / p95 / max frame time, the
+update / shade / show split, budget fraction), next to the offline
+<code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code>. The agent iterates offline and confirms on the device
+before calling a performance goal met; when they disagree it optimizes
+against the measurement. The tool is offered only while a fixture with the
+<code class="docutils literal notranslate"><span class="pre">perf</span></code> feature is connected, and never in the website demo.</p></li>
+<li><p><strong>The hub gained the same pair:</strong> <code class="docutils literal notranslate"><span class="pre">estimate_effect</span></code> (offline, touches nothing)
+and <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code> (windowed on-device stream, now in milliseconds).</p></li>
+</ul>
+</section>
+<section id="the-c6-player-s-memory-from-1-6-kib-to-87-kib-of-worst-case-headroom">
+<h3>The C6 player’s memory, from 1.6 KiB to ~87 KiB of worst-case headroom<a class="headerlink" href="#the-c6-player-s-memory-from-1-6-kib-to-87-kib-of-worst-case-headroom" title="Link to this heading">¶</a></h3>
+<p>Measured on the <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> HITL worst case (BLE provisioning → first wss
+handshake → 512-LED map and texture effect → loaded handshakes). Detail in
+<a class="reference internal" href="design/ram-budget.html"><span class="std std-doc">ram-budget.md</span></a>.</p>
+<ul class="simple">
+<li><p><strong>Zero-copy envelopes</strong> (#262): the board-capabilities reply is spliced in
+encoded form, so the firmware <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> shrank from 4,104 B to 656 B.
+Requests dispatch in place, and task stacks are sized from a static bound
+(loopTask 48 → 20 KiB).</p></li>
+<li><p><strong>pbview</strong> (#265): zero-copy <code class="docutils literal notranslate"><span class="pre">no_std</span></code> protobuf views (<code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code>), so the
+firmware decodes every request straight from the RX frame.</p></li>
+<li><p><strong>Vendor Wi-Fi residue freed and dead SDK code moved out of IRAM</strong> (#266):</p>
+<ul>
+<li><p>~20 KB of vendor heap freed (no lwIP task, the event loop deleted after the
+scan, no NVS mirror);</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> <code class="docutils literal notranslate"><span class="pre">sections.ld</span></code> override moves cold vendor code to flash
+(<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 114,910 → 97,512 B).</p></li>
+</ul>
+</li>
+<li><p><strong>Zero-copy TX</strong> (#267): each outbound frame is built once, in place
+(loopTask 20 → 14 KiB).</p></li>
+<li><p><strong>Native pulse/flood playback removed:</strong> every show is an FX-engine effect.
+<code class="docutils literal notranslate"><span class="pre">set_playback</span></code> accepts only <code class="docutils literal notranslate"><span class="pre">&quot;off&quot;</span></code>, and the render stack went from 8 to
+5 KiB. <code class="docutils literal notranslate"><span class="pre">firmware/pulse</span></code> remains for the web simulator only.</p></li>
+<li><p><strong>Static stack-bound CI gate</strong> (#270): <code class="docutils literal notranslate"><span class="pre">//tools/stack_bound</span></code> over the shipped
+ELF’s call graph fails the build when a task’s bound, plus margin, outgrows its
+stack.</p></li>
+<li><p><strong>Post-boot heap census</strong> (#271): every allocation after <code class="docutils literal notranslate"><span class="pre">setup()</span></code> is
+attributed to its call site and read over JTAG. See
+<a class="reference internal" href="design/heap-census.html"><span class="std std-doc">heap-census.md</span></a>.</p></li>
+<li><p><strong>TLS region</strong> (#272): mbedTLS allocates from its own fixed slots and private
+region, off the shared heap.</p></li>
+<li><p><strong>Unbuffered littlefs</strong> (#273): removes a 4 KB stdio buffer per file open.</p></li>
+<li><p><strong>Exact-size topology decode</strong> (#291): a topology upload is decoded in two
+passes (count, then fill exactly), with every polyline in one shared vertex
+array, and the topology arena grew from 8 to 12 KB. A scan needs
+16·J + 24·S + 12·V bytes for J junctions, S segments and V vertices: a
+462-LED scan with 27 / 51 / 206 now takes 4,128 B (it overflowed 8 KB before),
+leaving room for ~880 vertices at that junction and segment count. Beyond
+that the upload fails with <code class="docutils literal notranslate"><span class="pre">map_too_large</span></code>.</p></li>
+<li><p><strong>Memory regions and the mode model</strong> (#263, #269): <code class="docutils literal notranslate"><span class="pre">firmware/region</span></code> (pools,
+slabs, mode unions) and <code class="docutils literal notranslate"><span class="pre">firmware/sysmode</span></code>, a reachability-checked model of
+the device’s memory modes, which the firmware now tracks (log-only). See
+<a class="reference internal" href="design/memory-regions.html"><span class="std std-doc">memory-regions.md</span></a>.</p></li>
+<li><p><strong>Kani under Bazel</strong> (#264): the region proofs run as hermetic
+<code class="docutils literal notranslate"><span class="pre">rust_kani_test</span></code> targets. See <a class="reference internal" href="design/kani-bazel.html"><span class="std std-doc">kani-bazel.md</span></a>.</p></li>
+<li><p><strong>PR-38</strong>: BLE and wss coexist. Making the radios mutually exclusive is not an
+allowed memory lever.</p></li>
+</ul>
+</section>
+<section id="tooling-hitl-and-releases">
+<h3>Tooling, HITL and releases<a class="headerlink" href="#tooling-hitl-and-releases" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The netstack answers <code class="docutils literal notranslate"><span class="pre">ping</span></code></strong> (#302): ICMP echo requests to the player’s own
+IP get a reply, rate-limited to 10/s (burst 5) so a flood can’t starve the
+LEDs or TLS. Broadcast/multicast pings and fragments are ignored; up to 1472
+data bytes (one 1500-byte MTU packet) are echoed.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ram_audit</span> <span class="pre">--hang</span></code></strong> (#270): catches a hard hang over JTAG before the
+watchdog erases it. RAM dumps are armed only after provisioning, because a
+~46 s halt during the Wi-Fi join resets the board.</p></li>
+<li><p><strong>Android flashing</strong> (#268): the USB-JTAG connect resets and reopens the
+port, and the C6 flash-ID probe is fixed.</p></li>
+<li><p><strong>splanc.io/app follows app releases</strong> (#277): every <code class="docutils literal notranslate"><span class="pre">app-v*</span></code> tag now
+publishes <code class="docutils literal notranslate"><span class="pre">splanc-webapp-&lt;ver&gt;.tar.gz</span></code>, and splanc.io stages the newest one.</p></li>
+<li><p><strong>Fleet dashboards</strong> (#279): the Android bench (amd-rig) and the iPhone bench
+(mac-mini) push metrics to Grafana, and the dashboard sync warns loudly
+instead of skipping silently.</p></li>
+<li><p><strong>Release stamps the agent bundle</strong> (#293): <code class="docutils literal notranslate"><span class="pre">release.yaml</span></code> passes the
+bundle’s URL and sha256 into the firmware build, so a released device’s
+<code class="docutils literal notranslate"><span class="pre">/.well-known/splanc.json</span></code> names its bundle with a hash.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ffi_test</span></code> is one <code class="docutils literal notranslate"><span class="pre">#[test]</span></code> again</strong> (#294): the FFI state is
+process-global, and a second test raced it on the harness’s threads.</p></li>
+<li><p><strong>Docs:</strong> <a class="reference internal" href="manifesto.html"><span class="std std-doc">the Splanc manifesto</span></a>, on why the system is built
+the way it is.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../architecture.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Architecture</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="manifesto.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">The Splanc manifesto</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">What’s new</a><ul>
+<li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
+<li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
+<li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>
+<li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
+<li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
+<li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
+<li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
+<li><a class="reference internal" href="#every-player-has-its-own-tls-certificate">Every player has its own TLS certificate</a></li>
+<li><a class="reference internal" href="#export-a-map-to-touchdesigner-or-chromatik">Export a map to TouchDesigner or Chromatik</a></li>
+<li><a class="reference internal" href="#splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal">Splanc bridge SD image + Splanc Bridge Flasher (no terminal)</a></li>
+<li><a class="reference internal" href="#a-raspberry-pi-as-a-splanc-bridge">A Raspberry Pi as a Splanc bridge</a></li>
+<li><a class="reference internal" href="#ai-agents-can-drive-splanc-use-splanc-io-to-set-the-mood-of-the-room">AI agents can drive Splanc (“Use splanc.io to set the mood of the room”)</a></li>
+<li><a class="reference internal" href="#saved-looks-uniform-keypoints-two-decks-and-a-crossfade">Saved looks: uniform keypoints, two decks and a crossfade</a></li>
+<li><a class="reference internal" href="#effect-authoring-measure-on-the-fixture-not-just-in-the-model">Effect authoring: measure on the fixture, not just in the model</a></li>
+<li><a class="reference internal" href="#the-c6-player-s-memory-from-1-6-kib-to-87-kib-of-worst-case-headroom">The C6 player’s memory, from 1.6 KiB to ~87 KiB of worst-case headroom</a></li>
+<li><a class="reference internal" href="#tooling-hitl-and-releases">Tooling, HITL and releases</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
