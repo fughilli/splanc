@@ -422,6 +422,46 @@ users. Design: <a class="reference internal" href="design/cloud-relay.html#effec
 how to use it: <a class="reference internal" href="guides/cloud-agent.html#effects-library"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
 </ul>
 </section>
+<section id="a-good-live-preview-no-longer-ends-in-an-empty-map">
+<h3>A good live preview no longer ends in an empty map<a class="headerlink" href="#a-good-live-preview-no-longer-ends-in-an-empty-map" title="Link to this heading">¶</a></h3>
+<p>Some captures showed the fixture correctly in the live preview, then the final
+solve came back degenerate. The cause: the final solve started over from
+scratch, and on gentle or decode-swapped captures its first scale estimate can
+come out negative. That flips the whole scene behind the camera, and the
+optimizer can’t recover. Each preview solve rolled its own sign, so the preview
+could look right while the final didn’t. Analysis and fix:
+<a class="reference internal" href="design/mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a>.</p>
+<ul class="simple">
+<li><p><strong>The solver rejects an implausible starting scale</strong> and starts from an
+arm’s-length guess instead. The optimizer and the motion data then find the
+real size.</p></li>
+<li><p><strong>The final solve also starts from the best live-preview solve</strong> and keeps
+whichever start solves better.</p></li>
+<li><p><strong>If the final is still degenerate</strong> (it failed, has far fewer LEDs, or
+collapsed) while the preview wasn’t, the app keeps the preview’s map and adds
+a warning that says why.</p></li>
+</ul>
+</section>
+<section id="debug-mode-logs-failed-mapping-runs">
+<h3>Debug mode logs failed mapping runs<a class="headerlink" href="#debug-mode-logs-failed-mapping-runs" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Turn on Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings</strong>, and
+every mapping run that fails, comes out degenerate, or disagrees with its
+preview saves a capture bundle on the phone. <strong>Keep successful runs too</strong>
+saves the rest as well.</p></li>
+<li><p><strong>A bundle holds everything needed to replay the run’s solves exactly</strong>:
+detections, motion data, capture settings, the fixture’s firmware version,
+the preview and final solves with their diagnostics, and the app and solver
+builds.</p></li>
+<li><p><strong>Export or share bundles</strong> from <strong>Settings ▸ Debugging ▸ Mapping capture
+bundles</strong>, as one <code class="docutils literal notranslate"><span class="pre">.splanc-capture.json</span></code> file. A saved map’s <strong>Bundle</strong> tile
+(in debug mode) rebuilds one from a map you already captured.</p></li>
+<li><p><strong>Developers replay a bundle</strong> bit-for-bit through the wasm build with
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//solver:replay_bundle</span> <span class="pre">--</span> <span class="pre">FILE</span></code>, or natively with per-stage
+traces with <code class="docutils literal notranslate"><span class="pre">solver_cli</span> <span class="pre">--replay</span> <span class="pre">FILE</span></code>. See the
+<a class="reference internal" href="user-guide.html#debug-mode-capture-bundles"><span class="std std-ref">user guide</span></a>.</p></li>
+</ul>
+</section>
 <section id="splanc-works-as-a-chatgpt-plugin">
 <h3>Splanc works as a ChatGPT plugin<a class="headerlink" href="#splanc-works-as-a-chatgpt-plugin" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -784,6 +824,8 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#the-bridge-follows-players-that-come-back-on-a-new-ip">The bridge follows players that come back on a new IP</a></li>
 <li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
 <li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
+<li><a class="reference internal" href="#a-good-live-preview-no-longer-ends-in-an-empty-map">A good live preview no longer ends in an empty map</a></li>
+<li><a class="reference internal" href="#debug-mode-logs-failed-mapping-runs">Debug mode logs failed mapping runs</a></li>
 <li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
 <li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
 <li><a class="reference internal" href="#every-player-has-its-own-tls-certificate">Every player has its own TLS certificate</a></li>

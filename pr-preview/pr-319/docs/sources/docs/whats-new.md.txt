@@ -94,6 +94,43 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   users. Design: [cloud-relay.md § Effects library](design/cloud-relay.md#effects-library);
   how to use it: [cloud-agent.md](guides/cloud-agent.md#effects-library).
 
+### A good live preview no longer ends in an empty map
+
+Some captures showed the fixture correctly in the live preview, then the final
+solve came back degenerate. The cause: the final solve started over from
+scratch, and on gentle or decode-swapped captures its first scale estimate can
+come out negative. That flips the whole scene behind the camera, and the
+optimizer can't recover. Each preview solve rolled its own sign, so the preview
+could look right while the final didn't. Analysis and fix:
+[mapping-solve-paths.md](design/mapping-solve-paths.md).
+
+- **The solver rejects an implausible starting scale** and starts from an
+  arm's-length guess instead. The optimizer and the motion data then find the
+  real size.
+- **The final solve also starts from the best live-preview solve** and keeps
+  whichever start solves better.
+- **If the final is still degenerate** (it failed, has far fewer LEDs, or
+  collapsed) while the preview wasn't, the app keeps the preview's map and adds
+  a warning that says why.
+
+### Debug mode logs failed mapping runs
+
+- **Turn on Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings**, and
+  every mapping run that fails, comes out degenerate, or disagrees with its
+  preview saves a capture bundle on the phone. **Keep successful runs too**
+  saves the rest as well.
+- **A bundle holds everything needed to replay the run's solves exactly**:
+  detections, motion data, capture settings, the fixture's firmware version,
+  the preview and final solves with their diagnostics, and the app and solver
+  builds.
+- **Export or share bundles** from **Settings ▸ Debugging ▸ Mapping capture
+  bundles**, as one `.splanc-capture.json` file. A saved map's **Bundle** tile
+  (in debug mode) rebuilds one from a map you already captured.
+- **Developers replay a bundle** bit-for-bit through the wasm build with
+  `bazel run //solver:replay_bundle -- FILE`, or natively with per-stage
+  traces with `solver_cli --replay FILE`. See the
+  [user guide](user-guide.md#debug-mode--capture-bundles).
+
 ### Splanc works as a ChatGPT plugin
 
 - **Add `https://splanc.pages.dev/mcp`** in ChatGPT as a custom MCP server with OAuth, sign in
