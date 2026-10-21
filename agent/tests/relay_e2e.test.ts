@@ -20,8 +20,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "../src/annotations";
+import { withLibraryInstructions } from "../relay/src/mcpLibrary";
 import { LanBridge, type BridgeStatus } from "../src/bridge/lanBridge";
 import { RelayLink } from "../src/bridge/relayLink";
+import { loadFxHost } from "../src/fxhost";
 import { Hub } from "../src/hub";
 import { RelayHost } from "../src/relayHost";
 import { FakePlayer, yFixture } from "./fakePlayer";
@@ -60,6 +62,8 @@ async function call(c: Client, name: string, args: Record<string, unknown> = {})
 }
 
 before(async () => {
+  // deploy_effect compiles on the bridge (the library test deploys an entry).
+  await loadFxHost(process.env["AGENT_WASM_ROOT"] ?? "wasm");
   if (EXTERNAL) relay = EXTERNAL.replace(/\/+$/, "");
   else {
     host = new RelayHost();
@@ -107,9 +111,10 @@ test("cloud agent -> relay -> bridge -> players", async () => {
   try {
     const tools = await c.listTools();
     assert.ok(tools.tools.some((t) => t.name === "set_brightness"));
-    // Annotations + instructions come from the bridge's agent, unchanged by the relay.
+    // Annotations + instructions come from the bridge's agent; the relay adds the
+    // effects library's tools (annotated the same) and appends its guidance.
     for (const t of tools.tools) assert.deepEqual(t.annotations, TOOL_ANNOTATIONS[t.name], t.name);
-    assert.equal(c.getInstructions(), SERVER_INSTRUCTIONS);
+    assert.equal(c.getInstructions(), withLibraryInstructions(SERVER_INSTRUCTIONS));
     const list = await call(c, "list_players");
     assert.equal(list.isError, false);
     assert.deepEqual(
@@ -129,6 +134,23 @@ test("cloud agent -> relay -> bridge -> players", async () => {
     })) as { isError?: boolean };
     assert.equal(m.isError, undefined);
     assert.ok(seen.some((x) => /measuring for 1 s/.test(x)), `progress seen: ${JSON.stringify(seen)}`);
+    // The effects library (served by the relay): seeded, deployable by id through
+    // the real bridge, and a deploy with a new source is kept.
+    assert.ok(tools.tools.some((t) => t.name === "search_effects"));
+    assert.match(c.getInstructions() ?? "", /search_effects/);
+    const lib = await call(c, "search_effects", { query: "solid colour breathing" });
+    const solid = (lib.json.results as { id: string; name: string }[]).find((r) => r.name === "Solid fill")!;
+    const dep = await call(c, "deploy_effect", { library_id: solid.id, players: "Kitchen" });
+    assert.equal(dep.isError, false, JSON.stringify(dep.json));
+    assert.equal(players[0]!.effect?.id, "solid_fill", JSON.stringify(dep.json));
+    const fresh = (await c.callTool({
+      name: "deploy_effect",
+      arguments: { effect_id: "e2e_red", source: "vec3 shade(Led led) { return vec3(1.0, 0.0, 0.0); }", players: "Hall", description: "Plain red everywhere", tags: ["red"] },
+    })) as { isError?: boolean; content: Text[] };
+    assert.notEqual(fresh.isError, true);
+    const note = JSON.parse(fresh.content[1]!.text!).library as { id: string; status: string };
+    assert.equal(note.status, "saved");
+    assert.equal((await call(c, "get_effect", { id: note.id })).json.description, "Plain red everywhere");
     const res = await c.readResource({ uri: "splanc://players" });
     assert.match((res.contents[0] as { text: string }).text, /Kitchen/);
     await until(() => status().clients === 1, "status counts the cloud session");

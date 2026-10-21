@@ -89,6 +89,26 @@ heaviest look.
 - Older firmware without the `keypoints` feature answers with a clear error: fall
   back to `ramp_uniforms`.
 
+## A new scene or mood: the effects library first
+
+The installation keeps a library of effects that worked before (what each looks
+like, tags, its uniforms), and it grows with every deploy. Before writing an
+effect:
+
+- `search_effects {query: "slow warm cosy fireplace"}` — keywords for the look,
+  mood, colours and motion (add synonyms); no query lists everything, most used
+  first. Rows are compact; `get_effect {id}` reads one in full (source, uniforms,
+  measured frame cost).
+- **One fits** → `deploy_effect {library_id}`, then tune it with uniforms.
+- **One is close** → `duplicate_effect {id, name}`, adapt the source (preview it),
+  deploy it, and `update_effect {id: <copy>, source, description, tags}`. Reading
+  entries is also how to reuse a technique, a palette or a motion that worked.
+- **Nothing fits** → write a new one (below), and give the deploy (or a
+  `save_effect`) a rich `description` — what it looks like, the mood, when to use
+  it — and `tags`: that is what the next search matches. Deploys without one are
+  kept with `needs_description`; fill those in with `update_effect`.
+- `delete_effect` only when the user asks; the library is theirs.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;
@@ -101,7 +121,7 @@ heaviest look.
    Does it animate (compare frames)? Is anything clipped to black or white? With
    several players (or a room) you get ONE image per time of every fixture in the
    room frame, plus per-fixture stats.
-4. `deploy_effect {effect_id, source}` — estimates each player's frame cost
+4. `deploy_effect {effect_id, source, description, tags}` — estimates each player's frame cost
    first and deploys nowhere if any would overrun (`force: true` overrides;
    the estimate is uncalibrated, so still measure), then uploads and activates
    everywhere. A player holds one effect at a time; the hub remembers the

@@ -20,6 +20,8 @@
 
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
+import { LIBRARY_TOOLS } from "../relay/src/library";
+
 const read = (title: string): ToolAnnotations => ({
   title,
   readOnlyHint: true,
@@ -75,6 +77,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   stop_texture: write("Stop a texture stream", false, true),
   // identity
   set_device_name: write("Rename a player", true, true),
+  // the effects library (relay/src/library.ts defines them, annotations included:
+  // search/get read-only; save idempotent by source hash; update/delete destructive)
+  ...Object.fromEntries(LIBRARY_TOOLS.map((t) => [t.name, t.annotations])),
 };
 
 /**
@@ -86,8 +91,8 @@ export const SERVER_INSTRUCTIONS =
   "Start with list_players: names, rooms, firmware. Target tools with players: a name, room or \"all\". " +
   "identify_player blinks fixtures so the user can tell them apart. " +
   "set_brightness sets 0..1; list_uniforms then set_uniforms or ramp_uniforms tune the running effect; " +
-  "keypoints are saved looks. New effect: compile_effect, estimate_effect, preview_effect, " +
-  "then deploy_effect and measure_effect; rollback_effect undoes a deploy.\n\n" +
+  "keypoints are saved looks. New scene or mood: search_effects first (past effects), " +
+  "else compile_effect, preview_effect, deploy_effect; rollback_effect undoes it.\n\n" +
   "Rules: ask the user before deleting or overwriting their keypoints, renaming a player " +
   "(set_device_name), re-trusting a certificate (trust_player) or forgetting a player. Ask where fixtures " +
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +

@@ -13,7 +13,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { resolveTarget, checkSamePlayer } from "../src/discovery";
 import { compile, loadFxHost } from "../src/fxhost";
+import { EffectLibrary, LIBRARY_INSTRUCTIONS } from "../relay/src/library";
 import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "../src/annotations";
+import { FileLibraryStore } from "../src/libraryLocal";
 import { createServer } from "../src/server";
 import { COMMIT_IN_PROTO, DeviceSession, FORBIDDEN_TYPES, ToolError, sniffType } from "../src/session";
 import { nodeSocketFactory } from "../src/socket";
@@ -313,7 +315,8 @@ describe("safety", () => {
 
 describe("mcp", () => {
   test("every tool is annotated (ChatGPT confirms any tool not marked read-only); instructions lead with 512 self-contained chars", async () => {
-    const server = createServer(session);
+    // With the effects library (stdio/CLI), so its tools are checked too.
+    const server = createServer(session, { library: new EffectLibrary(new FileLibraryStore(null)) });
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "0" });
     await Promise.all([server.connect(a), client.connect(b)]);
@@ -335,6 +338,7 @@ describe("mcp", () => {
       "compile_effect",
       "estimate_effect",
       "export_map",
+      "get_effect",
       "get_keypoint",
       "list_keypoints",
       "list_players",
@@ -342,16 +346,17 @@ describe("mcp", () => {
       "list_uniforms",
       "preview_effect",
       "refresh_players",
+      "search_effects",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
-    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "set_device_name", "trust_player"]) {
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "set_device_name", "trust_player", "delete_effect", "update_effect"]) {
       assert.ok(destructive.includes(d), d);
     }
     // measure_effect can roll back (rollback_on_overrun): not read-only.
     assert.equal(tools.find((t) => t.name === "measure_effect")!.annotations!.readOnlyHint, false);
 
     const instructions = client.getInstructions() ?? "";
-    assert.equal(instructions, SERVER_INSTRUCTIONS);
+    assert.equal(instructions, `${SERVER_INSTRUCTIONS}\n\n${LIBRARY_INSTRUCTIONS}`);
     const head = instructions.split("\n\n")[0]!;
     assert.ok(head.length <= 512, `first paragraph is ${head.length} chars`);
     for (const word of ["Splanc", "list_players", "identify_player", "set_brightness", "deploy_effect", "rollback_effect"]) {

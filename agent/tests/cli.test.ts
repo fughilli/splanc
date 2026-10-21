@@ -33,7 +33,7 @@ function run(args: string[]): Promise<{ code: number; out: string; err: string }
   return new Promise((done) => {
     const hosts = ps.flatMap((p) => ["--host", p.host]);
     const child = spawn(process.execPath, [MCP, ...args, ...hosts, "--no-mdns", "--bundle-root", ROOT], {
-      env: { ...process.env, SPLANC_CONFIG_DIR: join(SCRATCH, "cfg"), SPLANC_CACHE_DIR: join(SCRATCH, "cache") },
+      env: { ...process.env, SPLANC_CONFIG_DIR: join(SCRATCH, "cfg"), SPLANC_CACHE_DIR: join(SCRATCH, "cache"), SPLANC_BRIDGE_STATE_DIR: join(SCRATCH, "state") },
     });
     let out = "";
     let err = "";

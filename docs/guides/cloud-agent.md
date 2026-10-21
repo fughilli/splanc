@@ -119,6 +119,17 @@ fire effect would look like on the porch". The agent sees every player your brid
 and all, with the same tools a local agent gets (list players, effects, uniforms, keypoints,
 previews). It can't re-flash, re-map or rewire anything.
 
+## Effects library
+
+Your installation keeps a private library of the effects your agents have made: what each looks
+like, its tags and its knobs. When you ask for a new scene or mood, the agent searches the
+library first and reuses or adapts an effect that worked before; anything it deploys is kept
+(with a description), so the library grows with what you ask for. It starts with Splanc's
+example effects. The library lives in the relay, so it works even while the bridge is off (the
+agent can browse and edit it; it can't show anything until the bridge is back). It is yours
+only: nothing in it is shared with other users. Ask the agent to "show my effects library",
+"delete the party effect from the library", or "make a copy of the ocean effect but stormier".
+
 ## Managing access
 
 - **Revoke everything**: the Pi's "revoke all" control, or

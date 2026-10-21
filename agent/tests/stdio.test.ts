@@ -5,6 +5,8 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -33,7 +35,7 @@ test("stdio bridge: discover, deploy, read back", async () => {
     stderr: "pipe",
     // The SDK spawns with a minimal env by default; under rules_js,
     // process.execPath is a node shim that needs the JS_BINARY__* variables.
-    env: process.env as Record<string, string>,
+    env: { ...(process.env as Record<string, string>), SPLANC_BRIDGE_STATE_DIR: mkdtempSync(join(tmpdir(), "splanc-stdio-")) },
   });
   const client = new Client({ name: "stdio-test", version: "0" });
   let stderr = "";
@@ -60,6 +62,11 @@ test("stdio bridge: discover, deploy, read back", async () => {
     assert.equal(player.effect?.id, "e2e");
     const u = await client.callTool({ name: "list_uniforms", arguments: {} });
     assert.match((u.content as { text: string }[])[0]!.text, /"k"/);
+    // The local effects library: the deploy was kept (auto, needs a description).
+    const note = JSON.parse((r.content as { text: string }[])[1]!.text).library as { id: string; needs_description?: boolean };
+    assert.equal(note.needs_description, true);
+    const s = await client.callTool({ name: "search_effects", arguments: { query: "e2e" } });
+    assert.equal(JSON.parse((s.content as { text: string }[])[0]!.text).results[0].id, note.id);
   } finally {
     await client.close();
     await player.stop();
