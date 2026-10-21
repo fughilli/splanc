@@ -17,6 +17,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   performing on.
 - Design, numbers and free-tier costs: [live-vj-relay.md](design/live-vj-relay.md).
 
+### The bridge follows players that come back on a new IP
+
+- **Players are tracked by device id, not by address.** Players that pick a new
+  Wi-Fi MAC on every boot get a new IP each time. A bridge that keeps running
+  now finds such a player again by itself, through mDNS or a LAN sweep for its
+  manifest, and moves it to the new address. You don't need to call
+  `add_player`. If you call `add_player` with a known player's new address, that
+  player is updated, and its stale old address is dropped. A different
+  certificate under a known id is reported as TLS CHANGED.
+- **Dead sessions are noticed.** Every player session has a heartbeat. A player
+  that vanished fails the call within seconds, with the reason, instead of hanging.
+  `list_players` shows each session's state and when the player was last heard.
+- **Errors name the cause.** Tool calls the relay or bridge can't complete come
+  back as tool errors with the reason (bridge disconnected, offline, timed out,
+  `ECONNREFUSED`, a stale PERMANENT ARP entry on the bridge…). Before, MCP clients
+  showed only "MCP tool call failed".
+
 ### Agents crossfade between effects, and look at your fixtures in 3D
 
 - **`crossfade_to`** fades from the running effect to a new one (its source, or an effects-library

@@ -335,6 +335,25 @@ performing on.</p></li>
 <li><p>Design, numbers and free-tier costs: <a class="reference internal" href="design/live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>.</p></li>
 </ul>
 </section>
+<section id="the-bridge-follows-players-that-come-back-on-a-new-ip">
+<h3>The bridge follows players that come back on a new IP<a class="headerlink" href="#the-bridge-follows-players-that-come-back-on-a-new-ip" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Players are tracked by device id, not by address.</strong> Players that pick a new
+Wi-Fi MAC on every boot get a new IP each time. A bridge that keeps running
+now finds such a player again by itself, through mDNS or a LAN sweep for its
+manifest, and moves it to the new address. You don’t need to call
+<code class="docutils literal notranslate"><span class="pre">add_player</span></code>. If you call <code class="docutils literal notranslate"><span class="pre">add_player</span></code> with a known player’s new address, that
+player is updated, and its stale old address is dropped. A different
+certificate under a known id is reported as TLS CHANGED.</p></li>
+<li><p><strong>Dead sessions are noticed.</strong> Every player session has a heartbeat. A player
+that vanished fails the call within seconds, with the reason, instead of hanging.
+<code class="docutils literal notranslate"><span class="pre">list_players</span></code> shows each session’s state and when the player was last heard.</p></li>
+<li><p><strong>Errors name the cause.</strong> Tool calls the relay or bridge can’t complete come
+back as tool errors with the reason (bridge disconnected, offline, timed out,
+<code class="docutils literal notranslate"><span class="pre">ECONNREFUSED</span></code>, a stale PERMANENT ARP entry on the bridge…). Before, MCP clients
+showed only “MCP tool call failed”.</p></li>
+</ul>
+</section>
 <section id="agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">
 <h3>Agents crossfade between effects, and look at your fixtures in 3D<a class="headerlink" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -736,6 +755,7 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#live-vj-through-your-bridge-every-fixture-from-one-phone">Live VJ through your bridge: every fixture from one phone</a></li>
+<li><a class="reference internal" href="#the-bridge-follows-players-that-come-back-on-a-new-ip">The bridge follows players that come back on a new IP</a></li>
 <li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
 <li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
 <li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
