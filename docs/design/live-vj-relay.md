@@ -243,7 +243,22 @@ bridge screen.
 
 ## Measurements
 
-(filled in below from `//agent:live_e2e_test` and the live run)
+`//agent:live_e2e_test` with `SPLANC_E2E_RELAY` = a throwaway deployment of this Worker
+(`splanc-relay-vjtest.*.workers.dev`, i.e. real Cloudflare + workerd; app and bridge both in
+one dev container in the US, fake players on loopback), 20 samples each, 2026-10-21:
+
+| Path | App ⇄ bridge ping p50 / p95 | Slider → player receives `set_uniforms` p50 / p95 |
+| --- | --- | --- |
+| Via the relay | 48 / 78 ms | 24 / 43 ms |
+| Direct (LAN endpoint) | 0.4 / 1.5 ms | 1.0 / 1.9 ms |
+
+So the relay adds ≈ ½ its round trip (~24 ms one way here) on top of the LAN path; the
+bridge's own overhead (parse, coalesce, resolve the uniform, queue, encode) is ~1 ms.
+Add the real bridge → C6 hop and the player's frame (see the HITL row, when run) for
+slider → LED. Both targets hold with margin: ~10–35 ms direct, ~35–80 ms via the relay.
+
+Coalescing (same test): a 200-move burst over ~100 ms became ≤ 10 app frames and as many
+`set_uniforms` per player, ending on the final value.
 
 ## Not done yet / follow-ups
 
