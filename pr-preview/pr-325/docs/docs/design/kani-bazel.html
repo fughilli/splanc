@@ -1,0 +1,560 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Design: MbedTLS from source with dynamic buffers (@embedded)" href="mbedtls-dynamic-buffers.html"><link rel="prev" title="Post-boot heap census" href="heap-census.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Kani under Bazel - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ramps.html">Canned interpolation profiles (ramps)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/kani-bazel.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/kani-bazel.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="kani-under-bazel">
+<h1>Kani under Bazel<a class="headerlink" href="#kani-under-bazel" title="Link to this heading">¶</a></h1>
+<p>Status: working in-repo (2026-10-19). <code class="docutils literal notranslate"><span class="pre">//tools/kani</span></code> provides
+<code class="docutils literal notranslate"><span class="pre">rust_kani_test</span></code>, which runs <code class="docutils literal notranslate"><span class="pre">//firmware/region</span></code>’s proofs and a dependency
+fixture as hermetic <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code> targets. This doc explains why that didn’t
+exist, how it works, and what to contribute upstream.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/region:region_kani<span class="w">        </span><span class="c1"># both region proofs (~5 min, CBMC)</span>
+bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/region:region_kani_slab<span class="w">   </span><span class="c1"># the ~1 s slab proof</span>
+bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//tools/kani/tests:uses_clamp_kani<span class="w">   </span><span class="c1"># harness reaching into a dep</span>
+</pre></div>
+</div>
+<p>All Kani targets are tagged <code class="docutils literal notranslate"><span class="pre">manual</span></code> + <code class="docutils literal notranslate"><span class="pre">kani</span></code>: the first run fetches about
+200 MB.</p>
+<section id="why-kani-didn-t-run-under-bazel">
+<h2>Why Kani didn’t run under Bazel<a class="headerlink" href="#why-kani-didn-t-run-under-bazel" title="Link to this heading">¶</a></h2>
+<p>Kani is not “another rustc”, and nothing upstream bridged the gap.</p>
+<ol class="arabic">
+<li><p><strong>A rustc <em>driver</em> on a different compiler and sysroot.</strong>
+<code class="docutils literal notranslate"><span class="pre">kani-compiler</span></code> links against one specific nightly’s <code class="docutils literal notranslate"><span class="pre">librustc_driver</span></code>
+(0.68.0 uses nightly-2026-08-21).</p>
+<ul class="simple">
+<li><p>It compiles against Kani’s own sysroot: Kani-built <code class="docutils literal notranslate"><span class="pre">core</span></code>/<code class="docutils literal notranslate"><span class="pre">std</span></code> rlibs, the
+<code class="docutils literal notranslate"><span class="pre">kani</span></code> crate, and a <code class="docutils literal notranslate"><span class="pre">std</span></code> shim injected with
+<code class="docutils literal notranslate"><span class="pre">--extern</span> <span class="pre">noprelude,nounused:std=...</span></code>.</p></li>
+<li><p>It also takes ~25 fixed <code class="docutils literal notranslate"><span class="pre">-Z</span></code>/<code class="docutils literal notranslate"><span class="pre">-C</span></code> flags (<code class="docutils literal notranslate"><span class="pre">-Z</span> <span class="pre">always-encode-mir</span></code>,
+<code class="docutils literal notranslate"><span class="pre">--cfg=kani</span></code>, <code class="docutils literal notranslate"><span class="pre">-C</span> <span class="pre">panic=abort</span></code>, <code class="docutils literal notranslate"><span class="pre">--kani-compiler</span></code>, harness options
+tunnelled through <code class="docutils literal notranslate"><span class="pre">-Cllvm-args</span></code>).</p></li>
+<li><p>rules_rust’s toolchain model is one rustc plus its matching std per
+target. The only driver swap it does, the clippy aspect, keeps the
+toolchain’s sysroot and is built on private <code class="docutils literal notranslate"><span class="pre">//rust/private</span></code> APIs
+(<code class="docutils literal notranslate"><span class="pre">construct_arguments</span></code>, <code class="docutils literal notranslate"><span class="pre">collect_inputs</span></code>).</p></li>
+</ul>
+</li>
+<li><p><strong>Every dependency must be rebuilt.</strong> A rules_rust rlib is built against the
+stable std, which has a different crate hash and metadata format, so
+kani-compiler can’t link it.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span></code> sets <code class="docutils literal notranslate"><span class="pre">RUSTC=kani-compiler</span></code> and rebuilds the whole graph with
+the Kani flags (<code class="docutils literal notranslate"><span class="pre">--emit=dep-info,metadata,link</span></code>).</p></li>
+<li><p>Only the crate under test gets the harness options. Codegen of what a
+harness reaches in a dependency happens in that top crate, from the MIR
+the dependency’s rmeta encodes.</p></li>
+<li><p>So Bazel needs a parallel build graph: an aspect.</p></li>
+</ul>
+</li>
+<li><p><strong>The verify half lives only inside kani-driver, which insists on owning
+compilation.</strong> After compiling, each harness runs a pipeline:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">goto-cc</span></code> links its symtab with <code class="docutils literal notranslate"><span class="pre">kani_lib.c</span></code> and sets the entry point;</p></li>
+<li><p>three <code class="docutils literal notranslate"><span class="pre">goto-instrument</span></code> passes run;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cbmc</span></code> runs with Kani’s flags, and the driver parses the JSON verdict.</p></li>
+</ul>
+<p>Only <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span></code> and standalone <code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">&lt;file&gt;</span></code> drive this; neither verifies
+artifacts a build system produced. The open upstream
+<a class="reference external" href="https://github.com/model-checking/kani/pull/4600">model-checking/kani#4600</a>
+(<code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">verify-artifacts</span></code>, since 2026-05) exists to decouple them. Its own
+description cites the same build-system friction
+(<a class="reference external" href="https://github.com/model-checking/kani/issues/4079">#4079</a>,
+<a class="reference external" href="https://github.com/model-checking/kani/issues/4212">#4212</a>).</p>
+</li>
+<li><p><strong>Distribution is rustup-shaped.</strong> <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span> <span class="pre">setup</span></code> installs into
+<code class="docutils literal notranslate"><span class="pre">~/.kani</span></code> plus a rustup toolchain. Kani does publish prebuilt bundles for
+{aarch64,x86_64}-{linux-gnu,apple-darwin} that already contain the Kani
+sysroot and CBMC. The only missing piece is the nightly <code class="docutils literal notranslate"><span class="pre">rustc</span></code> component’s
+<code class="docutils literal notranslate"><span class="pre">lib/</span></code> (librustc_driver, libLLVM), which kani-compiler finds through its
+<code class="docutils literal notranslate"><span class="pre">$ORIGIN/../toolchain/lib</span></code> rpath.</p></li>
+</ol>
+<p><strong>Prior art:</strong></p>
+<ul class="simple">
+<li><p><strong>No Bazel integration upstream.</strong> There are no Kani issues or PRs in
+bazelbuild/rules_rust, no Bazel issues in model-checking/kani, and no
+<code class="docutils literal notranslate"><span class="pre">rules_kani</span></code>.</p></li>
+<li><p><strong>pulseengine/gale’s <code class="docutils literal notranslate"><span class="pre">kani_test</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">bzl/private/cargo.bzl</span></code>) shells out to
+the host’s <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span></code> with sandboxing off. That isn’t hermetic, and gale’s
+README notes it isn’t in CI.</p></li>
+<li><p><strong><a class="reference external" href="https://github.com/pulseengine/rules_verus">pulseengine/rules_verus</a></strong> is
+the analogous hermetic pattern for another rustc-driver verifier (Verus).</p></li>
+</ul>
+</section>
+<section id="what-tools-kani-does">
+<h2>What //tools/kani does<a class="headerlink" href="#what-tools-kani-does" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">repositories.bzl</span></code> <code class="docutils literal notranslate"><span class="pre">kani_bundle</span></code></strong> (via <code class="docutils literal notranslate"><span class="pre">use_repo_rule</span></code>): downloads the
+sha-pinned Kani release bundle for the host and the matching nightly <code class="docutils literal notranslate"><span class="pre">rustc</span></code>
+component into <code class="docutils literal notranslate"><span class="pre">toolchain/</span></code>, which reproduces <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span> <span class="pre">setup</span></code>’s layout.
+There is no rustup and no <code class="docutils literal notranslate"><span class="pre">~/.kani</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">defs.bzl</span></code> <code class="docutils literal notranslate"><span class="pre">rust_kani_test(crate,</span> <span class="pre">harnesses)</span></code>:</strong></p>
+<ul>
+<li><p><strong>Deps:</strong> an aspect over <code class="docutils literal notranslate"><span class="pre">deps</span></code> rebuilds each dependency with kani-compiler
+(<code class="docutils literal notranslate"><span class="pre">--emit=metadata</span></code>, the same flags <code class="docutils literal notranslate"><span class="pre">cargo</span> <span class="pre">kani</span></code> logs under <code class="docutils literal notranslate"><span class="pre">--verbose</span></code>).</p></li>
+<li><p><strong>Crate under test:</strong> goes through Kani’s standalone driver
+(<code class="docutils literal notranslate"><span class="pre">kani-driver</span> <span class="pre">&lt;root&gt;</span></code>), so the whole verify pipeline is Kani’s own code.
+The test stages sources into <code class="docutils literal notranslate"><span class="pre">$TEST_TMPDIR</span></code>, because standalone mode
+writes goto artifacts beside the root file.</p></li>
+<li><p><strong>Flags:</strong> the edition and the deps’ <code class="docutils literal notranslate"><span class="pre">--extern=name=&lt;rmeta&gt;</span></code> /
+<code class="docutils literal notranslate"><span class="pre">-Ldependency=</span></code> reach kani-compiler through <code class="docutils literal notranslate"><span class="pre">RUSTFLAGS</span></code>, which standalone
+mode forwards.</p></li>
+<li><p><strong>Exit code:</strong> kani-driver’s exit status is the test verdict. An injected
+bug in a dependency (<code class="docutils literal notranslate"><span class="pre">//tools/kani/tests:clamp</span></code>) turns the test red.</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>Quirks found:</strong></p>
+<ul class="simple">
+<li><p>Standalone mode splits <code class="docutils literal notranslate"><span class="pre">RUSTFLAGS</span></code> on single spaces, so an empty field
+becomes an empty input-file argument (<code class="docutils literal notranslate"><span class="pre">multiple</span> <span class="pre">input</span> <span class="pre">filenames</span> <span class="pre">provided</span></code>).</p></li>
+<li><p>Standalone mode names the crate after the file stem (<code class="docutils literal notranslate"><span class="pre">lib</span></code>).</p></li>
+<li><p>It has no output-directory option.</p></li>
+</ul>
+<p><strong>Limitations:</strong></p>
+<ul class="simple">
+<li><p>No proc-macro deps or build scripts. They would need the nightly rustc plus
+its host <code class="docutils literal notranslate"><span class="pre">rust-std</span></code> to build host code the compiler can load.</p></li>
+<li><p>The crate’s <code class="docutils literal notranslate"><span class="pre">crate_features</span></code>, <code class="docutils literal notranslate"><span class="pre">rustc_flags</span></code> and <code class="docutils literal notranslate"><span class="pre">rustc_env</span></code> aren’t forwarded.
+Full fidelity needs rules_rust’s private <code class="docutils literal notranslate"><span class="pre">construct_arguments</span></code>.</p></li>
+<li><p>One test re-verifies every harness when anything changes; there’s no
+per-harness caching or sharding.</p></li>
+</ul>
+</section>
+<section id="upstream-proposal">
+<h2>Upstream proposal<a class="headerlink" href="#upstream-proposal" title="Link to this heading">¶</a></h2>
+<p><strong>1. Kani (model-checking/kani): small, independent PRs.</strong></p>
+<ul class="simple">
+<li><p><strong>Support #4600 <code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">verify-artifacts</span></code> to completion.</strong> Maintainers want
+docs or an RFC (feliperodri). The open soundness review (rajath-mk) found
+that a verify step not passed <code class="docutils literal notranslate"><span class="pre">-Z</span> <span class="pre">loop-contracts</span></code> silently skips loop
+contracts the metadata records. The fix is to have the verify step take its
+options from the metadata, plus a version stamp. With that, a build system
+owns per-crate compilation, which is cacheable and remote-executable, and
+Kani owns only verification. That also answers #4212, where carolynzech
+calls cache invalidation “an unfixable limitation” under Cargo’s
+fingerprinting.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">--print-compiler-args</span></code> (or a JSON file in the bundle):</strong> the exact
+kani-compiler flags for this version, so build rules stop hardcoding
+<code class="docutils literal notranslate"><span class="pre">call_cargo.rs</span></code>’s list.</p></li>
+<li><p><strong>Standalone <code class="docutils literal notranslate"><span class="pre">--out-dir</span></code></strong>, and proper <code class="docutils literal notranslate"><span class="pre">RUSTFLAGS</span></code> tokenization, or a
+<code class="docutils literal notranslate"><span class="pre">KANI_ENCODED_RUSTFLAGS</span></code> with <code class="docutils literal notranslate"><span class="pre">\x1f</span></code> separators like Cargo’s.</p></li>
+</ul>
+<p><strong>2. Bazel side: a <code class="docutils literal notranslate"><span class="pre">rules_rust_kani</span></code> extension</strong> in <code class="docutils literal notranslate"><span class="pre">bazelbuild/rules_rust</span></code>,
+next to <code class="docutils literal notranslate"><span class="pre">extensions/{bindgen,prost,wasm_bindgen}</span></code> (this repo already uses
+<code class="docutils literal notranslate"><span class="pre">rules_rust_wasm_bindgen</span></code>). Living in-repo lets it reuse
+<code class="docutils literal notranslate"><span class="pre">construct_arguments</span></code> the way the clippy aspect does, which brings features,
+cfgs, env, build-script outputs and proc-macros built with the bundle’s
+nightly. If the rules_rust maintainers decline, ship it as a standalone
+<code class="docutils literal notranslate"><span class="pre">rules_kani</span></code> BCR module, modelled on rules_verus. Proposed API:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">=</span> <span class="pre">use_extension(&quot;&#64;rules_rust_kani//:extensions.bzl&quot;,</span> <span class="pre">&quot;kani&quot;)</span></code>, then
+<code class="docutils literal notranslate"><span class="pre">kani.toolchain(version</span> <span class="pre">=</span> <span class="pre">&quot;0.68.0&quot;)</span></code> (sha table per platform, like
+rules_rust’s own).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">rust_kani_test(crate,</span> <span class="pre">harnesses</span> <span class="pre">=</span> <span class="pre">[],</span> <span class="pre">unwind</span> <span class="pre">=</span> <span class="pre">None,</span> <span class="pre">kani_flags</span> <span class="pre">=</span> <span class="pre">[])</span></code>.</p></li>
+<li><p>A dep aspect: a <code class="docutils literal notranslate"><span class="pre">KaniCompile</span></code> action per crate, emitting rmetas. Once #4600
+lands, add a root <code class="docutils literal notranslate"><span class="pre">KaniCodegen</span></code> action emitting goto artifacts plus metadata,
+and the test runs <code class="docutils literal notranslate"><span class="pre">kani</span> <span class="pre">verify-artifacts</span></code>.</p></li>
+<li><p><strong>Map Bazel test sharding to harnesses:</strong> <code class="docutils literal notranslate"><span class="pre">TEST_TOTAL_SHARDS</span></code> and
+<code class="docutils literal notranslate"><span class="pre">TEST_SHARD_INDEX</span></code> select a harness subset, so long proofs parallelize across
+executors.</p></li>
+</ul>
+<p><strong>Order:</strong> the Kani PRs first, since they are small and unblock a clean rule.
+Then propose the rules_rust extension with this repo’s <code class="docutils literal notranslate"><span class="pre">//tools/kani</span></code> as the
+working reference. Nothing has been filed upstream yet.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="mbedtls-dynamic-buffers.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Design: MbedTLS from source with dynamic buffers (<code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="heap-census.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Post-boot heap census</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Kani under Bazel</a><ul>
+<li><a class="reference internal" href="#why-kani-didn-t-run-under-bazel">Why Kani didn’t run under Bazel</a></li>
+<li><a class="reference internal" href="#what-tools-kani-does">What //tools/kani does</a></li>
+<li><a class="reference internal" href="#upstream-proposal">Upstream proposal</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
