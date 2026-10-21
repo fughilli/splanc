@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { proxiedAssetUrl, releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
+import { compareVersionsDesc, proxiedAssetUrl, releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
 
 function asset(name: string) {
   return { name, browser_download_url: `https://example.test/${name}` };
@@ -34,7 +34,7 @@ test("releasesToFirmwareIndex yields one entry per release × variant, newest fi
   const idx = releasesToFirmwareIndex(RELEASES);
   assert.ok(idx);
   assert.equal(idx!.entries.length, 4);
-  // Newest release's entries come first (API order preserved).
+  // Newest release's entries come first.
   assert.match(idx!.entries[0]!.label, /firmware-v1\.2\.0/);
   const vendor = idx!.entries.find((e) => e.id === "firmware-v1.2.0::vendor")!;
   assert.equal(vendor.chip, "esp32c6");
@@ -82,4 +82,21 @@ test("releases with no firmware assets, drafts, and non-arrays degrade to null",
   );
   assert.equal(releasesToFirmwareIndex({ not: "an array" }), null);
   assert.equal(releasesToFirmwareIndex(null), null);
+});
+
+test("versions sort numerically, newest first, whatever order the API returns", () => {
+  // The API orders by creation date; a re-published or back-ported release can land
+  // anywhere. 1.10.0 must sort above 1.9.0 (plain string order puts it below).
+  const rel = (v: string) => ({ tag_name: `firmware-v${v}`, draft: false, assets: [asset(`esp32c6-netstack-${v}.tar`)] });
+  const idx = releasesToFirmwareIndex([rel("1.9.0"), rel("1.10.0"), rel("1.8.2"), rel("1.10.1-rc1"), rel("1.10.1")]);
+  assert.deepEqual(
+    idx!.entries.map((e) => e.version),
+    ["1.10.1", "1.10.1-rc1", "1.10.0", "1.9.0", "1.8.2"],
+  );
+});
+
+test("compareVersionsDesc: numeric parts, missing parts as zero, pre-releases below releases", () => {
+  const sorted = ["1.9", "1.10.0", "1.9.10", "1.9.9", "2.0.0-rc2", "2.0.0-rc10", "2.0.0", "dev"].sort(compareVersionsDesc);
+  assert.deepEqual(sorted, ["2.0.0", "2.0.0-rc10", "2.0.0-rc2", "1.10.0", "1.9.10", "1.9.9", "1.9", "dev"]);
+  assert.equal(compareVersionsDesc("1.10", "1.10.0"), 0);
 });
