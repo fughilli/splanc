@@ -172,8 +172,9 @@ rr_rust_test(
     srcs = ["tests/ffi.rs"],
     edition = "2021",
     # On the wrapper; the test binary it runs inherits it. Host-profile
-    # envelopes carry big inline heapless storage.
-    env = {"RUST_MIN_STACK": "16777216"},
+    # envelopes carry big inline heapless storage; a debug (fastbuild)
+    # ClientMessage::decode frame alone is ~12 MB with every arm's temporary.
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -190,7 +191,7 @@ rust_test(
     name = "agent_surface_test",
     srcs = ["tests/agent_surface.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     deps = [
         ":player_ffi_host",
         "//firmware/fx_vm",
@@ -207,7 +208,7 @@ rust_test(
     name = "decks_keypoints_test",
     srcs = ["tests/decks_keypoints.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -223,7 +224,7 @@ rust_test(
     srcs = ["tests/room_frame.rs"],
     compile_data = ["//pi/hitl/harness:ab_demo/timeBaseClock.fx"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -241,7 +242,7 @@ rr_rust_test(
     edition = "2021",
     # On the wrapper; the test binary it runs inherits it. Host-profile
     # envelopes carry big inline heapless storage.
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -259,7 +260,7 @@ rr_rust_test(
     edition = "2021",
     # On the wrapper; the test binary it runs inherits it. Host-profile
     # envelopes carry big inline heapless storage.
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -278,7 +279,7 @@ rust_test(
     ],
     crate_root = "tests/sensor_pool.rs",
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     deps = [
         ":player_ffi_host",
         "//firmware/sensor",
@@ -830,7 +831,7 @@ rr_rust_test(
     srcs = ["tests/device_identity.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -847,7 +848,7 @@ rr_rust_test(
     srcs = ["tests/starvation_guard.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -866,7 +867,7 @@ rr_rust_test(
     srcs = ["tests/playback_rate.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -882,7 +883,7 @@ rr_rust_test(
     srcs = ["tests/memory_workloads.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -901,7 +902,7 @@ rr_rust_test(
     srcs = ["tests/memory_bounds.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -920,7 +921,7 @@ rr_rust_test(
     srcs = ["tests/embedded_types.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -936,7 +937,7 @@ rr_rust_test(
     srcs = ["tests/color_calibration.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -953,7 +954,7 @@ rr_rust_test(
     srcs = ["tests/perf_cost_counters.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
