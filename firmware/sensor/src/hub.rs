@@ -8,7 +8,7 @@
 //! (the caller passes `now_us`), so the whole thing runs under host tests.
 
 use crate::bus::{BusError, I2cBus};
-use crate::calib::{Calibration, FLAG_ACCEL, FLAG_GYRO_BIAS, FLAG_MOUNT};
+use crate::calib::{Calibration, FLAG_ACCEL, FLAG_EXTRINSIC, FLAG_GYRO_BIAS, FLAG_MOUNT, FLAG_YAW_RESOLVED};
 use crate::fusion::{AttitudeFilter, Mahony, MahonyParams, RestDetector};
 use crate::gesture::{GestureParams, Gestures};
 use crate::math::{Quat, Vec3, GRAVITY};
@@ -94,6 +94,21 @@ pub struct Snapshot {
     /// and minimum over the last ~1 s window; 0 without a cycle source.
     pub ingest_cycles_mean: u32,
     pub ingest_cycles_min: u32,
+    /// The settled "up" (specific-force direction) in the raw IMU body frame —
+    /// before the mount — averaged over the current rest streak: one side of
+    /// an extrinsic-calibration pose (docs/design/sensor-core.md §7).
+    pub rest_up_imu: [f32; 3],
+    /// 1-sigma uncertainty of that mean direction, degrees.
+    pub rest_up_sigma_deg: f32,
+    /// Samples in the current rest streak (0 = moving).
+    pub rest_samples: u32,
+    /// R_fi: IMU body -> fixture/map frame (+Y up), [w, x, y, z].
+    pub mount_map: [f32; 4],
+    /// calib FLAG_* bits (MOUNT / EXTRINSIC / YAW_RESOLVED ...).
+    pub cal_flags: u8,
+    pub mount_poses: u8,
+    pub mount_residual_deg: f32,
+    pub calibrated_at: u32,
 }
 
 impl Default for Snapshot {
@@ -123,9 +138,21 @@ impl Default for Snapshot {
             bus_errors: 0,
             ingest_cycles_mean: 0,
             ingest_cycles_min: 0,
+            rest_up_imu: [0.0; 3],
+            rest_up_sigma_deg: 0.0,
+            rest_samples: 0,
+            mount_map: MAP_FROM_ZUP.to_array(),
+            cal_flags: 0,
+            mount_poses: 0,
+            mount_residual_deg: 0.0,
+            calibrated_at: 0,
         }
     }
 }
+
+/// The map frame (+Y up) from the sensor core's z-up fixture frame: -90° about
+/// x, i.e. (x, y, z) -> (x, z, -y). `mount = conj(MAP_FROM_ZUP) * R_fi`.
+pub const MAP_FROM_ZUP: Quat = Quat { w: core::f32::consts::FRAC_1_SQRT_2, x: -core::f32::consts::FRAC_1_SQRT_2, y: 0.0, z: 0.0 };
 
 /// Calibration actions (the `SensorCalibrate` request).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,6 +212,9 @@ pub struct Hub<F: AttitudeFilter = Mahony> {
     lin_world: Vec3,
     cal_dirty: bool,
     cycle_source: Option<fn() -> u32>,
+    rest_up: Vec3,
+    rest_dev2: f32,
+    rest_n: u32,
     cyc_sum: u32,
     cyc_min: u32,
     cyc_n: u32,
@@ -237,6 +267,9 @@ impl<F: AttitudeFilter> Hub<F> {
             lin_world: Vec3::ZERO,
             cal_dirty: false,
             cycle_source: None,
+            rest_up: Vec3::ZERO,
+            rest_dev2: 0.0,
+            rest_n: 0,
             cyc_sum: 0,
             cyc_min: u32::MAX,
             cyc_n: 0,
@@ -512,6 +545,9 @@ impl<F: AttitudeFilter> Hub<F> {
             (a_s.sub(self.cal.accel_offset).mul(self.cal.accel_scale), w_s)
         };
         let a = a.scale(self.accel_gain);
+        // Raw-body-frame direction for the extrinsic observation (§7): the
+        // corrected accel pulled back through the mount (gain doesn't matter).
+        let a_body = if self.cal.flags & FLAG_MOUNT != 0 { self.cal.mount.rotate_inv(a) } else { a };
         if let (Some(t), Some(v)) = (raw.temp, self.variant()) {
             self.temp_c = mpu::temp_c(v.family(), t);
         }
@@ -537,6 +573,26 @@ impl<F: AttitudeFilter> Hub<F> {
                 self.bias_known = true;
             }
         }
+        // Settled up in the IMU body frame, averaged while at rest.
+        if self.rest.at_rest() {
+            let n2 = a_body.norm2();
+            if n2 > 0.0 {
+                let u = a_body.scale(crate::math::inv_sqrt(n2));
+                self.rest_n = self.rest_n.saturating_add(1);
+                if self.rest_n == 1 {
+                    self.rest_up = u;
+                    self.rest_dev2 = 0.0;
+                } else {
+                    // Running mean (exact up to 1000 samples, then a 10 s EMA).
+                    let k = 1.0 / (self.rest_n.min(1000) as f32);
+                    let d = u.sub(self.rest_up);
+                    self.rest_up = self.rest_up.add(d.scale(k));
+                    self.rest_dev2 += k * (d.norm2() - self.rest_dev2);
+                }
+            }
+        } else {
+            self.rest_n = 0;
+        }
         // Sanity: mean |a| over the first 100 samples should be ~1 g (±5%).
         if self.accel_norm_n < 100 {
             self.accel_norm_sum += a.norm() / GRAVITY;
@@ -555,6 +611,37 @@ impl<F: AttitudeFilter> Hub<F> {
         self.accel = a;
         self.gyro = w.sub(self.filter.gyro_bias());
         self.samples = self.samples.wrapping_add(1);
+    }
+
+    /// Install an IMU -> fixture/map extrinsic `r_fi` (the post-mapping
+    /// calibration's solve, §7). Tilt AND yaw come from it; the gyro bias is
+    /// re-expressed across the mount change.
+    pub fn set_extrinsic(&mut self, r_fi: Quat, residual_deg: f32, poses: u8, yaw_resolved: bool, unix_s: u32) {
+        let bias_s = self.cal.mount.rotate_inv(self.filter.gyro_bias());
+        self.cal.mount = MAP_FROM_ZUP.conj().mul(r_fi).normalized();
+        self.cal.flags |= FLAG_MOUNT | FLAG_EXTRINSIC;
+        if yaw_resolved {
+            self.cal.flags |= FLAG_YAW_RESOLVED;
+        } else {
+            self.cal.flags &= !FLAG_YAW_RESOLVED;
+        }
+        self.cal.mount_residual_deg = residual_deg;
+        self.cal.mount_poses = poses;
+        self.cal.calibrated_at = unix_s;
+        self.filter.set_gyro_bias(self.cal.mount.rotate(bias_s));
+        self.filter.reset();
+        self.rest_n = 0;
+        self.calibrated = true;
+        self.cal_dirty = true;
+    }
+
+    /// The LED map was redone: its gravity-levelled frame keeps the tilt part
+    /// of the extrinsic but not the yaw. Mark yaw unresolved.
+    pub fn map_changed(&mut self) {
+        if self.cal.flags & FLAG_YAW_RESOLVED != 0 {
+            self.cal.flags &= !FLAG_YAW_RESOLVED;
+            self.cal_dirty = true;
+        }
     }
 
     /// Run a calibration action against the live state.
@@ -607,6 +694,9 @@ impl<F: AttitudeFilter> Hub<F> {
                 let bias_s = self.cal.mount.rotate_inv(self.filter.gyro_bias());
                 self.cal.mount = Quat::from_two_unit(up_s, Vec3::UP);
                 self.cal.flags |= FLAG_MOUNT;
+                // A level is tilt-only: any extrinsic yaw is gone.
+                self.cal.flags &= !(FLAG_EXTRINSIC | FLAG_YAW_RESOLVED);
+                self.cal.mount_poses = 0;
                 self.filter.set_gyro_bias(self.cal.mount.rotate(bias_s));
                 self.filter.reset();
                 self.calibrated = true;
@@ -644,6 +734,18 @@ impl<F: AttitudeFilter> Hub<F> {
             bus_errors: self.bus_errors,
             ingest_cycles_mean: self.cyc_mean_pub,
             ingest_cycles_min: self.cyc_min_pub,
+            rest_up_imu: self.rest_up.to_array(),
+            rest_up_sigma_deg: if self.rest_n > 1 {
+                crate::math::sqrt(self.rest_dev2 / self.rest_n.min(1000) as f32) * (180.0 / core::f32::consts::PI)
+            } else {
+                0.0
+            },
+            rest_samples: self.rest_n,
+            mount_map: MAP_FROM_ZUP.mul(self.cal.mount).normalized().to_array(),
+            cal_flags: self.cal.flags,
+            mount_poses: self.cal.mount_poses,
+            mount_residual_deg: self.cal.mount_residual_deg,
+            calibrated_at: self.cal.calibrated_at,
         }
     }
 

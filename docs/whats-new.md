@@ -5,6 +5,18 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### The motion sensor knows which way the map is
+
+- **Mapping now calibrates the IMU's tilt for free**: the map is gravity-levelled
+  and the fixture stands still while it's captured, so the sensor's settled
+  "up" is pinned to the map's +Y as soon as the map is stored; effects tilt the
+  right way at once. Heading needs a second, re-oriented pose (the guided
+  "Calibrate IMU" screen is next); the solver and device side are in
+  ([sensor-core.md §7](design/sensor-core.md)).
+- **Fixtures remember how they were mapped**: diffuse mode, LED stride, code
+  timing and brightness are stored on the device with the map, and a later
+  supplemental or calibration capture reuses them instead of re-probing.
+
 ### Sensor drivers an agent can write
 
 - **Any I2C sensor, no firmware release.** Agents scan the player's sensor bus

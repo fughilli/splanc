@@ -99,6 +99,19 @@ const SNAP_INIT: Snapshot = Snapshot {
     bus_errors: 0,
     ingest_cycles_mean: 0,
     ingest_cycles_min: 0,
+    rest_up_imu: [0.0; 3],
+    rest_up_sigma_deg: 0.0,
+    rest_samples: 0,
+    mount_map: [
+        core::f32::consts::FRAC_1_SQRT_2,
+        -core::f32::consts::FRAC_1_SQRT_2,
+        0.0,
+        0.0,
+    ],
+    cal_flags: 0,
+    mount_poses: 0,
+    mount_residual_deg: 0.0,
+    calibrated_at: 0,
 };
 
 /// Calibration mailbox: 0 = none, else CalibrateSensors.Action.
@@ -106,6 +119,12 @@ static PENDING_CAL: AtomicU8 = AtomicU8::new(0);
 static CAL_SEQ: AtomicU32 = AtomicU32::new(0);
 /// 0 none, 1 ok, 2 not_running, 3 not_at_rest.
 static CAL_RESULT: AtomicU8 = AtomicU8::new(0);
+/// Mailbox for set_sensor_mount (§7): the data is written before the flag is
+/// raised (Release), read after it is taken (Acquire).
+static MOUNT_PENDING: AtomicBool = AtomicBool::new(false);
+static mut MOUNT_REQ: ([f32; 4], f32, u8, bool, u32) = ([1.0, 0.0, 0.0, 0.0], 0.0, 0, false, 0);
+/// The LED map was replaced (lm_map_replaced): clear the extrinsic's yaw.
+static MAP_CHANGED: AtomicBool = AtomicBool::new(false);
 
 /// Who owns the hub. NATIVE: the sensor task (if any). HANDOVER: the driver VM
 /// asked for it while the task exists — the task converts the hub itself at its
@@ -296,6 +315,15 @@ pub(crate) unsafe fn bus_write_read(addr: u8, wr: &[u8], rd: &mut [u8]) -> bool 
 /// Run a calibration action posted by calibrate_sensors (whichever context owns
 /// the hub calls this before advancing it).
 unsafe fn apply_pending_cal(hub: &mut Hub) {
+    if MOUNT_PENDING.swap(false, Ordering::AcqRel) {
+        let (q, residual, poses, yaw, ts) = *addr_of!(MOUNT_REQ);
+        hub.set_extrinsic(ledmapper_sensor::math::Quat::from_array(q).normalized(), residual, poses, yaw, ts);
+        CAL_RESULT.store(1, Ordering::Relaxed);
+        CAL_SEQ.fetch_add(1, Ordering::Release);
+    }
+    if MAP_CHANGED.swap(false, Ordering::AcqRel) {
+        hub.map_changed();
+    }
     let act = PENDING_CAL.swap(0, Ordering::AcqRel);
     if act != 0 {
         let action = match act {
@@ -472,6 +500,20 @@ fn write_sensor_state(w: &mut PbOut, s: &Snapshot, pins: [i32; 3]) {
         w.bytes(27, r.as_bytes());
     }
     w.sint(28, pins[2]);
+    if s.rest_samples > 0 {
+        w.floats(29, &s.rest_up_imu);
+        w.float(30, s.rest_up_sigma_deg);
+        w.uint(31, s.rest_samples as u64);
+    }
+    use ledmapper_sensor::calib::{FLAG_EXTRINSIC, FLAG_MOUNT, FLAG_YAW_RESOLVED};
+    if s.cal_flags & FLAG_MOUNT != 0 || s.state == ledmapper_sensor::State::Running as u8 {
+        w.floats(32, &s.mount_map);
+    }
+    w.uint(33, (s.cal_flags & FLAG_EXTRINSIC != 0) as u64);
+    w.uint(34, (s.cal_flags & FLAG_YAW_RESOLVED != 0) as u64);
+    w.uint(35, s.mount_poses as u64);
+    w.float(36, s.mount_residual_deg);
+    w.uint(37, s.calibrated_at as u64 * 1000);
 }
 
 /// get_sensors -> sensor_state, encoded zero-copy into `out`.
@@ -491,4 +533,108 @@ pub(crate) unsafe fn handle_calibrate_sensors(frame: &[u8], out: *mut u8, out_ca
         }
     }
     handle_get_sensors(out, out_cap)
+}
+
+/// set_sensor_mount (§7): post R_fi + its quality to the owner of the hub;
+/// reply with the state (calibration_seq advances once it is applied).
+pub(crate) unsafe fn handle_set_sensor_mount(frame: &[u8], out: *mut u8, out_cap: usize) -> i32 {
+    if let Some(CArm::SetSensorMount(m)) = client_arm(frame) {
+        let mut q = [0.0f32; 4];
+        let mut n = 0;
+        for v in m.quat() {
+            if n < 4 {
+                q[n] = v;
+            }
+            n += 1;
+        }
+        let norm2: f32 = q.iter().map(|x| x * x).sum();
+        if n == 4 && norm2 > 0.5 && norm2 < 1.5 {
+            let secs = (m.calibrated_at_ms() / 1000).min(u32::MAX as u64) as u32;
+            *addr_of_mut!(MOUNT_REQ) =
+                (q, m.residual_deg(), m.poses().min(255) as u8, m.yaw_resolved(), secs);
+            MOUNT_PENDING.store(true, Ordering::Release);
+        } else {
+            return super::encode_reply(
+                &super::fx_error("bad_mount", "set_sensor_mount needs a unit quaternion w,x,y,z"),
+                out,
+                out_cap,
+            );
+        }
+    }
+    handle_get_sensors(out, out_cap)
+}
+
+// -- capture profile (§7.5) -------------------------------------------------------
+
+/// The stored CaptureProfile message, encoded (the device doesn't interpret it).
+const PROFILE_CAP: usize = 192;
+static mut PROFILE: [u8; PROFILE_CAP] = [0; PROFILE_CAP];
+static mut PROFILE_LEN: usize = 0;
+static PROFILE_GEN: AtomicU32 = AtomicU32::new(0);
+/// ServerMessage.capture_profile.
+const ARM_CAPTURE_PROFILE: u32 = 30;
+
+pub(crate) unsafe fn handle_set_capture_profile(frame: &[u8], out: *mut u8, out_cap: usize) -> i32 {
+    if let Some(CArm::SetCaptureProfile(m)) = client_arm(frame) {
+        let p = m.profile().map(|v| v.as_bytes()).unwrap_or(&[]);
+        if p.len() > PROFILE_CAP {
+            return super::encode_reply(&super::fx_error("too_large", "capture profile too large"), out, out_cap);
+        }
+        (*addr_of_mut!(PROFILE))[..p.len()].copy_from_slice(p);
+        PROFILE_LEN = p.len();
+        PROFILE_GEN.fetch_add(1, Ordering::Release);
+    }
+    handle_get_capture_profile(out, out_cap)
+}
+
+pub(crate) unsafe fn handle_get_capture_profile(out: *mut u8, out_cap: usize) -> i32 {
+    let n = PROFILE_LEN;
+    write_arm(out, out_cap, ARM_CAPTURE_PROFILE, |w| {
+        for &b in &(*addr_of!(PROFILE))[..n] {
+            w.byte(b);
+        }
+    })
+}
+
+/// Boot: the profile persisted in NVS.
+///
+/// # Safety
+/// `p` valid for `len`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_capture_profile_seed(p: *const u8, len: usize) {
+    if !p.is_null() && len <= PROFILE_CAP {
+        core::ptr::copy_nonoverlapping(p, addr_of_mut!(PROFILE) as *mut u8, len);
+        PROFILE_LEN = len;
+    }
+}
+
+/// Generation counter: bumped by set_capture_profile / a map replacement; the
+/// firmware persists (or erases) the profile when it changes.
+#[no_mangle]
+pub extern "C" fn lm_capture_profile_gen() -> u32 {
+    PROFILE_GEN.load(Ordering::Acquire)
+}
+
+/// Copy the current profile out (for NVS); returns its length (0 = none).
+///
+/// # Safety
+/// `out` valid for `cap`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_capture_profile_get(out: *mut u8, cap: usize) -> usize {
+    let n = PROFILE_LEN;
+    if out.is_null() || cap < n {
+        return 0;
+    }
+    core::ptr::copy_nonoverlapping(addr_of!(PROFILE) as *const u8, out, n);
+    n
+}
+
+/// A NEW LED map was stored (a live upload, not the boot replay): the capture
+/// profile belonged to the old map, and the IMU extrinsic's yaw is relative to
+/// the old map's frame.
+#[no_mangle]
+pub unsafe extern "C" fn lm_map_replaced() {
+    PROFILE_LEN = 0;
+    PROFILE_GEN.fetch_add(1, Ordering::Release);
+    MAP_CHANGED.store(true, Ordering::Release);
 }

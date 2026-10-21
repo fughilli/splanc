@@ -75,6 +75,9 @@ const CLIENT_ARMS: Record<string, string> = {
   submit_driver: "submitDriver",
   remove_driver: "removeDriver",
   get_driver_state: "getDriverState",
+  set_sensor_mount: "setSensorMount",
+  set_capture_profile: "setCaptureProfile",
+  get_capture_profile: "getCaptureProfile",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -105,6 +108,7 @@ const SERVER_ARMS: Record<string, string> = {
   sensor_state: "sensorState",
   i2c_scan_result: "i2cScanResult",
   driver_state: "driverState",
+  capture_profile: "captureProfile",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -672,6 +676,17 @@ export interface SensorStateMessage {
   calibrationResult: string;
   /** MPU INT pin (-1 = none); recorded, the device polls today. */
   intGpio: number;
+  /** Settled up in the RAW IMU frame while at rest (extrinsic calibration). */
+  restUpImu: number[];
+  restUpSigmaDeg: number;
+  restSamples: number;
+  /** R_fi (IMU -> map frame), w,x,y,z. */
+  mountQuat: number[];
+  mountExtrinsic: boolean;
+  mountYawResolved: boolean;
+  mountPoses: number;
+  mountResidualDeg: number;
+  mountCalibratedAtMs: number;
 }
 
 /** Reply to scan_i2c (proto I2cScanResult): ACKing 7-bit addresses. */

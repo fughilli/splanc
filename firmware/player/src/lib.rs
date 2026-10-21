@@ -588,7 +588,10 @@ impl Player {
             | CMsg::ScanI2c(_)
             | CMsg::SubmitDriver(_)
             | CMsg::RemoveDriver(_)
-            | CMsg::GetDriverState(_) => {
+            | CMsg::GetDriverState(_)
+            | CMsg::SetSensorMount(_)
+            | CMsg::SetCaptureProfile(_)
+            | CMsg::GetCaptureProfile(_) => {
                 Some(error("unsupported", "sensors are handled by the firmware"))
             }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),

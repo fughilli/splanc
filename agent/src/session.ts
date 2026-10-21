@@ -529,6 +529,16 @@ export class DeviceSession {
     if (r.i2cAddress) out["i2c_address"] = `0x${r.i2cAddress.toString(16)}`;
     if (r.whoAmI || status === "unknown_device") out["who_am_i"] = `0x${(r.whoAmI ?? 0).toString(16)}`;
     out["pins"] = { sda: r.sdaGpio ?? -1, scl: r.sclGpio ?? -1, int: r.intGpio ?? -1 };
+    // IMU -> fixture calibration (sensor-core.md §7): set by the app's
+    // post-mapping step / "Calibrate IMU"; an agent can only `level`.
+    if (r.mountExtrinsic || (r.mountPoses ?? 0) > 0) {
+      out["imu_calibration"] = {
+        extrinsic: r.mountExtrinsic ?? false,
+        yaw_resolved: r.mountYawResolved ?? false,
+        poses: r.mountPoses ?? 0,
+        residual_deg: Math.round((r.mountResidualDeg ?? 0) * 100) / 100,
+      };
+    }
     if (status !== "running") return out;
     const q = r.quat ?? [1, 0, 0, 0];
     const [w, x, y, z] = [q[0] ?? 1, q[1] ?? 0, q[2] ?? 0, q[3] ?? 0];
@@ -1616,6 +1626,10 @@ interface SensorStateReply {
   calibrationSeq?: number;
   calibrationResult?: string;
   intGpio?: number;
+  mountExtrinsic?: boolean;
+  mountYawResolved?: boolean;
+  mountPoses?: number;
+  mountResidualDeg?: number;
 }
 
 interface KeypointListReply {

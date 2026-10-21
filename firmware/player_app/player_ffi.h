@@ -397,6 +397,13 @@ uint32_t lm_sensor_poll(uint64_t now_us);
 int32_t lm_sensor_take_cal_record(uint8_t *out, size_t cap);
 // Status for the periodic log: u[6], f[5] (see sensor_ffi.rs).
 void lm_sensor_status(uint32_t *u, float *f);
+// -- IMU extrinsic + capture profile (sensor-core.md §7) -------------------------
+// A NEW map was stored by a live upload: drop the capture profile, mark the IMU
+// extrinsic's yaw unresolved.
+void lm_map_replaced(void);
+void lm_capture_profile_seed(const uint8_t *p, size_t len);
+uint32_t lm_capture_profile_gen(void);
+size_t lm_capture_profile_get(uint8_t *out, size_t cap);
 // Install bus callbacks without probing (the driver VM's lazy bus).
 void lm_sensor_set_ops(const LmI2cOps *ops);
 

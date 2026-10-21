@@ -565,6 +565,46 @@ message DriverState {
   bool feed_imu = 13;
 }
 
+// -- IMU extrinsic calibration + capture profile (sensor-core.md §7) ----------
+// Install the IMU -> fixture/map rotation R_fi (+Y up, the frame of the LED
+// map) solved by the app's post-mapping "Calibrate IMU" flow. Persisted (NVS);
+// the fused orientation + every imu_* uniform is then in the map frame, yaw
+// included. Redoing the map clears yaw_resolved (tilt stays valid). Reply:
+// sensor_state.
+message SetSensorMount {
+  repeated float quat = 1 [packed = true];  // R_fi, w,x,y,z
+  float residual_deg = 2;                   // solve RMS residual
+  uint32 poses = 3;                         // still poses it was solved from
+  bool yaw_resolved = 4;                    // >= 2 non-parallel poses
+  uint64 calibrated_at_ms = 5;              // unix ms (app clock)
+}
+
+// The capture parameters that produced the stored map, so re-localisation and
+// later re-/supplemental captures reuse them instead of re-asking/re-probing.
+// Stored on the device next to the map; dropped when a new map is uploaded.
+message CaptureProfile {
+  string map_id = 1;            // the map these belong to
+  bool diffuse = 2;
+  uint32 stride_spacing = 3;    // LED stride (1 = every LED lit each epoch)
+  uint32 anchor_density = 4;
+  uint32 symbols = 5;           // code symbols (2/4)
+  uint32 bit_period_ms = 6;
+  float brightness = 7;         // LED brightness the servo settled on, 0..1
+  float detect_threshold = 8;
+  uint32 downscale = 9;
+  float lc_gain = 10;
+  uint64 captured_at_ms = 11;
+}
+
+// Store the profile (after a successful capture). Reply: capture_profile.
+message SetCaptureProfile {
+  CaptureProfile profile = 1;
+}
+
+// Reply: capture_profile (empty map_id = none stored, e.g. a fixture mapped
+// before this existed).
+message GetCaptureProfile {}
+
 enum SensorStatus {
   SENSOR_STATUS_UNSPECIFIED = 0;  // sensor core not started
   SENSOR_STATUS_ABSENT = 1;       // nothing answered at 0x68/0x69
@@ -607,6 +647,18 @@ message SensorState {
   uint32 calibration_seq = 26;     // advances when a CalibrateSensors is applied
   string calibration_result = 27;  // "ok" | "not_running" | "not_at_rest" | ""
   int32 int_gpio = 28;             // MPU INT pin (-1 = none); recorded, polled today
+  // Extrinsic calibration (sensor-core.md §7): the settled up in the RAW IMU
+  // body frame while at_rest (one side of a calibration pose) ...
+  repeated float rest_up_imu = 29 [packed = true];
+  float rest_up_sigma_deg = 30;
+  uint32 rest_samples = 31;
+  // ... and the installed mount: R_fi (IMU -> map frame, w,x,y,z).
+  repeated float mount_quat = 32 [packed = true];
+  bool mount_extrinsic = 33;      // a full extrinsic (not just "level")
+  bool mount_yaw_resolved = 34;
+  uint32 mount_poses = 35;
+  float mount_residual_deg = 36;
+  uint64 mount_calibrated_at_ms = 37;
 }
 
 // List the effects the device holds: one per FX deck (deck A's is the last
@@ -883,6 +935,9 @@ message ClientMessage {
     SubmitDriver submit_driver = 51;
     RemoveDriver remove_driver = 52;
     GetDriverState get_driver_state = 53;
+    SetSensorMount set_sensor_mount = 54;
+    SetCaptureProfile set_capture_profile = 55;
+    GetCaptureProfile get_capture_profile = 56;
   }
 }
 
@@ -1393,5 +1448,6 @@ message ServerMessage {
     SensorState sensor_state = 27;
     I2cScanResult i2c_scan_result = 28;
     DriverState driver_state = 29;
+    CaptureProfile capture_profile = 30;
   }
 }

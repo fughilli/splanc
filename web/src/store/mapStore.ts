@@ -9,6 +9,7 @@
  * can change later (OPFS/export sync) without touching the UI.
  */
 
+import type { CaptureProfileFlat, ImuCalibrationRecord } from "../capture/captureProfile";
 import type { DetectionRecord, ImuSample, OutputMap, Topology } from "@ledmapper/protocol";
 import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
 import {
@@ -57,6 +58,10 @@ export interface StoredMapSummary {
   /** True when the payload carries the raw capture observations, so a
    * supplemental capture can fuse into this map (FUG-112). */
   supplementable?: boolean;
+  /** The capture parameters that produced this map (sensor-core.md §7.5). */
+  captureProfile?: CaptureProfileFlat;
+  /** The fixture IMU's extrinsic calibration against this map (§7). */
+  imuCalibration?: ImuCalibrationRecord;
   /** dataURL — small MapView snapshot; may be "" until first browser view. */
   thumbnail: string;
   /** Which thumbnail engine rendered `thumbnail` (see THUMBNAIL_ENGINE_VERSION).
@@ -335,6 +340,14 @@ class MapStore {
 
   async rename(id: string, name: string): Promise<void> {
     await this.patchSummary(id, { name });
+  }
+
+  async setCaptureProfile(id: string, p: CaptureProfileFlat): Promise<void> {
+    await this.patchSummary(id, { captureProfile: p });
+  }
+
+  async setImuCalibration(id: string, r: ImuCalibrationRecord): Promise<void> {
+    await this.patchSummary(id, { imuCalibration: r });
   }
 
   async setDescription(id: string, text: string): Promise<void> {
