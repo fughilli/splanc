@@ -604,10 +604,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
    * with an IMU is tilt-calibrated to its new map (sensor-core.md §7). Older
    * firmware answers "unsupported"; both steps are best-effort. */
   async function afterMapStored(c: NonNullable<ReturnType<typeof client>>, id: string, mapId: string): Promise<void> {
-    if (profileDraft !== null) {
-      const p = buildProfile(mapId, profileDraft.knobs, profileDraft, Date.now());
-      await mapStore.setCaptureProfile(id, p).catch(() => {});
-      await c.setCaptureProfile(p).catch(() => {});
+    try {
+      if (profileDraft !== null) {
+        const p = buildProfile(mapId, profileDraft.knobs, profileDraft, Date.now());
+        await mapStore.setCaptureProfile(id, p).catch(() => {});
+        await c.setCaptureProfile(p);
+      }
+    } catch {
+      /* firmware without capture profiles */
     }
     try {
       const s = await c.getSensors();
