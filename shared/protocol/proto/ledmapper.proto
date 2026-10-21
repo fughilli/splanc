@@ -594,6 +594,7 @@ message CaptureProfile {
   uint32 downscale = 9;
   float lc_gain = 10;
   uint64 captured_at_ms = 11;
+  float exposure = 12;          // camera exposure 0..1 that worked (0 = servo chose)
 }
 
 // Store the profile (after a successful capture). Reply: capture_profile.

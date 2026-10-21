@@ -15,6 +15,10 @@
  *   devmap-none / devmap-saved / devmap-unsaved — `device`, plus a stored map
  *                on it (none; one this phone already has; one it doesn't) and a
  *                running IMU, for the Maps tab's "On <device>" card.
+ *   imu        — (with `device`) the connected controller has a running motion
+ *                sensor, no saved capture settings, and answers the capture
+ *                requests, so `#/capture?calibrate=__demo__` (the first library
+ *                map) renders the Calibrate-IMU screen with its controls.
  *
  * These are genuine seams into the real stores/clients — no production path
  * calls them. Each scenario is independent so a shot can combine them
@@ -38,6 +42,47 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("camera")) setupFakeCamera();
   if (scenarios.has("effect")) setupEffectEditor();
   if (scenarios.has("flash")) setupFlashDemo();
+  if (scenarios.has("imu")) setupImuDemo();
+}
+
+/** The Calibrate-IMU screen without hardware (sensor-core.md §7.3): stub the
+ * demo client's capture + sensor requests and resolve `__demo__` to the first
+ * library map. */
+function setupImuDemo(): void {
+  const c = appState.client as unknown as Record<string, unknown> | null;
+  if (c === null) return;
+  const codeParams = {
+    ledCount: 30,
+    bits: 9,
+    encoding: "hue",
+    symbols: 4,
+    bitPeriodMs: 66,
+    syncPattern: "on_off",
+    cycleFrames: 7,
+    brightness: 0.6,
+  };
+  c["getCaptureProfile"] = async () => ({ mapId: "" }); // a map from before profiles
+  c["syncClock"] = async () => ({ offsetMs: 0, rttMs: 24 });
+  c["startMapping"] = async () => ({ type: "mapping_started", patternClockEpoch: 0, codeParams });
+  c["configure"] = async () => ({ type: "pattern_state", active: true, patternClockEpoch: 0, codeParams });
+  c["stopMappingNoSolve"] = async () => ({ type: "mapping_stopped" });
+  c["getSensors"] = async () => ({
+    type: "sensor_state",
+    status: "SENSOR_STATUS_RUNNING",
+    part: "MPU-6050",
+    atRest: true,
+    restUpImu: [0.02, -0.01, 0.999],
+    restUpSigmaDeg: 0.3,
+    restSamples: 240,
+    mountQuat: [1, 0, 0, 0],
+    gravity: [0, 0, -1],
+  });
+  const get = mapStore.get.bind(mapStore);
+  (mapStore as unknown as { get: typeof mapStore.get }).get = async (id: string) => {
+    if (id !== "__demo__") return get(id);
+    const first = (await mapStore.list())[0];
+    return first ? get(first.id) : undefined;
+  };
 }
 
 /** Open the flash sheet showing a simulated ESP32-C6 esptool log (see

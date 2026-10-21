@@ -13,6 +13,11 @@
     "route": "#/maps"
   },
   {
+    "id": "calibrate-imu",
+    "route": "#/capture?calibrate=__demo__",
+    "demo": "device,camera,imu"
+  },
+  {
     "id": "capture",
     "route": "#/capture",
     "demo": "device,camera"
