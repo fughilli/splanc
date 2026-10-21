@@ -107,6 +107,19 @@ static CAL_SEQ: AtomicU32 = AtomicU32::new(0);
 /// 0 none, 1 ok, 2 not_running, 3 not_at_rest.
 static CAL_RESULT: AtomicU8 = AtomicU8::new(0);
 
+/// Who owns the hub. NATIVE: the sensor task (if any). HANDOVER: the driver VM
+/// asked for it while the task exists — the task converts the hub itself at its
+/// next poll and exits (so the hub is never touched by two tasks). EXTERNAL:
+/// the driver VM feeds it via [`ingest_external`] on the loop task.
+static OWNER: AtomicU8 = AtomicU8::new(OWNER_NATIVE);
+const OWNER_NATIVE: u8 = 0;
+const OWNER_HANDOVER: u8 = 1;
+const OWNER_EXTERNAL: u8 = 2;
+/// lm_sensor_begin started a native task (set before the task exists).
+static TASK_EXISTS: AtomicBool = AtomicBool::new(false);
+/// lm_sensor_poll's "exit the task" return.
+pub const POLL_STOP: u32 = u32::MAX;
+
 fn ops_cycles() -> u32 {
     match unsafe { (*addr_of!(OPS)).cycles } {
         Some(f) => unsafe { f() },
@@ -173,6 +186,8 @@ pub unsafe extern "C" fn lm_sensor_begin(
         }
     }
     let st = hub.probe(&mut FfiBus(addr_of!(OPS)), now_us) as u8;
+    // State 3 = Starting: the caller now creates the sensor task.
+    TASK_EXISTS.store(st == ledmapper_sensor::State::Starting as u8, Ordering::Release);
     publish(&hub.snapshot());
     st
 }
@@ -197,25 +212,20 @@ pub unsafe extern "C" fn lm_sensor_set_disabled(sda: i32, scl: i32, int_gpio: i3
 /// Sensor task only, after lm_sensor_begin.
 #[no_mangle]
 pub unsafe extern "C" fn lm_sensor_poll(now_us: u64) -> u32 {
-    let Some(hub) = (*addr_of_mut!(HUB)).as_mut() else { return 1000 };
-    let act = PENDING_CAL.swap(0, Ordering::AcqRel);
-    if act != 0 {
-        let action = match act {
-            1 => Some(CalAction::GyroBias),
-            2 => Some(CalAction::Level),
-            3 => Some(CalAction::Reset),
-            _ => None,
-        };
-        if let Some(a) = action {
-            let r = match hub.calibrate(a) {
-                Ok(()) => 1,
-                Err(CalError::NotRunning) => 2,
-                Err(CalError::NotAtRest) => 3,
-            };
-            CAL_RESULT.store(r, Ordering::Relaxed);
-            CAL_SEQ.fetch_add(1, Ordering::Release);
+    match OWNER.load(Ordering::Acquire) {
+        OWNER_NATIVE => {}
+        OWNER_HANDOVER => {
+            // The driver VM takes the IMU: convert the hub here (this task owns
+            // it until now), then exit.
+            to_external();
+            TASK_EXISTS.store(false, Ordering::Release);
+            OWNER.store(OWNER_EXTERNAL, Ordering::Release);
+            return POLL_STOP;
         }
+        _ => return POLL_STOP,
     }
+    let Some(hub) = (*addr_of_mut!(HUB)).as_mut() else { return 1000 };
+    apply_pending_cal(hub);
     let ms = hub.poll(&mut FfiBus(addr_of!(OPS)), now_us);
     publish(&hub.snapshot());
     ms
@@ -261,12 +271,91 @@ pub unsafe extern "C" fn lm_sensor_status(u: *mut u32, f: *mut f32) {
     f[1..5].copy_from_slice(&s.quat);
 }
 
-// -- effects ------------------------------------------------------------------
+// -- the bus, shared with the driver VM (driver_ffi.rs) -----------------------
 
-/// A sensor is running (live data in the snapshot).
-pub(crate) unsafe fn sensor_running() -> bool {
-    SNAP_SEQ.load(Ordering::Relaxed) != 0 && snapshot().state == ledmapper_sensor::State::Running as u8
+/// Install the bus callbacks without probing (the driver VM brings the bus up
+/// when no native sensor did).
+///
+/// # Safety
+/// `ops` valid for the call; not while a native sensor task runs.
+#[no_mangle]
+pub unsafe extern "C" fn lm_sensor_set_ops(ops: *const LmI2cOps) {
+    if !ops.is_null() {
+        *addr_of_mut!(OPS) = core::ptr::read(ops);
+    }
 }
+
+pub(crate) unsafe fn bus_write(addr: u8, bytes: &[u8]) -> bool {
+    FfiBus(addr_of!(OPS)).write(addr, bytes).is_ok()
+}
+
+pub(crate) unsafe fn bus_write_read(addr: u8, wr: &[u8], rd: &mut [u8]) -> bool {
+    FfiBus(addr_of!(OPS)).write_read(addr, wr, rd).is_ok()
+}
+
+/// Run a calibration action posted by calibrate_sensors (whichever context owns
+/// the hub calls this before advancing it).
+unsafe fn apply_pending_cal(hub: &mut Hub) {
+    let act = PENDING_CAL.swap(0, Ordering::AcqRel);
+    if act != 0 {
+        let action = match act {
+            1 => Some(CalAction::GyroBias),
+            2 => Some(CalAction::Level),
+            3 => Some(CalAction::Reset),
+            _ => None,
+        };
+        if let Some(a) = action {
+            let r = match hub.calibrate(a) {
+                Ok(()) => 1,
+                Err(CalError::NotRunning) => 2,
+                Err(CalError::NotAtRest) => 3,
+            };
+            CAL_RESULT.store(r, Ordering::Relaxed);
+            CAL_SEQ.fetch_add(1, Ordering::Release);
+        }
+    }
+}
+
+/// Convert the hub to the external feed (whoever owns it calls this).
+unsafe fn to_external() {
+    let hub = (*addr_of_mut!(HUB)).get_or_insert_with(|| Hub::new(Config::default()));
+    if (*addr_of!(OPS)).cycles.is_some() {
+        hub.set_cycle_source(ops_cycles);
+    }
+    let (addr, who) = hub.found().map(|f| (f.addr, f.who_am_i)).unwrap_or((0x68, 0x68));
+    hub.start_external(addr, who, 0);
+    publish(&hub.snapshot());
+}
+
+/// Hand the IMU to the driver VM's feed. Loop task, player mutex held. With a
+/// native task alive the task converts the hub and exits at its next poll
+/// (≤ ~20 ms; samples arriving before that are dropped); otherwise now.
+/// Reverting to the native driver takes a reboot.
+pub(crate) unsafe fn start_external() {
+    if OWNER.load(Ordering::Acquire) != OWNER_NATIVE {
+        return;
+    }
+    if TASK_EXISTS.load(Ordering::Acquire) {
+        OWNER.store(OWNER_HANDOVER, Ordering::Release);
+    } else {
+        to_external();
+        OWNER.store(OWNER_EXTERNAL, Ordering::Release);
+    }
+}
+
+/// One sample from the driver VM (raw counts, ±8 g / ±1000 °/s like the
+/// native config). Loop task.
+pub(crate) unsafe fn ingest_external(accel: [i16; 3], gyro: [i16; 3], now_us: u64) {
+    if OWNER.load(Ordering::Acquire) != OWNER_EXTERNAL {
+        return;
+    }
+    let Some(hub) = (*addr_of_mut!(HUB)).as_mut() else { return };
+    apply_pending_cal(hub);
+    hub.ingest_external(&ledmapper_sensor::mpu6050::Raw { accel, gyro, temp: None }, now_us);
+    publish(&hub.snapshot());
+}
+
+// -- effects ------------------------------------------------------------------
 
 /// The snapshot, if a sensor is running.
 pub(crate) unsafe fn running_snapshot() -> Option<Snapshot> {

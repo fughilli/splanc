@@ -5,6 +5,14 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Sensor drivers an agent can write
+
+- **Any I2C sensor, no firmware release.** Agents scan the player's sensor bus
+  (`scan_i2c`), write a small driver in the effect language (`void poll()` +
+  `export`s, `i2c_read*` / `i2c_write`), and load it live (`deploy_driver`); every
+  export drives the effect uniform of the same name. Supersedes PR #96; the
+  native-vs-VM MPU-6050 A/B and when to use which: [sensor-core.md §8](design/sensor-core.md).
+
 ### Fixtures that feel motion: the sensor core
 
 - **Wire an MPU-6050 and the player finds it.** At boot the C6 player probes

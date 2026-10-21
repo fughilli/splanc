@@ -421,7 +421,7 @@ uniform float imu_tap   : 0.0 .. 1000.0 = 0.0;
 - Each frame, before `update()`, the render task runs `apply_frame()`. It reads
   the snapshot once if any binding is a sensor entry, computes only the bound
   entries, and writes them with `fx_set_uniform`.
-- Both decks are supported, with up to 12 bindings per deck and 24 pool entries.
+- Both decks are supported, with up to 12 bindings per deck; the pool holds the 9 sensor entries plus 8 dynamic ones (driver exports, §8).
 - Euler angles cost 3 `atan2`s per frame, and only when `imu_euler` is bound.
 
 **Frames.** The sensor core works in a z-up fixture frame: the sensor axes after
@@ -606,31 +606,141 @@ They are stored **on the device, next to the map**, as a small `CaptureProfile`
 
 ## 8. The driver VM backend (FUG-107) and the native-vs-VM A/B
 
-Implementation and measured results: in the driver VM PR, which supersedes
-PR #96. Design:
+Implemented in the driver-VM PR, which supersedes PR #96. That PR was not
+rebased: main had moved about 290 commits, and its `ffi.rs` / `fx_vm` /
+compiler diffs no longer applied. Its design was ported by hand onto the sensor
+core, with the changes noted below.
 
-- **Drivers are `.fxb` programs.** They have a `void poll()` entry instead of
-  `shade()`, `export <ty> name;` declarations, and the
-  `i2c_write(addr, reg, val)` / `i2c_read8` / `i2c_read16` intrinsics. Two new
-  VM ops, `I2cWrite` and `I2cRead`, are appended after the current last op. An
-  effect and a driver are mutually exclusive in one program.
-- **They run on the loop task**, in a second VM with its own small arena, under
-  the player mutex. The bus is the **same `LmI2cOps` seam** as the native core,
-  so there are no extern stubs.
-- **Exports are published into the uniform pool by name** (`uniform_pool::publish`).
-  PR #96's explicit export→slot `DriverBinding` table is replaced by the
-  name-binding that effects already use, so a VM driver and the native core are
-  interchangeable to an effect.
-- **MPU-6050 as a VM driver.** The driver reads the raw accel and gyro registers
-  and exports `imu_raw_accel` / `imu_raw_gyro` (counts). The firmware feeds these
-  into the *same native* `Hub::ingest` (scaling → calibration → Mahony →
-  gestures → pool). Only the bus/driver layer differs, so the A/B isolates
-  exactly the driver cost.
-- **A/B axes:** correctness (identical fused output on identical register
-  streams), CPU cycles per sample at 100 Hz, RAM (second VM plus arena against
-  the native statics), timing jitter (VM polls on the loop task, with no FIFO in
-  the simple driver, against IMU-clocked FIFO batches), and the impact on effect
-  frame time and TLS/WS responsiveness.
+### 8.1 Drivers
+
+**The language.** A driver is an effect-language program with `void poll()`
+instead of `shade()`, plus `export <float|int|vecN> name ["unit"];`
+declarations. Exports are state slots.
+
+The intrinsics all take and return `int`:
+
+| Intrinsic | Returns |
+|---|---|
+| `i2c_write(addr, reg, val)` | ACK 1/0 |
+| `i2c_read8(addr, reg)` | the byte |
+| `i2c_read16(addr, reg)` | big-endian u16 |
+| `i2c_read16s(addr, reg)` | sign-extended i16 (new: MEMS sensor words). |
+
+- A failed read returns −1. The host also counts the failure and drops that
+  poll's exports, because −1 is a valid i16.
+- The compiler enforces the boundaries: a program is a driver or an effect,
+  never both; a driver has no `update()` and no uniforms; `export` requires
+  `poll()`.
+
+**`.fxb`:**
+
+- No format-version bump. PR #96 went to v2, but main now pins
+  `FORMAT_VERSION = 1` and rejects anything else.
+- A new flag, **`FLAG_DRIVER` (0x10)**, marks a driver. The `poll()` entry rides
+  in the header's shade slot, and the embedded manifest is the export table
+  (`[{"name","slot","width","unit"}]`), so the device resolves it with the same
+  parser as uniforms (`osc::parse_manifest`).
+- The firmware's effect loader refuses `FLAG_DRIVER` programs.
+
+**VM.**
+
+- Two ops are appended after `JitCall`: `I2cWrite` and `I2cRead`. `I2cRead`
+  takes a mode byte: n = 1 or 2, and bit 7 means signed.
+- The bus is installed in a VM-global slot only for the duration of
+  `Vm::run_poll`, so the hot `run()` signature and the IRAM-pinned shade path
+  are unchanged; they only gain two match arms. Without a bus, writes return 0
+  and reads return −1.
+- The optimizer and JIT size the ops, and they stay in the interpreter.
+- The op-coverage test classifies them as type-agnostic.
+
+**Host** (`firmware/player_app/driver_ffi.rs`):
+
+- One driver at a time, run on the loop task under a try-lock of the player
+  mutex at its own `poll_interval_ms` (default 10 ms, minimum 5).
+- It uses the same `LmI2cOps` bus as the native core. If no native sensor
+  brought the bus up at boot, it starts on the configured pins
+  (`LmDrvHost.bus_ensure`).
+- **Memory** is a heap slot of **6,536 B** (`.fxb` buffer 1 KiB, VM ~5 KiB,
+  export table). It is allocated on `submit_driver` and freed on
+  `remove_driver`, so the driver VM costs nothing until it is used.
+- Statics: about 400 B. That is the dynamic pool's 8 entries (352 B), plus the
+  host callbacks, the slot pointer and the VM's bus slot.
+- **Exports go into the uniform pool by name** (§6). PR #96's explicit
+  export→slot `DriverBinding` table is gone: an effect just declares a uniform
+  with the export's name, exactly as for the native `imu_*` values. A new name
+  triggers a rebind off the render path.
+- **Protocol:**
+  - `scan_i2c` (client 50) → `i2c_scan_result` (server 28).
+  - `submit_driver {fxb, poll_interval_ms, feed_imu}` (51), `remove_driver`
+    (52) and `get_driver_state` (53) → `driver_state` (29). The reply carries
+    the exports' values, polls, bus errors, cycles and VM ops per poll, bus
+    operations, heap bytes and worst schedule lateness.
+  - Feature `drivers`.
+- **Agent:** `scan_i2c`, `deploy_driver {source, interval_ms, feed_imu}`
+  (compiled by the agent's own toolchain), `driver_state`, `remove_driver`.
+- **Web:** `client.scanI2c/submitDriver/removeDriver/getDriverState`, and PR
+  #96's `sensorDb` (address → candidate parts), extended with the splanc-mini
+  parts and a `native` flag for the parts the sensor core drives.
+- **Not carried over from #96** (follow-ups): the editor's driver UI and the
+  in-app AI tools `scan_bus` / `set_driver`. The agent tools cover the AI path
+  today.
+
+### 8.2 The MPU-6050 as a VM driver (the A/B)
+
+`firmware/sensor/drivers/mpu6050.fx`:
+
+- On the first poll it checks WHO_AM_I and programs the part exactly like the
+  native driver: PLL, 100 Hz, DLPF 42, ±1000 °/s, ±8 g.
+- After that, each poll reads the six data registers with `i2c_read16s` and
+  exports `imu_raw_accel` / `imu_raw_gyro` (counts).
+- With `submit_driver{feed_imu}`, the host hands those counts to the **same
+  native** `Hub::ingest`: scaling, calibration, rest learning, Mahony, gestures,
+  the snapshot and the `imu_*` pool.
+- The native sampler stops (the task converts the hub and exits; a reboot
+  restores it), so only the driver layer differs.
+
+| | Native driver | VM driver |
+|---|---|---|
+| Correctness | reference | **Same fused attitude** on the same 400-sample register stream: quat and calibrated accel/gyro agree to < 1e-4 (`driver_ab_test`; dt differs only by float rounding: 1/ODR vs the 10 ms poll clock) |
+| Sample timing | IMU clock (FIFO), dt exact; tolerates 0.4–0.8 s of starvation | Loop-task schedule; dt = wall-clock between polls, so jitter goes straight into dt. Worst lateness is reported (`jitter_us_max`). A FIFO-reading VM driver is possible but needs a burst-read intrinsic (`i2c_read16s` reads 2 bytes) |
+| Bus operations per sample | ~1 (2 samples per 20 ms drain: count + 24 B burst) | **6** (one 2-byte read per register) |
+| Driver CPU per sample | Rust driver: a few hundred cycles plus bus waits | **47 VM ops** per poll, about 47 × ~100–150 cycles ≈ 5–7 k cycles. The bus waits (6 transactions, ≈0.7–1 ms at 400 kHz) are spent **holding the player mutex on the loop task** |
+| Fusion CPU | identical (`Hub::ingest`, ~25–35 k cycles) | identical |
+| RAM | 720 B static (PR #315) + ~3.3 KB heap (task) | +~400 B static, +6,536 B heap while loaded; no sensor task |
+| Effect frame time / TLS | none: separate priority-5 task, no mutex | The loop task holds the player mutex for each poll's bus time (~1 ms every 10 ms), so a render frame can wait up to that long for the mutex. The poll is a try-lock that skips when render is busy (that lateness is the jitter above). The netstack runs on the same loop task, so the poll's ~1 ms comes out of its RX/ACK servicing at 100 Hz |
+
+**On-device numbers.** The firmware measures both paths: `fusion_cycles`
+(native, `get_sensors`) and `poll_cycles_mean/max` with `jitter_us_max`
+(`driver_state`).
+
+- **Status:** the PixieLamp (whose IMU is detected on the native driver) can
+  give real numbers. The A/B procedure is:
+  1. Native: run `read_sensors` and fx_bench.
+  2. `deploy_driver` with the MPU driver and `feed_imu: true`, then
+     `driver_state` and `read_sensors`, fx_bench again, and a TLS reconnect
+     loop.
+  3. Reboot to restore native.
+- No HITL rig has an IMU. The cost model above comes from host op counts and
+  the bus arithmetic.
+
+**Recommendation.**
+
+- **IMUs and anything sampled at ≥ ~20 Hz stay native.**
+  - The FIFO gives exact dt and keeps the sampler off the player mutex and off
+    the netstack's task.
+  - It does 6× fewer bus transactions.
+  - Fusion costs the same either way.
+- **The driver VM is for the long tail:** slow environmental and analog sensors
+  (temperature, light, pressure, fuel gauge, buttons/encoders over I2C) polled
+  at 1–20 Hz, which an agent can write from a datasheet with `deploy_driver`
+  and bind to effects by name, without a firmware release.
+  - At those rates its cost (≤ a few transactions, tens of VM ops) is
+    negligible.
+  - Its 6.5 KB heap is only paid while a driver is loaded.
+- **If a VM IMU driver is ever wanted** (an unsupported part), add a block-read
+  intrinsic (`i2c_read_block(addr, reg, n)` into a state array) so a poll can
+  drain a FIFO in one transaction. Run VM polls without the player mutex by
+  double-buffering the exports, as the native core does.
 
 ## 9. Protocol and agent
 

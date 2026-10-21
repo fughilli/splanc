@@ -133,6 +133,22 @@ effect:
   after the fixture has sat still a few seconds. Both need it held still: ask
   first.
 
+## Other I2C sensors: write a driver (feature `drivers`)
+
+- `scan_i2c` lists the addresses that answer on the player's sensor bus. Match
+  them to a part (and ask the user which module they wired), then read its
+  datasheet.
+- `deploy_driver {source, interval_ms}` loads a DRIVER: the effect language with
+  `void poll()` instead of `shade()` and `export float|vecN name "unit";` outputs.
+  `i2c_write(addr, reg, val)`, `i2c_read8/i2c_read16/i2c_read16s(addr, reg)` (all
+  int; a read returns -1 on a bus error) talk to the part. Configure it once
+  (guard with a `state` flag), then read and convert to physical units into the
+  exports. Every export drives any effect uniform OF THE SAME NAME, live — name
+  them for the effect (`lamp_temp`, `ambient_lux`).
+- Poll slow sensors slowly (100–1000 ms); one driver runs at a time;
+  `driver_state` shows its live exports and errors; `remove_driver` stops it.
+- An IMU (MPU-6050) is driven natively — don't write a driver for it.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;

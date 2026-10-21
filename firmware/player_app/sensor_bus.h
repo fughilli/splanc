@@ -42,5 +42,9 @@
 void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, int led_gpio1,
                   const uint8_t *cal, size_t cal_len);
 
+// Loop-task step for the driver VM (FUG-107): run a submitted driver's poll()
+// when due and persist a calibration it led to. Call with the player mutex held.
+void sensor_loop();
+
 // Append the sensor status to the periodic serial report (no-op when absent).
 void sensor_log_status();

@@ -78,6 +78,7 @@ export type Feature =
   | "keypoints"
   | "fps"
   | "sensors"
+  | "drivers"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -561,6 +562,63 @@ export class DeviceSession {
       fifo_overflows: r.fifoOverflows ?? 0,
     });
     return out;
+  }
+
+  // -- driver VM (FUG-107, docs/design/sensor-core.md §8) ---------------------------
+
+  private requireDrivers(): void {
+    if (!this.has("drivers")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) can't run sensor drivers`);
+    }
+    if (!DRIVERS_IN_PROTO) throw new ToolError("this agent bundle predates sensor drivers; update it");
+  }
+
+  async scanI2c(): Promise<Record<string, unknown>> {
+    this.requireDrivers();
+    const r = await this.rpc<{ addresses?: number[] }>({ type: "scan_i2c" }, "i2c_scan_result");
+    return { addresses: (r.addresses ?? []).map((a) => `0x${a.toString(16).padStart(2, "0")}`) };
+  }
+
+  /** Compile and load a sensor driver (`void poll()` + `export`s). */
+  async deployDriver(source: string, intervalMs: number, feedImu: boolean): Promise<Record<string, unknown>> {
+    this.requireDrivers();
+    const c = await compile(source);
+    if (!c.ok) throw new ToolError(`driver doesn't compile: ${JSON.stringify(c.diagnostics)}`);
+    const r = await this.rpc<DriverStateReply>(
+      { type: "submit_driver", fxb: c.fxb, pollIntervalMs: intervalMs, feedImu },
+      "driver_state",
+    );
+    return DeviceSession.driverView(r);
+  }
+
+  async driverState(): Promise<Record<string, unknown>> {
+    this.requireDrivers();
+    return DeviceSession.driverView(await this.rpc<DriverStateReply>({ type: "get_driver_state" }, "driver_state"));
+  }
+
+  async removeDriver(): Promise<Record<string, unknown>> {
+    this.requireDrivers();
+    return DeviceSession.driverView(await this.rpc<DriverStateReply>({ type: "remove_driver" }, "driver_state"));
+  }
+
+  private static driverView(r: DriverStateReply): Record<string, unknown> {
+    if (!r.running) return { running: false };
+    const exports: Record<string, number | number[]> = {};
+    for (const e of r.exports ?? []) exports[e.name] = e.value.length === 1 ? e.value[0]! : e.value;
+    return {
+      running: true,
+      poll_interval_ms: r.pollIntervalMs ?? 0,
+      exports,
+      last_poll: r.lastPoll ?? "",
+      polls: r.polls ?? 0,
+      bus_errors: r.busErrors ?? 0,
+      poll_cycles_mean: r.pollCyclesMean ?? 0,
+      poll_instrs_mean: r.pollInstrsMean ?? 0,
+      bus_ops_per_poll: r.busOps ?? 0,
+      heap_bytes: r.heapBytes ?? 0,
+      jitter_us_max: r.jitterUsMax ?? 0,
+      feed_imu: r.feedImu ?? false,
+    };
   }
 
   /** A request/reply on the device session (single-flight per reply type). */
@@ -1512,6 +1570,22 @@ export const DECKS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === 
 /** Whether this build's protocol carries the uniform-keypoint arms. */
 export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");
 export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "get_sensors");
+export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "submit_driver");
+
+interface DriverStateReply {
+  running?: boolean;
+  pollIntervalMs?: number;
+  exports?: { name: string; value: number[] }[];
+  lastPoll?: string;
+  polls?: number;
+  busErrors?: number;
+  pollCyclesMean?: number;
+  pollInstrsMean?: number;
+  busOps?: number;
+  heapBytes?: number;
+  jitterUsMax?: number;
+  feedImu?: boolean;
+}
 
 interface SensorStateReply {
   status?: string;

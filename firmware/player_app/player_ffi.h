@@ -397,6 +397,20 @@ uint32_t lm_sensor_poll(uint64_t now_us);
 int32_t lm_sensor_take_cal_record(uint8_t *out, size_t cap);
 // Status for the periodic log: u[6], f[5] (see sensor_ffi.rs).
 void lm_sensor_status(uint32_t *u, float *f);
+// Install bus callbacks without probing (the driver VM's lazy bus).
+void lm_sensor_set_ops(const LmI2cOps *ops);
+
+// -- Driver VM host (driver_ffi.rs, FUG-107) -------------------------------------
+typedef struct {
+  void *(*alloc)(size_t size);
+  void (*free)(void *p);
+  bool (*bus_ensure)(void);
+  size_t (*scan)(uint8_t *out, size_t cap);
+  uint32_t (*cycles)(void);
+} LmDrvHost;
+void lm_drv_set_host(const LmDrvHost *host);
+// Run the loaded driver's poll() if due (loop task, player mutex held).
+void lm_drv_poll(uint64_t now_us);
 
 #ifdef __cplusplus
 }  // extern "C"

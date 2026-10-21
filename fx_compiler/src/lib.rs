@@ -184,9 +184,30 @@ pub struct Diagnostic {
     pub msg: String,
 }
 
+/// A driver `export` (FUG-107, docs/design/sensor-core.md §8): a named value a
+/// driver's `poll()` writes into a state slot. The firmware publishes it into
+/// the uniform pool under `name`, so any effect uniform of that name follows
+/// it. `unit` is a free-form display hint ("°C", "counts"); empty if none.
+#[derive(Clone, Debug)]
+pub struct ExportInfo {
+    pub name: String,
+    pub ty: Ty,
+    pub slot: u8,
+    pub unit: String,
+}
+
+impl ExportInfo {
+    /// Slots (components) this export occupies.
+    pub fn width(&self) -> u8 {
+        self.ty.width()
+    }
+}
+
 pub struct Compiled {
     pub fxb: Vec<u8>,
     pub uniforms: Vec<UniformInfo>,
+    /// Driver exports (empty for an effect).
+    pub exports: Vec<ExportInfo>,
 }
 
 // -- lexer --------------------------------------------------------------------
@@ -406,6 +427,10 @@ pub struct Compiler {
     // host can skip the per-LED soft-float uv projection when it's unset.
     uses_uv: bool,
     uses_room: bool,
+    // FUG-107: driver exports, and the poll() entry (stored in the shade slot
+    // of the header with FLAG_DRIVER — no format-version bump).
+    exports: Vec<ExportInfo>,
+    poll_entry: u16,
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
@@ -480,6 +505,8 @@ pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnosti
         emitted_ctxfix: false,
         uses_uv: false,
         uses_room: false,
+        exports: Vec::new(),
+        poll_entry: NO_ENTRY,
         optimize,
     };
     match c.program() {
@@ -648,6 +675,7 @@ impl Compiler {
                 Tok::Eof => break,
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
                 Tok::Ident(kw) if kw == "state" => self.state_decl()?,
+                Tok::Ident(kw) if kw == "export" => self.export_decl()?,
                 Tok::Ident(kw) if kw == "buffer" => self.buffer_decl()?,
                 Tok::Ident(kw) if kw == "texture" => self.texture_decl()?,
                 Tok::Ident(kw) if kw == "struct" => self.struct_decl()?,
@@ -655,9 +683,47 @@ impl Compiler {
                 other => return self.err(format!("unexpected token {other:?}")),
             }
         }
-        if self.shade_entry == NO_ENTRY {
-            return self.err("program must define `vec3 shade(Led led)`");
+        // A program is an EFFECT (shade) or a sensor DRIVER (poll, FUG-107),
+        // never both; exports only make sense on a driver, and a driver takes no
+        // uniforms (its manifest slot carries the export table instead).
+        let is_driver = self.poll_entry != NO_ENTRY;
+        if is_driver && self.shade_entry != NO_ENTRY {
+            return self.err("a program is either an effect (shade) or a driver (poll), not both");
         }
+        if is_driver && self.update_entry != NO_ENTRY {
+            return self.err("a driver has no update(); do the work in poll()");
+        }
+        if is_driver && !self.uniforms.is_empty() {
+            return self.err("a driver takes no uniforms (publish values with `export`)");
+        }
+        if !is_driver && !self.exports.is_empty() {
+            return self.err("`export` is only valid in a sensor driver; define `void poll()`");
+        }
+        if !is_driver && self.shade_entry == NO_ENTRY {
+            return self.err("program must define `vec3 shade(Led led)` (or `void poll()` for a driver)");
+        }
+        Ok(())
+    }
+
+    // export float temperature "°C";   export vec3 imu_raw_accel;
+    // A driver output poll() writes; backed by a state slot (scalar or vecN).
+    fn export_decl(&mut self) -> Result<(), Diagnostic> {
+        self.advance(); // 'export'
+        let tyname = self.eat_ident()?;
+        let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        if !matches!(ty, Ty::Float | Ty::Int | Ty::Vec2 | Ty::Vec3 | Ty::Vec4) {
+            return self.err("export must be float, int or vecN");
+        }
+        let name = self.eat_ident()?;
+        let mut unit = String::new();
+        if let Tok::Str(s) = self.cur().clone() {
+            self.advance();
+            unit = s;
+        }
+        self.expect_sym(';')?;
+        let slot = self.alloc_state(ty.width())?;
+        self.syms.insert(name.clone(), Sym { kind: SymKind::State, slot, ty });
+        self.exports.push(ExportInfo { name, ty, slot, unit });
         Ok(())
     }
 
@@ -1052,7 +1118,7 @@ impl Compiler {
             }
         }
         self.expect_sym(')')?;
-        let is_entry = name == "update" || name == "shade";
+        let is_entry = name == "update" || name == "shade" || name == "poll";
         let entry = self.code.len() as u16;
         if !is_entry {
             self.funcs.insert(
@@ -1072,10 +1138,10 @@ impl Compiler {
         }
         self.expect_sym('{')?;
         let want = if is_entry {
-            if name == "update" {
-                Ty::Void
-            } else {
+            if name == "shade" {
                 Ty::Vec3
+            } else {
+                Ty::Void // update() and poll()
             }
         } else {
             ret_ty
@@ -1095,6 +1161,7 @@ impl Compiler {
         match name.as_str() {
             "update" => self.update_entry = entry,
             "shade" => self.shade_entry = entry,
+            "poll" => self.poll_entry = entry,
             _ => {}
         }
         Ok(())
@@ -2456,6 +2523,22 @@ impl Compiler {
                 self.emit(FLOOD_FROM);
                 Ok(Ty::Void)
             }
+            // -- I2C driver intrinsics (FUG-107) -------------------------------
+            // Only live inside a driver's poll() (the VM has no bus elsewhere:
+            // reads return -1, writes 0). int args (7-bit address, register,
+            // byte); results are int: the ACK (1/0), a byte, a big-endian u16, or
+            // with i2c_read16s a sign-extended i16 (MEMS sensor words).
+            "i2c_write" => {
+                self.i2c_int_args(args, 3)?;
+                self.emit(I2C_WRITE);
+                Ok(Ty::Int)
+            }
+            "i2c_read8" | "i2c_read16" | "i2c_read16s" => {
+                self.i2c_int_args(args, 2)?;
+                self.emit(I2C_READ);
+                self.emit(match name { "i2c_read8" => 1, "i2c_read16" => 2, _ => 0x82 });
+                Ok(Ty::Int)
+            }
             _ => self.err(format!("unknown function '{name}'")),
         }
     }
@@ -2475,6 +2558,14 @@ impl Compiler {
     /// Validate a graph-query's args: exactly `n`, each a scalar `int` (they are
     /// integer indices the GraphQuery opcode pops). No coercion — wrap a
     /// non-int index in `int(...)` at the call site.
+    fn i2c_int_args(&self, args: &[Ty], n: usize) -> Result<(), Diagnostic> {
+        self.need(args, n)?;
+        if args.iter().any(|a| !matches!(a, Ty::Int)) {
+            return Err(self.mkdiag("i2c arguments must be int (wrap with int(...))"));
+        }
+        Ok(())
+    }
+
     fn graph_int_args(&self, args: &[Ty], n: usize) -> Result<(), Diagnostic> {
         self.need(args, n)?;
         if args.iter().any(|a| !matches!(a, Ty::Int)) {
@@ -2644,6 +2735,12 @@ impl Compiler {
         // the `.fxb`. The pass repoints the entry offsets and may grow the const
         // pool; it is a semantics-preserving rewrite (guarded by the differential
         // `optimizer_preserves_output` test) so host + wasm stay bit-identical.
+        // A driver's poll() rides the header's shade slot (FLAG_DRIVER), so the
+        // optimizer repoints it like any entry.
+        let is_driver = self.poll_entry != NO_ENTRY;
+        if is_driver {
+            self.shade_entry = self.poll_entry;
+        }
         if self.optimize {
             self.code = opt::optimize(
                 &self.code,
@@ -2663,6 +2760,9 @@ impl Compiler {
         if self.uses_room {
             flags |= FLAG_USES_ROOM;
         }
+        if is_driver {
+            flags |= FLAG_DRIVER;
+        }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
         b.push(flags); // flags
@@ -2673,7 +2773,13 @@ impl Compiler {
         // it, and native OSC input resolves addresses against it — FUG-121). The
         // web app carries its own copy from the local compile, so this only adds
         // to the on-wire .fxb; slot count still bounds the render path.
-        let manifest: Vec<u8> = manifest_json(&self.uniforms).into_bytes();
+        // A driver's manifest is its export table (same name/slot/width keys, so
+        // the device resolves it with the same parser as uniforms).
+        let manifest: Vec<u8> = if is_driver {
+            exports_manifest_json(&self.exports).into_bytes()
+        } else {
+            manifest_json(&self.uniforms).into_bytes()
+        };
         b.extend_from_slice(&(manifest.len() as u16).to_le_bytes());
         b.extend_from_slice(&(self.consts.len() as u16).to_le_bytes());
         b.extend_from_slice(&(self.code.len() as u16).to_le_bytes());
@@ -2697,7 +2803,7 @@ impl Compiler {
                 b.extend_from_slice(&buf.h.to_le_bytes());
             }
         }
-        Compiled { fxb: b, uniforms: self.uniforms }
+        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports }
     }
 }
 
@@ -2963,6 +3069,8 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
             (format!("BR_CMP_I {} -> {tgt}", cmp_kind(b(0))), 4)
         }
         JIT_CALL => (format!("JIT_CALL block={}", u16at(0)), 3),
+        I2C_WRITE => ("I2C_WRITE".into(), 1),
+        I2C_READ => (format!("I2C_READ mode=0x{:02x}", b(0)), 2),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2976,6 +3084,27 @@ fn default_ui(ty: Ty) -> UiKind {
 }
 
 /// Render the uniform manifest as JSON (for the app / editor).
+/// A driver's export table as JSON (FUG-107): `[{"name","slot","width","unit"}]`,
+/// embedded as the driver `.fxb`'s manifest.
+pub fn exports_manifest_json(exports: &[ExportInfo]) -> String {
+    let mut s = String::from("[");
+    for (i, e) in exports.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        let _ = write!(
+            s,
+            "{{\"name\":\"{}\",\"slot\":{},\"width\":{},\"unit\":{}}}",
+            e.name,
+            e.slot,
+            e.ty.width(),
+            json_str(&e.unit, MAX_UNIFORM_DOC)
+        );
+    }
+    s.push(']');
+    s
+}
+
 pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
     let mut s = String::from("[");
     for (i, u) in uniforms.iter().enumerate() {
@@ -3164,6 +3293,9 @@ mod fx_vm_op {
     // FUG-125 on-device JIT dispatch (patched in by the firmware, never emitted by
     // the compiler; here so the disassembler + optimizer op-length agree).
     pub const JIT_CALL: u8 = 105;
+    // FUG-107 I2C driver intrinsics (mirror fx_vm::Op::I2cWrite / I2cRead).
+    pub const I2C_WRITE: u8 = 106;
+    pub const I2C_READ: u8 = 107;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
@@ -3179,6 +3311,9 @@ const FLAG_USES_UV: u8 = 0x04;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_ROOM): the program reads the room
 /// frame (`led.room` / `room.min` / `room.max`).
 const FLAG_USES_ROOM: u8 = 0x08;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_DRIVER): a sensor driver whose poll()
+/// entry sits in the shade slot and whose manifest is the export table.
+const FLAG_DRIVER: u8 = 0x10;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

@@ -263,6 +263,36 @@ impl<F: AttitudeFilter> Hub<F> {
         self.found.and_then(|f| f.variant)
     }
 
+    /// External feed (FUG-107 driver VM backend): another driver owns the bus
+    /// and hands raw samples to [`Hub::ingest_external`]; the hub skips its own
+    /// probe/FIFO and only runs scaling, calibration, fusion and gestures. The
+    /// device is assumed configured like [`Config::default`] (same ranges).
+    pub fn start_external(&mut self, addr: u8, who_am_i: u8, now_us: u64) {
+        self.found = Some(Found { addr, who_am_i, variant: mpu::identify(who_am_i) });
+        self.state = State::Running;
+        self.fifo = false;
+        self.t_state_us = now_us;
+        self.t_last_us = 0;
+        self.rate_t0_us = now_us;
+        self.rate_n0 = self.samples;
+        self.filter.reset();
+    }
+
+    /// One externally read sample; dt from the caller's clock (clamped).
+    pub fn ingest_external(&mut self, raw: &Raw, now_us: u64) {
+        if self.state != State::Running {
+            return;
+        }
+        let dt = if self.t_last_us == 0 {
+            self.dt_nominal
+        } else {
+            (now_us.wrapping_sub(self.t_last_us) as f32 * 1e-6).clamp(0.0, 0.1)
+        };
+        self.t_last_us = now_us;
+        self.ingest(raw, dt);
+        self.update_rate(now_us);
+    }
+
     /// Install a stored calibration (call before or after probe).
     pub fn load_calibration(&mut self, cal: Calibration) {
         self.cal = cal;

@@ -583,7 +583,12 @@ impl Player {
             // ffi), which intercepts set_fps before the session core sees it.
             CMsg::SetFps(_) => Some(error("unsupported", "fps is handled by the fx layer")),
             // The sensor core lives in the firmware glue (player_app ffi), too.
-            CMsg::GetSensors(_) | CMsg::CalibrateSensors(_) => {
+            CMsg::GetSensors(_)
+            | CMsg::CalibrateSensors(_)
+            | CMsg::ScanI2c(_)
+            | CMsg::SubmitDriver(_)
+            | CMsg::RemoveDriver(_)
+            | CMsg::GetDriverState(_) => {
                 Some(error("unsupported", "sensors are handled by the firmware"))
             }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),

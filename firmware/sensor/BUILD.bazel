@@ -32,4 +32,7 @@ rust_test(
 
 # The register-file fake MPU, shared with the player_app integration test
 # (//firmware/player_app:sensor_pool_test drives the C ABI through it).
-exports_files(["tests/fake_mpu.rs"])
+exports_files([
+    "drivers/mpu6050.fx",
+    "tests/fake_mpu.rs",
+])

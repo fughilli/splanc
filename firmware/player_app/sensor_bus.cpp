@@ -5,6 +5,7 @@
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_cpu.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -39,6 +40,9 @@ struct DevSlot {
 DevSlot g_devs[2] = {{0, nullptr}, {0, nullptr}};
 TaskHandle_t g_task = nullptr;
 int g_sda = -1, g_scl = -1;
+// The pins passed the enable/conflict checks (the driver VM may bring the bus
+// up later on them even if no native sensor answered at boot).
+bool g_pins_ok = false;
 
 int to_ret(esp_err_t e) {
   if (e == ESP_OK) return 0;
@@ -148,6 +152,13 @@ void sensor_task(void *) {
   uint8_t rec[96];
   for (;;) {
     uint32_t ms = lm_sensor_poll((uint64_t)esp_timer_get_time());
+    if (ms == 0xFFFFFFFFu) {
+      // The driver VM took the IMU (submit_driver feed_imu): the bus stays up
+      // (shared), this task goes away.
+      Log().printf("[sensor] native sampler stopped: driver VM owns the IMU\n");
+      g_task = nullptr;
+      vTaskDelete(nullptr);
+    }
     int32_t n = lm_sensor_take_cal_record(rec, sizeof rec);
     if (n > 0) persist_cal(rec, (size_t)n);
     vTaskDelay(pdMS_TO_TICKS(ms ? ms : 1));
@@ -166,12 +177,65 @@ const char *state_name(uint32_t st) {
   }
 }
 
+// -- driver VM host (driver_ffi.rs) ----------------------------------------------
+void *drv_alloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+void drv_free(void *p) { heap_caps_free(p); }
+
+bool make_bus(int sda, int scl) {
+  recover_bus(sda, scl);
+  i2c_master_bus_config_t bc = {};
+  bc.i2c_port = -1;  // any free HP I2C controller
+  bc.sda_io_num = (gpio_num_t)sda;
+  bc.scl_io_num = (gpio_num_t)scl;
+  bc.clk_source = I2C_CLK_SRC_DEFAULT;
+  bc.glitch_ignore_cnt = 7;
+  // Breakouts (GY-521) carry 4.7k-10k pull-ups; the internal ~45k ones keep an
+  // empty bus from floating during the probe.
+  bc.flags.enable_internal_pullup = 1;
+  if (i2c_new_master_bus(&bc, &g_bus) != ESP_OK) {
+    g_bus = nullptr;
+    return false;
+  }
+  return true;
+}
+
+bool drv_bus_ensure() {
+  if (g_bus) return true;
+  if (!g_pins_ok || !make_bus(g_sda, g_scl)) return false;
+  lm_sensor_set_ops(&kOps);
+  Log().printf("[sensor] i2c bus up for the driver VM (sda=%d scl=%d)\n", g_sda, g_scl);
+  return true;
+}
+
+size_t drv_scan(uint8_t *out, size_t cap) {
+  size_t n = 0;
+  if (!g_bus) return 0;
+  for (uint8_t a = 0x08; a < 0x78 && n < cap; a++) {
+    if (i2c_master_probe(g_bus, a, 5) == ESP_OK) out[n++] = a;
+  }
+  return n;
+}
+
+const LmDrvHost kDrvHost = {drv_alloc, drv_free, drv_bus_ensure, drv_scan, cycles};
+
 }  // namespace
+
+void sensor_loop() {
+  lm_drv_poll((uint64_t)esp_timer_get_time());
+  // With the driver VM feeding the IMU there is no sensor task: persist a
+  // calibration the loop applied.
+  if (!g_task) {
+    uint8_t rec[96];
+    int32_t n = lm_sensor_take_cal_record(rec, sizeof rec);
+    if (n > 0) persist_cal(rec, (size_t)n);
+  }
+}
 
 void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, int led_gpio1,
                   const uint8_t *cal, size_t cal_len) {
   g_sda = sda;
   g_scl = scl;
+  lm_drv_set_host(&kDrvHost);
   auto led = [&](int g) { return g >= 0 && (g == led_gpio0 || g == led_gpio1); };
   if (!enabled || sda < 0 || scl < 0 || sda == scl || led(sda) || led(scl)) {
     lm_sensor_set_disabled(sda, scl, int_gpio);
@@ -185,19 +249,9 @@ void sensor_begin(bool enabled, int sda, int scl, int int_gpio, int led_gpio0, i
     Log().printf("[sensor] INT gpio %d conflicts; ignoring it (polling)\n", int_gpio);
     int_gpio = -1;
   }
+  g_pins_ok = true;
   uint32_t t0 = micros();
-  recover_bus(sda, scl);
-  i2c_master_bus_config_t bc = {};
-  bc.i2c_port = -1;  // any free HP I2C controller
-  bc.sda_io_num = (gpio_num_t)sda;
-  bc.scl_io_num = (gpio_num_t)scl;
-  bc.clk_source = I2C_CLK_SRC_DEFAULT;
-  bc.glitch_ignore_cnt = 7;
-  // Breakouts (GY-521) carry 4.7k-10k pull-ups; the internal ~45k ones keep an
-  // empty bus from floating during the probe.
-  bc.flags.enable_internal_pullup = 1;
-  if (i2c_new_master_bus(&bc, &g_bus) != ESP_OK) {
-    g_bus = nullptr;
+  if (!make_bus(sda, scl)) {
     lm_sensor_set_disabled(sda, scl, int_gpio);
     Log().printf("[sensor] i2c bus init FAILED on sda=%d scl=%d\n", sda, scl);
     return;

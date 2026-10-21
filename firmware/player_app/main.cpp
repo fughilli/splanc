@@ -2743,6 +2743,15 @@ void loop() {
 #else
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
   mode_observe();
+#if defined(LM_SENSORS)
+  // Driver VM (FUG-107): a submitted I2C driver's poll(), when due. Try-lock: a
+  // busy render frame just defers it to a later loop pass (its own schedule
+  // records the lateness as jitter).
+  if (xSemaphoreTake(player_mutex, 0) == pdTRUE) {
+    sensor_loop();
+    xSemaphoreGive(player_mutex);
+  }
+#endif
 #endif
   if (fs_ok) {
     flush_fx_sel_save();

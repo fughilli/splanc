@@ -68,6 +68,11 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   read_sensors: read("Read the motion sensor"),
   // Overwrites the stored sensor calibration (no undo but recalibrating).
   calibrate_sensors: write("Calibrate the motion sensor", true, true),
+  // sensor drivers (FUG-107)
+  scan_i2c: read("Scan the sensor bus"),
+  deploy_driver: write("Load a sensor driver", true, true),
+  driver_state: read("Read the sensor driver"),
+  remove_driver: write("Remove the sensor driver", true, true),
   // effect authoring
   compile_effect: read("Compile an effect"),
   estimate_effect: read("Estimate an effect's frame cost"),

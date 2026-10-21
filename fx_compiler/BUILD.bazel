@@ -41,6 +41,19 @@ rust_test(
     ],
 )
 
+# FUG-107 sensor drivers: export / poll() / i2c intrinsics, FLAG_DRIVER .fxb,
+# and the MPU-6050 driver program against a register-file bus.
+rust_test(
+    name = "driver_test",
+    srcs = ["tests/driver.rs"],
+    compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 # The uniform manifest an agent reads: doc strings, ranges, units, and the .fxb
 # format version the device checks.
 rust_test(

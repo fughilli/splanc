@@ -71,6 +71,10 @@ const CLIENT_ARMS: Record<string, string> = {
   set_fps: "setFps",
   get_sensors: "getSensors",
   calibrate_sensors: "calibrateSensors",
+  scan_i2c: "scanI2c",
+  submit_driver: "submitDriver",
+  remove_driver: "removeDriver",
+  get_driver_state: "getDriverState",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -99,6 +103,8 @@ const SERVER_ARMS: Record<string, string> = {
   tls_info: "tlsInfo",
   fps_state: "fpsState",
   sensor_state: "sensorState",
+  i2c_scan_result: "i2cScanResult",
+  driver_state: "driverState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -666,6 +672,31 @@ export interface SensorStateMessage {
   calibrationResult: string;
   /** MPU INT pin (-1 = none); recorded, the device polls today. */
   intGpio: number;
+}
+
+/** Reply to scan_i2c (proto I2cScanResult): ACKing 7-bit addresses. */
+export interface I2cScanResultMessage {
+  type: "i2c_scan_result";
+  addresses: number[];
+}
+
+/** Reply to submit_driver / remove_driver / get_driver_state (proto
+ * DriverState; the "drivers" feature, FUG-107). */
+export interface DriverStateMessage {
+  type: "driver_state";
+  running: boolean;
+  pollIntervalMs: number;
+  exports: { name: string; value: number[] }[];
+  lastPoll: string;
+  polls: number;
+  busErrors: number;
+  pollCyclesMean: number;
+  pollCyclesMax: number;
+  pollInstrsMean: number;
+  busOps: number;
+  heapBytes: number;
+  jitterUsMax: number;
+  feedImu: boolean;
 }
 
 /** Reply to list_effects (proto EffectList). */
