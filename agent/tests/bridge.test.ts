@@ -365,6 +365,7 @@ describe("mcp", () => {
     const ro = tools.filter((t) => t.annotations!.readOnlyHint).map((t) => t.name).sort();
     assert.deepEqual(ro, [
       "compile_effect",
+      "driver_state",
       "estimate_effect",
       "export_map",
       "get_effect",
@@ -378,6 +379,7 @@ describe("mcp", () => {
       "preview_effect",
       "read_sensors",
       "refresh_players",
+      "scan_i2c",
       "search_effects",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);

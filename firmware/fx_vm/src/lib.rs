@@ -297,7 +297,32 @@ pub enum Op {
     // operand stack + locals + const pool, then resumes interpreting at the
     // block's end. Not emitted by the compiler; the interpreter is the fallback.
     JitCall,   // u16 block-index into the VM's JIT table
+    // --- FUG-107 I2C driver intrinsics (docs/design/sensor-core.md §8) --------
+    // A driver is a `.fxb` with FLAG_DRIVER whose `poll()` entry sits in the
+    // shade slot. Only [`Vm::run_poll`] installs a bus; anywhere else both ops are
+    // inert (write -> 0, read -> -1). Args ride the stack as ints. Appended LAST
+    // so every discriminant above (FUG-122 / FUG-125) is unchanged.
+    I2cWrite, // pop val, reg, addr -> write [reg, val]; push 1 on ACK else 0
+    I2cRead,  // u8 mode: n = mode & 3 (1..2 bytes), bit 7 = sign-extend a 16-bit
+              // read. pop reg, addr -> read n bytes big-endian; push int (-1 on
+              // failure — and the host counts the failure, see I2cBus)
 }
+
+/// A register-oriented I2C master for driver programs (FUG-107). The firmware
+/// backs it with the same ESP-IDF bus as the native sensor core; host tests
+/// and the web preview back it with a register-map fake.
+pub trait I2cBus {
+    /// Write `bytes` to 7-bit device `addr`; true on ACK.
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> bool;
+    /// Write the register pointer `reg`, then read `out.len()` bytes; true on
+    /// success (`out` untouched on failure).
+    fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool;
+}
+
+/// The bus a running `poll()` sees. Set only for the duration of
+/// [`Vm::run_poll`] (single-threaded VM use; never set during shade/update, so
+/// the effect hot path is unchanged apart from two unreachable match arms).
+static mut POLL_BUS: Option<*mut dyn I2cBus> = None;
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
 pub mod gq {
@@ -394,8 +419,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=JitCall; guard the range then transmute.
-        if b <= Op::JitCall as u8 {
+        // Op is a contiguous enum 0..=I2cRead; guard the range then transmute.
+        if b <= Op::I2cRead as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -486,6 +511,11 @@ pub const FLAG_USES_UV: u8 = 0x04;
 /// flags bit: the program reads `led.room` / `room.min` / `room.max`. Lets the
 /// host skip fetching the per-LED room-frame position for effects that don't.
 pub const FLAG_USES_ROOM: u8 = 0x08;
+/// flags bit: a sensor DRIVER (FUG-107), not an effect. Its `poll()` entry is
+/// stored in the `shade_entry` header field and its manifest is the export
+/// table (`[{"name","slot","width","unit"}]`, slots into `state`). A host must
+/// never shade it; [`Vm::run_poll`] runs it.
+pub const FLAG_DRIVER: u8 = 0x10;
 /// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
 pub const BUF_DESC_LEN: usize = 7;
 
@@ -1086,6 +1116,70 @@ impl Vm {
             self.jit_consts,
         );
         (outcome, counters)
+    }
+
+    /// Run a driver's `poll()` (a FLAG_DRIVER program) with `bus` reachable from
+    /// its `i2c_*` intrinsics, writing its exports into `state` in place (read
+    /// them back with [`Vm::export`]). A non-driver program is a no-op. Returns
+    /// the outcome and Tier-1 counters (opcodes retired) for the A/B cost.
+    pub fn run_poll(
+        &mut self,
+        prog: &Program,
+        frame: &Frame,
+        bus: &mut dyn I2cBus,
+        budget: &Budget,
+    ) -> (Outcome, Counters) {
+        if prog.flags & FLAG_DRIVER == 0 || prog.shade_entry == NO_ENTRY {
+            return (Outcome::Ok, Counters::default());
+        }
+        let led = Led::default();
+        let (arena_ptr, arena_len) = (self.arena_ptr, self.arena_len);
+        let arena: &mut [u8] = if arena_ptr.is_null() || arena_len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
+        };
+        let g = GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
+        };
+        // SAFETY: cleared before returning; the VM is single-threaded and `bus`
+        // outlives this call. The lifetime is erased only for the static slot.
+        unsafe {
+            let raw: *mut (dyn I2cBus + '_) = bus;
+            POLL_BUS = Some(core::mem::transmute::<*mut (dyn I2cBus + '_), *mut dyn I2cBus>(raw));
+        }
+        let (_out, _rgb, outcome, counters) = run(
+            prog,
+            &self.uniforms,
+            &mut self.state,
+            frame,
+            &led,
+            &g,
+            &mut self.dist_src,
+            arena,
+            &mut self.stack,
+            &mut self.locals,
+            &mut self.call_stack,
+            prog.shade_entry as usize,
+            budget,
+            self.jit_blocks,
+            self.jit_len,
+            self.jit_consts,
+        );
+        unsafe { POLL_BUS = None };
+        (outcome, counters)
+    }
+
+    /// A driver export's current value: `state[slot..slot + out.len()]`.
+    pub fn export(&self, slot: usize, out: &mut [f32]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = *self.state.get(slot + i).unwrap_or(&0.0);
+        }
     }
 
     /// Run `shade(led)` → RGB. Does not mutate `state` (read-only in shade).
@@ -2625,6 +2719,39 @@ fn run(
                     sp = (sp as isize + blk.net_delta as isize) as usize;
                     pc = blk.end as usize;
                 }
+            }
+            // FUG-107 I2C intrinsics: inert unless run_poll installed a bus.
+            Op::I2cWrite => {
+                let val = popi!();
+                let reg = popi!();
+                let addr = popi!();
+                // SAFETY: POLL_BUS is set only inside run_poll, which outlives this.
+                let ok = match unsafe { POLL_BUS } {
+                    Some(bus) => unsafe { (*bus).write(addr as u8, &[reg as u8, val as u8]) },
+                    None => false,
+                };
+                pushi!(ok as i32);
+            }
+            Op::I2cRead => {
+                let mode = code[pc];
+                pc += 1;
+                let n = ((mode & 3) as usize).clamp(1, 2);
+                let reg = popi!();
+                let addr = popi!();
+                let mut buf = [0u8; 2];
+                let ok = match unsafe { POLL_BUS } {
+                    Some(bus) => unsafe { (*bus).read_reg(addr as u8, reg as u8, &mut buf[..n]) },
+                    None => false,
+                };
+                pushi!(if !ok {
+                    -1
+                } else if n == 1 {
+                    buf[0] as i32
+                } else if mode & 0x80 != 0 {
+                    i16::from_be_bytes([buf[0], buf[1]]) as i32
+                } else {
+                    u16::from_be_bytes([buf[0], buf[1]]) as i32
+                });
             }
         }
     }

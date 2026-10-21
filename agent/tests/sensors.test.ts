@@ -7,9 +7,12 @@
  */
 
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, test } from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, before, beforeEach, test } from "node:test";
 
-import { DeviceSession, SENSORS_IN_PROTO } from "../src/session";
+import { loadFxHost } from "../src/fxhost";
+import { DeviceSession, DRIVERS_IN_PROTO, SENSORS_IN_PROTO } from "../src/session";
 import { nodeSocketFactory } from "../src/socket";
 import { FakePlayer, TEST_CERT_SHA256 } from "./fakePlayer";
 
@@ -26,6 +29,10 @@ async function connect(features: string[]): Promise<DeviceSession> {
   await s.connect();
   return s;
 }
+
+before(async () => {
+  await loadFxHost(process.env["AGENT_WASM_ROOT"] ?? "wasm");
+});
 
 beforeEach(async () => {
   player = new FakePlayer();
@@ -98,5 +105,38 @@ test("calibrate_sensors waits for the device to apply it", { skip }, async () =>
 test("firmware without the feature gets a clear error", { skip }, async () => {
   const s = await connect([]);
   await assert.rejects(s.readSensors(), /no sensor core/);
+  s.close();
+});
+
+const skipDrivers = DRIVERS_IN_PROTO ? false : "this bundle's protocol has no driver arms yet";
+
+test("drivers: scan, deploy (compiled here), state, remove", { skip: skipDrivers }, async () => {
+  const s = await connect(["drivers"]);
+  assert.deepEqual(await s.scanI2c(), { addresses: ["0x40", "0x68"] });
+  const src = "export float t;\nvoid poll() { t = float(i2c_read8(64, 0)); }";
+  const r = await s.deployDriver(src, 20, false);
+  assert.equal(r["running"], true);
+  assert.deepEqual(r["exports"], { imu_ok: 1 });
+  const sent = player.received.find((m) => m.type === "submit_driver")!;
+  assert.equal(sent["pollIntervalMs"], 20);
+  assert.ok(String(sent["fxb"]).length > 0, "compiled bytecode went out");
+  // A compile error never reaches the device.
+  await assert.rejects(s.deployDriver("export float t; void poll() { t = ; }", 10, false), /doesn't compile/);
+  assert.equal((await s.driverState())["running"], true);
+  assert.deepEqual(await s.removeDriver(), { running: false });
+  s.close();
+});
+
+test("the MPU-6050 driver source compiles in the agent's toolchain", { skip: skipDrivers }, async () => {
+  const p = join(process.cwd(), "../firmware/sensor/drivers/mpu6050.fx");
+  let src: string;
+  try {
+    src = readFileSync(p, "utf8");
+  } catch {
+    return; // not in this test's runfiles
+  }
+  const s = await connect(["drivers"]);
+  const r = await s.deployDriver(src, 10, true);
+  assert.equal(r["running"], true);
   s.close();
 });

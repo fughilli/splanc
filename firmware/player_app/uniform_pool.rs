@@ -25,8 +25,9 @@ use ledmapper_sensor::math::Quat;
 
 use super::{deck, fx_set_uniform, sensor_ffi, N_DECKS};
 
-/// Pool entries (the fixed sensor names + dynamic ones).
-pub const POOL_CAP: usize = 24;
+/// Pool entries: the fixed sensor names + up to 8 dynamic ones (one driver's
+/// exports; each dynamic entry is 44 B of static RAM).
+pub const POOL_CAP: usize = SENSOR_ENTRIES.len() + 8;
 /// Bound uniforms per deck.
 pub const MAX_BIND: usize = 12;
 const NAME_MAX: usize = osc::MAX_NAME;
@@ -209,19 +210,6 @@ pub(crate) unsafe fn publish(name: &[u8], vals: &[f32]) -> bool {
 pub(crate) unsafe fn clear_dynamic() {
     DYN_LEN = 0;
     rebind_all();
-}
-
-/// Names + widths currently in the pool (for get_sensors / tests).
-pub(crate) unsafe fn for_each_entry(mut f: impl FnMut(&[u8], u8, bool)) {
-    let live_sensor = sensor_ffi::sensor_running();
-    for i in 0..entries() {
-        let live = if i < SENSOR_ENTRIES.len() {
-            live_sensor
-        } else {
-            (*addr_of!(DYN))[i - SENSOR_ENTRIES.len()].live
-        };
-        f(entry_name(i), entry_width(i), live);
-    }
 }
 
 /// Write every bound, live pool value into its deck's uniforms for this frame.

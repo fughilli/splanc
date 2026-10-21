@@ -62,6 +62,8 @@ import {
   flatFpsState,
   type SensorStateMessage,
   type SensorCalibration,
+  type I2cScanResultMessage,
+  type DriverStateMessage,
   type UniformValueFlat,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
@@ -869,6 +871,39 @@ export class LedMapperClient {
     return normalizeSensorState(r);
   }
 
+  /** Probe the sensor I2C bus (FUG-107 "drivers" feature): ACKing addresses. */
+  async scanI2c(): Promise<number[]> {
+    const r = (await this.request(
+      { type: "scan_i2c" } as unknown as ClientMessage,
+      "i2c_scan_result",
+    )) as unknown as Partial<I2cScanResultMessage>;
+    return r.addresses ?? [];
+  }
+
+  /** Load a compiled sensor driver (a program with `void poll()` + `export`s);
+   * its exports reach effect uniforms of the same name. `feedImu` routes an
+   * MPU-6050 driver's imu_raw_* exports into the native fusion instead. */
+  async submitDriver(fxb: Uint8Array, pollIntervalMs = 10, feedImu = false): Promise<DriverStateMessage> {
+    return normalizeDriverState(
+      (await this.request(
+        { type: "submit_driver", fxb, pollIntervalMs, feedImu } as unknown as ClientMessage,
+        "driver_state",
+      )) as unknown as Partial<DriverStateMessage>,
+    );
+  }
+
+  async removeDriver(): Promise<DriverStateMessage> {
+    return normalizeDriverState(
+      (await this.request({ type: "remove_driver" } as unknown as ClientMessage, "driver_state")) as unknown as Partial<DriverStateMessage>,
+    );
+  }
+
+  async getDriverState(): Promise<DriverStateMessage> {
+    return normalizeDriverState(
+      (await this.request({ type: "get_driver_state" } as unknown as ClientMessage, "driver_state")) as unknown as Partial<DriverStateMessage>,
+    );
+  }
+
   /** Place this fixture in a shared room frame (or clear it); resolves with the
    * echoing welcome. Needs the "fixture_pose" feature. */
   async setFixturePose(
@@ -1340,5 +1375,24 @@ function normalizeSensorState(r: Partial<SensorStateMessage>): SensorStateMessag
     calibrationSeq: r.calibrationSeq ?? 0,
     calibrationResult: r.calibrationResult ?? "",
     intGpio: r.intGpio ?? -1,
+  };
+}
+
+function normalizeDriverState(r: Partial<DriverStateMessage>): DriverStateMessage {
+  return {
+    type: "driver_state",
+    running: r.running ?? false,
+    pollIntervalMs: r.pollIntervalMs ?? 0,
+    exports: (r.exports ?? []).map((e) => ({ name: e.name ?? "", value: e.value ?? [] })),
+    lastPoll: r.lastPoll ?? "",
+    polls: r.polls ?? 0,
+    busErrors: r.busErrors ?? 0,
+    pollCyclesMean: r.pollCyclesMean ?? 0,
+    pollCyclesMax: r.pollCyclesMax ?? 0,
+    pollInstrsMean: r.pollInstrsMean ?? 0,
+    busOps: r.busOps ?? 0,
+    heapBytes: r.heapBytes ?? 0,
+    jitterUsMax: r.jitterUsMax ?? 0,
+    feedImu: r.feedImu ?? false,
   };
 }

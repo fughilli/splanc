@@ -99,6 +99,7 @@ exports_files(["board_caps.textproto"])
 rust_static_library(
     name = "player_ffi",
     srcs = [
+        "driver_ffi.rs",
         "ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
@@ -139,6 +140,7 @@ rust_static_library(
 rust_library(
     name = "player_ffi_host",
     srcs = [
+        "driver_ffi.rs",
         "ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
@@ -280,6 +282,27 @@ rust_test(
     crate_root = "tests/sensor_pool.rs",
     edition = "2021",
     env = {"RUST_MIN_STACK": "33554432"},
+    deps = [
+        ":player_ffi_host",
+        "//firmware/sensor",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# FUG-107 driver VM through the C ABI + the native-vs-VM MPU-6050 A/B
+# (docs/design/sensor-core.md §8). Own binary: fresh process-global FFI state.
+rust_test(
+    name = "driver_ab_test",
+    srcs = [
+        "tests/driver_ab.rs",
+        "//firmware/sensor:tests/fake_mpu.rs",
+    ],
+    compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
+    crate_root = "tests/driver_ab.rs",
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
     deps = [
         ":player_ffi_host",
         "//firmware/sensor",

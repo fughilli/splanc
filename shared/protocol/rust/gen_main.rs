@@ -240,9 +240,24 @@ fn main() -> std::io::Result<()> {
         ] {
             g.configure(&format!(".ledmapper.v1.SensorState.{field}"), Config::new().skip(true));
         }
+        // Driver VM (FUG-107): replies encoded zero-copy too; the request's fxb
+        // is read in place (pbview).
+        for field in [
+            ".ledmapper.v1.I2cScanResult.addresses",
+            ".ledmapper.v1.DriverState.exports",
+            ".ledmapper.v1.DriverState.last_poll",
+            ".ledmapper.v1.SubmitDriver.fxb",
+        ] {
+            g.configure(field, Config::new().skip(true));
+        }
     } else {
         g.configure(".ledmapper.v1.SensorState.part", Config::new().max_bytes(32));
         g.configure(".ledmapper.v1.SensorState.calibration_result", Config::new().max_bytes(16));
+        g.configure(".ledmapper.v1.I2cScanResult.addresses", Config::new().max_len(112));
+        g.configure(".ledmapper.v1.DriverState.exports", Config::new().max_len(8));
+        g.configure(".ledmapper.v1.DriverExport.name", Config::new().max_bytes(24));
+        g.configure(".ledmapper.v1.DriverState.last_poll", Config::new().max_bytes(16));
+        g.configure(".ledmapper.v1.SubmitDriver.fxb", Config::new().max_bytes(1024));
     }
 
     g.compile_fdset_file(&args[1], &args[2])

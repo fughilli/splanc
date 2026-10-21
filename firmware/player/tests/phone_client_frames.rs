@@ -96,6 +96,10 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetFps(_)
         | CMsg::GetSensors(_)
         | CMsg::CalibrateSensors(_)
+        | CMsg::ScanI2C(_)
+        | CMsg::SubmitDriver(_)
+        | CMsg::RemoveDriver(_)
+        | CMsg::GetDriverState(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -167,6 +171,10 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetFps(_) => "set_fps",
         CMsg::GetSensors(_) => "get_sensors",
         CMsg::CalibrateSensors(_) => "calibrate_sensors",
+        CMsg::ScanI2C(_) => "scan_i2c",
+        CMsg::SubmitDriver(_) => "submit_driver",
+        CMsg::RemoveDriver(_) => "remove_driver",
+        CMsg::GetDriverState(_) => "get_driver_state",
     }
 }
 

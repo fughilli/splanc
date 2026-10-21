@@ -76,7 +76,7 @@ fn shade0() -> [f32; 3] {
 #[test]
 fn sensor_core_through_the_c_abi() {
     assert!(FEATURES.contains(&"sensors"));
-    unsafe { lm_player_init(16) };
+    lm_player_init(16);
 
     // Before the sensor core starts: status unspecified, no vectors.
     let s = sensors();

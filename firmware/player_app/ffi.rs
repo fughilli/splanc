@@ -49,6 +49,9 @@ pub use sensor_ffi::*;
 // Named live values (sensor fusion outputs, driver exports) bound to effect
 // uniforms by name (docs/design/sensor-core.md).
 mod uniform_pool;
+// The driver VM host (FUG-107): one `.fxb` I2C driver, exports into the pool.
+mod driver_ffi;
+pub use driver_ffi::*;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -1352,6 +1355,11 @@ pub unsafe extern "C" fn lm_player_handle(
         // calibrate posts to the sensor task's mailbox and replies the same.
         Some(ARM_GET_SENSORS) => return sensor_ffi::handle_get_sensors(out, out_cap),
         Some(ARM_CALIBRATE_SENSORS) => return sensor_ffi::handle_calibrate_sensors(frame, out, out_cap),
+        // Driver VM (FUG-107): scan the bus, load / remove the one driver, report it.
+        Some(ARM_SCAN_I2C) => return driver_ffi::handle_scan_i2c(out, out_cap),
+        Some(ARM_SUBMIT_DRIVER) => return driver_ffi::handle_submit_driver(frame, out, out_cap),
+        Some(ARM_REMOVE_DRIVER) => return driver_ffi::handle_remove_driver(out, out_cap),
+        Some(ARM_GET_DRIVER_STATE) => return driver_ffi::handle_get_driver_state(out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1819,6 +1827,10 @@ const ARM_GET_TLS_INFO: u32 = 45;
 const ARM_SET_FPS: u32 = 46;
 const ARM_GET_SENSORS: u32 = 48;
 const ARM_CALIBRATE_SENSORS: u32 = 49;
+const ARM_SCAN_I2C: u32 = 50;
+const ARM_SUBMIT_DRIVER: u32 = 51;
+const ARM_REMOVE_DRIVER: u32 = 52;
+const ARM_GET_DRIVER_STATE: u32 = 53;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1839,6 +1851,7 @@ pub const FEATURES: &[&str] =
         "tls_info",
         "fps",
         "sensors",
+        "drivers",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -3647,6 +3660,10 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     let Ok(prog) = Program::parse(src) else {
         return Err(FxLoadError::Bad);
     };
+    // A sensor driver (FUG-107) is not an effect: its "shade" slot is poll().
+    if prog.flags & ledmapper_fx_vm::FLAG_DRIVER != 0 {
+        return Err(FxLoadError::Bad);
+    }
     let need = arena_need(&prog);
     let b_reserve = match deck(DECK_B_IDX) {
         Some(b) if (*b).loaded() => (*b).arena_len,

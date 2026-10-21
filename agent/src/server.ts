@@ -565,6 +565,54 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ action, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.calibrateSensors(action)))),
   );
 
+  // -- sensor drivers (FUG-107) -----------------------------------------------------------
+  server.registerTool(
+    "scan_i2c",
+    {
+      description:
+        "Probe the player's sensor I2C bus and list the 7-bit addresses that answer (to identify an attached " +
+        "module before writing a driver for it). Feature `drivers`.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.scanI2c()))),
+  );
+  server.registerTool(
+    "deploy_driver",
+    {
+      description:
+        "Compile and load a sensor DRIVER on the player: an effect-language program with `void poll()` (run every " +
+        "interval_ms) that talks I2C via i2c_read8/i2c_read16/i2c_read16s(addr, reg) and i2c_write(addr, reg, val) " +
+        "(all int; reads return -1 on a bus error) and publishes `export float|vecN name;` values. Every export " +
+        "drives any effect uniform of the same name, live. One driver at a time (replaces the previous). feed_imu " +
+        "routes an MPU-6050 driver's imu_raw_accel / imu_raw_gyro into the on-device fusion (A/B vs the native " +
+        "driver; needs a reboot to go back).",
+      inputSchema: {
+        source: z.string().min(1),
+        interval_ms: z.number().int().min(5).max(10000).optional(),
+        feed_imu: z.boolean().optional(),
+        players,
+      },
+    },
+    ({ source, interval_ms, feed_imu, players: sel }) =>
+      guard(async () => ok(await fan(sel, (s) => s.deployDriver(source, interval_ms ?? 10, feed_imu ?? false)))),
+  );
+  server.registerTool(
+    "driver_state",
+    {
+      description: "The running sensor driver: its exports' current values, polls, bus errors and on-device cost.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.driverState()))),
+  );
+  server.registerTool(
+    "remove_driver",
+    {
+      description: "Stop and unload the player's sensor driver.",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.removeDriver()))),
+  );
+
   // -- effect authoring -------------------------------------------------------------------
   server.registerTool(
     "compile_effect",

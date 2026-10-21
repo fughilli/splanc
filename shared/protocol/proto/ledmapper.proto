@@ -514,6 +514,57 @@ message CalibrateSensors {
   Action action = 1;
 }
 
+// -- Driver VM (FUG-107, docs/design/sensor-core.md §8) ------------------------
+// Probe every 7-bit address on the sensor I2C bus (bringing the bus up if no
+// native sensor did). Firmware advertising "drivers" answers. Reply:
+// i2c_scan_result.
+message ScanI2c {}
+
+message I2cScanResult {
+  repeated uint32 addresses = 1 [packed = true];  // ACKing 7-bit addresses
+}
+
+// Load (replacing any running one) a sensor DRIVER: a .fxb compiled from a
+// program with `void poll()` and `export` declarations. The device runs poll()
+// every poll_interval_ms on its I2C bus and publishes each export into the
+// uniform pool by name (effects bind uniforms of the same name). With
+// feed_imu, exports `imu_raw_accel` / `imu_raw_gyro` (MPU-6050 counts) go into
+// the native fusion instead — the VM becomes the IMU's driver backend (the
+// native sampler stops until reboot). Reply: driver_state (or error:
+// bad_fxb / not_a_driver / driver_too_large / no_bus / no_memory).
+message SubmitDriver {
+  bytes fxb = 1;
+  uint32 poll_interval_ms = 2;  // 0 = 10 ms; minimum 5
+  bool feed_imu = 3;
+}
+
+// Stop and unload the driver (frees its heap). Reply: driver_state.
+message RemoveDriver {}
+
+// Reply: driver_state.
+message GetDriverState {}
+
+message DriverExport {
+  string name = 1;
+  repeated float value = 2 [packed = true];
+}
+
+message DriverState {
+  bool running = 1;
+  uint32 poll_interval_ms = 2;
+  repeated DriverExport exports = 3;  // current values
+  string last_poll = 4;               // "ok" | "budget" | "timeout" | "bus_error"
+  uint32 polls = 5;
+  uint32 bus_errors = 6;
+  uint32 poll_cycles_mean = 7;        // CPU cycles per poll() incl. bus waits
+  uint32 poll_cycles_max = 8;
+  uint32 poll_instrs_mean = 9;        // VM opcodes per poll()
+  uint32 bus_ops = 10;                // I2C transactions in the last poll
+  uint32 heap_bytes = 11;             // the driver slot (bytes + VM + exports)
+  uint32 jitter_us_max = 12;          // worst lateness vs the poll schedule
+  bool feed_imu = 13;
+}
+
 enum SensorStatus {
   SENSOR_STATUS_UNSPECIFIED = 0;  // sensor core not started
   SENSOR_STATUS_ABSENT = 1;       // nothing answered at 0x68/0x69
@@ -828,6 +879,10 @@ message ClientMessage {
     // 47: unused (left free while FUG-82 was in flight; it took 46).
     GetSensors get_sensors = 48;
     CalibrateSensors calibrate_sensors = 49;
+    ScanI2c scan_i2c = 50;
+    SubmitDriver submit_driver = 51;
+    RemoveDriver remove_driver = 52;
+    GetDriverState get_driver_state = 53;
   }
 }
 
@@ -1336,5 +1391,7 @@ message ServerMessage {
     FpsState fps_state = 25;
     // 26: unused (left free while FUG-82 was in flight; it took 25).
     SensorState sensor_state = 27;
+    I2cScanResult i2c_scan_result = 28;
+    DriverState driver_state = 29;
   }
 }

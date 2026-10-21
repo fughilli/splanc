@@ -53,14 +53,14 @@
     "^__wrap_esp_panic_handler",
     "^panicHandler$"
   ],
-  "_indirect_edges": "Function-pointer calls the disassembly can't resolve: mbedtls's f_send/f_recv are our bio callbacks (netstack_transport.cpp mbedtls_ssl_set_bio); the sensor core's LmI2cOps callbacks (sensor_bus.cpp kOps) and the hub's cycle source (sensor_ffi.rs ops_cycles).",
+  "_indirect_edges": "Function-pointer calls the disassembly can't resolve: mbedtls's f_send/f_recv are our bio callbacks (netstack_transport.cpp mbedtls_ssl_set_bio); the sensor core's LmI2cOps callbacks (sensor_bus.cpp kOps) and the hub's cycle source (sensor_ffi.rs ops_cycles); the driver VM's I2C intrinsics (fx_vm POLL_BUS -> driver_ffi DrvBus) and its LmDrvHost callbacks (sensor_bus.cpp kDrvHost).",
   "indirect_edges": [
     {
       "callers": "^(mbedtls_ssl|ssl_)",
       "callees": ["(anonymous namespace)::bio_send", "(anonymous namespace)::bio_recv"]
     },
     {
-      "callers": "(FfiBus|ledmapper_sensor::|sensor_ffi::(?!ops_cycles)|lm_sensor_)",
+      "callers": "(FfiBus|ledmapper_sensor::|sensor_ffi::(?!ops_cycles)|driver_ffi::|lm_sensor_|lm_drv_)",
       "callees": [
         "(anonymous namespace)::bus_write_read",
         "(anonymous namespace)::bus_write",
@@ -70,6 +70,23 @@
     {
       "callers": "sensor_ffi::ops_cycles",
       "callees": ["(anonymous namespace)::cycles()"]
+    },
+    {
+      "callers": "^ledmapper_fx_vm::run",
+      "callees": [
+        "<ledmapper_player_ffi::driver_ffi::DrvBus as ledmapper_fx_vm::I2cBus>::write",
+        "<ledmapper_player_ffi::driver_ffi::DrvBus as ledmapper_fx_vm::I2cBus>::read_reg"
+      ]
+    },
+    {
+      "callers": "(driver_ffi|lm_drv_)",
+      "callees": [
+        "(anonymous namespace)::drv_alloc(unsigned int)",
+        "(anonymous namespace)::drv_free(void*)",
+        "(anonymous namespace)::drv_bus_ensure()",
+        "(anonymous namespace)::drv_scan(unsigned char*, unsigned int)",
+        "(anonymous namespace)::cycles()"
+      ]
     }
   ],
   "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold. s_i2c_start_end_command (IDF i2c_master): two VLAs of roundup16(0 or 1) bytes = 32 B max (disassembly: andi -16 of s2+15, s2 in {0,1}).",

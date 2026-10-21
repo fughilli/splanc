@@ -372,13 +372,13 @@ pub fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         Swizzle => 3 + *code.get(pc + 2).unwrap_or(&0) as usize,
         Hash1 | Hash3 | Hsv2Rgb | AddI | SubI | MulI | DivI | ModI | NegI | MulFix | DivFix
         | I2F | F2I | Fix2F | F2Fix | I2Fix | Fix2I | RetFn | FloodFrom | AbsI | MinI | MaxI
-        | ClampI | RetRgb8 => 1,
+        | ClampI | RetRgb8 | I2cWrite => 1,
         LoadCtx | Add | Sub | Mul | Div | Neg | Scale | Clamp | Mix | Smoothstep | Dot | Cross
         | Length | Normalize | Distance | Cmp | Logic | Palette | Pop | Ret | CmpI | GraphQuery
         | LoadBuf | StoreBuf | SampleTex | PaintTex | MulFixN | DivFixN | FixRescale | FixToF
         | FixFromF | SinFix | CosFix | ExpFix | SignI | StepI | FloorFix | CeilFix | FractFix
         | MixFix | SqrtFix | CrossFix | ClampVFix | Hsv2RgbFix | Atan2Fix | LogFix | TanFix
-        | PowFix | HashFix | Hash3Fix | RetRgbFix => 2,
+        | PowFix | HashFix | Hash3Fix | RetRgbFix | I2cRead => 2,
         PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | UnMath
         | BinMath | BrFalse | Jmp | Swap | Call | ScaleFix | DotFix | LengthFix | DistanceFix
         | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall => 3,

@@ -77,6 +77,8 @@ export class FakePlayer {
   /** The motion sensor's get_sensors reply (proto3-JSON field names); null =
    * the sensor core reports "absent". calibrate_sensors bumps calibrationSeq. */
   sensor: Record<string, unknown> | null = null;
+  /** The loaded sensor driver's driver_state (null = none). */
+  driver: Record<string, unknown> | null = null;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
@@ -386,6 +388,16 @@ export class FakePlayer {
         }
         return this.reply(ws, reply);
       }
+      case "scan_i2c":
+        return this.reply(ws, { type: "i2c_scan_result", addresses: [0x40, 0x68] });
+      case "submit_driver":
+        this.driver = { running: true, pollIntervalMs: m["pollIntervalMs"], feedImu: m["feedImu"], polls: 3, busOps: 6, exports: [{ name: "imu_ok", value: [1] }] };
+        return this.reply(ws, { type: "driver_state", ...this.driver });
+      case "get_driver_state":
+        return this.reply(ws, { type: "driver_state", ...(this.driver ?? { running: false }) });
+      case "remove_driver":
+        this.driver = null;
+        return this.reply(ws, { type: "driver_state", running: false });
       case "time_sync_ping": {
         // The device clock: this process's clock shifted by clockOffsetMs.
         const t1 = performance.now() + this.clockOffsetMs;
