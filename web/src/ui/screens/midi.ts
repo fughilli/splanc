@@ -21,6 +21,7 @@ import {
   type MidiDeviceInfo,
 } from "../../midi/manager";
 import { midiStore, type SemanticControl } from "../../store/midiStore";
+import { openTwisterSetup } from "./twisterSetup";
 
 export function MidiScreen(_router: Router): Screen {
   installMidiStyles();
@@ -229,7 +230,25 @@ export function MidiScreen(_router: Router): Screen {
   function rerender(): void {
     meterFills = new Map();
     capturedRefreshers = [];
-    body.replaceChildren(enableSection(), learnSection(), namedSection());
+    body.replaceChildren(enableSection(), twisterSection(), learnSection(), namedSection());
+  }
+
+  // -- controller setup (SysEx) ---------------------------------------------
+  function twisterSection(): HTMLElement {
+    const g = group("Endless encoders");
+    const p = document.createElement("p");
+    p.className = "midi-hint";
+    p.textContent =
+      "Encoders in a relative mode scroll Show Mode's effects list without stopping. Map them in " +
+      "Show mode ▸ MIDI map (the mode is detected when you learn), or let Splanc set up a Midi " +
+      "Fighter Twister for you.";
+    const btn = Button({
+      label: "Set up Midi Fighter Twister",
+      icon: "midi",
+      onClick: () => openTwisterSetup(),
+    });
+    g.append(p, btn);
+    return g;
   }
 
   // Meter writes are coalesced to one animation frame: MIDI controllers emit

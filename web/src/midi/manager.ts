@@ -117,6 +117,7 @@ export interface MidiDeviceInfo {
 
 type ControlListener = (e: MidiControlEvent) => void;
 type DevicesListener = (devices: MidiDeviceInfo[]) => void;
+type SysexListener = (data: Uint8Array, device: string) => void;
 
 /** True when this browser exposes the Web MIDI API. */
 export function midiSupported(): boolean {
@@ -135,11 +136,68 @@ export class MidiManager {
   private enabling: Promise<boolean> | null = null;
   private readonly controlListeners = new Set<ControlListener>();
   private readonly deviceListeners = new Set<DevicesListener>();
+  private readonly sysexListeners = new Set<SysexListener>();
   private lastEvent: MidiControlEvent | null = null;
+  private sysexGranted = false;
 
   /** Whether {@link enable} has succeeded (MIDI access granted). */
   get enabled(): boolean {
     return this.access !== null;
+  }
+
+  /** Whether SysEx access was granted (needed to configure a controller). */
+  get sysexEnabled(): boolean {
+    return this.sysexGranted;
+  }
+
+  /**
+   * Upgrade to SysEx access (a second browser prompt: SysEx can reconfigure a
+   * device). Chrome/Edge (desktop + Android) support it; iOS has no Web MIDI.
+   * Swaps the underlying MIDIAccess and rewires every input, so control
+   * events keep flowing through the same listeners. Resolves false if denied.
+   */
+  async enableSysex(): Promise<boolean> {
+    if (this.sysexGranted) return true;
+    if (!midiSupported()) return false;
+    if (this.enabling !== null) await this.enabling;
+    try {
+      const access = await navigator.requestMIDIAccess({ sysex: true });
+      // Detach the old access's handlers so no message is delivered twice.
+      this.access?.inputs.forEach((i) => {
+        i.onmidimessage = null;
+      });
+      if (this.access) this.access.onstatechange = null;
+      this.access = access;
+      this.sysexGranted = true;
+      access.onstatechange = () => this.rewire();
+      this.rewire();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Connected output ports (for sending SysEx). */
+  outputs(): MidiDeviceInfo[] {
+    if (this.access === null) return [];
+    const out: MidiDeviceInfo[] = [];
+    this.access.outputs.forEach((o) => {
+      if (o.state === "connected") out.push({ id: o.id, name: o.name ?? o.id });
+    });
+    return out;
+  }
+
+  /** Send raw bytes to an output port. Throws if the port is gone. */
+  send(outputId: string, data: number[]): void {
+    const port = this.access?.outputs.get(outputId);
+    if (!port) throw new Error("MIDI output not connected");
+    port.send(data);
+  }
+
+  /** Subscribe to incoming SysEx messages (only with SysEx access). */
+  onSysex(fn: SysexListener): () => void {
+    this.sysexListeners.add(fn);
+    return () => this.sysexListeners.delete(fn);
   }
 
   /** The most recent control event seen (for a learn UI that opened late). */
@@ -183,6 +241,10 @@ export class MidiManager {
 
   private onMessage(input: MIDIInput, e: MIDIMessageEvent): void {
     if (e.data === null) return;
+    if (e.data[0] === 0xf0) {
+      for (const fn of this.sysexListeners) fn(e.data, input.name ?? input.id);
+      return;
+    }
     const ev = parseMidiMessage(input.name ?? input.id, e.data);
     if (ev === null) return;
     this.lastEvent = ev;

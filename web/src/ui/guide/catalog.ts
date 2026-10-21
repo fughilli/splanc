@@ -586,6 +586,79 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     ],
   },
   {
+    id: "show-mode",
+    title: "Show Mode & the mixing deck",
+    icon: "midi",
+    tab: "effects",
+    route: "/show",
+    summary: "Cue effects onto two decks, crossfade live, and browse with a MIDI encoder.",
+    screenshot: "#/show",
+    screenshotDemo: "device",
+    sections: [
+      {
+        body: [
+          "Show Mode (**Effects ▸ ⋯ ▸ Show mode**) is the live mixing deck: cue an effect onto Deck A " +
+            "or Deck B and crossfade between them on the device, which runs both at once and " +
+            "blends their output per LED. Each deck carries its effect's keypoint pads and " +
+            "morph fader.",
+          "The effects list is its own scroll area: it scrolls inside the panel (touch, " +
+            "wheel or keys) without moving the rest of the page. Tap it, then use ↑/↓, " +
+            "Page Up/Down and Home/End to move the highlight; **Enter** loads the highlighted " +
+            "effect onto the deck that was browsing, **A**/**B** load it onto that deck.",
+        ],
+      },
+      {
+        heading: "MIDI: browse with a knob",
+        bullets: [
+          "**MIDI map** binds every Show Mode control: crossfader, play/pause, blend mode, " +
+            "keypoints, and per deck a **browse** encoder and a **load** button (an encoder's " +
+            "push switch).",
+          "Turning a deck's browse encoder moves the highlight (tinted in that deck's " +
+            "colour); a faster turn jumps further. Pushing its load button loads the " +
+            "highlighted effect onto that deck.",
+          "**Encoder push** picks what load does: **Cue** loads the effect onto the deck; " +
+            "**Take** loads it and crossfades to that deck over **Take fade** seconds.",
+        ],
+      },
+      {
+        heading: "Relative (endless) encoders",
+        body: [
+          "A knob in absolute mode sends its position (0–127), so it stops at the ends of its " +
+            "travel. An endless encoder in a relative mode sends how far it turned, so the list " +
+            "scrolls as far as you like. Each mapping stores its mode; when you learn an " +
+            "encoder, turn it slowly a few clicks both ways and Splanc detects the mode from " +
+            "the values it sends. You can change it in the mapping row.",
+        ],
+        bullets: [
+          "**Relative — binary offset (3F/41)**: 65 = one step right, 63 = one step left, " +
+            "64±n for bigger steps. The Midi Fighter Twister's “ENC 3FH/41H”.",
+          "**Relative — two's complement (7F/01)**: 1 = right, 127 = left (1..63 / 127..65).",
+          "**Relative — signed bit (41/01)**: 1..63 = right, 65..127 = left.",
+          "**Absolute** (the default): the change between positions moves the list, up to the " +
+            "knob's end stop.",
+        ],
+      },
+      {
+        heading: "Set up a Midi Fighter Twister from Splanc",
+        body: [
+          "**MIDI map ▸ Set up Midi Fighter Twister** (also in Settings ▸ MIDI) configures the " +
+            "Twister over SysEx: pick the encoders for Deck A and Deck B, choose whether a fast " +
+            "turn accelerates, and whether pushing loads. Splanc reads the Twister's current " +
+            "settings, shows exactly what will change, and after you confirm writes only those " +
+            "fields (MIDI type → ENC 3FH/41H, sensitivity, push action, and CC/channel when an " +
+            "existing mapping needs them). Everything else on the Twister is kept. It then reads " +
+            "the encoders back and maps them in Show Mode.",
+          "This needs Web MIDI with SysEx: Chrome or Edge on a computer or Android, which ask " +
+            "you to let the site control MIDI devices. iOS/iPadOS Safari has no Web MIDI; use " +
+            "DJ TechTools' Midi Fighter Utility there (set the encoder's MIDI type to " +
+            "ENC 3FH/41H), then learn it in Show Mode. If an older Twister firmware doesn't " +
+            "answer the settings read, Splanc can still write the chosen encoders after an " +
+            "explicit overwrite confirmation; replug the Twister afterwards.",
+        ],
+      },
+    ],
+  },
+  {
     id: "device-management",
     title: "Managing devices",
     icon: "device",
@@ -724,6 +797,14 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         body: [
           "Those names are global, so any effect with a matching uniform can bind to them. " +
             "The per-effect binding itself lives in the effect editor's Uniforms pane.",
+        ],
+      },
+      {
+        heading: "Endless encoders",
+        body: [
+          "Show Mode's MIDI map binds encoders to browse the effects list, in absolute or " +
+            "relative mode (see Show Mode & the mixing deck). **Set up Midi Fighter Twister** " +
+            "switches a Twister's encoders to relative mode from here.",
         ],
       },
     ],

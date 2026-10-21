@@ -136,7 +136,7 @@
       <nav class="toc">
 <div class="nav-group"><div class="nav-head">Getting started</div><a href="#welcome">Welcome to Splanc</a></div>
 <div class="nav-group"><div class="nav-head">Maps</div><a href="#maps-library">The maps library</a><a href="#calibrate-imu">Calibrating a fixture's motion sensor</a><a href="#capture">Mapping a fixture with the camera</a><a href="#map-workspace">The mapping workspace</a></div>
-<div class="nav-group"><div class="nav-head">Effects</div><a href="#effects-library">The effects library</a><a href="#effect-editor">The effect editor</a></div>
+<div class="nav-group"><div class="nav-head">Effects</div><a href="#effects-library">The effects library</a><a href="#effect-editor">The effect editor</a><a href="#show-mode">Show Mode &amp; the mixing deck</a></div>
 <div class="nav-group"><div class="nav-head">Devices</div><a href="#connect-device">Connecting a device</a><a href="#device-management">Managing devices</a><a href="#flashing">Flashing firmware</a><a href="#color-correction">Color correction</a><a href="#performance">Performance &amp; calibration</a></div>
 <div class="nav-group"><div class="nav-head">Settings &amp; help</div><a href="#midi">MIDI controllers</a><a href="#appearance">Appearance &amp; behavior</a><a href="#debug-bundles">Debug mode &amp; capture bundles</a><a href="#help">Help, tutorial &amp; about</a></div>
       </nav>
@@ -279,6 +279,32 @@
 <p class="more"><a href="effect-editor.html">Full walkthrough — 3 screenshots &rarr;</a></p>
 </div>
 </article>
+<article class="topic" id="show-mode">
+<div class="topic-figure"><img class="shot" src="img/show-mode.png" alt="Show Mode &amp; the mixing deck screen" loading="lazy" /></div>
+<div class="topic-body">
+<h3>Show Mode &amp; the mixing deck</h3>
+<p class="summary">Cue effects onto two decks, crossfade live, and browse with a MIDI encoder.</p>
+<p>Show Mode (<strong>Effects ▸ ⋯ ▸ Show mode</strong>) is the live mixing deck: cue an effect onto Deck A or Deck B and crossfade between them on the device, which runs both at once and blends their output per LED. Each deck carries its effect's keypoint pads and morph fader.</p>
+<p>The effects list is its own scroll area: it scrolls inside the panel (touch, wheel or keys) without moving the rest of the page. Tap it, then use ↑/↓, Page Up/Down and Home/End to move the highlight; <strong>Enter</strong> loads the highlighted effect onto the deck that was browsing, <strong>A</strong>/<strong>B</strong> load it onto that deck.</p>
+<h4>MIDI: browse with a knob</h4>
+<ul>
+<li><strong>MIDI map</strong> binds every Show Mode control: crossfader, play/pause, blend mode, keypoints, and per deck a <strong>browse</strong> encoder and a <strong>load</strong> button (an encoder's push switch).</li>
+<li>Turning a deck's browse encoder moves the highlight (tinted in that deck's colour); a faster turn jumps further. Pushing its load button loads the highlighted effect onto that deck.</li>
+<li><strong>Encoder push</strong> picks what load does: <strong>Cue</strong> loads the effect onto the deck; <strong>Take</strong> loads it and crossfades to that deck over <strong>Take fade</strong> seconds.</li>
+</ul>
+<h4>Relative (endless) encoders</h4>
+<p>A knob in absolute mode sends its position (0–127), so it stops at the ends of its travel. An endless encoder in a relative mode sends how far it turned, so the list scrolls as far as you like. Each mapping stores its mode; when you learn an encoder, turn it slowly a few clicks both ways and Splanc detects the mode from the values it sends. You can change it in the mapping row.</p>
+<ul>
+<li><strong>Relative — binary offset (3F/41)</strong>: 65 = one step right, 63 = one step left, 64±n for bigger steps. The Midi Fighter Twister's “ENC 3FH/41H”.</li>
+<li><strong>Relative — two's complement (7F/01)</strong>: 1 = right, 127 = left (1..63 / 127..65).</li>
+<li><strong>Relative — signed bit (41/01)</strong>: 1..63 = right, 65..127 = left.</li>
+<li><strong>Absolute</strong> (the default): the change between positions moves the list, up to the knob's end stop.</li>
+</ul>
+<h4>Set up a Midi Fighter Twister from Splanc</h4>
+<p><strong>MIDI map ▸ Set up Midi Fighter Twister</strong> (also in Settings ▸ MIDI) configures the Twister over SysEx: pick the encoders for Deck A and Deck B, choose whether a fast turn accelerates, and whether pushing loads. Splanc reads the Twister's current settings, shows exactly what will change, and after you confirm writes only those fields (MIDI type → ENC 3FH/41H, sensitivity, push action, and CC/channel when an existing mapping needs them). Everything else on the Twister is kept. It then reads the encoders back and maps them in Show Mode.</p>
+<p>This needs Web MIDI with SysEx: Chrome or Edge on a computer or Android, which ask you to let the site control MIDI devices. iOS/iPadOS Safari has no Web MIDI; use DJ TechTools' Midi Fighter Utility there (set the encoder's MIDI type to ENC 3FH/41H), then learn it in Show Mode. If an older Twister firmware doesn't answer the settings read, Splanc can still write the chosen encoders after an explicit overwrite confirmation; replug the Twister afterwards.</p>
+</div>
+</article>
 </section>
 <section class="tab-section">
 <h2 id="tab-device">Devices</h2>
@@ -366,6 +392,8 @@
 <p class="summary">Name physical knobs and bind them to effect parameters.</p>
 <p>Splanc can drive effect parameters from a hardware MIDI controller. Under Settings ▸ MIDI you enable Web MIDI, see connected devices, and give physical controls semantic names: wiggle a knob, type &quot;speed&quot;, assign.</p>
 <p>Those names are global, so any effect with a matching uniform can bind to them. The per-effect binding itself lives in the effect editor's Uniforms pane.</p>
+<h4>Endless encoders</h4>
+<p>Show Mode's MIDI map binds encoders to browse the effects list, in absolute or relative mode (see Show Mode &amp; the mixing deck). <strong>Set up Midi Fighter Twister</strong> switches a Twister's encoders to relative mode from here.</p>
 </div>
 </article>
 <article class="topic" id="appearance">
