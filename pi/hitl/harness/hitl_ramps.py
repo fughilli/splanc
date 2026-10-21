@@ -491,7 +491,7 @@ def run(args: argparse.Namespace) -> int:
             box = {}
             th = threading.Thread(
                 target=lambda: box.setdefault(
-                    "by", capture(args.server, a, [pins[0]], 3500, save("xf"))
+                    "by", capture(args.server, a, [pins[0]], 6000, save("xf"))
                 )
             )
             th.start()
@@ -550,14 +550,16 @@ def run(args: argparse.Namespace) -> int:
     ramp_lines = []
     for r in reservations:
         for name, text in r.serial_logs.items():
-            for m in re.finditer(r"\[ramp\] now=\d+ n=(\d+) cyc=(\d+)", text):
-                ramp_lines.append((name, int(m.group(1)), int(m.group(2))))
+            for m in re.finditer(r"\[ramp\] now=\d+ n=(\d+) cyc=(\d+)(?: mean=(\d+))?", text):
+                ramp_lines.append((name, int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)))
     if ramp_lines:
-        cyc = [c for _, _, c in ramp_lines]
+        cyc = [c for _, _, c, _ in ramp_lines]
+        means = [m for _, _, _, m in ramp_lines if m]
         _log(
             f"RESULT ramp tick cost: {len(cyc)} one-second windows, worst-tick cycles "
             f"median={statistics.median(cyc):.0f} max={max(cyc)} (= {max(cyc) / 160:.1f} us @160 MHz), "
-            f"things moved per tick max={max(n for _, n, _ in ramp_lines)}"
+            f"mean-tick cycles median={statistics.median(means) if means else 'n/a'}, "
+            f"things moved per tick max={max(n for _, n, _, _ in ramp_lines)}"
         )
     else:
         _log("RESULT ramp tick cost: no [ramp] serial lines captured")

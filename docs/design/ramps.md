@@ -134,10 +134,18 @@ The player wiring is in `ffi.rs`:
 
 ### Cost
 
-On the host, a full table (16 vec4 lanes) ticks in well under a microsecond. On
-the C6, the HITL run records the `[ramp]` line: see the PR for the measured
-cycles. The work is O(ramped floats) per frame, never O(LEDs). For scale, a
-single `set_uniforms` message costs a TLS record decode plus a protobuf walk.
+Measured on the C6 by the HITL run, on rig-2, at 160 MHz, with one ramped
+scalar:
+
+- The mean `lm_ramp_tick` takes about 4.9 k cycles (about 31 µs).
+- The worst tick in a one-second window is a median of 12 k cycles and at most
+  22 k (136 µs), inflated by interrupts.
+- PerfReport's mean frame cost rises by about 2.2 to 3.4 k cycles while a ramp
+  runs.
+
+On the host, a full table of 16 vec4 lanes ticks in about 2 µs (debug build).
+The work grows with the number of ramped floats per frame, never with the
+number of LEDs. When nothing is ramping, the tick returns early.
 
 ## Clients
 
