@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1799,
+    "test_cases": 1802,
     "gaps": 34
   },
   "levels": [
@@ -4710,7 +4710,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/starvation_guard.rs",
-          "line": 188,
+          "line": 190,
           "symbol": "fn each_runaway_shade_call_is_cut_off_within_the_per_invocation_instruction_budget"
         },
         {
@@ -4719,7 +4719,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/starvation_guard.rs",
-          "line": 209,
+          "line": 211,
           "symbol": "fn a_runaway_update_is_cut_off_and_reported_while_the_frame_still_renders"
         },
         {
@@ -4728,7 +4728,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/starvation_guard.rs",
-          "line": 226,
+          "line": 228,
           "symbol": "fn a_non_default_instruction_budget_is_enforced_per_invocation"
         },
         {
@@ -4737,7 +4737,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/starvation_guard.rs",
-          "line": 261,
+          "line": 263,
           "symbol": "fn frames_over_the_frame_budget_are_counted_once_and_reported_to_the_app"
         },
         {
@@ -4746,7 +4746,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/starvation_guard.rs",
-          "line": 297,
+          "line": 299,
           "symbol": "fn the_app_can_switch_a_runaway_effect_off"
         }
       ]
