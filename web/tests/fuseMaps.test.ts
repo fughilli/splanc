@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
 import { applySimilarity, type Similarity } from "../src/geom/fit";
-import { concatObservations, fuseMaps, spreadRatio } from "../src/geom/fuseMaps";
+import { concatObservations, fuseMaps, importedPriorSigmaM, spreadRatio, statslessPrior } from "../src/geom/fuseMaps";
 
 function led(id: number, xyz: Vec3, confidence = 0.8, nViews = 6): LedEntry {
   return { id, xyz, confidence, nViews, rmsReprojPx: 1.5, parallaxDeg: 20 };
@@ -362,4 +362,48 @@ test("a strip-prior fill in the joint solve cannot hide a dropped session", () =
   const { report } = fuseMaps(prior, supp, { joint: dropped });
   assert.equal(report.method, "registered");
   assert.match(report.jointRejected ?? "", /lost 4 of the base map's 12 LEDs/);
+});
+
+// -- a prior without observations or statistics (pulled off a device) ----------
+
+/** What a player's map dump decodes to: positions only, nViews = confidence = 0. */
+function pulled(ids: number[]): OutputMap {
+  return mapOf(ids.map((id) => ({ id, xyz: pos(id), confidence: 0, nViews: 0, rmsReprojPx: 0, parallaxDeg: 0 })));
+}
+
+test("a supplemental scan registers to a map pulled off a device (positions only, no stats)", () => {
+  const prior = pulled(range(0, 11));
+  assert.ok(statslessPrior(prior));
+  const addition = transformMap(mapOf(grid(range(4, 15), 0.9)), DISGUISE);
+  const { map, report } = fuseMaps(prior, addition);
+  assert.ok(report.registered, report.summary);
+  assert.equal(report.common, 8, "the stored positions count as registration evidence");
+  assert.equal(report.added, 4);
+  // Untouched LEDs keep their stored position; registered new LEDs land in the prior frame.
+  for (const id of [0, 3, 12, 15]) {
+    const l = map.leds.find((x) => x.id === id)!;
+    assert.ok(Math.hypot(l.xyz[0] - pos(id)[0], l.xyz[1] - pos(id)[1], l.xyz[2] - pos(id)[2]) < 1e-3, `led ${id}`);
+  }
+});
+
+test("on a stats-less prior, re-seen LEDs are inverse-variance fused with a conservative prior σ", () => {
+  const prior = pulled(range(0, 11));
+  // The new scan sees LED 5 2 mm off its stored spot (and the rest exactly).
+  const scan = mapOf(grid(range(0, 11), 0.9));
+  const off: Vec3 = [pos(5)[0] + 0.002, pos(5)[1], pos(5)[2]];
+  scan.leds = scan.leds.map((l) => (l.id === 5 ? { ...l, xyz: off } : l));
+  const { map, report } = fuseMaps(prior, scan);
+  assert.ok(report.registered, report.summary);
+  const sigmaPrior = importedPriorSigmaM(prior);
+  assert.ok(sigmaPrior >= 0.003 && sigmaPrior <= 0.03, `σ ${sigmaPrior}`);
+  const l5 = map.leds.find((x) => x.id === 5)!;
+  const moved = l5.xyz[0] - pos(5)[0];
+  // Between the two estimates, much nearer the measured scan than the stored prior.
+  assert.ok(moved > 0.0015 && moved < 0.002, `moved ${moved}`);
+  assert.ok(l5.nViews > 0, "now backed by real views");
+});
+
+test("a map with real statistics is not treated as stats-less", () => {
+  assert.equal(statslessPrior(mapOf(grid(range(0, 3)))), false);
+  assert.equal(statslessPrior(mapOf([])), false);
 });

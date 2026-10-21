@@ -53,6 +53,11 @@ export interface StoredMapSummary {
   rmsReprojPx: number;
   hasTopology: boolean;
   deviceMapId?: string;
+  /** The OutputMap's own map_id (kept through a push: the device reports it back
+   * in its stored-map header, so the Maps tab can tell a device's map is already
+   * here). Absent on summaries written before it was stamped; findByMapId
+   * backfills those from the payload. */
+  mapId?: string;
   /** Optional folder for organizing the library; "" / absent = ungrouped. */
   folder?: string;
   /** True when the payload carries the raw capture observations, so a
@@ -142,6 +147,7 @@ function summaryFromMap(input: CreateInput, id: string, now: string): StoredMapS
     thumbnail: "",
   };
   if (input.deviceMapId !== undefined) s.deviceMapId = input.deviceMapId;
+  s.mapId = map.mapId ?? "";
   if (input.observations !== undefined) s.supplementable = true;
   return s;
 }
@@ -301,10 +307,29 @@ class MapStore {
     return payload?.observations;
   }
 
-  /** All known device map ids (dedup on pull). */
-  private async deviceMapIds(): Promise<Set<string>> {
-    const all = await this.list();
-    return new Set(all.map((m) => m.deviceMapId).filter((x): x is string => !!x));
+  /** The library entry holding the map with this map_id — a pulled copy
+   * (deviceMapId) or a map captured/imported here and pushed to the device
+   * (summary.mapId). Most recently updated wins. Summaries from before mapId
+   * was stamped are checked against their payload once and backfilled. */
+  async findByMapId(mapId: string): Promise<StoredMapSummary | undefined> {
+    if (!mapId) return undefined;
+    const all = await this.list(); // newest first
+    const hit = all.find((m) => m.deviceMapId === mapId || m.mapId === mapId);
+    if (hit) return hit;
+    for (const m of all) {
+      if (m.mapId !== undefined) continue;
+      const rec = await this.get(m.id);
+      const id = rec?.map.mapId ?? "";
+      // Backfill quietly: no updatedAt bump (it would reorder the library) and
+      // no change event (nothing visible changed).
+      await this.tx([IDX], "readwrite", async (tx) => {
+        const store = tx.objectStore(IDX);
+        const cur = await MapStore.req(store.get(m.id) as IDBRequest<StoredMapSummary | undefined>);
+        if (cur) store.put({ ...cur, mapId: id });
+      });
+      if (id === mapId) return { ...m, mapId: id };
+    }
+    return undefined;
   }
 
   async create(input: CreateInput): Promise<string> {
@@ -423,7 +448,7 @@ class MapStore {
       const iStore = tx.objectStore(IDX);
       const s = await MapStore.req(iStore.get(id) as IDBRequest<StoredMapSummary | undefined>);
       if (s) {
-        const ns: StoredMapSummary = { ...s, updatedAt: new Date().toISOString() };
+        const ns: StoredMapSummary = { ...s, mapId: map.mapId ?? "", updatedAt: new Date().toISOString() };
         if (thumbnail) {
           ns.thumbnail = thumbnail;
           ns.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
@@ -492,11 +517,10 @@ class MapStore {
     }
     const deviceMapId = bundle.map.mapId || undefined;
     if (deviceMapId) {
-      const seen = await this.deviceMapIds();
-      if (seen.has(deviceMapId)) {
-        const existing = (await this.list()).find((m) => m.deviceMapId === deviceMapId);
-        if (existing) return existing.id;
-      }
+      // Same map id = the map this library already holds (pulled earlier, or
+      // captured here and pushed): open that instead of adding a copy.
+      const existing = await this.findByMapId(deviceMapId);
+      if (existing) return existing.id;
     }
     const input: CreateInput = { map: bundle.map, source: opts.source ?? "import" };
     if (bundle.topology) input.topology = bundle.topology;

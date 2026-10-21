@@ -755,13 +755,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (supplementId !== null) {
       const rec = await mapStore.get(supplementId);
       const obs = await mapStore.getObservations(supplementId);
-      if (!rec || !obs) {
-        toast("This map has no capture data to supplement.", { error: true });
+      if (!rec || rec.map.leds.length === 0) {
+        toast("This map has no LEDs to supplement.", { error: true });
         router.navigate(`/map/${supplementId}`);
         return;
       }
       priorMap = rec.map;
-      priorObs = obs;
+      // A map without its raw observations (pulled off a device, imported, or
+      // captured before FUG-112) is still supplemented: the new scan registers
+      // to its stored positions and fuses with them (no joint re-solve).
+      priorObs = obs ?? null;
+      if (!obs) toast("No raw capture data for this map: the new scan will be registered and fused with its stored positions");
       // Reuse the capture settings that produced this map, if the device still
       // holds them for it. Older firmware / a pre-profile map: defaults.
       try {
@@ -1765,7 +1769,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // longer hinges on it: a dropped device socket (e.g. TLS heap exhaustion
       // on a long capture, FUG-69) must not lose a capture we already hold.
       let pushedToDevice = false;
-      if (solveOnPhone && supplementId !== null && priorObs !== null) {
+      if (solveOnPhone && supplementId !== null && priorMap !== null) {
         // Supplemental scan solved on the phone. A short scan aimed at a few
         // weak LEDs may be too thin to solve ON ITS OWN, yet still add the rays
         // those LEDs need to the joint re-solve — so a failed standalone solve
@@ -1840,7 +1844,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       preview.view?.stop();
       if (solvePoll !== null) clearInterval(solvePoll);
-      if (supplementId !== null && priorMap !== null && priorObs !== null) {
+      if (supplementId !== null && priorMap !== null) {
         // Supplemental: register + fuse into the prior map, then let the user
         // accept or reject the fused result before it is committed (FUG-112).
         await reviewSupplement(map);
@@ -1991,24 +1995,24 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   async function reviewSupplement(newMap: OutputMap | null): Promise<void> {
     const prior = priorMap;
     const obs = priorObs;
-    if (prior === null || obs === null || supplementId === null) {
+    if (prior === null || supplementId === null) {
       router.navigate("/maps");
       return;
     }
     // The base capture's observations + this session's on one timeline: the
     // joint re-solve input now, and what the map persists on Accept (so it can
-    // be supplemented again).
-    const mergedObs: CaptureObservations = concatObservations(obs, {
-      detections: localDetections,
-      imu: localImu,
-    });
+    // be supplemented again). Null for a map without observations: no joint
+    // re-solve, the scan is registered + fused with the stored positions
+    // (fuseMaps treats a stats-less prior's LEDs as measured, conservative σ).
+    const mergedObs: CaptureObservations | null =
+      obs === null ? null : concatObservations(obs, { detections: localDetections, imu: localImu });
     // Joint re-solve (FUG-112 D): accumulate the supplemental measurements with
     // the base ones and solve them together, so low-confidence base LEDs get a
     // new solution from all their rays. Needs the in-browser solver; fuseMaps
     // validates the result (a solver that keeps only one arc of an interrupted
     // timeline drops a session) and falls back to estimate-level fusion.
     let joint: OutputMap | null = null;
-    if (solverAgent.available && localDetections.length > 0) {
+    if (mergedObs !== null && solverAgent.available && localDetections.length > 0) {
       progWrap.style.display = "";
       progFill.style.width = "0%";
       progText.textContent = "re-solving with the original capture…";
@@ -2043,7 +2047,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       method: fusion.report.method,
       registered: fusion.report.registered,
       summary: fusion.report.summary,
-      jointError: joint === null ? "joint re-solve unavailable or failed" : (fusion.report.jointRejected ?? null),
+      jointError:
+        mergedObs === null
+          ? "no prior observations (registered fusion only)"
+          : joint === null
+            ? "joint re-solve unavailable or failed"
+            : (fusion.report.jointRejected ?? null),
     };
     nativeLog(
       `[solve] supplement fusion: method=${fusion.report.method} registered=${fusion.report.registered} ` +
@@ -2064,7 +2073,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const how =
         fusion.report.method === "joint"
           ? " Low-confidence LEDs were re-solved jointly from both captures."
-          : joint !== null || fusion.report.jointRejected !== null
+          : mergedObs === null
+            ? " The map has no raw capture data, so the scan was fused with its stored positions."
+            : joint !== null || fusion.report.jointRejected !== null
             ? ` Joint re-solve not used (${fusion.report.jointRejected ?? "unavailable"}) — low-confidence LEDs fused from the separate solves.`
             : "";
       reviewText.textContent = fusion.report.registered
@@ -2093,7 +2104,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Persist the fused map in place (still in the base frame — anchored LEDs
       // didn't move) and the time-shifted union of observations, so the next
       // supplement's joint re-solve sees both sessions on one valid timeline.
-      await mapStore.setMap(supplementId, fusion.map, undefined, mergedObs);
+      await mapStore.setMap(supplementId, fusion.map, undefined, mergedObs ?? undefined);
       appState.setSelectedMap(supplementId);
       // Best-effort: the device should play the map the library now holds.
       const pushed = await client()

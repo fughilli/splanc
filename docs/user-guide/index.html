@@ -175,6 +175,16 @@
 <li>A row's ⋯ menu renames, tags, moves to a folder, duplicates, or deletes.</li>
 <li>The tab's ⋯ menu <strong>imports and exports</strong> the whole library as a bundle, so you can move maps between phones or back them up.</li>
 </ul>
+<h4>The map on your connected device</h4>
+<p>While a device is connected, a card at the top of the tab shows the map stored <strong>on the device</strong>: its LED count, how many LEDs were mapped versus interpolated, and when it was mapped (when the device knows). A fresh install, or a second phone, starts with an empty library, but the fixture still has its map. Use this card to copy it here.</p>
+<ul>
+<li><strong>Saved on this phone</strong>: the library already has this map (it was captured or saved here). <strong>Open</strong> goes to it.</li>
+<li><strong>Not on this phone</strong>: <strong>Save to this phone</strong> copies the map into the library and opens it. <strong>Preview</strong> loads it without saving, so you can look at it in 3D or export it first.</li>
+<li><strong>Calibrate IMU</strong> appears when the device's motion sensor is running. It copies the map first if needed, then opens the calibration. It's also in the device's detail sheet (Device tab ▸ ⋯).</li>
+<li><strong>No map on this device yet</strong>: map the fixture with <strong>+</strong>, or open a map and <strong>Push</strong> it.</li>
+<li>Large maps show a short summary first. The whole map is only downloaded when you save or preview it.</li>
+<li>Through <strong>Live via bridge</strong>, a fixture's stored map can't be copied yet. Connect to the fixture directly to copy it.</li>
+</ul>
 </div>
 </article>
 <article class="topic" id="capture">
@@ -206,6 +216,8 @@
 <li><strong>Inspect the solve</strong> in 3D: orbit, zoom, and auto-scale/recenter the view.</li>
 <li><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</li>
 <li><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</li>
+<li><strong>Supplement</strong> re-scans part of the fixture and merges the new scan into the map, to fill gaps or improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both captures. A map without that data (copied from a device, imported, or captured before it was kept) still works: the new scan is aligned to the stored positions and averaged with them.</li>
+<li><strong>Calibrate IMU</strong> (when the connected device's motion sensor is running) aligns the sensor to this map. A map copied from the device works too.</li>
 <li><strong>Jump to Effects</strong> to start animating this fixture.</li>
 <li><strong>Export</strong> the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX Studio) fixture file. See below.</li>
 <li><strong>Edit metadata</strong> — name, tags, and folder.</li>

@@ -119,6 +119,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Map", back: true, tabs: true });
       return MapDetailScreen(router, m.params["id"]!);
     })
+    .add("/device-map", () => {
+      // Read-only preview of the connected device's map (Maps ▸ On <device>).
+      shell.setChrome({ title: "Device map", back: true, tabs: true });
+      return MapDetailScreen(router, "", { preview: true });
+    })
     .add("/map/:id/topology", (m) => {
       shell.setChrome({ title: "Topology", back: true, tabs: true });
       return MapDetailScreen(router, m.params["id"]!, { topologyOpen: true });

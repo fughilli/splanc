@@ -12,7 +12,7 @@
  */
 
 import { firmwareCardFields, type FirmwareCardFields } from "../../buildInfo";
-import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
+import { ActionGrid, Button, IconButton, Sheet, icon, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../../store/deviceStore";
 import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { appendGrouped, openFolderPicker } from "./folders";
+import { deviceImuReady } from "../../store/deviceMap";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -499,9 +500,7 @@ function openDeviceDetail(dev: KnownDevice): void {
   const divider = document.createElement("hr");
   divider.className = "device-detail-divider";
 
-  sheet.body.append(
-    nameField,
-    ActionGrid([
+  const actionGrid = ActionGrid([
       {
         label: "Gamma",
         icon: "gamma",
@@ -539,7 +538,43 @@ function openDeviceDetail(dev: KnownDevice): void {
           sheet.close();
         },
       },
-    ]),
+    ]);
+  // Calibrate IMU straight from the device (no local map needed: it copies the
+  // device's map into the library first). Offered once the connected device
+  // reports a running IMU and holds a map.
+  const client = appState.client;
+  if (isActive && client) {
+    void (async () => {
+      if (!(await deviceImuReady(client))) return;
+      // Lazy: the card module pulls in the map library + 3D thumbnail renderer.
+      const { calibrateFromDevice, deviceMaps } = await import("./deviceMapCard");
+      const st = await deviceMaps.probe(client);
+      if (st.kind !== "saved" && st.kind !== "unsaved") return;
+      const tile = document.createElement("button");
+      tile.type = "button";
+      tile.className = "k-actiontile";
+      tile.append(icon("camera"));
+      const lbl = document.createElement("span");
+      lbl.textContent = "Calibrate IMU";
+      tile.append(lbl);
+      tile.addEventListener("click", () => {
+        tile.disabled = true;
+        lbl.textContent = "Copying map…";
+        void calibrateFromDevice((route) => {
+          sheet.close();
+          location.hash = `#${route}`;
+        }).finally(() => {
+          tile.disabled = false;
+          lbl.textContent = "Calibrate IMU";
+        });
+      });
+      actionGrid.insertBefore(tile, actionGrid.lastElementChild);
+    })();
+  }
+
+  sheet.body.append(
+    nameField,
+    actionGrid,
     divider,
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),

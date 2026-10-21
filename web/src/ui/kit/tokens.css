@@ -679,6 +679,10 @@ a {
   background: var(--accent-quiet);
   color: var(--text);
 }
+/* Greyed-out tile that still takes a tap, to explain why it can't run. */
+.k-actiontile--unavailable {
+  opacity: 0.4;
+}
 /* Greyed-out tile (e.g. Save with no pending edits, or a disabled action). */
 .k-actiontile--disabled,
 .k-actiontile:disabled {

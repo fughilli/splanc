@@ -36,6 +36,8 @@ import { debugModeEnabled } from "../../store/debugMode";
 import { captureBundleStore } from "../../store/captureBundleStore";
 import { bundleFromSavedMap, deviceInfo } from "../../solver/captureBundle";
 import { appBuildInfo } from "../../buildInfo";
+import { deviceImuReady } from "../../store/deviceMap";
+import { calibrateFromDevice, deviceMaps, devicePreviewRecord } from "./deviceMapCard";
 
 // The five raw ExtractOptions and the single-knob "Cleanup" curve over them.
 // Cleanup 0..1 sweeps the two perceptually-dominant knobs (radius + prune);
@@ -71,7 +73,7 @@ function cleanupToOptions(cleanup: number, base: RawOpts): RawOpts {
 export function MapDetailScreen(
   router: Router,
   mapId: string,
-  opts: { topologyOpen?: boolean } = {},
+  opts: { topologyOpen?: boolean; preview?: boolean } = {},
 ): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--detail";
@@ -219,6 +221,24 @@ export function MapDetailScreen(
     return b;
   };
 
+  // Grey out a tile that can't run, keeping it visible: a tap says why (and its
+  // tooltip does too) instead of the action disappearing without explanation.
+  const disabledReason = (tile: HTMLElement, reason: string | null): HTMLElement => {
+    if (reason === null) return tile;
+    tile.classList.add("k-actiontile--unavailable");
+    tile.title = reason;
+    tile.setAttribute("aria-disabled", "true");
+    tile.addEventListener(
+      "click",
+      (e) => {
+        e.stopImmediatePropagation();
+        toast(reason);
+      },
+      { capture: true },
+    );
+    return tile;
+  };
+
   // A collapsible-section header: a chevron (rotates when open) + a label. The
   // caller wires the click to toggle its body and the `--open` class.
   const collapsibleHeader = (label: string, open: boolean): HTMLButtonElement => {
@@ -254,6 +274,7 @@ export function MapDetailScreen(
   };
 
   async function load(): Promise<void> {
+    if (opts.preview) return loadPreview();
     rec = (await mapStore.get(mapId)) ?? null;
     if (rec === null) {
       el.append(Card("Map not found."));
@@ -299,34 +320,45 @@ export function MapDetailScreen(
       }),
     );
     // Supplemental capture (FUG-112): re-scan and fuse into this map to fill
-    // gaps / raise confidence. Only offered for maps that kept their raw
-    // observations (a captured map with the FUG-112 payload).
-    if (rec.supplementable) {
-      grid.append(
+    // gaps / raise confidence. A map that kept its raw observations also gets a
+    // joint re-solve; one without (pulled off a device, imported, captured
+    // before FUG-112) is registered to its stored positions and fused with
+    // them. Shown for every map; disabled (with the reason) only when it can't run.
+    const noLeds = rec.map.leds.length === 0;
+    grid.append(
+      disabledReason(
         actionTile("camera", "Supplement", () =>
           router.navigate(`/capture?supplement=${encodeURIComponent(mapId)}`),
         ),
-      );
-    }
+        noLeds ? "This map has no solved LEDs to register a new scan to." : null,
+      ),
+    );
     // Debug mode: turn this map's saved capture into a reproduction bundle
     // (Settings ▸ Debugging ▸ Mapping capture bundles) — how a run from before
     // bundles existed, or one that saved a degenerate map, can be replayed.
-    if (rec.supplementable && debugModeEnabled()) {
-      grid.append(actionTile("alert", "Bundle", () => void saveCaptureBundle()));
+    // Needs the raw observations, so it's disabled (with why) without them.
+    if (debugModeEnabled()) {
+      grid.append(
+        disabledReason(
+          actionTile("alert", "Bundle", () => void saveCaptureBundle()),
+          rec.supplementable
+            ? null
+            : "A bundle needs the raw capture data, which this map doesn't have (pulled, imported, or captured before it was kept).",
+        ),
+      );
     }
     actions.append(grid, MeshPanel(mapId, rec.mesh ?? null, mesh => view?.setMesh(mesh)));
     // Calibrate IMU (sensor-core.md §7.3): only offered when the connected
     // fixture reports a running motion sensor.
+    // Gated on the device serving the extrinsic calibration (imu_extrinsic), so
+    // older firmware is never sent a get_sensors it would leave unanswered.
     const imuLabel = rec.imuCalibration?.yawResolved ? "Recalibrate IMU" : "Calibrate IMU";
-    void appState.client
-      ?.getSensors()
-      .then((s) => {
-        if (s.status !== "SENSOR_STATUS_RUNNING") return;
-        grid.append(
-          actionTile("camera", imuLabel, () => router.navigate(`/capture?calibrate=${encodeURIComponent(mapId)}`)),
-        );
-      })
-      .catch(() => {});
+    void deviceImuReady(appState.client).then((ready) => {
+      if (!ready) return;
+      grid.append(
+        actionTile("camera", imuLabel, () => router.navigate(`/capture?calibrate=${encodeURIComponent(mapId)}`)),
+      );
+    });
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
     // re-extraction, matching §4.3 "skip re-extraction unless the user opts to".
@@ -341,6 +373,72 @@ export function MapDetailScreen(
     // navigating — navigating to the route we're already on would re-resolve the
     // router and remount this screen in an infinite loop (blank/thrashing page).
     if (opts.topologyOpen) openTopoPanel();
+  }
+
+  // Read-only preview of the connected device's map, pulled into memory but not
+  // saved (Maps tab ▸ On <device> ▸ Preview). Inspect it in 3D, export it, or
+  // save it; editing and Calibrate IMU need a library copy, so they save first.
+  function loadPreview(): void {
+    rec = devicePreviewRecord();
+    if (rec === null) {
+      el.append(Card("Nothing to preview. Open the Maps tab with the device connected."));
+      return;
+    }
+    const map: OutputMap = rec.map;
+    view = new MapView(canvas, map);
+    view.setTrajectory(map.trajectory ?? null);
+    view.start();
+    const counts = deviceMaps.lastPulled()?.info;
+    metaStrip.textContent =
+      `${map.ledCount} LEDs` +
+      (counts?.mapped !== undefined ? ` · ${counts.mapped} mapped · ${counts.interpolated ?? 0} interpolated` : "");
+    viewToggles.append(
+      iconToggle("grid", "Grid", view.showGrid, (v) => setViewFlag("showGrid", v)),
+      iconToggle("triad", "World triad", view.showTriad, (v) => setViewFlag("showTriad", v)),
+    );
+    if (rec.topology && rec.topology.segments.length > 0) {
+      currentTopology = stripTopologyDebug(rec.topology);
+      view.setTopology(currentTopology);
+    }
+
+    const note = document.createElement("p");
+    note.className = "detail-preview-note";
+    note.textContent = `Preview of the map on ${counts?.deviceName ?? "the device"}. It isn't saved on this phone.`;
+    const save = Button({
+      label: "Save to this phone",
+      icon: "download",
+      block: true,
+      onClick: () => {
+        save.disabled = true;
+        const c = appState.client;
+        if (!c?.isConnected) {
+          toast("No device connected", { error: true });
+          save.disabled = false;
+          return;
+        }
+        void deviceMaps
+          .save(c)
+          .then((id) => {
+            toast("Map saved to this phone");
+            router.navigate(`/map/${id}`);
+          })
+          .catch((e: unknown) => {
+            save.disabled = false;
+            toast(`Couldn't save the map: ${e instanceof Error ? e.message : e}`, { error: true });
+          });
+      },
+    });
+    const grid = document.createElement("div");
+    grid.className = "k-actiongrid";
+    grid.append(
+      actionTile("download", "Export", () => {
+        if (rec) openMapExportSheet({ name: rec.name, map: rec.map, topology: currentTopology ?? null });
+      }),
+    );
+    void deviceImuReady(appState.client).then((ready) => {
+      if (ready) grid.append(actionTile("camera", "Calibrate IMU", () => void calibrateFromDevice((r) => router.navigate(r))));
+    });
+    actions.append(Card(note, save), grid);
   }
 
   function setViewFlag(flag: "showGrid" | "showTriad", v: boolean): void {

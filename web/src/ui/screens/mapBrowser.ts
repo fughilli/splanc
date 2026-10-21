@@ -12,6 +12,7 @@ import {
   type ConflictMode,
 } from "../../store/mapBundle";
 import { appendGrouped, openFolderPicker } from "./folders";
+import { BridgeMapNote, DeviceMapCard } from "./deviceMapCard";
 import { appState } from "../app/state";
 import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
@@ -211,6 +212,12 @@ export function MapBrowserScreen(router: Router): Screen {
     }
   }
 
+  // The connected device's own map, above the library (a fresh install's way to
+  // the map a fixture already holds).
+  const deviceCard = DeviceMapCard(router);
+  const bridgeNote = BridgeMapNote();
+  el.append(deviceCard.el);
+  if (bridgeNote) el.append(bridgeNote);
   el.append(searchWrap, tagRow, listEl);
 
   async function refresh(): Promise<void> {
@@ -386,9 +393,11 @@ export function MapBrowserScreen(router: Router): Screen {
     onMount: () => {
       document.body.appendChild(fab);
       setTabMenuItems(tabMenuItems);
+      deviceCard.refresh();
       void refresh();
     },
     onUnmount: () => {
+      deviceCard.dispose();
       fab.remove();
       setTabMenuItems([]);
     },
