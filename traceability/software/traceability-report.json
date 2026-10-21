@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1811,
+    "test_cases": 1835,
     "gaps": 34
   },
   "levels": [
@@ -958,6 +958,12 @@
           "target": "//pi/reconstruction:rust_parity_test"
         },
         {
+          "name": "pi.reconstruction.tests.test_vio::test_implausible_alignment_scale_falls_back_to_an_arms_length_seed",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/reconstruction:vio_test"
+        },
+        {
           "name": "pi.reconstruction.tests.test_vio::test_outlier_rejection_unsticks_a_contaminated_led",
           "status": "passed",
           "level": "simulation",
@@ -1769,7 +1775,7 @@
           ],
           "relation": "implements",
           "path": "solver/BUILD.bazel",
-          "line": 8,
+          "line": 10,
           "text": "implemented in this package (see requirements/requirements.yaml)"
         },
         {
@@ -6072,7 +6078,7 @@
           ],
           "relation": "implements",
           "path": "solver/BUILD.bazel",
-          "line": 8,
+          "line": 10,
           "text": "implemented in this package (see requirements/requirements.yaml)"
         },
         {
