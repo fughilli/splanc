@@ -61,6 +61,7 @@ test("SHOW_ACTIONS covers the transport surface the issue calls for", () => {
   for (const id of [
     "crossfade",
     "crossfadeMode",
+    "crossfadeAuto",
     "deckA.playPause",
     "deckB.playPause",
     "list.prev",

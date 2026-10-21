@@ -104,16 +104,35 @@ fn morph_eases_from_live_to_target_and_lands_exactly() {
     assert!(m.push_source(b"storm", &kp));
     assert!(m.cached(7, &[b"storm"]));
     assert!(!m.cached(8, &[b"storm"]));
-    assert!(m.start(&live, &[1.0], 2.0, COLOR_RGB).is_none());
+    let sched = Schedule::resolve(1000, 0, 2000, Ease::Smoothstep as u32).unwrap();
+    assert!(m.start(&live, &[1.0], Some(sched), COLOR_RGB).is_none());
     assert!(m.running());
-    let mid = m.advance(1.0).unwrap();
+    let mid = m.advance_at(2000).unwrap();
     assert!((mid[6] - 0.5).abs() < 1e-6, "smoothstep(0.5) = 0.5: {}", mid[6]);
     assert_eq!(mid[0], 2.0); // 0.5 * 4 = 2.0, on a step
-    let end = m.advance(5.0).unwrap();
+    let end = m.advance_at(7000).unwrap();
     assert!(!m.running());
     assert_eq!(&end[..8], &kp[..8]);
-    assert!(m.advance(0.1).is_none());
+    assert!(m.advance_at(7100).is_none());
     assert_eq!(&m.target()[..8], &kp[..8]);
+}
+
+#[test]
+fn morph_waits_for_start_at_and_takes_any_ease() {
+    let mut m = Morph::new();
+    m.reset(MANIFEST);
+    let live = packed(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    let kp = packed(&[4.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, -1.0]);
+    m.begin_sources(7);
+    m.push_source(b"storm", &kp);
+    let sched = Schedule::resolve(1000, 1500, 1000, Ease::InCubic as u32).unwrap();
+    m.start(&live, &[1.0], Some(sched), COLOR_RGB);
+    assert!(m.advance_at(1400).is_none(), "holds before start_at");
+    assert!(m.running());
+    let q = m.advance_at(2000).unwrap();
+    assert!((q[6] - 0.125).abs() < 1e-3, "ease_in(0.5) = 0.125: {}", q[6]);
+    assert_eq!(&m.advance_at(2500).unwrap()[..8], &kp[..8]);
+    assert!(!m.running());
 }
 
 #[test]
@@ -125,7 +144,7 @@ fn instant_blend_returns_the_mix() {
     m.begin_sources(1);
     m.push_source(b"calm", &a);
     m.push_source(b"storm", &b);
-    let out = m.start(&a, &[3.0, 1.0], 0.0, COLOR_RGB).unwrap();
+    let out = m.start(&a, &[3.0, 1.0], None, COLOR_RGB).unwrap();
     assert!(!m.running());
     assert!((out[6] - (-0.5)).abs() < 1e-6);
     assert_eq!(out[0], 1.0);

@@ -11,7 +11,11 @@
  *   - cueing an effect compiles it to .fxb and submit_effect(deck=A|B),
  *   - the crossfader pushes set_crossfade(position, mode),
  *   - keypoint pads / the morph fader push blend_keypoints(deck, weights),
- *   - play/pause is set_effect("", deck) / set_effect(id, deck).
+ *   - play/pause is set_effect("", deck) / set_effect(id, deck),
+ *   - "Fade" glides the crossfade to the other side over the chosen time: ONE
+ *     ramp_crossfade the device runs itself on firmware with "ramps"
+ *     (docs/design/ramps.md), else stepped set_crossfade; any fader / MIDI move
+ *     takes over at once (the device cancels its ramp on that set_crossfade).
  *
  * The effects list is its own scroll container (it never scrolls the page) and
  * a keyboard listbox. A per-deck MIDI encoder moves its highlight — endless in
@@ -49,6 +53,7 @@ import {
   type ShowAction,
 } from "../../midi/showRouter";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
+import { CrossfadeGlide } from "../../effects/crossfadeGlide";
 import { KeypointStrip } from "./keypointStrip";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
@@ -119,24 +124,15 @@ export function ShowModeScreen(_router: Router): Screen {
     }
   }
 
-  // Crossfade animation for "take" (load + fade to the deck).
-  let fadeRaf = 0;
+  // "Take" (load + fade to the deck): the same glide as Fade (the device runs it
+  // on firmware with "ramps"), smoothstep so the cut isn't felt at either end.
   function fadeTo(target: number, seconds: number): void {
-    cancelAnimationFrame(fadeRaf);
-    const from = crossfade;
-    if (seconds <= 0 || from === target) {
+    const c = appState.client;
+    if (seconds <= 0 || crossfade === target || !c?.isConnected) {
       setCrossfade(target);
       return;
     }
-    const t0 = performance.now();
-    const tick = (now: number): void => {
-      const t = Math.min(1, (now - t0) / (seconds * 1000));
-      // Smoothstep: eases in/out so the cut isn't felt at either end.
-      const k = t * t * (3 - 2 * t);
-      setCrossfade(from + (target - from) * k);
-      if (t < 1) fadeRaf = requestAnimationFrame(tick);
-    };
-    fadeRaf = requestAnimationFrame(tick);
+    void glide.start(c, crossfade, target, seconds, { mode, ease: "smoothstep" });
   }
 
   /** Load the highlighted effect onto `deck`: cue it, or (take) also
@@ -162,12 +158,32 @@ export function ShowModeScreen(_router: Router): Screen {
     render();
   }
 
-  function setCrossfade(v: number, fromUser = false): void {
-    if (fromUser) cancelAnimationFrame(fadeRaf);
+  function showCrossfade(v: number): void {
     crossfade = Math.min(1, Math.max(0, v));
     fader.value = String(Math.round(crossfade * 100));
     xfReadout.textContent = crossfadeLabel();
+  }
+
+  /** A live crossfade move (fader drag / MIDI): direct and immediate — it ends a
+   * running Fade (on the device, the set_crossfade cancels its ramp). */
+  function setCrossfade(v: number): void {
+    glide.stop();
+    showCrossfade(v);
     pushCrossfade();
+  }
+
+  // Timed transition ("Fade"): to the other side over FADE_STEPS[fadeIdx] s.
+  const FADE_STEPS = [2, 4, 8, 16];
+  let fadeIdx = 1;
+  const glide = new CrossfadeGlide({ show: (p) => showCrossfade(p) });
+  function autoFade(): void {
+    const c = appState.client;
+    if (!c?.isConnected) {
+      toast("Connect a device first", { error: true });
+      return;
+    }
+    const to = crossfade < 0.5 ? 1 : 0;
+    void glide.start(c, crossfade, to, FADE_STEPS[fadeIdx]!, { mode, ease: "ease" });
   }
 
   function toggleMode(): void {
@@ -241,6 +257,9 @@ export function ShowModeScreen(_router: Router): Screen {
     switch (action) {
       case "crossfadeMode":
         toggleMode();
+        break;
+      case "crossfadeAuto":
+        autoFade();
         break;
       case "deckA.playPause":
         playPauseDeck(0);
@@ -359,11 +378,24 @@ export function ShowModeScreen(_router: Router): Screen {
   fader.value = "0";
   fader.className = "show-xfader-input";
   fader.setAttribute("aria-label", "Crossfade A to B");
-  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100, true));
+  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100));
   const modeBtn = Button({ label: "RGB", variant: "quiet", onClick: toggleMode });
   modeBtn.classList.add("show-mode-btn");
   modeBtn.title = "Blend colour space: linear RGB vs linear HSV";
-  xfWrap.append(xfLabels, fader, modeBtn);
+  const fadeBtn = Button({ label: "Fade", variant: "quiet", onClick: autoFade });
+  fadeBtn.classList.add("show-mode-btn");
+  fadeBtn.title = "Glide the crossfade to the other deck (the device runs it; move the fader to take over)";
+  const fadeTime = Button({
+    label: `${FADE_STEPS[fadeIdx]} s`,
+    variant: "quiet",
+    onClick: () => {
+      fadeIdx = (fadeIdx + 1) % FADE_STEPS.length;
+      fadeTime.querySelector("span")!.textContent = `${FADE_STEPS[fadeIdx]} s`;
+    },
+  });
+  fadeTime.classList.add("show-mode-btn");
+  fadeTime.title = "Fade time";
+  xfWrap.append(xfLabels, fader, modeBtn, fadeBtn, fadeTime);
 
   // Effect picker list
   const listWrap = document.createElement("div");
@@ -702,7 +734,7 @@ export function ShowModeScreen(_router: Router): Screen {
       midiUnsub = null;
       stateUnsub?.();
       stateUnsub = null;
-      cancelAnimationFrame(fadeRaf);
+      glide.stop(); // a device-run Fade carries on; only the readout stops
       compiler.dispose();
     },
   };

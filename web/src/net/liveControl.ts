@@ -359,6 +359,10 @@ export class LiveControl {
         seconds: o.seconds ?? 0,
         colorMode: o.colorMode ?? 0,
         ...(o.commit ? { commit: true } : {}),
+        // Canned-profile fields (firmware with "ramps"; docs/design/ramps.md).
+        ...(o.ease !== undefined ? { ease: o.ease } : {}),
+        ...(o.startAtMs ? { startAtMs: Math.round(o.startAtMs) } : {}),
+        ...(o.id ? { id: o.id } : {}),
       };
       // blend_keypoints has no seq: it is paced on its playback_state reply.
       if (!this.host.sendFlat(msg)) return null;

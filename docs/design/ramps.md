@@ -1,0 +1,191 @@
+# Canned interpolation profiles (ramps)
+
+Status: implemented (firmware feature `ramps`). Code: `firmware/ramp` (the
+engine), `firmware/player_app/ffi.rs` (the arms, the per-frame tick),
+`firmware/keypoint` (the morph shares the engine's eases and clock),
+`agent/src/session.ts` (the bridge), `web/src/effects/crossfadeGlide.ts` (Show
+Mode's Fade). Tests: `//firmware/ramp:ramp_test`,
+`//firmware/player_app:ramps_test`, `//agent:ramps_test`,
+`//web:crossfadeGlide_test`, and the HITL run `//pi/hitl/harness:ramps`.
+
+## Why
+
+Two kinds of smooth change reach a player:
+
+- **Live control.** A person moves a slider, a MIDI fader, an OSC control or the
+  app's crossfader. Every value matters at once and nothing is known ahead.
+- **Planned transitions.** An agent says "rain to 0.8 over 20 s", "crossfade to
+  storm over 8 s", "morph to the dusk keypoint over 10 s". The endpoint, the
+  duration and the shape are known when the request is made.
+
+Before ramps, planned transitions were stepped by the client: the agent bridge
+sent 20 `set_uniforms` or `set_crossfade` frames a second for the whole ramp.
+That costs relay traffic for the whole ramp (the free-tier cloud relay), and it
+flooded the C6. Fire-and-forget steps at 25 Hz left its wss queue about 20 s
+behind on hardware. Several fixtures also only stayed in step as far as the
+hub's per-player sends happened to stay in step.
+
+With ramps, the device does the interpolation for planned transitions. Live
+control stays the direct path.
+
+## Protocol
+
+Field numbers are in `shared/protocol/proto/ledmapper.proto`. Firmware
+advertises `ramps` in `Welcome.features` and in the discovery manifest.
+
+| Arm (`ClientMessage`) | #  | Reply                  | What                                         |
+| --------------------- | -: | ---------------------- | -------------------------------------------- |
+| `ramp_uniforms`       | 60 | `ramp_state` (STARTED) | ramp uniforms on a deck to slot targets      |
+| `ramp_crossfade`      | 61 | `ramp_state` (STARTED) | ramp the A/B crossfade to a position         |
+| `cancel_ramp`         | 62 | `ramp_state` (CANCELLED) | stop a ramp by id, or all of them for id 0 |
+
+`ServerMessage.ramp_state` (40) is the STARTED reply. It carries the schedule
+resolved in the device's clock (`start_at_ms`, `end_at_ms`) and `active`, the
+number of ramped uniforms plus one while a crossfade ramp runs. A ramp with a
+non-zero `id` also pushes `ramp_state` DONE (1) when it lands, or CANCELLED (2)
+when something overrides it. `kind` is 0 for uniforms, 1 for the crossfade and
+2 for a keypoint morph.
+
+`BlendKeypoints` gains `ease` (6, optional: unset keeps the original
+smoothstep), `start_at_ms` (7) and `id` (8). A timed morph is then a ramp like
+the others: time based, any ease, a shared start, and a `ramp_state` event.
+
+`ClientMessage` 57..59 and `ServerMessage` 31..39 are unused. The ramp numbers
+were picked while the sensor and OTA branches were still in flight.
+
+Common fields:
+
+- `duration_ms`: up to 1 hour. 0 makes a jump at `start_at_ms`.
+- `ease`: 0 linear, 1 ease (cubic in-out), 2 ease_in (cubic), 3 ease_out
+  (cubic), 4 smoothstep. Anything else is refused with `bad_ramp`.
+- `start_at_ms`: the start in the **device's** clock, the `millis()` domain that
+  `time_sync_pong` and `set_time_base` use. 0 means on receipt. A start in the
+  past joins the ramp part-way, so a fixture that got the request late still
+  lands in step. A start more than 10 minutes ahead is refused (it is probably a
+  hub-clock time by mistake).
+- `id`: chosen by the client and echoed in the events. 0 means no events.
+
+`ramp_uniforms` addresses uniforms by slot, like `set_uniforms`; the client
+resolves names from the manifest. Targets with 0 or more than 4 values, a
+repeated slot, or a slot past the VM's 128 uniform floats are `bad_ramp`. A
+deck with no effect is `no_effect`. A request is all or nothing: if any target
+is refused, nothing starts.
+
+## Semantics
+
+- **Last writer wins, nothing queues.** A `set_uniforms` or OSC write on a
+  uniform cancels that uniform's ramp, and the live value stays. A
+  `set_crossfade` (a fader or MIDI move) cancels the crossfade ramp. A newer ramp
+  on a uniform takes it over, and the old one reports CANCELLED. A
+  `blend_keypoints` takes the whole deck over: it cancels the deck's uniform
+  ramps and any earlier morph. A `ramp_uniforms` on a deck cancels its running
+  morph. Loading or clearing a deck's effect cancels its ramps, because its
+  slots now mean something else. One request can ramp several uniforms; if a
+  live set cuts one of them, the rest carry on, and the request reports
+  CANCELLED when it ends.
+- **Landing.** The last frame writes the target exactly, not a lerp that is
+  close to it. Toggles and dropdowns (from the manifest's `ui.kind`) hold their
+  value and switch when the ramp lands; they have no in-between values.
+- **Persistence.** It follows the existing rules. A deck-A `ramp_uniforms` with
+  `commit` unset or true persists the deck's uniforms when it lands, through the
+  same coalesced save that a committed `set_uniforms` uses (the frame is all of
+  deck A's manifest uniforms). `commit: false` keeps it live only. A ramp that
+  was cancelled does not persist; the live write that cancelled it follows its
+  own commit. Deck B and the crossfade are runtime only, as before.
+- **Time base.** Ramps run on the device clock, not on frames. The FUG-82
+  framerate autoscaler can change the frame rate during a ramp and the ramp
+  still ends on time. Several fixtures given one start in their own clocks move
+  in step.
+- **Cap.** There can be 16 ramped uniforms at once across both decks, plus one
+  crossfade ramp and one morph per deck. Past that a request is refused with
+  `too_many_ramps`; running ramps are never dropped. The event queue holds 24
+  events, and if a client never reads them the oldest is dropped.
+
+## Firmware
+
+`firmware/ramp` (`no_std`, no dependencies, no allocation) is the engine:
+
+- `ease_q16` evaluates the eases in Q16 fixed point, which needs no FPU. The
+  products fit in `u64` and are rounded once. Every ease is exact at 0 and 1,
+  monotonic, and within 2/65536 of the f64 reference (tested over all 65537
+  inputs).
+- `Schedule` holds `start_ms`, `dur_ms` and `ease`. Its progress is exactly 1.0
+  only once the duration has elapsed, so an ease that rounds to 1.0 a frame early
+  doesn't end the ramp early.
+- `Engine` holds 16 lanes (one per ramped uniform: deck, slot, from/to values),
+  a group per request (shared schedule, id, commit flag), one crossfade lane and
+  an event queue. It takes about 1.6 KB of `.bss`.
+- `tick(now_ms)` evaluates the ease **once per request per frame**, then does one
+  lerp per ramped float. It never runs per LED.
+
+The player wiring is in `ffi.rs`:
+
+- `lm_ramp_tick(now_ms)` runs once per rendered frame in `render_once`, before
+  `lm_fx_update`, so `update()` and `shade()` see one position. It moves the
+  ramped uniforms, the crossfade (`Player::set_crossfade_live`) and both decks'
+  keypoint morphs. Before this change the morph advanced inside `lm_fx_update`
+  from `dt`; now it uses the device clock too. `main.cpp` counts the tick's
+  cycles as part of the frame cost, so the autoscaler sees it, and logs the worst
+  tick each second as `[ramp] now=… n=… cyc=…`.
+- `loop()` pushes the queued events as `ramp_state` over the open wss session,
+  on the same path as the FUG-82 fps abort notice. BLE sessions get the STARTED
+  reply, which carries the end time, but no pushes. A landed committed ramp is
+  persisted from `lm_ramp_take_commit_frame`.
+
+### Cost
+
+On the host, a full table (16 vec4 lanes) ticks in well under a microsecond. On
+the C6, the HITL run records the `[ramp]` line: see the PR for the measured
+cycles. The work is O(ramped floats) per frame, never O(LEDs). For scale, a
+single `set_uniforms` message costs a TLS record decode plus a protobuf walk.
+
+## Clients
+
+**Agent bridge** (`agent/src/session.ts`, `hub.ts`):
+
+- `ramp_uniforms`, `crossfade_to`, `rollback_effect {seconds}`, `recall_keypoint`
+  and `blend_keypoints` use the canned profile when the player advertises
+  `ramps` and this bundle's proto has the arms (`RAMPS_IN_PROTO`).
+  `ramp_uniforms` takes `curve` (default linear) and `wait` (default true: it
+  returns on the DONE event, or "unconfirmed" a little after the end if no event
+  arrives).
+- **Sync.** With two or more ramp-capable players, `Hub.rampStart` re-syncs any
+  stale clock (the same min-RTT sync `align_time` uses) and picks one hub time
+  200 ms ahead. Each player gets that time in its own clock. `crossfade_to`
+  re-uses the clocks `align_time` just measured.
+- **One request per player.** Nothing goes over the relay while the ramp runs.
+- **Older firmware** falls back to stepping, now **acknowledged**: each
+  `set_uniforms` waits for its `playback_state` before the next, paced off the
+  wall clock. When the player is slow, steps are skipped, so the ramp still ends
+  on time and the C6's queue no longer floods. The crossfade fallback was already
+  acknowledged (#316). Older firmware morphs keypoints with smoothstep only.
+- The curves are shared: the fallback's `curveAt` is the same set of eases as the
+  firmware's. `ease` is now cubic in-out (it was smoothstep), `ease_in` and
+  `ease_out` are cubic (they were quadratic), and `smoothstep` is its own
+  choice.
+
+**Web app.** Show Mode has a **Fade** button with a fade time (2/4/8/16 s) and
+a MIDI trigger `crossfadeAuto`. On firmware with `ramps` it sends one
+`ramp_crossfade` and only animates the fader locally. Older firmware gets
+stepped `set_crossfade` at up to 25 Hz. Moving the fader, or a MIDI crossfade
+move, takes over at once. The crossfader, sliders and the live-VJ relay path
+stay direct: they send `set_crossfade` / `set_uniforms`, which cancel any ramp
+they touch.
+
+## HITL
+
+`bazel run -c opt //pi/hitl/harness:ramps -- --server http://hitl-rig-2:8087`
+holds both analyzer-tapped DUTs. It sets an identity colour correction (live
+only), so the wire brightness is the uniform, and reads everything from one
+two-channel analyzer capture:
+
+1. Ramp shape and timing against the expected curve (`ramp_shape_core.fit_ramp`:
+   max and RMS error, and the duration from the 10/90% crossings), plus the
+   two-fixture skew of one shared start (target under 20 ms, the same as the time
+   base).
+2. A live `set_uniforms` that cancels a ramp mid-way: the wire never reaches the
+   target and holds the live value, and CANCELLED is pushed.
+3. A crossfade ramp to deck B: mixed frames mid-way, deck B at the end, DONE
+   pushed.
+4. Per-frame cost: PerfReport frame cycles with and without a ramp, and the
+   `[ramp]` serial lines.

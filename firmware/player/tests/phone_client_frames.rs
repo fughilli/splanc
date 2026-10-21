@@ -124,6 +124,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::FxDebugControl(_)
         | CMsg::GetFxSnapshot(_)
         | CMsg::DebugFxLed(_)
+        | CMsg::RampUniforms(_)
+        | CMsg::RampCrossfade(_)
+        | CMsg::CancelRamp(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -222,6 +225,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::FxDebugControl(_) => "fx_debug_control",
         CMsg::GetFxSnapshot(_) => "get_fx_snapshot",
         CMsg::DebugFxLed(_) => "debug_fx_led",
+        CMsg::RampUniforms(_) => "ramp_uniforms",
+        CMsg::RampCrossfade(_) => "ramp_crossfade",
+        CMsg::CancelRamp(_) => "cancel_ramp",
     }
 }
 

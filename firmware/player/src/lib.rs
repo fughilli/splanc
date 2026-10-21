@@ -771,7 +771,11 @@ impl Player {
             | CMsg::SetNetworkOutput(_)
             // The mesh gateway: the netstack player's mesh (player_app mesh_ffi.rs), when on.
             | CMsg::MeshSend(_)
-            | CMsg::GetMesh(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::GetMesh(_)
+            // Canned ramps (docs/design/ramps.md) run in the fx layer (player_app ffi).
+            | CMsg::RampUniforms(_)
+            | CMsg::RampCrossfade(_)
+            | CMsg::CancelRamp(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
@@ -1306,6 +1310,12 @@ impl Player {
     pub fn set_output_brightness(&mut self, brightness: f64) {
         self.output_brightness = (brightness as f32).clamp(0.0, 1.0);
         self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
+    }
+
+    /// Move the crossfade from the fx layer (a ramp_crossfade step): the same
+    /// clamped state set_crossfade stores, so welcome echoes where a ramp is.
+    pub fn set_crossfade_live(&mut self, position: f32, mode: u32) {
+        self.set_crossfade(position as f64, mode);
     }
 
     pub fn output_brightness(&self) -> f32 {

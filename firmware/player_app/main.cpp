@@ -2508,7 +2508,18 @@ static uint32_t render_once() {
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
-    uint32_t c_update_start = c_frame_start;
+    // Canned ramps (docs/design/ramps.md): move ramped uniforms, the crossfade
+    // and keypoint morphs to this frame's device time first (time based, so the
+    // autoscaled frame rate never stretches a ramp). Costed into the frame.
+    static uint32_t ramp_cyc_max = 0;
+    static uint32_t ramp_n_max = 0;
+    uint32_t ramp_n = lm_ramp_tick((int64_t)now);
+    uint32_t c_update_start = esp_cpu_get_cycle_count();
+    if (ramp_n > 0) {
+      uint32_t rc = c_update_start - c_frame_start;
+      if (rc > ramp_cyc_max) ramp_cyc_max = rc;
+      if (ramp_n > ramp_n_max) ramp_n_max = ramp_n;
+    }
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -2546,6 +2557,13 @@ static uint32_t render_once() {
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
                      fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
         ft_due = true;  // the cadence line goes out after the timed span (below)
+        if (ramp_n_max > 0) {
+          // Worst ramp tick this second: things moved + CPU cycles (160/us).
+          Log().printf("[ramp] now=%u n=%u cyc=%u\n", (unsigned)now, (unsigned)ramp_n_max,
+                       (unsigned)ramp_cyc_max);
+          ramp_cyc_max = 0;
+          ramp_n_max = 0;
+        }
       }
     } else {
       // Effect active but no deck loaded (shouldn't happen): hold the last frame.
@@ -3098,6 +3116,34 @@ static void emit_fps_lag_if_changed() {
 #else
   if (n > 0 && ws_state == WsState::kOpen) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
 #endif
+}
+
+// -- canned ramps: completion events + the landing commit (docs/design/ramps.md)
+// A ramp with a client id reports when it lands or is overridden: ship each
+// pending ramp_state over the open session (the fps-abort push path). A
+// committed deck-A uniform ramp that landed persists the deck's uniforms through
+// the same coalesced save a committed set_uniforms takes.
+static void emit_ramp_events() {
+  for (int i = 0; i < 4; i++) {  // a few per loop pass; the rest next time
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    int32_t n = lm_ramp_take_event_frame(tx, sizeof tx);
+    xSemaphoreGive(player_mutex);
+    if (n <= 0) break;
+#if defined(LM_NETSTACK)
+    if (netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
+#else
+    if (ws_state == WsState::kOpen) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+#endif
+  }
+  if (!fs_ok) return;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t c = lm_ramp_take_commit_frame(pending_fx_sel, sizeof pending_fx_sel);
+  xSemaphoreGive(player_mutex);
+  if (c > 0) {
+    pending_fx_sel_len = (size_t)c;
+    fx_sel_dirty = true;
+    fx_sel_dirty_at = millis();
+  }
 }
 
 // -- app ----------------------------------------------------------------------
@@ -4378,6 +4424,7 @@ void loop() {
 #if defined(LM_NETSTACK)
   poll_mesh_sessions();
 #endif
+  emit_ramp_events();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
