@@ -11,7 +11,8 @@
  * - destructiveHint: it deletes, or overwrites without an undo, something the
  *   user keeps — a remembered player, a keypoint, a stored effect, a pose, a
  *   room, a certificate pin, a name — or may replace the running effect without
- *   being asked to (measure_effect's rollback_on_overrun).
+ *   being asked to (measure_effect's rollback_on_overrun). crossfade_to counts:
+ *   it overwrites whatever was cued on the idle deck (the user's Show Mode cue).
  * - idempotentHint: calling it again with the same arguments changes nothing
  *   further.
  * - openWorldHint: false throughout — every tool talks only to the user's own
@@ -48,6 +49,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   trust_player: write("Re-trust a player's new certificate", true, true),
   identify_player: write("Blink players to identify them", false, true),
   export_map: read("Export an LED map"),
+  plot_fixture: read("Plot a fixture in 3D"),
   set_room: write("Set a room's players", true, true),
   set_fixture_pose: write("Place a fixture in its room", true, true),
   align_time: write("Align effect clocks", false, true),
@@ -70,6 +72,8 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   deploy_effect: write("Deploy an effect", true, false),
   set_effect: write("Switch the running effect", false, true),
   rollback_effect: write("Roll back the last deploy", true, false),
+  crossfade_to: write("Crossfade to an effect", true, false),
+  list_decks: read("Show the FX decks"),
   measure_effect: write("Measure the running effect", true, false),
   // textures
   list_textures: read("List texture inputs"),
@@ -97,4 +101,5 @@ export const SERVER_INSTRUCTIONS =
   "(set_device_name), re-trusting a certificate (trust_player) or forgetting a player. Ask where fixtures " +
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
-  "Splanc app.";
+  "Splanc app. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +
+  "players; rollback_effect fades back). plot_fixture draws a fixture or a room in 3D (PNG) to check a map or poses.";

@@ -88,8 +88,12 @@ above can't see the user's lights from there.
 3. A new look: write an effect (skill: effect-language.md), `compile_effect`,
    `preview_effect` (several players: one room-frame image), `deploy_effect`
    (refuses an over-budget effect; puts the players on one clock), then
-   `measure_effect` (with rollback_on_overrun).
+   `measure_effect` (with rollback_on_overrun). Swapping effects while people
+   watch: `crossfade_to` fades into the new one (rollback_effect fades back).
 4. Tell the user what changed and which knobs they can now ask for.
+
+`plot_fixture` shows a fixture, or a room with its poses, in 3D (one PNG) when you
+need to see the geometry.
 
 ## Rules
 

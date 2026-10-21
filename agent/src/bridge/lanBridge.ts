@@ -400,7 +400,16 @@ export class LanBridge {
     else if (f.t === "state" && f.reason) this.log(`relay: ${f.reason} (${f.credentials} credential(s))`);
   }
 
+  /** One frame for a whole reply up to CHUNK; a bigger one (a preview's or
+   * plot's images) goes as res + chunks + end, so no single WebSocket message to
+   * the relay outgrows what a Worker accepts. */
   private reply(f: ResFrame): void {
+    if (f.end && f.body !== undefined && f.body.length > CHUNK) {
+      this.link.send({ t: "res", id: f.id, status: f.status, headers: f.headers });
+      this.sendChunks(f.id, f.body);
+      this.link.send({ t: "end", id: f.id });
+      return;
+    }
     this.link.send(f);
   }
 

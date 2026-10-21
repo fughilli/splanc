@@ -62,6 +62,8 @@ export class Hub {
   /** Sessions opened by discovery (identifying a host), by host, until a tool adopts them. */
   private readonly dialed = new Map<string, DeviceSession>();
   private readonly choice = new Map<string, ToolchainChoice>();
+  /** The room epoch (hub clock, ms) last applied to each player by alignTime. */
+  private readonly epochs = new Map<string, number>();
   private refreshed: Promise<unknown> | null = null;
   private readonly log: (...a: unknown[]) => void;
 
@@ -423,6 +425,18 @@ export class Hub {
 
   // -- time base ----------------------------------------------------------------------
 
+  /** The most recent room epoch alignTime gave any of `ids` (undefined: none).
+   * Re-aligning with it keeps effects that already share it from jumping in time
+   * (crossfade_to), while bringing the others onto it. */
+  sharedEpoch(ids: string[]): number | undefined {
+    let best: number | undefined;
+    for (const id of ids) {
+      const e = this.epochs.get(id);
+      if (e !== undefined && (best === undefined || e > best)) best = e;
+    }
+    return best;
+  }
+
   /**
    * Give every selected player the same effect-clock epoch ("now", unless an
    * epoch on the hub clock is passed): sync clocks (re-using a fresh sync), then
@@ -441,6 +455,7 @@ export class Hub {
       const e = epochs.get(p.id);
       return e === undefined ? false : s.setTimeBase(e);
     });
+    for (const r of applied) if (r.ok && r.result === true) this.epochs.set(r.player.id, hubEpochMs);
     const unsupported = applied.filter((r) => r.ok && r.result === false).map((r) => r.player.name);
     return {
       players: per.map((r) => ({

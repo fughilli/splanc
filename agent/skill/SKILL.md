@@ -41,6 +41,10 @@ With several targets the result is one entry per player (`ok`, `result` or
    the actual geometry (see `geometry.md`). If the user wants the map in other
    show software, `export_map {format: "csv"|"lxf"}` returns a TouchDesigner
    CSV or a Chromatik `.lxf` (filename + content) to save for them.
+   To SEE a fixture (or a whole room with its poses), `plot_fixture` returns one
+   PNG with front / side / top / isometric views (+Y up, LED index hints, mapped
+   dots vs interpolated rings) plus the numbers. Use it to check a map, or poses
+   after `set_fixture_pose`, before writing geometry-dependent effects.
 4. Read `splanc://effect/active` (or call `list_uniforms`): which effect is
    running and what its knobs are.
 
@@ -136,6 +140,20 @@ effect:
 
 `rollback_effect` restores whatever ran before your last deploy;
 `set_effect {effect_id: "off"}` blacks out the effect.
+
+## Changing effect without a hard cut — crossfade
+
+When the user is watching (a mood change, a show), switch effects with
+`crossfade_to {effect_id, source, seconds: 8}` (or `{library_id}` for a library
+entry) instead of `deploy_effect`: the
+new effect is loaded on the player's idle FX deck and the device blends into it
+(`curve`: ease (default) / linear / ease_in / ease_out; `color_mode`: rgb or hsv).
+Several players fade together on one clock. It checks frame cost like
+`deploy_effect`; both effects render during the fade. The outgoing effect stays
+loaded, so `rollback_effect {seconds: 3}` fades back to it — even one the user
+started from the app. `list_decks` tells you which deck is live; uniform and
+keypoint tools follow it. Deck B doesn't survive a reboot (deck A's effect comes
+back), so for a permanent change finish with `deploy_effect`, or say so.
 
 ## Without MCP: the CLI
 

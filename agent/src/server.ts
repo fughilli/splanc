@@ -31,8 +31,11 @@ import { renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withProgress, type ProgressSink } from "./progress";
-import { IDENTITY, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
-import { DeviceSession, ToolError, summarize, type TextureSource } from "./session";
+import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
+import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
+import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
+import type { RGB } from "./plot";
+import type { UniformInput } from "./uniforms";
 import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
@@ -435,7 +438,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   // -- uniform keypoints -----------------------------------------------------------------
   // Named looks of the active effect, stored on each player (shared with the app's
   // Show Mode); the device moves between them in parameter space.
-  const deck = z.union([z.literal(0), z.literal(1)]).optional().describe("FX deck (0 = A, the default; 1 = B)");
+  const deck = z
+    .union([z.literal(0), z.literal(1)])
+    .optional()
+    .describe("FX deck (0 = A, 1 = B). Default: the live deck (the one the crossfade shows; see list_decks)");
   server.registerTool(
     "list_keypoints",
     {
@@ -444,7 +450,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "stale = saved against an older build of the effect (still recalls, by uniform name).",
       inputSchema: { deck, players },
     },
-    ({ deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listKeypoints(d ?? 0)))),
+    ({ deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listKeypoints(d)))),
   );
   server.registerTool(
     "save_keypoint",
@@ -457,7 +463,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       inputSchema: { name: z.string().min(1).max(32), values: z.record(z.string(), uniformValue).optional(), deck, players },
     },
     ({ name, values, deck: d, players: sel }) =>
-      guard(async () => ok(await fan(sel, (s) => s.saveKeypoint(name, values, d ?? 0)))),
+      guard(async () => ok(await fan(sel, (s) => s.saveKeypoint(name, values, d)))),
   );
   server.registerTool(
     "recall_keypoint",
@@ -475,7 +481,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     },
     ({ name, seconds, commit, deck: d, players: sel }) =>
       guard(async () =>
-        ok(await fan(sel, (s) => s.blendKeypoints({ [name]: 1 }, { seconds, commit, deck: d ?? 0 }))),
+        ok(await fan(sel, (s) => s.blendKeypoints({ [name]: 1 }, { seconds, commit, deck: d }))),
       ),
   );
   server.registerTool(
@@ -496,7 +502,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     },
     ({ weights, seconds, color_mode, commit, deck: d, players: sel }) =>
       guard(async () =>
-        ok(await fan(sel, (s) => s.blendKeypoints(weights, { seconds, colorMode: color_mode, commit, deck: d ?? 0 }))),
+        ok(await fan(sel, (s) => s.blendKeypoints(weights, { seconds, colorMode: color_mode, commit, deck: d }))),
       ),
   );
   server.registerTool(
@@ -505,7 +511,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description: "A saved keypoint's uniform values, by name.",
       inputSchema: { name: z.string().min(1), deck, players },
     },
-    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getKeypoint(name, d ?? 0)))),
+    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getKeypoint(name, d)))),
   );
   server.registerTool(
     "delete_keypoint",
@@ -513,7 +519,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description: "Delete a saved keypoint from the player. Ask the user first: keypoints are theirs.",
       inputSchema: { name: z.string().min(1), deck, players },
     },
-    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.deleteKeypoint(name, d ?? 0)))),
+    ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.deleteKeypoint(name, d)))),
   );
 
   // -- effect authoring -------------------------------------------------------------------
@@ -743,10 +749,60 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   server.registerTool(
     "rollback_effect",
     {
-      description: "Restore the effect that was active before the last deploy (or turn the effect off).",
+      description:
+        "Restore the effect that was running before the last deploy_effect or crossfade_to. After a crossfade it " +
+        "is still loaded on the other deck, so this fades back to it (over `seconds`, default at once) and calling " +
+        "it again swaps back; after a deploy it is re-uploaded. With nothing to restore the effect is turned off.",
+      inputSchema: { seconds: z.number().min(0).max(600).optional(), players },
+    },
+    ({ seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rollback(seconds ?? 0)))),
+  );
+  server.registerTool(
+    "crossfade_to",
+    {
+      description:
+        "Crossfade smoothly from the running effect to another, on every selected player together. The new effect " +
+        "(source, or effect_id of one compiled/deployed this session, or the id of the effect already waiting on " +
+        "the idle deck) is loaded onto the idle FX deck, then the device blends A<->B over `seconds` with the " +
+        "given curve; several players share one clock and fade in lockstep. The outgoing effect stays loaded on " +
+        "its deck: rollback_effect fades back to it. Frame cost is checked first like deploy_effect (both effects " +
+        "render during the fade). Deck B is runtime-only: after a reboot the player resumes deck A's effect. " +
+        "library_id fades to an effects-library entry (search_effects) instead of source.",
+      inputSchema: {
+        effect_id: z.string().min(1).max(32).optional().describe("Default: from the library entry"),
+        source: z.string().optional(),
+        library_id: z.string().optional(),
+        seconds: z.number().min(0).max(600).optional().describe("Fade length, s (default 5)"),
+        curve: z.enum(["linear", "ease", "ease_in", "ease_out"]).optional().describe("Default ease (smoothstep)"),
+        color_mode: z.enum(["rgb", "hsv"]).optional().describe("Blend colour space (default rgb)"),
+        uniforms: z.record(z.string(), uniformValue).optional().describe("Start values for the incoming effect"),
+        force: z.boolean().optional(),
+        players,
+      },
+    },
+    (a) =>
+      guard(async () => {
+        let { effect_id, source } = a;
+        if (a.library_id) {
+          if (!library) throw new ToolError("library_id needs the effects library (search_effects); pass source");
+          const r = await library.forDeploy(a.library_id, effect_id);
+          source ??= r.entry.source;
+          effect_id = r.effectId;
+        }
+        if (!effect_id) throw new ToolError("pass effect_id (or library_id, a library entry from search_effects)");
+        return ok(await crossfadeTo(hub, { ...a, effect_id, source }));
+      }),
+  );
+  server.registerTool(
+    "list_decks",
+    {
+      description:
+        "Each player's two FX decks: which effect is loaded and running on A and B, the crossfade position " +
+        "(0 = all A, 1 = all B) and blend mode, and which deck is live (shown; the deck uniform and keypoint tools " +
+        "address by default).",
       inputSchema: { players },
     },
-    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rollback()))),
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.deckStatus()))),
   );
   server.registerTool(
     "measure_effect",
@@ -769,6 +825,33 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           }),
         ),
       ),
+  );
+
+  // -- fixture review -------------------------------------------------------------------
+  server.registerTool(
+    "plot_fixture",
+    {
+      description:
+        "A 3D plot of a fixture's LED map as a PNG, for checking a map or a room layout: front (from +z), side " +
+        "(from +x), top (from +y) and isometric views in one image, metres, +y up, axes, bounding box, wiring " +
+        "order, LED index hints and a scale bar; mapped LEDs are dots, interpolated (unmapped) LEDs rings. " +
+        "color_by: index (default), confidence, segment, channel, fixture, or effect = one frame of an effect " +
+        "(source or effect_id, at `time` with `uniforms`, the device's own VM as in preview_effect). Several " +
+        "players or a room: every fixture placed by its pose in one scene, coloured by fixture. Also returns the " +
+        "numbers: LED counts (mapped vs interpolated), channels, segments, bounding boxes. Touches nothing on the " +
+        "device.",
+      inputSchema: {
+        color_by: z.enum(["index", "confidence", "segment", "channel", "fixture", "effect"]).optional(),
+        source: z.string().optional(),
+        effect_id: z.string().optional(),
+        time: z.number().min(0).max(600).optional(),
+        uniforms: z.record(z.string(), uniformValue).optional(),
+        size: z.number().int().min(384).max(1024).optional().describe("Image width, px (default 768)"),
+        labels: z.boolean().optional().describe("LED index hints (default true)"),
+        players,
+      },
+    },
+    (a) => guard(async () => plotFixture(hub, a)),
   );
 
   // -- textures ---------------------------------------------------------------------------
@@ -1017,6 +1100,234 @@ async function previewRoom(
       ...(per.some((x) => !x.ok) ? { failed: per.filter((x) => !x.ok).map((x) => ({ ...x.player, error: x.error })) } : {}),
     },
     images,
+  );
+}
+
+// -- crossfade -----------------------------------------------------------------------------
+
+interface CrossfadeArgs {
+  effect_id: string;
+  source?: string | undefined;
+  seconds?: number | undefined;
+  curve?: Curve | undefined;
+  color_mode?: "rgb" | "hsv" | undefined;
+  uniforms?: Record<string, unknown> | undefined;
+  force?: boolean | undefined;
+  players?: Selector;
+}
+
+/**
+ * crossfade_to: (1) compile + estimate every target (when there is source) and
+ * refuse an over-budget effect before touching any player; (2) cue it on each
+ * player's idle deck — loaded, running, not yet shown; (3) several players: one
+ * shared effect clock (re-using the room epoch they already share, so the
+ * outgoing effects don't jump in time); (4) every player's fade on ONE hub clock
+ * (a common start a moment ahead, progress read off the wall clock), so a room
+ * crossfades in lockstep.
+ */
+async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
+  const sel = a.players;
+  const seconds = a.seconds ?? 5;
+  const source = a.source ?? knownSources.get(a.effect_id);
+  if (a.source) knownSources.set(a.effect_id, a.source);
+  let compiled: Map<string, CompileOutcome> | undefined;
+  let estimates: Record<string, unknown> | undefined;
+  if (source !== undefined) {
+    const builds = await hub.each(sel, async (s, p) => {
+      if (!s.decksUsable()) {
+        throw new ToolError(`the player's firmware (${s.fwVersion}) has no second FX deck: use deploy_effect`);
+      }
+      const c = await s.compile(source);
+      if (!c.ok) {
+        throw new ToolError(`the effect doesn't compile:\n${c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n")}`);
+      }
+      const leds = await s.ledCount();
+      const est = estimateAcrossDevices(c.fxb, [
+        { key: p.id, label: p.name, table: defaultCostTable(), ledCount: leds, calibrated: false },
+      ]).devices[0]!;
+      return { c, leds, est };
+    });
+    const failed = builds.filter((b) => !b.ok);
+    if (failed.length) {
+      const held: PlayerResult<unknown>[] = builds.map((b) =>
+        b.ok ? { player: b.player, ok: true, result: "not crossfaded (another player failed)" } : b,
+      );
+      return shape(held, sel !== undefined);
+    }
+    estimates = Object.fromEntries(
+      builds.map((b) => [
+        b.player.name,
+        {
+          leds: b.result!.leds,
+          estimate_ms: +b.result!.est.estimate.totalMs.toFixed(2),
+          budget_used: Number.isFinite(b.result!.est.budget.fraction) ? +b.result!.est.budget.fraction.toFixed(2) : null,
+        },
+      ]),
+    );
+    const over = builds.filter((b) => !(b.result!.est.budget.fraction <= 1));
+    if (over.length && !a.force) {
+      throw new ToolError(
+        `nothing changed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
+          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.`,
+      );
+    }
+    compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
+  }
+  // 2. Cue everywhere.
+  const cues = await hub.each(sel, async (s, p) => {
+    progress(`${p.name}: cueing ${a.effect_id}…`);
+    return s.cueCrossfade(a.effect_id, source, compiled?.get(p.id), a.uniforms as Record<string, UniformInput> | undefined, {
+      reuseLoaded: a.source === undefined,
+    });
+  });
+  const cued = cues.filter((c) => c.ok);
+  const okIds = cued.map((c) => c.player.id);
+  // 3. One effect clock across the room.
+  let time: Record<string, unknown> | undefined;
+  if (okIds.length > 1) {
+    progress(`aligning ${okIds.length} clocks…`);
+    time = await hub.alignTime(okIds, hub.sharedEpoch(okIds) ?? performance.now());
+  }
+  // 4. Fade together.
+  if (okIds.length && seconds > 0) progress(`crossfading ${okIds.length} player(s) over ${seconds} s…`);
+  const t0 = performance.now() + (okIds.length > 1 ? 150 : 0);
+  const cueOf = new Map(cued.map((c) => [c.player.id, c.result!]));
+  const mode = a.color_mode === "hsv" ? 1 : a.color_mode === "rgb" ? 0 : undefined;
+  const fades = okIds.length
+    ? await hub.each(okIds, async (s, p) => {
+        const cue = cueOf.get(p.id)!;
+        const f = await s.fadeCrossfade(cue.to, cue.from === cue.to ? 0 : seconds, {
+          curve: a.curve ?? "ease",
+          t0,
+          from: cue.from,
+          ...(mode !== undefined ? { mode } : {}),
+        });
+        return {
+          effect_id: cue.incoming,
+          deck: cue.to_deck === 1 ? "B" : "A",
+          ...(cue.outgoing ? { previous: cue.outgoing, previous_deck: cue.from_deck === 1 ? "B" : "A" } : { previous: null }),
+          uploaded: cue.uploaded,
+          ...(cue.bytecode_bytes !== undefined ? { bytecode_bytes: cue.bytecode_bytes } : {}),
+          crossfade: { from: f.from, to: f.to, seconds: cue.from === cue.to ? 0 : seconds, steps: f.steps },
+          persists_reboot: cue.to_deck === 0,
+          ...(cue.outgoing ? {} : { note: "nothing was running: the effect started at once on deck A" }),
+        };
+      })
+    : [];
+  const byId = new Map(fades.map((f) => [f.player.id, f]));
+  const results: PlayerResult<unknown>[] = cues.map((c) => (c.ok ? (byId.get(c.player.id) ?? c) : c));
+  const out = shape(results, sel !== undefined) as Record<string, unknown>;
+  const extra = {
+    rollback: "rollback_effect fades back to the previous effect (still loaded on the other deck)",
+    ...(fades.some((f) => f.ok && (f.result as { persists_reboot: boolean }).persists_reboot === false)
+      ? { persistence: "the new effect is on deck B, which is runtime-only: a reboot resumes deck A's effect" }
+      : {}),
+  };
+  return sel === undefined && results.length === 1
+    ? { ...out, ...extra }
+    : { ...out, ...(estimates ? { estimates } : {}), ...(time ? { time_base: time } : {}), ...extra };
+}
+
+// -- fixture plot ---------------------------------------------------------------------------
+
+interface PlotArgs {
+  color_by?: ColorBy | undefined;
+  source?: string | undefined;
+  effect_id?: string | undefined;
+  time?: number | undefined;
+  uniforms?: Record<string, unknown> | undefined;
+  size?: number | undefined;
+  labels?: boolean | undefined;
+  players?: Selector;
+}
+
+async function plotFixture(hub: Hub, a: PlotArgs) {
+  const source = a.source ?? (a.effect_id ? knownSources.get(a.effect_id) : undefined);
+  const targets = await hub.select(a.players);
+  const room = targets.length > 1;
+  const colorBy: ColorBy = a.color_by ?? (source ? "effect" : room ? "fixture" : "index");
+  if (colorBy === "effect" && !source) {
+    throw new ToolError("color_by effect needs `source`, or the `effect_id` of an effect compiled/deployed this session");
+  }
+  const time = a.time ?? 0;
+  const per = await hub.each(a.players, async (s, p) => {
+    const bundle = await s.mappingBundle();
+    if (!bundle.map || (bundle.map.ledCount ?? 0) === 0) throw new ToolError("this player has no stored map (map it in the app first)");
+    let channels: number[] | undefined;
+    if (colorBy === "channel") {
+      const dev = await s.device().catch(() => null);
+      channels = ((dev?.["channels"] as { ledCount: number }[] | undefined) ?? []).map((c) => c.ledCount);
+    }
+    let effect: Map<number, RGB> | undefined;
+    if (colorBy === "effect") {
+      const c = await s.compile(source!);
+      if (!c.ok) throw new ToolError(`the effect doesn't compile: ${JSON.stringify(c.diagnostics)}`);
+      const [f] = await preview({
+        fxb: c.fxb,
+        manifest: c.uniforms,
+        bundle,
+        times: [time],
+        imageWidth: 64,
+        ...(a.uniforms ? { uniforms: a.uniforms as never } : {}),
+        ...(s.toolchain ? { toolchain: s.toolchain } : {}),
+      });
+      effect = new Map((bundle.map.leds ?? []).map((l, i) => [l.id, f!.colors[i]!]));
+    }
+    return { id: p.id, name: p.name, bundle, channels, effect };
+  });
+  const good = per.filter((x) => x.ok).map((x) => x.result!);
+  if (good.length === 0) throw new ToolError(per.map((x) => `${x.player.name}: ${x.error}`).join("; "));
+  let roomName: string | undefined;
+  let poses = new Map<string, { pose: Pose; posed: boolean }>();
+  if (room) {
+    roomName = typeof a.players === "string" && a.players !== "all" ? a.players : (hub.roomOf(good[0]!.id) ?? "all");
+    const placed = placeFixtures(
+      roomName,
+      good.map((g) => ({ id: g.id, name: g.name, bundle: g.bundle, ...(hub.pose(g.id) ? { pose: hub.pose(g.id)! } : {}) })),
+    );
+    poses = new Map(placed.map((p) => [p.id, { pose: p.pose, posed: p.posed }]));
+  }
+  const fixtures: SceneFixture[] = good.map((g) => ({
+    name: g.name,
+    bundle: g.bundle,
+    ...(g.channels?.length ? { channels: g.channels } : {}),
+    ...(g.effect ? { effect: g.effect } : {}),
+    ...(poses.get(g.id) ? { pose: poses.get(g.id)!.pose, posed: poses.get(g.id)!.posed } : {}),
+  }));
+  const scene = buildScene(fixtures, colorBy);
+  const total = scene.points.length;
+  const title = room ? `ROOM ${roomName}: ${good.length} FIXTURES, ${total} LEDS` : `${good[0]!.name}: ${total} LEDS`;
+  const subtitle =
+    `COLOUR: ${colorBy}${colorBy === "effect" ? ` AT T=${time} S` : ""}  METRES, +Y UP` +
+    (room ? "  POSED IN THE ROOM FRAME" : "  MAP FRAME");
+  const img = renderScene(scene.points, {
+    size: a.size ?? 768,
+    labels: a.labels ?? true,
+    title,
+    subtitle,
+    legend: scene.legend,
+    fixtures: good.map((g) => g.name),
+    outline: colorBy === "effect",
+  });
+  const all = bbox(scene.points.map((p) => p.xyz));
+  const r3 = (v: number) => +v.toFixed(3);
+  return ok(
+    {
+      ...(room ? { room: roomName } : {}),
+      frame: room ? "room (poses from set_fixture_pose; unposed fixtures side by side along +x)" : "the fixture's map frame",
+      units: "meters",
+      up_axis: "+y",
+      color_by: colorBy,
+      ...(colorBy === "effect" ? { time } : {}),
+      views: ["front: from +z (x right, y up)", "side: from +x (-z right, y up)", "top: from +y (x right, -z up)", "iso: from +x+y+z"],
+      legend: "filled dot = mapped LED; ring = interpolated (unmapped) LED, placed between its mapped neighbours by index",
+      fixtures: scene.summary,
+      total_leds: total,
+      bounding_box_m: all ? { min: all.min.map(r3), max: all.max.map(r3), size: all.max.map((m, k) => r3(m - all.min[k]!)) } : null,
+      image: { width: img.width, height: img.height, png_bytes: img.png.length, ...(img.shrunk ? { shrunk: true } : {}) },
+      ...(per.some((x) => !x.ok) ? { failed: per.filter((x) => !x.ok).map((x) => ({ ...x.player, error: x.error })) } : {}),
+    },
+    [{ type: "image", data: img.png.toString("base64"), mimeType: "image/png" }],
   );
 }
 

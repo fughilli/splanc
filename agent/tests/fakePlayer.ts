@@ -34,7 +34,20 @@ export interface FakeEffect {
 
 export class FakePlayer {
   readonly received: Msg[] = [];
+  /** Deck A's effect (the only deck before FUG-110). */
   effect: FakeEffect | null = null;
+  /** Deck B's effect (firmware with "decks"). */
+  deckB: FakeEffect | null = null;
+  /** Running flags per deck (an upload with activate=false parks it). */
+  deckActive: [boolean, boolean] = [false, false];
+  /** The global crossfade (0 = all A .. 1 = all B) and mode, and every set. */
+  crossfade = 0;
+  crossfadeMode = 0;
+  readonly crossfades: { position: number; mode: number; at: number }[] = [];
+  /** A slow player: delay each set_crossfade's apply + ack (ms). */
+  crossfadeDelayMs = 0;
+  /** The last set_time_base epoch (device ms). */
+  timeBase: number | null = null;
   bundle: MappingBundle | null = null;
   manifest: unknown | null = null;
   fwVersion = "1.6.0";
@@ -147,10 +160,25 @@ export class FakePlayer {
       // Like the firmware since the manifest arrived (#276): Welcome carries the
       // features too, so the bridge needn't read the manifest to know them.
       ...(this.welcomeFeatures ? { features: this.features } : {}),
+      ...(this.features.includes("crossfade") ? { crossfade: this.crossfade, crossfadeMode: this.crossfadeMode } : {}),
     };
   }
 
-  private applyEffect(effectId: string, fxbB64: string | Uint8Array, activate: boolean): Msg {
+  deck(d: number): FakeEffect | null {
+    return d === 1 ? this.deckB : this.effect;
+  }
+
+  /** What the LEDs show, per the firmware's two-deck shade: A, B or both. */
+  visible(): ("A" | "B")[] {
+    const a = !!this.effect && this.deckActive[0];
+    const b = !!this.deckB && this.deckActive[1];
+    const out: ("A" | "B")[] = [];
+    if (a && !(b && this.crossfade >= 1)) out.push("A");
+    if (b && !(a && this.crossfade <= 0)) out.push("B");
+    return out;
+  }
+
+  private applyEffect(effectId: string, fxbB64: string | Uint8Array, activate: boolean, deck = 0): Msg {
     if (this.nextUploadError) {
       const e = this.nextUploadError;
       this.nextUploadError = null;
@@ -161,7 +189,15 @@ export class FakePlayer {
     // it back out of the header (manifest length @8, manifest after the 18-B header).
     const mlen = fxb.readUInt16LE(8);
     const manifest = fxb.subarray(18, 18 + mlen).toString("utf8");
-    if (activate) this.effect = { id: effectId, manifest, current: [] };
+    const e = { id: effectId, manifest, current: [] };
+    if (deck === 1) {
+      this.deckB = e;
+      this.deckActive[1] = activate;
+    } else if (activate || this.features.includes("decks")) {
+      // Pre-deck firmware tests only ever activate; a parked deck-A load is kept.
+      this.effect = e;
+      this.deckActive[0] = activate;
+    }
     return { type: "result_ready", mapId: effectId };
   }
 
@@ -188,7 +224,11 @@ export class FakePlayer {
           board: { board: "ESP32-C6 SuperMini", gpioPins: [], ledModes: [], ledChannels: 2, maxLeds: 512 },
         });
       case "get_effect_uniforms": {
-        const e = this.effect;
+        const d = (m["deck"] as number) ?? 0;
+        if (d === 1 && !(this.deckB && this.deckActive[1])) {
+          return this.reply(ws, { type: "error", code: "no_effect", message: "no active effect to describe" });
+        }
+        const e = this.deck(d);
         return this.reply(ws, {
           type: "effect_uniforms",
           effectId: e?.id ?? "",
@@ -197,18 +237,56 @@ export class FakePlayer {
           textures: e?.textures ?? [],
         });
       }
-      case "set_uniforms":
-        if (this.effect) {
+      case "set_uniforms": {
+        const e = this.deck((m["deck"] as number) ?? 0);
+        if (e) {
           for (const v of m["values"] as { slot: number; value: number[] }[]) {
-            this.effect.current = this.effect.current.filter((c) => c.slot !== v.slot).concat([v]);
+            e.current = e.current.filter((c) => c.slot !== v.slot).concat([v]);
           }
         }
         return;
-      case "set_effect":
-        if (!m["effectId"]) this.effect = null;
+      }
+      case "set_effect": {
+        const d = (m["deck"] as number) ?? 0;
+        const id = m["effectId"] as string;
+        if (!id || id === "off") {
+          if (d === 1 && this.deckB && this.deckActive[1]) this.deckActive[1] = false;
+          else if (d === 1) this.deckB = null;
+          else {
+            this.effect = null;
+            this.deckActive[0] = false;
+          }
+        } else if (this.deck(d)) {
+          this.deckActive[d === 1 ? 1 : 0] = true;
+        }
         return this.reply(ws, { type: "playback_state", active: false, effect: "off" });
+      }
+      case "list_effects":
+        return this.reply(ws, {
+          type: "effect_list",
+          effects: ([0, 1] as const)
+            .filter((d) => this.deck(d))
+            .map((d) => ({ effectId: this.deck(d)!.id, fxbBytes: 100, active: this.deckActive[d], deck: d })),
+        });
+      case "set_crossfade": {
+        const apply = () => {
+          this.crossfade = Math.min(1, Math.max(0, m["position"] as number));
+          this.crossfadeMode = (m["mode"] as number) ?? 0;
+          this.crossfades.push({ position: this.crossfade, mode: this.crossfadeMode, at: performance.now() });
+          this.reply(ws, this.welcome());
+        };
+        if (this.crossfadeDelayMs > 0) setTimeout(apply, this.crossfadeDelayMs);
+        else apply();
+        return;
+      }
+      case "set_time_base":
+        this.timeBase = Number(m["epochMs"]);
+        return this.reply(ws, this.welcome());
       case "submit_effect":
-        return this.reply(ws, this.applyEffect(m["effectId"] as string, m["fxb"] as Uint8Array, m["activate"] as boolean));
+        return this.reply(
+          ws,
+          this.applyEffect(m["effectId"] as string, m["fxb"] as Uint8Array, m["activate"] as boolean, (m["deck"] as number) ?? 0),
+        );
       case "upload_chunk": {
         const id = m["uploadId"] as number;
         const parts = this.uploads.get(id) ?? [];
@@ -219,7 +297,10 @@ export class FakePlayer {
         const frame = Buffer.concat(parts.map((p) => Buffer.from(p, "base64")));
         const inner = decodeClient(new Uint8Array(frame)) as unknown as Msg;
         this.received.push(inner);
-        return this.reply(ws, this.applyEffect(inner["effectId"] as string, inner["fxb"] as Uint8Array, inner["activate"] as boolean));
+        return this.reply(
+          ws,
+          this.applyEffect(inner["effectId"] as string, inner["fxb"] as Uint8Array, inner["activate"] as boolean, (inner["deck"] as number) ?? 0),
+        );
       }
       case "set_perf":
       case "get_perf_report":
@@ -293,7 +374,7 @@ export interface FakePlayer {
 /** Keypoint arms, modelled closely enough for the bridge: store by uniform name,
  * blend floats linearly (the device's per-kind rules are its own tests'). */
 FakePlayer.prototype.keypoint = function (this: FakePlayer, m: Msg): Msg {
-  const e = this.effect;
+  const e = this.deck((m["deck"] as number) ?? 0);
   if (!e) return { type: "error", code: "no_effect", message: "no effect loaded on that deck" };
   const store = this.keypoints.get(e.id) ?? new Map();
   this.keypoints.set(e.id, store);

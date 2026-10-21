@@ -143,6 +143,15 @@ test("cloud agent -> relay -> bridge -> players", async () => {
     const dep = await call(c, "deploy_effect", { library_id: solid.id, players: "Kitchen" });
     assert.equal(dep.isError, false, JSON.stringify(dep.json));
     assert.equal(players[0]!.effect?.id, "solid_fill", JSON.stringify(dep.json));
+    // crossfade_to {library_id}: the relay resolves the entry to source (the bridge
+    // never sees library_id); these fake players have no second deck, so the
+    // bridge's answer is about decks, not a missing effect.
+    const xf = (await c.callTool({ name: "crossfade_to", arguments: { library_id: solid.id, players: "Kitchen" } })) as {
+      isError?: boolean;
+      content: Text[];
+    };
+    assert.match(xf.content[0]!.text!, /no second FX deck/);
+    assert.doesNotMatch(xf.content[0]!.text!, /pass effect_id/);
     const fresh = (await c.callTool({
       name: "deploy_effect",
       arguments: { effect_id: "e2e_red", source: "vec3 shade(Led led) { return vec3(1.0, 0.0, 0.0); }", players: "Hall", description: "Plain red everywhere", tags: ["red"] },
@@ -151,6 +160,15 @@ test("cloud agent -> relay -> bridge -> players", async () => {
     const note = JSON.parse(fresh.content[1]!.text!).library as { id: string; status: string };
     assert.equal(note.status, "saved");
     assert.equal((await call(c, "get_effect", { id: note.id })).json.description, "Plain red everywhere");
+    // Image content (plot_fixture's PNG) crosses the relay intact.
+    const plot = (await c.callTool({ name: "plot_fixture", arguments: { players: "all", size: 1024 } })) as {
+      isError?: boolean;
+      content: { type: string; data?: string; mimeType?: string }[];
+    };
+    assert.equal(plot.isError, undefined);
+    const img = plot.content.find((x) => x.type === "image")!;
+    assert.equal(img.mimeType, "image/png");
+    assert.deepEqual([...Buffer.from(img.data!, "base64").subarray(1, 4)], [0x50, 0x4e, 0x47]);
     const res = await c.readResource({ uri: "splanc://players" });
     assert.match((res.contents[0] as { text: string }).text, /Kitchen/);
     await until(() => status().clients === 1, "status counts the cloud session");
