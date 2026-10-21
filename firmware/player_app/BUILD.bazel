@@ -103,8 +103,8 @@ rust_static_library(
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
-    crate_root = "ffi.rs",
     crate_name = "ledmapper_player_ffi",
+    crate_root = "ffi.rs",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
@@ -143,8 +143,8 @@ rust_library(
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
-    crate_root = "ffi.rs",
     crate_name = "ledmapper_player_ffi",
+    crate_root = "ffi.rs",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},

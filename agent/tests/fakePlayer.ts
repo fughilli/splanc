@@ -377,7 +377,7 @@ export class FakePlayer {
         return this.reply(ws, this.keypoint(m));
       case "get_sensors":
       case "calibrate_sensors": {
-        const base = this.sensor ?? { status: "SENSOR_STATUS_ABSENT", sdaGpio: 6, sclGpio: 7, intGpio: 2 };
+        const base = this.sensor ?? { status: "SENSOR_STATUS_ABSENT", sdaGpio: 6, sclGpio: 7, intGpio: 21 };
         const reply = { type: "sensor_state", ...base };
         if (m.type === "calibrate_sensors" && this.sensor) {
           // Applied "on the next poll": the reply is the state before it ran.

@@ -116,14 +116,14 @@ commit. A wrapper implements the trait. Re-syncing means bumping the pin.
 |---|---|---|
 | SDA | **GPIO6** | |
 | SCL | **GPIO7** | |
-| INT | **GPIO2** | Optional; recorded and collision-checked. The core polls the FIFO whether INT is wired or not (§4.3) |
+| INT | **GPIO21** | Optional; recorded and collision-checked. The core polls the FIFO whether INT is wired or not (§4.3) |
 | AD0 | GND | Address 0x68; 0x69 is probed too |
 
 - These are the compile-time defaults: `LM_SENSOR_SDA` / `LM_SENSOR_SCL` /
-  `LM_SENSOR_INT` in `sensor_bus.h`. They are the recommended PixieLamp wiring.
+  `LM_SENSOR_INT` in `sensor_bus.h`. They match how the PixieLamp is wired.
 - 6/7 is the C6's LP_I2C pair, which keeps a future low-power path possible. It
-  is also the FUG-131 Splanc Dev Module's I2C0 (`splanc_dev.ato`, 2k2 pull-ups;
-  that board routes INT to GPIO21).
+  is also the FUG-131 Splanc Dev Module's I2C0 (`splanc_dev.ato`, 2k2 pull-ups),
+  and that board routes INT to GPIO21 too.
 - The defaults avoid:
   - the strapping pins 4/5/8/9/15;
   - USB-JTAG 12/13;
@@ -261,7 +261,7 @@ FIFO batching is used, not a timer, and the interrupt pin is not used yet.
 - The measured rate (samples per wall-second) is reported as a diagnostic.
 - Direct polling is kept as a fallback (dead FIFO): one 14-byte burst per poll,
   with dt from `esp_timer`, clamped to 0.1 s.
-- **The INT pin** (optional; default GPIO2, GPIO21 on the Dev Module) is the next step:
+- **The INT pin** (optional; default GPIO21) is the next step:
   data-ready or FIFO-watermark wakes the task by notification instead of the
   20 ms poll, and wake-on-motion would let a sleeping lamp wake on pickup. It
   needs an IRAM-safe GPIO ISR, and therefore IRAM, so it is left off until a use

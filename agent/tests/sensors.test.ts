@@ -62,7 +62,7 @@ const RUNNING = {
 test("absent sensor reads as absent, with the probed pins", { skip }, async () => {
   const s = await connect(["sensors"]);
   const r = await s.readSensors();
-  assert.deepEqual(r, { status: "absent", pins: { sda: 6, scl: 7, int: 2 } });
+  assert.deepEqual(r, { status: "absent", pins: { sda: 6, scl: 7, int: 21 } });
   s.close();
 });
 

@@ -12,7 +12,8 @@
 
 // Compile-time defaults: I2C SDA = GPIO6, SCL = GPIO7 (the Splanc Dev Module's
 // I2C0 and the C6's LP_I2C pair, so a low-power path stays possible), INT =
-// GPIO2, AD0 = GND (0x68; 0x69 is probed too). They avoid the strapping pins
+// GPIO21 (the Dev Module's and the PixieLamp's wiring), AD0 = GND (0x68; 0x69
+// is probed too). They avoid the strapping pins
 // 4/5/8/9/15, USB-JTAG 12/13, the SuperMini's flash 18/19, the LED data pins
 // 20/14 and GPIO0/1 (32 kHz crystal on some boards). Overridable per build
 // (--copt=-DLM_SENSOR_SDA=…) and at runtime through NVS keys "sens_sda" /
@@ -27,7 +28,7 @@
 // collision-checked today; the sensor task polls the FIFO either way (an
 // INT-driven wake is the next step, docs/design/sensor-core.md §4.3). -1 = none.
 #ifndef LM_SENSOR_INT
-#define LM_SENSOR_INT 2
+#define LM_SENSOR_INT 21
 #endif
 #ifndef LM_SENSOR_ENABLED
 #define LM_SENSOR_ENABLED 1

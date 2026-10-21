@@ -97,7 +97,7 @@ fn sensor_core_through_the_c_abi() {
         write: Some(w),
         cycles: None,
     }));
-    let st = unsafe { lm_sensor_begin(ops, 6, 7, 2, 0, core::ptr::null(), 0) };
+    let st = unsafe { lm_sensor_begin(ops, 6, 7, 21, 0, core::ptr::null(), 0) };
     assert_eq!(st, 3, "found + starting");
     let mut t = 100_000u64;
     unsafe { lm_sensor_poll(t) };
@@ -111,7 +111,7 @@ fn sensor_core_through_the_c_abi() {
     assert_eq!(s.r#status, pb::SensorStatus::Running);
     assert_eq!(s.r#i2c_address, 0x68);
     assert_eq!(s.r#who_am_i, 0x68);
-    assert_eq!((s.r#sda_gpio, s.r#scl_gpio, s.r#int_gpio), (6, 7, 2));
+    assert_eq!((s.r#sda_gpio, s.r#scl_gpio, s.r#int_gpio), (6, 7, 21));
     assert!(s.r#fifo && s.r#at_rest);
     assert_eq!(s.r#samples, 150);
     // Firmware encodes the vectors zero-copy; host-profile decode sees them.
