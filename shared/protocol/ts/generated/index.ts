@@ -83,6 +83,9 @@ export interface CodeParams {
   strideSpacing?: number | undefined;
   anchorDensity?: number | undefined;
   stridePhase?: number | undefined;
+  /** Group capture: this fixture's LED i transmits id (i + codeOffset) of a
+   * code book of ledCount ids shared by the group. Absent = 0. */
+  codeOffset?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +223,12 @@ export interface StartMappingOptions {
   strideSpacing?: number;
   anchorDensity?: number;
   stridePhase?: number;
+  /** Group capture (feature group_capture): LED i transmits id (i + codeOffset)
+   * of a codeSpace-sized code book shared by the group; epochMs = the pattern
+   * epoch in the PLAYER's clock (aligns every fixture's frames). */
+  codeOffset?: number;
+  codeSpace?: number;
+  epochMs?: number;
 }
 
 export interface StartMappingMessage {

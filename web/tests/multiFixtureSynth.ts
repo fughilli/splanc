@@ -165,6 +165,9 @@ export interface CaptureSimOptions {
   distM?: number;
   /** Camera translation amplitude, m (default 1.2); 0 = tripod (rotation only). */
   walkM?: number;
+  /** Per-frame hand-jitter multiplier (default 1; 0 for a smooth 30 fps path the
+   * 2D tracker can follow). */
+  jitter?: number;
   /** Vertical camera bob amplitude, m (default 0.25). */
   bobM?: number;
   /** Fixtures (indices) never in view together with any other: skip frames showing them with others. */
@@ -199,17 +202,18 @@ export function simulateCapture(room: SynthFixture[], o: CaptureSimOptions): Cap
     const s = 0.5 - 0.5 * Math.cos(tau * 2 * Math.PI * 1.5);
     // walkM = 0: a tripod (the camera only pans; no translation at all).
     const tri = walk === 0 ? 0 : 1;
+    const jit = o.jitter ?? 1;
     const eye: Vec3 = [
-      (xmin + xmax) / 2 + (s - 0.5) * 2 * walk + tri * 0.05 * g(),
-      1.4 + tri * ((o.bobM ?? 0.25) * Math.sin(tau * 7) + 0.03 * g()),
-      cz + dist + tri * (0.3 * Math.sin(tau * 5) + 0.03 * g()),
+      (xmin + xmax) / 2 + (s - 0.5) * 2 * walk + tri * jit * 0.05 * g(),
+      1.4 + tri * ((o.bobM ?? 0.25) * Math.sin(tau * 7) + jit * 0.03 * g()),
+      cz + dist + tri * (0.3 * Math.sin(tau * 5) + jit * 0.03 * g()),
     ];
     const mid = (xmin + xmax) / 2;
     const halfSpan = ((xmax - xmin) / 2) * pan;
-    const target: Vec3 = [mid + (s - 0.5) * 2 * Math.max(halfSpan, 0.01) + 0.1 * g(), cy + 0.1 * g(), cz];
+    const target: Vec3 = [mid + (s - 0.5) * 2 * Math.max(halfSpan, 0.01) + (o.jitter ?? 1) * 0.1 * g(), cy + (o.jitter ?? 1) * 0.1 * g(), cz];
     const q = lookAtQuat(eye, target);
     // Hand roll jitter.
-    const roll = 0.04 * g();
+    const roll = (o.jitter ?? 1) * 0.04 * g();
     const pose: Pose = { p: eye, q: quatMul(q, [0, 0, Math.sin(roll / 2), Math.cos(roll / 2)]) };
     const sightings: CaptureView["sightings"] = [];
     room.forEach((fx, k) => {

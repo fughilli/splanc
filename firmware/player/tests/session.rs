@@ -822,4 +822,80 @@ fn growing_past_the_boot_capacity_asks_for_a_reboot() {
     expect_error(send(&mut player, hw(0, 1000, true), 4.0), "bad_message");
     assert_eq!((player.led_count(0), player.led_count(1)), (Some(600), Some(1000)));
     assert!(!player.take_reboot_request());
+
+/// Start a group capture: `led_count` physical LEDs at `offset` in a shared
+/// `space`-id code book, epoch pinned in the player's clock.
+fn start_group(player: &mut Player, led_count: u32, offset: i32, space: i32, epoch: f64, now: f64) -> Option<SMsg> {
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = led_count as i32;
+    opts.set_symbols(4);
+    opts.set_code_offset(offset);
+    opts.set_code_space(space);
+    opts.set_epoch_ms(epoch);
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    send(player, CMsg::StartMapping(start), now)
+}
+
+#[test]
+fn group_capture_offsets_ids_and_pins_the_epoch() {
+    // docs/design/multi-fixture-localization.md: two fixtures share one 100-id
+    // code book; fixture B's LED i transmits id 40 + i, on an epoch chosen by
+    // the phone (in B's clock), and drives only its own 60 LEDs.
+    let mut player = Player::new("esp32-0002", 64);
+    send(&mut player, CMsg::Hello(pb::Hello::default()), 1.0);
+    let Some(SMsg::MappingStarted(started)) = start_group(&mut player, 60, 40, 100, 4321.0, 5000.0) else {
+        panic!("group start_mapping must produce mapping_started");
+    };
+    let spec = pat::CodeSpec::derive(100, 4, true);
+    // The echo carries the SHARED code book (led_count = code space) + offset,
+    // so every fixture of the group reports identical bits / cycle_frames.
+    let cp = &started.r#code_params;
+    assert_eq!(cp.r#led_count, 100);
+    assert_eq!(cp.r#bits, spec.bits as i32);
+    assert_eq!(cp.r#cycle_frames, spec.cycle_frames as i32);
+    assert_eq!(cp.r#code_offset().copied(), Some(40));
+    assert_eq!(started.r#pattern_clock_epoch, 4321.0);
+    // Physical LEDs show id + offset; the frame loop drives exactly 60.
+    for frame in [pat::FRAME_ALL_ON, pat::FRAME_ALL_OFF, pat::DATA_FRAME_OFFSET, pat::DATA_FRAME_OFFSET + 1] {
+        for led in 0..60 {
+            assert_eq!(player.pattern_color(led, frame), Some(pat::color_for_frame(led + 40, frame, &spec)));
+        }
+    }
+    assert_eq!(player.pattern_timing().map(|t| (t.0, t.2, t.3)), Some((4321, spec.cycle_frames, 60)));
+    // A Configure (e.g. brightness) keeps the group layout.
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_brightness(0.5);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(state)) = send(&mut player, CMsg::Configure(configure), 6000.0) else {
+        panic!("pattern_state");
+    };
+    assert_eq!(state.r#code_params.r#led_count, 100);
+    assert_eq!(state.r#code_params.r#code_offset().copied(), Some(40));
+}
+
+#[test]
+fn group_capture_rejects_bad_layouts() {
+    let mut player = Player::new("esp32-0003", 64);
+    send(&mut player, CMsg::Hello(pb::Hello::default()), 1.0);
+    // Space too small for offset + LEDs.
+    assert!(matches!(start_group(&mut player, 60, 50, 100, 1000.0, 1000.0), Some(SMsg::Error(_))));
+    // Negative offset.
+    assert!(matches!(start_group(&mut player, 10, -1, 100, 1000.0, 1000.0), Some(SMsg::Error(_))));
+    // Space beyond the cap.
+    assert!(matches!(start_group(&mut player, 10, 0, 100_000, 1000.0, 1000.0), Some(SMsg::Error(_))));
+    // Epoch absurdly far from the player clock (a clock-sync bug).
+    assert!(matches!(start_group(&mut player, 10, 0, 100, 1.0e9, 1000.0), Some(SMsg::Error(_))));
+    // A solo capture (no group fields) is unchanged: led_count = code space, no offset echoed.
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 32;
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    let Some(SMsg::MappingStarted(started)) = send(&mut player, CMsg::StartMapping(start), 2000.0) else {
+        panic!("mapping_started");
+    };
+    assert_eq!(started.r#code_params.r#led_count, 32);
+    assert_eq!(started.r#code_params.r#code_offset().copied(), None);
+    assert_eq!(started.r#pattern_clock_epoch, 2000.0);
 }
