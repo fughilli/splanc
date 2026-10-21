@@ -256,6 +256,26 @@ test("after trusting, a reconnect that lands on the still-lingering slot is retr
   assert.equal(appState.client?.url, "wss://10.0.0.88/ws");
 });
 
+test("a retry that welcomes after the first connect attempt timed out still finishes connecting [rr:PR-29]", async () => {
+  // The Android HITL connect journey (and the trust flow) connect with a retry
+  // budget. Right after the cert page, the player's single TLS slot can still be
+  // held by that page's connection, so the FIRST socket hits the 10 s bound and
+  // connect() rejects; the client's own retry then reaches welcome. The app must
+  // still run the post-welcome chain (identity, cert check, clock sync) and
+  // report "connected" — it used to stick at "syncing clock…" with a live socket.
+  const player = lan.add("10.0.0.87", { mac: mac(0x87), deviceName: "Attic" });
+  player.mode = "silent"; // slot still held by the cert page's connection
+  appState.connect("wss://10.0.0.87/ws", undefined, { coldRetryLimit: 6 });
+  await advance(10_100);
+  assert.notEqual(appState.status.state, "connected");
+
+  player.mode = "answer";
+  await advance(3000); // 1 s backoff, the retry's welcome, then the watch tick
+  assert.ok(appState.client?.isConnected, "the retry reached welcome");
+  assert.equal(appState.status.state, "connected");
+  assert.equal(appState.status.text, "connected");
+});
+
 test("the liveness prober never opens a second TLS session to the device the app is connected to [rr:PR-29]", async () => {
   lan.add("10.0.0.89", { mac: mac(0x89), deviceName: "Lounge" });
   appState.connect("wss://10.0.0.89/ws");
