@@ -240,7 +240,7 @@ which probes 0x68/0x69 and issues the reset if a known IMU answers.
   probed pins. Hot-plug is not supported; re-probing would need a reboot or the
   config message in §9.
 - **Found:** a FreeRTOS task (`sensor`, priority 5, 2,560 B heap stack whose
-  static bound is checked by `stack_bound.json`) loops
+  static bound, 1,056 B including the IDF I2C driver path, is checked by `stack_bound.json`) loops
   `lm_sensor_poll(now_us)`. The poll returns the sleep time, and the task
   persists a changed calibration record to NVS.
 - **Hub states:** `Starting` (waits out the reset), then `Running`, and

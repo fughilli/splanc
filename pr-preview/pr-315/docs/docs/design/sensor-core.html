@@ -637,7 +637,7 @@ in <code class="docutils literal notranslate"><span class="pre">.data</span></co
 probed pins. Hot-plug is not supported; re-probing would need a reboot or the
 config message in §9.</p></li>
 <li><p><strong>Found:</strong> a FreeRTOS task (<code class="docutils literal notranslate"><span class="pre">sensor</span></code>, priority 5, 2,560 B heap stack whose
-static bound is checked by <code class="docutils literal notranslate"><span class="pre">stack_bound.json</span></code>) loops
+static bound, 1,056 B including the IDF I2C driver path, is checked by <code class="docutils literal notranslate"><span class="pre">stack_bound.json</span></code>) loops
 <code class="docutils literal notranslate"><span class="pre">lm_sensor_poll(now_us)</span></code>. The poll returns the sleep time, and the task
 persists a changed calibration record to NVS.</p></li>
 <li><p><strong>Hub states:</strong> <code class="docutils literal notranslate"><span class="pre">Starting</span></code> (waits out the reset), then <code class="docutils literal notranslate"><span class="pre">Running</span></code>, and

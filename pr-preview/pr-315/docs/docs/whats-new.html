@@ -335,6 +335,31 @@ a sensor they stay ordinary knobs. Try <code class="docutils literal notranslate
 Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md</span></a> (#315).</p></li>
 </ul>
 </section>
+<section id="agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">
+<h3>Agents crossfade between effects, and look at your fixtures in 3D<a class="headerlink" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code></strong> fades from the running effect to a new one (its source, or an effects-library
+entry by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>) instead of cutting. The bridge
+loads the new effect onto the player’s idle FX deck (the second deck Show Mode uses), then
+glides the crossfade over the seconds you ask for, with a choice of curve (<code class="docutils literal notranslate"><span class="pre">ease</span></code> by default)
+and RGB or HSV blending. With several players or a room, every player fades on one clock, and
+the effects share one time base, so the room changes together.</p></li>
+<li><p><strong>Rollback keeps working.</strong> The effect you faded away from stays loaded on its deck, even
+one the app put there, so <code class="docutils literal notranslate"><span class="pre">rollback_effect</span></code> fades straight back to it (call it again to swap
+forward). <code class="docutils literal notranslate"><span class="pre">list_decks</span></code> shows what is on decks A and B, where the crossfade sits, and which
+deck is live. Uniform and keypoint tools follow the live deck.</p></li>
+<li><p><strong>Deck B is runtime-only</strong>: if a crossfade ends on it, a reboot brings back deck A’s effect.
+<code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> still makes an effect permanent. Both effects render while the fade runs, and
+they share the 24 KB buffer arena, so a too-large pair is refused with that explanation.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">plot_fixture</span></code></strong> returns a PNG of a fixture’s LED map from the front, side, top and an
+isometric view. It shows metres with +Y up, axes, the bounding box, the wiring order, LED index
+hints and a scale bar. Mapped LEDs are dots and interpolated ones are rings. You can colour the
+LEDs by index, solve confidence, segment, channel or one frame of an effect. A room plots every
+fixture at its pose in one scene. The numbers (mapped vs interpolated, bounds) come with it.
+The image is drawn in plain TypeScript, so it works on the Pi bridge, and stays small enough
+for the cloud relay. The CLI has <code class="docutils literal notranslate"><span class="pre">crossfade-to</span></code>, <code class="docutils literal notranslate"><span class="pre">list-decks</span></code> and <code class="docutils literal notranslate"><span class="pre">plot-fixture</span> <span class="pre">--out</span> <span class="pre">&lt;dir&gt;</span></code>.</p></li>
+</ul>
+</section>
 <section id="an-effects-library-that-grows-with-every-scene">
 <h3>An effects library that grows with every scene<a class="headerlink" href="#an-effects-library-that-grows-with-every-scene" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -711,6 +736,7 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>
+<li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
 <li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
 <li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
 <li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
