@@ -36,6 +36,11 @@ bool netstack_ws_open(void);
 bool netstack_creds_ready(void);
 bool netstack_leased(void);
 
+// Commit WiFi credentials restored from the store (main.cpp reads NVS) so the board joins
+// on its own after a reboot / firmware update. Call BEFORE netstack_setup(). Invalid or
+// empty values (nothing stored) leave the board waiting for Improv / wired PROV.
+void netstack_restore_credentials(const char *ssid, const char *pass);
+
 // Count of AP group-key rekeys serviced this session (surfaced in the status line so a
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);
@@ -46,6 +51,11 @@ uint32_t netstack_rekey_count(void);
 // sets *reply to it (writable, with kWsSendHeadroom bytes before it); returns the reply
 // length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
+
+// PROVIDED BY main.cpp. Persist the active WiFi credentials (NVS "ssid"/"pass", the keys
+// the vendor build uses) — called once a freshly provisioned network has leased. Returns
+// whether both writes succeeded.
+bool lm_store_wifi_credentials(const char *ssid, const char *pass);
 
 // PROVIDED BY main.cpp. Render the agent discovery manifest (GET
 // /.well-known/splanc.json) into the app's tx buffer and set *body to it. `cert_sha256`

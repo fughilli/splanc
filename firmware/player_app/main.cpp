@@ -1231,6 +1231,16 @@ int lm_agent_manifest_body(const char *cert_sha256, const uint8_t **body) {
   return (int)n;
 }
 
+// WiFi credentials for netstack_transport.cpp, persisted once a provisioned network has
+// leased (wifi_creds.h). Same NVS keys as the vendor build's provisioning_poll, so either
+// build boots onto the network the other was provisioned to. A normal update (images
+// written at their offsets, no erase) keeps them; a full chip erase clears them.
+bool lm_store_wifi_credentials(const char *ssid, const char *pass) {
+  size_t sn = prefs.putString("ssid", ssid);
+  size_t pn = prefs.putString("pass", pass);
+  return sn == strlen(ssid) && pn == strlen(pass);
+}
+
 // TLS identity readiness for the manifest / TlsInfo / mDNS TXT (netstack_transport.cpp
 // publishes it whenever the identity is installed or still pending).
 void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persisted) {
@@ -2517,6 +2527,10 @@ void setup() {
   // the HW RNG is a true RNG. Measured on the C6 (HW ECC): see device_cert's log line.
   // A failure here leaves :443 closed and netstack_loop retries on a backoff.
   device_cert_begin(macstr, fs_ok ? &kTlsStore : nullptr);
+  // The WiFi credentials a previous provision stored (lm_store_wifi_credentials, once that
+  // network leased): rejoin on our own after a reboot or a firmware update. Before this the
+  // netstack kept them in RAM only, so every update/power cut needed a re-provision.
+  netstack_restore_credentials(ssid.c_str(), prefs.getString("pass", "").c_str());
   // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + the per-device TLS server on :443.
   netstack_setup();
 #endif

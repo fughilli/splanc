@@ -292,7 +292,9 @@ build bundles over Web Serial, with live progress, a log, and a diagnostics pane
 - Works on desktop Chromium (native Web Serial) and Android Chrome (via a WebUSB polyfill).
 - iOS Safari has neither API, so flashing isn't available there — the sheet says so rather than
   failing silently.
-- After flashing, provision the fresh board onto Wi-Fi like any other device.
+- After flashing, provision a fresh board onto Wi-Fi like any other device. Updating a board that
+  was already on Wi-Fi keeps its network (from the firmware release after v1.8.2), so it rejoins by
+  itself.
 
 ### Color correction
 

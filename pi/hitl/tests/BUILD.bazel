@@ -55,6 +55,7 @@ py_test(
         "test_time_base_skew.py",
         "test_tls_churn.py",
         "test_uniform_bench.py",
+        "test_upgrade_keeps_wifi_core.py",
         "test_video_bench.py",
     ],
     # test_board_caps pins the REAL descriptor, loaded from runfiles; the

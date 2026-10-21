@@ -226,6 +226,21 @@ def test_wire_provision_accepts_tcp_listen_ip_when_already_leased():
     assert url == "http://192.168.60.141/"
 
 
+def test_wire_provision_accepts_re_received_on_a_board_already_joined():
+    # Firmware that persists WiFi credentials rejoins on its own after a reset; a PROV for
+    # that same network keeps the link and answers with its IP at once. The reader must be
+    # attached before the PROV is written, or that one line is missed.
+    serial = (
+        "[t=12001] [wire] PROV received (ssid=amd-rig-ap) — already joined, link kept; "
+        "PROV re-received at IP 169.254.100.23\n"
+    )
+    res = WireRes(serial)
+    url = wire_provision_dut(res, "amd-rig-ap", "pw", timeout=5)
+    assert url == "http://169.254.100.23/"
+    cmd = res.calls[0]
+    assert cmd.index("cat /dev/ttyACM0") < cmd.index("PROV")
+
+
 def test_wire_provision_no_ack_no_lease_reports_prov_not_received():
     with pytest.raises(HarnessError) as e:
         wire_provision_dut(WireRes(SILENT_SERIAL), "amd-rig-ap", "pw", timeout=5)

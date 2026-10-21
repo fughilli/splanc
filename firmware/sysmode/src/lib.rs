@@ -86,7 +86,8 @@ pub enum Event {
     /// Improv delivered WiFi credentials.
     ImprovCredentials,
     /// The wired serial console delivered credentials (`PROV <ssid> <pass>`, the
-    /// no-BLE HITL path) — needs no central.
+    /// no-BLE HITL path) — needs no central. Credentials restored from NVS at boot
+    /// arrive the same way (no central), so they are observed as this event too.
     WiredCredentials,
     /// The vendor scan + join finished.
     Joined,
@@ -160,8 +161,10 @@ impl SysMode {
     };
 
     /// Power-on with a stored map and effect: fs_replay restores them before the
-    /// network is up. WiFi credentials are RAM-only on the netstack build, so the
-    /// device still waits for Improv / the wired console.
+    /// network is up. The model boots unprovisioned either way: stored WiFi
+    /// credentials (persisted once a provision leased, see
+    /// firmware/player_app/wifi_creds.h) are committed by the first loop, which the
+    /// observer sees as [`Event::WiredCredentials`] (credentials with no central).
     pub const BOOT_RESTORED: SysMode = SysMode {
         wifi: Wifi::Unprovisioned,
         ble: Ble::Advertising,

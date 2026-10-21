@@ -15,6 +15,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 - **The same button** is on the API key fields in AI settings and on the Splanc
   Bridge Flasher's Wi-Fi password (which had a text "Show" button).
 
+### Players stay on Wi-Fi across updates and power cuts
+
+Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
+(a power cut, a reset, a firmware update over USB) brought the board back
+unprovisioned, and it had to be put back on the network. Now the credentials are
+saved to NVS once the board has actually joined with them (a mistyped password is
+never saved), and the board rejoins on its own at boot. Re-provisioning the
+network a board is already on keeps the link instead of restarting the join. If
+the saved network wasn't visible at boot (the router still starting after a power
+cut), the board restarts to rescan on a capped backoff. Design notes:
+`firmware/player_app/wifi_creds.h`; HITL gate `//pi/hitl/harness:upgrade_keeps_wifi`.
+
+- **One last re-provision.** A board running a release before this fix has no
+  saved credentials to keep, so the update that installs this firmware still needs
+  one provision; every update after that keeps them.
+- **Factory reset** (a full flash erase) still clears them.
+
 ### Every player has its own TLS certificate
 
 Netstack firmware used to serve one shared certificate, and its private key was in

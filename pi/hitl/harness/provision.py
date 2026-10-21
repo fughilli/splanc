@@ -284,9 +284,13 @@ def provision_dut(
 # lease, and "TCP LISTEN on <ip>:443" when the server binds. Either proves the DUT
 # joined WiFi and is serving at <ip>; we accept both so an ALREADY-provisioned DUT
 # (re-PROV'd while it still holds its lease, so no fresh "LEASE ACQUIRED" line prints)
-# is still recognized. The em-dash etc. is matched loosely so a console-encoding quirk
-# can't break the parse.
-_LEASE_RE = re.compile(r"(?:DHCP LEASE ACQUIRED.*?IP\s+|TCP LISTEN on\s+)(\d{1,3}(?:\.\d{1,3}){3})")
+# is still recognized. Firmware that persists WiFi credentials rejoins on its own after a
+# reset/reflash, so a PROV for the network it is already on is a no-op that answers with
+# "PROV re-received at IP <ip>" instead. The em-dash etc. is matched loosely so a
+# console-encoding quirk can't break the parse.
+_LEASE_RE = re.compile(
+    r"(?:DHCP LEASE ACQUIRED.*?IP\s+|TCP LISTEN on\s+|PROV re-received.*?IP\s+)(\d{1,3}(?:\.\d{1,3}){3})"
+)
 _WIRE_ACK = "[wire] PROV received"
 
 
@@ -312,10 +316,14 @@ def wire_provision_dut(res, ssid: str, password: str, timeout: float) -> str:
     prov = "printf 'PROV %s %s\\n' {} {} > /dev/ttyACM0".format(
         shlex.quote(ssid), shlex.quote(password)
     )
+    # Attach the reader BEFORE writing the PROV: a board already on this network (it
+    # rejoined from its stored credentials) answers at once with "PROV re-received at IP
+    # <ip>", which a reader started after the write would miss.
     cmd = (
         "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
+        + f"timeout {timeout:g} cat /dev/ttyACM0 & sleep 0.5; "
         + prov
-        + f"; timeout {timeout:g} cat /dev/ttyACM0"
+        + "; wait"
     )
     proc = res.ssh_serialized(cmd, capture=True, timeout=timeout + 30)
     log = (proc.stdout or "") + (proc.stderr or "")
