@@ -12,7 +12,7 @@
  * prompt/await) — see net/improv.ts.
  */
 
-import { Button, Sheet, confirmDialog, toast } from "../kit";
+import { Button, PasswordReveal, Sheet, confirmDialog, toast } from "../kit";
 import {
   provisionViaBle,
   requestImprovDevice,
@@ -62,11 +62,20 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
   ssidInput.className = "sheet-input";
   ssidInput.placeholder = "Wi-Fi network (SSID)";
   ssidInput.value = first.ssid;
+  ssidInput.setAttribute("autocomplete", "off");
+  ssidInput.setAttribute("autocapitalize", "off");
+  ssidInput.setAttribute("autocorrect", "off");
+  ssidInput.setAttribute("spellcheck", "false");
   const passInput = document.createElement("input");
   passInput.className = "sheet-input";
-  passInput.type = "password";
   passInput.placeholder = "Wi-Fi password";
+  passInput.setAttribute("aria-label", "Wi-Fi password");
   passInput.value = first.password;
+  // Eye toggle for cleartext (starts hidden). "new-password": these are the
+  // network's credentials for the device, not a login for this site, so keep
+  // the browser's password manager from autofilling/saving them. Picking a
+  // saved network below only swaps the value, so the current visibility stays.
+  const pass = PasswordReveal(passInput, { autocomplete: "new-password", className: "sheet-pw" });
 
   const renderPicks = (): void => {
     picks.replaceChildren();
@@ -129,7 +138,7 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
     cap.textContent = "Saved networks";
     sheet.body.append(cap, picks);
   }
-  sheet.body.append(ssidInput, passInput, go, status);
+  sheet.body.append(ssidInput, pass.el, go, status);
   ssidInput.focus();
 }
 

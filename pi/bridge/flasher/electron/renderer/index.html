@@ -51,14 +51,21 @@
         <form id="wifi-form" autocomplete="off" novalidate>
           <div class="field" data-field="ssid">
             <label for="ssid">Network name (SSID)</label>
-            <input id="ssid" name="ssid" spellcheck="false" maxlength="64" />
+            <input id="ssid" name="ssid" spellcheck="false" maxlength="64" autocomplete="off" autocapitalize="off" autocorrect="off" />
             <p class="err-text"></p>
           </div>
           <div class="field" data-field="psk">
             <label for="psk">Password</label>
             <div class="pw">
-              <input id="psk" name="psk" type="password" spellcheck="false" maxlength="64" />
-              <button type="button" class="k-btn ghost tiny" id="show-psk">Show</button>
+              <input id="psk" name="psk" type="password" spellcheck="false" maxlength="64"
+                     autocomplete="new-password" autocapitalize="off" autocorrect="off" />
+              <button type="button" class="pw-toggle" id="show-psk"
+                      aria-label="Show password" title="Show password" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path class="pw-slash" d="M4 4 20 20"/>
+                </svg>
+              </button>
             </div>
             <p class="err-text"></p>
             <p class="hint">Leave empty for an open network.</p>

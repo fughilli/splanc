@@ -53,7 +53,9 @@ export type IconName =
   | "chip"
   | "mic"
   | "check"
-  | "code";
+  | "code"
+  | "eye"
+  | "eye-off";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
@@ -149,6 +151,10 @@ const PATHS: Record<IconName, string> = {
   check: `<path d="M5 12.5 10 17.5 19 7"/>`,
   // Angle brackets </> (load model).
   code: `<path d="M9 8 5 12 9 16"/><path d="M15 8 19 12 15 16"/>`,
+  // Eye (show password): an almond outline around a round pupil.
+  eye: `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/>`,
+  // Eye with a slash (hide password): the same eye, struck through.
+  "eye-off": `<path d="M2.5 12C4.8 7.6 8.1 5.5 12 5.5s7.2 2.1 9.5 6.5c-2.3 4.4-5.6 6.5-9.5 6.5S4.8 16.4 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="M4 4 20 20"/>`,
 };
 
 let installed = false;
