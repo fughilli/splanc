@@ -187,14 +187,23 @@ class AppState {
           certUrl,
           error: certUrl ? null : "connection failed — retrying",
         });
-        if (!certUrl) this.watchReconnect();
+        // Watch for a background reconnect in BOTH cases. A cert-trust target whose
+        // client was given a retry budget (the trust flow / the HITL journey pass
+        // coldRetryLimit > 1) keeps retrying after this first connect() rejects —
+        // typically its first socket timed out at the 10 s bound while the player's
+        // single TLS slot was still held by the cert page's connection. That retry
+        // then reaches `welcome`, but nothing ran the post-welcome chain any more,
+        // so the pill sat at "syncing clock…" forever with a live socket. A client
+        // that has given up never connects, so the watch just idles until the next
+        // connect()/disconnect() clears it.
+        this.watchReconnect(dev.id);
       }
     })();
   }
 
   /** Poll for a background reconnect completing (after cert trust / a flaky
    * network) so the pill flips to connected without a page reload. */
-  private watchReconnect(): void {
+  private watchReconnect(devId?: string): void {
     if (this.connTimer !== null) return;
     this.connTimer = window.setInterval(() => {
       const c = this.client;
@@ -204,8 +213,21 @@ class AppState {
       }
       if (c.isConnected) {
         this.clearReconnectWatch();
+        const w = c.welcome;
+        if (devId !== undefined && w) {
+          deviceStore.applyWelcome(devId, {
+            mac: w.mac,
+            deviceName: w.deviceName,
+            fwGitCommit: w.fwGitCommit,
+            fwGitDirty: w.fwGitDirty,
+            fwVersion: w.fwVersion,
+          });
+        }
         this.setStatus({ state: "connected", text: "connected", certUrl: null, error: null });
-        void c.syncClock().catch(() => undefined);
+        void (async () => {
+          if (devId !== undefined) await this.checkCert(c, devId).catch(() => undefined);
+          await c.syncClock().catch(() => undefined);
+        })();
       }
     }, 600);
   }
