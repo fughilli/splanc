@@ -42,6 +42,12 @@ test("stdio bridge: discover, deploy, read back", async () => {
     await client.connect(transport).catch((e: Error) => {
       throw new Error(`${e.message}; bridge stderr:\n${stderr}`);
     });
+    // The shipped bundle carries the tool annotations + server instructions.
+    const tools = (await client.listTools()).tools;
+    assert.equal(tools.find((t) => t.name === "list_players")?.annotations?.readOnlyHint, true);
+    assert.equal(tools.find((t) => t.name === "delete_keypoint")?.annotations?.destructiveHint, true);
+    assert.ok(tools.every((t) => t.annotations), "every tool annotated");
+    assert.match(client.getInstructions() ?? "", /^Splanc controls/);
     const dev = await client.readResource({ uri: "splanc://device" });
     const d = JSON.parse((dev.contents[0] as { text: string }).text);
     assert.equal(d.id, player.mac);

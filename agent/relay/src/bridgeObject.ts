@@ -19,6 +19,7 @@
  * object's name) and `x-relay-origin` (the public origin).
  */
 
+import { grantedScope } from "./oauth";
 import { b64url, ed25519Verify, randomSecret, sha256b64url, sha256hex } from "./crypto";
 import { now, upgrade, autoResponse, type DOState, type Env, type HSocket } from "./platform";
 import {
@@ -73,6 +74,8 @@ interface TokRec {
   resource: string;
   created: number;
   label?: string;
+  /** The granted scope (OAuth tokens; absent on older records = "splanc"). */
+  scope?: string;
 }
 
 interface CodeRec {
@@ -142,7 +145,7 @@ const oauthError = (error: string, description: string, status = 400) =>
 
 export function wwwAuthenticate(origin: string, error?: string): string {
   return (
-    `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"` +
+    `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="splanc offline_access"` +
     (error ? `, error="${error}"` : "")
   );
 }
@@ -491,7 +494,7 @@ export class BridgeObject {
       redirect: b["redirect_uri"]!,
       challenge: b["code_challenge"]!,
       resource: b["resource"]!,
-      scope: b["scope"] ?? "",
+      scope: grantedScope(b["scope"]),
       exp: this.nowS() + AUTH_CODE_TTL_S,
     });
     await this.clearPairing("pairing code redeemed");
@@ -500,14 +503,14 @@ export class BridgeObject {
 
   private async grant(bid: string, fam: string, client: string, resource: string, scope: string): Promise<Response> {
     const t = this.nowS();
-    const access = await this.mint("at", bid, { exp: t + ACCESS_TTL_S, fam, client, resource });
-    const refresh = await this.mint("rt", bid, { exp: t + REFRESH_TTL_S, fam, client, resource });
+    const access = await this.mint("at", bid, { exp: t + ACCESS_TTL_S, fam, client, resource, scope });
+    const refresh = await this.mint("rt", bid, { exp: t + REFRESH_TTL_S, fam, client, resource, scope });
     return json({
       access_token: access,
       token_type: "Bearer",
       expires_in: ACCESS_TTL_S,
       refresh_token: refresh,
-      scope: scope || "splanc",
+      scope,
     });
   }
 
@@ -528,7 +531,7 @@ export class BridgeObject {
       if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || (await sha256b64url(verifier)) !== rec.challenge) {
         return oauthError("invalid_grant", "PKCE verification failed");
       }
-      const r = await this.grant(bid, b64url(crypto.getRandomValues(new Uint8Array(12))), rec.client, resource, rec.scope);
+      const r = await this.grant(bid, b64url(crypto.getRandomValues(new Uint8Array(12))), rec.client, resource, grantedScope(rec.scope));
       await this.pushState("connector authorized");
       return r;
     }
@@ -551,7 +554,8 @@ export class BridgeObject {
       await this.state.storage.delete(`tok:${h}`);
       this.tokCache.delete(h);
       await this.state.storage.put(`used:${h}`, { fam: rec.fam, exp: rec.exp ?? this.nowS() + REFRESH_TTL_S });
-      return this.grant(bid, rec.fam, rec.client, resource, b["scope"] ?? "");
+      // A refresh keeps the grant's scope (RFC 6749 §6: never more than granted).
+      return this.grant(bid, rec.fam, rec.client, resource, rec.scope ?? "splanc");
     }
     return oauthError("unsupported_grant_type", "authorization_code or refresh_token");
   }

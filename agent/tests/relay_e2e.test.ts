@@ -19,6 +19,7 @@ import { after, before, test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
+import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "../src/annotations";
 import { LanBridge, type BridgeStatus } from "../src/bridge/lanBridge";
 import { RelayLink } from "../src/bridge/relayLink";
 import { Hub } from "../src/hub";
@@ -106,6 +107,9 @@ test("cloud agent -> relay -> bridge -> players", async () => {
   try {
     const tools = await c.listTools();
     assert.ok(tools.tools.some((t) => t.name === "set_brightness"));
+    // Annotations + instructions come from the bridge's agent, unchanged by the relay.
+    for (const t of tools.tools) assert.deepEqual(t.annotations, TOOL_ANNOTATIONS[t.name], t.name);
+    assert.equal(c.getInstructions(), SERVER_INSTRUCTIONS);
     const list = await call(c, "list_players");
     assert.equal(list.isError, false);
     assert.deepEqual(

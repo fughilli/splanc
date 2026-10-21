@@ -5,6 +5,18 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Splanc works as a ChatGPT plugin
+
+- **Add `https://splanc.pages.dev/mcp`** in ChatGPT as a custom MCP server with OAuth, sign in
+  with your bridge's pairing code, and ChatGPT drives your lights. Steps:
+  [cloud-agent.md](guides/cloud-agent.md#chatgpt).
+- **Every agent tool says what it does**: read-only tools (listing, previews, compiling) run
+  without a confirmation prompt in ChatGPT; tools that change the lights ask first, and deleting
+  or overwriting your saved things is flagged as destructive. The server also gives agents a
+  short "how to use Splanc" note.
+- **The relay** advertises `offline_access`, so ChatGPT keeps its sign-in, accepts ChatGPT's
+  client metadata document, and ignores scopes it doesn't use (like `openid`) instead of failing.
+
 ### Show the Wi-Fi password while you type it
 
 - **An eye button** at the right end of the Wi-Fi password field in the

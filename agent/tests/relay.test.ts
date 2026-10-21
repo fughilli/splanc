@@ -15,7 +15,7 @@ import WebSocket from "ws";
 import { parseToken, sameResource } from "../relay/src/bridgeObject";
 import { normalizePairingCode, randomPairingCode } from "../relay/src/crypto";
 import { LIMITS } from "../relay/src/directory";
-import { redirectAllowed, validRedirect } from "../relay/src/oauth";
+import { grantedScope, redirectAllowed, validRedirect } from "../relay/src/oauth";
 import { connectMessage, registerMessage, type RelayFrame, type StateFrame } from "../relay/src/protocol";
 import { RelayLink, backoffDelay } from "../src/bridge/relayLink";
 import { RelayHost } from "../src/relayHost";
@@ -107,6 +107,13 @@ describe("pure helpers", () => {
     assert.ok(!redirectAllowed(c, "http://127.0.0.1:3000/other"));
   });
 
+  test("scopes: the supported part is granted, always with splanc; others dropped, not refused", () => {
+    assert.equal(grantedScope(""), "splanc");
+    assert.equal(grantedScope(undefined), "splanc");
+    assert.equal(grantedScope("openid profile email offline_access"), "splanc offline_access");
+    assert.equal(grantedScope("offline_access  splanc"), "splanc offline_access");
+  });
+
   test("resource indicator: the MCP endpoint or the origin", () => {
     assert.ok(sameResource("https://R.example/mcp", "https://r.example"));
     assert.ok(sameResource("https://r.example", "https://r.example"));
@@ -133,6 +140,16 @@ describe("metadata + unauthenticated", () => {
     assert.deepEqual(as["code_challenge_methods_supported"], ["S256"]);
     assert.equal(as["client_id_metadata_document_supported"], true);
     assert.equal(as["registration_endpoint"], `${relay}/register`);
+    // ChatGPT: offline_access advertised (keeps refresh tokens), the issuer
+    // identification it keys its stable redirect URI + CIMD client id on, and
+    // `none` (public client) among the token endpoint auth methods.
+    assert.deepEqual(prm["scopes_supported"], ["splanc", "offline_access"]);
+    assert.deepEqual(as["scopes_supported"], ["splanc", "offline_access"]);
+    assert.equal(as["authorization_response_iss_parameter_supported"], true);
+    assert.ok((as["token_endpoint_auth_methods_supported"] as string[]).includes("none"));
+    assert.ok((as["grant_types_supported"] as string[]).includes("refresh_token"));
+    const oidc = (await (await fetch(`${relay}/.well-known/openid-configuration`)).json()) as Record<string, unknown>;
+    assert.equal(oidc["issuer"], relay);
   });
 
   test("/mcp without a token: 401 pointing at the resource metadata (no DO touched)", async () => {
@@ -142,6 +159,7 @@ describe("metadata + unauthenticated", () => {
     const bad = await mcpPost(relay, `spl_at_${"a".repeat(20)}_${"B".repeat(43)}`, {});
     assert.equal(bad.status, 401);
     assert.match(bad.headers.get("www-authenticate") ?? "", /invalid_token/);
+    assert.match(r.headers.get("www-authenticate") ?? "", /scope="splanc offline_access"/);
   });
 
   test("a hostile browser Origin is refused", async () => {
@@ -441,6 +459,126 @@ describe("OAuth connector flow", () => {
     } finally {
       globalThis.fetch = real;
     }
+  });
+});
+
+describe("ChatGPT", () => {
+  // ChatGPT's own Client ID Metadata Document, as served at
+  // https://chatgpt.com/oauth/client.json (2026-10): private_key_jwt preferred,
+  // `none` also listed — our metadata offers only `none`, so it uses that.
+  const CHATGPT_ID = "https://chatgpt.com/oauth/client.json";
+  const CHATGPT_REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect";
+  const chatgptDoc = {
+    client_id: CHATGPT_ID,
+    client_uri: "https://chatgpt.com/",
+    redirect_uris: [CHATGPT_REDIRECT],
+    token_endpoint_auth_method: "private_key_jwt",
+    token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    client_name: "ChatGPT",
+    token_endpoint_auth_signing_alg: "RS256",
+    jwks_uri: "https://chatgpt.com/oauth/jwks.json",
+  };
+  const docs: Record<string, unknown> = {
+    [CHATGPT_ID]: chatgptDoc,
+    "https://jwt-only.example/client.json": {
+      ...chatgptDoc,
+      client_id: "https://jwt-only.example/client.json",
+      token_endpoint_auth_methods_supported: ["private_key_jwt"],
+    },
+  };
+  const real = globalThis.fetch;
+  before(() => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (u in docs) return new Response(JSON.stringify(docs[u]), { status: 200, headers: { "content-type": "application/json" } });
+      return real(input, init);
+    }) as typeof fetch;
+  });
+  after(() => {
+    globalThis.fetch = real;
+  });
+
+  test("CIMD client (public, PKCE) with ChatGPT's redirect + scopes: tokens, refresh keeps offline_access", async () => {
+    const { link, frames } = await echoBridge();
+    try {
+      const { verifier, challenge } = pkce();
+      const a = await authorize(relay, CHATGPT_ID, challenge, await codeFor(link, frames), {
+        redirect: CHATGPT_REDIRECT,
+        scope: "openid email profile splanc offline_access",
+        state: "cg",
+      });
+      assert.equal(a.status, 302, a.body.slice(0, 300));
+      const loc = new URL(a.location!);
+      assert.equal(`${loc.origin}${loc.pathname}`, CHATGPT_REDIRECT);
+      assert.equal(loc.searchParams.get("iss"), relay);
+      assert.equal(loc.searchParams.get("state"), "cg");
+      // No client authentication (`none`): the code_verifier is the proof.
+      const t = await tokenRequest(relay, {
+        grant_type: "authorization_code",
+        code: loc.searchParams.get("code")!,
+        redirect_uri: CHATGPT_REDIRECT,
+        client_id: CHATGPT_ID,
+        code_verifier: verifier,
+        resource: `${relay}/mcp`,
+      });
+      assert.equal(t.status, 200, JSON.stringify(t.json));
+      assert.equal(t.json["scope"], "splanc offline_access");
+      assert.match(t.json["refresh_token"] ?? "", /^spl_rt_/);
+      assert.equal((await mcpPost(relay, t.json["access_token"]!, { jsonrpc: "2.0", id: 1, method: "ping" })).status, 200);
+      const r = await tokenRequest(relay, {
+        grant_type: "refresh_token",
+        refresh_token: t.json["refresh_token"]!,
+        client_id: CHATGPT_ID,
+        resource: `${relay}/mcp`,
+      });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.equal(r.json["scope"], "splanc offline_access");
+      assert.notEqual(r.json["refresh_token"], t.json["refresh_token"]);
+    } finally {
+      link.stop();
+    }
+  });
+
+  test("a redirect the document doesn't list, or a document without `none`, is refused", async () => {
+    const { challenge } = pkce();
+    const q = (id: string, redirect: string) =>
+      new URLSearchParams({ response_type: "code", client_id: id, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256" });
+    assert.equal((await real(`${relay}/authorize?${q(CHATGPT_ID, CHATGPT_REDIRECT)}`)).status, 200);
+    assert.equal((await real(`${relay}/authorize?${q(CHATGPT_ID, "https://chatgpt.com/connector/oauth/abc")}`)).status, 400);
+    assert.equal(
+      (await real(`${relay}/authorize?${q("https://jwt-only.example/client.json", CHATGPT_REDIRECT)}`)).status,
+      400,
+    );
+  });
+
+  test("error redirects carry iss too (RFC 9207)", async () => {
+    const q = new URLSearchParams({
+      response_type: "code",
+      client_id: CHATGPT_ID,
+      redirect_uri: CHATGPT_REDIRECT,
+      code_challenge_method: "plain",
+      code_challenge: "x",
+      state: "s",
+    });
+    const r = await real(`${relay}/authorize?${q}`, { redirect: "manual" });
+    assert.equal(r.status, 302);
+    const loc = new URL(r.headers.get("location")!);
+    assert.equal(loc.searchParams.get("error"), "invalid_request");
+    assert.equal(loc.searchParams.get("iss"), relay);
+  });
+
+  test("DCR as ChatGPT sends it (redirect, grant types, scope) registers a public client", async () => {
+    const c = await registerClient(relay, {
+      client_name: "ChatGPT",
+      redirect_uris: [CHATGPT_REDIRECT],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope: "splanc offline_access",
+    });
+    assert.match(c["client_id"]!, /^dcr\./);
+    assert.deepEqual(c["redirect_uris"], [CHATGPT_REDIRECT] as unknown as string);
   });
 });
 

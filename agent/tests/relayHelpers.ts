@@ -54,16 +54,16 @@ export async function authorize(
   clientId: string,
   challenge: string,
   pairingCode: string,
-  opts: { ip?: string; state?: string } = {},
+  opts: { ip?: string; state?: string; scope?: string; redirect?: string } = {},
 ): Promise<AuthorizeResult> {
   const form = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
-    redirect_uri: REDIRECT,
+    redirect_uri: opts.redirect ?? REDIRECT,
     code_challenge: challenge,
     code_challenge_method: "S256",
     state: opts.state ?? "st8",
-    scope: "splanc",
+    scope: opts.scope ?? "splanc",
     resource: `${relay}/mcp`,
     pairing_code: pairingCode,
   });
