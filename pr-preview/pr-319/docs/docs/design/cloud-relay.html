@@ -423,7 +423,10 @@ stream), upgrading the bridge’s SDK is enough; the relay doesn’t change.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/bridge/connect?id=</span></code></p></td>
 <td><p>The bridge’s WebSocket upgrade (header <code class="docutils literal notranslate"><span class="pre">x-splanc-bridge-auth</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/live</span></code></p></td>
+<td><p>An app’s live (VJ) WebSocket, bearer token in the subprotocol list, passed through to the bridge (<a class="reference internal" href="live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true}</span></code>.</p></td>
 </tr>
 </tbody>
@@ -493,6 +496,18 @@ possession). The relay picks a random 20-character base32 bridge id.</p>
 <tr class="row-even"><td><p>bridge → relay</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ping</span></code> (plain text)</p></td>
 <td><p>Liveness fallback; auto-answered <code class="docutils literal notranslate"><span class="pre">pong</span></code> without waking the object.</p></td>
+</tr>
+<tr class="row-odd"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;caps&quot;,&quot;live&quot;:1}</span></code></p></td>
+<td><p>After <code class="docutils literal notranslate"><span class="pre">hello</span></code>: this bridge speaks the live protocol (else <code class="docutils literal notranslate"><span class="pre">/live</span></code> answers <code class="docutils literal notranslate"><span class="pre">501</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>both</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live&quot;,&quot;c&quot;,&quot;d&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live_close&quot;,&quot;c&quot;,…}</span></code></p></td>
+<td><p>One live-protocol message for app connection <code class="docutils literal notranslate"><span class="pre">c</span></code>, verbatim / its end (<a class="reference internal" href="live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live_open&quot;,&quot;c&quot;,&quot;label&quot;,&quot;grant&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;revoked&quot;,&quot;grants&quot;}</span></code></p></td>
+<td><p>An app opened a live session (re-sent after a reconnect) / these grants were revoked.</p></td>
 </tr>
 </tbody>
 </table>
