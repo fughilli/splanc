@@ -245,9 +245,10 @@ in
       description = "Check for a new Splanc agent bundle";
       wantedBy = [ "timers.target" ];
       timerConfig = {
+        # No RandomizedDelaySec: it also delays the first check after boot (up to
+        # 30 min), and a freshly flashed card may need that update to be usable.
         OnBootSec = "2min";
         OnUnitActiveSec = "1d";
-        RandomizedDelaySec = "30min";
       };
     };
 

@@ -150,7 +150,7 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
   if (!relay) {
     // Stay up (a service would only crash-loop) and say what's missing.
     await bridge.start({ connect: false });
-    bridge.setFatal("no relay configured: pass --relay <url> or set SPLANC_RELAY (e.g. in /etc/splanc-bridge/bridge.env)");
+    bridge.setFatal("no relay configured: pass --relay <url> or set SPLANC_RELAY (Raspberry Pi image: SPLANC_RELAY= in splanc-bridge.conf on the card's boot partition; curl install: /etc/splanc-bridge/bridge.env)");
     log("bridge: no relay configured (--relay / SPLANC_RELAY); waiting");
   } else {
     await bridge.start();
