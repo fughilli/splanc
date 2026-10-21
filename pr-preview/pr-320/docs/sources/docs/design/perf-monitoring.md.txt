@@ -54,7 +54,7 @@ Per rendered effect frame, around the render task that already runs
 | `instr_update` | count | opcodes retired in `update()` |
 | `instr_shade` | count | opcodes retired across all `shade()` calls this frame |
 | `stack_max` | f32 slots | high-water VM operand-stack depth this frame |
-| `overruns` | count | frames whose `frame_cycles + show_cycles` exceeded the 33 ms budget, since last drain |
+| `overruns` | count | frames whose `frame_cycles + show_cycles` exceeded the current frame budget (`cpu_hz / current_fps`, FUG-82), since last drain |
 | `dropped_frames` | count | frames the render task skipped because it fell behind schedule, since last drain |
 | `heap_free` | bytes | `esp_get_free_heap_size()` |
 | `heap_min_free` | bytes | `esp_get_minimum_free_heap_size()` (low-water) |
@@ -64,8 +64,70 @@ because the cost model (below) is expressed in cycles/opcode. The app converts
 to ms with the known core clock (≈160 MHz → 1 ms ≈ 160 000 cycles), carried
 once in the stream header (`cpu_hz`) so we never hardcode it.
 
-The 33 ms budget = 1 / 30 fps. `headroom_cycles = budget_cycles - (frame_cycles
-+ show_cycles)`; negative headroom is an overrun.
+`headroom_cycles = budget_cycles - (frame_cycles + show_cycles)`; negative
+headroom is an overrun. Historically the budget was a fixed 33 ms (1 / 30 fps);
+with the framerate autoscaler (below) it tracks the *live* target FPS, so
+`budget_cycles = cpu_hz / current_fps` and both `budget_cycles` and the new
+`current_fps` field ride the `PerfReport`.
+
+## Framerate autoscaling (FUG-82)
+
+A fixed frame period is wrong for effects: cost varies wildly with the program
+and LED count (soft-float on the C6), so a fixed rate either wastes headroom on
+a cheap effect or starves the WiFi/BLE tasks and stutters on a heavy one. The
+render loop instead adapts the effect's target FPS to its measured cost, driven
+by the pure `//firmware/fps` `FpsController` (host-unit-tested; integer-only,
+no f64).
+
+- **Ladder.** Targets live on a 5-fps grid, 25..80 fps. Discrete steps keep the
+  cadence legible to the app and damp oscillation. A fresh effect starts at
+  30 fps (the historical rate) and climbs when there's headroom, so load never
+  opens with a visible stutter.
+- **5% headroom.** A frame *misses* when its cost (`max(frame_cycles,
+  show_cycles)` in µs — render and the async strip transmit overlap) exceeds 95% of the current target's period — we insist on ≥5% of every
+  period left for the other threads.
+- **x/N window.** Over a sliding window of 30 frames (~1 s), if **more than**
+  a quarter miss, drop one rung. A clean window whose *worst* frame would still
+  fit the next rung's 95% budget steps up one rung (checking the worst frame,
+  not the mean, keeps it from stepping up then immediately back down).
+- **Abort.** At the floor (25 fps) — or an app-pinned rate — a still-failing
+  window means the effect can't run within budget: the render loop **parks** the
+  effect (freeing the CPU) and the loop task pushes an `fps_state{aborted=true}`
+  so the app can tell the user.
+- **Consistent FPS.** The render task sleeps `period − work` (not a fixed delay
+  *after* the work), so successive frame starts land one period apart regardless
+  of how long a frame took — the whole point being a *consistent* rate. It never
+  sleeps less than `max(1 ms, work / 19)`: the render task outranks the network
+  task, so even a frame that overran its period cedes ≥ 5% of the wall clock to
+  WiFi/TLS while the window decides.
+- **Decks + crossfade.** The cost fed to the controller is the whole frame —
+  `lm_fx_update` / `lm_fx_shade` drive *every* rendering deck and blend them by
+  the crossfade — so a two-deck show is costed as one frame. The search restarts
+  (default or pinned rung) whenever what renders changes: a load, clear or
+  (de)activation on either deck. An abort parks every rendering deck; they stay
+  loaded and `set_effect` resumes them. (Deck A's persisted selection is left as
+  is, so a reboot resumes the effect and the autoscaler parks it again within a
+  couple of seconds.)
+- **App override.** `set_fps{target_fps}` pins an exact rate (snapped to the
+  ladder) and stops autoscaling; `target_fps = 0` returns to auto. A pinned rate
+  the device can't hold aborts rather than silently dropping — the user asked
+  for a rate this effect can't achieve, so we say so instead of ignoring it.
+- **Hold (`no_abort`).** `set_fps{no_abort: true}` keeps the rung instead of
+  parking (benchmark/profiling clients: the HITL `fx_bench` pins 30 fps + hold so
+  its up-to-~130 ms/frame calibration programs are measured, at the golden's
+  historical cadence). Pin and hold are runtime-only and survive effect reloads.
+
+The controller is measured **every** effect frame regardless of the perf tier
+(the cost is the same two CSR reads the profiler already deemed negligible); the
+perf *ring* is still only filled while a perf mode is active. Firmware with the
+autoscaler advertises the `fps` feature. `set_fps` replies
+`fps_state{target_fps, current_fps, min_fps, max_fps, auto, aborted, no_abort}`;
+the same message is pushed unsolicited on an abort over the open session (the
+same push path as the perf report), and the web app toasts it wherever the user
+is. The agent's `measure_effect` reports `current_fps` and calls an effect "over
+budget" only when the player parked it or its mean cost can't hold the 25-fps
+floor (an overrun above the floor is just the autoscaler stepping down), and its
+uniform ramps never stream faster than the player's reported framerate.
 
 ### Cheap sampling
 
