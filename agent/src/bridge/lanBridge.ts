@@ -27,6 +27,9 @@ import type { Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/pr
 import type { Hub } from "../hub";
 import type { ProgressSink } from "../progress";
 import { createServer } from "../server";
+import { loadLanCert } from "./lanCert";
+import { LiveMux, type LiveConn } from "./live";
+import { DEFAULT_LIVE_PORT, LanTickets, LiveLan } from "./liveLan";
 import { RelayLink } from "./relayLink";
 
 export const DEFAULT_STATUS_PATH = "/run/splanc-bridge/status.json";
@@ -68,6 +71,10 @@ export interface LanBridgeOptions {
   sessionIdleMs?: number;
   /** Also print each tool's progress here (the service log). */
   echo?: ProgressSink;
+  /** Live sessions (docs/design/live-vj-relay.md). Through the relay they always
+   * work; the direct LAN endpoint needs `stateDir` (its certificate + tickets) and
+   * listens on `port` (default 8443; 0 = relay only). */
+  live?: { stateDir?: string; port?: number; host?: string; advertise?: string };
 }
 
 interface Session {
@@ -112,10 +119,23 @@ export class LanBridge {
   private readonly waiters: ((f: RelayFrame) => void)[] = [];
   private readonly log: (...a: unknown[]) => void;
   private readonly link: RelayLink;
+  /** The live multiplexer (app sessions, via the relay and the LAN endpoint). */
+  readonly live: LiveMux;
+  private readonly tickets: LanTickets | null;
+  private lan: LiveLan | null = null;
 
   constructor(private readonly opts: LanBridgeOptions) {
     this.link = opts.link;
     this.log = opts.log ?? (() => undefined);
+    const stateDir = opts.live?.stateDir;
+    this.tickets = stateDir ? new LanTickets(stateDir) : null;
+    this.live = new LiveMux({
+      hub: opts.hub,
+      bridgeId: () => this.link.bridgeId ?? "",
+      lan: () => this.lan?.info() ?? null,
+      ...(this.tickets ? { tickets: this.tickets } : {}),
+      log: this.log,
+    });
     this.statusPath = writablePath(opts.statusPath ?? process.env["SPLANC_BRIDGE_STATUS"], DEFAULT_STATUS_PATH, "status.json", this.log);
     this.controlPath = writablePath(opts.controlPath ?? process.env["SPLANC_BRIDGE_CONTROL"], DEFAULT_CONTROL_PATH, "control.sock", this.log);
   }
@@ -126,8 +146,12 @@ export class LanBridge {
     this.stopping = false;
     this.writeStatus(true);
     await this.listenControl();
+    await this.listenLive();
     if (opts.connect === false) return;
     this.link.onChange = () => {
+      // The relay's sockets for live sessions are unreachable while it's down; the
+      // relay re-opens them after our next `caps` (their locks wait out the grace).
+      if (!this.link.online) this.live.detachVia("relay");
       this.maybeAutoPair();
       this.writeStatus();
     };
@@ -169,6 +193,9 @@ export class LanBridge {
     this.link.stop();
     for (const s of this.sessions.values()) await s.transport.close().catch(() => undefined);
     this.sessions.clear();
+    this.live.close();
+    await this.lan?.close();
+    this.lan = null;
     // Leave a truthful last word for the display.
     this.stopping = true;
     this.writeStatus(true);
@@ -310,6 +337,7 @@ export class LanBridge {
     // Drop live sessions too: a revoked client must start over (and will be refused).
     for (const s of this.sessions.values()) await s.transport.close().catch(() => undefined);
     this.sessions.clear();
+    this.live.revoke(["*"]);
     this.writeStatus(true);
     return f ? { ok: true, revoked: before } : { ok: false, error: "the relay didn't confirm" };
   }
@@ -339,8 +367,11 @@ export class LanBridge {
         return this.identify();
       case "status":
         return { ok: true, status: this.status() };
+      case "live":
+        // Live (VJ) sessions; kept out of status.json, whose display contract is fixed.
+        return { ok: true, clients: this.live.clients, lan: this.lan?.info() ?? null, tickets: this.tickets?.count ?? 0 };
       default:
-        return { ok: false, error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status)` };
+        return { ok: false, error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live)` };
     }
   }
 
@@ -393,8 +424,50 @@ export class LanBridge {
 
   // -- the MCP tunnel -------------------------------------------------------------------
 
+  /** The direct LAN endpoint for live sessions (when a state dir is configured). */
+  private async listenLive(): Promise<void> {
+    const cfg = this.opts.live;
+    const port = cfg?.port ?? Number(process.env["SPLANC_BRIDGE_LIVE_PORT"] ?? DEFAULT_LIVE_PORT);
+    if (!cfg?.stateDir || !this.tickets || !(port >= 0) || port === 0 || this.lan) return;
+    try {
+      const lan = new LiveLan({
+        mux: this.live,
+        tickets: this.tickets,
+        cert: loadLanCert(cfg.stateDir),
+        port,
+        ...(cfg.host ? { host: cfg.host } : {}),
+        advertise: cfg.advertise ? () => cfg.advertise! : lanIp,
+        log: this.log,
+      });
+      await lan.listen();
+      this.lan = lan;
+      this.log(`live: direct LAN endpoint ${lan.info()?.url ?? `port ${lan.port}`}`);
+    } catch (e) {
+      this.log(`live: can't listen on port ${port} (${(e as Error).message}); live sessions go through the relay only`);
+    }
+  }
+
+  private relayConn(c: string, label: string, grant: string): LiveConn {
+    return {
+      id: c,
+      via: "relay",
+      label,
+      grant,
+      send: (d) => void this.link.send({ t: "live", c, d }),
+      close: (code, reason) => void this.link.send({ t: "live_close", c, ...(code ? { code } : {}), ...(reason ? { reason } : {}) }),
+    };
+  }
+
   private onFrame(f: RelayFrame): void {
     for (const w of [...this.waiters]) w(f);
+    if (f.t === "hello") {
+      // Tell the relay we speak the live protocol (it re-opens any live sessions).
+      this.live.detachVia("relay");
+      this.link.send({ t: "caps", live: 1 });
+    } else if (f.t === "live_open") this.live.attach(this.relayConn(f.c, f.label, f.grant));
+    else if (f.t === "live") void this.live.message(f.c, f.d).catch((e: Error) => this.log(`live: ${e.message}`));
+    else if (f.t === "live_close") this.live.detach(f.c);
+    else if (f.t === "revoked") this.live.revoke(f.grants);
     if (f.t === "req") void this.onReq(f);
     else if (f.t === "cancel") this.inflight.get(f.id)?.abort();
     else if (f.t === "error") this.log(`relay: ${f.message}`);

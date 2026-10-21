@@ -104,6 +104,10 @@ export class Shell {
     this.menu.appendChild(
       this.menuItem("midi", "MIDI controllers", () => this.router?.navigate("/settings/midi")),
     );
+    // Live VJ through a bridge (all fixtures from one place, via the relay or the LAN).
+    this.menu.appendChild(
+      this.menuItem("link", "Live via bridge", () => this.router?.navigate("/bridge")),
+    );
     // Performance (FUG-11): the live/predicted frame-budget panel + budget bar,
     // and from there device calibration + the profile manager. Always available
     // so it's discoverable (offline it shows the predicted cost model).

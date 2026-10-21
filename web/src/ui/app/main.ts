@@ -28,6 +28,7 @@ import { EffectsBrowserScreen } from "../screens/effectsBrowser";
 import { EffectDemoScreen } from "../screens/effectDemo";
 import { EffectEditorScreen } from "../screens/effectEditor";
 import { ShowModeScreen } from "../screens/showMode";
+import { BridgeLiveScreen } from "../screens/bridgeLive";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
@@ -130,6 +131,12 @@ async function main(): Promise<void> {
       // Live performance workspace (FUG-110): cue two decks + crossfade.
       shell.setChrome({ title: "Show mode", back: true, tabs: true });
       return ShowModeScreen(router);
+    })
+    .add("/bridge", () => {
+      // Live VJ through a Splanc bridge: every fixture from one session
+      // (docs/design/live-vj-relay.md).
+      shell.setChrome({ title: "Live via bridge", back: true, tabs: true });
+      return BridgeLiveScreen(router);
     })
     .add("/effects/edit/:id", (m) => {
       // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole

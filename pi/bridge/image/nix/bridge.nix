@@ -113,6 +113,9 @@ in
 
   config = {
     networking.hostName = lib.mkDefault "splanc-bridge";
+    # The app's direct LAN endpoint for live VJ (`splanc-agent bridge --live-port`,
+    # default 8443; docs/design/live-vj-relay.md). TLS + a ticket minted via the relay.
+    networking.firewall.allowedTCPPorts = [ 8443 ];
 
     # Nobody logs in: no passwords anywhere. SSH (root, key-only) exists only when
     # the boot partition carries an authorized_keys file (see services.openssh).

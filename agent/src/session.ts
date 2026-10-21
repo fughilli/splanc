@@ -208,6 +208,20 @@ export class DeviceSession {
   /** The player's last-reported effect framerate (FUG-82 autoscaler; 0 = unknown).
    * Ramps never stream uniforms faster than the player renders. */
   private playerFps = 0;
+  /** The player's last fps_state (FUG-82), and who wants each one (the live mux
+   * forwards them to app sessions). */
+  private lastFps: FpsStateMessage | null = null;
+  private readonly fpsSubs = new Set<(st: FpsStateMessage) => void>();
+  /**
+   * A live performer's show lock (docs/design/live-vj-relay.md, "Arbitration"):
+   * while set, every mutating method refuses with a ToolError naming the holder,
+   * except calls made through {@link asLive} with the lock's key. Reads still work.
+   */
+  liveLock: { by: string; key: object } | null = null;
+  private liveKey: object | null = null;
+  /** Bumped whenever an effect is (de)activated through this session, so caches
+   * of the active effect's uniform manifest (the live mux's) know to re-read it. */
+  effectGen = 0;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
@@ -243,10 +257,28 @@ export class DeviceSession {
     this.client.onFpsState((st) => {
       if (st.aborted) this.parked = { ...st, at: performance.now() };
       if (st.currentFps > 0) this.playerFps = st.currentFps;
+      this.lastFps = st;
+      for (const fn of this.fpsSubs) fn(st);
     });
     this.client.onPerfReport((r) => {
       if ((r.currentFps ?? 0) > 0) this.playerFps = r.currentFps!;
     });
+  }
+
+  /** The player's framerate as last reported (fps_state or a perf report; 0 = unknown),
+   * and its last fps_state (null until one arrives). */
+  get renderFps(): number {
+    return this.playerFps;
+  }
+
+  get fpsState(): FpsStateMessage | null {
+    return this.lastFps;
+  }
+
+  /** Every fps_state the player pushes (autoscaler steps, aborts); returns unsubscribe. */
+  onFps(fn: (st: FpsStateMessage) => void): () => void {
+    this.fpsSubs.add(fn);
+    return () => this.fpsSubs.delete(fn);
   }
 
   /** Whether rollback() has an earlier effect to restore (else it turns the
@@ -254,6 +286,30 @@ export class DeviceSession {
   get canRestorePrevious(): boolean {
     const p = this.previous;
     return p !== null && (Boolean(p.onDevice && this.decksUsable()) || Boolean(p.fxb));
+  }
+
+  /** Call a mutating method on behalf of the holder of `key` (the live mux). The
+   * guard runs synchronously at each method's start, so `fn` must call the method
+   * directly (not after an await). */
+  asLive<T>(key: object, fn: () => T): T {
+    const prev = this.liveKey;
+    this.liveKey = key;
+    try {
+      return fn();
+    } finally {
+      this.liveKey = prev;
+    }
+  }
+
+  /** Refuse a mutation while someone else holds the show lock. */
+  private assertUnlocked(): void {
+    const l = this.liveLock;
+    if (l && l.key !== this.liveKey) {
+      throw new ToolError(
+        `${this.client.welcome?.deviceName || "this player"} is being performed live (Show Mode lock held by ` +
+          `"${l.by}"); it can't be changed until they release it. Reads still work; ask the user.`,
+      );
+    }
   }
 
   /** Run `fn` after every earlier request on this session has settled. */
@@ -444,6 +500,7 @@ export class DeviceSession {
    * set by name — the rest stay unset in the keypoint) as keypoint `name`.
    * Overwrites an existing keypoint of that name. */
   async saveKeypoint(name: string, values?: Record<string, UniformInput>, deckArg?: number): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
     this.requireKeypoints();
     const deck = deckArg ?? this.liveDeck();
     if (!name.trim() || new TextEncoder().encode(name).length > 32) {
@@ -459,6 +516,7 @@ export class DeviceSession {
   }
 
   async deleteKeypoint(name: string, deck?: number): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
     this.requireKeypoints();
     return DeviceSession.keypointList(
       await this.rpc<KeypointListReply>({ type: "delete_keypoint", name, deck: deck ?? this.liveDeck() }, "keypoint_list"),
@@ -480,6 +538,7 @@ export class DeviceSession {
     weights: Record<string, number>,
     opts: { seconds?: number | undefined; colorMode?: "rgb" | "hsv" | undefined; commit?: boolean | undefined; deck?: number | undefined } = {},
   ): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
     this.requireKeypoints();
     const entries = Object.entries(weights).filter(([, w]) => w > 0);
     if (entries.length === 0) throw new ToolError("give at least one keypoint a positive weight");
@@ -509,6 +568,7 @@ export class DeviceSession {
   // -- control -----------------------------------------------------------------
 
   async setBrightness(level: number): Promise<number> {
+    this.assertUnlocked();
     if (!(level >= 0 && level <= 1)) throw new ToolError("level must be within 0..1");
     const w = await this.run(() => this.client.setBrightness(level));
     this.lastBrightness = (w as unknown as { brightness?: number }).brightness ?? level;
@@ -536,11 +596,21 @@ export class DeviceSession {
 
   /** Resolve + send uniform values. `commit` persists them (when supported). */
   async setUniforms(values: Record<string, UniformInput>, commit = false): Promise<UniformValueFlat[]> {
+    this.assertUnlocked();
     const a = await this.activeEffect();
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
     const wire = resolve(a.uniforms, values);
     await this.run(async () => this.sendUniforms(wire, commit));
     return wire;
+  }
+
+  /** Live uniform push (the live mux; slider drags): fire-and-forget, in order
+   * with this session's other traffic, on `deck` (default: the live deck).
+   * `commit` persists them where the firmware understands it (false while
+   * dragging, true on release). */
+  async sendLiveUniforms(values: UniformValueFlat[], commit: boolean, deck?: Deck): Promise<void> {
+    this.assertUnlocked();
+    await this.run(async () => this.sendUniforms(values, commit, deck ?? this.liveDeck()));
   }
 
   /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
@@ -577,6 +647,7 @@ export class DeviceSession {
     seconds: number,
     opts: { hz?: number; sleep?: (ms: number) => Promise<void> } = {},
   ): Promise<{ steps: number; final: UniformValueFlat[] }> {
+    this.assertUnlocked();
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const a = await this.activeEffect();
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
@@ -627,6 +698,7 @@ export class DeviceSession {
    * rollback target. `compiled` skips the compile when the caller already has
    * this player's build. */
   async deployEffect(effectId: string, source: string, activate: boolean, compiled?: CompileOutcome) {
+    this.assertUnlocked();
     const c = compiled ?? (await this.compile(source));
     if (!c.ok) {
       const d = c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n");
@@ -636,6 +708,7 @@ export class DeviceSession {
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
       this.parked = null;
+      this.effectGen++;
       const outgoing = this.current ?? (wasLive === 1 ? await this.deviceHeld(1) : null);
       // Deck A was just overwritten; an outgoing effect on deck B is still there.
       this.previous = outgoing ? { ...outgoing, onDevice: outgoing.deck === 1 } : null;
@@ -651,6 +724,8 @@ export class DeviceSession {
    * loaded under it — on the live deck, or on the other deck when that is where
    * it is parked (then the crossfade snaps to it). */
   async setEffect(effectId: string): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.effectGen++;
     const id = effectId === "off" ? "" : effectId;
     this.parked = null;
     if (id === "") {
@@ -686,6 +761,8 @@ export class DeviceSession {
    * bytecode to deck A, then its last-known uniform values (the defaults where
    * none were set). */
   async rollback(seconds = 0): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    this.effectGen++;
     const prev = this.previous;
     this.parked = null;
     if (prev?.onDevice && this.decksUsable()) {
@@ -830,7 +907,9 @@ export class DeviceSession {
     uniforms?: Record<string, UniformInput>,
     opts: { reuseLoaded?: boolean } = {},
   ): Promise<CueResult> {
+    this.assertUnlocked();
     this.requireDecks();
+    this.effectGen++;
     const st = await this.deckStatus();
     // Nothing running: there is nothing to fade from, so the effect goes onto deck
     // A (the persisted one) and simply starts.
@@ -902,6 +981,65 @@ export class DeviceSession {
     };
   }
 
+  /**
+   * The live mux's crossfader (a fader drag): set the position at once, keeping
+   * this session's deck state in step with crossfade_to's — the side the fader
+   * is on is the live deck, and landing on the deck where the rollback target is
+   * parked swaps them, exactly like a crossfade_to that ends there. False when
+   * the firmware or this bundle has no decks.
+   */
+  async liveCrossfade(position: number, mode?: number): Promise<boolean> {
+    this.assertUnlocked();
+    if (!this.decksUsable()) return false;
+    const before = this.liveDeck();
+    await this.snapCrossfade(position, mode);
+    const now: Deck = this.crossfadePosition() >= 0.5 ? 1 : 0;
+    this.live = now;
+    if (now !== before) this.swapIfParked(now);
+    return true;
+  }
+
+  /**
+   * Show Mode's "cue onto deck X" (the live mux): upload + activate an effect on
+   * `deck` WITHOUT touching the crossfade (a performer cueing the deck that's off
+   * air must not cut to it). Deck state follows crossfade_to's model: cueing the
+   * idle deck makes the effect on the live deck the rollback target (parked,
+   * still on the device); cueing the live deck replaces it, like deploy_effect.
+   * Firmware without decks: deck 0 is a plain deploy.
+   */
+  async cueDeck(effectId: string, source: string, deck: Deck, compiled?: CompileOutcome): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
+    if (!this.decksUsable()) {
+      if (deck !== 0) this.requireDecks();
+      return this.asLiveInternal(() => this.deployEffect(effectId, source, true, compiled));
+    }
+    const c = compiled ?? (await this.compile(source));
+    if (!c.ok) {
+      const d = c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n");
+      throw new ToolError(`the effect doesn't compile:\n${d}`);
+    }
+    await this.run(() => this.client.submitEffect(effectId, c.fxb, true, deck));
+    this.effectGen++;
+    const incoming: Deployed = { effectId, fxb: c.fxb, deck, source, uniforms: c.uniforms, values: new Map() };
+    const cur = this.current;
+    if (deck === this.liveDeck()) {
+      // The live deck was overwritten; a parked rollback target on the other deck stays.
+      this.previous = cur && cur.deck === deck ? { ...cur, onDevice: false } : this.previous;
+    } else {
+      // The live deck keeps running: it is the rollback target, parked on the device.
+      this.previous = cur && cur.deck !== deck ? { ...cur, onDevice: true } : this.previous;
+    }
+    this.current = incoming;
+    await this.sendActivationValues(incoming);
+    return { effect_id: effectId, deck: deck === 1 ? "B" : "A", bytecode_bytes: c.bytecodeBytes, uniforms: c.uniforms.map((u) => u.name) };
+  }
+
+  /** Call a guarded method from inside an already-authorized one (the guard's key is
+   * only set synchronously, so a nested call after an await re-supplies it). */
+  private asLiveInternal<T>(fn: () => T): T {
+    return this.liveLock ? this.asLive(this.liveLock.key, fn) : fn();
+  }
+
   /** Set the crossfade at once (and wait for the device's ack). */
   async snapCrossfade(position: number, mode?: number): Promise<void> {
     const m = mode ?? this.crossfadeMode();
@@ -931,6 +1069,7 @@ export class DeviceSession {
       sleep?: (ms: number) => Promise<void>;
     } = {},
   ): Promise<{ from: number; to: number; seconds: number; steps: number }> {
+    this.assertUnlocked();
     this.requireDecks();
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const mode = opts.mode ?? this.crossfadeMode();
@@ -1099,6 +1238,7 @@ export class DeviceSession {
    * 5% and back `times` times, then the previous brightness is restored. Works over
    * any running effect (SetBrightness is runtime-only). */
   async identify(times = 3, opts: { sleep?: (ms: number) => Promise<void> } = {}): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const before = this.lastBrightness ?? (this.welcome as unknown as { brightness?: number }).brightness ?? 1;
     const high = Math.max(before, 0.6);
@@ -1146,6 +1286,7 @@ export class DeviceSession {
     fps: number,
     opts: { format?: TextureFormat; maxFrames?: number } = {},
   ): Promise<Record<string, unknown>> {
+    this.assertUnlocked();
     const tex = (await this.listTextures()).find((t) => t.index === texIndex);
     if (!tex) throw new ToolError(`the active effect has no texture ${texIndex}`);
     this.stopTexture(texIndex);

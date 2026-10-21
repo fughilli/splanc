@@ -632,6 +632,24 @@ export class Hub {
     s.close();
   }
 
+  /** This player's session if one was opened (connected or reconnecting), without dialing. */
+  openSession(id: string): DeviceSession | undefined {
+    return this.sessions.get(id);
+  }
+
+  /** Drop a session that stopped reconnecting (the player rebooted past its retry
+   * budget, or moved) and dial it again; the live mux calls this for a player whose
+   * socket has been down a while. The old session goes through forgetSession, so its
+   * heartbeat stops too. Callers holding the old session see it closed. */
+  async reopen(id: string): Promise<DeviceSession> {
+    const old = this.sessions.get(id);
+    for (const [k, v] of [...this.sessions]) if (v === old) this.sessions.delete(k);
+    if (old) this.forgetSession(old);
+    const p = this.registry.get(id);
+    if (!p) throw new ToolError(`no player ${id}`);
+    return this.session(p);
+  }
+
   toolchainNote(id: string): string | undefined {
     return this.choice.get(id)?.note;
   }

@@ -235,7 +235,7 @@ export class RelayHost {
 
   /** Drop every bridge socket (tests: simulate a relay outage). */
   dropBridgeSockets(): void {
-    for (const i of this.instances.values()) for (const s of i.state.sockets) s.ws?.terminate();
+    for (const i of this.instances.values()) for (const s of i.state.sockets) if (s.tags.includes("bridge")) s.ws?.terminate();
   }
 
   // -- Durable Objects --------------------------------------------------------------------

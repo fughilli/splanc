@@ -169,7 +169,17 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
   const link = new RelayLink({ relay, identity, log });
   const status = flag(p, "status");
   const control = flag(p, "control");
-  const bridge = new LanBridge({ link, hub, root, log, echo: log, ...(status ? { statusPath: status } : {}), ...(control ? { controlPath: control } : {}) });
+  const livePort = flag(p, "live-port");
+  const bridge = new LanBridge({
+    link,
+    hub,
+    root,
+    log,
+    echo: log,
+    ...(status ? { statusPath: status } : {}),
+    ...(control ? { controlPath: control } : {}),
+    live: { stateDir: flag(p, "state-dir") ?? defaultStateDir(), ...(livePort !== undefined ? { port: Number(livePort) } : {}) },
+  });
   if (!relay) {
     // Stay up (a service would only crash-loop) and say what's missing.
     await bridge.start({ connect: false });
@@ -196,6 +206,7 @@ const CTL: Record<string, string> = {
   "revoke-all": "revoke_all",
   identify: "identify",
   status: "status",
+  live: "live",
 };
 
 /** `splanc-agent bridge-ctl <new-code|revoke-all|identify|status>`: talk to a running bridge. */

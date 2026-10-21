@@ -57,6 +57,8 @@ Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
   bridge [--relay <url>]               serve this LAN's players to cloud agents through a relay
                                        (default: $SPLANC_RELAY, else the Splanc relay)
          [--state-dir d] [--status f] [--control sock]   (plus --host/--no-mdns/--pin as above)
+         [--live-port 8443]            the app's direct LAN endpoint for live VJ (0 = relay only;
+                                       docs/design/live-vj-relay.md)
   bridge-ctl new-code|revoke-all|identify|status   control a running bridge (its unix socket)
   relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]
                                        host the relay yourself (e.g. behind tailscale funnel)

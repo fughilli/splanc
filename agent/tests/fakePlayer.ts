@@ -153,6 +153,11 @@ export class FakePlayer {
     await new Promise<void>((r) => this.server.close(() => r()));
   }
 
+  /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
+  pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; aborted: boolean }): void {
+    for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
+  }
+
   types(): string[] {
     return this.received.map((m) => m.type);
   }

@@ -106,7 +106,73 @@ export interface ErrorFrame {
   message: string;
 }
 
-export type RelayFrame = HelloFrame | StateFrame | ReqFrame | CancelFrame | ErrorFrame;
+// -- live sessions (docs/design/live-vj-relay.md) --------------------------------------
+// An app (the Splanc PWA) opens `GET <relay>/live` as a WebSocket, authenticated by
+// its bearer token in the subprotocol list. The relay authenticates it and passes
+// every text message through verbatim, both ways, tagged with a connection id; the
+// bridge speaks the live protocol (agent/src/bridge/liveProtocol.ts) with the app.
+
+/** The subprotocol a live socket negotiates (the relay and the bridge's LAN port). */
+export const LIVE_SUBPROTOCOL = "splanc-live.v1";
+/** The credential rides in the subprotocol list (browsers can't set headers on a
+ * WebSocket): `["splanc-live.v1", "bearer.<token>"]`. */
+export const LIVE_BEARER_PREFIX = "bearer.";
+/** At most this many live sockets per bridge (each keeps the object awake while busy). */
+export const MAX_LIVE_CLIENTS = 8;
+/** A live message larger than this is refused (an effect's source fits easily). */
+export const MAX_LIVE_MESSAGE = 256 * 1024;
+/** Per live socket: a sustained rate above this many messages/s is dropped (the
+ * app coalesces controls to <= 30 Hz; this protects the free-tier budget). */
+export const LIVE_MAX_RATE_HZ = 60;
+/** Close codes on a live socket. */
+export const LIVE_CLOSE_REVOKED = 4003; // the credential was revoked
+export const LIVE_CLOSE_TOO_MANY = 4004; // MAX_LIVE_CLIENTS
+export const LIVE_CLOSE_BRIDGE = 4005; // the bridge closed this session
+
+/** relay -> bridge: an app opened a live session (also re-sent for every open live
+ * socket after the bridge reconnects). */
+export interface LiveOpenFrame {
+  t: "live_open";
+  c: string;
+  /** The credential's label / client name, for the bridge's log and lock owner. */
+  label: string;
+  /** The credential's grant id (opaque), so the bridge can tie LAN tickets to it. */
+  grant: string;
+}
+
+/** Either direction: one live-protocol message for connection `c`, verbatim. */
+export interface LiveFrame {
+  t: "live";
+  c: string;
+  d: string;
+}
+
+/** Either direction: connection `c` ended (relay -> bridge: the app went away;
+ * bridge -> relay: close the app's socket). */
+export interface LiveCloseFrame {
+  t: "live_close";
+  c: string;
+  code?: number;
+  reason?: string;
+}
+
+/** relay -> bridge: these grants were revoked (their live sessions and LAN tickets end). */
+export interface RevokedFrame {
+  t: "revoked";
+  /** Grant ids, or ["*"] for every credential. */
+  grants: string[];
+}
+
+export type RelayFrame =
+  | HelloFrame
+  | StateFrame
+  | ReqFrame
+  | CancelFrame
+  | ErrorFrame
+  | LiveOpenFrame
+  | LiveFrame
+  | LiveCloseFrame
+  | RevokedFrame;
 
 // -- bridge -> relay -----------------------------------------------------------------
 
@@ -139,4 +205,20 @@ export interface RevokeAllFrame {
   t: "revoke_all";
 }
 
-export type BridgeFrame = ResFrame | ChunkFrame | EndFrame | NewCodeFrame | RevokeAllFrame;
+/** bridge -> relay, once per connection right after `hello`: what this bridge speaks
+ * beyond the MCP tunnel. A relay that never hears it treats the bridge as MCP-only
+ * (an older bridge), and answers `/live` with 501. */
+export interface CapsFrame {
+  t: "caps";
+  live?: number;
+}
+
+export type BridgeFrame =
+  | ResFrame
+  | ChunkFrame
+  | EndFrame
+  | NewCodeFrame
+  | RevokeAllFrame
+  | CapsFrame
+  | LiveFrame
+  | LiveCloseFrame;
