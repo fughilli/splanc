@@ -186,7 +186,8 @@ stored as SHA-256 in `<state dir>/live-clients.json` (mode 0600), one per `clien
   every other writer is refused with the holder's name — other live apps get
   `err locked`, MCP tools get a ToolError ("… is being performed live (Show Mode lock held
   by "Kevin's iPhone") …") from `DeviceSession.assertUnlocked`, which every mutating method
-  calls. Reads (list, effect, perf, preview) still work. A lock outlives its holder's
+  calls — including `crossfade_to`'s cue and fade and `rollback_effect`. Reads (list,
+  list_decks, effect, perf, preview) still work. A lock outlives its holder's
   disconnect by 30 s (a phone switching from Wi-Fi to cellular reclaims it with its
   `client_id`), then releases.
 
@@ -196,6 +197,14 @@ stored as SHA-256 in `<state dir>/live-clients.json` (mode 0600), one per `clien
   `fps_state{aborted}` — the player parked the effect because it can't hold the floor or a
   pinned rate — is pushed to every app at once as `{"t":"fps",…}`; the screen says so and
   marks the fixture.
+- **One deck model.** The live mux and the agent tools share `DeviceSession`'s deck state
+  (which deck is live, the crossfade position, the effect on each deck and the parked rollback
+  target). A performer's **Cue A/B** is `cueDeck` (upload + activate on that deck without
+  touching the crossfade; cueing the idle deck parks the live effect as the rollback target, as
+  `crossfade_to`'s cue does) and the crossfader is `liveCrossfade` (the side it rests on is the
+  live deck; landing on the parked deck swaps, like a `crossfade_to` that ends there). So after a
+  performer cues B and fades to it, `list_decks` says B is live and `rollback_effect` fades back
+  to A — tested in `//agent:live_e2e_test`.
 
 ### Multi-fixture sync
 

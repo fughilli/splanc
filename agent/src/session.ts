@@ -634,7 +634,7 @@ export class DeviceSession {
    * defaults), so a freshly activated effect renders black until something sets
    * them. Send each declared uniform's value — its default, or `known` — right
    * after the submit, uncommitted (as the web app does after its own submit). */
-  private async sendActivationValues(d: Pick<Deployed, "uniforms">, known?: Map<number, number[]>, deck = 0): Promise<void> {
+  private async sendActivationValues(d: Deployed, known?: Map<number, number[]>): Promise<void> {
     const values = d.uniforms.map((u) => ({ slot: u.slot, value: known?.get(u.slot) ?? u.default }));
     if (values.length === 0) return;
     await this.run(async () => this.sendUniforms(values, false, d.deck));
