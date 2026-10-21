@@ -744,9 +744,9 @@ The intrinsics all take and return `int`:
 
 ## 9. Protocol and agent
 
-Field numbers are additive. `ClientMessage` 46–47 and `ServerMessage` 25–26
-are left free for FUG-82 (framerate autoscale, PR #55), which is being
-reconciled in parallel. The driver VM arms take the next numbers.
+Field numbers are additive. FUG-82 (framerate autoscale, #55) took
+`ClientMessage` 46 and `ServerMessage` 25 while this was in flight; 47 and 26
+stay unused. The driver VM arms take the next numbers.
 
 | Message | Arm | Notes |
 |---|---|---|

@@ -400,7 +400,7 @@ DMA/RMT transmit time (measured as one lumped constant, not per-LED-attributed).
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">overruns</span></code></p></td>
 <td><p>count</p></td>
-<td><p>frames whose <code class="docutils literal notranslate"><span class="pre">frame_cycles</span> <span class="pre">+</span> <span class="pre">show_cycles</span></code> exceeded the 33 ms budget, since last drain</p></td>
+<td><p>frames whose <code class="docutils literal notranslate"><span class="pre">frame_cycles</span> <span class="pre">+</span> <span class="pre">show_cycles</span></code> exceeded the current frame budget (<code class="docutils literal notranslate"><span class="pre">cpu_hz</span> <span class="pre">/</span> <span class="pre">current_fps</span></code>, FUG-82), since last drain</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">dropped_frames</span></code></p></td>
 <td><p>count</p></td>
@@ -421,11 +421,70 @@ DMA/RMT transmit time (measured as one lumped constant, not per-LED-attributed).
 because the cost model (below) is expressed in cycles/opcode. The app converts
 to ms with the known core clock (≈160 MHz → 1 ms ≈ 160 000 cycles), carried
 once in the stream header (<code class="docutils literal notranslate"><span class="pre">cpu_hz</span></code>) so we never hardcode it.</p>
-<p>The 33 ms budget = 1 / 30 fps. `headroom_cycles = budget_cycles - (frame_cycles</p>
-<ul class="simple">
-<li><p>show_cycles)`; negative headroom is an overrun.</p></li>
-</ul>
+<p><code class="docutils literal notranslate"><span class="pre">headroom_cycles</span> <span class="pre">=</span> <span class="pre">budget_cycles</span> <span class="pre">-</span> <span class="pre">(frame_cycles</span> <span class="pre">+</span> <span class="pre">show_cycles)</span></code>; negative
+headroom is an overrun. Historically the budget was a fixed 33 ms (1 / 30 fps);
+with the framerate autoscaler (below) it tracks the <em>live</em> target FPS, so
+<code class="docutils literal notranslate"><span class="pre">budget_cycles</span> <span class="pre">=</span> <span class="pre">cpu_hz</span> <span class="pre">/</span> <span class="pre">current_fps</span></code> and both <code class="docutils literal notranslate"><span class="pre">budget_cycles</span></code> and the new
+<code class="docutils literal notranslate"><span class="pre">current_fps</span></code> field ride the <code class="docutils literal notranslate"><span class="pre">PerfReport</span></code>.</p>
 </section>
+</section>
+<section id="framerate-autoscaling-fug-82">
+<h2>Framerate autoscaling (FUG-82)<a class="headerlink" href="#framerate-autoscaling-fug-82" title="Link to this heading">¶</a></h2>
+<p>A fixed frame period is wrong for effects: cost varies wildly with the program
+and LED count (soft-float on the C6), so a fixed rate either wastes headroom on
+a cheap effect or starves the WiFi/BLE tasks and stutters on a heavy one. The
+render loop instead adapts the effect’s target FPS to its measured cost, driven
+by the pure <code class="docutils literal notranslate"><span class="pre">//firmware/fps</span></code> <code class="docutils literal notranslate"><span class="pre">FpsController</span></code> (host-unit-tested; integer-only,
+no f64).</p>
+<ul class="simple">
+<li><p><strong>Ladder.</strong> Targets live on a 5-fps grid, 25..80 fps. Discrete steps keep the
+cadence legible to the app and damp oscillation. A fresh effect starts at
+30 fps (the historical rate) and climbs when there’s headroom, so load never
+opens with a visible stutter.</p></li>
+<li><p><strong>5% headroom.</strong> A frame <em>misses</em> when its cost (<code class="docutils literal notranslate"><span class="pre">max(frame_cycles,</span> <span class="pre">show_cycles)</span></code> in µs — render and the async strip transmit overlap) exceeds 95% of the current target’s period — we insist on ≥5% of every
+period left for the other threads.</p></li>
+<li><p><strong>x/N window.</strong> Over a sliding window of 30 frames (~1 s), if <strong>more than</strong>
+a quarter miss, drop one rung. A clean window whose <em>worst</em> frame would still
+fit the next rung’s 95% budget steps up one rung (checking the worst frame,
+not the mean, keeps it from stepping up then immediately back down).</p></li>
+<li><p><strong>Abort.</strong> At the floor (25 fps) — or an app-pinned rate — a still-failing
+window means the effect can’t run within budget: the render loop <strong>parks</strong> the
+effect (freeing the CPU) and the loop task pushes an <code class="docutils literal notranslate"><span class="pre">fps_state{aborted=true}</span></code>
+so the app can tell the user.</p></li>
+<li><p><strong>Consistent FPS.</strong> The render task sleeps <code class="docutils literal notranslate"><span class="pre">period</span> <span class="pre">−</span> <span class="pre">work</span></code> (not a fixed delay
+<em>after</em> the work), so successive frame starts land one period apart regardless
+of how long a frame took — the whole point being a <em>consistent</em> rate. It never
+sleeps less than <code class="docutils literal notranslate"><span class="pre">max(1</span> <span class="pre">ms,</span> <span class="pre">work</span> <span class="pre">/</span> <span class="pre">19)</span></code>: the render task outranks the network
+task, so even a frame that overran its period cedes ≥ 5% of the wall clock to
+WiFi/TLS while the window decides.</p></li>
+<li><p><strong>Decks + crossfade.</strong> The cost fed to the controller is the whole frame —
+<code class="docutils literal notranslate"><span class="pre">lm_fx_update</span></code> / <code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code> drive <em>every</em> rendering deck and blend them by
+the crossfade — so a two-deck show is costed as one frame. The search restarts
+(default or pinned rung) whenever what renders changes: a load, clear or
+(de)activation on either deck. An abort parks every rendering deck; they stay
+loaded and <code class="docutils literal notranslate"><span class="pre">set_effect</span></code> resumes them. (Deck A’s persisted selection is left as
+is, so a reboot resumes the effect and the autoscaler parks it again within a
+couple of seconds.)</p></li>
+<li><p><strong>App override.</strong> <code class="docutils literal notranslate"><span class="pre">set_fps{target_fps}</span></code> pins an exact rate (snapped to the
+ladder) and stops autoscaling; <code class="docutils literal notranslate"><span class="pre">target_fps</span> <span class="pre">=</span> <span class="pre">0</span></code> returns to auto. A pinned rate
+the device can’t hold aborts rather than silently dropping — the user asked
+for a rate this effect can’t achieve, so we say so instead of ignoring it.</p></li>
+<li><p><strong>Hold (<code class="docutils literal notranslate"><span class="pre">no_abort</span></code>).</strong> <code class="docutils literal notranslate"><span class="pre">set_fps{no_abort:</span> <span class="pre">true}</span></code> keeps the rung instead of
+parking (benchmark/profiling clients: the HITL <code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> pins 30 fps + hold so
+its up-to-~130 ms/frame calibration programs are measured, at the golden’s
+historical cadence). Pin and hold are runtime-only and survive effect reloads.</p></li>
+</ul>
+<p>The controller is measured <strong>every</strong> effect frame regardless of the perf tier
+(the cost is the same two CSR reads the profiler already deemed negligible); the
+perf <em>ring</em> is still only filled while a perf mode is active. Firmware with the
+autoscaler advertises the <code class="docutils literal notranslate"><span class="pre">fps</span></code> feature. <code class="docutils literal notranslate"><span class="pre">set_fps</span></code> replies
+<code class="docutils literal notranslate"><span class="pre">fps_state{target_fps,</span> <span class="pre">current_fps,</span> <span class="pre">min_fps,</span> <span class="pre">max_fps,</span> <span class="pre">auto,</span> <span class="pre">aborted,</span> <span class="pre">no_abort}</span></code>;
+the same message is pushed unsolicited on an abort over the open session (the
+same push path as the perf report), and the web app toasts it wherever the user
+is. The agent’s <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code> reports <code class="docutils literal notranslate"><span class="pre">current_fps</span></code> and calls an effect “over
+budget” only when the player parked it or its mean cost can’t hold the 25-fps
+floor (an overrun above the floor is just the autoscaler stepping down), and its
+uniform ramps never stream faster than the player’s reported framerate.</p>
 <section id="cheap-sampling">
 <h3>Cheap sampling<a class="headerlink" href="#cheap-sampling" title="Link to this heading">¶</a></h3>
 <p>The instrumentation must not perturb what it measures. Rules:</p>
@@ -1278,6 +1337,9 @@ not grow. The MCP hub has the same pair: <code class="docutils literal notransla
 <li><a class="reference internal" href="#goal">Goal</a></li>
 <li><a class="reference internal" href="#metrics-collected-cheap-sampling">Metrics collected + cheap sampling</a><ul>
 <li><a class="reference internal" href="#what-the-firmware-measures">What the firmware measures</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#framerate-autoscaling-fug-82">Framerate autoscaling (FUG-82)</a><ul>
 <li><a class="reference internal" href="#cheap-sampling">Cheap sampling</a></li>
 <li><a class="reference internal" href="#rollup-vs-raw">Rollup vs raw</a></li>
 </ul>
