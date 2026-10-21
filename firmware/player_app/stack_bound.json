@@ -60,20 +60,21 @@
       "callees": ["(anonymous namespace)::bio_send", "(anonymous namespace)::bio_recv"]
     },
     {
-      "callers": "FfiBus",
-      "callees": ["(anonymous namespace)::bus_write_read", "(anonymous namespace)::bus_write"]
+      "callers": "(FfiBus|ledmapper_sensor::|sensor_ffi::(?!ops_cycles)|lm_sensor_)",
+      "callees": [
+        "(anonymous namespace)::bus_write_read",
+        "(anonymous namespace)::bus_write",
+        "ledmapper_player_ffi::sensor_ffi::ops_cycles"
+      ]
     },
     {
       "callers": "sensor_ffi::ops_cycles",
       "callees": ["(anonymous namespace)::cycles()"]
-    },
-    {
-      "callers": "ledmapper_sensor::hub::Hub",
-      "callees": ["ledmapper_player_ffi::sensor_ffi::ops_cycles"]
     }
   ],
-  "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold.",
+  "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold. s_i2c_start_end_command (IDF i2c_master): two VLAs of roundup16(0 or 1) bytes = 32 B max (disassembly: andi -16 of s2+15, s2 in {0,1}).",
   "dynamic_allocations": {
+    "s_i2c_start_end_command": 32,
     "Preferences::getString(char const*, String)": 128,
     "ppTxFragmentProc": 2400
   },
