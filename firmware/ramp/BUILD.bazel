@@ -1,0 +1,27 @@
+"""Canned interpolation profiles (docs/design/ramps.md): firmware-side ramps of
+uniforms and the FX crossfade toward a known endpoint, over a known duration,
+with a known ease — evaluated once per frame per ramp on the device, so an agent
+or the app sends ONE request instead of streaming steps.
+
+no_std, zero-dependency, integer (Q16) ease math so the per-frame cost on the
+C6 (no FPU) is a handful of integer ops per ramp plus one lerp per ramped float.
+Driven by the render loop through the player FFI (//firmware/player_app:ffi.rs);
+the keypoint morph (//firmware/keypoint) shares its eases and clock."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "ramp",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_ramp",
+    edition = "2021",
+)
+
+rust_test(
+    name = "ramp_test",
+    srcs = ["tests/ramp.rs"],
+    edition = "2021",
+    deps = [":ramp"],
+)

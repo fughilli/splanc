@@ -81,6 +81,13 @@ export class FakePlayer {
   driver: Record<string, unknown> | null = null;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
+  /** Canned ramps received ("ramps" feature; docs/design/ramps.md), in order. */
+  readonly ramps: Msg[] = [];
+  /** Ramps ended, as the device would report them: [id, "done" | "cancelled"]. */
+  readonly rampEnds: [number, string][] = [];
+  /** Don't push ramp_state DONE / CANCELLED (a link without pushes). */
+  muteRampEvents = false;
+  private running = new Map<number, { timer: ReturnType<typeof setTimeout>; kind: number; deck: number; slots: Set<number>; cut: boolean }>();
 
   /** Which TLS identity this player serves (2 = cert2.pem: "after a factory reset"). */
   identity: 1 | 2 = 1;
@@ -263,14 +270,22 @@ export class FakePlayer {
         });
       }
       case "set_uniforms": {
-        const e = this.deck((m["deck"] as number) ?? 0);
+        const d = (m["deck"] as number) ?? 0;
+        const e = this.deck(d);
         if (e) {
           for (const v of m["values"] as { slot: number; value: number[] }[]) {
+            this.cutRamps(ws, 0, d, v.slot); // a live set wins over a ramp
             e.current = e.current.filter((c) => c.slot !== v.slot).concat([v]);
           }
         }
-        return;
+        // Like the firmware: every set_uniforms is acked with playback_state.
+        return this.reply(ws, { type: "playback_state", active: true, effect: e?.id ?? "off" });
       }
+      case "ramp_uniforms":
+      case "ramp_crossfade":
+      case "cancel_ramp":
+        if (!this.features.includes("ramps")) break;
+        return this.ramp(ws, m);
       case "set_effect": {
         const d = (m["deck"] as number) ?? 0;
         const id = m["effectId"] as string;
@@ -294,6 +309,7 @@ export class FakePlayer {
             .map((d) => ({ effectId: this.deck(d)!.id, fxbBytes: 100, active: this.deckActive[d], deck: d })),
         });
       case "set_crossfade": {
+        this.cutRamps(ws, 1);
         const apply = () => {
           this.crossfade = Math.min(1, Math.max(0, m["position"] as number));
           this.crossfadeMode = (m["mode"] as number) ?? 0;
@@ -409,8 +425,83 @@ export class FakePlayer {
         return this.reply(ws, pong);
       }
       default:
-        return this.reply(ws, { type: "error", code: "unsupported", message: `fake player: ${m.type}` });
+        break;
     }
+    return this.reply(ws, { type: "error", code: "unsupported", message: `fake player: ${m.type}` });
+  }
+
+  /** The fake device clock (ms). */
+  deviceNow(): number {
+    return performance.now() + this.clockOffsetMs;
+  }
+
+  private rampEvent(ws: WebSocket, id: number, end: "done" | "cancelled", kind: number): void {
+    this.rampEnds.push([id, end]);
+    if (id && !this.muteRampEvents) this.reply(ws, { type: "ramp_state", id, state: end === "done" ? 1 : 2, kind });
+  }
+
+  /** Cancel running ramps of `kind` (0 uniforms on deck/slot, 1 the crossfade). */
+  private cutRamps(ws: WebSocket, kind: number, deck?: number, slot?: number): void {
+    for (const [id, r] of this.running) {
+      if (r.kind !== kind) continue;
+      if (kind === 0) {
+        if (r.deck !== deck || slot === undefined || !r.slots.delete(slot)) continue;
+        r.cut = true;
+        if (r.slots.size > 0) continue;
+      }
+      clearTimeout(r.timer);
+      this.running.delete(id);
+      this.rampEvent(ws, id, "cancelled", kind);
+    }
+  }
+
+  /** The canned-ramp arms: land the targets at the end (the fake has no frames). */
+  private ramp(ws: WebSocket, m: Msg): void {
+    this.ramps.push(m);
+    const id = (m["id"] as number) ?? 0;
+    if (m.type === "cancel_ramp") {
+      for (const [rid, r] of [...this.running]) {
+        if (id && rid !== id) continue;
+        clearTimeout(r.timer);
+        this.running.delete(rid);
+        this.rampEvent(ws, rid, "cancelled", r.kind);
+      }
+      return this.reply(ws, { type: "ramp_state", id, state: 2 });
+    }
+    const now = this.deviceNow();
+    const start = Number(m["startAtMs"] ?? 0) > 0 ? Number(m["startAtMs"]) : now;
+    const end = start + ((m["durationMs"] as number) ?? 0);
+    const kind = m.type === "ramp_crossfade" ? 1 : 0;
+    const deck = (m["deck"] as number) ?? 0;
+    const targets = (m["targets"] as { slot: number; value: number[] }[] | undefined) ?? [];
+    if (kind === 0) {
+      if (!this.deck(deck)) return this.reply(ws, { type: "error", code: "no_effect", message: "no effect loaded on that deck" });
+      for (const t of targets) this.cutRamps(ws, 0, deck, t.slot);
+    } else {
+      this.cutRamps(ws, 1);
+    }
+    const r = {
+      kind,
+      deck,
+      slots: new Set(targets.map((t) => t.slot)),
+      cut: false,
+      timer: setTimeout(() => {
+        this.running.delete(id);
+        if (kind === 1) {
+          this.crossfade = Math.min(1, Math.max(0, m["position"] as number));
+          this.crossfadeMode = (m["mode"] as number) ?? 0;
+          this.crossfades.push({ position: this.crossfade, mode: this.crossfadeMode, at: performance.now() });
+        } else {
+          const e = this.deck(deck);
+          for (const t of targets) {
+            if (e && r.slots.has(t.slot)) e.current = e.current.filter((c) => c.slot !== t.slot).concat([t]);
+          }
+        }
+        this.rampEvent(ws, id, r.cut ? "cancelled" : "done", kind);
+      }, Math.max(0, end - now)),
+    };
+    this.running.set(id, r);
+    this.reply(ws, { type: "ramp_state", id, state: 0, kind, startAtMs: Math.round(start), endAtMs: Math.round(end), active: this.running.size });
   }
 }
 

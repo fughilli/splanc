@@ -32,7 +32,7 @@ import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
-import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
+import { CURVES, DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
@@ -428,16 +428,36 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ values, commit, players: sel }) =>
       guard(async () => ok(await fan(sel, async (s) => ({ sent: await s.setUniforms(values, commit ?? false) })))),
   );
+  const curve = z
+    .enum(CURVES)
+    .optional()
+    .describe("Curve: linear, ease (cubic in-out), ease_in, ease_out (cubic), smoothstep");
   server.registerTool(
     "ramp_uniforms",
     {
       description:
-        "Glide uniforms to targets over `seconds` on every selected player at once (the hub interpolates at its " +
-        "stream rate, uncommitted, then commits the final values once). The way to change a mood smoothly: e.g. " +
-        "{rain: 0.8} over 20 s. Returns when the ramp is done.",
-      inputSchema: { targets: z.record(z.string(), uniformValue), seconds: z.number().min(0).max(600), players },
+        "Glide uniforms to targets over `seconds` on every selected player at once, then commit the final values. " +
+        "The way to change a mood smoothly: e.g. {rain: 0.8} over 20 s. Players advertising `ramps` run the ramp " +
+        "themselves (one request each, started together on the shared clock; nothing streams while it runs) and " +
+        "the user's live controls (app sliders, MIDI, OSC) override it at once; older firmware is stepped by the " +
+        "hub. Toggles and dropdowns switch at the end. Returns when the ramp is done (wait=false: once started).",
+      inputSchema: {
+        targets: z.record(z.string(), uniformValue),
+        seconds: z.number().min(0).max(600),
+        curve: curve.describe("Default linear"),
+        wait: z.boolean().optional(),
+        players,
+      },
     },
-    ({ targets, seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rampUniforms(targets, seconds)))),
+    ({ targets, seconds, curve: c, wait, players: sel }) =>
+      guard(async () => {
+        const t0 = seconds > 0 ? await hub.rampStart(sel) : undefined;
+        return ok(
+          await fan(sel, (s) =>
+            s.rampUniforms(targets, seconds, { ...(c ? { curve: c } : {}), ...(t0 !== undefined ? { t0 } : {}), ...(wait === false ? { wait } : {}) }),
+          ),
+        );
+      }),
   );
 
   // -- uniform keypoints -----------------------------------------------------------------
@@ -474,20 +494,22 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     "recall_keypoint",
     {
       description:
-        "Move the active effect to a saved keypoint, morphing there over `seconds` on the device (0 = jump). " +
-        "Live only unless commit=true (persists across reboots).",
+        "Move the active effect to a saved keypoint, morphing there over `seconds` on the device (0 = jump; " +
+        "several players start together). Live only unless commit=true (persists across reboots).",
       inputSchema: {
         name: z.string().min(1),
         seconds: z.number().min(0).max(600).optional(),
+        curve: curve.describe("Default smoothstep (players advertising `ramps`; older ones always smoothstep)"),
         commit: z.boolean().optional(),
         deck,
         players,
       },
     },
-    ({ name, seconds, commit, deck: d, players: sel }) =>
-      guard(async () =>
-        ok(await fan(sel, (s) => s.blendKeypoints({ [name]: 1 }, { seconds, commit, deck: d }))),
-      ),
+    ({ name, seconds, curve: c, commit, deck: d, players: sel }) =>
+      guard(async () => {
+        const t0 = (seconds ?? 0) > 0 ? await hub.rampStart(sel) : undefined;
+        return ok(await fan(sel, (s) => s.blendKeypoints({ [name]: 1 }, { seconds, commit, deck: d, curve: c, t0 })));
+      }),
   );
   server.registerTool(
     "blend_keypoints",
@@ -495,20 +517,25 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Blend up to 4 saved keypoints by weight (normalised) — a position between known-good looks, computed on " +
         "the device per uniform: numbers interpolate, colours blend in RGB or HSV (shortest hue), toggles and " +
-        "dropdowns take the heaviest keypoint's value. `seconds` morphs there from the current look.",
+        "dropdowns take the heaviest keypoint's value. `seconds` morphs there from the current look (on the " +
+        "device; several players start together).",
       inputSchema: {
         weights: z.record(z.string(), z.number().min(0)),
         seconds: z.number().min(0).max(600).optional(),
+        curve: curve.describe("Default smoothstep (players advertising `ramps`; older ones always smoothstep)"),
         color_mode: z.enum(["rgb", "hsv"]).optional(),
         commit: z.boolean().optional(),
         deck,
         players,
       },
     },
-    ({ weights, seconds, color_mode, commit, deck: d, players: sel }) =>
-      guard(async () =>
-        ok(await fan(sel, (s) => s.blendKeypoints(weights, { seconds, colorMode: color_mode, commit, deck: d }))),
-      ),
+    ({ weights, seconds, curve: c, color_mode, commit, deck: d, players: sel }) =>
+      guard(async () => {
+        const t0 = (seconds ?? 0) > 0 ? await hub.rampStart(sel) : undefined;
+        return ok(
+          await fan(sel, (s) => s.blendKeypoints(weights, { seconds, colorMode: color_mode, commit, deck: d, curve: c, t0 })),
+        );
+      }),
   );
   server.registerTool(
     "get_keypoint",
@@ -846,7 +873,11 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "it again swaps back; after a deploy it is re-uploaded. With nothing to restore the effect is turned off.",
       inputSchema: { seconds: z.number().min(0).max(600).optional(), players },
     },
-    ({ seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rollback(seconds ?? 0)))),
+    ({ seconds, players: sel }) =>
+      guard(async () => {
+        const t0 = (seconds ?? 0) > 0 ? await hub.rampStart(sel) : undefined;
+        return ok(await fan(sel, (s) => s.rollback(seconds ?? 0, t0)));
+      }),
   );
   server.registerTool(
     "crossfade_to",
@@ -855,7 +886,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "Crossfade smoothly from the running effect to another, on every selected player together. The new effect " +
         "(source, or effect_id of one compiled/deployed this session, or the id of the effect already waiting on " +
         "the idle deck) is loaded onto the idle FX deck, then the device blends A<->B over `seconds` with the " +
-        "given curve; several players share one clock and fade in lockstep. The outgoing effect stays loaded on " +
+        "given curve; several players share one clock and fade in lockstep (players advertising `ramps` run the " +
+        "fade themselves from one request; a move of the app's crossfader takes over). The outgoing effect stays loaded on " +
         "its deck: rollback_effect fades back to it. Frame cost is checked first like deploy_effect (both effects " +
         "render during the fade). Deck B is runtime-only: after a reboot the player resumes deck A's effect. " +
         "library_id fades to an effects-library entry (search_effects) instead of source.",
@@ -864,7 +896,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         source: z.string().optional(),
         library_id: z.string().optional(),
         seconds: z.number().min(0).max(600).optional().describe("Fade length, s (default 5)"),
-        curve: z.enum(["linear", "ease", "ease_in", "ease_out"]).optional().describe("Default ease (smoothstep)"),
+        curve: curve.describe("Default ease (cubic in-out)"),
         color_mode: z.enum(["rgb", "hsv"]).optional().describe("Blend colour space (default rgb)"),
         uniforms: z.record(z.string(), uniformValue).optional().describe("Start values for the incoming effect"),
         force: z.boolean().optional(),

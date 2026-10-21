@@ -64,6 +64,9 @@ import {
   type SensorCalibration,
   type I2cScanResultMessage,
   type DriverStateMessage,
+  flatRampState,
+  RAMP_STARTED,
+  type RampStateMessage,
   type UniformValueFlat,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
@@ -273,6 +276,11 @@ export class LedMapperClient {
   // unsolicited push when the player parks an effect it can't run within budget,
   // so — like perf_report — it fans out rather than going to a single waiter.
   private fpsSubs = new Set<(s: FpsStateMessage) => void>();
+
+  // ramp_state subscribers (the "ramps" feature): ramp_state is the STARTED reply
+  // to ramp_uniforms / ramp_crossfade AND an unsolicited DONE / CANCELLED push,
+  // so it fans out; only a STARTED frame resolves a pending request.
+  private rampSubs = new Set<(s: RampStateMessage) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -645,6 +653,66 @@ export class LedMapperClient {
     )) as unknown as WelcomeMessage;
   }
 
+  /** Ramp the crossfade ON THE DEVICE (firmware advertising "ramps"): from where
+   * it is to `position` over `durationMs` with `ease` (wire value), optionally at
+   * a device-clock `startAtMs`. One request — no stream; a later set_crossfade
+   * (a fader move) cancels it. Reply: ramp_state STARTED (with the schedule). */
+  async rampCrossfade(
+    position: number,
+    durationMs: number,
+    opts: { mode?: number; ease?: number; startAtMs?: number; id?: number } = {},
+  ): Promise<RampStateMessage> {
+    const r = await this.request(
+      {
+        type: "ramp_crossfade",
+        position: Math.min(1, Math.max(0, position)),
+        durationMs: Math.max(0, Math.round(durationMs)),
+        mode: opts.mode ?? 0,
+        ease: opts.ease ?? 1,
+        ...(opts.startAtMs ? { startAtMs: Math.round(opts.startAtMs) } : {}),
+        ...(opts.id ? { id: opts.id } : {}),
+      } as unknown as ClientMessage,
+      "ramp_state",
+    );
+    return flatRampState(r as never);
+  }
+
+  /** Ramp uniforms ON THE DEVICE (firmware advertising "ramps"): each target from
+   * its current value over `durationMs` with `ease`. A later set_uniforms on a
+   * uniform cancels its ramp. Reply: ramp_state STARTED. */
+  async rampUniforms(
+    targets: UniformValueFlat[],
+    durationMs: number,
+    opts: { deck?: number; ease?: number; startAtMs?: number; id?: number; commit?: boolean } = {},
+  ): Promise<RampStateMessage> {
+    const r = await this.request(
+      {
+        type: "ramp_uniforms",
+        targets,
+        durationMs: Math.max(0, Math.round(durationMs)),
+        ease: opts.ease ?? 0,
+        ...(opts.deck ? { deck: opts.deck } : {}),
+        ...(opts.startAtMs ? { startAtMs: Math.round(opts.startAtMs) } : {}),
+        ...(opts.id ? { id: opts.id } : {}),
+        ...(opts.commit !== undefined ? { commit: opts.commit } : {}),
+      } as unknown as ClientMessage,
+      "ramp_state",
+    );
+    return flatRampState(r as never);
+  }
+
+  /** Stop ramps where they are: `id`, or every ramp for 0. Fire-and-forget. */
+  cancelRamp(id = 0): boolean {
+    return this.send({ type: "cancel_ramp", ...(id ? { id } : {}) } as unknown as ClientMessage);
+  }
+
+  /** Subscribe to ramp_state frames (STARTED replies and DONE / CANCELLED pushes).
+   * Returns an unsubscribe fn. */
+  onRampState(fn: (s: RampStateMessage) => void): () => void {
+    this.rampSubs.add(fn);
+    return () => this.rampSubs.delete(fn);
+  }
+
   /** Fire-and-forget crossfade (a fader drag at MIDI rate: no single-flight
    * request, the last one wins — like setUniforms). */
   sendCrossfade(position: number, mode = 0): boolean {
@@ -712,6 +780,9 @@ export class LedMapperClient {
       seconds: opts.seconds ?? 0,
       colorMode: opts.colorMode ?? 0,
       ...(opts.commit ? { commit: true } : {}),
+      ...(opts.ease !== undefined ? { ease: opts.ease } : {}),
+      ...(opts.startAtMs ? { startAtMs: Math.round(opts.startAtMs) } : {}),
+      ...(opts.id ? { id: opts.id } : {}),
     } as unknown as ClientMessage);
   }
 
@@ -1225,6 +1296,18 @@ export class LedMapperClient {
       if (fw) {
         this.waiters.delete("fps_state");
         fw.resolve(msg);
+      }
+      return;
+    }
+    if ((msg.type as string) === "ramp_state") {
+      // Subscribers first; only the STARTED ack answers a ramp request (a DONE /
+      // CANCELLED push of an earlier ramp must not resolve a newer request).
+      const state = flatRampState(msg as never);
+      for (const fn of this.rampSubs) fn(state);
+      const rw = state.state === RAMP_STARTED ? this.waiters.get("ramp_state") : undefined;
+      if (rw) {
+        this.waiters.delete("ramp_state");
+        rw.resolve(msg);
       }
       return;
     }

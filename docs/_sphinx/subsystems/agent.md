@@ -66,13 +66,20 @@ remote MCP connector paired with a code on the bridge's screen
   `delete_keypoint` drive the device's uniform keypoints, gated on the
   `keypoints` feature. The skill maps "save the look as a keypoint" and "morph
   between moods" onto them.
+- **Canned ramps.** On firmware with `ramps`, `ramp_uniforms`, `crossfade_to`,
+  `rollback_effect {seconds}` and timed keypoint recalls and blends are one
+  request per player, which the device interpolates itself. Several players get
+  one start in their own clocks, and nothing streams over the relay while the
+  ramp runs. Older firmware is stepped, and each step is acknowledged. Design:
+  {doc}`../docs/design/ramps`.
 - **Performance.** `estimate_effect` runs the offline cost model and touches
   nothing; `measure_effect` reads a few seconds of the device's perf stream.
   The skill says to iterate with the first and confirm with the second.
 
 Uniforms are addressed **by name**, with the `doc`, `min`, `max` and `unit`
-that the compiler extracts from the effect's source comments. Ramps stream
-uncommitted (`set_uniforms.commit=false`) and persist once at the end.
+that the compiler extracts from the effect's source comments. A ramp persists
+once, at the end: on the device when it lands (`ramps`), or with a final
+committed set after uncommitted, acknowledged steps on older firmware.
 
 Deliberately absent: rewiring, remapping, calibration, JIT and hardware
 configuration, all of which the bridge refuses at the wire. There is **no LAN

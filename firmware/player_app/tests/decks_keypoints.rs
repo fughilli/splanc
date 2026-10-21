@@ -11,8 +11,12 @@ use std::sync::Mutex;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_fx_last_deck, lm_fx_shade, lm_fx_update, lm_kp_commit, lm_kp_commit_frame, lm_kp_set_store,
-    lm_player_handle, lm_player_init, lm_set_uniforms_commit, FEATURES, FX_TOPO_CAP,
+    lm_player_handle, lm_player_init, lm_ramp_tick, lm_set_uniforms_commit, FEATURES, FX_TOPO_CAP,
 };
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// The device clock (ms) the test drives: requests arrive at it, frames tick it.
+static NOW: AtomicI64 = AtomicI64::new(1000);
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -54,7 +58,8 @@ fn encode(msg: CMsg) -> Vec<u8> {
 fn handle(msg: CMsg) -> Option<SMsg> {
     let frame = encode(msg);
     let mut out = vec![0u8; 4096];
-    let n = unsafe { lm_player_handle(frame.as_ptr(), frame.len(), 0, 0, out.as_mut_ptr(), out.len()) };
+    let now = NOW.load(Ordering::Relaxed);
+    let n = unsafe { lm_player_handle(frame.as_ptr(), frame.len(), now, now, out.as_mut_ptr(), out.len()) };
     assert!(n >= 0, "handle returned {n}");
     if n == 0 {
         return None;
@@ -95,7 +100,8 @@ fn submit(deck: u32, id: &str, src: &str) -> Option<SMsg> {
     body.extend([3 << 3, 1, 4 << 3, deck as u8]);
     let frame = len_field(21, &body);
     let mut out = vec![0u8; 4096];
-    let n = unsafe { lm_player_handle(frame.as_ptr(), frame.len(), 0, 0, out.as_mut_ptr(), out.len()) };
+    let now = NOW.load(Ordering::Relaxed);
+    let n = unsafe { lm_player_handle(frame.as_ptr(), frame.len(), now, now, out.as_mut_ptr(), out.len()) };
     assert!(n > 0);
     let mut reply = pb::ServerMessage::default();
     reply.decode_from_bytes(&out[..n as usize]).expect("reply decodes");
@@ -159,8 +165,12 @@ fn crossfade(pos: f64, mode: u32) {
     }
 }
 
-/// One frame (dt seconds), then LED 0's colour.
+/// One frame (dt seconds on the device clock: ramps/morphs tick first), then
+/// LED 0's colour.
 fn frame(dt: f32) -> [u8; 3] {
+    let ms = (dt * 1000.0).round() as i64;
+    let now = NOW.fetch_add(ms, Ordering::Relaxed) + ms;
+    unsafe { lm_ramp_tick(now) };
     assert!(unsafe { lm_fx_update(0.0, dt, 0, 1) });
     let mut rgb = [0u8; 3];
     assert!(unsafe { lm_fx_shade(0, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
@@ -248,7 +258,7 @@ fn decks_crossfade_and_keypoints() {
     assert_eq!(err_code(blend(0, &[("nope", 1.0)], 0.0, 0, false)), "no_keypoint");
     assert_eq!(err_code(blend(0, &[("red", 0.0)], 0.0, 0, false)), "bad_keypoint");
 
-    // A morph: red -> blue over 1 s, advanced per frame by lm_fx_update.
+    // A morph: red -> blue over 1 s, advanced per frame by lm_ramp_tick.
     blend(0, &[("red", 1.0)], 0.0, 0, false);
     frame(0.03);
     blend(0, &[("blue", 1.0)], 1.0, 0, false);

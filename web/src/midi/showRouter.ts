@@ -22,6 +22,8 @@ export interface ShowAction {
 export const SHOW_ACTIONS: readonly ShowAction[] = [
   { id: "crossfade", label: "Crossfade A ↔ B", kind: "value" },
   { id: "crossfadeMode", label: "Toggle blend mode", kind: "trigger" },
+  // Timed transition: the device glides the crossfade to the other deck.
+  { id: "crossfadeAuto", label: "Fade to the other deck", kind: "trigger" },
   { id: "deckA.playPause", label: "Deck A play / pause", kind: "trigger" },
   { id: "deckB.playPause", label: "Deck B play / pause", kind: "trigger" },
   { id: "list.prev", label: "Effect list — previous", kind: "trigger" },

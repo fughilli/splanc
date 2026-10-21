@@ -30,6 +30,7 @@ use ledmapper_fx_vm::{
     Program, Rgb as Rgb8, Vm as FxVm,
 };
 use ledmapper_keypoint::{self as kp, Morph};
+use ledmapper_ramp::{self as ramp, Engine as RampEngine, Schedule};
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
@@ -1329,7 +1330,13 @@ pub unsafe extern "C" fn lm_player_handle(
         return -1;
     }
     let frame = core::slice::from_raw_parts(data, len);
-    let reply = match envelope_arm(frame) {
+    let arm = envelope_arm(frame);
+    // A live crossfade move (fader / MIDI) overrides a crossfade ramp — last
+    // writer wins — then the session core stores it as before (default arm).
+    if arm == Some(ARM_SET_CROSSFADE) {
+        ramps().cancel_crossfade();
+    }
+    let reply = match arm {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, |r: &mut &[u8]| *r = frame, frame.len()),
         // Dump the stored map+topology (it lives in the arena, not the session
@@ -1370,7 +1377,11 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_DELETE_KEYPOINT) => return handle_delete_keypoint(frame, out, out_cap),
         Some(ARM_LIST_KEYPOINTS) => return handle_list_keypoints(frame, out, out_cap),
         Some(ARM_GET_KEYPOINT) => return handle_get_keypoint(frame, out, out_cap),
-        Some(ARM_BLEND_KEYPOINTS) => handle_blend_keypoints(frame),
+        Some(ARM_BLEND_KEYPOINTS) => handle_blend_keypoints(frame, recv_ms),
+        // Canned ramps (docs/design/ramps.md): the device interpolates per frame.
+        Some(ARM_RAMP_UNIFORMS) => handle_ramp_uniforms(frame, recv_ms),
+        Some(ARM_RAMP_CROSSFADE) => handle_ramp_crossfade(frame, recv_ms),
+        Some(ARM_CANCEL_RAMP) => handle_cancel_ramp(frame),
         // Perf-monitoring arms: configure the instrumentation tier / push
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
@@ -1838,6 +1849,10 @@ const ARM_GET_DRIVER_STATE: u32 = 53;
 const ARM_SET_SENSOR_MOUNT: u32 = 54;
 const ARM_SET_CAPTURE_PROFILE: u32 = 55;
 const ARM_GET_CAPTURE_PROFILE: u32 = 56;
+const ARM_SET_CROSSFADE: u32 = 39;
+const ARM_RAMP_UNIFORMS: u32 = 60;
+const ARM_RAMP_CROSSFADE: u32 = 61;
+const ARM_CANCEL_RAMP: u32 = 62;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1861,6 +1876,7 @@ pub const FEATURES: &[&str] =
         "drivers",
         "imu_extrinsic",
         "capture_profile",
+        "ramps",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2302,7 +2318,8 @@ pub unsafe extern "C" fn lm_set_uniforms_commit() -> bool {
 }
 
 /// set_uniforms: apply every UniformValue{slot, value[]} to the deck's VM (a
-/// running keypoint morph on that deck stops where it is — the slider wins).
+/// running keypoint morph on that deck, and any ramp on these uniforms, stops
+/// where it is — the slider wins).
 /// Reply: playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
     UNIFORMS_COMMIT = true;
@@ -2314,7 +2331,7 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
         // Deck B is never persisted.
         UNIFORMS_COMMIT = m.commit().unwrap_or(true) && d == DECK_A_IDX;
         if let Some(p) = deck(d) {
-            (*p).morph.cancel();
+            morph_cancel(p);
         }
         for uv in m.values() {
             // UniformValue { slot, repeated float value } — packed or not.
@@ -2325,6 +2342,8 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
                 n += 1;
             }
             if n > 0 {
+                // A live write wins over a ramp on this uniform (no queueing).
+                ramps().cancel_slot(d as u8, uv.slot() as u16);
                 fx_set_uniform(d, uv.slot(), &vals[..n]);
             }
         }
@@ -2852,7 +2871,7 @@ unsafe fn kp_keypoint_reply(
     })
 }
 
-unsafe fn handle_blend_keypoints(frame: &[u8]) -> pb::ServerMessage {
+unsafe fn handle_blend_keypoints(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
     KP_COMMIT = false;
     let Some(CArm::BlendKeypoints(m)) = client_arm(frame) else {
         return fx_error("bad_keypoint", "blend_keypoints is malformed");
@@ -2880,6 +2899,23 @@ unsafe fn handle_blend_keypoints(frame: &[u8]) -> pb::ServerMessage {
     if n == 0 || !weights[..n].iter().any(|w| *w > 0.0) {
         return fx_error("bad_keypoint", "blend needs a keypoint with a positive weight");
     }
+    // Canned profile ("ramps"): a timed morph is a ramp — time based, any ease
+    // (unset = the original smoothstep), optionally at a shared start_at.
+    let seconds = if m.seconds().is_finite() { m.seconds().clamp(0.0, 3600.0) } else { 0.0 };
+    let ease = m.ease().unwrap_or(ramp::Ease::Smoothstep as u32);
+    let timed = seconds > 0.0 || m.start_at_ms() > now_ms;
+    let sched = if timed {
+        match Schedule::resolve(now_ms, m.start_at_ms(), (seconds * 1000.0 + 0.5) as u32, ease) {
+            Ok(sc) => Some(sc),
+            Err(e) => return fx_error(e.code(), e.message()),
+        }
+    } else {
+        None
+    };
+    // The blend takes the whole deck over: its uniform ramps and an earlier
+    // morph stop where they are.
+    ramps().cancel_deck(d as u8);
+    morph_cancel(p);
     let morph = &mut (*p).morph;
     // The fader path: the same names as last time reuse the cached sources (no
     // flash read per fader tick).
@@ -2902,9 +2938,11 @@ unsafe fn handle_blend_keypoints(frame: &[u8]) -> pb::ServerMessage {
         return fx_error("no_effect", "no effect loaded on that deck");
     };
     let live = morph.rules.pack(&vm.uniforms);
-    let seconds = if m.seconds().is_finite() { m.seconds().min(3600.0) } else { 0.0 };
-    if let Some(v) = morph.start(&live, &weights[..n], seconds, m.color_mode()) {
+    morph.id = m.id();
+    if let Some(v) = morph.start(&live, &weights[..n], sched, m.color_mode()) {
         morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
+        // Applied at once: it has already landed.
+        ramps().push_event(m.id(), ramp::Kind::Keypoints, ramp::End::Done);
     }
     KP_COMMIT = m.commit().unwrap_or(false) && d == DECK_A_IDX;
     KP_COMMIT_DECK = d;
@@ -3707,6 +3745,9 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).uses_ctxfix = prog.uses_ctxfix();
     (*p).uses_uv = prog.uses_uv();
     (*p).uses_room = prog.uses_room();
+    // A new effect on the deck: its slots mean something else now.
+    ramps().cancel_deck(d as u8);
+    morph_cancel(p);
     (*p).morph.reset(prog.manifest);
     // Bind uniforms named like a pool entry (imu_quat, ...) to the live pool.
     uniform_pool::bind(d, prog.manifest);
@@ -3773,6 +3814,10 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 /// back (a video stream can claim it) and deck A the whole arena.
 unsafe fn fx_clear(d: usize) {
     fps_invalidate();
+    ramps().cancel_deck(d as u8);
+    if let Some(p) = deck(d) {
+        morph_cancel(p);
+    }
     if d == DECK_A_IDX {
         DECK_A.len = 0;
         DECK_A.active = false;
@@ -3986,6 +4031,8 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let table = &*addr_of!(OSC_TABLE);
     let shadow = &mut *addr_of_mut!(OSC_SHADOW);
     osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
+        // Live OSC control wins over a ramp on the same uniform.
+        ramps().cancel_slot(DECK_A_IDX as u8, slot);
         if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }
@@ -3998,7 +4045,7 @@ static mut FX_XF_POS: f32 = 0.0;
 static mut FX_XF_MODE: u32 = 0;
 
 /// Run `update()` once for this frame (before the per-LED shade sweep) on EVERY
-/// active deck, first advancing any keypoint morph on that deck. Clears the
+/// active deck (lm_ramp_tick has already moved any ramped uniform / morph). Clears the
 /// wall-time deadline flag first (a fresh frame gets the full budget) and
 /// latches the frame context + crossfade the shade sweep reuses. Returns false
 /// when no deck has an effect loaded. A cancelled update (budget/timeout) still
@@ -4103,11 +4150,9 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     let bytes = &(*p).bytes[..(*p).len];
     let prog = Program::parse(bytes).ok()?;
     let vm = (*p).vm.as_mut()?;
-    // A keypoint morph moves the uniforms first, so this frame's update and
-    // shade see the same in-between position (out of line: rarely running).
-    if (*p).morph.running() {
-        fx_advance_morph(p, dt_s);
-    }
+    // Keypoint morphs and uniform ramps advanced in lm_ramp_tick (called just
+    // before this, on the device clock), so update and shade see one position.
+    let _ = dt_s;
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
         let (oc, c) = vm.run_update_counted(&prog, f, &fx_budget());
@@ -4122,8 +4167,8 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
 
 #[cold]
 #[inline(never)]
-unsafe fn fx_advance_morph(p: *mut DeckState, dt_s: f32) {
-    if let (Some(v), Some(vm)) = ((*p).morph.advance(dt_s), (*p).vm.as_mut()) {
+unsafe fn fx_advance_morph(p: *mut DeckState, now_ms: i64) {
+    if let (Some(v), Some(vm)) = ((*p).morph.advance_at(now_ms), (*p).vm.as_mut()) {
         (*p).morph.rules.unpack(&v, |slot, vals| vm.set_uniform(slot as usize, vals));
     }
 }
@@ -4632,4 +4677,214 @@ pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize, aborte
         return -1;
     }
     encode_reply(&build_fps_state(aborted), out, out_cap)
+}
+
+// -- Canned interpolation profiles (docs/design/ramps.md) ---------------------
+// ramp_uniforms / ramp_crossfade hand the device an endpoint, a duration and an
+// ease; lm_ramp_tick (the render loop, once per frame, before lm_fx_update)
+// moves every ramped uniform, the crossfade and the keypoint morphs on the
+// device clock. Live writes (set_uniforms, OSC, set_crossfade) cancel the ramp
+// they touch. Completion events queue here; loop() pushes them as ramp_state.
+
+static mut RAMPS: RampEngine = RampEngine::new();
+
+/// RampState.state on the wire (End::Done = 1 / End::Cancelled = 2 follow).
+const RAMP_STARTED: u32 = 0;
+
+unsafe fn ramps() -> &'static mut RampEngine {
+    &mut *addr_of_mut!(RAMPS)
+}
+
+/// Stop deck `p`'s keypoint morph where it is (reports cancelled when it has an id).
+unsafe fn morph_cancel(p: *mut DeckState) {
+    if (*p).morph.running() {
+        (*p).morph.cancel();
+        ramps().push_event((*p).morph.id, ramp::Kind::Keypoints, ramp::End::Cancelled);
+    }
+}
+
+unsafe fn ramp_state(id: u32, state: u32, kind: ramp::Kind, sched: Option<Schedule>) -> pb::ServerMessage {
+    let r = ramps();
+    let mut s = pb::RampState {
+        r#id: id,
+        r#state: state,
+        r#kind: kind as u32,
+        r#active: r.active_lanes() as u32 + r.crossfade_active() as u32,
+        ..Default::default()
+    };
+    if let Some(sc) = sched {
+        s.r#start_at_ms = sc.start_ms;
+        s.r#end_at_ms = sc.end_ms();
+    }
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::RampState(s)) }
+}
+
+fn ramp_error(e: ramp::RampError) -> pb::ServerMessage {
+    fx_error(e.code(), e.message())
+}
+
+/// ramp_uniforms: validate everything first (all-or-nothing), capture each
+/// target's current value as the ramp's start, then hand it to the engine. A
+/// morph on the deck stops (the ramp takes over). Reply: ramp_state STARTED.
+unsafe fn handle_ramp_uniforms(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
+    let Some(CArm::RampUniforms(m)) = client_arm(frame) else {
+        return fx_error("bad_ramp", "ramp_uniforms is malformed");
+    };
+    let d = deck_index(m.deck());
+    FX_LAST_DECK = d as u32;
+    let Some(p) = deck(d).filter(|p| (**p).loaded()) else {
+        return fx_error("no_effect", "no effect loaded on that deck");
+    };
+    let sched = match Schedule::resolve(now_ms, m.start_at_ms(), m.duration_ms(), m.ease()) {
+        Ok(sc) => sc,
+        Err(e) => return ramp_error(e),
+    };
+    let Some(vm) = (*p).vm.as_ref() else {
+        return fx_error("no_effect", "no effect loaded on that deck");
+    };
+    let blank = ramp::Target { slot: 0, width: 0, discrete: false, from: [0.0; 4], to: [0.0; 4] };
+    let rules = &(*p).morph.rules;
+    let mut ts = [blank; ramp::MAX_LANES];
+    let mut n = 0;
+    for uv in m.targets() {
+        if n >= ramp::MAX_LANES {
+            return ramp_error(ramp::RampError::TooMany);
+        }
+        let mut t = blank;
+        for v in uv.value() {
+            if t.width as usize >= ramp::MAX_WIDTH || !v.is_finite() {
+                return ramp_error(ramp::RampError::BadTarget);
+            }
+            t.to[t.width as usize] = v;
+            t.width += 1;
+        }
+        let slot = uv.slot() as usize;
+        if t.width == 0 || slot + t.width as usize > ledmapper_fx_vm::MAX_UNIFORM_SLOTS {
+            return ramp_error(ramp::RampError::BadTarget);
+        }
+        t.slot = slot as u16;
+        // Toggles / dropdowns have no in-between: they switch when the ramp lands.
+        t.discrete = rules
+            .by_slot(slot as u32)
+            .is_some_and(|r| matches!(r.kind, kp::Kind::Toggle | kp::Kind::Dropdown));
+        t.from[..t.width as usize].copy_from_slice(&vm.uniforms[slot..slot + t.width as usize]);
+        ts[n] = t;
+        n += 1;
+    }
+    // Deck B is never persisted; deck A persists on landing unless commit=false.
+    let commit = m.commit().unwrap_or(true) && d == DECK_A_IDX;
+    if let Err(e) = ramps().start_uniforms(m.id(), d as u8, &ts[..n], sched, commit) {
+        return ramp_error(e);
+    }
+    morph_cancel(p);
+    ramp_state(m.id(), RAMP_STARTED, ramp::Kind::Uniforms, Some(sched))
+}
+
+/// ramp_crossfade: from the crossfade's current position to `position`. Reply:
+/// ramp_state STARTED.
+unsafe fn handle_ramp_crossfade(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
+    let Some(CArm::RampCrossfade(m)) = client_arm(frame) else {
+        return fx_error("bad_ramp", "ramp_crossfade is malformed");
+    };
+    let pos = m.position();
+    if !pos.is_finite() {
+        return fx_error("bad_ramp", "position is not a number");
+    }
+    let sched = match Schedule::resolve(now_ms, m.start_at_ms(), m.duration_ms(), m.ease()) {
+        Ok(sc) => sc,
+        Err(e) => return ramp_error(e),
+    };
+    let from = player().crossfade();
+    ramps().start_crossfade(m.id(), from, (pos as f32).clamp(0.0, 1.0), m.mode().min(1), sched);
+    ramp_state(m.id(), RAMP_STARTED, ramp::Kind::Crossfade, Some(sched))
+}
+
+/// cancel_ramp: the ramp(s) with `id`, or everything for 0 (uniform ramps, the
+/// crossfade ramp, both decks' morphs). Reply: ramp_state CANCELLED.
+unsafe fn handle_cancel_ramp(frame: &[u8]) -> pb::ServerMessage {
+    let id = match client_arm(frame) {
+        Some(CArm::CancelRamp(m)) => m.id(),
+        _ => 0,
+    };
+    ramps().cancel_id(id);
+    for d in [DECK_A_IDX, DECK_B_IDX] {
+        if let Some(p) = deck(d) {
+            if id == 0 || (*p).morph.id == id {
+                morph_cancel(p);
+            }
+        }
+    }
+    ramp_state(id, ramp::End::Cancelled as u32, ramp::Kind::Uniforms, None)
+}
+
+/// Advance every ramp + keypoint morph to the device clock `now_ms` (millis();
+/// the domain set_time_base and start_at use). Call once per rendered frame,
+/// before lm_fx_update, so update() and shade() see this frame's values.
+/// Returns how many things moved (ramped uniforms + crossfade + morphs) — the
+/// per-frame cost driver main.cpp logs alongside its cycle count.
+///
+/// # Safety
+/// Under the player_mutex (single firmware thread).
+#[no_mangle]
+pub unsafe extern "C" fn lm_ramp_tick(now_ms: i64) -> u32 {
+    let r = ramps();
+    let mut n = 0;
+    if !r.idle() {
+        n = r.tick(
+            now_ms,
+            |d, slot, vals| fx_set_uniform(d as usize, slot as u32, vals),
+            |pos, mode| player().set_crossfade_live(pos, mode),
+        );
+    }
+    for d in [DECK_A_IDX, DECK_B_IDX] {
+        if let Some(p) = deck(d) {
+            if (*p).morph.running() {
+                fx_advance_morph(p, now_ms);
+                n += 1;
+                if !(*p).morph.running() {
+                    r.push_event((*p).morph.id, ramp::Kind::Keypoints, ramp::End::Done);
+                }
+            }
+        }
+    }
+    n
+}
+
+/// Pop one pending completion event as an encoded `ramp_state` ServerMessage
+/// (loop() pushes it to the open session). 0 = none pending, -2 = `out_cap` too
+/// small (the event is dropped).
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes; under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_ramp_take_event_frame(out: *mut u8, out_cap: usize) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let Some(e) = ramps().take_event() else { return 0 };
+    encode_reply(&ramp_state(e.id, e.end as u32, e.kind, None), out, out_cap)
+}
+
+/// A committed deck-A ramp landed: encode deck A's CURRENT uniforms (every
+/// uniform of its manifest) as a `set_uniforms` ClientMessage into `out`, for
+/// main.cpp to persist through the same coalesced save as a committed
+/// set_uniforms (boot replays it). 0 = nothing to persist, -2 = doesn't fit.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes; under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_ramp_take_commit_frame(out: *mut u8, cap: usize) -> i32 {
+    if !ramps().take_commit() || out.is_null() {
+        return 0;
+    }
+    let p = addr_of_mut!(DECK_A);
+    let Some(vm) = (*p).vm.as_ref() else { return 0 };
+    let rules = &(*p).morph.rules;
+    if rules.is_empty() {
+        return 0;
+    }
+    let live = rules.pack(&vm.uniforms);
+    write_arm(out, cap, ARM_SET_UNIFORMS, |w| {
+        rules.unpack(&live, |slot, vals| w.value_msg(1, ValueKey::Slot(slot as u32), vals));
+    })
 }

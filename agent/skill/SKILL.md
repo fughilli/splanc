@@ -58,9 +58,12 @@ effect already running**, not a new effect. Uniforms are addressed by NAME; the
 bridge checks width and range and tells you the declared names if you miss.
 
 - `set_uniforms {values: {tint: [1, 0.5, 0.2]}}` — instant.
-- `ramp_uniforms {targets: {rain: 0.8}, seconds: 20}` — a smooth glide; the bridge
-  streams the steps and commits the end value once. Use this for anything a person
-  will watch change. With several players they all glide together.
+- `ramp_uniforms {targets: {rain: 0.8}, seconds: 20}` — a smooth glide that
+  commits the end value once (`curve`: linear by default, or ease / ease_in /
+  ease_out / smoothstep). Use this for anything a person will watch change. The
+  player runs the glide itself when it can, and several players start together.
+  If the user moves the same control during the glide, their move wins and the
+  result says `outcome: "cancelled"`. Leave it there and don't ramp it again.
 - `commit: true` persists values across reboots — only when the user wants the
   change to stick (flash wear).
 - `set_brightness {level}` is global output brightness (runtime-only).
@@ -79,7 +82,8 @@ heaviest look.
   that already exists is overwritten, so `list_keypoints` first and ask before
   replacing one you didn't make. Max 16 per effect, names up to 32 bytes.
 - **"Go back to dusk"** → `recall_keypoint {name: "dusk", seconds: 10}`. Prefer
-  a morph (`seconds` > 0) for anything a person watches; 0 jumps.
+  a morph (`seconds` > 0) for anything a person watches; 0 jumps. `curve` picks
+  its shape (smoothstep by default).
 - **"Morph between moods"** / "somewhere between calm and storm" →
   `blend_keypoints {weights: {calm: 0.7, storm: 0.3}, seconds: 15}`: a position
   between known-good looks — safer than inventing new values, because every
@@ -185,7 +189,8 @@ When the user is watching (a mood change, a show), switch effects with
 `crossfade_to {effect_id, source, seconds: 8}` (or `{library_id}` for a library
 entry) instead of `deploy_effect`: the
 new effect is loaded on the player's idle FX deck and the device blends into it
-(`curve`: ease (default) / linear / ease_in / ease_out; `color_mode`: rgb or hsv).
+(`curve`: ease (default, cubic in-out) / linear / ease_in / ease_out / smoothstep;
+`color_mode`: rgb or hsv).
 Several players fade together on one clock. It checks frame cost like
 `deploy_effect`; both effects render during the fade. The outgoing effect stays
 loaded, so `rollback_effect {seconds: 3}` fades back to it — even one the user

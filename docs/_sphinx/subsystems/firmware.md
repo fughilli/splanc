@@ -125,9 +125,15 @@ loading deck B ends a video stream. Deck B is interpreted and not persisted.
 
 Uniform keypoints (named looks per effect) live in littlefs under `/lfs/kp/`,
 one power-loss-safe file each, at most 16 per effect. The `firmware/keypoint`
-crate owns the record format, the per-uniform blend rules and the morph; the
-morph advances once per frame inside `lm_fx_update`, and a fader-rate blend
-reads no flash. Design: {doc}`../docs/design/uniform-keypoints`.
+crate owns the record format, the per-uniform blend rules and the morph. A
+fader-rate blend reads no flash. Design: {doc}`../docs/design/uniform-keypoints`.
+
+Canned ramps (`ramp_uniforms`, `ramp_crossfade`, timed `blend_keypoints`): the
+`firmware/ramp` crate interpolates toward a known endpoint on the device clock,
+with Q16 eases, once per request per frame and never per LED. `lm_ramp_tick`
+runs in `render_once` before `lm_fx_update` and also advances the keypoint
+morphs. Live writes cancel the ramp they touch, and `loop()` pushes the
+`ramp_state` completion events. Design: {doc}`../docs/design/ramps`.
 
 ## The `@embedded` module & Nix
 

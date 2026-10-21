@@ -46,6 +46,7 @@ py_test(
         "test_mapping_trigger.py",
         "test_pool.py",
         "test_provision.py",
+        "test_ramp_shape.py",
         "test_reach_preflight.py",
         "test_rejoin_loop_core.py",
         "test_reservation_readiness.py",

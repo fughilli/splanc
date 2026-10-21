@@ -78,6 +78,9 @@ const CLIENT_ARMS: Record<string, string> = {
   set_sensor_mount: "setSensorMount",
   set_capture_profile: "setCaptureProfile",
   get_capture_profile: "getCaptureProfile",
+  ramp_uniforms: "rampUniforms",
+  ramp_crossfade: "rampCrossfade",
+  cancel_ramp: "cancelRamp",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -109,6 +112,7 @@ const SERVER_ARMS: Record<string, string> = {
   i2c_scan_result: "i2cScanResult",
   driver_state: "driverState",
   capture_profile: "captureProfile",
+  ramp_state: "rampState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -563,6 +567,11 @@ export interface BlendOptions {
   seconds?: number;
   colorMode?: number;
   commit?: boolean;
+  /** Canned-profile fields (firmware with "ramps"): the morph's ease (wire value;
+   * unset = smoothstep), a device-clock start, and an id for its ramp_state. */
+  ease?: number;
+  startAtMs?: number;
+  id?: number;
 }
 
 /** Ask for the device's TLS identity (proto GetTlsInfo; the "tls_info" feature):
@@ -609,6 +618,94 @@ export interface FpsStateMessage {
   auto: boolean;
   aborted: boolean;
   noAbort: boolean;
+}
+
+// -- canned interpolation profiles (the "ramps" feature; docs/design/ramps.md) --
+// The device interpolates a uniform / the crossfade toward a known endpoint over
+// a known duration with a known ease, once per frame — one request, no stream.
+// Live control (set_uniforms / set_crossfade) cancels the ramp it touches.
+
+/** Ramp ease on the wire (RampUniforms.ease). */
+export const RAMP_EASES = ["linear", "ease", "ease_in", "ease_out", "smoothstep"] as const;
+export type RampEase = (typeof RAMP_EASES)[number];
+export function rampEaseWire(e: RampEase): number {
+  return RAMP_EASES.indexOf(e);
+}
+
+/** Reference curve for each ease (the firmware's Q16 version is within 2/65536):
+ * progress u (0..1) -> eased (0..1). Used to animate a local readout while the
+ * device runs the ramp, and by the stepped fallback for older firmware. */
+export function rampEaseAt(e: RampEase, u: number): number {
+  const t = Math.min(1, Math.max(0, u));
+  switch (e) {
+    case "linear":
+      return t;
+    case "ease_in":
+      return t * t * t;
+    case "ease_out":
+      return 1 - (1 - t) ** 3;
+    case "smoothstep":
+      return t * t * (3 - 2 * t);
+    default:
+      return t < 0.5 ? 4 * t * t * t : 1 - (2 - 2 * t) ** 3 / 2;
+  }
+}
+
+/** Ramp uniforms on a deck (proto RampUniforms). Reply: ramp_state STARTED. */
+export interface RampUniformsMessage {
+  type: "ramp_uniforms";
+  deck?: number;
+  targets: UniformValueFlat[];
+  durationMs: number;
+  ease?: number;
+  /** Device-clock ms (0 = on receipt). */
+  startAtMs?: number;
+  id?: number;
+  commit?: boolean;
+}
+
+/** Ramp the FX crossfade (proto RampCrossfade). Reply: ramp_state STARTED. */
+export interface RampCrossfadeMessage {
+  type: "ramp_crossfade";
+  position: number;
+  mode?: number;
+  durationMs: number;
+  ease?: number;
+  startAtMs?: number;
+  id?: number;
+}
+
+/** A ramp's lifecycle (proto RampState): the STARTED reply, then a DONE /
+ * CANCELLED push for ramps with a non-zero id. */
+export interface RampStateMessage {
+  type: "ramp_state";
+  id: number;
+  /** 0 started, 1 done, 2 cancelled. */
+  state: number;
+  /** 0 uniforms, 1 crossfade, 2 keypoint morph. */
+  kind: number;
+  startAtMs: number;
+  endAtMs: number;
+  active: number;
+}
+
+export const RAMP_STARTED = 0;
+export const RAMP_DONE = 1;
+export const RAMP_CANCELLED = 2;
+
+/** Normalize a decoded ramp_state (proto3 drops zeros; int64 decodes as a
+ * string in proto3 JSON). */
+export function flatRampState(m: Partial<Record<keyof RampStateMessage, unknown>>): RampStateMessage {
+  const n = (v: unknown) => (v === undefined || v === null ? 0 : Number(v));
+  return {
+    type: "ramp_state",
+    id: n(m.id),
+    state: n(m.state),
+    kind: n(m.kind),
+    startAtMs: n(m.startAtMs),
+    endAtMs: n(m.endAtMs),
+    active: n(m.active),
+  };
 }
 
 /** Normalize a decoded fps_state (proto3 drops zero / false fields). */

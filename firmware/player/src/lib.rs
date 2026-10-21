@@ -594,6 +594,11 @@ impl Player {
             | CMsg::GetCaptureProfile(_) => {
                 Some(error("unsupported", "sensors are handled by the firmware"))
             }
+            // Canned ramps (docs/design/ramps.md) run in the fx layer (player_app
+            // ffi), which intercepts these arms before the session core.
+            CMsg::RampUniforms(_) | CMsg::RampCrossfade(_) | CMsg::CancelRamp(_) => {
+                Some(error("unsupported", "ramps are handled by the fx layer"))
+            }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
@@ -1023,6 +1028,13 @@ impl Player {
     /// The FX deck crossfade colour space (0 = linear RGB, 1 = HSV).
     pub fn crossfade_mode(&self) -> u32 {
         self.crossfade_mode
+    }
+
+    /// Move the crossfade from the fx layer (a ramp_crossfade step): the same
+    /// clamped state set_crossfade stores, so welcome echoes where a ramp is.
+    pub fn set_crossfade_live(&mut self, position: f32, mode: u32) {
+        self.crossfade = if position.is_finite() { position.clamp(0.0, 1.0) } else { 0.0 };
+        self.crossfade_mode = mode.min(1);
     }
 
     pub fn output_brightness(&self) -> f32 {

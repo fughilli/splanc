@@ -12,6 +12,7 @@ The effects runtime <../docs/design/effects-runtime>
 The effects compiler <../docs/design/effects-compiler>
 Performance monitoring <../docs/design/perf-monitoring>
 FX decks, crossfade & uniform keypoints <../docs/design/uniform-keypoints>
+Canned interpolation profiles (ramps) <../docs/design/ramps>
 ```
 
 ## Capture, solve & reconstruct

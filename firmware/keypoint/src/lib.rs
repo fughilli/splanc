@@ -1,7 +1,8 @@
 //! Uniform keypoints: named positions in an effect's parameter space, and the
 //! on-device blend between them (docs/design/uniform-keypoints.md).
 //!
-//! `no_std`, zero-dependency, never allocates — linked into the player app and
+//! `no_std`, never allocates (its only dependency is the shared ease/clock of
+//! `ledmapper_ramp`) — linked into the player app and
 //! host-tested byte for byte. Four pieces:
 //!
 //! - [`Rules`]: the effect's uniform manifest (fx_compiler JSON) reduced to a
@@ -14,13 +15,16 @@
 //!   toggles/dropdowns take the heaviest source's value.
 //! - [`Morph`]: the per-deck blend state the firmware advances once per frame —
 //!   a live snapshot plus up to [`MAX_BLEND`] cached keypoints, eased from one
-//!   weight vector to another.
+//!   weight vector to another on a time-based [`Schedule`] (device clock ms,
+//!   any of the ramp eases; smoothstep unless the request names one).
 //! - The storage record ([`encode_record`] / [`decode_record`]): one keypoint per
 //!   small littlefs file, values keyed by uniform NAME so a recompiled effect
 //!   whose slots moved still recalls correctly, stamped with the manifest hash so
 //!   a stale keypoint is reported.
 
 #![no_std]
+
+pub use ledmapper_ramp::{Ease, Schedule, Q16_ONE};
 
 /// Keypoints per effect (the storage index range).
 pub const MAX_KEYPOINTS: usize = 16;
@@ -671,10 +675,14 @@ pub struct Morph {
     kp_effect: u32,
     w_from: [f32; MAX_BLEND + 1],
     w_to: [f32; MAX_BLEND + 1],
-    elapsed: f32,
-    seconds: f32,
+    /// When the morph runs, in the device clock (ms), and its ease — shared with
+    /// the uniform/crossfade ramps (ledmapper_ramp), so a morph is time based
+    /// (frame-rate independent) and can start at a shared `start_at`.
+    sched: Schedule,
     running: bool,
     color_mode: u32,
+    /// The request's id (BlendKeypoints.id; 0 = none): its ramp_state event.
+    pub id: u32,
 }
 
 impl Default for Morph {
@@ -697,10 +705,10 @@ impl Morph {
             kp_effect: 0,
             w_from: [0.0; MAX_BLEND + 1],
             w_to: [0.0; MAX_BLEND + 1],
-            elapsed: 0.0,
-            seconds: 0.0,
+            sched: Schedule { start_ms: 0, dur_ms: 0, ease: Ease::Smoothstep },
             running: false,
             color_mode: 0,
+            id: 0,
         }
     }
 
@@ -763,10 +771,10 @@ impl Morph {
     }
 
     /// Begin a blend toward `weights` (one per cached source, in order). `live` =
-    /// the deck's current values, packed. `seconds` <= 0 → returns the blended
-    /// target at once (apply it); > 0 → starts a morph from `live` and returns
-    /// None (advance() applies it per frame).
-    pub fn start(&mut self, live: &Packed, weights: &[f32], seconds: f32, color_mode: u32) -> Option<Packed> {
+    /// the deck's current values, packed. `sched` = None → returns the blended
+    /// target at once (apply it); Some → starts a morph from `live` on that
+    /// schedule and returns None ([`Morph::advance_at`] applies it per frame).
+    pub fn start(&mut self, live: &Packed, weights: &[f32], sched: Option<Schedule>, color_mode: u32) -> Option<Packed> {
         self.live = *live;
         self.color_mode = color_mode;
         let n = self.kp_n as usize;
@@ -774,12 +782,11 @@ impl Morph {
         for (i, w) in weights.iter().take(n).enumerate() {
             to[i + 1] = w.max(0.0);
         }
-        if seconds > 0.0 {
+        if let Some(sched) = sched {
             self.w_from = [0.0; MAX_BLEND + 1];
             self.w_from[0] = 1.0;
             self.w_to = to;
-            self.elapsed = 0.0;
-            self.seconds = seconds;
+            self.sched = sched;
             self.running = true;
             None
         } else {
@@ -805,21 +812,22 @@ impl Morph {
         out
     }
 
-    /// Advance a running morph by `dt` seconds; the values to apply this frame
-    /// (None when not morphing). The last step lands exactly on the target.
-    pub fn advance(&mut self, dt: f32) -> Option<Packed> {
+    /// Advance a running morph to the device clock `now_ms`; the values to apply
+    /// this frame (None when not morphing, or before its start). The last step
+    /// lands exactly on the target and ends the morph.
+    pub fn advance_at(&mut self, now_ms: i64) -> Option<Packed> {
         if !self.running {
             return None;
         }
-        self.elapsed += dt.max(0.0);
-        let p = (self.elapsed / self.seconds).clamp(0.0, 1.0);
-        let e = p * p * (3.0 - 2.0 * p); // smoothstep
+        let q = self.sched.at(now_ms)?;
+        let e = q as f32 * (1.0 / Q16_ONE as f32);
         let mut w = [0.0f32; MAX_BLEND + 1];
         for (i, x) in w.iter_mut().enumerate() {
             *x = self.w_from[i] + (self.w_to[i] - self.w_from[i]) * e;
         }
-        if p >= 1.0 {
+        if q >= Q16_ONE {
             self.running = false;
+            w = self.w_to;
         }
         Some(self.eval(&w))
     }

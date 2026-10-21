@@ -221,6 +221,9 @@ fn main() -> std::io::Result<()> {
         (".ledmapper.v1.Keypoint.slots", 32),
         (".ledmapper.v1.SaveKeypoint.values", 32),
         (".ledmapper.v1.BlendKeypoints.weights", 4),
+        // Canned ramps (docs/design/ramps.md): read in place by the firmware too;
+        // a request ramps at most 16 uniforms (ledmapper_ramp::MAX_LANES).
+        (".ledmapper.v1.RampUniforms.targets", 16),
     ] {
         if firmware {
             g.configure(field, Config::new().skip(true));

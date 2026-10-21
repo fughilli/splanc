@@ -419,6 +419,18 @@ void lm_drv_set_host(const LmDrvHost *host);
 // Run the loaded driver's poll() if due (loop task, player mutex held).
 void lm_drv_poll(uint64_t now_us);
 
+// -- Canned interpolation profiles (docs/design/ramps.md) --------------------
+// Advance every ramp (uniforms, crossfade) and keypoint morph to the device
+// clock now_ms (millis()). Once per rendered frame, before lm_fx_update.
+// Returns the number of things moved this frame.
+uint32_t lm_ramp_tick(int64_t now_ms);
+// Pop one pending ramp completion event as an encoded ramp_state frame. 0 =
+// none pending, -2 = out_cap too small.
+int32_t lm_ramp_take_event_frame(uint8_t *out, size_t out_cap);
+// A committed deck-A ramp landed: encode deck A's current uniforms as a
+// set_uniforms frame to persist. 0 = nothing to persist, -2 = doesn't fit.
+int32_t lm_ramp_take_commit_frame(uint8_t *out, size_t cap);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

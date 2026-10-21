@@ -126,6 +126,7 @@ rust_static_library(
         "//firmware/osc",
         "//firmware/player:player_fw",
         "//firmware/sensor",
+        "//firmware/ramp",
         "//firmware/store",
         "//firmware/sysmode",
         "//oss/pbview",
@@ -160,6 +161,7 @@ rust_library(
         "//firmware/osc",
         "//firmware/player",
         "//firmware/sensor",
+        "//firmware/ramp",
         "//firmware/store",
         "//firmware/sysmode",
         "//oss/pbview",
@@ -209,6 +211,25 @@ rust_test(
 rust_test(
     name = "decks_keypoints_test",
     srcs = ["tests/decks_keypoints.rs"],
+    edition = "2021",
+    # Host-profile envelopes are ~100 KB each and debug builds don't share their
+    # stack slots: the handler path needs ~16 MB here (on the device, the
+    # firmware profile + opt build is bounded by stack_bound_test).
+    env = {"RUST_MIN_STACK": "33554432"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Canned interpolation profiles (ramp_uniforms / ramp_crossfade / cancel_ramp,
+# the keypoint morph as a ramp, live-set cancellation, events + the landing
+# commit) through the C ABI. Own binary.
+rust_test(
+    name = "ramps_test",
+    srcs = ["tests/ramps.rs"],
     edition = "2021",
     env = {"RUST_MIN_STACK": "33554432"},
     deps = [

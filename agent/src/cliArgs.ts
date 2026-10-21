@@ -30,12 +30,13 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   set-brightness <0..1>
   list-uniforms
   set-uniforms k=v... [--commit]
-  ramp-uniforms k=v... --seconds <s>   waits for the ramp to finish
+  ramp-uniforms k=v... --seconds <s> [--curve c]   waits for the ramp to finish
+               (curves: linear|ease|ease_in|ease_out|smoothstep; the player runs it if it can)
   compile-effect --file <f.fx>
   preview-effect --file <f.fx> [--times 0,1,2] [--out <dir>]   writes PNGs to --out
   deploy-effect <id> --file <f.fx> [--no-activate] [--force]
   set-effect <id|off>  |  rollback-effect [--seconds s]   (after a crossfade: fades back)
-  crossfade-to <id> [--file <f.fx>] [--seconds 5] [--curve linear|ease|ease_in|ease_out]
+  crossfade-to <id> [--file <f.fx>] [--seconds 5] [--curve c]
                [--color-mode rgb|hsv] [--force] [k=v...]   fade to an effect on the idle FX deck
   list-decks                           FX decks A/B: loaded effects, crossfade, the live deck
   plot-fixture [--color-by index|confidence|segment|channel|fixture|effect] [--file <f.fx>]
@@ -45,8 +46,8 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   list-keypoints                       the active effect's saved looks
   save-keypoint <name> [k=v...]        save the live look (or just k=v...) as <name>
   get-keypoint <name>                  a keypoint's uniform values
-  recall-keypoint <name> [--seconds s] [--commit]
-  blend-keypoints name=weight... [--seconds s] [--color-mode rgb|hsv] [--commit]
+  recall-keypoint <name> [--seconds s] [--curve c] [--commit]
+  blend-keypoints name=weight... [--seconds s] [--curve c] [--color-mode rgb|hsv] [--commit]
   delete-keypoint <name>               (ask the user first: keypoints are theirs)
   read-sensors [--samples n] [--interval ms]   the on-board motion sensor (IMU)
   calibrate-sensors <gyro_bias|level|reset>  (hold the fixture still first)
@@ -173,6 +174,8 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
   const deck = deckFlag !== undefined ? { deck: Number(deckFlag) } : {};
   const seconds = flag(p, "seconds") !== undefined ? { seconds: Number(flag(p, "seconds")) } : {};
   const commit = flag(p, "commit") ? { commit: true } : {};
+  const curveFlag = flag(p, "curve");
+  const curveArg = curveFlag !== undefined ? { curve: curveFlag } : {};
   switch (cmd) {
     case "players":
     case "list-players":
@@ -224,7 +227,10 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
     case "set-uniforms":
       return { tool: "set_uniforms", args: { values: kv(rest), ...commit, ...sel } };
     case "ramp-uniforms":
-      return { tool: "ramp_uniforms", args: { targets: kv(rest), seconds: Number(flag(p, "seconds") ?? 5), ...sel } };
+      return {
+        tool: "ramp_uniforms",
+        args: { targets: kv(rest), seconds: Number(flag(p, "seconds") ?? 5), ...curveArg, ...sel },
+      };
     case "compile":
     case "compile-effect":
       return { tool: "compile_effect", args: { ...src, ...sel } };
@@ -339,7 +345,10 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
     case "get-keypoint":
       return { tool: "get_keypoint", args: { name: need(rest[0], "keypoint name"), ...deck, ...sel } };
     case "recall-keypoint":
-      return { tool: "recall_keypoint", args: { name: need(rest[0], "keypoint name"), ...seconds, ...commit, ...deck, ...sel } };
+      return {
+        tool: "recall_keypoint",
+        args: { name: need(rest[0], "keypoint name"), ...seconds, ...curveArg, ...commit, ...deck, ...sel },
+      };
     case "blend-keypoints": {
       if (rest.length === 0) throw new Error("give keypoint weights as name=weight...");
       const weights: Record<string, number> = {};
@@ -350,7 +359,7 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
       const mode = flag(p, "color-mode");
       return {
         tool: "blend_keypoints",
-        args: { weights, ...seconds, ...(mode ? { color_mode: mode } : {}), ...commit, ...deck, ...sel },
+        args: { weights, ...seconds, ...curveArg, ...(mode ? { color_mode: mode } : {}), ...commit, ...deck, ...sel },
       };
     }
     case "delete-keypoint":

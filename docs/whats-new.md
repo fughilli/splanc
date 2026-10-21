@@ -5,6 +5,29 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Smooth changes run on the player
+
+- **Glides, crossfades and keypoint morphs are one request.** When an agent
+  glides a control (`ramp_uniforms`), crossfades to an effect (`crossfade_to`,
+  `rollback_effect`) or morphs to a saved look over some seconds, players with
+  this firmware do the interpolation themselves. They get the endpoint, the
+  duration and the curve, then animate frame by frame on their own clock.
+  Nothing streams while the change runs, so the cloud relay stays quiet and the
+  player's connection isn't flooded.
+- **Fixtures move together.** With several players, every player gets the same
+  start time in its own clock, so a room glides or crossfades in step.
+- **Your hands always win.** Moving a slider, a MIDI control, an OSC control or
+  the crossfader takes over at once, and the agent's glide on that control stops
+  where it is. Live control is never queued behind a glide.
+- **Curves:** linear, ease (cubic in-out), ease in, ease out and smoothstep, for
+  glides, crossfades and keypoint morphs. Toggles and dropdowns switch when the
+  glide ends.
+- **Show Mode** has a **Fade** button with a fade time (2, 4, 8 or 16 s) that
+  glides the crossfader to the other deck. You can map it to a MIDI button.
+- **Older firmware still works.** The agent steps the change itself, now waiting
+  for each step to be acknowledged so the player doesn't fall behind.
+  Design: [ramps.md](design/ramps.md).
+
 ### Copy a fixture's map onto a new phone
 
 - **The Maps tab shows the map on the connected device.** A card at the top
