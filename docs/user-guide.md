@@ -47,6 +47,8 @@ static site at `/user-guide/` on the deployed app.
   - [MIDI controllers](#midi-controllers) — Name physical knobs and bind them to effect parameters.
   - [Appearance & behavior](#appearance--behavior) — Theme the app, pick fonts, and tune the 3D view
     and capture defaults.
+  - [Debug mode & capture bundles](#debug-mode--capture-bundles) — Turn on debug mode to save and
+    share everything needed to reproduce a failed mapping run.
   - [Help, tutorial & about](#help-tutorial--about) — Restart this tutorial any time, and find
     licensing and credits.
 
@@ -119,6 +121,12 @@ the fixture.
 
 The heavy solve can run on-device (WASM) or on a host server; the app picks the better placement
 automatically.
+
+The final solve starts both from scratch and from the best live-preview solve, and keeps whichever
+comes out better. If it still comes back degenerate (no LEDs in front of the camera, a collapsed
+size, far fewer LEDs than the preview had) while the preview looked right, the app keeps the
+preview's map instead and says so in a warning on the map. With debug mode on, such runs also save a
+reproduction bundle (see **Debug mode & capture bundles**).
 
 ### The mapping workspace
 
@@ -361,6 +369,40 @@ persists across reloads, with a live 3D preview so the render knobs show their e
 
 - **Manual exposure ceiling** — the top of the capture screen's manual exposure slider, for lighting
   a frame under artificial light.
+
+### Debug mode & capture bundles
+
+_Turn on debug mode to save and share everything needed to reproduce a failed mapping run._
+
+**Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings** is the app's debug mode. It adds a
+**Debugging** tab, and while it's on, every mapping run that fails, comes out degenerate, falls back
+to its live preview, or disagrees with the preview saves a **capture bundle** on the phone.
+
+A bundle holds what a developer needs to replay the run's solves exactly: every LED detection with
+its timestamp and camera intrinsics, the motion-sensor stream, the capture settings (stride, diffuse
+mode, exposure, brightness, LED count, the fixture and its firmware version), the live-preview
+solves, the final solve's result and diagnostics, and the app, solver and phone versions.
+
+#### Export or share a bundle
+
+- Open **Settings ▸ Debugging ▸ Mapping capture bundles**. Each run is listed with its outcome (for
+  example `fallback-degenerate`), LED count and size.
+- **Export** saves the bundle as one `.splanc-capture.json` file (on iPhone the share sheet opens,
+  so you can **Save to Files**).
+- **Share** opens the phone's share sheet (AirDrop, Mail, Messages…) with the file attached. If it
+  says **Ready — tap Share again**, tap once more.
+- Attach the file to your bug report. **Delete** removes one bundle; **Delete all** clears them. The
+  phone keeps the newest 20 (up to 150 MB).
+
+#### Options
+
+- **Keep successful runs too** saves a bundle for runs that ended fine, to compare against a failed
+  one.
+- **Include camera frames** adds a small camera snapshot every 2 seconds (about 1–2 MB per minute).
+  Not available with the native iPhone camera.
+
+Bundles stay on your phone until you export or share them. They contain the capture's measurements
+and your fixture's name, nothing from the camera unless you turn on camera frames.
 
 ### Help, tutorial & about
 

@@ -7,11 +7,16 @@
 //! surface is JSON-in/JSON-out (`solve_json`) so both carriers stay trivial.
 
 pub mod camera;
+pub mod diag;
 pub mod imu;
 pub mod linalg;
 pub mod lm;
 pub mod pipeline;
 pub mod quat;
+#[cfg(test)]
+mod regression_tests;
+pub mod replay;
+pub mod scenario;
 pub mod so3;
 pub mod sparse;
 pub mod strip;
@@ -38,6 +43,27 @@ pub fn solve_json(
         };
     let map = pipeline::reconstruct_vio(&problem, Some(&mut cb))?;
     serde_json::to_string(&map).map_err(|e| format!("serialize: {e}"))
+}
+
+/// `solve_json`, returning `{"map": OutputMap, "diag": SolveDiagnostics}` —
+/// the per-stage trace, degeneracy assessment and final solver state a
+/// capture reproduction bundle records (and a later solve can warm-start
+/// from).
+pub fn solve_json_diag(
+    input: &str,
+    mut progress: Option<&mut dyn FnMut(&ProgressSnapshot)>,
+) -> Result<String, String> {
+    let problem: Problem =
+        serde_json::from_str(input).map_err(|e| format!("bad problem JSON: {e}"))?;
+    let mut cb =
+        |frac: f64, rms: f64, ids: &[u32], leds: &[linalg::Vec3], cams: &[linalg::Vec3]| {
+            if let Some(p) = progress.as_mut() {
+                p(&pipeline::snapshot(frac, rms, ids, leds, cams));
+            }
+        };
+    let (map, diag) = pipeline::reconstruct_vio_diag(&problem, Some(&mut cb))?;
+    serde_json::to_string(&serde_json::json!({"map": map, "diag": diag}))
+        .map_err(|e| format!("serialize: {e}"))
 }
 
 /// Run the canned benchmark solve once (identical work on every carrier —

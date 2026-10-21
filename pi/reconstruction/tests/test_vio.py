@@ -382,3 +382,33 @@ def test_solved_led_count_gates_on_quality():
     # ids-present notwithstanding.
     result.led_positions[0] = result.led_positions[0] + np.array([0.5, 0.0, 0.0])
     assert solved_led_count(frames, result) == len(leds) - 1
+
+
+def test_implausible_alignment_scale_falls_back_to_an_arms_length_seed():
+    """The cold start's linear alignment scale can come out <= 0 (or ~0) on a
+    gentle or decode-swapped capture; applied as-is it mirrors the init behind
+    every camera (an empty map). Mirrors the Rust guard (vio::plausible_init_scale)."""
+    from reconstruction.vio import (
+        FALLBACK_CAMERA_DIST_M,
+        _finite_difference_velocities,
+        _init_camera_distance,
+        _plausible_init_scale,
+    )
+
+    centers = np.array([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0], [0.2, 0.0, 1.0]])
+    leds = {0: np.array([0.0, 0.0, 0.0]), 1: np.array([0.2, 0.0, 0.0])}
+    d0 = _init_camera_distance(centers, leds)
+    assert d0 == pytest.approx(1.0, abs=0.01)
+    assert _plausible_init_scale(0.6, d0)
+    assert not _plausible_init_scale(-0.9, d0)  # mirrored
+    assert not _plausible_init_scale(0.01, d0)  # cameras 1 cm away
+    assert not _plausible_init_scale(float("nan"), d0)
+    assert not _plausible_init_scale(100.0, d0)
+    s = FALLBACK_CAMERA_DIST_M / d0
+
+    class F:
+        def __init__(self, t):
+            self.t = t
+
+    v = _finite_difference_velocities([F(0.0), F(0.5), F(1.0)], centers, s)
+    assert v[1] == pytest.approx([0.2 * s, 0.0, 0.0])

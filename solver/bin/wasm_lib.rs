@@ -41,3 +41,23 @@ pub fn solve_json(input: &str, progress: Option<js_sys::Function>) -> Result<Str
     };
     ledmapper_solver::solve_json(input, Some(&mut cb)).map_err(|e| JsError::new(&e))
 }
+
+/// `solve_json` returning `{"map", "diag"}`: the stage trace, degeneracy
+/// assessment and final solver state (a later solve's `options.warmStart`).
+#[wasm_bindgen]
+pub fn solve_json_diag(input: &str, progress: Option<js_sys::Function>) -> Result<String, JsError> {
+    let mut last_report = 0.0f64;
+    let mut cb = |snap: &ledmapper_solver::types::ProgressSnapshot| {
+        let now = js_sys::Date::now();
+        if now - last_report < 250.0 {
+            return;
+        }
+        last_report = now;
+        if let Some(f) = progress.as_ref() {
+            if let Ok(json) = serde_json::to_string(snap) {
+                let _ = f.call1(&JsValue::NULL, &JsValue::from_str(&json));
+            }
+        }
+    };
+    ledmapper_solver::solve_json_diag(input, Some(&mut cb)).map_err(|e| JsError::new(&e))
+}
