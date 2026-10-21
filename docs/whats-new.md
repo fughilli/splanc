@@ -5,6 +5,18 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Fixtures that feel motion: the sensor core
+
+- **Wire an MPU-6050 and the player finds it.** At boot the C6 player probes
+  its I2C pins (SDA 6 / SCL 7, INT 21 by default) for an MPU-6050-family IMU,
+  fuses it on the device (orientation, gravity, linear acceleration, shake and
+  tap), and costs nothing when none is fitted.
+- **Effects react by name.** Declare `uniform vec3 imu_gravity`, `imu_quat`,
+  `imu_shake`, `imu_tap`, ... and the firmware drives them every frame; without
+  a sensor they stay ordinary knobs. Try `agent/skill/examples/imu_tilt.fx`.
+- **Agents can read and calibrate it** (`read_sensors`, `calibrate_sensors`).
+  Design: [sensor-core.md](design/sensor-core.md) (#315).
+
 ### Live VJ through your bridge: every fixture from one phone
 
 - **⋯ → Live via bridge** in the app pairs with your Splanc bridge (the code on its screen,

@@ -65,6 +65,9 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   blend_keypoints: write("Blend saved looks", false, true),
   get_keypoint: read("Read a saved look"),
   delete_keypoint: write("Delete a saved look", true, true),
+  read_sensors: read("Read the motion sensor"),
+  // Overwrites the stored sensor calibration (no undo but recalibrating).
+  calibrate_sensors: write("Calibrate the motion sensor", true, true),
   // effect authoring
   compile_effect: read("Compile an effect"),
   estimate_effect: read("Estimate an effect's frame cost"),

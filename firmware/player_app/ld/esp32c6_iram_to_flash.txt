@@ -25,6 +25,11 @@ libesp_ringbuf.a
 libesp_driver_rmt.a:rmt_tx
 libesp_driver_rmt.a:rmt_rx
 libesp_driver_rmt.a:rmt_encoder
+# CONFIG_I2C_MASTER_ISR_HANDLER_IN_IRAM=y but CONFIG_I2C_ISR_IRAM_SAFE=n: the
+# sensor core's I2C interrupt (sensor_bus.cpp) is allocated WITHOUT
+# ESP_INTR_FLAG_IRAM, so it is masked while the flash cache is off and its
+# handler never needs IRAM (724 B back; docs/design/sensor-core.md budget).
+libesp_driver_i2c.a:i2c_master
 # Flash on the general-purpose SPI host: we only use the main (SPI1) flash.
 # (The other flash VENDORS' chip drivers stay: a board fitted with, say, a
 # Winbond part runs that driver with the cache off on every flash write.)

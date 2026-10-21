@@ -23,6 +23,11 @@
       "reserved_from": ["firmware/player_app/main.cpp", "kXmitTaskStack = (\\d+);", 1]
     },
     {
+      "name": "sensor",
+      "symbol": "(anonymous namespace)::sensor_task(void*)",
+      "reserved_from": ["firmware/player_app/sensor_bus.cpp", "kSensorTaskStack = (\\d+);", 1]
+    },
+    {
       "name": "logdrain",
       "symbol": "log_drain_task(void*)",
       "reserved_from": ["firmware/player_app/serial_log.h", "StackType_t stack\\[(\\d+) /", 1]
@@ -48,15 +53,28 @@
     "^__wrap_esp_panic_handler",
     "^panicHandler$"
   ],
-  "_indirect_edges": "Function-pointer calls the disassembly can't resolve: mbedtls's f_send/f_recv are our bio callbacks (netstack_transport.cpp mbedtls_ssl_set_bio).",
+  "_indirect_edges": "Function-pointer calls the disassembly can't resolve: mbedtls's f_send/f_recv are our bio callbacks (netstack_transport.cpp mbedtls_ssl_set_bio); the sensor core's LmI2cOps callbacks (sensor_bus.cpp kOps) and the hub's cycle source (sensor_ffi.rs ops_cycles).",
   "indirect_edges": [
     {
       "callers": "^(mbedtls_ssl|ssl_)",
       "callees": ["(anonymous namespace)::bio_send", "(anonymous namespace)::bio_recv"]
+    },
+    {
+      "callers": "(FfiBus|ledmapper_sensor::|sensor_ffi::(?!ops_cycles)|lm_sensor_)",
+      "callees": [
+        "(anonymous namespace)::bus_write_read",
+        "(anonymous namespace)::bus_write",
+        "ledmapper_player_ffi::sensor_ffi::ops_cycles"
+      ]
+    },
+    {
+      "callers": "sensor_ffi::ops_cycles",
+      "callees": ["(anonymous namespace)::cycles()"]
     }
   ],
-  "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold.",
+  "_dynamic_allocations": "VLA/alloca bytes per function. Preferences::getString: a char[len+1] for the stored NVS string (our values are names/credentials, <= 64 B). ppTxFragmentProc (libpp): a buffer of roundup2(fragment) bytes, the fragment bounded by the 2346 B fragmentation threshold. s_i2c_start_end_command (IDF i2c_master): two VLAs of roundup16(0 or 1) bytes = 32 B max (disassembly: andi -16 of s2+15, s2 in {0,1}).",
   "dynamic_allocations": {
+    "s_i2c_start_end_command": 32,
     "Preferences::getString(char const*, String)": 128,
     "ppTxFragmentProc": 2400
   },

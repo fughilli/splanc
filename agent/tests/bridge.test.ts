@@ -376,6 +376,7 @@ describe("mcp", () => {
       "list_uniforms",
       "plot_fixture",
       "preview_effect",
+      "read_sensors",
       "refresh_players",
       "search_effects",
     ]);

@@ -60,6 +60,8 @@ import {
   type TlsInfoMessage,
   type FpsStateMessage,
   flatFpsState,
+  type SensorStateMessage,
+  type SensorCalibration,
   type UniformValueFlat,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
@@ -841,6 +843,32 @@ export class LedMapperClient {
     };
   }
 
+  /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
+   * "sensors" feature. */
+  async getSensors(): Promise<SensorStateMessage> {
+    const r = (await this.request(
+      { type: "get_sensors" } as unknown as ClientMessage,
+      "sensor_state",
+    )) as unknown as Partial<SensorStateMessage>;
+    return normalizeSensorState(r);
+  }
+
+  /** Run a sensor calibration action. Applied by the device's sensor task at its
+   * next poll: the reply is the state BEFORE it ran — poll getSensors until
+   * calibrationSeq advances, then read calibrationResult. */
+  async calibrateSensors(action: SensorCalibration): Promise<SensorStateMessage> {
+    const actions: Record<SensorCalibration, string> = {
+      gyro_bias: "ACTION_GYRO_BIAS",
+      level: "ACTION_LEVEL",
+      reset: "ACTION_RESET",
+    };
+    const r = (await this.request(
+      { type: "calibrate_sensors", action: actions[action] } as unknown as ClientMessage,
+      "sensor_state",
+    )) as unknown as Partial<SensorStateMessage>;
+    return normalizeSensorState(r);
+  }
+
   /** Place this fixture in a shared room frame (or clear it); resolves with the
    * echoing welcome. Needs the "fixture_pose" feature. */
   async setFixturePose(
@@ -1278,4 +1306,39 @@ function b64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/** Fill a decoded SensorState's absent fields (proto3 omits defaults). */
+function normalizeSensorState(r: Partial<SensorStateMessage>): SensorStateMessage {
+  return {
+    type: "sensor_state",
+    status: r.status ?? "SENSOR_STATUS_UNSPECIFIED",
+    part: r.part ?? "",
+    i2cAddress: r.i2cAddress ?? 0,
+    whoAmI: r.whoAmI ?? 0,
+    sdaGpio: r.sdaGpio ?? -1,
+    sclGpio: r.sclGpio ?? -1,
+    accel: r.accel ?? [],
+    gyro: r.gyro ?? [],
+    quat: r.quat ?? [],
+    gravity: r.gravity ?? [],
+    linearAccel: r.linearAccel ?? [],
+    gyroBias: r.gyroBias ?? [],
+    temperatureC: r.temperatureC ?? 0,
+    shake: r.shake ?? 0,
+    tapCount: r.tapCount ?? 0,
+    shakeCount: r.shakeCount ?? 0,
+    atRest: r.atRest ?? false,
+    sampleRateHz: r.sampleRateHz ?? 0,
+    samples: r.samples ?? 0,
+    fifoOverflows: r.fifoOverflows ?? 0,
+    busErrors: r.busErrors ?? 0,
+    fifo: r.fifo ?? false,
+    calibrated: r.calibrated ?? false,
+    accelScaleCorrected: r.accelScaleCorrected ?? false,
+    fusionCycles: r.fusionCycles ?? 0,
+    calibrationSeq: r.calibrationSeq ?? 0,
+    calibrationResult: r.calibrationResult ?? "",
+    intGpio: r.intGpio ?? -1,
+  };
 }

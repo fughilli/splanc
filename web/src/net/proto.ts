@@ -69,6 +69,8 @@ const CLIENT_ARMS: Record<string, string> = {
   blend_keypoints: "blendKeypoints",
   get_tls_info: "getTlsInfo",
   set_fps: "setFps",
+  get_sensors: "getSensors",
+  calibrate_sensors: "calibrateSensors",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -96,6 +98,7 @@ const SERVER_ARMS: Record<string, string> = {
   keypoint: "keypoint",
   tls_info: "tlsInfo",
   fps_state: "fpsState",
+  sensor_state: "sensorState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -610,6 +613,59 @@ export function flatFpsState(m: Partial<FpsStateMessage>): FpsStateMessage {
     aborted: m.aborted ?? false,
     noAbort: m.noAbort ?? false,
   };
+}
+
+/** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */
+export type SensorStatus =
+  | "SENSOR_STATUS_UNSPECIFIED"
+  | "SENSOR_STATUS_ABSENT"
+  | "SENSOR_STATUS_UNKNOWN_DEVICE"
+  | "SENSOR_STATUS_STARTING"
+  | "SENSOR_STATUS_RUNNING"
+  | "SENSOR_STATUS_FAULT"
+  | "SENSOR_STATUS_DISABLED";
+
+/** Calibration actions (proto CalibrateSensors.Action). */
+export type SensorCalibration = "gyro_bias" | "level" | "reset";
+
+/** Reply to get_sensors / calibrate_sensors (proto SensorState; the "sensors"
+ * feature, docs/design/sensor-core.md). Vectors are empty unless RUNNING. */
+export interface SensorStateMessage {
+  type: "sensor_state";
+  status: SensorStatus;
+  part: string;
+  i2cAddress: number;
+  whoAmI: number;
+  sdaGpio: number;
+  sclGpio: number;
+  /** m/s^2, fixture frame, gravity included. */
+  accel: number[];
+  /** rad/s, fixture frame, bias-corrected. */
+  gyro: number[];
+  /** w, x, y, z: fixture -> world (z up; yaw drifts without a magnetometer). */
+  quat: number[];
+  /** Unit DOWN vector, fixture frame. */
+  gravity: number[];
+  /** m/s^2, world frame, gravity removed. */
+  linearAccel: number[];
+  gyroBias: number[];
+  temperatureC: number;
+  shake: number;
+  tapCount: number;
+  shakeCount: number;
+  atRest: boolean;
+  sampleRateHz: number;
+  samples: number;
+  fifoOverflows: number;
+  busErrors: number;
+  fifo: boolean;
+  calibrated: boolean;
+  accelScaleCorrected: boolean;
+  fusionCycles: number;
+  calibrationSeq: number;
+  calibrationResult: string;
+  /** MPU INT pin (-1 = none); recorded, the device polls today. */
+  intGpio: number;
 }
 
 /** Reply to list_effects (proto EffectList). */

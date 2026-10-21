@@ -74,6 +74,9 @@ export class FakePlayer {
   readonly connections: ("manifest" | "ws")[] = [];
   /** Device-stored uniform keypoints: effect id -> name -> {index, values by uniform}. */
   keypoints = new Map<string, Map<string, { index: number; values: Record<string, number[]> }>>();
+  /** The motion sensor's get_sensors reply (proto3-JSON field names); null =
+   * the sensor core reports "absent". calibrate_sensors bumps calibrationSeq. */
+  sensor: Record<string, unknown> | null = null;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
@@ -372,6 +375,17 @@ export class FakePlayer {
       case "get_keypoint":
       case "blend_keypoints":
         return this.reply(ws, this.keypoint(m));
+      case "get_sensors":
+      case "calibrate_sensors": {
+        const base = this.sensor ?? { status: "SENSOR_STATUS_ABSENT", sdaGpio: 6, sclGpio: 7, intGpio: 21 };
+        const reply = { type: "sensor_state", ...base };
+        if (m.type === "calibrate_sensors" && this.sensor) {
+          // Applied "on the next poll": the reply is the state before it ran.
+          const seq = (this.sensor["calibrationSeq"] as number | undefined) ?? 0;
+          this.sensor = { ...this.sensor, calibrationSeq: seq + 1, calibrationResult: "ok", calibrated: true };
+        }
+        return this.reply(ws, reply);
+      }
       case "time_sync_ping": {
         // The device clock: this process's clock shifted by clockOffsetMs.
         const t1 = performance.now() + this.clockOffsetMs;

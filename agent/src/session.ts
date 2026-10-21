@@ -77,6 +77,7 @@ export type Feature =
   | "crossfade"
   | "keypoints"
   | "fps"
+  | "sensors"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -471,6 +472,95 @@ export class DeviceSession {
       throw new ToolError(`the player's firmware (${this.fwVersion}) doesn't store uniform keypoints`);
     }
     if (!KEYPOINTS_IN_PROTO) throw new ToolError("this agent bundle predates uniform keypoints; update it");
+  }
+
+  // -- motion sensor (docs/design/sensor-core.md) ---------------------------------
+  // The on-board IMU (MPU-6050 family on I2C), fused on the device. Values are
+  // also bound by name into effect uniforms (imu_quat, imu_gravity, ...).
+
+  private requireSensors(): void {
+    if (!this.has("sensors")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no sensor core`);
+    }
+    if (!SENSORS_IN_PROTO) throw new ToolError("this agent bundle predates the sensor core; update it");
+  }
+
+  /** One get_sensors, shaped for an agent: status, part, and (when running) the
+   * fused orientation as degrees as well as the raw protocol vectors. */
+  async readSensors(): Promise<Record<string, unknown>> {
+    this.requireSensors();
+    return DeviceSession.sensorView(await this.rpc<SensorStateReply>({ type: "get_sensors" }, "sensor_state"));
+  }
+
+  /** `samples` readings `intervalMs` apart (a short time series: what an agent
+   * can do with request/reply; the firmware has no push subscription yet). */
+  async readSensorSeries(samples: number, intervalMs: number): Promise<Record<string, unknown>[]> {
+    const out: Record<string, unknown>[] = [];
+    const t0 = Date.now();
+    for (let i = 0; i < samples; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+      out.push({ t_ms: Date.now() - t0, ...(await this.readSensors()) });
+    }
+    return out;
+  }
+
+  /** Run a calibration action and wait (up to ~1.5 s) for the device's sensor
+   * task to apply it. */
+  async calibrateSensors(action: "gyro_bias" | "level" | "reset"): Promise<Record<string, unknown>> {
+    this.requireSensors();
+    const names = { gyro_bias: "ACTION_GYRO_BIAS", level: "ACTION_LEVEL", reset: "ACTION_RESET" } as const;
+    const before = await this.rpc<SensorStateReply>({ type: "calibrate_sensors", action: names[action] }, "sensor_state");
+    const seq0 = before.calibrationSeq ?? 0;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const s = await this.rpc<SensorStateReply>({ type: "get_sensors" }, "sensor_state");
+      if ((s.calibrationSeq ?? 0) !== seq0) {
+        return { action, result: s.calibrationResult || "ok", state: DeviceSession.sensorView(s) };
+      }
+    }
+    throw new ToolError("the device didn't apply the calibration (is a sensor running?)");
+  }
+
+  private static sensorView(r: SensorStateReply): Record<string, unknown> {
+    const status = (r.status ?? "SENSOR_STATUS_UNSPECIFIED").replace("SENSOR_STATUS_", "").toLowerCase();
+    const out: Record<string, unknown> = { status };
+    if (r.part) out["part"] = r.part;
+    if (r.i2cAddress) out["i2c_address"] = `0x${r.i2cAddress.toString(16)}`;
+    if (r.whoAmI || status === "unknown_device") out["who_am_i"] = `0x${(r.whoAmI ?? 0).toString(16)}`;
+    out["pins"] = { sda: r.sdaGpio ?? -1, scl: r.sclGpio ?? -1, int: r.intGpio ?? -1 };
+    if (status !== "running") return out;
+    const q = r.quat ?? [1, 0, 0, 0];
+    const [w, x, y, z] = [q[0] ?? 1, q[1] ?? 0, q[2] ?? 0, q[3] ?? 0];
+    const deg = (a: number) => Math.round((a * 1800) / Math.PI) / 10;
+    const g = r.gravity ?? [0, 0, -1];
+    const round = (v: number[] | undefined, k = 1000) => (v ?? []).map((n) => Math.round(n * k) / k);
+    Object.assign(out, {
+      euler_deg: {
+        roll: deg(Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))),
+        pitch: deg(Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x))))),
+        yaw: deg(Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))),
+      },
+      tilt_deg: deg(Math.acos(Math.max(-1, Math.min(1, -(g[2] ?? -1))))),
+      quat_wxyz: round(r.quat, 10000),
+      gravity_down: round(r.gravity),
+      accel_ms2: round(r.accel, 100),
+      gyro_rads: round(r.gyro),
+      linear_accel_ms2: round(r.linearAccel, 100),
+      shake: Math.round((r.shake ?? 0) * 100) / 100,
+      taps: r.tapCount ?? 0,
+      shakes: r.shakeCount ?? 0,
+      at_rest: r.atRest ?? false,
+      temperature_c: Math.round((r.temperatureC ?? 0) * 10) / 10,
+      rate_hz: Math.round((r.sampleRateHz ?? 0) * 10) / 10,
+      samples: r.samples ?? 0,
+      fifo: r.fifo ?? false,
+      calibrated: r.calibrated ?? false,
+      ...(r.accelScaleCorrected ? { accel_scale_corrected: true } : {}),
+      fusion_cycles_per_sample: r.fusionCycles ?? 0,
+      bus_errors: r.busErrors ?? 0,
+      fifo_overflows: r.fifoOverflows ?? 0,
+    });
+    return out;
   }
 
   /** A request/reply on the device session (single-flight per reply type). */
@@ -1421,6 +1511,38 @@ export const DECKS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === 
 
 /** Whether this build's protocol carries the uniform-keypoint arms. */
 export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");
+export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "get_sensors");
+
+interface SensorStateReply {
+  status?: string;
+  part?: string;
+  i2cAddress?: number;
+  whoAmI?: number;
+  sdaGpio?: number;
+  sclGpio?: number;
+  accel?: number[];
+  gyro?: number[];
+  quat?: number[];
+  gravity?: number[];
+  linearAccel?: number[];
+  gyroBias?: number[];
+  temperatureC?: number;
+  shake?: number;
+  tapCount?: number;
+  shakeCount?: number;
+  atRest?: boolean;
+  sampleRateHz?: number;
+  samples?: number;
+  fifoOverflows?: number;
+  busErrors?: number;
+  fifo?: boolean;
+  calibrated?: boolean;
+  accelScaleCorrected?: boolean;
+  fusionCycles?: number;
+  calibrationSeq?: number;
+  calibrationResult?: string;
+  intGpio?: number;
+}
 
 interface KeypointListReply {
   effectId: string;

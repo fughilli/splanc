@@ -487,6 +487,77 @@ message SetFps {
   bool no_abort = 2;
 }
 
+// -- Sensor core (docs/design/sensor-core.md) ---------------------------------
+// Ask for the on-board motion sensor's live state: what was detected on the I2C
+// bus at boot, the latest calibrated sample, the fused orientation and the
+// gesture counters. Firmware advertising the "sensors" feature answers it (also
+// with no sensor attached: status SENSOR_STATUS_ABSENT). Reply: sensor_state.
+message GetSensors {}
+
+// Run a calibration action on the motion sensor. Applied by the sensor task at
+// its next poll (~20 ms), persisted to NVS, survives reboots. GYRO_BIAS and
+// LEVEL require the fixture to be held still (state.at_rest). Reply:
+// sensor_state, whose calibration_result reports the outcome once applied —
+// poll get_sensors until calibration_seq advances.
+message CalibrateSensors {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    // Store the gyro zero-rate bias learned while still (+ the learned accel
+    // scale): the next boot starts calibrated instead of re-learning.
+    ACTION_GYRO_BIAS = 1;
+    // "The fixture is upright now": rotate the sensor mount so the measured
+    // gravity is the fixture's -z (zero tilt). Yaw stays arbitrary.
+    ACTION_LEVEL = 2;
+    // Forget the stored calibration (defaults; re-learn at rest).
+    ACTION_RESET = 3;
+  }
+  Action action = 1;
+}
+
+enum SensorStatus {
+  SENSOR_STATUS_UNSPECIFIED = 0;  // sensor core not started
+  SENSOR_STATUS_ABSENT = 1;       // nothing answered at 0x68/0x69
+  SENSOR_STATUS_UNKNOWN_DEVICE = 2; // something answered; WHO_AM_I unrecognized
+  SENSOR_STATUS_STARTING = 3;     // reset/config in progress
+  SENSOR_STATUS_RUNNING = 4;
+  SENSOR_STATUS_FAULT = 5;        // bus errors (unplugged?); re-probing every 1 s
+  SENSOR_STATUS_DISABLED = 6;     // disabled by config or pin conflict
+}
+
+// The motion sensor's state. Frames: "fixture" = the sensor axes after the
+// stored mount rotation (identity until calibrated with ACTION_LEVEL); "world"
+// = z up, yaw arbitrary (no magnetometer yet: heading drifts slowly).
+message SensorState {
+  SensorStatus status = 1;
+  string part = 2;                 // e.g. "MPU-6050"
+  uint32 i2c_address = 3;          // 0x68 (AD0 low) / 0x69 (AD0 high)
+  uint32 who_am_i = 4;
+  int32 sda_gpio = 5;
+  int32 scl_gpio = 6;
+  repeated float accel = 7 [packed = true];        // m/s^2, fixture frame, incl. gravity (3)
+  repeated float gyro = 8 [packed = true];         // rad/s, fixture frame, bias-corrected (3)
+  repeated float quat = 9 [packed = true];         // w,x,y,z fixture->world (4)
+  repeated float gravity = 10 [packed = true];     // unit DOWN vector, fixture frame (3)
+  repeated float linear_accel = 11 [packed = true]; // m/s^2, world frame, gravity removed (3)
+  repeated float gyro_bias = 12 [packed = true];   // rad/s, fixture frame (3)
+  float temperature_c = 13;
+  float shake = 14;                // 0..1
+  uint32 tap_count = 15;           // increments per tap (compare, don't edge-detect)
+  uint32 shake_count = 16;         // increments per shake episode
+  bool at_rest = 17;
+  float sample_rate_hz = 18;       // measured fused-sample rate
+  uint32 samples = 19;
+  uint32 fifo_overflows = 20;
+  uint32 bus_errors = 21;
+  bool fifo = 22;                  // batching via the on-chip FIFO (else direct reads)
+  bool calibrated = 23;            // a stored calibration record is in use
+  bool accel_scale_corrected = 24; // first-second |a| was >5% off 1 g; re-scaled
+  uint32 fusion_cycles = 25;       // CPU cycles per fused sample (device-measured mean)
+  uint32 calibration_seq = 26;     // advances when a CalibrateSensors is applied
+  string calibration_result = 27;  // "ok" | "not_running" | "not_at_rest" | ""
+  int32 int_gpio = 28;             // MPU INT pin (-1 = none); recorded, polled today
+}
+
 // List the effects the device holds: one per FX deck (deck A's is the last
 // submit_effect, persisted and auto-resumed on boot; deck B's is runtime-only),
 // so the reply has at most two entries. Reply: effect_list.
@@ -754,6 +825,9 @@ message ClientMessage {
     BlendKeypoints blend_keypoints = 44;
     GetTlsInfo get_tls_info = 45;
     SetFps set_fps = 46;
+    // 47: unused (left free while FUG-82 was in flight; it took 46).
+    GetSensors get_sensors = 48;
+    CalibrateSensors calibrate_sensors = 49;
   }
 }
 
@@ -1260,5 +1334,7 @@ message ServerMessage {
     Keypoint keypoint = 23;
     TlsInfo tls_info = 24;
     FpsState fps_state = 25;
+    // 26: unused (left free while FUG-82 was in flight; it took 25).
+    SensorState sensor_state = 27;
   }
 }

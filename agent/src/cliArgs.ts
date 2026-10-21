@@ -48,6 +48,8 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   recall-keypoint <name> [--seconds s] [--commit]
   blend-keypoints name=weight... [--seconds s] [--color-mode rgb|hsv] [--commit]
   delete-keypoint <name>               (ask the user first: keypoints are theirs)
+  read-sensors [--samples n] [--interval ms]   the on-board motion sensor (IMU)
+  calibrate-sensors <gyro_bias|level|reset>  (hold the fixture still first)
   skill [<file>]                       print the bundled skill (SKILL.md, or a file of it)
   tools                                list every tool + its input schema
   call <tool> '<json>'                 any tool by its MCP name
@@ -353,6 +355,20 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
     }
     case "delete-keypoint":
       return { tool: "delete_keypoint", args: { name: need(rest[0], "keypoint name"), ...deck, ...sel } };
+    case "read-sensors": {
+      const samples = flag(p, "samples");
+      const interval = flag(p, "interval");
+      return {
+        tool: "read_sensors",
+        args: {
+          ...(samples ? { samples: Number(samples) } : {}),
+          ...(interval ? { interval_ms: Number(interval) } : {}),
+          ...sel,
+        },
+      };
+    }
+    case "calibrate-sensors":
+      return { tool: "calibrate_sensors", args: { action: need(rest[0], "action"), ...sel } };
     case "export-map": {
       const format = flag(p, "format");
       const up = flag(p, "up");

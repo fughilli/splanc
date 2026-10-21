@@ -582,6 +582,10 @@ impl Player {
             // The framerate autoscaler (FUG-82) lives in the fx layer (player_app
             // ffi), which intercepts set_fps before the session core sees it.
             CMsg::SetFps(_) => Some(error("unsupported", "fps is handled by the fx layer")),
+            // The sensor core lives in the firmware glue (player_app ffi), too.
+            CMsg::GetSensors(_) | CMsg::CalibrateSensors(_) => {
+                Some(error("unsupported", "sensors are handled by the firmware"))
+            }
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
