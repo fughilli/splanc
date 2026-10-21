@@ -321,6 +321,64 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">
+<h3>Agents crossfade between effects, and look at your fixtures in 3D<a class="headerlink" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code></strong> fades from the running effect to a new one (its source, or an effects-library
+entry by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>) instead of cutting. The bridge
+loads the new effect onto the player’s idle FX deck (the second deck Show Mode uses), then
+glides the crossfade over the seconds you ask for, with a choice of curve (<code class="docutils literal notranslate"><span class="pre">ease</span></code> by default)
+and RGB or HSV blending. With several players or a room, every player fades on one clock, and
+the effects share one time base, so the room changes together.</p></li>
+<li><p><strong>Rollback keeps working.</strong> The effect you faded away from stays loaded on its deck, even
+one the app put there, so <code class="docutils literal notranslate"><span class="pre">rollback_effect</span></code> fades straight back to it (call it again to swap
+forward). <code class="docutils literal notranslate"><span class="pre">list_decks</span></code> shows what is on decks A and B, where the crossfade sits, and which
+deck is live. Uniform and keypoint tools follow the live deck.</p></li>
+<li><p><strong>Deck B is runtime-only</strong>: if a crossfade ends on it, a reboot brings back deck A’s effect.
+<code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> still makes an effect permanent. Both effects render while the fade runs, and
+they share the 24 KB buffer arena, so a too-large pair is refused with that explanation.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">plot_fixture</span></code></strong> returns a PNG of a fixture’s LED map from the front, side, top and an
+isometric view. It shows metres with +Y up, axes, the bounding box, the wiring order, LED index
+hints and a scale bar. Mapped LEDs are dots and interpolated ones are rings. You can colour the
+LEDs by index, solve confidence, segment, channel or one frame of an effect. A room plots every
+fixture at its pose in one scene. The numbers (mapped vs interpolated, bounds) come with it.
+The image is drawn in plain TypeScript, so it works on the Pi bridge, and stays small enough
+for the cloud relay. The CLI has <code class="docutils literal notranslate"><span class="pre">crossfade-to</span></code>, <code class="docutils literal notranslate"><span class="pre">list-decks</span></code> and <code class="docutils literal notranslate"><span class="pre">plot-fixture</span> <span class="pre">--out</span> <span class="pre">&lt;dir&gt;</span></code>.</p></li>
+</ul>
+</section>
+<section id="an-effects-library-that-grows-with-every-scene">
+<h3>An effects library that grows with every scene<a class="headerlink" href="#an-effects-library-that-grows-with-every-scene" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Agents look before they write.</strong> Each installation now keeps a private
+library of effects that worked before: what each looks like, its tags and its
+knobs. Asked for a new scene or mood, the agent searches it first
+(<code class="docutils literal notranslate"><span class="pre">search_effects</span></code>), deploys a match in one call (<code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>)
+or copies and adapts a close one (<code class="docutils literal notranslate"><span class="pre">duplicate_effect</span></code>), and only writes a new
+effect when nothing fits.</p></li>
+<li><p><strong>It fills itself.</strong> Every successful deploy is kept, with its description,
+tags and measured frame cost; the agent is asked to describe any it deployed
+without one. New libraries start with Splanc’s example effects.</p></li>
+<li><p><strong>Served by the cloud relay</strong>, so it’s fast and still browsable while the
+bridge is off. Without the relay (a local agent over stdio or the CLI) the same
+tools keep it in a file in the agent’s state dir. Nothing is shared between
+users. Design: <a class="reference internal" href="design/cloud-relay.html#effects-library"><span class="std std-ref">cloud-relay.md § Effects library</span></a>;
+how to use it: <a class="reference internal" href="guides/cloud-agent.html#effects-library"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="splanc-works-as-a-chatgpt-plugin">
+<h3>Splanc works as a ChatGPT plugin<a class="headerlink" href="#splanc-works-as-a-chatgpt-plugin" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Add <code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code></strong> in ChatGPT as a custom MCP server with OAuth, sign in
+with your bridge’s pairing code, and ChatGPT drives your lights. Steps:
+<a class="reference internal" href="guides/cloud-agent.html#chatgpt"><span class="std std-ref">cloud-agent.md</span></a>.</p></li>
+<li><p><strong>Every agent tool says what it does</strong>: read-only tools (listing, previews, compiling) run
+without a confirmation prompt in ChatGPT; tools that change the lights ask first, and deleting
+or overwriting your saved things is flagged as destructive. The server also gives agents a
+short “how to use Splanc” note.</p></li>
+<li><p><strong>The relay</strong> advertises <code class="docutils literal notranslate"><span class="pre">offline_access</span></code>, so ChatGPT keeps its sign-in, accepts ChatGPT’s
+client metadata document, and ignores scopes it doesn’t use (like <code class="docutils literal notranslate"><span class="pre">openid</span></code>) instead of failing.</p></li>
+</ul>
+</section>
 <section id="show-the-wi-fi-password-while-you-type-it">
 <h3>Show the Wi-Fi password while you type it<a class="headerlink" href="#show-the-wi-fi-password-while-you-type-it" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -681,6 +739,9 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
+<li><a class="reference internal" href="#an-effects-library-that-grows-with-every-scene">An effects library that grows with every scene</a></li>
+<li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
 <li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
 <li><a class="reference internal" href="#players-stay-on-wi-fi-across-updates-and-power-cuts">Players stay on Wi-Fi across updates and power cuts</a></li>
 <li><a class="reference internal" href="#every-player-has-its-own-tls-certificate">Every player has its own TLS certificate</a></li>

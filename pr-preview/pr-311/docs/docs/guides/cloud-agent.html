@@ -379,8 +379,7 @@ is no account and no password.</p>
 <ul>
 <li><p><strong>Claude (claude.ai, desktop and mobile apps)</strong>: Settings → Connectors → Add custom
 connector. Name it “Splanc”, paste <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code>, add it, then press Connect.</p></li>
-<li><p><strong>ChatGPT</strong>: in the connectors settings (developer mode), create a connector with the URL
-<code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> and OAuth authentication.</p></li>
+<li><p><strong>ChatGPT</strong>: see <a class="reference internal" href="#chatgpt">ChatGPT</a> below.</p></li>
 <li><p><strong>Claude Code</strong> (including on the web):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>--transport<span class="w"> </span>http<span class="w"> </span>splanc<span class="w"> </span>&lt;relay&gt;/mcp
 </pre></div>
@@ -394,6 +393,30 @@ header <code class="docutils literal notranslate"><span class="pre">Authorizatio
 <p>Each agent (or each person) pairs once with its own code: after the first one, get the next code
 with the button or <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>. The bridge’s screen shows <strong>Paired</strong> and how many cloud
 sessions are connected.</p>
+<section id="chatgpt">
+<h3>ChatGPT<a class="headerlink" href="#chatgpt" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Open <a class="reference external" href="https://chatgpt.com/plugins">chatgpt.com/plugins</a>, press <strong>+</strong>, then <strong>Add custom MCP
+server</strong>.</p></li>
+<li><p>Give it a name (“Splanc”) and a description (“My Splanc lights”).</p></li>
+<li><p>Under <strong>Connection</strong>, enter the server URL <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> (the public relay:
+<code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code>).</p></li>
+<li><p>Authentication: <strong>OAuth</strong>. Leave the client fields empty: ChatGPT registers itself (Client ID
+Metadata Document, or dynamic registration if you pick that). Review the warning and choose
+“I understand and want to continue”.</p></li>
+<li><p>Press <strong>Create as a plugin</strong>, check the discovered tools, and install it.</p></li>
+<li><p>When ChatGPT asks you to sign in, the Splanc page opens: type the pairing code from your bridge
+and press <strong>Connect</strong>.</p></li>
+</ol>
+<p>ChatGPT asks you to confirm each action that changes your lights (brightness, effects, saved
+looks); reading (listing players, uniforms, keypoints, previews, compiling) runs without asking.
+You can let it remember your answer for the rest of a conversation. It keeps its sign-in (a
+refresh token), so you don’t pair again unless you revoke access.</p>
+<p>Which ChatGPT plans can add custom MCP servers is up to OpenAI, and some need <strong>Developer mode</strong>
+switched on in ChatGPT’s settings. Nothing has to be submitted to OpenAI for your own use:
+submission is only for publishing a plugin in ChatGPT’s directory. After a Splanc update that
+changes the tools, press <strong>Refresh</strong> on the plugin and start a new conversation.</p>
+</section>
 </section>
 <section id="ask">
 <h2>3. Ask<a class="headerlink" href="#ask" title="Link to this heading">¶</a></h2>
@@ -401,6 +424,17 @@ sessions are connected.</p>
 fire effect would look like on the porch”. The agent sees every player your bridge sees, rooms
 and all, with the same tools a local agent gets (list players, effects, uniforms, keypoints,
 previews). It can’t re-flash, re-map or rewire anything.</p>
+</section>
+<section id="effects-library">
+<h2>Effects library<a class="headerlink" href="#effects-library" title="Link to this heading">¶</a></h2>
+<p>Your installation keeps a private library of the effects your agents have made: what each looks
+like, its tags and its knobs. When you ask for a new scene or mood, the agent searches the
+library first and reuses or adapts an effect that worked before; anything it deploys is kept
+(with a description), so the library grows with what you ask for. It starts with Splanc’s
+example effects. The library lives in the relay, so it works even while the bridge is off (the
+agent can browse and edit it; it can’t show anything until the bridge is back). It is yours
+only: nothing in it is shared with other users. Ask the agent to “show my effects library”,
+“delete the party effect from the library”, or “make a copy of the ocean effect but stormier”.</p>
 </section>
 <section id="managing-access">
 <h2>Managing access<a class="headerlink" href="#managing-access" title="Link to this heading">¶</a></h2>
@@ -533,8 +567,12 @@ The design and threat model are in <code class="docutils literal notranslate"><s
 <li><a class="reference internal" href="#">Use Splanc from a cloud agent</a><ul>
 <li><a class="reference internal" href="#what-you-need">What you need</a></li>
 <li><a class="reference internal" href="#start-the-bridge">1. Start the bridge</a></li>
-<li><a class="reference internal" href="#add-splanc-to-your-agent">2. Add Splanc to your agent</a></li>
+<li><a class="reference internal" href="#add-splanc-to-your-agent">2. Add Splanc to your agent</a><ul>
+<li><a class="reference internal" href="#chatgpt">ChatGPT</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#ask">3. Ask</a></li>
+<li><a class="reference internal" href="#effects-library">Effects library</a></li>
 <li><a class="reference internal" href="#managing-access">Managing access</a></li>
 <li><a class="reference internal" href="#what-the-screen-status-means">What the screen (status) means</a></li>
 <li><a class="reference internal" href="#troubleshooting">Troubleshooting</a></li>
