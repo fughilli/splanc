@@ -77,6 +77,7 @@ stream), upgrading the bridge's SDK is enough; the relay doesn't change.
 | `GET/POST /pair` | Pairing code → a personal bearer token, for clients that take a header. |
 | `POST /bridge/register` | `{public_key, ts, sig}` → `{bridge_id}`. |
 | `GET /bridge/connect?id=` | The bridge's WebSocket upgrade (header `x-splanc-bridge-auth`). |
+| `GET /live` | An app's live (VJ) WebSocket, bearer token in the subprotocol list, passed through to the bridge ([live-vj-relay.md](live-vj-relay.md)). |
 | `GET /healthz` | `{"ok":true}`. |
 
 `/mcp` answers `401` with `WWW-Authenticate: Bearer resource_metadata="<relay>/.well-known/
@@ -114,6 +115,9 @@ possession). The relay picks a random 20-character base32 bridge id.
 | bridge → relay | `{"t":"res",...}` then `{"t":"chunk","id","data"}`… `{"t":"end","id"}` | A streamed (SSE) reply. |
 | bridge → relay | `{"t":"new_code"}` / `{"t":"revoke_all"}` | Pairing control from the bridge's local API. |
 | bridge → relay | `ping` (plain text) | Liveness fallback; auto-answered `pong` without waking the object. |
+| bridge → relay | `{"t":"caps","live":1}` | After `hello`: this bridge speaks the live protocol (else `/live` answers `501`). |
+| both | `{"t":"live","c","d"}` / `{"t":"live_close","c",…}` | One live-protocol message for app connection `c`, verbatim / its end ([live-vj-relay.md](live-vj-relay.md)). |
+| relay → bridge | `{"t":"live_open","c","label","grant"}` / `{"t":"revoked","grants"}` | An app opened a live session (re-sent after a reconnect) / these grants were revoked. |
 
 Tunnelled request headers: `accept`, `content-type`, `last-event-id`, `mcp-session-id`,
 `mcp-protocol-version`, `mcp-method`, `mcp-name`, `mcp-param-*`. `Authorization` is never
