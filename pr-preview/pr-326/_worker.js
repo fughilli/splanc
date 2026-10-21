@@ -310,7 +310,7 @@ const demoAi = createDemoRelay();
 // The relay's landing page (/) and the other .well-known paths stay with the site.
 export const RELAY_PATHS = new Set([
   "/mcp", "/healthz", "/register", "/authorize", "/token", "/revoke", "/pair",
-  "/bridge/register", "/bridge/connect",
+  "/bridge/register", "/bridge/connect", "/live",
   "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
 ]);

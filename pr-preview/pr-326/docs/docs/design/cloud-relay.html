@@ -372,7 +372,8 @@ MCP calls.</p></li>
 </ul>
 </li>
 <li><p>The relay <strong>stores no device secrets</strong> and sees only MCP traffic: it forwards JSON-RPC bodies
-without interpreting them, and a client’s relay credential is never passed to the bridge.</p></li>
+without interpreting them (except the few messages the <a class="reference internal" href="#effects-library">effects library</a>
+needs), and a client’s relay credential is never passed to the bridge.</p></li>
 </ul>
 <p>Why a tunnel of HTTP rather than relaying JSON-RPC messages: the MCP transport (sessions,
 protocol-version headers, JSON vs SSE replies, error codes) is implemented once, by the SDK, on
@@ -422,7 +423,10 @@ stream), upgrading the bridge’s SDK is enough; the relay doesn’t change.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/bridge/connect?id=</span></code></p></td>
 <td><p>The bridge’s WebSocket upgrade (header <code class="docutils literal notranslate"><span class="pre">x-splanc-bridge-auth</span></code>).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/live</span></code></p></td>
+<td><p>An app’s live (VJ) WebSocket, bearer token in the subprotocol list, passed through to the bridge (<a class="reference internal" href="live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true}</span></code>.</p></td>
 </tr>
 </tbody>
@@ -492,6 +496,18 @@ possession). The relay picks a random 20-character base32 bridge id.</p>
 <tr class="row-even"><td><p>bridge → relay</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">ping</span></code> (plain text)</p></td>
 <td><p>Liveness fallback; auto-answered <code class="docutils literal notranslate"><span class="pre">pong</span></code> without waking the object.</p></td>
+</tr>
+<tr class="row-odd"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;caps&quot;,&quot;live&quot;:1}</span></code></p></td>
+<td><p>After <code class="docutils literal notranslate"><span class="pre">hello</span></code>: this bridge speaks the live protocol (else <code class="docutils literal notranslate"><span class="pre">/live</span></code> answers <code class="docutils literal notranslate"><span class="pre">501</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>both</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live&quot;,&quot;c&quot;,&quot;d&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live_close&quot;,&quot;c&quot;,…}</span></code></p></td>
+<td><p>One live-protocol message for app connection <code class="docutils literal notranslate"><span class="pre">c</span></code>, verbatim / its end (<a class="reference internal" href="live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live_open&quot;,&quot;c&quot;,&quot;label&quot;,&quot;grant&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;revoked&quot;,&quot;grants&quot;}</span></code></p></td>
+<td><p>An app opened a live session (re-sent after a reconnect) / these grants were revoked.</p></td>
 </tr>
 </tbody>
 </table>
@@ -645,6 +661,118 @@ display service in the bridge user’s group). Newline-delimited JSON, one reply
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code|revoke-all|identify|status</span></code> is a CLI over the same socket.</p>
 </section>
+<section id="effects-library">
+<h2>Effects library<a class="headerlink" href="#effects-library" title="Link to this heading">¶</a></h2>
+<p>A private library of effect programs per installation (per bridge), so an agent asked for a new
+scene or mood can find an effect that already worked instead of writing it again, read and copy
+one to reuse its ideas, and the library grows as the user asks for more. Code:
+<code class="docutils literal notranslate"><span class="pre">agent/relay/src/library.ts</span></code> (entries, validation, search, the tools; no runtime imports),
+<code class="docutils literal notranslate"><span class="pre">agent/relay/src/mcpLibrary.ts</span></code> (the relay’s JSON-RPC handling), <code class="docutils literal notranslate"><span class="pre">agent/src/libraryLocal.ts</span></code>
+(the agent’s file store and zod schemas).</p>
+<p><strong>Entry</strong>: <code class="docutils literal notranslate"><span class="pre">id</span></code> (<code class="docutils literal notranslate"><span class="pre">fx_</span></code> + 8 base32 chars, stable), <code class="docutils literal notranslate"><span class="pre">name</span></code>, <code class="docutils literal notranslate"><span class="pre">description</span></code> (what it looks like, the
+mood, when to use it), <code class="docutils literal notranslate"><span class="pre">tags</span></code>, <code class="docutils literal notranslate"><span class="pre">source</span></code>, <code class="docutils literal notranslate"><span class="pre">uniforms</span></code> (the compiler’s manifest minus slots: name,
+width, ui, default, min, max, unit, doc), <code class="docutils literal notranslate"><span class="pre">lang</span></code> (effect language version, 1), <code class="docutils literal notranslate"><span class="pre">compiler</span></code> (when
+known), <code class="docutils literal notranslate"><span class="pre">hash</span></code> (sha256 of the normalized source), <code class="docutils literal notranslate"><span class="pre">bytes</span></code>, <code class="docutils literal notranslate"><span class="pre">created_at</span></code>, <code class="docutils literal notranslate"><span class="pre">updated_at</span></code>, <code class="docutils literal notranslate"><span class="pre">uses</span></code>
+(successful deploys), <code class="docutils literal notranslate"><span class="pre">last_used_at</span></code>, <code class="docutils literal notranslate"><span class="pre">parent_id</span></code> (duplicates), <code class="docutils literal notranslate"><span class="pre">origin</span></code> (<code class="docutils literal notranslate"><span class="pre">saved</span></code>, <code class="docutils literal notranslate"><span class="pre">auto</span></code> = kept
+from a deploy, <code class="docutils literal notranslate"><span class="pre">seed</span></code> = a built-in example), <code class="docutils literal notranslate"><span class="pre">needs_description</span></code>, <code class="docutils literal notranslate"><span class="pre">perf</span></code> (<code class="docutils literal notranslate"><span class="pre">estimate</span></code> per fixture
+from deploy_effect, <code class="docutils literal notranslate"><span class="pre">measured</span></code> from the next measure_effect).</p>
+<p><strong>Tools</strong> (annotated: search/get read-only; update/delete destructive; all <code class="docutils literal notranslate"><span class="pre">openWorldHint:</span> <span class="pre">false</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Tool</p></th>
+<th class="head"><p></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">search_effects</span> <span class="pre">{query?,</span> <span class="pre">tags?,</span> <span class="pre">limit?}</span></code></p></td>
+<td><p>Compact rows (id, name, truncated description, tags, uniform names, uses, last_used), ranked. No query: the whole index, most used first (default 100 rows, max 500).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">get_effect</span> <span class="pre">{id}</span></code></p></td>
+<td><p>The full entry, source included.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">save_effect</span> <span class="pre">{name,</span> <span class="pre">description,</span> <span class="pre">source,</span> <span class="pre">tags?,</span> <span class="pre">uniforms?,</span> <span class="pre">perf?}</span></code></p></td>
+<td><p>New entry, or (same source hash) the existing entry’s metadata updated; an <code class="docutils literal notranslate"><span class="pre">auto</span></code> entry saved this way becomes <code class="docutils literal notranslate"><span class="pre">saved</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">duplicate_effect</span> <span class="pre">{id,</span> <span class="pre">name?,</span> <span class="pre">description?}</span></code></p></td>
+<td><p>A copy with <code class="docutils literal notranslate"><span class="pre">parent_id</span></code> set, full source returned, to adapt and <code class="docutils literal notranslate"><span class="pre">update_effect</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update_effect</span> <span class="pre">{id,</span> <span class="pre">…}</span></code></p></td>
+<td><p>Name, description, tags, source (uniforms re-read), uniforms, perf.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">delete_effect</span> <span class="pre">{id}</span></code></p></td>
+<td><p>Gone for good.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code></p></td>
+<td><p>Deploys an entry in one call; <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> defaults to a slug of its name. <code class="docutils literal notranslate"><span class="pre">name</span></code>/<code class="docutils literal notranslate"><span class="pre">description</span></code>/<code class="docutils literal notranslate"><span class="pre">tags</span></code> on any deploy describe it for the library.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The tool descriptions and the MCP <code class="docutils literal notranslate"><span class="pre">instructions</span></code> give the agent the workflow: <code class="docutils literal notranslate"><span class="pre">search_effects</span></code>
+first for any new scene or mood; reuse (deploy by <code class="docutils literal notranslate"><span class="pre">library_id</span></code>, tune uniforms) or duplicate and
+adapt; otherwise author, then <code class="docutils literal notranslate"><span class="pre">save_effect</span></code> with a rich description and tags.</p>
+<p><strong>Accumulation</strong>: every successful <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> with a source is kept: a use of the entry with
+the same source (or <code class="docutils literal notranslate"><span class="pre">library_id</span></code>), else a new <code class="docutils literal notranslate"><span class="pre">auto</span></code> entry named after the effect id, with a
+placeholder description and <code class="docutils literal notranslate"><span class="pre">needs_description</span></code> (search reports how many; the deploy result’s
+second text block says <code class="docutils literal notranslate"><span class="pre">update_effect</span></code> it). A failed deploy (compile error, over budget, every
+player failed) isn’t kept.</p>
+<p><strong>Limits</strong>: source ≤ 64 KB, description ≤ 2 KB, name ≤ 80, ≤ 16 tags, ≤ 64 uniforms, perf ≤ 4
+KB; ≤ 500 entries and ≤ 8 MB of source per installation. To make room, <code class="docutils literal notranslate"><span class="pre">auto</span></code> and <code class="docutils literal notranslate"><span class="pre">seed</span></code>
+entries are evicted least recently used first (the save’s result lists them); <code class="docutils literal notranslate"><span class="pre">saved</span></code> entries
+never are: a save that would need that is refused with the reason, and a deploy still succeeds
+(its result says it wasn’t kept).</p>
+<p><strong>Search</strong>: word tokens (lower case, a light stemmer, stop words dropped) over name (weight 5),
+tags (4), uniform names (2) and description (1, not placeholders); exact or prefix (≥ 3 chars)
+matches, weighted by rarity (idf), scaled by how much of the query matched, plus a small boost
+for use. SQLite FTS5 is available in Durable Object SQLite, but the relay keeps its Durable
+Object state through the storage KV API so the same code runs on the Node host (self-hosted
+relay, tests) and in the agent’s file store; at ≤ 500 metadata rows, scoring in memory is
+microseconds, and the index is read once per wake period.</p>
+<p><strong>Where it lives</strong>:</p>
+<ul class="simple">
+<li><p><em>Behind the relay</em> the library is in the bridge’s <code class="docutils literal notranslate"><span class="pre">BridgeObject</span></code> storage: <code class="docutils literal notranslate"><span class="pre">fx:&lt;id&gt;</span></code> = an
+entry’s metadata (the search index), <code class="docutils literal notranslate"><span class="pre">fxs:&lt;id&gt;</span></code> = its source (read by id only), <code class="docutils literal notranslate"><span class="pre">fxk:&lt;name&gt;</span></code> =
+flags (<code class="docutils literal notranslate"><span class="pre">seeded</span></code>, <code class="docutils literal notranslate"><span class="pre">last_deploy</span></code>). New keys in the existing class: no Durable Object migration,
+nothing changes for paired bridges. The relay serves it itself, so it is fast and works while
+the bridge is offline:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tools/call</span></code> of a library tool is answered by the Durable Object; nothing crosses the
+bridge socket.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tools/list</span></code> and <code class="docutils literal notranslate"><span class="pre">initialize</span></code> are forwarded and the reply’s response event rewritten: the
+library tools appended (a bridge tool of the same name replaced), <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code>’s schema
+given the library arguments, the library guidance appended to <code class="docutils literal notranslate"><span class="pre">instructions</span></code>. JSON replies
+stay JSON; SSE replies stay streams (progress events pass straight through; only the event
+with the response for that request id waits).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>: the relay puts the entry’s source and an <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> in the
+call and strips the library arguments, so any bridge version deploys it. After a successful
+deploy (and a <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>), the library is updated and a note added to the result.</p></li>
+<li><p>Bridge offline: <code class="docutils literal notranslate"><span class="pre">tools/list</span></code> answers the library tools; <code class="docutils literal notranslate"><span class="pre">initialize</span></code> gets a relay session
+(<code class="docutils literal notranslate"><span class="pre">Mcp-Session-Id:</span> <span class="pre">relay-…</span></code>, <code class="docutils literal notranslate"><span class="pre">serverInfo.name:</span> <span class="pre">splanc-relay</span></code>, instructions saying the bridge
+is offline) serving the library, <code class="docutils literal notranslate"><span class="pre">ping</span></code> and notifications (<code class="docutils literal notranslate"><span class="pre">202</span></code>); other calls on it get a
+JSON-RPC error. Once the bridge is back, that session gets <code class="docutils literal notranslate"><span class="pre">404</span></code> for anything but library
+calls, so the client initializes again onto the bridge (the spec’s session-expiry path).
+Other calls while offline keep the <code class="docutils literal notranslate"><span class="pre">503</span></code>.</p></li>
+<li><p>Batches and anything unparseable are tunnelled untouched.</p></li>
+</ul>
+</li>
+<li><p><em>Without the relay</em> (stdio, the one-shot CLI) the agent serves the same tools from
+<code class="docutils literal notranslate"><span class="pre">&lt;state</span> <span class="pre">dir&gt;/effects-library.json</span></code> (<code class="docutils literal notranslate"><span class="pre">$SPLANC_BRIDGE_STATE_DIR</span></code>, else <code class="docutils literal notranslate"><span class="pre">$STATE_DIRECTORY</span></code>, else
+<code class="docutils literal notranslate"><span class="pre">~/.local/state/splanc</span></code>), with the same <code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code> and accumulation. The
+bridge (<code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge</span></code>) registers no library tools: the relay’s library is the one in
+use (and a self-hosted <code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">relay</span></code> keeps it in its data file).</p></li>
+</ul>
+<p><strong>Seed</strong>: a new library starts with the skill’s examples (<code class="docutils literal notranslate"><span class="pre">agent/skill/examples/*.fx</span></code>, copied
+into <code class="docutils literal notranslate"><span class="pre">librarySeed.ts</span></code>; <code class="docutils literal notranslate"><span class="pre">library_test</span></code> checks they match) with descriptions and tags, once.
+Uniform manifests are read from the source’s <code class="docutils literal notranslate"><span class="pre">uniform</span></code> declarations the way <code class="docutils literal notranslate"><span class="pre">fx_compiler</span></code>
+parses them (the relay has no compiler); <code class="docutils literal notranslate"><span class="pre">library_test</span></code> checks that against the compiler for
+every example. An agent can pass the compiler’s manifest instead.</p>
+<p><strong>Later: a shared library.</strong> This one is private on purpose. An opt-in shared/community library
+(publish an entry; search others’) would need moderation (effect source is arbitrary text an
+agent reads: prompt injection, spam, offensive names), per-account quotas, attribution and
+licensing, and takedown. It would live in its own Durable Object class (not in any bridge’s), with
+publishing as an explicit user action and results marked as third-party content.</p>
+</section>
 <section id="free-tier-budget">
 <h2>Free-tier budget<a class="headerlink" href="#free-tier-budget" title="Link to this heading">¶</a></h2>
 <p>Workers Free plan limits (Cloudflare docs, checked 2026-10): Worker requests 100,000/day (10 ms
@@ -699,6 +827,16 @@ is never charged.</p>
 <td><p>2</p></td>
 <td><p>3 / 3</p></td>
 </tr>
+<tr class="row-odd"><td><p>Library tool call (search, get, save, …)</p></td>
+<td><p>1</p></td>
+<td><p>1 (no bridge message)</p></td>
+<td><p>first per wake: #entries; then 0–1 / 0–2</p></td>
+</tr>
+<tr class="row-even"><td><p>Library bookkeeping on a deploy / measure through the relay</p></td>
+<td><p>0 (same request)</p></td>
+<td><p>0</p></td>
+<td><p>first per wake: #entries / 1–3</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -716,7 +854,9 @@ is ~25 messages, so ~3,800 sessions/day if they were short and dense.</p></li>
 bridges. The design choices that keep it there: quick replies coalesced into one message, <code class="docutils literal notranslate"><span class="pre">405</span></code> on
 <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/mcp</span></code>,
 hibernatable bridge sockets with free pings, <code class="docutils literal notranslate"><span class="pre">401</span></code>s answered without a Durable Object, no
-per-request storage writes, and token checks cached per wake period.</p>
+per-request storage writes, and token checks cached per wake period. The effects library adds
+no Worker requests and no socket messages: its calls are answered inside the one Durable Object
+request, its index (≤ 500 small rows) is read once per wake, and a save writes two rows.</p>
 </section>
 <section id="hosting">
 <h2>Hosting<a class="headerlink" href="#hosting" title="Link to this heading">¶</a></h2>
@@ -814,6 +954,14 @@ bridge sits on; the bridge’s identity key; the relay’s free-tier budget.</p>
 <td><p>Only https URLs with a path; 5 s, 16 KiB, no redirects; Workers can’t reach private networks</p></td>
 <td><p>The relay can be made to fetch public URLs (rate-bound by <code class="docutils literal notranslate"><span class="pre">/authorize</span></code> use)</p></td>
 </tr>
+<tr class="row-odd"><td><p>Library abuse (a paired agent filling it)</p></td>
+<td><p>Size caps per entry and per installation (500 entries, 8 MB); private per bridge, so nothing one user stores reaches another</p></td>
+<td><p>A paired agent can fill or delete its own user’s library</p></td>
+</tr>
+<tr class="row-even"><td><p>Prompt injection through library entries</p></td>
+<td><p>Entries are private: only this installation’s own agents wrote them</p></td>
+<td><p>Content an agent saved earlier is read back as data by the next agent</p></td>
+</tr>
 <tr class="row-odd"><td><p>Free-tier exhaustion (DoS)</p></td>
 <td><p>Unauthenticated requests stop at the Worker; registrations rate-limited per IP and globally</p></td>
 <td><p>100 k Worker requests/day is a hard ceiling an attacker can spend; the relay then fails closed until 00:00 UTC</p></td>
@@ -833,6 +981,16 @@ codes (replacement, single use, expiry, per-IP and global limits), the OAuth flo
 page, PKCE, single-use codes, confidential clients, tampered client ids, CIMD), refresh
 rotation + reuse detection, <code class="docutils literal notranslate"><span class="pre">/pair</span></code>, RFC 7009, revoke-all, offline <code class="docutils literal notranslate"><span class="pre">503</span></code>, <code class="docutils literal notranslate"><span class="pre">405</span></code> GET, in-flight
 requests failing fast when the bridge drops, no token passthrough, hashes-only storage.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:library_test</span></code>: the library on its own and in the stdio/CLI server: validation and
+caps, search ranking, LRU eviction (saved entries never), dedupe by source hash, duplicate
+lineage, deploy accumulation and perf, the seed examples, the uniform reader against the real
+compiler, the relay’s DO store and the agent’s file store giving identical tool results, the
+server’s tools and schemas matching the relay’s.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_library_test</span></code>: the relay serving it: library calls answered without a bridge
+frame, <code class="docutils literal notranslate"><span class="pre">tools/list</span></code>/<code class="docutils literal notranslate"><span class="pre">initialize</span></code> merged over SSE replies, <code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code> inlined
+(and stripped of library arguments), deploys saved and failures not, measurements attached,
+the offline relay session (a real SDK client) and its <code class="docutils literal notranslate"><span class="pre">404</span></code> once the bridge is back, one
+library per bridge. <code class="docutils literal notranslate"><span class="pre">relay_e2e_test</span></code> deploys a library entry through the real bridge.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>: the display contract (every field, states, atomic writes), every
 control command, reconnect after a dropped socket, <code class="docutils literal notranslate"><span class="pre">offline</span></code> during a relay outage, recovery
 with the same bridge id and credentials after a relay restart.</p></li>
@@ -906,6 +1064,7 @@ fan-out; <code class="docutils literal notranslate"><span class="pre">404</span>
 <li><a class="reference internal" href="#bridge-socket-protocol">Bridge socket protocol</a></li>
 <li><a class="reference internal" href="#pairing">Pairing</a></li>
 <li><a class="reference internal" href="#display-contract-fixed-the-pi-display-image-codes-against-it">Display contract (fixed; the Pi/display image codes against it)</a></li>
+<li><a class="reference internal" href="#effects-library">Effects library</a></li>
 <li><a class="reference internal" href="#free-tier-budget">Free-tier budget</a></li>
 <li><a class="reference internal" href="#hosting">Hosting</a></li>
 <li><a class="reference internal" href="#threat-model">Threat model</a></li>
