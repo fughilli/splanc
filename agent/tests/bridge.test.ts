@@ -13,6 +13,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { resolveTarget, checkSamePlayer } from "../src/discovery";
 import { compile, loadFxHost } from "../src/fxhost";
+import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "../src/annotations";
 import { createServer } from "../src/server";
 import { COMMIT_IN_PROTO, DeviceSession, FORBIDDEN_TYPES, ToolError, sniffType } from "../src/session";
 import { nodeSocketFactory } from "../src/socket";
@@ -311,6 +312,57 @@ describe("safety", () => {
 });
 
 describe("mcp", () => {
+  test("every tool is annotated (ChatGPT confirms any tool not marked read-only); instructions lead with 512 self-contained chars", async () => {
+    const server = createServer(session);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const tools = (await client.listTools()).tools;
+    assert.deepEqual(tools.map((t) => t.name).sort(), Object.keys(TOOL_ANNOTATIONS).sort(), "the table and the tools agree");
+    for (const t of tools) {
+      const a = t.annotations!;
+      assert.ok(a, `${t.name} has annotations`);
+      assert.equal(typeof a.title, "string", t.name);
+      assert.equal(t.title, a.title, t.name);
+      for (const k of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const) {
+        assert.equal(typeof a[k], "boolean", `${t.name}.${k}`);
+      }
+      assert.equal(a.openWorldHint, false, t.name);
+      if (a.readOnlyHint) assert.equal(a.destructiveHint, false, t.name);
+    }
+    const ro = tools.filter((t) => t.annotations!.readOnlyHint).map((t) => t.name).sort();
+    assert.deepEqual(ro, [
+      "compile_effect",
+      "estimate_effect",
+      "export_map",
+      "get_keypoint",
+      "list_keypoints",
+      "list_players",
+      "list_textures",
+      "list_uniforms",
+      "preview_effect",
+      "refresh_players",
+    ]);
+    const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "set_device_name", "trust_player"]) {
+      assert.ok(destructive.includes(d), d);
+    }
+    // measure_effect can roll back (rollback_on_overrun): not read-only.
+    assert.equal(tools.find((t) => t.name === "measure_effect")!.annotations!.readOnlyHint, false);
+
+    const instructions = client.getInstructions() ?? "";
+    assert.equal(instructions, SERVER_INSTRUCTIONS);
+    const head = instructions.split("\n\n")[0]!;
+    assert.ok(head.length <= 512, `first paragraph is ${head.length} chars`);
+    for (const word of ["Splanc", "list_players", "identify_player", "set_brightness", "deploy_effect", "rollback_effect"]) {
+      assert.ok(head.includes(word), word);
+    }
+    for (const name of instructions.match(/\b[a-z]+_[a-z_]+\b/g) ?? []) {
+      assert.ok(name in TOOL_ANNOTATIONS, `instructions name a real tool: ${name}`);
+    }
+    await client.close();
+  });
+
   test("lists the spec's tools (no set_playback) and runs compile/preview", async () => {
     const server = createServer(session);
     const [a, b] = InMemoryTransport.createLinkedPair();

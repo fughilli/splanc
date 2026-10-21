@@ -18,7 +18,7 @@
 import { BridgeObject, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
 import { Directory } from "./directory";
-import { checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
+import { SCOPES_SUPPORTED, checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
 import { consent, landing, oauthErrorPage, pairForm, tokenPage } from "./pages";
 import { now, type Env } from "./platform";
 import { SIGNATURE_WINDOW_S, registerMessage } from "./protocol";
@@ -99,7 +99,7 @@ export default {
               resource: `${origin}/mcp`,
               authorization_servers: [origin],
               bearer_methods_supported: ["header"],
-              scopes_supported: ["splanc"],
+              scopes_supported: SCOPES_SUPPORTED,
               resource_name: "Splanc lights",
               resource_documentation: "https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md",
             },
@@ -121,7 +121,7 @@ export default {
               code_challenge_methods_supported: ["S256"],
               token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
               revocation_endpoint_auth_methods_supported: ["none"],
-              scopes_supported: ["splanc"],
+              scopes_supported: SCOPES_SUPPORTED,
               client_id_metadata_document_supported: true,
               authorization_response_iss_parameter_supported: true,
             },
@@ -220,6 +220,7 @@ function authzParams(src: { get(k: string): string | null }): AuthzParams {
 
 /** Validate the request; {client} when it may proceed, else the response to send. */
 async function checkAuthz(
+  req: Request,
   env: Env,
   p: AuthzParams,
 ): Promise<{ client: OAuthClient; redirectError?: undefined } | { response: Response }> {
@@ -229,7 +230,11 @@ async function checkAuthz(
   if (!p.redirect_uri || !redirectAllowed(client, p.redirect_uri)) {
     return { response: oauthErrorPage("This redirect address isn't registered for the client.") };
   }
-  const fail = (error: string, description: string) => ({ response: redirectTo(p.redirect_uri, { error, error_description: description, state: p.state }, env) });
+  // RFC 9207: `iss` on every authorization response, errors included (ChatGPT
+  // keys its stable redirect URI + CIMD client id on this).
+  const fail = (error: string, description: string) => ({
+    response: redirectTo(p.redirect_uri, { error, error_description: description, state: p.state }, env, originOf(req, env)),
+  });
   if (p.response_type !== "code") return fail("unsupported_response_type", "only response_type=code");
   if (p.code_challenge_method !== "S256" || !/^[A-Za-z0-9_-]{43}$/.test(p.code_challenge)) {
     return fail("invalid_request", "PKCE with S256 is required");
@@ -247,7 +252,7 @@ function redirectTo(uri: string, params: Record<string, string>, env: Env, origi
 
 async function authorizeGet(req: Request, env: Env): Promise<Response> {
   const p = authzParams(new URL(req.url).searchParams);
-  const c = await checkAuthz(env, p);
+  const c = await checkAuthz(req, env, p);
   if ("response" in c) return c.response;
   return consent({
     clientName: c.client.name,
@@ -261,7 +266,7 @@ async function authorizeGet(req: Request, env: Env): Promise<Response> {
 async function authorizePost(req: Request, env: Env, origin: string): Promise<Response> {
   const form = await formOrJson(req);
   const p = authzParams({ get: (k) => form[k] ?? null });
-  const c = await checkAuthz(env, p);
+  const c = await checkAuthz(req, env, p);
   if ("response" in c) return c.response;
   const again = (error: string, status: number) =>
     consent(

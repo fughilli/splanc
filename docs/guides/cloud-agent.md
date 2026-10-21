@@ -70,8 +70,7 @@ is no account and no password.
 
 - **Claude (claude.ai, desktop and mobile apps)**: Settings → Connectors → Add custom
   connector. Name it "Splanc", paste `<relay>/mcp`, add it, then press Connect.
-- **ChatGPT**: in the connectors settings (developer mode), create a connector with the URL
-  `<relay>/mcp` and OAuth authentication.
+- **ChatGPT**: see [ChatGPT](#chatgpt) below.
 - **Claude Code** (including on the web):
 
   ```sh
@@ -88,6 +87,30 @@ is no account and no password.
 Each agent (or each person) pairs once with its own code: after the first one, get the next code
 with the button or `bridge-ctl new-code`. The bridge's screen shows **Paired** and how many cloud
 sessions are connected.
+
+### ChatGPT
+
+1. Open [chatgpt.com/plugins](https://chatgpt.com/plugins), press **+**, then **Add custom MCP
+   server**.
+2. Give it a name ("Splanc") and a description ("My Splanc lights").
+3. Under **Connection**, enter the server URL `<relay>/mcp` (the public relay:
+   `https://splanc.pages.dev/mcp`).
+4. Authentication: **OAuth**. Leave the client fields empty: ChatGPT registers itself (Client ID
+   Metadata Document, or dynamic registration if you pick that). Review the warning and choose
+   "I understand and want to continue".
+5. Press **Create as a plugin**, check the discovered tools, and install it.
+6. When ChatGPT asks you to sign in, the Splanc page opens: type the pairing code from your bridge
+   and press **Connect**.
+
+ChatGPT asks you to confirm each action that changes your lights (brightness, effects, saved
+looks); reading (listing players, uniforms, keypoints, previews, compiling) runs without asking.
+You can let it remember your answer for the rest of a conversation. It keeps its sign-in (a
+refresh token), so you don't pair again unless you revoke access.
+
+Which ChatGPT plans can add custom MCP servers is up to OpenAI, and some need **Developer mode**
+switched on in ChatGPT's settings. Nothing has to be submitted to OpenAI for your own use:
+submission is only for publishing a plugin in ChatGPT's directory. After a Splanc update that
+changes the tools, press **Refresh** on the plugin and start a new conversation.
 
 ## 3. Ask
 

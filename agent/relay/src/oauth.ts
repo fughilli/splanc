@@ -10,6 +10,11 @@
  *   id. Nothing is stored per client, so registration spam costs no storage.
  *
  * Every grant is public-client style: PKCE S256 is mandatory.
+ *
+ * Scopes: `splanc` (drive the lights) and `offline_access` (advertised so hosts
+ * such as ChatGPT know to keep the refresh token; every grant gets one anyway).
+ * Any other requested scope (e.g. `openid`) is dropped from the grant, not
+ * refused: the granted `scope` says what was given.
  */
 
 import { b64url, fromB64url } from "./crypto";
@@ -23,6 +28,14 @@ export interface OAuthClient {
   auth: "none" | "client_secret_post" | "client_secret_basic";
   /** Where the client's metadata came from (shown on the consent page). */
   source: "metadata document" | "dynamic registration";
+}
+
+export const SCOPES_SUPPORTED = ["splanc", "offline_access"];
+
+/** The scope granted for a requested one: the supported part, always with `splanc`. */
+export function grantedScope(requested: string | null | undefined): string {
+  const want = new Set((requested ?? "").split(/\s+/).filter(Boolean));
+  return SCOPES_SUPPORTED.filter((s) => s === "splanc" || want.has(s)).join(" ");
 }
 
 const dec = new TextDecoder();
@@ -159,8 +172,12 @@ async function fetchMetadataDocument(id: string): Promise<OAuthClient | null> {
     const doc = JSON.parse(text) as Record<string, unknown>;
     const uris = doc["redirect_uris"];
     if (doc["client_id"] !== id || !Array.isArray(uris) || !uris.every((u) => typeof u === "string" && validRedirect(u))) return null;
-    const m = doc["token_endpoint_auth_method"] ?? "none";
-    if (m !== "none") return null; // private_key_jwt etc. not supported: public clients only
+    // Public clients only (PKCE): the document must allow `none`. ChatGPT's lists
+    // ["none", "private_key_jwt"] with private_key_jwt as its singular preference;
+    // our metadata advertises only `none` for such clients, so it uses that.
+    const listed = doc["token_endpoint_auth_methods_supported"];
+    const methods = Array.isArray(listed) ? listed : [doc["token_endpoint_auth_method"] ?? "none"];
+    if (!methods.includes("none")) return null;
     return {
       id,
       name: typeof doc["client_name"] === "string" ? doc["client_name"].slice(0, 100) : url.host,

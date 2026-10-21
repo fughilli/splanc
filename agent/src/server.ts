@@ -19,6 +19,8 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { SERVER_INSTRUCTIONS, TOOL_ANNOTATIONS } from "./annotations";
+
 import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
 import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
@@ -98,10 +100,30 @@ function withCallProgress(server: McpServer, echo?: ProgressSink): void {
   }
 }
 
+/**
+ * Give every tool its title + annotations from TOOL_ANNOTATIONS (annotations.ts),
+ * so no tool ships without them: one missing from the table is a startup error.
+ */
+function withAnnotations(server: McpServer): void {
+  type Fn = (...a: unknown[]) => unknown;
+  const s = server as unknown as { registerTool: Fn };
+  const orig = s.registerTool.bind(server) as Fn;
+  s.registerTool = (name: unknown, config: unknown, cb: unknown) => {
+    const annotations = TOOL_ANNOTATIONS[String(name)];
+    if (!annotations) throw new Error(`tool ${String(name)} has no annotations (agent/src/annotations.ts)`);
+    const c = config as { title?: string; annotations?: object };
+    return orig(name, { title: annotations.title, ...c, annotations: { ...annotations, ...c.annotations } }, cb);
+  };
+}
+
 export function createServer(target: DeviceSession | Hub, opts: { root?: string; echo?: ProgressSink } = {}): McpServer {
   const hub = target instanceof Hub ? target : Hub.forSession(target, opts.root ?? "");
-  const server = new McpServer({ name: "splanc-agent", version: VERSION }, { capabilities: { logging: {} } });
+  const server = new McpServer(
+    { name: "splanc-agent", version: VERSION },
+    { capabilities: { logging: {} }, instructions: SERVER_INSTRUCTIONS },
+  );
   withCallProgress(server, opts.echo);
+  withAnnotations(server);
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });
