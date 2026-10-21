@@ -165,6 +165,8 @@ export interface CaptureSimOptions {
   distM?: number;
   /** Camera translation amplitude, m (default 1.2); 0 = tripod (rotation only). */
   walkM?: number;
+  /** Vertical camera bob amplitude, m (default 0.25). */
+  bobM?: number;
   /** Fixtures (indices) never in view together with any other: skip frames showing them with others. */
   isolate?: number[];
 }
@@ -195,10 +197,12 @@ export function simulateCapture(room: SynthFixture[], o: CaptureSimOptions): Cap
     const tau = f / Math.max(1, frames - 1);
     // Serpentine: left->right->left so neighbours overlap repeatedly.
     const s = 0.5 - 0.5 * Math.cos(tau * 2 * Math.PI * 1.5);
+    // walkM = 0: a tripod (the camera only pans; no translation at all).
+    const tri = walk === 0 ? 0 : 1;
     const eye: Vec3 = [
-      (xmin + xmax) / 2 + (s - 0.5) * 2 * walk + 0.05 * g(),
-      1.4 + 0.25 * Math.sin(tau * 7) + 0.03 * g(),
-      cz + dist + 0.3 * Math.sin(tau * 5) + 0.03 * g(),
+      (xmin + xmax) / 2 + (s - 0.5) * 2 * walk + tri * 0.05 * g(),
+      1.4 + tri * ((o.bobM ?? 0.25) * Math.sin(tau * 7) + 0.03 * g()),
+      cz + dist + tri * (0.3 * Math.sin(tau * 5) + 0.03 * g()),
     ];
     const mid = (xmin + xmax) / 2;
     const halfSpan = ((xmax - xmin) / 2) * pan;

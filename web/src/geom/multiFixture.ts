@@ -102,9 +102,9 @@ export interface LocalizeOptions {
   minPnpLeds?: number;
   /** Sightings of one fixture in one frame for it to count in the BA (default 3). */
   minGroupLeds?: number;
-  /** Cap on frames used (default 120; evenly spaced over the multi-fixture frames). */
+  /** Cap on frames used (default 150; evenly spaced over the multi-fixture frames). */
   maxViews?: number;
-  /** Cap on sightings per (frame, fixture) used (default 32, spread over the
+  /** Cap on sightings per (frame, fixture) used (default 64, spread over the
    * fixture's LED index range): the error is dominated by the per-LED map error,
    * which more sightings of the same LEDs don't average away. */
   maxGroupLeds?: number;
@@ -848,7 +848,13 @@ export function applyRoomPose(p: RoomPose, x: Vec3): Vec3 {
 // Map geometry
 // ---------------------------------------------------------------------------
 
-function mapShape(leds: ReadonlyMap<number, Vec3>): { centroid: Vec3; extent: number; linear: boolean; axis: Vec3 } {
+function mapShape(leds: ReadonlyMap<number, Vec3>): {
+  centroid: Vec3;
+  extent: number;
+  linear: boolean;
+  planar: boolean;
+  axis: Vec3;
+} {
   const pts = [...leds.values()];
   const n = Math.max(1, pts.length);
   const c: Vec3 = [0, 0, 0];
@@ -869,6 +875,8 @@ function mapShape(leds: ReadonlyMap<number, Vec3>): { centroid: Vec3; extent: nu
     extent: 2 * Math.sqrt(l0),
     // Second principal spread under ~3 % of the first (σ ratio): a strip/line.
     linear: Math.sqrt(Math.max(values[1]!, 0) / l0) < 0.03,
+    // Thin in one direction: PnP has the two-fold planar ambiguity.
+    planar: Math.sqrt(Math.max(values[2]!, 0) / l0) < 0.05,
     axis: vectors[0]!,
   };
 }
@@ -892,8 +900,8 @@ export function localizeFixtures(
     outlierPx: options.outlierPx ?? 6,
     minPnp: Math.max(4, options.minPnpLeds ?? 6),
     minGroup: Math.max(1, options.minGroupLeds ?? 3),
-    maxViews: options.maxViews ?? 120,
-    maxGroupLeds: Math.max(6, options.maxGroupLeds ?? 32),
+    maxViews: options.maxViews ?? 150,
+    maxGroupLeds: Math.max(6, options.maxGroupLeds ?? 64),
     iters: options.maxIterations ?? 40,
   };
   const warnings: string[] = [];
@@ -1013,10 +1021,11 @@ export function localizeFixtures(
     reference = 0;
     for (let k = 1; k < F; k++) if (pnpOk[k]! > pnpOk[reference]!) reference = k;
   }
+  // The anchor seeds every camera at first, so prefer a fixture whose PnP is
+  // unambiguous (not planar: a flat panel's PnP has a two-fold flip).
   let anchor = reference;
-  if (pnpOk[anchor] === 0) {
-    for (let k = 0; k < F; k++) if (pnpOk[k]! > pnpOk[anchor]!) anchor = k;
-  }
+  const anchorScore = (k: number) => (pnpOk[k]! > 0 ? (shapes[k]!.planar ? 0 : 1e6) + pnpOk[k]! : 0);
+  for (let k = 0; k < F; k++) if (anchorScore(k) > anchorScore(anchor) * (shapes[anchor]!.planar ? 1 : 2)) anchor = k;
   if (views.length === 0) {
     return emptyResult(
       "no frame showed two fixtures at once — keep at least two fixtures in view while you move",
@@ -1112,6 +1121,7 @@ export function localizeFixtures(
       const Rt = mT(a.R);
       seeded = { R: mm(Rt, b.R), t: scl(mv(Rt, sub(b.t, a.t)), 1 / a.s), s: b.s / a.s };
     }
+    const multiStart = cands.length === 0;
     if (cands.length === 0) {
       // Multi-start from the best-covered frames: depth from apparent size,
       // yaw sweep about up (handles collinear strips and PnP failures).
@@ -1151,6 +1161,10 @@ export function localizeFixtures(
         }
       }
     }
+    if (multiStart) {
+      // Rough starts must be refined before they can be scored.
+      for (let i = 0; i < cands.length; i++) cands[i] = refineFixture(k, cands[i]!, undefined, 6);
+    }
     if (seeded) cands.push(seeded);
     if (cands.length === 0) return false;
     // Bound the candidate set (one per frame can be hundreds): evenly spaced.
@@ -1176,8 +1190,6 @@ export function localizeFixtures(
       const f = refineFixture(k, best.f, best.sc.good, 20);
       best = { f, sc: fixScore(k, f) };
     }
-    if ((globalThis as { __MFDBG?: boolean }).__MFDBG)
-      console.log("placeFixture", k, "cands", cands.length, scored.slice(0, 5).map((x) => [x.sc.good.size, x.sc.bad.size, x.sc.views, x.sc.inl, x.sc.n]), "best", best && [best.sc.good.size, best.sc.bad.size, best.sc.views]);
     // Accept on a consistent minority too: wrongly placed cameras (planar flips)
     // disagree with each other as well, so >= 3 agreeing frames is a real signal.
     if (!best || best.sc.good.size < Math.min(3, best.sc.views) || best.sc.good.size < 0.2 * best.sc.views) return false;
@@ -1237,8 +1249,6 @@ export function localizeFixtures(
 
   for (let round = 0; round < 3 * F + 2; round++) {
     let progress = placeCameras();
-    if ((globalThis as { __MFDBG?: boolean }).__MFDBG)
-      console.log("round", round, "cams", st.cams.filter(Boolean).length, "fix", st.fix.map((f) => !!f), "pnpOk", pnpOk);
     // Place the unplaced fixture with the most sightings in placed cameras.
     const pending = fixtures
       .map((_, k) => k)
@@ -1394,10 +1404,29 @@ export function localizeFixtures(
     const lf = f ? levelFix(f) : null;
     const up = ups[k];
     const tiltDeg = f && up ? (Math.acos(Math.max(-1, Math.min(1, dot(mv(f.R, up), U)))) * 180) / Math.PI : null;
+    // A straight strip is placed by triangulating its line: every camera centre
+    // and the line span a plane, and if those planes all coincide (camera moved
+    // only along the strip's own plane) its depth is barely constrained.
+    let lineSpreadDeg: number | null = null;
+    if (f && shapes[k]!.linear && k !== gauge) {
+      const axis = unit(mv(f.R, shapes[k]!.axis));
+      const c0 = add(scl(mv(f.R, shapes[k]!.centroid), f.s), f.t);
+      const ns: Vec3[] = [];
+      for (const i of p.viewSet) {
+        const c = st.cams[i];
+        if (!c) continue;
+        const n = cross(axis, sub(scl(mv(mT(c.R), c.t), -1), c0));
+        if (norm(n) > 1e-9) ns.push(unit(n));
+      }
+      let spread = 0;
+      for (const n of ns) for (const m of ns) spread = Math.max(spread, Math.acos(Math.min(1, Math.abs(dot(n, m)))));
+      lineSpreadDeg = (spread * 180) / Math.PI;
+    }
+    const lineWeak = lineSpreadDeg !== null && lineSpreadDeg < 20;
     let status: FixtureStatus;
     if (!f) status = "unlocalized";
     else if (k === gauge) status = "reference";
-    else if (coViews < 3 || (sigma !== null && (sigma.ledM > 0.05 || (!shapes[k]!.linear && sigma.rotationDeg > 5))))
+    else if (lineWeak || coViews < 3 || (sigma !== null && (sigma.ledM > 0.05 || (!shapes[k]!.linear && sigma.rotationDeg > 5))))
       status = "weak";
     else status = "localized";
 
@@ -1411,11 +1440,16 @@ export function localizeFixtures(
       if (sigma && !shapes[k]!.linear && sigma.rotationDeg > 5)
         w.push(`${name}: orientation uncertain (±${sigma.rotationDeg.toFixed(0)}°)`);
       const ss = scaleSigma[k]!;
-      if (solveScale && Math.abs(Math.log(f.s)) > 3 * (Number.isFinite(ss) ? ss : 0.05) && Math.abs(f.s - 1) > 0.03)
+      if (solveScale && sigma && Math.abs(f.s - 1) > Math.max(0.03, 3 * sigma.scale))
         w.push(`${name}: its map's scale differs by ${((f.s - 1) * 100).toFixed(1)} % from the reference's — consider re-mapping`);
       if (solveScale && sigma && Number.isFinite(ss) && ss > 0 && sigma.scale > 0.8 * ss)
         w.push(`${name}: relative scale not observable from this capture (move the phone more); kept near its map's scale`);
-      if (tiltDeg !== null && tiltDeg > 10)
+      if (lineWeak)
+        w.push(
+          `${name}: a straight strip seen from only ${lineSpreadDeg!.toFixed(0)}° of viewpoints across it — ` +
+            "move the phone up and down (across the strip) to pin its depth",
+        );
+      if (tiltDeg !== null && tiltDeg > 10 && !shapes[k]!.linear)
         w.push(`${name}: tilted ${tiltDeg.toFixed(0)}° from its map's level — was it moved or tilted since mapping?`);
     }
     if (p.inl > 0 && Math.sqrt(p.sse / p.inl) > 3) w.push(`${name}: high reprojection error — its map may be stale`);
