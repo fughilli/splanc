@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -362,7 +380,8 @@ crate into two deployments:</p>
 <p>JSON in, JSON out — both carriers stay trivial:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>stdin/solve_json  {detections, imu, ledCount, mapId, createdAt,
                    options{maxKeyframes, maxNfev, pxSigma, rejectOutliers,
-                           gapSplitS, outlierSigma, minViews}}
+                           outlierSigma, minViews,
+                           stripPrior, stripSpacingM, stripTolerance}}
 stdout/return     §7.5 OutputMap JSON
 stderr/progress   solve_status-shaped snapshots (JSON per line / JS callback)
 </pre></div>
@@ -394,6 +413,34 @@ that both implementations solve the same synthetic session to the same map.</p>
 a floating focal is a scale-drift channel; calibration studies keep the
 Python solver, which also remains the automatic fallback when the binary is
 missing from runfiles).</p>
+</section>
+<section id="strip-prior-options-stripprior-off-by-default">
+<h3>Strip prior (<code class="docutils literal notranslate"><span class="pre">options.stripPrior</span></code>, off by default)<a class="headerlink" href="#strip-prior-options-stripprior-off-by-default" title="Link to this heading">¶</a></h3>
+<p>Most fixtures are a strip, rope or string wired in id order, so LED <code class="docutils literal notranslate"><span class="pre">i</span></code> and
+LED <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">+</span> <span class="pre">k</span></code> are at most <code class="docutils literal notranslate"><span class="pre">k</span></code> pitches apart. Diffuse capture needs this most:
+striding cuts each LED’s observation rate N×, and bloomed blobs give poor ray
+vergence. <code class="docutils literal notranslate"><span class="pre">src/strip.rs</span></code> adds, after the outlier-rejection loop:</p>
+<ol class="arabic simple">
+<li><p><strong>Pitch estimate</strong> — median distance between consecutive mapped ids
+(confident pairs preferred; <code class="docutils literal notranslate"><span class="pre">stripSpacingM</span></code> overrides).</p></li>
+<li><p><strong>Rope constraint</strong> — a second VI-BA pass, warm-started, with one one-sided
+residual per consecutive mapped pair: zero within <code class="docutils literal notranslate"><span class="pre">gap</span> <span class="pre">·</span> <span class="pre">pitch</span> <span class="pre">·</span> <span class="pre">(1</span> <span class="pre">+</span> <span class="pre">stripTolerance)</span></code>, linear past it (a pitch of overshoot ≈ a 20σ pixel
+error). LEDs already off the chain are left out of the rope so their
+observations can’t drag their neighbours, and a far jump between two LEDs
+that each agree with their other neighbour is a <strong>break</strong> (a jumper between
+strip segments, a raster row wrap) and is not linked.</p></li>
+<li><p><strong>Demote + fill</strong> — at assembly, an LED still too far from both
+neighbours (while they agree) is dropped, and every interior run of
+unmapped ids is placed on the straight segment between its mapped
+neighbours at equal spacing. End runs stay unmapped. Placed LEDs are
+emitted as ordinary entries with <code class="docutils literal notranslate"><span class="pre">nViews</span> <span class="pre">=</span> <span class="pre">0,</span> <span class="pre">confidence</span> <span class="pre">=</span> <span class="pre">0</span></code> (the web app’s
+<code class="docutils literal notranslate"><span class="pre">geom/inferred.ts</span></code> keys on that), so any real measurement outranks them.</p></li>
+</ol>
+<p>Rust-only: the Python reference doesn’t implement it, and with the option off
+(the default) the solve is unchanged, so <code class="docutils literal notranslate"><span class="pre">rust_parity_test</span></code> is unaffected. The
+phone enables it on final solves from Settings ▸ Capture ▸ Strip prior; the
+host-solve path doesn’t carry the option yet (<code class="docutils literal notranslate"><span class="pre">stop_mapping</span></code> has no field for
+it), so host-placed solves run without it.</p>
 </section>
 <section id="build-test">
 <h3>Build / test<a class="headerlink" href="#build-test" title="Link to this heading">¶</a></h3>
@@ -475,6 +522,7 @@ against opt. Format with <code class="docutils literal notranslate"><span class=
 <li><a class="reference internal" href="#interface">Interface</a></li>
 <li><a class="reference internal" href="#solver-placement-why-the-benchmark-exists">Solver placement (why the benchmark exists)</a></li>
 <li><a class="reference internal" href="#algorithm-parity">Algorithm parity</a></li>
+<li><a class="reference internal" href="#strip-prior-options-stripprior-off-by-default">Strip prior (<code class="docutils literal notranslate"><span class="pre">options.stripPrior</span></code>, off by default)</a></li>
 <li><a class="reference internal" href="#build-test">Build / test</a></li>
 </ul>
 </li>

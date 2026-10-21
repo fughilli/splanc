@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -444,7 +462,35 @@ refine and use the map.</p>
 handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
 <li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
 <li><p><strong>Jump to Effects</strong> to start animating this fixture.</p></li>
+<li><p><strong>Export</strong> the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
+Studio) fixture file. See below.</p></li>
 <li><p><strong>Edit metadata</strong> — name, tags, and folder.</p></li>
+</ul>
+</section>
+<section id="exporting-a-map-to-other-software">
+<h4>Exporting a map to other software<a class="headerlink" href="#exporting-a-map-to-other-software" title="Link to this heading">¶</a></h4>
+<p><strong>Export</strong> opens a sheet with two formats. Both have one entry per LED in output order, so entry N
+is the LED at output index N. The file is named after the map plus today’s date. On iPhone and iPad
+it opens the share sheet; choose <strong>Save to Files</strong>.</p>
+<ul class="simple">
+<li><p><strong>CSV (TouchDesigner, spreadsheets)</strong> — columns
+<code class="docutils literal notranslate"><span class="pre">index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</span></code>. Positions are in
+<strong>metres</strong>. In TouchDesigner, point a Table DAT’s File at the CSV and wire it into a DAT to SOP’s
+Points DAT. You get one point per LED, numbered by <code class="docutils literal notranslate"><span class="pre">index</span></code>, and the other columns become point
+attributes.</p></li>
+<li><p><strong>Chromatik fixture (.lxf)</strong> — copy it into the Fixtures folder under your Chromatik home
+directory and add it from the Fixture Chooser. Its points follow output order (one component per
+channel). A <strong>Scale</strong> parameter sets units per metre: the default 100 means centimetres; set 1 for
+metres or 39.37 for inches.</p></li>
+<li><p><strong>Unmapped LEDs</strong> still get an entry so the indices line up. They have <code class="docutils literal notranslate"><span class="pre">mapped</span> <span class="pre">=</span> <span class="pre">0</span></code>, and their
+position is interpolated between their mapped neighbours (clamped at the ends), the same place the
+device renders them.</p></li>
+<li><p><strong>Channels</strong> — maps don’t store a channel layout. If a connected device’s per-channel LED counts
+add up to this map’s LED count, the export uses them. Otherwise every LED is on channel 0.
+<code class="docutils literal notranslate"><span class="pre">segment</span></code> is the topology segment (-1 if none) and <code class="docutils literal notranslate"><span class="pre">arclength</span></code> is the LED’s distance along it in
+metres.</p></li>
+<li><p><strong>Axes</strong> — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
+nothing needs converting. For Z-up tools such as Blender, pick <strong>Z up</strong> before exporting the CSV.</p></li>
 </ul>
 <p>The 3D view honors the render knobs in Settings ▸ Appearance (LED size, glow, background, ground
 grid, and axes triad).</p>
@@ -494,8 +540,12 @@ the on-screen sliders.</p></li>
 <li><p><strong>Compile feedback</strong> — errors surface inline as you type.</p></li>
 <li><p><strong>Push to device</strong> — when a controller is connected, send the compiled <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> and live uniform
 values so the fixture updates as you edit.</p></li>
+<li><p><strong>Keypoints</strong> — save the live uniform values as a named look stored on the controller, tap a pad
+to morph back to it, or slide the morph fader between two looks. The same keypoints appear in Show
+Mode and to AI agents.</p></li>
 <li><p><strong>AI assistant</strong> (optional, bring-your-own-key) — describe a change in words and have it drafted
-for you.</p></li>
+for you. With a controller connected it can also measure the effect’s real frame time on the
+fixture, not just estimate it.</p></li>
 </ul>
 </section>
 </section>
@@ -522,6 +572,18 @@ tab.</p></li>
 </ul>
 <p>Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or
 the Device tab) any time to reopen the device sheet.</p>
+</section>
+<section id="the-device-s-security-certificate">
+<h4>The device’s security certificate<a class="headerlink" href="#the-device-s-security-certificate" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Each device creates its <strong>own</strong> security certificate the first time it starts (it takes well under
+a second), and keeps it for life. Your browser asks you to trust it once per device.</p></li>
+<li><p>The app remembers each device’s certificate. If a device you know shows up with a <strong>different</strong>
+one, the device sheet warns you: that is expected only after a factory reset (its flash erased).
+Tap <strong>I reset it — trust the new certificate</strong> if you did; otherwise disconnect.</p></li>
+<li><p>Devices updated from older firmware get their own certificate on the first start after the update;
+the app switches to it without a warning.</p></li>
+</ul>
 </section>
 </section>
 <section id="managing-devices">
@@ -694,6 +756,7 @@ source, and lists the open-source components the app ships.</p>
 </li>
 <li><a class="reference internal" href="#the-mapping-workspace">The mapping workspace</a><ul>
 <li><a class="reference internal" href="#what-you-can-do-here">What you can do here</a></li>
+<li><a class="reference internal" href="#exporting-a-map-to-other-software">Exporting a map to other software</a></li>
 </ul>
 </li>
 </ul>
@@ -712,6 +775,7 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#devices">Devices</a><ul>
 <li><a class="reference internal" href="#connecting-a-device">Connecting a device</a><ul>
 <li><a class="reference internal" href="#ways-to-add-a-device">Ways to add a device</a></li>
+<li><a class="reference internal" href="#the-device-s-security-certificate">The device’s security certificate</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#managing-devices">Managing devices</a><ul>

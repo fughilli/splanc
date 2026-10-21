@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Runbook" href="docs/runbook.html"><link rel="prev" title="Developing splanc" href="DEVELOPERS.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Set up a Splanc bridge on a Raspberry Pi" href="docs/pi-bridge.html"><link rel="prev" title="Developing splanc" href="DEVELOPERS.html">
         <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -310,8 +328,8 @@
   <a href="https://splanc.grafana.net/public-dashboards/0ce888d9584940a6845438d376555b51"><img
     src="https://img.shields.io/badge/HITL%20status-Grafana-f46800?logo=grafana&logoColor=white"
     alt="HITL status" /></a>
-  <a href="https://ledmapper.pages.dev"><img
-    src="https://img.shields.io/badge/live%20app-ledmapper.pages.dev-084de7"
+  <a href="https://splanc.io/app"><img
+    src="https://img.shields.io/badge/live%20app-splanc.io%2Fapp-084de7"
     alt="Live app" /></a>
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
@@ -339,7 +357,7 @@ camera path and the LED positions together.</p>
 <section id="getting-started">
 <h1>Getting started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h1>
 <p>The app is a PWA — nothing to install:</p>
-<p><strong>→ <a class="reference external" href="https://ledmapper.pages.dev">https://ledmapper.pages.dev</a></strong></p>
+<p><strong>→ <a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong></p>
 <ol class="arabic simple">
 <li><p><strong>Onboard your controller.</strong> Starting from a brand-new ESP32-C6 dev board?
 Flash the firmware onto it straight from the PWA over USB (desktop
@@ -353,6 +371,20 @@ fixture until the live preview converges, then save the map.</p></li>
 <li><p><strong>Design effects.</strong> Open the effects editor, pick or write an effect, preview
 it against your map, and send it to the controller to play for real.</p></li>
 </ol>
+</section>
+<section id="ask-an-ai-agent">
+<h1>Ask an AI agent<a class="headerlink" href="#ask-an-ai-agent" title="Link to this heading">¶</a></h1>
+<p>Splanc players can also be driven by an AI agent. Tell an agent that has a shell
+and Node.js 20 or later <em>“Use splanc.io to set the mood of the room”</em>. It reads
+<a class="reference external" href="https://splanc.io/AGENTS.md">https://splanc.io/AGENTS.md</a> and finds every Splanc fixture on your LAN. It
+treats them as one room, with a shared room frame and clock, and can tweak the
+running effect’s knobs or write, preview and deploy a new effect.</p>
+<p>To install it as an MCP server once:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>splanc<span class="w"> </span>--<span class="w"> </span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz
+</pre></div>
+</div>
+<p>There is no LAN authentication, so anyone on your network can drive the lights.
+See <a class="reference internal" href="#./agent/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">agent/README.md</span></code></span></a>.</p>
 </section>
 <section id="hardware">
 <h1>Hardware<a class="headerlink" href="#hardware" title="Link to this heading">¶</a></h1>
@@ -390,6 +422,10 @@ secure WebSocket — so what you see in the editor is what lights up.</p></li>
 <ul class="simple">
 <li><p><strong>Using the app:</strong> <a class="reference internal" href="docs/user-guide.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/user-guide.md</span></code></span></a> — a walkthrough of
 every feature (also an interactive tutorial in the app, from Settings ▸ Help)</p></li>
+<li><p><strong>Why it’s built this way:</strong> <a class="reference internal" href="docs/manifesto.html"><span class="std std-doc">the Splanc manifesto</span></a>:
+a microcontroller instead of Art-Net boxes, our own wireless stack, no heap,
+and model checking for an LED controller.</p></li>
+<li><p><strong>What’s new:</strong> <a class="reference internal" href="docs/whats-new.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/whats-new.md</span></code></span></a></p></li>
 <li><p><strong>Contributing &amp; building from source:</strong> <a class="reference internal" href="DEVELOPERS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">DEVELOPERS.md</span></code></span></a></p></li>
 <li><p><strong>Design &amp; architecture:</strong> <a class="reference internal" href="led-mapper-design.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code></span></a> —
 the durable spec — plus <a class="reference internal" href="#./docs"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/</span></code></span></a></p></li>
@@ -402,12 +438,12 @@ the durable spec — plus <a class="reference internal" href="#./docs"><span cla
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="docs/runbook.html">
+          <a class="next-page" href="docs/pi-bridge.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Runbook</div>
+                <div class="title">Set up a Splanc bridge on a Raspberry Pi</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>

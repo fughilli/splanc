@@ -206,7 +206,17 @@
 <li><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</li>
 <li><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</li>
 <li><strong>Jump to Effects</strong> to start animating this fixture.</li>
+<li><strong>Export</strong> the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX Studio) fixture file. See below.</li>
 <li><strong>Edit metadata</strong> — name, tags, and folder.</li>
+</ul>
+<h4>Exporting a map to other software</h4>
+<p><strong>Export</strong> opens a sheet with two formats. Both have one entry per LED in output order, so entry N is the LED at output index N. The file is named after the map plus today's date. On iPhone and iPad it opens the share sheet; choose <strong>Save to Files</strong>.</p>
+<ul>
+<li><strong>CSV (TouchDesigner, spreadsheets)</strong> — columns <code>index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength</code>. Positions are in <strong>metres</strong>. In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's Points DAT. You get one point per LED, numbered by <code>index</code>, and the other columns become point attributes.</li>
+<li><strong>Chromatik fixture (.lxf)</strong> — copy it into the Fixtures folder under your Chromatik home directory and add it from the Fixture Chooser. Its points follow output order (one component per channel). A <strong>Scale</strong> parameter sets units per metre: the default 100 means centimetres; set 1 for metres or 39.37 for inches.</li>
+<li><strong>Unmapped LEDs</strong> still get an entry so the indices line up. They have <code>mapped = 0</code>, and their position is interpolated between their mapped neighbours (clamped at the ends), the same place the device renders them.</li>
+<li><strong>Channels</strong> — maps don't store a channel layout. If a connected device's per-channel LED counts add up to this map's LED count, the export uses them. Otherwise every LED is on channel 0. <code>segment</code> is the topology segment (-1 if none) and <code>arclength</code> is the LED's distance along it in metres.</li>
+<li><strong>Axes</strong> — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so nothing needs converting. For Z-up tools such as Blender, pick <strong>Z up</strong> before exporting the CSV.</li>
 </ul>
 <p>The 3D view honors the render knobs in Settings ▸ Appearance (LED size, glow, background, ground grid, and axes triad).</p>
 </div>
@@ -241,7 +251,8 @@
 <li><strong>Uniforms pane</strong> — expose tunable parameters (speed, color, …) and bind them to MIDI controls or the on-screen sliders.</li>
 <li><strong>Compile feedback</strong> — errors surface inline as you type.</li>
 <li><strong>Push to device</strong> — when a controller is connected, send the compiled <code>.fxb</code> and live uniform values so the fixture updates as you edit.</li>
-<li><strong>AI assistant</strong> (optional, bring-your-own-key) — describe a change in words and have it drafted for you.</li>
+<li><strong>Keypoints</strong> — save the live uniform values as a named look stored on the controller, tap a pad to morph back to it, or slide the morph fader between two looks. The same keypoints appear in Show Mode and to AI agents.</li>
+<li><strong>AI assistant</strong> (optional, bring-your-own-key) — describe a change in words and have it drafted for you. With a controller connected it can also measure the effect's real frame time on the fixture, not just estimate it.</li>
 </ul>
 <p class="more"><a href="effect-editor.html">Full walkthrough — 3 screenshots &rarr;</a></p>
 </div>
@@ -263,6 +274,12 @@
 <li><strong>Skip / go offline</strong> — explore maps and effects with no hardware; connect later from the Device tab.</li>
 </ul>
 <p>Once linked, the connection status shows in the app-bar pill at the top of every screen. Tap it (or the Device tab) any time to reopen the device sheet.</p>
+<h4>The device's security certificate</h4>
+<ul>
+<li>Each device creates its <strong>own</strong> security certificate the first time it starts (it takes well under a second), and keeps it for life. Your browser asks you to trust it once per device.</li>
+<li>The app remembers each device's certificate. If a device you know shows up with a <strong>different</strong> one, the device sheet warns you: that is expected only after a factory reset (its flash erased). Tap <strong>I reset it — trust the new certificate</strong> if you did; otherwise disconnect.</li>
+<li>Devices updated from older firmware get their own certificate on the first start after the update; the app switches to it without a warning.</li>
+</ul>
 </div>
 </article>
 <article class="topic" id="device-management">

@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Developing splanc" href="../DEVELOPERS.html"><link rel="prev" title="The simulator (shared/simulator/)" href="simulator.html">
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Developing splanc" href="../DEVELOPERS.html"><link rel="prev" title="The agent bridge (agent/)" href="agent.html">
         <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" checked="" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -304,10 +322,55 @@
 <p>The HITL infrastructure runs the firmware on real ESP32-C6 boards under <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span></code>-style automation. A rig is a Raspberry Pi with one or more C6 boards over
 USB, reserved through a FIFO queue and reached over Tailscale. A Go daemon + CLI
 manage reservations; a Python harness drives the tests.</p>
-<p>Suites include <code class="docutils literal notranslate"><span class="pre">e2e</span></code>, <code class="docutils literal notranslate"><span class="pre">map_upload</span></code>, <code class="docutils literal notranslate"><span class="pre">mapping_trigger</span></code>, <code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> (the FX
-performance benchmark that feeds <a class="reference internal" href="../docs/fx-vm-performance.html"><span class="doc">FX-VM performance</span></a>), <code class="docutils literal notranslate"><span class="pre">rename_wss</span></code>,
-and <code class="docutils literal notranslate"><span class="pre">video_stream</span></code>. The CI wiring and how to stand up your own rig are documented
-in <a class="reference internal" href="../DEVELOPERS.html"><span class="doc">Developing splanc</span></a> (Hardware-in-the-loop testing).</p>
+<p>Suites include:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">e2e_netstack</span></code>: flash, BLE provisioning, wss and the agent manifest check.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">map_upload</span></code>, <code class="docutils literal notranslate"><span class="pre">mapping_trigger</span></code> and <code class="docutils literal notranslate"><span class="pre">rename_wss</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fx_bench</span></code>: the FX performance benchmark that feeds
+<a class="reference internal" href="../docs/fx-vm-performance.html"><span class="doc">FX-VM performance</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">video_stream</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">loaded_tls_netstack</span></code>: TLS handshakes on a heap loaded with a map and an
+effect.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>, described below.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">time_base_skew</span></code>: inter-fixture skew under one shared epoch, captured on both
+analyzer-tapped DUTs in one capture.</p></li>
+<li><p>The real-phone journeys: Android on <code class="docutils literal notranslate"><span class="pre">amd-rig</span></code>, iOS on the Mac mini.</p></li>
+</ul>
+<p>Every failure ships the DUT’s serial log as a CI artifact. The CI wiring and how
+to stand up your own rig are documented in <a class="reference internal" href="../DEVELOPERS.html"><span class="doc">Developing splanc</span></a>
+(Hardware-in-the-loop testing).</p>
+<section id="memory-auditing-over-jtag-ram-audit">
+<h3>Memory auditing over JTAG (<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>)<a class="headerlink" href="#memory-auditing-over-jtag-ram-audit" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ram_audit</span></code> drives the field worst case: BLE provisioning,
+then the first wss handshake with BLE still up, then a 512-LED map, a texture
+effect and loaded handshakes. Meanwhile <code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code> polls every heap’s
+free bytes over the C6’s system bus, <strong>without halting</strong> the core. At each new
+low it halts just long enough to dump HP + LP SRAM and the registers, so the
+last dump is the RAM image at the minimum watermark. At the end of the run it
+also reads the heap census (<code class="docutils literal notranslate"><span class="pre">LM_HEAP_CENSUS</span></code>, with
+<code class="docutils literal notranslate"><span class="pre">--//firmware/player_app:heap_census_enabled</span></code>) and the sysmode counters
+(<code class="docutils literal notranslate"><span class="pre">LM_MODE</span></code>). The DUT never reports metrics over the network.</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">--hang</span></code></strong> adds <code class="docutils literal notranslate"><span class="pre">hang_watch.tcl</span></code>. It polls FreeRTOS’s tick count, and if
+the tick stops for 3 s it halts the core, records the registers and a PC
+trail, dumps SRAM, and <strong>leaves the core halted</strong> so the watchdog can’t erase
+the evidence.</p></li>
+<li><p><strong>Gotcha: never halt during the Wi-Fi join.</strong> A dump halts the core for
+~46 s, and a halt in the DHCP window ends in a TG0 watchdog reset after
+resume, which looks exactly like a firmware hang. Dumps are therefore armed
+only after provisioning (the harness touches <code class="docutils literal notranslate"><span class="pre">/tmp/ram_watch.arm</span></code>); the
+minimum comes later, at the first wss handshake.</p></li>
+</ul>
+</section>
+<section id="observability">
+<h3>Observability<a class="headerlink" href="#observability" title="Link to this heading">¶</a></h3>
+<p>Rigs push their metrics to Grafana Cloud through Alloy. This covers the Pi
+rigs, the Android bench <code class="docutils literal notranslate"><span class="pre">amd-rig</span></code> (both daemons, <code class="docutils literal notranslate"><span class="pre">:8087</span></code> and <code class="docutils literal notranslate"><span class="pre">:8088</span></code>) and the
+iPhone bench <code class="docutils literal notranslate"><span class="pre">mac-mini</span></code> (a launchd Alloy agent). The dashboards are code in
+<code class="docutils literal notranslate"><span class="pre">pi/hitl/observability/dashboards/</span></code> and are synced by
+<code class="docutils literal notranslate"><span class="pre">.github/workflows/grafana-dashboards.yaml</span></code>, which warns loudly if its Grafana
+credentials are missing. See <code class="docutils literal notranslate"><span class="pre">pi/hitl/observability/README.md</span></code>.</p>
+</section>
 </section>
 <section id="host-side-tools-tools">
 <h2>Host-side tools (<code class="docutils literal notranslate"><span class="pre">tools/</span></code>)<a class="headerlink" href="#host-side-tools-tools" title="Link to this heading">¶</a></h2>
@@ -459,14 +522,14 @@ app.</p></li>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="simulator.html">
+          <a class="prev-page" href="agent.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</div>
+                <div class="title">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</div>
                 
               </div>
             </a>
@@ -501,7 +564,11 @@ app.</p></li>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a><ul>
-<li><a class="reference internal" href="#hardware-in-the-loop-rigs-pi-hitl">Hardware-in-the-loop rigs (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>)</a></li>
+<li><a class="reference internal" href="#hardware-in-the-loop-rigs-pi-hitl">Hardware-in-the-loop rigs (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>)</a><ul>
+<li><a class="reference internal" href="#memory-auditing-over-jtag-ram-audit">Memory auditing over JTAG (<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>)</a></li>
+<li><a class="reference internal" href="#observability">Observability</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#host-side-tools-tools">Host-side tools (<code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 <li><a class="reference internal" href="#sim-studio-interactive-solver-debugging">Sim Studio — interactive solver debugging</a><ul>
 <li><a class="reference internal" href="#run">Run</a><ul>

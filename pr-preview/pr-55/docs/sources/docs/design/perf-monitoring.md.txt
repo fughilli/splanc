@@ -83,8 +83,8 @@ no f64).
   cadence legible to the app and damp oscillation. A fresh effect starts at
   30 fps (the historical rate) and climbs when there's headroom, so load never
   opens with a visible stutter.
-- **5% headroom.** A frame *misses* when its cost (`frame_cycles + show_cycles`,
-  in µs) exceeds 95% of the current target's period — we insist on ≥5% of every
+- **5% headroom.** A frame *misses* when its cost (`max(frame_cycles,
+  show_cycles)` in µs — render and the async strip transmit overlap) exceeds 95% of the current target's period — we insist on ≥5% of every
   period left for the other threads.
 - **x/N window.** Over a sliding window of 30 frames (~1 s), if **more than**
   a quarter miss, drop one rung. A clean window whose *worst* frame would still
@@ -96,19 +96,38 @@ no f64).
   so the app can tell the user.
 - **Consistent FPS.** The render task sleeps `period − work` (not a fixed delay
   *after* the work), so successive frame starts land one period apart regardless
-  of how long a frame took — the whole point being a *consistent* rate.
+  of how long a frame took — the whole point being a *consistent* rate. It never
+  sleeps less than `max(1 ms, work / 19)`: the render task outranks the network
+  task, so even a frame that overran its period cedes ≥ 5% of the wall clock to
+  WiFi/TLS while the window decides.
+- **Decks + crossfade.** The cost fed to the controller is the whole frame —
+  `lm_fx_update` / `lm_fx_shade` drive *every* rendering deck and blend them by
+  the crossfade — so a two-deck show is costed as one frame. The search restarts
+  (default or pinned rung) whenever what renders changes: a load, clear or
+  (de)activation on either deck. An abort parks every rendering deck; they stay
+  loaded and `set_effect` resumes them. (Deck A's persisted selection is left as
+  is, so a reboot resumes the effect and the autoscaler parks it again within a
+  couple of seconds.)
 - **App override.** `set_fps{target_fps}` pins an exact rate (snapped to the
   ladder) and stops autoscaling; `target_fps = 0` returns to auto. A pinned rate
   the device can't hold aborts rather than silently dropping — the user asked
   for a rate this effect can't achieve, so we say so instead of ignoring it.
+- **Hold (`no_abort`).** `set_fps{no_abort: true}` keeps the rung instead of
+  parking (benchmark/profiling clients: the HITL `fx_bench` pins 30 fps + hold so
+  its up-to-~130 ms/frame calibration programs are measured, at the golden's
+  historical cadence). Pin and hold are runtime-only and survive effect reloads.
 
 The controller is measured **every** effect frame regardless of the perf tier
 (the cost is the same two CSR reads the profiler already deemed negligible); the
-perf *ring* is still only filled while a perf mode is active. `set_fps` replies
-`fps_state{target_fps, current_fps, min_fps, max_fps, auto, aborted}`; the same
-message is pushed unsolicited on an abort (plain ws:81 only, same async-push
-limitation as the perf report — a phone on wss learns of it by polling, where
-the parked effect shows as "off").
+perf *ring* is still only filled while a perf mode is active. Firmware with the
+autoscaler advertises the `fps` feature. `set_fps` replies
+`fps_state{target_fps, current_fps, min_fps, max_fps, auto, aborted, no_abort}`;
+the same message is pushed unsolicited on an abort over the open session (the
+same push path as the perf report), and the web app toasts it wherever the user
+is. The agent's `measure_effect` reports `current_fps` and calls an effect "over
+budget" only when the player parked it or its mean cost can't hold the 25-fps
+floor (an overrun above the floor is just the autoscaler stepping down), and its
+uniform ramps never stream faster than the player's reported framerate.
 
 ### Cheap sampling
 
@@ -904,3 +923,20 @@ for the binding device first, then re-estimate to confirm it fits. Online
 (device PerfReport) and offline (cost model) share one schema, so the same loop
 runs with or without hardware; per-device calibrations make each fleet member's
 estimate as trustworthy as its `measuredError`.
+
+A second tool, **`measure_on_device`** (#292, `web/src/effects/devicePerf.ts`),
+closes the loop on real hardware. While a fixture with the `perf` feature is
+connected (never in the website demo), the model can run the current compile
+there: the editor uploads it over the same path as "Send to device" (skipped
+when the fixture already runs that exact program; the result says so if it
+replaced a different effect), sets perf FULL, reads `get_perf_report` every
+0.5 s for `seconds` (1–10, default 3), and turns perf back off. The result is
+the measured `PerfContext` (`contextFromReport`) plus mean / p95 / max frame
+time, the per-window means and a predicted-vs-measured line against the
+estimate's error band. Device work is serialized with the editor's push and
+auto-push and every call times out. The guidance (iterate with the estimate,
+confirm on the device, optimize against the measurement when they disagree,
+since the estimate models the interpreter and the device may JIT) is added to
+the prompt only when the tool is offered, so the small local-model prompt does
+not grow. The MCP hub has the same pair: `estimate_effect` and
+`measure_effect`.

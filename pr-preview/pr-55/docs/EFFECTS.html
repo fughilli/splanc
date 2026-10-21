@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="docs/decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -379,6 +397,14 @@ opcode):</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">led.uv</span></code></p></td>
 <td><p>vec2</p></td>
 <td><p>per-LED texture coordinate (top-down projection to 0..1)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">led.room</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>LED position in the shared room frame, metres (== <code class="docutils literal notranslate"><span class="pre">led.pos</span></code> while unposed)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">room.min</span></code>, <code class="docutils literal notranslate"><span class="pre">room.max</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>room bounding box (the host’s, else this fixture’s own room-frame box)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">imu.accel</span></code>, <code class="docutils literal notranslate"><span class="pre">imu.gyro</span></code></p></td>
 <td><p>vec3</p></td>
@@ -729,7 +755,15 @@ Operands follow inline in the code stream, little-endian.</p>
 <p>Function ids for <code class="docutils literal notranslate"><span class="pre">UnMath</span></code>: <code class="docutils literal notranslate"><span class="pre">sin</span> <span class="pre">cos</span> <span class="pre">abs</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">sqrt</span> <span class="pre">exp</span> <span class="pre">log</span> <span class="pre">sign</span> <span class="pre">tan</span></code>
 (0–10). For <code class="docutils literal notranslate"><span class="pre">BinMath</span></code>: <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">pow</span> <span class="pre">mod</span> <span class="pre">step</span> <span class="pre">atan2</span></code> (0–5). Context ids for
 <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>: time, dt, frame, led.pos(3), led.idx, led.count, led.seg, led.s,
-led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2).</p>
+led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2), led.room(3),
+room.min(3), room.max(3). A program reading the room frame sets <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> flags bit
+0x08 (<code class="docutils literal notranslate"><span class="pre">FLAG_USES_ROOM</span></code>) so the host fetches it only then.</p>
+<p><code class="docutils literal notranslate"><span class="pre">time</span></code> is seconds since the effect started — or, once a host sends
+<code class="docutils literal notranslate"><span class="pre">set_time_base</span> <span class="pre">{</span> <span class="pre">epoch_ms</span> <span class="pre">}</span></code> (the multi-fixture shared time base, in the device’s
+own clock), <code class="docutils literal notranslate"><span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch_ms)</span> <span class="pre">/</span> <span class="pre">1000</span></code>, held at 0 before the epoch, so fixtures
+animate in step. A fixture’s room pose (<code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code>: translation, rotation
+quaternion, scale) maps each LED as <code class="docutils literal notranslate"><span class="pre">room</span> <span class="pre">=</span> <span class="pre">t</span> <span class="pre">+</span> <span class="pre">R(q)</span> <span class="pre">*</span> <span class="pre">(scale</span> <span class="pre">*</span> <span class="pre">pos)</span></code>; the device
+caches it per LED in millimetres (6 B/LED).</p>
 </section>
 <section id="the-fxb-container">
 <h2>The <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> container<a class="headerlink" href="#the-fxb-container" title="Link to this heading">¶</a></h2>
@@ -972,8 +1006,15 @@ model calls client-fulfilled tools: <code class="docutils literal notranslate"><
 compile, and return the compile result — ok/diagnostics/uniforms/disassembly so
 the model can self-repair), <code class="docutils literal notranslate"><span class="pre">capture_preview</span></code> (render the live <code class="docutils literal notranslate"><span class="pre">FxPreview</span></code> canvas
 to a PNG returned as a vision block), <code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code> (run the cost model
-and report headroom), and <code class="docutils literal notranslate"><span class="pre">list_midi_controls</span></code> / <code class="docutils literal notranslate"><span class="pre">set_midi_mapping</span></code>. Each user
-turn includes the current source and the latest compile summary as context.</p></li>
+and report headroom), <code class="docutils literal notranslate"><span class="pre">measure_on_device</span></code> (offered only while a fixture with
+the <code class="docutils literal notranslate"><span class="pre">perf</span></code> feature is connected: run the current script there for
+<code class="docutils literal notranslate"><span class="pre">seconds</span></code> (1–10, default 3), optionally at given <code class="docutils literal notranslate"><span class="pre">uniforms</span></code>, and return the
+measured frame time mean / p95 / max, per-window means and the estimate’s
+error band next to it), and <code class="docutils literal notranslate"><span class="pre">list_midi_controls</span></code> / <code class="docutils literal notranslate"><span class="pre">set_midi_mapping</span></code>. The
+prompt tells the model to iterate with the estimate, confirm on the device
+before calling a performance goal met, and trust the measurement when the two
+disagree. Each user turn includes the current source and the latest compile
+summary as context.</p></li>
 </ul>
 <p>So every AI-authored effect is compiled by the real wasm compiler and (optionally)
 previewed by the real VM before it ever reaches the device — the same path a

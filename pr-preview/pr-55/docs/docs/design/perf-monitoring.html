@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning" href="../vio-exploration.html"><link rel="prev" title="Design: Effects compiler (editor + wasm compile + AI generation)" href="effects-compiler.html">
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="FX decks, crossfade and uniform keypoints" href="uniform-keypoints.html"><link rel="prev" title="Design: Effects compiler (editor + wasm compile + AI generation)" href="effects-compiler.html">
         <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,8 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
@@ -214,6 +216,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
 </ul>
 </li>
@@ -222,9 +225,13 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -243,14 +250,25 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Meta</span></p>
 <ul>
@@ -423,8 +441,7 @@ no f64).</p>
 cadence legible to the app and damp oscillation. A fresh effect starts at
 30 fps (the historical rate) and climbs when there’s headroom, so load never
 opens with a visible stutter.</p></li>
-<li><p><strong>5% headroom.</strong> A frame <em>misses</em> when its cost (<code class="docutils literal notranslate"><span class="pre">frame_cycles</span> <span class="pre">+</span> <span class="pre">show_cycles</span></code>,
-in µs) exceeds 95% of the current target’s period — we insist on ≥5% of every
+<li><p><strong>5% headroom.</strong> A frame <em>misses</em> when its cost (<code class="docutils literal notranslate"><span class="pre">max(frame_cycles,</span> <span class="pre">show_cycles)</span></code> in µs — render and the async strip transmit overlap) exceeds 95% of the current target’s period — we insist on ≥5% of every
 period left for the other threads.</p></li>
 <li><p><strong>x/N window.</strong> Over a sliding window of 30 frames (~1 s), if <strong>more than</strong>
 a quarter miss, drop one rung. A clean window whose <em>worst</em> frame would still
@@ -436,19 +453,38 @@ effect (freeing the CPU) and the loop task pushes an <code class="docutils liter
 so the app can tell the user.</p></li>
 <li><p><strong>Consistent FPS.</strong> The render task sleeps <code class="docutils literal notranslate"><span class="pre">period</span> <span class="pre">−</span> <span class="pre">work</span></code> (not a fixed delay
 <em>after</em> the work), so successive frame starts land one period apart regardless
-of how long a frame took — the whole point being a <em>consistent</em> rate.</p></li>
+of how long a frame took — the whole point being a <em>consistent</em> rate. It never
+sleeps less than <code class="docutils literal notranslate"><span class="pre">max(1</span> <span class="pre">ms,</span> <span class="pre">work</span> <span class="pre">/</span> <span class="pre">19)</span></code>: the render task outranks the network
+task, so even a frame that overran its period cedes ≥ 5% of the wall clock to
+WiFi/TLS while the window decides.</p></li>
+<li><p><strong>Decks + crossfade.</strong> The cost fed to the controller is the whole frame —
+<code class="docutils literal notranslate"><span class="pre">lm_fx_update</span></code> / <code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code> drive <em>every</em> rendering deck and blend them by
+the crossfade — so a two-deck show is costed as one frame. The search restarts
+(default or pinned rung) whenever what renders changes: a load, clear or
+(de)activation on either deck. An abort parks every rendering deck; they stay
+loaded and <code class="docutils literal notranslate"><span class="pre">set_effect</span></code> resumes them. (Deck A’s persisted selection is left as
+is, so a reboot resumes the effect and the autoscaler parks it again within a
+couple of seconds.)</p></li>
 <li><p><strong>App override.</strong> <code class="docutils literal notranslate"><span class="pre">set_fps{target_fps}</span></code> pins an exact rate (snapped to the
 ladder) and stops autoscaling; <code class="docutils literal notranslate"><span class="pre">target_fps</span> <span class="pre">=</span> <span class="pre">0</span></code> returns to auto. A pinned rate
 the device can’t hold aborts rather than silently dropping — the user asked
 for a rate this effect can’t achieve, so we say so instead of ignoring it.</p></li>
+<li><p><strong>Hold (<code class="docutils literal notranslate"><span class="pre">no_abort</span></code>).</strong> <code class="docutils literal notranslate"><span class="pre">set_fps{no_abort:</span> <span class="pre">true}</span></code> keeps the rung instead of
+parking (benchmark/profiling clients: the HITL <code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> pins 30 fps + hold so
+its up-to-~130 ms/frame calibration programs are measured, at the golden’s
+historical cadence). Pin and hold are runtime-only and survive effect reloads.</p></li>
 </ul>
 <p>The controller is measured <strong>every</strong> effect frame regardless of the perf tier
 (the cost is the same two CSR reads the profiler already deemed negligible); the
-perf <em>ring</em> is still only filled while a perf mode is active. <code class="docutils literal notranslate"><span class="pre">set_fps</span></code> replies
-<code class="docutils literal notranslate"><span class="pre">fps_state{target_fps,</span> <span class="pre">current_fps,</span> <span class="pre">min_fps,</span> <span class="pre">max_fps,</span> <span class="pre">auto,</span> <span class="pre">aborted}</span></code>; the same
-message is pushed unsolicited on an abort (plain ws:81 only, same async-push
-limitation as the perf report — a phone on wss learns of it by polling, where
-the parked effect shows as “off”).</p>
+perf <em>ring</em> is still only filled while a perf mode is active. Firmware with the
+autoscaler advertises the <code class="docutils literal notranslate"><span class="pre">fps</span></code> feature. <code class="docutils literal notranslate"><span class="pre">set_fps</span></code> replies
+<code class="docutils literal notranslate"><span class="pre">fps_state{target_fps,</span> <span class="pre">current_fps,</span> <span class="pre">min_fps,</span> <span class="pre">max_fps,</span> <span class="pre">auto,</span> <span class="pre">aborted,</span> <span class="pre">no_abort}</span></code>;
+the same message is pushed unsolicited on an abort over the open session (the
+same push path as the perf report), and the web app toasts it wherever the user
+is. The agent’s <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code> reports <code class="docutils literal notranslate"><span class="pre">current_fps</span></code> and calls an effect “over
+budget” only when the player parked it or its mean cost can’t hold the 25-fps
+floor (an overrun above the floor is just the autoscaler stepping down), and its
+uniform ramps never stream faster than the player’s reported framerate.</p>
 <section id="cheap-sampling">
 <h3>Cheap sampling<a class="headerlink" href="#cheap-sampling" title="Link to this heading">¶</a></h3>
 <p>The instrumentation must not perturb what it measures. Rules:</p>
@@ -1222,6 +1258,22 @@ for the binding device first, then re-estimate to confirm it fits. Online
 (device PerfReport) and offline (cost model) share one schema, so the same loop
 runs with or without hardware; per-device calibrations make each fleet member’s
 estimate as trustworthy as its <code class="docutils literal notranslate"><span class="pre">measuredError</span></code>.</p>
+<p>A second tool, <strong><code class="docutils literal notranslate"><span class="pre">measure_on_device</span></code></strong> (#292, <code class="docutils literal notranslate"><span class="pre">web/src/effects/devicePerf.ts</span></code>),
+closes the loop on real hardware. While a fixture with the <code class="docutils literal notranslate"><span class="pre">perf</span></code> feature is
+connected (never in the website demo), the model can run the current compile
+there: the editor uploads it over the same path as “Send to device” (skipped
+when the fixture already runs that exact program; the result says so if it
+replaced a different effect), sets perf FULL, reads <code class="docutils literal notranslate"><span class="pre">get_perf_report</span></code> every
+0.5 s for <code class="docutils literal notranslate"><span class="pre">seconds</span></code> (1–10, default 3), and turns perf back off. The result is
+the measured <code class="docutils literal notranslate"><span class="pre">PerfContext</span></code> (<code class="docutils literal notranslate"><span class="pre">contextFromReport</span></code>) plus mean / p95 / max frame
+time, the per-window means and a predicted-vs-measured line against the
+estimate’s error band. Device work is serialized with the editor’s push and
+auto-push and every call times out. The guidance (iterate with the estimate,
+confirm on the device, optimize against the measurement when they disagree,
+since the estimate models the interpreter and the device may JIT) is added to
+the prompt only when the tool is offered, so the small local-model prompt does
+not grow. The MCP hub has the same pair: <code class="docutils literal notranslate"><span class="pre">estimate_effect</span></code> and
+<code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>.</p>
 </section>
 </section>
 </section>
@@ -1231,12 +1283,12 @@ estimate as trustworthy as its <code class="docutils literal notranslate"><span 
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="../vio-exploration.html">
+          <a class="next-page" href="uniform-keypoints.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning</div>
+                <div class="title">FX decks, crossfade and uniform keypoints</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
