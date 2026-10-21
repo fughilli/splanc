@@ -14,7 +14,7 @@
  * {@link set}.
  */
 
-import { Button, Card, icon, toast, type IconName } from "../kit";
+import { Button, Card, PasswordReveal, icon, toast, type IconName } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { installSettingsStyles } from "./settings.css";
 import { installAiSettingsStyles } from "./aiSettings.css";
@@ -931,7 +931,8 @@ function field(opts: {
   if (opts.value) input.value = opts.value;
   if (opts.placeholder) input.placeholder = opts.placeholder;
   if (opts.onInput) input.addEventListener("input", () => opts.onInput?.(input.value));
-  label.append(cap, input);
+  // Secrets (API keys) get the kit's show/hide eye toggle, starting hidden.
+  label.append(cap, input.type === "password" ? PasswordReveal(input).el : input);
   return label;
 }
 

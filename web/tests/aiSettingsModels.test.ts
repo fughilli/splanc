@@ -268,3 +268,18 @@ test("the WebGPU model browser starts on tool-capable models, and a browser with
   button(root, "Add").click();
   assert.deepEqual(getAiConfig().webllm.pinned, []);
 });
+
+test("API key fields get the show-password eye toggle, hidden by default", () => {
+  updateAiConfig({ kind: "local", local: { baseUrl: BASE, key: "sk-local", model: "", vision: false } });
+  const root = mount();
+  const key = root.querySelectorAll("input").find((i) => i.value === "sk-local");
+  assert.ok(key, "the local server's API key field");
+  assert.equal(key.getAttribute("type"), "password");
+  const toggle = asFake(key.parentElement).querySelector(".k-pw-toggle");
+  assert.ok(toggle);
+  assert.equal(toggle.getAttribute("aria-label"), "Show password");
+  toggle.click();
+  assert.equal(key.getAttribute("type"), "text");
+  assert.equal(key.value, "sk-local");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+});

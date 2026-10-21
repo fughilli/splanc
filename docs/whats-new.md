@@ -5,6 +5,16 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Show the Wi-Fi password while you type it
+
+- **An eye button** at the right end of the Wi-Fi password field in the
+  add-device sheet shows the password in cleartext, and taps back to hidden.
+  It starts hidden, keeps the keyboard open and the cursor where it was, and
+  picking a saved network keeps your choice. Phone keyboards no longer
+  autocorrect or capitalize the field, and password managers leave it alone.
+- **The same button** is on the API key fields in AI settings and on the Splanc
+  Bridge Flasher's Wi-Fi password (which had a text "Show" button).
+
 ### Every player has its own TLS certificate
 
 Netstack firmware used to serve one shared certificate, and its private key was in

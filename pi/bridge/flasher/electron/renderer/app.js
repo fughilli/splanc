@@ -160,10 +160,21 @@
       for (const id of ['ssid', 'psk', 'hidden', 'show-psk']) $(id).disabled = off;
       validate(false);
     });
-    $('show-psk').addEventListener('click', () => {
+    // Eye toggle (same behaviour as the phone app's kit PasswordReveal): the
+    // press never takes focus from the field, and the caret survives the swap.
+    const showPsk = $('show-psk');
+    for (const ev of ['pointerdown', 'mousedown']) showPsk.addEventListener(ev, (e) => e.preventDefault());
+    showPsk.addEventListener('click', () => {
       const p = $('psk');
-      p.type = p.type === 'password' ? 'text' : 'password';
-      $('show-psk').textContent = p.type === 'password' ? 'Show' : 'Hide';
+      const { selectionStart: a, selectionEnd: b } = p;
+      const shown = p.type === 'password';
+      p.type = shown ? 'text' : 'password';
+      if (typeof a === 'number' && typeof b === 'number') p.setSelectionRange(a, b);
+      const label = shown ? 'Hide password' : 'Show password';
+      showPsk.setAttribute('aria-label', label);
+      showPsk.title = label;
+      showPsk.setAttribute('aria-pressed', String(shown));
+      showPsk.classList.toggle('on', shown);
     });
     const list = $('countries');
     for (const [code, name] of window.COUNTRIES || []) {

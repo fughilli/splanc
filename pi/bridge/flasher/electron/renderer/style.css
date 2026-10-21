@@ -262,8 +262,54 @@ textarea:focus {
 }
 
 .pw {
-  display: flex;
-  gap: 8px;
+  position: relative;
+}
+
+.pw input {
+  padding-right: 44px;
+}
+
+/* Eye button inside the password field's right end (44px hit area). */
+.pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  border-radius: var(--r-ctrl);
+  cursor: pointer;
+}
+
+.pw-toggle:hover,
+.pw-toggle.on {
+  color: var(--text);
+}
+
+.pw-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+.pw-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pw-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.pw-toggle:not(.on) .pw-slash {
+  display: none;
 }
 
 .checks {

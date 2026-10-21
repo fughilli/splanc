@@ -3111,6 +3111,11 @@ input.device-name-input {
   font: inherit;
   margin-bottom: var(--sp-3);
 }
+/* A .sheet-input wrapped by the kit PasswordReveal: the wrapper carries the
+   input's spacing (see .k-pw in tokens.css). */
+.sheet-pw {
+  margin-bottom: var(--sp-3);
+}
 
 /* ===========================================================================
    Wide viewports — desktop and unfolded foldables. Use the horizontal space

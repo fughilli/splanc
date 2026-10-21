@@ -120,6 +120,85 @@ export function Field(opts: {
   return { el: label, input };
 }
 
+// -- PasswordReveal ----------------------------------------------------------
+
+export interface PasswordRevealHandle {
+  /** The wrapper (input + eye button) to put in the layout instead of `input`. */
+  el: HTMLDivElement;
+  input: HTMLInputElement;
+  toggle: HTMLButtonElement;
+  /** Whether the secret is currently shown in cleartext. */
+  shown: () => boolean;
+  setShown: (on: boolean) => void;
+}
+
+/**
+ * Wrap a secret `<input>` (Wi-Fi password, API key) with a "show password" eye
+ * button inside its right end. Starts hidden (`type=password`); the button
+ * flips the input between `password` and `text` without touching its value,
+ * and keeps focus + caret in the input (the press never takes focus). The
+ * input is also told not to autocorrect / autocapitalize / spellcheck — which
+ * matters once it shows cleartext on a phone keyboard — and to keep password
+ * managers out (`autocomplete`: "new-password" for credentials the user types
+ * for another device, "off" for API keys).
+ */
+export function PasswordReveal(
+  input: HTMLInputElement,
+  opts: { autocomplete?: string; className?: string } = {},
+): PasswordRevealHandle {
+  const wrap = document.createElement("div");
+  wrap.className = opts.className ? `k-pw ${opts.className}` : "k-pw";
+  input.classList.add("k-pw-input");
+  input.type = "password";
+  input.setAttribute("autocomplete", opts.autocomplete ?? "off");
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("spellcheck", "false");
+  // Ask the common password-manager extensions not to decorate / autofill it.
+  input.setAttribute("data-1p-ignore", "");
+  input.setAttribute("data-lpignore", "true");
+  input.setAttribute("data-bwignore", "");
+
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "k-pw-toggle";
+  let on = false;
+  const sync = (): void => {
+    b.replaceChildren(icon(on ? "eye-off" : "eye"));
+    const label = on ? "Hide password" : "Show password";
+    b.setAttribute("aria-label", label);
+    b.title = label;
+    b.setAttribute("aria-pressed", String(on));
+    wrap.classList.toggle("k-pw--shown", on);
+  };
+  const setShown = (v: boolean): void => {
+    if (v === on) return;
+    on = v;
+    // Swapping `type` can reset the selection in some engines: restore the
+    // caret / selection the user had.
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    input.type = on ? "text" : "password";
+    if (typeof start === "number" && typeof end === "number" && typeof input.setSelectionRange === "function") {
+      try {
+        input.setSelectionRange(start, end);
+      } catch {
+        /* not a text-selectable state; nothing to restore */
+      }
+    }
+    sync();
+  };
+  // Pressing the button must not steal focus from the input (that would close
+  // the phone keyboard and lose the caret).
+  const keepFocus = (ev: Event): void => ev.preventDefault();
+  b.addEventListener("pointerdown", keepFocus);
+  b.addEventListener("mousedown", keepFocus);
+  b.addEventListener("click", () => setShown(!on));
+  sync();
+  wrap.append(input, b);
+  return { el: wrap, input, toggle: b, shown: () => on, setShown };
+}
+
 // -- Slider ------------------------------------------------------------------
 
 export interface SliderHandle {

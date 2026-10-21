@@ -183,6 +183,51 @@ a {
   border-color: var(--accent);
 }
 
+/* Secret input with a show/hide eye button inside its right end. The wrapper
+   owns the outer spacing (the input's own margin is zeroed) so the button can
+   centre on the input's box. The button is a 44px touch target; only the icon
+   paints, so it may overhang a shorter input without showing. */
+.k-pw {
+  position: relative;
+  display: block;
+}
+.k-pw > input.k-pw-input {
+  width: 100%;
+  margin: 0;
+  padding-right: 44px;
+}
+.k-pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  border-radius: var(--r-ctrl);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.k-pw-toggle:hover,
+.k-pw--shown .k-pw-toggle {
+  color: var(--text);
+}
+.k-pw-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+.k-pw-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
 .k-slider {
   display: block;
   margin-bottom: var(--sp-3);
