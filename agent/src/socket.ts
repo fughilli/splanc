@@ -46,9 +46,9 @@ export function checkPin(sock: TLSSocket, tls: TlsPolicy): void {
  * (LedMapperClient only reports "connection failed"). */
 export function nodeSocketFactory(
   tls: TlsPolicy = {},
-  hooks: { onPeer?: (sha256: string) => void; onError?: (e: Error) => void } = {},
+  hooks: { onPeer?: (sha256: string) => void; onError?: (e: Error) => void; onRx?: () => void } = {},
 ): SocketFactory {
-  const { onPeer, onError } = hooks;
+  const { onPeer, onError, onRx } = hooks;
   return (url: string): SocketLike => {
     const ws = new WebSocket(url, { rejectUnauthorized: false, handshakeTimeout: 15000 });
     const adapter: SocketLike = {
@@ -61,6 +61,11 @@ export function nodeSocketFactory(
       },
       close() {
         ws.close();
+        // A dead peer never answers the closing handshake: don't hold its socket
+        // for ws's 30 s close timeout.
+        const t = setTimeout(() => ws.terminate(), 2000);
+        t.unref?.();
+        ws.once("close", () => clearTimeout(t));
       },
       onopen: null,
       onclose: null,
@@ -84,12 +89,28 @@ export function nodeSocketFactory(
     ws.on("open", () => adapter.onopen?.());
     ws.on("close", () => adapter.onclose?.());
     ws.on("error", (e) => {
-      onError?.(e);
+      onError?.(new Error(errorText(e)));
       adapter.onerror?.(e);
     });
-    ws.on("message", (data: Buffer) => adapter.onmessage?.({ data: new Uint8Array(data) }));
+    ws.on("message", (data: Buffer) => {
+      onRx?.();
+      adapter.onmessage?.({ data: new Uint8Array(data) });
+    });
+    // A dead peer (rebooted onto another IP) never FINs: keepalive lets the kernel
+    // notice too, under the hub's own heartbeat (liveness.ts).
+    ws.on("upgrade", (res) => (res.socket as TLSSocket).setKeepAlive?.(true, 10_000));
     return adapter;
   };
+}
+
+/** An error's text, never empty: a connect to a name with several addresses
+ * (localhost: ::1 + 127.0.0.1) fails with an AggregateError whose message is "",
+ * its causes (each ECONNREFUSED…) inside. */
+export function errorText(e: unknown): string {
+  const x = e as Error & { code?: string; errors?: unknown[] };
+  if (x?.message) return x.message;
+  if (Array.isArray(x?.errors) && x.errors.length) return [...new Set(x.errors.map(errorText))].join("; ");
+  return x?.code ?? String(e);
 }
 
 export interface HttpResult {
@@ -123,6 +144,6 @@ export function httpsGet(url: string, tls: TlsPolicy = {}, timeoutMs = 8000): Pr
       res.on("error", reject);
     });
     req.on("timeout", () => req.destroy(new Error(`GET ${url} timed out`)));
-    req.on("error", reject);
+    req.on("error", (e) => reject(new Error(errorText(e))));
   });
 }

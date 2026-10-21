@@ -136,6 +136,17 @@ export class FakePlayer {
     return `127.0.0.1:${this.port}`;
   }
 
+  /** Ignore everything received (no replies): a player that rebooted onto another
+   * IP, as the bridge sees it — its old socket stays "open" and nothing answers. */
+  silent = false;
+
+  /** "Reboot onto a new IP": go silent on every open socket WITHOUT closing them
+   * (no FIN/RST, like a device that vanished), and stop listening at this address. */
+  freeze(): void {
+    this.silent = true;
+    this.server.close();
+  }
+
   async stop(): Promise<void> {
     for (const c of this.wss.clients) c.terminate();
     await new Promise<void>((r) => this.wss.close(() => r()));
@@ -205,6 +216,7 @@ export class FakePlayer {
   }
 
   private onMessage(ws: WebSocket, m: Msg): void {
+    if (this.silent) return;
     this.received.push(m);
     const refusal = this.refuse.get(m.type);
     if (refusal) {

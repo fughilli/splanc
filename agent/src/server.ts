@@ -248,7 +248,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Look for players again, thoroughly: mDNS (even with hosts given) and every reachable player's manifest " +
-        "re-read (list_players trusts the cache); sweep=true also probes every host of the local /24s.",
+        "re-read (list_players trusts the cache); sweep=true also probes every host of the local /24s. A known " +
+        "player found at a new address (players are identified by device id, never by IP) moves there.",
       inputSchema: { sweep: z.boolean().optional() },
     },
     ({ sweep }) =>
@@ -266,8 +267,12 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ host }) =>
       guard(async () => {
         hub.addHost(host);
+        // A host that answers as a KNOWN player (same device id) moves that player's
+        // record here — its old address is dropped, and a dead session at the old
+        // one replaced — rather than adding a second entry.
         await hub.refresh({ mdns: false, sweep: "off" });
         const r = await hub.each(host, async (s) => s.device());
+        if (!r[0]!.ok) throw new ToolError(`add_player ${host}: ${r[0]!.error ?? "failed"}`);
         return ok(r[0]);
       }),
   );
@@ -935,6 +940,9 @@ async function playersView(hub: Hub): Promise<Record<string, unknown>> {
       // How this run confirmed it: session (Welcome), manifest, tcp (answers on
       // :443; name/firmware from the cache), mdns (its advert), or unreachable.
       checked: p.checked ?? null,
+      // The /ws session: live (and when the player was last heard from: every
+      // session is heartbeat-checked), reconnecting, or none.
+      session: hub.sessionState(p.id),
       ...(p.checked === "unreachable" ? { error: p.manifestError ?? "unreachable" } : {}),
       manifest: p.manifest ? "yes" : p.checked === "unreachable" ? "no" : (p.manifestError ?? "not read (not needed to connect)"),
       tls: tlsView(p.trust, !!p.target?.tls.pinSha256),

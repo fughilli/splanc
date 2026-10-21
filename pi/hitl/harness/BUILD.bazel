@@ -869,6 +869,29 @@ py_binary(
     ],
 )
 
+# Player re-discovery: the agent's MCP bridge (never restarted) follows a C6 that
+# reboots onto a new address (netstack firmware: random Wi-Fi MAC per boot), with
+# no add_player; a gone player fails with a specific error. Needs `node` on PATH.
+#   bazel run //pi/hitl/harness:agent_rediscover -- --server http://hitl-rig-2:8087
+py_binary(
+    name = "agent_rediscover",
+    srcs = ["hitl_agent_rediscover.py"],
+    data = [
+        "//agent:mcp",
+        "//agent:wasm",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_agent_rediscover.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
 # The ELF the netstack flashbundle was linked from (the watcher reads the heap
 # list's address from it).
 filegroup(

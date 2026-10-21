@@ -72,4 +72,23 @@ describe("localSweepHosts", () => {
     assert.ok(!hosts.includes("192.168.1.21"));
     assert.deepEqual(subnets(hosts), ["192.168.1"]);
   });
+
+  test("169.254.x is swept like any LAN: a /24 as itself, a /16 as the /24 around the address (field: a home network on 169.254.100.0/24)", () => {
+    const as24 = localSweepHosts({ wlan0: [v4("169.254.100.151", "255.255.255.0")] });
+    assert.deepEqual(subnets(as24), ["169.254.100"]);
+    assert.equal(as24.length, 253);
+    assert.ok(as24.includes("169.254.100.168") && !as24.includes("169.254.100.151"));
+    const as16 = localSweepHosts({ wlan0: [v4("169.254.100.151", "255.255.0.0")] });
+    assert.deepEqual(as16, as24);
+  });
+
+  test("container / VM bridges are skipped and don't use up the two-LAN cap", () => {
+    const hosts = localSweepHosts({
+      docker0: [v4("172.17.0.1", "255.255.0.0")],
+      "br-3f2a": [v4("172.18.0.1", "255.255.0.0")],
+      virbr0: [v4("192.168.122.1", "255.255.255.0")],
+      wlan0: [v4("169.254.100.151", "255.255.255.0")],
+    });
+    assert.deepEqual(subnets(hosts), ["169.254.100"]);
+  });
 });

@@ -1124,6 +1124,27 @@ export class LedMapperClient {
     }
   }
 
+  /** One time_sync_ping round trip as a liveness check (the clock is left alone):
+   * resolves with the RTT (ms), rejects when the socket is down or no pong comes
+   * within `timeoutMs`. */
+  async ping(timeoutMs: number): Promise<number> {
+    let t0 = this.now();
+    while (this.pingWaiters.has(t0)) t0 += 1e-3; // a concurrent syncClock round
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.roundtripPing(t0),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new RequestTimeoutError("time_sync_pong", timeoutMs)), timeoutMs);
+        }),
+      ]);
+      return this.now() - t0;
+    } finally {
+      clearTimeout(timer);
+      this.pingWaiters.delete(t0);
+    }
+  }
+
   private roundtripPing(t0: number): Promise<ServerMessage> {
     return new Promise((resolve, reject) => {
       if (!this.send({ type: "time_sync_ping", t0 })) {

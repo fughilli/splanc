@@ -26,7 +26,10 @@ With several targets the result is one entry per player (`ok`, `result` or
 1. `list_players` (or the `splanc://players` resource): names, rooms, firmware.
    It is fast and trusts what the hub remembers (`checked` says how each player
    was confirmed); `refresh_players` looks again thoroughly. No players → ask the
-   user for the player's address and `add_player`. A player with
+   user for the player's address and `add_player`. Players are tracked by device
+   id: one that rebooted onto a new IP is found again by itself (it shows
+   `checked: "unreachable"` with the reason until then), so there's no need to
+   `add_player` it again. A player with
    `tls: CHANGED…` is refused: its certificate differs from the one first seen
    for it. Tell the user; call `trust_player` only if they confirm they
    factory-reset that player (otherwise another device may be answering as it).

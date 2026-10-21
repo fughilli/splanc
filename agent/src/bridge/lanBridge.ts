@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
+import { toolCalls, toolFailure } from "../../relay/src/mcpLibrary";
 import type { Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/protocol";
 import type { Hub } from "../hub";
 import type { ProgressSink } from "../progress";
@@ -497,7 +498,15 @@ export class LanBridge {
       this.link.send({ t: "end", id: f.id });
     } catch (e) {
       if (!ac.signal.aborted) {
-        this.jsonReply(f.id, 500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: `bridge: ${(e as Error).message}` } });
+        // A tool call gets a tool result naming the cause: an HTTP 500 shows in MCP
+        // clients only as a generic "tool call failed".
+        const tools = f.method === "POST" ? toolCalls(f.body ?? "") : new Map<string | number, string>();
+        const [call] = [...tools];
+        if (tools.size === 1 && call) {
+          this.jsonReply(f.id, 200, toolFailure(call[0], call[1], `bridge error: ${(e as Error).message}`));
+        } else {
+          this.jsonReply(f.id, 500, { jsonrpc: "2.0", id: null, error: { code: -32603, message: `bridge: ${(e as Error).message}` } });
+        }
       }
     } finally {
       this.inflight.delete(f.id);
