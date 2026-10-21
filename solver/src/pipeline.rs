@@ -6,12 +6,15 @@
 use std::collections::BTreeMap;
 
 use crate::camera::project;
+use crate::diag::{assess_state, Assessment};
 use crate::linalg::{
     add, cross, dot, mat_vec, norm, normalize, scale, solve3_spd, sub, Mat3, Vec3, EYE3, ZERO3,
 };
 use crate::quat::{back_project_dir, quat_to_rotmat};
 use crate::strip;
-use crate::types::{LedEntry, OutputMap, OutputMapStats, Problem, ProgressLed, ProgressSnapshot};
+use crate::types::{
+    LedEntry, OutputMap, OutputMapStats, Problem, ProgressLed, ProgressSnapshot, WarmState,
+};
 use crate::vio::{solve_vio, FrameObservations, ProgressFn, SolveOptions, VioResult};
 
 // ---------------------------------------------------------------------------
@@ -525,6 +528,59 @@ pub fn decimate_path(positions: &[Vec3], max_points: usize) -> Vec<[f64; 3]> {
         .collect()
 }
 
+/// One optimizer stage of `reconstruct_vio`, for the reproduction bundle's
+/// diagnostics (what each solve did to the map: kept observations, residual,
+/// how far the inertial re-anchor rescaled it).
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct StageTrace {
+    pub stage: String,
+    pub frames: usize,
+    pub observations: usize,
+    pub leds: usize,
+    /// LEDs with ≥ 2 views whose median reprojection error is ≤ 8 px.
+    pub solved: usize,
+    #[serde(rename = "rmsPx")]
+    pub rms_px: f64,
+    /// Factor this stage's re-anchor multiplied the geometry by.
+    #[serde(rename = "reanchorScale")]
+    pub reanchor_scale: f64,
+    #[serde(rename = "scaleRelStdErr")]
+    pub scale_rel_se: Option<f64>,
+    /// RMS distance of the LEDs from their centroid, meters.
+    #[serde(rename = "spreadM")]
+    pub spread_m: f64,
+    /// Cold start only: the linear inertial alignment's scale for the visual
+    /// init (≤ 0 mirrors the scene behind the cameras).
+    #[serde(rename = "initScale", skip_serializing_if = "Option::is_none")]
+    pub init_scale: Option<f64>,
+    /// The cold start rejected `initScale` and seeded an arm's-length prior.
+    #[serde(
+        rename = "initScaleFallback",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub init_scale_fallback: bool,
+    /// Degeneracy reasons of this stage's state (initial solves only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub degenerate: Vec<String>,
+}
+
+fn trace_stage(stage: &str, frames: &[FrameObservations], r: &VioResult) -> StageTrace {
+    StageTrace {
+        stage: stage.to_string(),
+        frames: frames.len(),
+        observations: frames.iter().map(|f| f.obs.len()).sum(),
+        leds: r.led_ids.len(),
+        solved: solved_led_count(frames, r, 8.0),
+        rms_px: r.rms_reproj_px,
+        reanchor_scale: r.reanchor_scale,
+        scale_rel_se: r.scale_rel_se.is_finite().then_some(r.scale_rel_se),
+        spread_m: crate::diag::geometry(&r.led_positions, &[]).spread_m,
+        init_scale: r.init_scale,
+        init_scale_fallback: r.init_scale_fallback,
+        degenerate: Vec::new(),
+    }
+}
+
 /// The production entry point — port of vio_api.reconstruct_vio (frames →
 /// solve → iterative outlier rejection with best-state rollback →
 /// gravity-leveled OutputMap). Every observation is kept, however the
@@ -533,8 +589,35 @@ pub fn decimate_path(positions: &[Vec3], max_points: usize) -> Vec<[f64; 3]> {
 /// the rejection loop's job.
 pub fn reconstruct_vio(
     problem: &Problem,
-    mut progress: Option<ProgressFn>,
+    progress: Option<ProgressFn>,
 ) -> Result<OutputMap, String> {
+    reconstruct_vio_diag(problem, progress).map(|(map, _diag)| map)
+}
+
+/// What a solve did, beside its map: the capture bundle's diagnostics.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct SolveDiagnostics {
+    /// Every optimizer stage, in order.
+    pub trace: Vec<StageTrace>,
+    /// Which initial solve the pipeline continued from: "cold" (from
+    /// scratch) or "warm" (from `options.warmStart`).
+    pub start: String,
+    /// Why a supplied warm start was not usable (it was ignored).
+    #[serde(rename = "warmStartError", skip_serializing_if = "Option::is_none")]
+    pub warm_start_error: Option<String>,
+    /// The degeneracy verdict on the returned map (diag.rs).
+    pub assessment: Assessment,
+    /// The final solver state, un-leveled — a later solve's `warmStart`.
+    pub state: WarmState,
+}
+
+/// `reconstruct_vio`, with the per-stage trace, the degeneracy assessment
+/// and the final solver state.
+pub fn reconstruct_vio_diag(
+    problem: &Problem,
+    mut progress: Option<ProgressFn>,
+) -> Result<(OutputMap, SolveDiagnostics), String> {
+    let mut trace: Vec<StageTrace> = Vec::new();
     // `&mut dyn` is invariant, so the Option can't be reborrowed per solve
     // call; route every solve through one concrete relay closure instead.
     let has_progress = progress.is_some();
@@ -581,9 +664,41 @@ pub fn reconstruct_vio(
     let solve_opts = SolveOptions {
         px_sigma: opts.px_sigma,
         max_nfev: opts.max_nfev,
+        init_scale_guard: opts.init_scale_guard,
         ..SolveOptions::default()
     };
-    let mut result = solve_vio(&frames, &imu, &solve_opts, None, prog!());
+    // Initial solve. From scratch ("cold") — and, when the caller hands over
+    // the state of an earlier solve of this capture (the live preview's best
+    // interim), also from that ("warm"); the better start carries on. The cold
+    // start re-derives scale and gravity from all the data, which is usually
+    // the better start, but it can also land in a basin the interim solves
+    // never saw; the warm start guarantees the final solve begins no worse
+    // than what the user was shown.
+    let observable = crate::diag::observable_leds(&problem.detections);
+    let cold = solve_vio(&frames, &imu, &solve_opts, None, prog!());
+    let mut start = "cold";
+    let mut warm_start_error = None;
+    let cold_q = assess_state(&cold, solved_led_count(&frames, &cold, 8.0), observable);
+    let mut cold_trace = trace_stage("initial-cold", &frames, &cold);
+    cold_trace.degenerate = cold_q.reasons.clone();
+    trace.push(cold_trace);
+    let mut result = cold;
+    if let Some(ws) = &opts.warm_start {
+        match crate::diag::from_warm_state(ws) {
+            Ok(ws) => {
+                let warm = solve_vio(&frames, &imu, &solve_opts, Some(&ws), prog!());
+                let warm_q = assess_state(&warm, solved_led_count(&frames, &warm, 8.0), observable);
+                let mut warm_trace = trace_stage("initial-warm", &frames, &warm);
+                warm_trace.degenerate = warm_q.reasons.clone();
+                trace.push(warm_trace);
+                if crate::diag::better(&warm_q, &cold_q) {
+                    result = warm;
+                    start = "warm";
+                }
+            }
+            Err(e) => warm_start_error = Some(e),
+        }
+    }
 
     if opts.reject_outliers {
         let score = |res: &VioResult, frs: &[FrameObservations]| -> (usize, f64) {
@@ -613,6 +728,11 @@ pub fn reconstruct_vio(
                 ..solve_opts.clone()
             };
             result = solve_vio(&frames, &imu, &resolve_opts, Some(&result), prog!());
+            trace.push(trace_stage(
+                &format!("outlier-round-{round}"),
+                &frames,
+                &result,
+            ));
             let cur = score(&result, &frames);
             if cmp(cur, best_score) == std::cmp::Ordering::Greater {
                 best_result = result.clone();
@@ -623,6 +743,7 @@ pub fn reconstruct_vio(
         if cmp(best_score, score(&result, &frames)) == std::cmp::Ordering::Greater {
             result = best_result;
             frames = best_frames;
+            trace.push(trace_stage("rollback-to-best-round", &frames, &result));
         }
     }
 
@@ -661,6 +782,7 @@ pub fn reconstruct_vio(
                     ..solve_opts.clone()
                 };
                 result = solve_vio(&frames, &imu, &chain_opts, Some(&result), prog!());
+                trace.push(trace_stage("strip-prior", &frames, &result));
             }
             // Re-measure on the constrained state: the solve's a-posteriori
             // metric re-anchor may have rescaled it.
@@ -744,7 +866,7 @@ pub fn reconstruct_vio(
         median_camera_distance(&leveled_traj, &measured),
     );
 
-    Ok(OutputMap {
+    let map = OutputMap {
         map_id: problem
             .map_id
             .clone()
@@ -765,7 +887,16 @@ pub fn reconstruct_vio(
             scale_rel_std_err: Some(result.scale_rel_se).filter(|s| s.is_finite()),
             warnings,
         },
-    })
+    };
+    let assessment = crate::diag::assess_map(&map, observable);
+    let diag = SolveDiagnostics {
+        trace,
+        start: start.to_string(),
+        warm_start_error,
+        assessment,
+        state: crate::diag::to_warm_state(&result),
+    };
+    Ok((map, diag))
 }
 
 /// Progress snapshot assembly shared by the carriers.
@@ -795,7 +926,10 @@ mod tests {
 
     #[test]
     fn scale_warnings_flag_collapsed_and_uncertain_scale() {
-        assert!(scale_warnings(0.02, Some(0.75)).is_empty(), "a sound solve warns nothing");
+        assert!(
+            scale_warnings(0.02, Some(0.75)).is_empty(),
+            "a sound solve warns nothing"
+        );
         let close = scale_warnings(0.02, Some(0.09));
         assert_eq!(close.len(), 1);
         assert!(close[0].contains("9 cm"), "{}", close[0]);

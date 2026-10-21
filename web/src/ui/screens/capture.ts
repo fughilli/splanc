@@ -52,7 +52,20 @@ import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
 import { overlayLegend } from "../overlayStyle";
 import { LIVE_SOLVE_OPTIONS, LiveSolveScheduler } from "../../solver/liveSolve";
-import type { SolveProblem } from "../../solver/agent";
+import type { SolveDiag, SolveProblem } from "../../solver/agent";
+import {
+  buildBundle,
+  deviceInfo,
+  InterimLog,
+  shouldLogRun,
+  type BundleFrame,
+  type CaptureBundle,
+  type CaptureParamsSnapshot,
+} from "../../solver/captureBundle";
+import { assessMap, decideFinal, observableLeds, type FinalDecision } from "../../solver/degeneracy";
+import { debugModeEnabled } from "../../store/debugMode";
+import { bundleIncludeFrames, bundleKeepSuccessful, captureBundleStore } from "../../store/captureBundleStore";
+import { appBuildInfo } from "../../buildInfo";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
 import { deviceStore, DEFAULT_CAPTURE_STRIDE } from "../../store/deviceStore";
@@ -481,6 +494,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let focalPx: number | undefined;
   // Interim phone solves (no host solver), see solver/liveSolve.
   let liveSolver: LiveSolveScheduler | null = null;
+  // Every interim (live-preview) solve of this run, phone or host: the best
+  // one warm-starts the final solve and is the fallback if the final comes
+  // back degenerate; the bundle keeps it + the last few (solver/captureBundle).
+  let interimLog = new InterimLog();
+  // This run's capture parameters, read at the end (the closure sees the live
+  // servo / reconfigure state). Null before capture starts.
+  let runParams: (() => CaptureParamsSnapshot) | null = null;
+  // The final solve's exact input and raw outcome, and the decision on which
+  // map the run keeps — the capture bundle's core (debug mode).
+  let runProblem: SolveProblem | null = null;
+  let runFinal: CaptureBundle["final"] = { map: null, diag: null, error: null, assessment: null, timing: null };
+  let runDecision: FinalDecision | null = null;
+  let runSupplement: CaptureBundle["supplement"] = null;
+  // Opt-in downsampled camera frames for the bundle (getUserMedia path only).
+  let bundleFrames: BundleFrame[] = [];
   // Hot-loop + live-solver perf counters for the current capture (cv/capturePerf).
   let perf: CapturePerf | null = null;
   let localDetections: DetectionRecord[] = [];
@@ -745,6 +773,52 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capturing = true;
       startedAt = performance.now();
+      interimLog = new InterimLog();
+      runProblem = null;
+      runFinal = { map: null, diag: null, error: null, assessment: null, timing: null };
+      runDecision = null;
+      runSupplement = null;
+      bundleFrames = [];
+      const sampleFrames = debugModeEnabled() && bundleIncludeFrames();
+      let lastFrameSampleMs = -Infinity;
+      const captureSource: CaptureParamsSnapshot["captureSource"] =
+        syntheticSource !== null ? "synthetic" : nativeSource !== null ? "native" : previewVideo !== null ? "mediastream" : "unknown";
+      runParams = (): CaptureParamsSnapshot => {
+        const w = c.welcome;
+        const activeId = deviceStore.activeId();
+        return {
+          ledCount: lastLedCount,
+          supplementOf: supplementId,
+          diffuse,
+          strideSpacing,
+          anchorDensity,
+          detector: {
+            threshold: detector.threshold,
+            downscale: detector.downscale,
+            flipV: detectorOpts.flipV,
+            localContrastGain: detectorOpts.localContrast?.gain ?? null,
+          },
+          forced: { exposure: forcedExposure, brightness: forcedBrightness, symbols: forcedSymbols, bitMs: forcedBitMs },
+          codeParams: params,
+          lastExposure: servoExposure || initialExposure !== null ? servoedExposure : null,
+          lastBrightness: params.brightness ?? null,
+          stripPrior: finalSolveOptions().stripPrior === true,
+          liveSolve: liveSolveEnabled,
+          placement: c.hostSolverBenchMs === null ? "phone" : "host",
+          captureSource,
+          durationMs: performance.now() - startedAt,
+          frameCount,
+          truncatedFrames,
+          fixture: {
+            deviceId: activeId,
+            name: w?.deviceName || (activeId ? deviceStore.get(activeId)?.label ?? null : null),
+            mac: w?.mac || null,
+            fwVersion: w?.fwVersion || null,
+            fwGitCommit: w?.fwGitCommit || null,
+            fwGitDirty: w ? w.fwGitDirty : null,
+          },
+        };
+      };
       const loopPerf = new CapturePerf();
       perf = loopPerf;
       // Reachable from a remote devtools console mid-capture.
@@ -866,6 +940,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             nativeLog(perfDiag);
           }
         }
+        // Debug-mode capture bundle: an opt-in downsampled frame every 2 s.
+        if (sampleFrames && previewVideo !== null && bundleFrames.length < 120 && f.tCaptureMs - lastFrameSampleMs >= 2000) {
+          lastFrameSampleMs = f.tCaptureMs;
+          const jpeg = snapshotVideo(previewVideo);
+          if (jpeg !== null) bundleFrames.push({ tMs: f.tCaptureMs, jpeg });
+        }
         // Everything above is this frame's main-thread cost, HUD included.
         const tEnd = performance.now();
         loopPerf.frame({
@@ -905,6 +985,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       // Fast live-map poll — the same solver that runs the final solve, so the
       // user sees what they'll get (owner §9 Q2).
+      let lastHostLive: OutputMap | null = null;
       const livePoll = setInterval(() => {
         if (!capturing) {
           clearInterval(livePoll);
@@ -914,6 +995,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         c.getLiveMap()
           .then((lm) => {
             if (!capturing || lm.map === null) return;
+            if (lm.map !== lastHostLive) {
+              lastHostLive = lm.map;
+              interimLog.add({
+                source: "host",
+                tMs: performance.now() - startedAt,
+                recordCount: localDetections.length,
+                imuCount: localImu.length,
+                ledCount: lastLedCount,
+                mapId: lm.map.mapId,
+                createdAt: lm.map.createdAt,
+                options: null,
+                map: lm.map,
+                diag: null,
+                error: null,
+                assessment: null,
+              });
+            }
             liveLeds = lm.map.leds;
             pipeline.updateSolved(liveLeds);
             applyLiveSolve(lm.map);
@@ -946,20 +1044,40 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               pending = { records: recordCount, uploaded: detections.length, stats: null, applyMs: 0 };
               const p = pending;
               loopPerf.solveBegin();
+              // What the worker's live session holds for this solve: exactly the
+              // first sentDetections / sentImu records (a bundle replays it so).
+              const interim = {
+                source: "phone" as const,
+                tMs: performance.now() - startedAt,
+                recordCount: sentDetections,
+                imuCount: sentImu,
+                ledCount: lastLedCount,
+                mapId: "live",
+                createdAt: new Date().toISOString(),
+                options: { ...LIVE_SOLVE_OPTIONS },
+              };
               return solverAgent
                 .solveLive({
                   reset,
                   detections,
                   imu,
-                  ledCount: lastLedCount,
-                  mapId: "live",
-                  createdAt: new Date().toISOString(),
-                  options: { ...LIVE_SOLVE_OPTIONS },
+                  ledCount: interim.ledCount,
+                  mapId: interim.mapId,
+                  createdAt: interim.createdAt,
+                  options: interim.options,
                 })
-                .then((r) => {
-                  p.stats = r.stats;
-                  return r.map;
-                });
+                .then(
+                  (r) => {
+                    p.stats = r.stats;
+                    interimLog.add({ ...interim, map: r.map, diag: r.diag, error: null, assessment: r.diag?.assessment ?? null });
+                    return r.map;
+                  },
+                  (e: unknown) => {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    interimLog.add({ ...interim, map: null, diag: null, error: msg, assessment: null });
+                    throw e;
+                  },
+                );
             },
             (map) => {
               if (!capturing) return;
@@ -1350,14 +1468,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // plays no part once capture ends (FUG-69). Factored out so the host-solve
     // path can fall back to it when the device has dropped mid-capture.
     const solveOnPhoneNow = async (): Promise<OutputMap> => {
-      const problem = {
+      // Warm start: the best live-preview solve's state, so the final solve
+      // also starts from what the user was shown and keeps the better start
+      // (solver/src/pipeline.rs). Only a phone interim carries a state.
+      const best = interimLog.best();
+      const warmStart = best?.source === "phone" ? best.diag?.state : undefined;
+      const problem: SolveProblem = {
         detections: localDetections,
         imu: localImu,
         ledCount: lastLedCount,
         mapId: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
-        options: finalSolveOptions(),
+        options: { ...finalSolveOptions(), ...(warmStart ? { warmStart } : {}) },
       };
+      runProblem = problem;
       // Persist the exact solver input on iOS so a failed solve can be replayed
       // natively (//solver:solver_cli) instead of re-captured per hypothesis.
       const logged = nativeSource === null ? problem : { ...problem, imuRaw: nativeSource.rawImuLog() };
@@ -1376,15 +1500,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         );
       }
       let lastProg = -1;
-      const { map: solved, stats } = await solverAgent.solveWithStats(problem, (snap: SolveSnapshot) => {
-        renderSolveSnapshot(snap);
-        if (driverActive() && snap.progress - lastProg >= 0.2) {
-          lastProg = snap.progress;
-          console.info(
-            `[solve] progress=${(snap.progress * 100).toFixed(0)}% rms=${snap.rmsPx?.toFixed(1)} leds=${snap.leds?.length ?? 0}`,
-          );
-        }
-      });
+      let solvedRes: Awaited<ReturnType<typeof solverAgent.solveWithStats>>;
+      try {
+        solvedRes = await solverAgent.solveWithStats(problem, (snap: SolveSnapshot) => {
+          renderSolveSnapshot(snap);
+          if (driverActive() && snap.progress - lastProg >= 0.2) {
+            lastProg = snap.progress;
+            console.info(
+              `[solve] progress=${(snap.progress * 100).toFixed(0)}% rms=${snap.rmsPx?.toFixed(1)} leds=${snap.leds?.length ?? 0}`,
+            );
+          }
+        });
+      } catch (e) {
+        // A throwing final solve still has the preview to fall back to.
+        return keepMap(null, null, e instanceof Error ? e.message : String(e), null);
+      }
+      const { map: solved, diag, stats } = solvedRes;
       const solveLine =
         `[solve] final ${problem.detections.length} records: ${stats.roundTripMs.toFixed(0)} ms ` +
         `(queue ${stats.queueMs.toFixed(0)} post ${stats.postMs.toFixed(1)}` +
@@ -1395,10 +1526,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         `)`;
       console.info(solveLine);
       nativeLog(solveLine);
-      // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
-      // on the LED centroid — the natural fixture origin — before the device
-      // and the library both take it, so they agree.
-      return recenterToCentroid(solved).map;
+      return keepMap(solved, diag, null, {
+        roundTripMs: stats.roundTripMs,
+        solveMs: stats.worker?.solveMs ?? null,
+      });
     };
     try {
       let map: OutputMap;
@@ -1449,7 +1580,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           const result = await c.stopMapping();
           const resp = await fetch(`/maps/${result.mapId}`);
           if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
-          map = recenterToCentroid((await resp.json()) as OutputMap).map;
+          map = keepMap((await resp.json()) as OutputMap, null, null, null);
           nativeLog(`[solve] host solve done: ${map.leds.length} leds`);
           pushedToDevice = true;
         } catch (hostErr) {
@@ -1511,6 +1642,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
     } catch (e) {
       nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+      if (runDecision === null) {
+        runDecision = {
+          use: "none",
+          outcome: "failed",
+          reasons: [`error: ${e instanceof Error ? e.message : String(e)}`],
+          comparison: null,
+        };
+      }
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
       driverSolveReject?.(e);
       driverSolveResolve = null;
@@ -1520,6 +1659,97 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (solvePoll !== null) clearInterval(solvePoll);
       progWrap.style.display = "none";
       stopBtn.disabled = false;
+      void saveRunBundle();
+    }
+  }
+
+  /**
+   * Decide which map this run keeps (solver/degeneracy decideFinal): the final
+   * solve's, unless it failed / came out degenerate / clearly regressed where
+   * the best live-preview solve did not — then the preview's, with a warning
+   * on the map. Records the raw final + the decision for the capture bundle.
+   * Returns the kept map, recentered on its LED centroid (the solve frame is
+   * camera-anchored; the device and the library should agree on the fixture
+   * origin). Throws when there is no usable map at all.
+   */
+  function keepMap(
+    final: OutputMap | null,
+    diag: SolveDiag | null,
+    error: string | null,
+    timing: { roundTripMs: number; solveMs: number | null } | null,
+  ): OutputMap {
+    const assessment = final === null ? null : (diag?.assessment ?? assessMap(final, observableLeds(localDetections)));
+    runFinal = { map: final, diag, error, assessment, timing };
+    const best = interimLog.best();
+    const preview =
+      best !== null && best.map !== null && best.assessment !== null
+        ? { map: best.map, assessment: best.assessment }
+        : null;
+    const decision = decideFinal({ map: final, assessment, error }, preview);
+    runDecision = decision;
+    const line =
+      `[solve] decision ${decision.outcome} (kept ${decision.use})` +
+      (decision.reasons.length > 0 ? `: ${decision.reasons.join(", ")}` : "") +
+      (diag ? ` start=${diag.start}` : "");
+    console.info(line);
+    nativeLog(line);
+    if (decision.use === "none" || (decision.use === "preview" && preview === null)) {
+      throw new Error(error ?? `degenerate solve (${decision.reasons.join(", ")})`);
+    }
+    if (decision.use === "preview" && preview !== null) {
+      const why = decision.reasons.join(", ");
+      const warning =
+        `The final solve ${final === null ? "failed" : "came out degenerate"} (${why}), so this map ` +
+        `is the live preview's solve instead. It may be less refined; re-capture for a better one.`;
+      toast("Final solve was degenerate — kept the live preview's map", { error: true, ms: 8000 });
+      const kept: OutputMap = {
+        ...preview.map,
+        mapId: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        stats: { ...preview.map.stats, warnings: [...(preview.map.stats.warnings ?? []), warning] },
+      };
+      return recenterToCentroid(kept).map;
+    }
+    return recenterToCentroid(final!).map;
+  }
+
+  /** Debug mode: persist this run's reproduction bundle when it failed, came
+   * out degenerate, fell back to the preview or disagreed with it — or always,
+   * with "Keep successful runs too". Best-effort; never throws. */
+  async function saveRunBundle(): Promise<void> {
+    const decision = runDecision;
+    if (!debugModeEnabled() || decision === null || runParams === null) return;
+    if (!shouldLogRun(decision.outcome, bundleKeepSuccessful())) return;
+    try {
+      const bundle = buildBundle({
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        decision,
+        app: { version: appBuildInfo.version ?? null, gitCommit: appBuildInfo.gitCommit, gitDirty: appBuildInfo.gitDirty },
+        solver: { version: solverAgent.version, wasmSha256: solverAgent.wasmSha256 },
+        device: deviceInfo(),
+        capture: runParams(),
+        problem: runProblem ?? {
+          detections: localDetections,
+          imu: localImu,
+          ledCount: lastLedCount,
+          mapId: "unsolved",
+          createdAt: new Date().toISOString(),
+        },
+        interims: interimLog,
+        final: runFinal,
+        supplement: runSupplement,
+        frames: bundleFrames,
+      });
+      const meta = await captureBundleStore.save(bundle);
+      if (meta !== null) {
+        const line = `[solve] capture bundle saved (${meta.outcome}, ${(meta.bytes / 1024 / 1024).toFixed(1)} MB)`;
+        console.info(line);
+        nativeLog(line);
+        if (decision.outcome !== "ok") toast(`Debug: capture bundle saved (${decision.outcome}) — Settings ▸ Debugging`);
+      }
+    } catch (e) {
+      console.warn("capture bundle failed", e);
     }
   }
 
@@ -1580,6 +1810,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     for (const d of localDetections) decodes.set(d.ledId, (decodes.get(d.ledId) ?? 0) + 1);
     const observedIds = new Set([...decodes].filter(([, n]) => n >= 3).map(([id]) => id));
     const fusion = fuseMaps(prior, newMap, { joint, observedIds });
+    runSupplement = {
+      method: fusion.report.method,
+      registered: fusion.report.registered,
+      summary: fusion.report.summary,
+      jointError: joint === null ? "joint re-solve unavailable or failed" : (fusion.report.jointRejected ?? null),
+    };
     nativeLog(
       `[solve] supplement fusion: method=${fusion.report.method} registered=${fusion.report.registered} ` +
         `jointRejected=${fusion.report.jointRejected ?? "-"} — ${fusion.report.summary}`,
@@ -1707,4 +1943,24 @@ function interimMap(
     ...(trajectory !== null ? { trajectory } : {}),
     stats: { rmsReprojPxGlobal: 0, medianParallaxDeg: 0 },
   };
+}
+
+/** A downsampled JPEG of the camera preview (debug capture bundles), or null
+ * when the frame can't be read (not ready, tainted). ~160 px wide. */
+function snapshotVideo(video: HTMLVideoElement): string | null {
+  try {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (w === 0 || h === 0) return null;
+    const scale = 160 / w;
+    const c = document.createElement("canvas");
+    c.width = Math.round(w * scale);
+    c.height = Math.round(h * scale);
+    const ctx = c.getContext("2d");
+    if (ctx === null) return null;
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  }
 }

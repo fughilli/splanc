@@ -598,6 +598,39 @@ def _alignment_with_center_noise(
 # ---------------------------------------------------------------------------
 
 
+# Plausible metric camera-to-fixture distance for a cold-start seed, and the
+# seed distance when the linear alignment's scale falls outside it.
+INIT_CAMERA_DIST_RANGE_M = (0.05, 30.0)
+FALLBACK_CAMERA_DIST_M = 0.75
+
+
+def _init_camera_distance(centers: np.ndarray, led_seed: dict) -> float:
+    """Median init camera-center distance to the LED centroid (init units)."""
+    if len(centers) == 0 or not led_seed:
+        return 1.0
+    c = np.mean(np.array(list(led_seed.values())), axis=0)
+    m = float(np.median(np.linalg.norm(np.asarray(centers) - c, axis=1)))
+    return m if np.isfinite(m) and m > 1e-9 else 1.0
+
+
+def _plausible_init_scale(scale: float, d0: float) -> bool:
+    d = scale * d0
+    return bool(
+        np.isfinite(scale) and INIT_CAMERA_DIST_RANGE_M[0] <= d <= INIT_CAMERA_DIST_RANGE_M[1]
+    )
+
+
+def _finite_difference_velocities(frames, centers: np.ndarray, scale: float) -> np.ndarray:
+    n = len(centers)
+    v = np.zeros((n, 3))
+    for i in range(n):
+        a, b = max(i - 1, 0), min(i + 1, n - 1)
+        dt = frames[b].t - frames[a].t
+        if b != a and dt > 1e-9:
+            v[i] = (centers[b] - centers[a]) * scale / dt
+    return v
+
+
 def solve_vio(
     frames: Sequence[FrameObservations],
     imu: Sequence[ImuSample],
@@ -661,6 +694,16 @@ def solve_vio(
         rotations = _rotation_seeds(frames, imu)
         centers, led_seed = _known_rotation_linear_init(frames, rotations, led_ids, gauge=g_idx)
         scale, g_seed, v_seed = _inertial_alignment(frames, rotations, centers, imu)
+        # The linear alignment's scale is noisy on gentle or decode-swapped
+        # captures and can come out <= 0 (or ~0): applied as-is it mirrors
+        # the visual init through the gauge camera, every LED lands behind
+        # every camera, and the flat behind-camera penalty leaves the BA no
+        # gradient — an empty map. Seed an implausible scale from an
+        # arm's-length prior instead (Rust: vio::plausible_init_scale).
+        d0 = _init_camera_distance(centers, led_seed)
+        if not _plausible_init_scale(scale, d0):
+            scale = FALLBACK_CAMERA_DIST_M / d0
+            v_seed = _finite_difference_velocities(frames, centers, scale)
         centers = centers * scale
         led_seed = {led: x * scale for led, x in led_seed.items()}
         bg_seed = np.zeros(3)

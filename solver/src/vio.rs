@@ -123,6 +123,15 @@ pub struct VioResult {
     /// error a few-fold (preintegrated noise is correlated), but it climbs
     /// steeply as the capture motion gets gentler.
     pub scale_rel_se: f64,
+    /// Factor the a-posteriori inertial re-anchor multiplied the solved
+    /// geometry by (1 = not applied).
+    pub reanchor_scale: f64,
+    /// Metric scale the cold-start linear inertial alignment gave the
+    /// up-to-scale visual init (None = warm-started).
+    pub init_scale: Option<f64>,
+    /// The cold start rejected `init_scale` as implausible and seeded the
+    /// arm's-length prior (`FALLBACK_CAMERA_DIST_M`) instead.
+    pub init_scale_fallback: bool,
 }
 
 impl VioResult {
@@ -149,6 +158,10 @@ pub struct SolveOptions {
     pub chain: Vec<(u32, u32, f64)>,
     /// Stiffness of the rope links (meters per unit residual).
     pub chain_sigma: f64,
+    /// Reject an implausible cold-start alignment scale (≤ 0, or cameras
+    /// closer than 5 cm / farther than 30 m) and seed the arm's-length prior
+    /// instead. Off reproduces the solver before the guard (replays only).
+    pub init_scale_guard: bool,
 }
 
 impl Default for SolveOptions {
@@ -162,6 +175,7 @@ impl Default for SolveOptions {
             ftol: 1e-6,
             chain: Vec::new(),
             chain_sigma: 0.0,
+            init_scale_guard: true,
         }
     }
 }
@@ -603,6 +617,127 @@ fn scale_std_err(rows: &[Vec<(usize, f64)>], rhs: &[f64], sol: &[f64], n_cols: u
     (rss / dof as f64 / r0).sqrt()
 }
 
+/// Plausible metric camera-to-fixture distance range for a cold-start seed:
+/// nobody maps a fixture from closer than 5 cm or farther than 30 m.
+pub const INIT_CAMERA_DIST_RANGE_M: (f64, f64) = (0.05, 30.0);
+/// Seed distance when the linear alignment's scale is implausible.
+pub const FALLBACK_CAMERA_DIST_M: f64 = 0.75;
+
+/// Median distance from the init's camera centers to the LED centroid, in
+/// the visual init's (unit-depth) units.
+fn init_camera_distance(centers: &[Vec3], leds: &[Vec3]) -> f64 {
+    if centers.is_empty() || leds.is_empty() {
+        return 1.0;
+    }
+    let mut c = ZERO3;
+    for l in leds {
+        c = add(c, *l);
+    }
+    c = scale(c, 1.0 / leds.len() as f64);
+    let mut d: Vec<f64> = centers.iter().map(|p| norm(sub(*p, c))).collect();
+    d.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let m = d[d.len() / 2];
+    if m.is_finite() && m > 1e-9 {
+        m
+    } else {
+        1.0
+    }
+}
+
+/// `s` if it puts the cameras a plausible metric distance from the fixture
+/// (init distance `d0` in init units), else None.
+pub fn plausible_init_scale(s: f64, d0: f64) -> Option<f64> {
+    let d = s * d0;
+    (s.is_finite() && d >= INIT_CAMERA_DIST_RANGE_M.0 && d <= INIT_CAMERA_DIST_RANGE_M.1)
+        .then_some(s)
+}
+
+/// Central-difference velocities of the scaled init centers (the seed when
+/// the alignment's own velocities belong to a rejected scale).
+fn finite_difference_velocities(
+    frames: &[FrameObservations],
+    centers: &[Vec3],
+    s: f64,
+) -> Vec<Vec3> {
+    let n = centers.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (i.saturating_sub(1), (i + 1).min(n - 1));
+            let dt = frames[b].t - frames[a].t;
+            if b == a || dt <= 1e-9 {
+                ZERO3
+            } else {
+                scale(sub(centers[b], centers[a]), s / dt)
+            }
+        })
+        .collect()
+}
+
+/// LED seeds for a warm start: the warm state's position where it has one.
+/// An LED the warm state never solved (first seen after an interim solve) is
+/// triangulated from its rays under the seeded poses — seeding it at the
+/// origin would put it on the gauge camera, behind-camera for half the views,
+/// where the flat penalty leaves the BA no gradient to move it.
+fn warm_led_seed(
+    frames: &[FrameObservations],
+    led_ids: &[u32],
+    ws: &VioResult,
+    rotations: &[Mat3],
+    centers: &[Vec3],
+) -> Vec<Vec3> {
+    // Typical seeded camera-to-LED depth, for LEDs with a single ray.
+    let mut depths: Vec<f64> = Vec::new();
+    for (i, fr) in frames.iter().enumerate() {
+        for &(led, _, _) in &fr.obs {
+            if let Some(x) = ws.led_pos(led) {
+                depths.push(norm(sub(x, centers[i])));
+            }
+        }
+    }
+    depths.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let typical = depths
+        .get(depths.len() / 2)
+        .copied()
+        .filter(|d| d.is_finite() && *d > 1e-6)
+        .unwrap_or(FALLBACK_CAMERA_DIST_M);
+    led_ids
+        .iter()
+        .map(|&id| {
+            if let Some(x) = ws.led_pos(id) {
+                return x;
+            }
+            let mut origins = Vec::new();
+            let mut dirs = Vec::new();
+            for (i, fr) in frames.iter().enumerate() {
+                for &(led, u, v) in &fr.obs {
+                    if led == id {
+                        origins.push(centers[i]);
+                        dirs.push(crate::quat::back_project_dir(&rotations[i], fr.k, u, v));
+                    }
+                }
+            }
+            // Rays from (nearly) one seeded pose don't triangulate — the
+            // solve is near-singular and lands anywhere; require some parallax.
+            let parallax = crate::pipeline::max_parallax_deg(&dirs);
+            let spread_origins = origins.iter().any(|o| norm(sub(*o, origins[0])) > 1e-3);
+            if parallax < 1.0 || !spread_origins {
+                return add(origins[0], scale(normalize(dirs[0]), typical));
+            }
+            if let Ok(x) = crate::pipeline::triangulate_point(&origins, &dirs) {
+                let in_front = origins
+                    .iter()
+                    .zip(&dirs)
+                    .filter(|(o, d)| dot(sub(x, **o), **d) > 0.0)
+                    .count();
+                if x.iter().all(|c| c.is_finite()) && 2 * in_front > origins.len() {
+                    return x;
+                }
+            }
+            add(origins[0], scale(normalize(dirs[0]), typical))
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Full VI bundle adjustment
 // ---------------------------------------------------------------------------
@@ -626,6 +761,8 @@ pub fn solve_vio(
     let g_idx = gauge_frame(frames);
 
     // ---- Stages 1–3: seeds (or warm start) --------------------------------
+    let mut init_scale = None;
+    let mut init_scale_fallback = false;
     let (rotations, centers, v_seed, led_seed, g_seed, bg_seed, ba_seed) = match warm_start {
         Some(ws) => {
             let mut rotations = Vec::with_capacity(n);
@@ -645,10 +782,7 @@ pub fn solve_vio(
                 centers.push(ws.positions[best]);
                 v_seed.push(ws.velocities[best]);
             }
-            let led_seed: Vec<Vec3> = led_ids
-                .iter()
-                .map(|id| ws.led_pos(*id).unwrap_or(ZERO3))
-                .collect();
+            let led_seed = warm_led_seed(frames, &led_ids, ws, &rotations, &centers);
             (
                 rotations,
                 centers,
@@ -663,8 +797,27 @@ pub fn solve_vio(
             let rotations = rotation_seeds(frames, imu);
             let (mut centers, mut led_seed) =
                 known_rotation_linear_init(frames, &rotations, &led_ids, g_idx);
-            let (s, g_seed, v_seed, _) =
+            let (s_lin, g_seed, mut v_seed, _) =
                 inertial_alignment(frames, &rotations, &centers, imu, ZERO3, ZERO3);
+            init_scale = Some(s_lin);
+            // The linear alignment's scale is noisy on gentle or decode-swapped
+            // captures and can come out ≤ 0 (or ~0): applying it mirrors the
+            // whole visual init through the gauge camera, every LED lands
+            // behind every camera, and the behind-camera penalty is flat — the
+            // BA has no gradient to climb out and the map comes back empty.
+            // Seed an implausible scale from an arm's-length prior instead and
+            // let the BA + re-anchor settle the metric size.
+            let d0 = init_camera_distance(&centers, &led_seed);
+            let s = match plausible_init_scale(s_lin, d0) {
+                Some(s) => s,
+                None if !opts.init_scale_guard => s_lin,
+                None => {
+                    init_scale_fallback = true;
+                    let s = FALLBACK_CAMERA_DIST_M / d0;
+                    v_seed = finite_difference_velocities(frames, &centers, s);
+                    s
+                }
+            };
             for c in centers.iter_mut() {
                 *c = scale(*c, s);
             }
@@ -983,12 +1136,14 @@ pub fn solve_vio(
     // accel bias alone pulls the scale ~15% low even on a well-excited
     // capture.
     let mut scale_rel_se = f64::INFINITY;
+    let mut reanchor_scale = 1.0;
     if n_int > 0 {
         let (s_post, _g_post, v_post, s_se) = inertial_alignment(frames, &rots, &ps, imu, bg, ba);
         if s_post.is_finite() && s_post > 1e-3 {
             scale_rel_se = s_se / s_post;
         }
         if s_post.is_finite() && s_post > 1e-3 && (s_post - 1.0).abs() > 0.02 {
+            reanchor_scale = s_post;
             for p in ps.iter_mut() {
                 *p = scale(*p, s_post);
             }
@@ -1014,6 +1169,9 @@ pub fn solve_vio(
         rms_reproj_px: rms,
         frame_times,
         scale_rel_se,
+        reanchor_scale,
+        init_scale,
+        init_scale_fallback,
     }
 }
 

@@ -32,6 +32,10 @@ import { appState } from "../app/state";
 import { openDeviceSheet } from "./deviceSheet";
 import { openMapExportSheet } from "./mapExportSheet";
 import type { Router, Screen } from "../app/router";
+import { debugModeEnabled } from "../../store/debugMode";
+import { captureBundleStore } from "../../store/captureBundleStore";
+import { bundleFromSavedMap, deviceInfo } from "../../solver/captureBundle";
+import { appBuildInfo } from "../../buildInfo";
 
 // The five raw ExtractOptions and the single-knob "Cleanup" curve over them.
 // Cleanup 0..1 sweeps the two perceptually-dominant knobs (radius + prune);
@@ -303,6 +307,12 @@ export function MapDetailScreen(
           router.navigate(`/capture?supplement=${encodeURIComponent(mapId)}`),
         ),
       );
+    }
+    // Debug mode: turn this map's saved capture into a reproduction bundle
+    // (Settings ▸ Debugging ▸ Mapping capture bundles) — how a run from before
+    // bundles existed, or one that saved a degenerate map, can be replayed.
+    if (rec.supplementable && debugModeEnabled()) {
+      grid.append(actionTile("alert", "Bundle", () => void saveCaptureBundle()));
     }
     actions.append(grid, MeshPanel(mapId, rec.mesh ?? null, mesh => view?.setMesh(mesh)));
 
@@ -828,6 +838,29 @@ export function MapDetailScreen(
     storedTopoSig = topoSig(currentTopology);
     refreshTopoSave();
     toast("Topology saved");
+  }
+
+  async function saveCaptureBundle(): Promise<void> {
+    if (!rec) return;
+    const obs = await mapStore.getObservations(mapId);
+    if (!obs) {
+      toast("This map kept no capture data", { error: true });
+      return;
+    }
+    const bundle = bundleFromSavedMap({ name: rec.name, map: rec.map }, obs, {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      app: { version: appBuildInfo.version ?? null, gitCommit: appBuildInfo.gitCommit, gitDirty: appBuildInfo.gitDirty },
+      solver: { version: null, wasmSha256: null },
+      device: deviceInfo(),
+    });
+    const meta = await captureBundleStore.save(bundle);
+    toast(
+      meta
+        ? `Capture bundle saved (${meta.outcome}) — Settings ▸ Debugging to export or share`
+        : "Couldn't save the capture bundle",
+      meta ? {} : { error: true },
+    );
   }
 
   async function sendToDevice(): Promise<void> {

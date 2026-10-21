@@ -4,11 +4,14 @@
   :solver_cli        host binary the Pi server runs as a subprocess
   :solver_wasm       wasm32 cdylib with wasm-bindgen exports for the phone
   :solver_wasm_pkg   wasm-bindgen JS glue + .wasm, served under /solver/
+  :replay_bundle     replay a capture reproduction bundle through the wasm
+                     build, bit-for-bit (bazel run //solver:replay_bundle -- <file>)
 
 @rr(PR-11, PR-34): implemented in this package (see requirements/requirements.yaml)
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
@@ -34,6 +37,9 @@ rust_library(
 # CI's 300 s timeout; at opt-level 2 the whole suite runs in seconds.
 rr_rust_test(
     name = "solver_test",
+    # The degenerate-final regression tests (src/regression_tests.rs) solve
+    # several 40 s synthetic captures: ~2 min on a 6-core dev box.
+    timeout = "long",
     crate = ":solver",
     data = ["testdata/ios_capture.json"],
     edition = "2021",
@@ -101,4 +107,27 @@ copy_to_directory(
     ],
     replace_prefixes = {"solver_wasm_pkg": ""},
     visibility = ["//visibility:public"],
+)
+
+# Capture-bundle replay through the wasm build the phone runs (bit-for-bit):
+#   bazel run //solver:replay_bundle -- <bundle.splanc-capture.json> [--cold] [--check]
+#   bazel run //solver:replay_bundle -- --record <problem.json> <out.json>
+# (solver_cli --replay is the native equivalent, with per-stage traces.)
+js_binary(
+    name = "replay_bundle",
+    data = [
+        "replay_bundle_lib.mjs",
+        ":solver_web",
+    ],
+    entry_point = "replay_bundle.mjs",
+)
+
+js_test(
+    name = "replay_bundle_test",
+    data = [
+        "replay_bundle_lib.mjs",
+        "testdata/synth_coil_small.json",
+        ":solver_web",
+    ],
+    entry_point = "replay_bundle_test.mjs",
 )

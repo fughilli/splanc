@@ -46,19 +46,16 @@ import {
   setChatLogDumpOnBoot,
 } from "../../store/chatLogStore";
 import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
+import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
+import { captureBundlesGroup } from "./captureBundles";
 
 type SettingsTab = "appearance" | "behavior" | "debugging";
 
 // The Debugging tab is hidden until the user opts in (Behavior ▸ "Enable Debug
 // Settings"), so the developer affordances don't clutter the default surface.
-const DEBUG_SETTINGS_KEY = "ledmapper.debugSettings";
-function debugSettingsEnabled(): boolean {
-  return localStorage.getItem(DEBUG_SETTINGS_KEY) === "1";
-}
-function setDebugSettingsEnabled(on: boolean): void {
-  if (on) localStorage.setItem(DEBUG_SETTINGS_KEY, "1");
-  else localStorage.removeItem(DEBUG_SETTINGS_KEY);
-}
+// The same switch is the app's debug mode (store/debugMode).
+const debugSettingsEnabled = debugModeEnabled;
+const setDebugSettingsEnabled = setDebugModeEnabled;
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -126,7 +123,7 @@ export function SettingsScreen(router: Router): Screen {
     if (tab === "appearance") {
       panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
     } else if (tab === "debugging") {
-      panels = [debugServerGroup(), chatLogsDebugGroup()];
+      panels = [captureBundlesGroup(group, row, segmented), debugServerGroup(), chatLogsDebugGroup()];
     } else {
       panels = [captureGroup(), diffuseGroup(), helpGroup(), developerGroup(), captureResetRow()];
     }
@@ -366,8 +363,9 @@ export function SettingsScreen(router: Router): Screen {
     g.append(
       row(
         "Enable Debug Settings",
-        "Show the Debugging tab: connect a debug server, pull AI chat logs, and " +
-          "drive the FX-agent chat remotely.",
+        "Debug mode. Shows the Debugging tab (debug server, AI chat logs, remote " +
+          "chat drive) and logs a reproduction bundle for every failed or degenerate " +
+          "mapping run (Debugging ▸ Mapping capture bundles).",
         segmented<"on" | "off">(
           [
             ["off", "Off"],

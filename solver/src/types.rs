@@ -75,6 +75,17 @@ pub struct ProblemOptions {
     /// Fractional slack on the pitch bound (bound = gap · pitch · (1 + tol)).
     #[serde(rename = "stripTolerance")]
     pub strip_tolerance: f64,
+    /// Solver state of an earlier (interim) solve of the same capture — the
+    /// final solve also starts from it and keeps whichever start solves
+    /// better, so it can't come back worse than what the live preview showed
+    /// (see pipeline::reconstruct_vio_traced).
+    #[serde(rename = "warmStart")]
+    pub warm_start: Option<WarmState>,
+    /// Cold-start scale guard (vio::SolveOptions::init_scale_guard). Only
+    /// for replaying a capture the way the solver handled it before the
+    /// guard existed; leave it on.
+    #[serde(rename = "initScaleGuard")]
+    pub init_scale_guard: bool,
 }
 
 impl Default for ProblemOptions {
@@ -89,8 +100,32 @@ impl Default for ProblemOptions {
             strip_prior: false,
             strip_spacing_m: None,
             strip_tolerance: default_strip_tolerance(),
+            warm_start: None,
+            init_scale_guard: true,
         }
     }
+}
+
+/// A solved VIO state on the wire: the solver's own (un-leveled,
+/// camera-anchored) frame, everything needed to warm-start a later solve of
+/// the same capture. Frame times are seconds on the detections' clock.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct WarmState {
+    #[serde(rename = "frameTimesS")]
+    pub frame_times_s: Vec<f64>,
+    /// Camera-to-world quaternions (w, x, y, z), one per frame.
+    pub quats: Vec<[f64; 4]>,
+    pub positions: Vec<[f64; 3]>,
+    pub velocities: Vec<[f64; 3]>,
+    pub gravity: [f64; 3],
+    #[serde(rename = "gyroBias")]
+    pub gyro_bias: [f64; 3],
+    #[serde(rename = "accelBias")]
+    pub accel_bias: [f64; 3],
+    #[serde(rename = "ledIds")]
+    pub led_ids: Vec<u32>,
+    #[serde(rename = "ledPositions")]
+    pub led_positions: Vec<[f64; 3]>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -151,6 +186,9 @@ pub struct OutputMap {
     pub led_count: u32,
     pub leds: Vec<LedEntry>,
     pub unmapped: Vec<u32>,
+    // Optional on the TS side (host maps may omit it); a replayed bundle's
+    // recorded map must still parse.
+    #[serde(default)]
     pub trajectory: Vec<[f64; 3]>,
     pub stats: OutputMapStats,
 }
