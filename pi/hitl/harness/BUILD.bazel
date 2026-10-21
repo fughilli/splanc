@@ -841,6 +841,34 @@ py_binary(
     ],
 )
 
+# The agent bridge's crossfade_to / list_decks / rollback_effect on hardware: the
+# real MCP bundle (stdio) against a flashed, provisioned C6, read off the LED wire.
+# Needs `node` on PATH (the harness host's).
+py_binary(
+    name = "agent_crossfade",
+    srcs = [
+        "hitl_agent_crossfade.py",
+        "hitl_fx_keypoints.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//agent:mcp",
+        "//agent:wasm",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_agent_crossfade.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # The ELF the netstack flashbundle was linked from (the watcher reads the heap
 # list's address from it).
 filegroup(

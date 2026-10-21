@@ -177,6 +177,27 @@ describe("configuration", () => {
   });
 });
 
+describe("framing", () => {
+  test("a reply bigger than one chunk (images) goes to the relay as res + chunks + end", () => {
+    const { identity } = tempIdentity();
+    const fake = new RelayLink({ relay: "", identity });
+    const sent: Record<string, unknown>[] = [];
+    (fake as unknown as { send: (f: Record<string, unknown>) => void }).send = (f) => void sent.push(f);
+    const b = new LanBridge({ link: fake, hub, refreshMs: 0 });
+    const reply = (b as unknown as { reply: (f: Record<string, unknown>) => void }).reply.bind(b);
+    const body = "x".repeat(600 * 1024);
+    reply({ t: "res", id: 7, status: 200, headers: { "content-type": "application/json" }, body, end: true });
+    assert.deepEqual(sent[0], { t: "res", id: 7, status: 200, headers: { "content-type": "application/json" } });
+    const chunks = sent.slice(1, -1) as { t: string; data: string }[];
+    assert.ok(chunks.length >= 3 && chunks.every((c) => c.t === "chunk" && c.data.length <= 256 * 1024));
+    assert.equal(chunks.map((c) => c.data).join(""), body);
+    assert.deepEqual(sent.at(-1), { t: "end", id: 7 });
+    sent.length = 0;
+    reply({ t: "res", id: 8, status: 200, headers: {}, body: "small", end: true });
+    assert.deepEqual(sent, [{ t: "res", id: 8, status: 200, headers: {}, body: "small", end: true }]);
+  });
+});
+
 describe("reconnect", () => {
   test("a dropped socket reconnects; a relay outage shows offline, then recovers with credentials intact", async () => {
     // Pair again so there is something to keep.

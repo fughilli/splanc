@@ -9,8 +9,15 @@
  * - safety: no path here sends SetHardwareConfig, SetLedCount,
  *   SetColorCorrection, the mapping arms or SetJit (see FORBIDDEN_TYPES — a test
  *   pins it), and SetDeviceName needs an explicit confirmation;
- * - rollback: the device holds ONE loaded effect, so "the previous effect" is
- *   kept here as the bytecode last deployed, and restored by re-deploying it.
+ * - rollback: deck A holds ONE persisted effect, so "the previous effect" is
+ *   kept here as the bytecode last deployed, and restored by re-deploying it —
+ *   or, after a crossfade (firmware with two FX decks), it is still loaded on
+ *   the other deck, and rollback just fades back to it.
+ *
+ * Decks (FUG-110): the firmware runs two effects (deck A = 0, the persisted one;
+ * deck B = 1, runtime-only) and blends them by a global crossfade position. The
+ * session tracks which deck is LIVE (the one the crossfade shows), and every
+ * deck-addressed request (uniforms, keypoints) defaults to it.
  */
 
 import { ClientMessageSchema, SetUniformsSchema } from "../../web/src/gen/ledmapper_pb";
@@ -67,6 +74,61 @@ export type Feature =
   | "keypoints"
   | (string & {});
 
+export type Deck = 0 | 1;
+
+/** The shape of a crossfade over time: progress u (0..1) -> mix (0..1). */
+export type Curve = "linear" | "ease" | "ease_in" | "ease_out";
+
+export function curveAt(curve: Curve, u: number): number {
+  const t = Math.min(1, Math.max(0, u));
+  switch (curve) {
+    case "linear":
+      return t;
+    case "ease_in":
+      return t * t;
+    case "ease_out":
+      return 1 - (1 - t) * (1 - t);
+    default:
+      return t * t * (3 - 2 * t);
+  }
+}
+
+/** One deck as list_decks reports it. */
+export interface DeckView {
+  deck: Deck;
+  name: "A" | "B";
+  effect_id: string | null;
+  /** Running (its update() ticks; it shows when the crossfade is on its side). */
+  active: boolean;
+  /** The crossfade shows it (fully or partly). */
+  visible: boolean;
+}
+
+export interface DeckStatus {
+  /** The deck the crossfade shows (the one deck-addressed tools target); null when
+   * nothing is running. */
+  live: Deck | null;
+  crossfade: number;
+  mode: "rgb" | "hsv";
+  decks: DeckView[];
+  /** The device couldn't list its decks (no list_effects): what is known comes
+   * from this session. */
+  inferred?: boolean;
+}
+
+/** What crossfade_to's cue step did on one player (the fade comes after). */
+export interface CueResult {
+  from_deck: Deck;
+  to_deck: Deck;
+  outgoing: string | null;
+  incoming: string;
+  uploaded: boolean;
+  bytecode_bytes?: number;
+  /** The crossfade position the fade starts from / ends at. */
+  from: number;
+  to: number;
+}
+
 export class ToolError extends Error {
   constructor(message: string) {
     super(message);
@@ -88,7 +150,15 @@ export interface SessionOptions {
 
 interface Deployed {
   effectId: string;
-  fxb: Uint8Array;
+  /** Its bytecode; undefined for an effect this bridge didn't upload (one the app
+   * or another client put on the device — it can only be restored while it is
+   * still loaded on a deck). */
+  fxb: Uint8Array | undefined;
+  /** The deck it is (or was) loaded on. */
+  deck: Deck;
+  /** Still loaded on `deck` (parked behind the crossfade) — rollback can fade
+   * straight back to it without re-uploading. */
+  onDevice?: boolean;
   source?: string;
   /** The effect's declared uniforms (slot + default), from its compile. */
   uniforms: ManifestUniform[];
@@ -111,6 +181,12 @@ export class DeviceSession {
   private fixture: { mapId: string; bundle: MappingBundle } | null = null;
   private current: Deployed | null = null;
   private previous: Deployed | null = null;
+  /** The live deck as this session last set/learned it (null: not yet known —
+   * derived from Welcome.crossfade). */
+  private live: Deck | null = null;
+  /** The crossfade position/mode this session last set (null: Welcome's). */
+  private xf: number | null = null;
+  private xfMode: number | null = null;
   private readonly streams = new Map<number, TextureStream>();
   /** Every message type sent, for the safety test and diagnostics. */
   readonly sentTypes: string[] = [];
@@ -245,14 +321,24 @@ export class DeviceSession {
     return summarize(await this.mappingBundle());
   }
 
-  async activeEffect(): Promise<{
+  async activeEffect(deck?: Deck): Promise<{
     effectId: string;
     uniforms: ManifestUniform[];
     current: Map<string, number[]>;
     textures: { index: number; width: number; height: number; elem: number }[];
     raw: EffectUniformsMessage;
   }> {
-    const raw = await this.run(() => this.client.getEffectUniforms());
+    const d = deck ?? this.liveDeck();
+    let raw: EffectUniformsMessage;
+    try {
+      raw = await this.run(() => this.client.getEffectUniforms(undefined, d));
+    } catch (e) {
+      // Welcome said the crossfade sits on deck B but nothing runs there (stale
+      // hydration): describe deck A instead, and remember it.
+      if (d !== 1 || deck !== undefined || !(e instanceof ToolError && /no_effect/.test(e.message))) throw e;
+      raw = await this.run(() => this.client.getEffectUniforms(undefined, 0));
+      this.live = 0;
+    }
     const uniforms = parseManifest(raw.manifest ?? new Uint8Array(0));
     const bySlot = new Map((raw.current ?? []).map((c) => [c.slot, c.value]));
     const current = new Map<string, number[]>();
@@ -280,6 +366,7 @@ export class DeviceSession {
     }
     return {
       effect_id: a.effectId || null,
+      ...(this.decksUsable() ? { deck: this.liveDeck() === 1 ? "B" : "A", crossfade: this.crossfadePosition() } : {}),
       uniforms: a.uniforms.map((u) => describe(u, a.current.get(u.name))),
       textures: a.textures,
       keypoints,
@@ -321,40 +408,41 @@ export class DeviceSession {
     };
   }
 
-  async listKeypoints(deck = 0): Promise<{ effect_id: string; keypoints: unknown[]; capacity: number }> {
+  async listKeypoints(deck?: number): Promise<{ effect_id: string; keypoints: unknown[]; capacity: number }> {
     this.requireKeypoints();
-    const r = await this.rpc<KeypointListReply>({ type: "list_keypoints", deck }, "keypoint_list");
+    const r = await this.rpc<KeypointListReply>({ type: "list_keypoints", deck: deck ?? this.liveDeck() }, "keypoint_list");
     return DeviceSession.keypointList(r) as { effect_id: string; keypoints: unknown[]; capacity: number };
   }
 
   /** Save the active effect's live uniforms (or, with `values`, those uniforms
    * set by name — the rest stay unset in the keypoint) as keypoint `name`.
    * Overwrites an existing keypoint of that name. */
-  async saveKeypoint(name: string, values?: Record<string, UniformInput>, deck = 0): Promise<Record<string, unknown>> {
+  async saveKeypoint(name: string, values?: Record<string, UniformInput>, deckArg?: number): Promise<Record<string, unknown>> {
     this.requireKeypoints();
+    const deck = deckArg ?? this.liveDeck();
     if (!name.trim() || new TextEncoder().encode(name).length > 32) {
       throw new ToolError("keypoint names are 1..32 bytes");
     }
     const msg: Record<string, unknown> & { type: string } = { type: "save_keypoint", name, deck };
     if (values && Object.keys(values).length) {
-      const a = await this.activeEffect();
+      const a = await this.activeEffect(deck as Deck);
       if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
       msg["values"] = resolve(a.uniforms, values);
     }
     return DeviceSession.keypointList(await this.rpc<KeypointListReply>(msg, "keypoint_list"));
   }
 
-  async deleteKeypoint(name: string, deck = 0): Promise<Record<string, unknown>> {
+  async deleteKeypoint(name: string, deck?: number): Promise<Record<string, unknown>> {
     this.requireKeypoints();
     return DeviceSession.keypointList(
-      await this.rpc<KeypointListReply>({ type: "delete_keypoint", name, deck }, "keypoint_list"),
+      await this.rpc<KeypointListReply>({ type: "delete_keypoint", name, deck: deck ?? this.liveDeck() }, "keypoint_list"),
     );
   }
 
   /** One keypoint's values, by uniform name. */
-  async getKeypoint(name: string, deck = 0): Promise<Record<string, unknown>> {
+  async getKeypoint(name: string, deck?: number): Promise<Record<string, unknown>> {
     this.requireKeypoints();
-    const r = await this.rpc<KeypointReply>({ type: "get_keypoint", name, deck }, "keypoint");
+    const r = await this.rpc<KeypointReply>({ type: "get_keypoint", name, deck: deck ?? this.liveDeck() }, "keypoint");
     const values: Record<string, number | number[]> = {};
     for (const v of r.values ?? []) values[v.uniform] = v.value.length === 1 ? v.value[0]! : v.value;
     return { name: r.name, effect_id: r.effectId, ...(r.stale ? { stale: true } : {}), values };
@@ -376,7 +464,7 @@ export class DeviceSession {
     await this.rpc(
       {
         type: "blend_keypoints",
-        deck: opts.deck ?? 0,
+        deck: opts.deck ?? this.liveDeck(),
         weights: entries.map(([name, weight]) => ({ name, weight })),
         seconds,
         colorMode: opts.colorMode === "hsv" ? 1 : 0,
@@ -429,7 +517,8 @@ export class DeviceSession {
     return wire;
   }
 
-  private sendUniforms(values: UniformValueFlat[], commit: boolean): void {
+  /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
+  private sendUniforms(values: UniformValueFlat[], commit: boolean, deck: Deck = this.liveDeck()): void {
     // `commit` is a newer SetUniforms field (device-side spec work). Only send it
     // when the firmware says it understands it; older firmware commits on its
     // own coalesced schedule, so a ramp's final set still persists there.
@@ -438,9 +527,11 @@ export class DeviceSession {
     // true once the device PR's proto change is regenerated into web/src/gen.
     const msg: Record<string, unknown> = { type: "set_uniforms", values };
     if (this.has("uniform_commit") && COMMIT_IN_PROTO) msg["commit"] = commit;
+    if (deck !== 0) msg["deck"] = deck;
     const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
     if (!ok) throw new ToolError("the player connection is down");
-    if (this.current) for (const v of values) this.current.values.set(v.slot, v.value);
+    const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
+    if (target) for (const v of values) target.values.set(v.slot, v.value);
   }
 
   /** The firmware VM starts every uniform at 0 (it ignores the manifest's
@@ -450,7 +541,7 @@ export class DeviceSession {
   private async sendActivationValues(d: Deployed, known?: Map<number, number[]>): Promise<void> {
     const values = d.uniforms.map((u) => ({ slot: u.slot, value: known?.get(u.slot) ?? u.default }));
     if (values.length === 0) return;
-    await this.run(async () => this.sendUniforms(values, false));
+    await this.run(async () => this.sendUniforms(values, false, d.deck));
   }
 
   /** Interpolate uniforms to `targets` over `seconds`, uncommitted, at the
@@ -502,52 +593,344 @@ export class DeviceSession {
     return compile(source, await this.getToolchain());
   }
 
-  /** Compile, then upload + (optionally) activate. Remembers what it replaced.
-   * `compiled` skips the compile when the caller already has this player's build. */
+  /** Compile, then upload + (optionally) activate on deck A (the persisted deck).
+   * Remembers what it replaced. When the crossfade was showing deck B, it snaps
+   * back to A (the new effect) and the effect on B stays parked there — the
+   * rollback target. `compiled` skips the compile when the caller already has
+   * this player's build. */
   async deployEffect(effectId: string, source: string, activate: boolean, compiled?: CompileOutcome) {
     const c = compiled ?? (await this.compile(source));
     if (!c.ok) {
       const d = c.diagnostics.map((x) => `${x.line}:${x.col}: ${x.msg}`).join("\n");
       throw new ToolError(`the effect doesn't compile:\n${d}`);
     }
+    const wasLive = activate ? this.liveDeck() : 0;
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
-      this.previous = this.current;
-      this.current = { effectId, fxb: c.fxb, source, uniforms: c.uniforms, values: new Map() };
+      const outgoing = this.current ?? (wasLive === 1 ? await this.deviceHeld(1) : null);
+      // Deck A was just overwritten; an outgoing effect on deck B is still there.
+      this.previous = outgoing ? { ...outgoing, onDevice: outgoing.deck === 1 } : null;
+      this.current = { effectId, fxb: c.fxb, deck: 0, source, uniforms: c.uniforms, values: new Map() };
+      if (wasLive === 1 || (this.xf ?? 0) > 0) await this.snapCrossfade(0);
+      this.live = 0;
       await this.sendActivationValues(this.current);
     }
     return { effect_id: effectId, bytecode_bytes: c.bytecodeBytes, uniforms: c.uniforms.map((u) => u.name) };
   }
 
-  /** Select the active effect ("off" clears it). The device holds one effect:
-   * any other id keeps the loaded one active. */
+  /** Select the active effect ("off" clears it). An id activates the effect
+   * loaded under it — on the live deck, or on the other deck when that is where
+   * it is parked (then the crossfade snaps to it). */
   async setEffect(effectId: string): Promise<Record<string, unknown>> {
     const id = effectId === "off" ? "" : effectId;
-    if (id === "" && this.current) {
-      this.previous = this.current;
-      this.current = null;
+    if (id === "") {
+      if (this.current) {
+        this.previous = { ...this.current, onDevice: false };
+        this.current = null;
+      }
+      await this.run(() => this.client.setEffect("", 0));
+      // Deck B: the first "" parks it, so the effect shown there goes dark too.
+      if (this.decksUsable() && this.liveDeck() === 1) await this.run(() => this.client.setEffect("", 1));
+      this.live = 0;
+      if ((this.xf ?? 0) > 0 && this.decksUsable()) await this.snapCrossfade(0);
+    } else if (this.decksUsable()) {
+      const st = await this.deckStatus();
+      const on = st.decks.find((d) => d.effect_id === id);
+      const deck: Deck = on?.deck ?? st.live ?? 0;
+      await this.run(() => this.client.setEffect(id, deck));
+      if (deck !== (st.live ?? 0)) {
+        await this.snapCrossfade(deck === 1 ? 1 : 0);
+        this.swapIfParked(deck);
+      }
+      this.live = deck;
+    } else {
+      await this.run(() => this.client.setEffect(id));
     }
-    await this.run(() => this.client.setEffect(id));
-    const a = await this.activeEffect();
-    return { active_effect: a.effectId || null };
+    const a = await this.activeEffect().catch(() => null);
+    return { active_effect: a?.effectId || null, ...(this.decksUsable() ? { deck: this.live === 1 ? "B" : "A" } : {}) };
   }
 
-  /** Restore the effect active before the last deploy (re-uploads its bytecode,
-   * then its last-known uniform values — the defaults where none were set). */
-  async rollback(): Promise<Record<string, unknown>> {
+  /** Restore the effect active before the last deploy or crossfade. Still loaded
+   * on the other deck (after a crossfade, or a deploy while deck B was showing):
+   * fade back to it over `seconds` (0 = at once). Otherwise re-upload its
+   * bytecode to deck A, then its last-known uniform values (the defaults where
+   * none were set). */
+  async rollback(seconds = 0): Promise<Record<string, unknown>> {
     const prev = this.previous;
-    if (prev) {
-      await this.run(() => this.client.submitEffect(prev.effectId, prev.fxb, true));
-      this.current = prev;
-      this.previous = null;
+    if (prev?.onDevice && this.decksUsable()) {
+      await this.run(() => this.client.setEffect(prev.effectId, prev.deck));
+      await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease" });
+      this.swapIfParked(prev.deck);
+      this.live = prev.deck;
+      return {
+        restored: prev.effectId,
+        deck: prev.deck === 1 ? "B" : "A",
+        how: seconds > 0 ? `faded back over ${seconds} s` : "switched back",
+        ...(this.previous ? { rollback_again: `restores ${this.previous.effectId}` } : {}),
+      };
+    }
+    if (prev?.fxb) {
+      const fxb = prev.fxb;
+      await this.run(() => this.client.submitEffect(prev.effectId, fxb, true));
+      if (this.decksUsable() && (this.liveDeck() === 1 || (this.xf ?? 0) > 0)) await this.snapCrossfade(0);
+      const outgoing = this.current;
+      this.current = { ...prev, deck: 0, onDevice: false };
+      this.previous = outgoing?.deck === 1 ? { ...outgoing, onDevice: true } : null;
+      this.live = 0;
       const known = prev.values;
-      prev.values = new Map();
-      await this.sendActivationValues(prev, known);
+      this.current.values = new Map();
+      await this.sendActivationValues(this.current, known);
       return { restored: prev.effectId };
     }
     await this.run(() => this.client.setEffect(""));
     this.current = null;
     return { restored: null, note: "no earlier effect was deployed by this bridge; the effect was turned off" };
+  }
+
+  // -- decks + crossfade (FUG-110) ------------------------------------------------
+
+  /** Both ends can do two decks + a crossfade. */
+  decksUsable(): boolean {
+    return this.has("decks") && this.has("crossfade") && DECKS_IN_PROTO;
+  }
+
+  private requireDecks(): void {
+    if (!this.has("decks") || !this.has("crossfade")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no second FX deck to crossfade with`);
+    }
+    if (!DECKS_IN_PROTO) throw new ToolError("this agent bundle predates FX decks; update it");
+  }
+
+  /** The crossfade position: as this session last set it, else Welcome's. */
+  crossfadePosition(): number {
+    if (this.xf !== null) return this.xf;
+    const w = this.client.welcome as unknown as { crossfade?: number } | null;
+    return Math.min(1, Math.max(0, w?.crossfade ?? 0));
+  }
+
+  private crossfadeMode(): number {
+    if (this.xfMode !== null) return this.xfMode;
+    return (this.client.welcome as unknown as { crossfadeMode?: number } | null)?.crossfadeMode ?? 0;
+  }
+
+  /** The deck the crossfade shows: what this session set, else from Welcome. */
+  liveDeck(): Deck {
+    if (!this.decksUsable()) return 0;
+    if (this.live !== null) return this.live;
+    return this.crossfadePosition() >= 0.5 ? 1 : 0;
+  }
+
+  /** Both decks: what is loaded, running and shown (ListEffects when the firmware
+   * has it, else this session's own record). */
+  async deckStatus(): Promise<DeckStatus> {
+    this.requireDecks();
+    const pos = this.crossfadePosition();
+    const views: DeckView[] = ([0, 1] as const).map((d) => ({
+      deck: d,
+      name: d === 0 ? "A" : "B",
+      effect_id: null,
+      active: false,
+      visible: false,
+    }));
+    let inferred = false;
+    if (this.has("list_effects")) {
+      const l = await this.run(() => this.client.listEffects());
+      for (const e of l.effects ?? []) {
+        const v = views[e.deck === 1 ? 1 : 0]!;
+        v.effect_id = e.effectId || null;
+        v.active = e.active;
+      }
+    } else {
+      inferred = true;
+      for (const d of [this.current, this.previous]) {
+        if (d && (d === this.current || d.onDevice)) {
+          views[d.deck]!.effect_id = d.effectId;
+          views[d.deck]!.active = true;
+        }
+      }
+    }
+    const [a, b] = views as [DeckView, DeckView];
+    a.visible = a.active && !(b.active && pos >= 1);
+    b.visible = b.active && !(a.active && pos <= 0);
+    const live: Deck | null = a.active && b.active ? (pos >= 0.5 ? 1 : 0) : a.active ? 0 : b.active ? 1 : null;
+    if (live !== null) this.live = live;
+    return { live, crossfade: +pos.toFixed(3), mode: this.crossfadeMode() === 1 ? "hsv" : "rgb", decks: views, ...(inferred ? { inferred } : {}) };
+  }
+
+  /** An effect loaded on `deck` that this bridge didn't upload (or forgot): its id
+   * and manifest from the device, no bytecode. */
+  private async deviceHeld(deck: Deck): Promise<Deployed | null> {
+    try {
+      const a = await this.activeEffect(deck);
+      if (!a.effectId) return null;
+      const values = new Map<number, number[]>();
+      for (const u of a.uniforms) {
+        const v = a.current.get(u.name);
+        if (v) values.set(u.slot, v);
+      }
+      return { effectId: a.effectId, fxb: undefined, deck, uniforms: a.uniforms, values, onDevice: true };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The crossfade landed on `deck`: if that is where the rollback target was
+   * parked, the two swap (rollback again goes back). */
+  private swapIfParked(deck: Deck): void {
+    if (this.previous?.onDevice && this.previous.deck === deck) {
+      const back = this.current;
+      this.current = { ...this.previous, onDevice: false };
+      this.previous = back && back.deck !== deck ? { ...back, onDevice: true } : null;
+    }
+  }
+
+  /**
+   * Step 1 of a crossfade: load the incoming effect onto the IDLE deck (the one the
+   * crossfade isn't showing), running but not yet visible, with its uniform values.
+   * The outgoing effect stays loaded and running on its deck — the rollback
+   * target. `effectId` alone (no `compiled`) cues the effect already loaded on the
+   * idle deck under that id. The fade itself is fadeCrossfade (the hub runs every
+   * player's fade on one clock).
+   */
+  async cueCrossfade(
+    effectId: string,
+    source: string | undefined,
+    compiled: CompileOutcome | undefined,
+    uniforms?: Record<string, UniformInput>,
+    opts: { reuseLoaded?: boolean } = {},
+  ): Promise<CueResult> {
+    this.requireDecks();
+    const st = await this.deckStatus();
+    // Nothing running: there is nothing to fade from, so the effect goes onto deck
+    // A (the persisted one) and simply starts.
+    const from: Deck = st.live ?? 1;
+    const to: Deck = st.live === null ? 0 : from === 0 ? 1 : 0;
+    const fromPos = from === 0 ? 0 : 1;
+    // Show only the outgoing deck before the incoming one starts running (a
+    // half-way crossfade left by the app would otherwise flash the new effect).
+    if (st.live !== null && Math.abs(this.crossfadePosition() - fromPos) > 1e-3) await this.snapCrossfade(fromPos);
+    const outgoing =
+      st.live === null
+        ? null
+        : this.current?.deck === from && this.current.effectId === st.decks[from]!.effect_id
+          ? this.current
+          : await this.deviceHeld(from);
+    let incoming: Deployed;
+    let uploaded = false;
+    // No new source: an effect already waiting on the idle deck under this id is
+    // faded to as it is (no re-upload).
+    if (compiled && opts.reuseLoaded && st.decks[to]!.effect_id === effectId) compiled = undefined;
+    if (compiled) {
+      if (!compiled.ok) throw new ToolError("the effect doesn't compile");
+      try {
+        await this.run(() => this.client.submitEffect(effectId, compiled.fxb, true, to));
+      } catch (e) {
+        if (e instanceof ToolError && /too large|effect_too_large/.test(e.message)) {
+          throw new ToolError(
+            `${e.message}. While crossfading BOTH effects are loaded: the two decks share one 24 KB buffer arena ` +
+              `(and each .fxb must fit 4 KB). Use fewer/smaller buffers, or deploy_effect to replace the effect outright.`,
+          );
+        }
+        throw e;
+      }
+      uploaded = true;
+      incoming = { effectId, fxb: compiled.fxb, deck: to, uniforms: compiled.uniforms, values: new Map() };
+      if (source !== undefined) incoming.source = source;
+      await this.sendActivationValues(incoming);
+    } else {
+      if (st.decks[to]!.effect_id !== effectId) {
+        throw new ToolError(
+          `"${effectId}" isn't loaded on the idle deck ${to === 1 ? "B" : "A"} ` +
+            `(it holds ${st.decks[to]!.effect_id ?? "nothing"}): pass its source`,
+        );
+      }
+      await this.run(() => this.client.setEffect(effectId, to));
+      incoming =
+        (this.previous?.onDevice && this.previous.deck === to ? this.previous : null) ??
+        (await this.deviceHeld(to)) ?? { effectId, fxb: undefined, deck: to, uniforms: [], values: new Map() };
+    }
+    if (uniforms && Object.keys(uniforms).length) {
+      const a = await this.activeEffect(to);
+      const wire = resolve(a.uniforms, uniforms);
+      await this.run(async () => this.sendUniforms(wire, false, to));
+      for (const v of wire) incoming.values.set(v.slot, v.value);
+    }
+    // The outgoing effect is the rollback target, still loaded on its deck.
+    this.previous = outgoing ? { ...outgoing, onDevice: true } : this.previous?.deck === from ? this.previous : null;
+    this.current = { ...incoming, onDevice: false };
+    if (st.live === null) await this.snapCrossfade(0);
+    return {
+      from_deck: from,
+      to_deck: to,
+      outgoing: outgoing?.effectId ?? null,
+      incoming: effectId,
+      uploaded,
+      ...(uploaded ? { bytecode_bytes: compiled!.bytecodeBytes } : {}),
+      from: st.live === null ? 0 : fromPos,
+      to: to === 1 ? 1 : 0,
+    };
+  }
+
+  /** Set the crossfade at once (and wait for the device's ack). */
+  async snapCrossfade(position: number, mode?: number): Promise<void> {
+    const m = mode ?? this.crossfadeMode();
+    await this.run(() => this.client.setCrossfade(position, m));
+    this.xf = Math.min(1, Math.max(0, position));
+    this.xfMode = m;
+  }
+
+  /**
+   * Glide the crossfade to `target` over `seconds`, from where it is. Progress is
+   * read off the wall clock from `t0` (performance.now() ms; the hub passes ONE
+   * t0 to every player so a room fades together). Each step is ACKNOWLEDGED
+   * before the next is sent (at most `hz` a second): on hardware a C6 fed
+   * fire-and-forget sets at 25 Hz fell ~20 s behind (its wss queue backed up), so
+   * the step rate follows what the player can take while the fade still ends on
+   * time. When it lands, the target side is the live deck.
+   */
+  async fadeCrossfade(
+    target: number,
+    seconds: number,
+    opts: {
+      curve?: Curve;
+      mode?: number;
+      t0?: number;
+      from?: number;
+      hz?: number;
+      sleep?: (ms: number) => Promise<void>;
+    } = {},
+  ): Promise<{ from: number; to: number; seconds: number; steps: number }> {
+    this.requireDecks();
+    if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
+    const mode = opts.mode ?? this.crossfadeMode();
+    const from = opts.from ?? this.crossfadePosition();
+    const t0 = opts.t0 ?? performance.now();
+    const hz = Math.max(1, Math.min(opts.hz ?? this.streamHz, 60));
+    const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const curve = opts.curve ?? "ease";
+    let steps = 0;
+    if (seconds > 0) {
+      let lastPct = 0;
+      for (;;) {
+        const tStep = performance.now();
+        const u = (tStep - t0) / (seconds * 1000);
+        if (u >= 1) break;
+        const pos = from + (target - from) * curveAt(curve, u);
+        await this.run(() => this.client.setCrossfade(pos, mode));
+        this.xf = pos;
+        steps++;
+        const pct = Math.floor(u * 4) * 25;
+        if (seconds >= 2 && pct > lastPct) {
+          lastPct = pct;
+          progress(`crossfade ${pct}%`);
+        }
+        const wait = 1000 / hz - (performance.now() - tStep);
+        if (wait > 0) await sleep(wait);
+      }
+    }
+    await this.snapCrossfade(target, mode);
+    this.live = target >= 0.5 ? 1 : 0;
+    return { from: +from.toFixed(3), to: target, seconds, steps: steps + 1 };
   }
 
   /** BASIC perf for `seconds`: frame cost vs budget, overruns, heap. */
@@ -824,6 +1207,10 @@ export function summarize(b: MappingBundle): Record<string, unknown> {
 
 /** Whether this build's SetUniforms carries the (device-PR) `commit` field. */
 export const COMMIT_IN_PROTO = SetUniformsSchema.fields.some((f) => f.name === "commit");
+
+/** Whether this build's protocol carries the FX-deck arms (set_crossfade + the
+ * `deck` fields). */
+export const DECKS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_crossfade");
 
 /** Whether this build's protocol carries the uniform-keypoint arms. */
 export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");

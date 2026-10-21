@@ -148,7 +148,14 @@ model, touches nothing), `measure_effect` (windowed on-device perf stream),
 `list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
 `list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
 `delete_keypoint` (feature `keypoints`; design
-[uniform-keypoints.md](../docs/design/uniform-keypoints.md)), `export_map`
+[uniform-keypoints.md](../docs/design/uniform-keypoints.md); deck default = the
+live deck), `crossfade_to` (features `decks` + `crossfade`: cue the effect on the
+idle FX deck, then stream the crossfade on one hub clock for every player, after
+re-using/applying the room's time base; the outgoing effect stays loaded as the
+rollback target, so `rollback_effect {seconds}` fades back), `list_decks` (both
+decks, crossfade position, live deck), `plot_fixture` (a four-view 3D PNG of the
+map or a posed room, pure-TS rasteriser `src/plot.ts`, capped at 512 KB; colour by
+index / confidence / segment / channel / fixture / an effect frame), `export_map`
 (the stored map as TouchDesigner CSV or a Chromatik `.lxf`, same serializer as
 the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).

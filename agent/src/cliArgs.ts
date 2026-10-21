@@ -34,7 +34,12 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   compile-effect --file <f.fx>
   preview-effect --file <f.fx> [--times 0,1,2] [--out <dir>]   writes PNGs to --out
   deploy-effect <id> --file <f.fx> [--no-activate] [--force]
-  set-effect <id|off>  |  rollback-effect
+  set-effect <id|off>  |  rollback-effect [--seconds s]   (after a crossfade: fades back)
+  crossfade-to <id> [--file <f.fx>] [--seconds 5] [--curve linear|ease|ease_in|ease_out]
+               [--color-mode rgb|hsv] [--force] [k=v...]   fade to an effect on the idle FX deck
+  list-decks                           FX decks A/B: loaded effects, crossfade, the live deck
+  plot-fixture [--color-by index|confidence|segment|channel|fixture|effect] [--file <f.fx>]
+               [--time t] [--size px] [--no-labels] [--out <dir>]   3D views of the map as a PNG
   measure-effect [--seconds 5] [--rollback-on-overrun]
   list-textures | stream-texture <tex> --solid r,g,b [--seconds s] | stop-texture <tex>
   list-keypoints                       the active effect's saved looks
@@ -99,6 +104,7 @@ const BOOL = new Set([
   "no-mdns",
   "list",
   "include-colors",
+  "no-labels",
   "help",
   "quiet",
   "trust-proxy",
@@ -248,7 +254,46 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
       return { tool: "set_effect", args: { effect_id: rest[0], ...sel } };
     case "rollback":
     case "rollback-effect":
-      return { tool: "rollback_effect", args: sel };
+      return { tool: "rollback_effect", args: { ...seconds, ...sel } };
+    case "crossfade":
+    case "crossfade-to": {
+      const curve = flag(p, "curve");
+      const mode = flag(p, "color-mode");
+      return {
+        tool: "crossfade_to",
+        args: {
+          effect_id: need(rest[0], "effect id"),
+          ...src,
+          ...seconds,
+          ...(curve ? { curve } : {}),
+          ...(mode ? { color_mode: mode } : {}),
+          ...(rest.length > 1 ? { uniforms: kv(rest.slice(1)) } : {}),
+          ...(flag(p, "force") ? { force: true } : {}),
+          ...sel,
+        },
+      };
+    }
+    case "decks":
+    case "list-decks":
+      return { tool: "list_decks", args: sel };
+    case "plot":
+    case "plot-fixture": {
+      const by = flag(p, "color-by");
+      const time = flag(p, "time");
+      const size = flag(p, "size");
+      return {
+        tool: "plot_fixture",
+        args: {
+          ...src,
+          ...(by ? { color_by: by } : {}),
+          ...(time !== undefined ? { time: Number(time) } : {}),
+          ...(size !== undefined ? { size: Number(size) } : {}),
+          ...(flag(p, "no-labels") ? { labels: false } : {}),
+          ...(rest.length ? { uniforms: kv(rest) } : {}),
+          ...sel,
+        },
+      };
+    }
     case "measure":
     case "measure-effect":
       return {

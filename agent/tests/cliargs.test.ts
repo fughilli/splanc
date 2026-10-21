@@ -80,3 +80,18 @@ test("export-map maps onto export_map", () => {
   });
   assert.match(USAGE, /export-map/);
 });
+
+test("crossfade, deck and plot commands map onto their MCP tools", () => {
+  assert.deepEqual(call("crossfade-to", "storm", "--seconds", "8", "--curve", "linear", "--color-mode", "hsv", "rain=0.5"), {
+    tool: "crossfade_to",
+    args: { effect_id: "storm", seconds: 8, curve: "linear", color_mode: "hsv", uniforms: { rain: 0.5 } },
+  });
+  assert.throws(() => call("crossfade-to"), /missing effect id/);
+  assert.deepEqual(call("list-decks", "--players", "all"), { tool: "list_decks", args: { players: "all" } });
+  assert.deepEqual(call("rollback-effect", "--seconds", "3"), { tool: "rollback_effect", args: { seconds: 3 } });
+  assert.deepEqual(call("plot-fixture", "--color-by", "confidence", "--size", "512", "--no-labels"), {
+    tool: "plot_fixture",
+    args: { color_by: "confidence", size: 512, labels: false },
+  });
+  assert.ok(USAGE.includes("crossfade-to") && USAGE.includes("plot-fixture"));
+});

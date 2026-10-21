@@ -431,6 +431,11 @@ export class BridgeObject {
         body = prepared.body;
         return this.afterDeploy(await this.forward(ws, req, body), msg.id, prepared);
       }
+      if (ws && name === "crossfade_to" && msg.id !== undefined) {
+        const prepared = await this.prepareCrossfade(msg);
+        if (prepared instanceof Response) return prepared;
+        return this.forward(ws, req, prepared);
+      }
       if (ws && name === "measure_effect" && msg.id !== undefined) {
         return rewriteReply(await this.forward(ws, req, body), msg.id, async (m) => {
           if (m.result && m.result["isError"] !== true) await (await this.library()).noteMeasure(toolResultJson(m.result));
@@ -521,6 +526,25 @@ export class BridgeObject {
     }
     meta.body = JSON.stringify({ ...msg, params: { ...params, arguments: stripDeployArgs(args) } });
     return meta;
+  }
+
+  /** crossfade_to {library_id}: resolve the entry's source (and an effect id)
+   * here, like deploy_effect; the bridge sees plain source. */
+  private async prepareCrossfade(msg: RpcRequest): Promise<Response | string> {
+    const params = msg.params ?? {};
+    const args = { ...((params["arguments"] as Record<string, unknown>) ?? {}) };
+    if (typeof args["library_id"] === "string") {
+      try {
+        const eid = typeof args["effect_id"] === "string" ? (args["effect_id"] as string) : undefined;
+        const { entry, effectId } = await (await this.library()).forDeploy(args["library_id"], eid);
+        if (typeof args["source"] !== "string") args["source"] = entry.source;
+        args["effect_id"] = effectId;
+      } catch (e) {
+        return rpcResult(msg.id!, { isError: true, content: [{ type: "text", text: (e as Error).message }] });
+      }
+      delete args["library_id"];
+    }
+    return JSON.stringify({ ...msg, params: { ...params, arguments: args } });
   }
 
   /** A successful deploy goes into the library (or counts a use); the library's
