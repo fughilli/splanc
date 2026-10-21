@@ -1,0 +1,40 @@
+/* splanc developer docs — small polish over the furo theme. */
+
+/* Center the generated figures and give them a little breathing room. */
+figure {
+  margin: 1.5rem auto;
+  text-align: center;
+}
+figure img {
+  border-radius: 8px;
+}
+figure figcaption {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin-top: 0.5rem;
+}
+
+/* sphinx-design cards: a touch more prominence on hover. */
+.sd-card {
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.sd-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(8, 77, 231, 0.18);
+}
+
+/* Light/dark-only images on the landing page. */
+body:not([data-theme="dark"]) .only-dark {
+  display: none;
+}
+body[data-theme="dark"] .only-light {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  body:not([data-theme="light"]) .only-light {
+    display: none;
+  }
+  body:not([data-theme="light"]) .only-dark {
+    display: initial;
+  }
+}
