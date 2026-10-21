@@ -623,6 +623,12 @@ calls — including <code class="docutils literal notranslate"><span class="pre"
 list_decks, effect, perf, preview) still work. A lock outlives its holder’s
 disconnect by 30 s (a phone switching from Wi-Fi to cellular reclaims it with its
 <code class="docutils literal notranslate"><span class="pre">client_id</span></code>), then releases.</p></li>
+<li><p><strong>Framerate autoscaler (FUG-82).</strong> The bridge never flushes controls to a player faster
+than it renders (gap = max(16 ms, 1000 / its current fps)), each player in the list carries
+<code class="docutils literal notranslate"><span class="pre">fps</span> <span class="pre">{current,</span> <span class="pre">target,</span> <span class="pre">auto,</span> <span class="pre">aborted}</span></code> (changes ride the 2 s <code class="docutils literal notranslate"><span class="pre">players</span></code> push), and an
+<code class="docutils literal notranslate"><span class="pre">fps_state{aborted}</span></code> — the player parked the effect because it can’t hold the floor or a
+pinned rate — is pushed to every app at once as <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;fps&quot;,…}</span></code>; the screen says so and
+marks the fixture.</p></li>
 <li><p><strong>One deck model.</strong> The live mux and the agent tools share <code class="docutils literal notranslate"><span class="pre">DeviceSession</span></code>’s deck state
 (which deck is live, the crossfade position, the effect on each deck and the parked rollback
 target). A performer’s <strong>Cue A/B</strong> is <code class="docutils literal notranslate"><span class="pre">cueDeck</span></code> (upload + activate on that deck without
