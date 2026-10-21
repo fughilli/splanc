@@ -38,3 +38,14 @@ libhal.a:spi_flash_hal_gpspi
 # IRAM makes it layout-independent. The interpreter (`run`, 37 KB) stays in
 # flash, as do the two-deck blend and every cold path.
 iram: .text.lm_fx_shade .text._ZN15ledmapper_fx_vm7Program5parse* .text._ZN15ledmapper_fx_vm2Vm17run_shade_bounded*
+
+# --- the per-frame render path that stays in flash, pinned FIRST in .flash.text ---
+# Everything the active-effect frame runs from flash outside the IRAM shade entry:
+# render_once + cc_apply (main.cpp), the player FFI's per-frame calls and the fx_vm
+# interpreter. Left to link order these sat after all of main.cpp and
+# netstack_transport.cpp, so ANY growth there shifted them and changed how many
+# flash-cache lines each frame re-warms: #311's +~4 KB of app code moved fx_bench
+# by a constant ~+9 k cycles per frame (sweep16 +16%, past its 15% margin) and a
+# pure-padding build of the old code reproduced it exactly. At the start of
+# .flash.text their addresses no longer depend on the app code in front of them.
+flash-first: .text._ZL11render_oncev .text._ZL8cc_applyPKh .text.lm_fx_update .text.lm_fx_last_update_outcome .text.lm_map_len .text.lm_map_led .text.lm_time_base .text._ZN20ledmapper_player_ffi16fx_advance_morph* .text._ZN15ledmapper_fx_vm2Vm*

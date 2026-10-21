@@ -78,6 +78,23 @@ class RewriteTest(unittest.TestCase):
             self.assertTrue(iram < at[0] < flash, stmt)
             self.assertEqual(lines[at[0] - 1].strip(), "*(.iram1 .iram1.*)")
 
+    def test_flash_first_pins_open_flash_text(self):
+        # Rule kind 5: each `flash-first:` rule is one `*(...)` statement that is the
+        # first statement of .flash.text, so the per-frame render path's flash
+        # address doesn't depend on how much app code precedes it in link order.
+        pins = [r for r in self.rules if r[0] == "flash-first:"]
+        self.assertTrue(pins)
+        lines = self.ours.splitlines()
+        flash = next(i for i, ln in enumerate(lines) if ln.strip().startswith(".flash.text"))
+        body = next(i for i in range(flash, len(lines)) if "{" in lines[i])
+        for _, secs in pins:
+            stmt = "*(" + " ".join(secs) + ")"
+            at = [i for i, ln in enumerate(lines) if ln.strip() == stmt]
+            self.assertEqual(len(at), 1, stmt)
+            self.assertEqual(at[0], body + 1, "must be the first .flash.text statement")
+        for sec in ("render_once", "lm_fx_update", "ledmapper_fx_vm2Vm"):
+            self.assertTrue(any(sec in x for _, secs in pins for x in secs), sec)
+
 
 if __name__ == "__main__":
     unittest.main()

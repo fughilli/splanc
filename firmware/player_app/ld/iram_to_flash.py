@@ -30,12 +30,21 @@ misses (the per-LED fx shade path):
      Our code is built with -ffunction-sections, so a glob names functions
      (`.text.lm_fx_shade`, `.text._ZN15ledmapper_fx_vm7Program5parse*`).
 
+  5. a `flash-first:` rule (`flash-first: <input-section glob> ...`) adds
+     `*(<globs>)` as the FIRST statement of .flash.text, so those input sections
+     sit at a fixed address at the start of flash code instead of wherever the link
+     order puts them. For the per-frame render path that stays in flash this makes
+     its flash-cache footprint independent of how much app code precedes it in link
+     order (growing main.cpp / netstack_transport.cpp used to shift the whole Rust
+     player and move fx_bench's per-frame cost by ~9 k cycles, e.g. sweep16 +16%).
+
 Nothing else changes; the link runs with --orphan-handling=warn, so a section
 that ends up placed nowhere is a loud warning, and the caller asserts every rule
 matched something.
 
 usage: iram_to_flash.py RULES IN_SECTIONS_LD OUT_SECTIONS_LD
-RULES lines: `<file>[ <section> ...]` or `iram: <section> ...`, `#` comments.
+RULES lines: `<file>[ <section> ...]`, `iram: <section> ...` or
+`flash-first: <section> ...`, `#` comments.
 """
 
 import re
@@ -143,11 +152,39 @@ def to_iram(src, rules, hits):
     raise SystemExit("iram_to_flash: no `*(.iram1 .iram1.*)` statement in .iram0.text")
 
 
+FLASH_TEXT = re.compile(r"^\s*\.flash\.text\s*:")
+
+
+def flash_first(src, rules, hits):
+    """Rule kind 5 (see the module doc): place input sections first in .flash.text.
+    Idempotent: an identical statement already present is not added again."""
+    pins = [r for r in rules if r[0] == "flash-first:"]
+    if not pins:
+        return src
+    lines = src.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if FLASH_TEXT.match(line):
+            j = i + 1
+            while j < len(lines) and "{" not in lines[j - 1]:
+                j += 1
+            adds = []
+            for r in pins:
+                add = f"    *({' '.join(r[1])})\n"
+                hits[r] += 1
+                if add not in lines and add not in adds:
+                    adds.append(add)
+            lines[j:j] = adds
+            return "".join(lines)
+    raise SystemExit("iram_to_flash: no .flash.text section")
+
+
 def rewrite(src, rules):
     out, hits = [], {r: 0 for r in rules}
     src = to_iram(src, rules, hits)
-    rules_ram_to_flash = [r for r in rules if r[0] != "iram:"]
+    rules_ram_to_flash = [r for r in rules if r[0] not in ("iram:", "flash-first:")]
     src = carve(src, rules_ram_to_flash, hits)
+    # After carve: carve also inserts at the top of .flash.text, and these must lead.
+    src = flash_first(src, rules, hits)
     rules = rules_ram_to_flash
     region = None
     for line in src.splitlines(keepends=True):
@@ -194,8 +231,8 @@ def rewrite(src, rules):
 def main():
     rules = parse_rules(open(sys.argv[1]).read())
     for r in rules:
-        if r[0] == "iram:" and not r[1]:
-            sys.exit("iram_to_flash: an `iram:` rule needs at least one section")
+        if r[0] in ("iram:", "flash-first:") and not r[1]:
+            sys.exit(f"iram_to_flash: a `{r[0]}` rule needs at least one section")
     text, hits = rewrite(open(sys.argv[2]).read(), rules)
     dead = [r for r, n in hits.items() if n == 0]
     if dead:
