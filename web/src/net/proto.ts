@@ -68,6 +68,7 @@ const CLIENT_ARMS: Record<string, string> = {
   get_keypoint: "getKeypoint",
   blend_keypoints: "blendKeypoints",
   get_tls_info: "getTlsInfo",
+  set_fps: "setFps",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -94,6 +95,7 @@ const SERVER_ARMS: Record<string, string> = {
   keypoint_list: "keypointList",
   keypoint: "keypoint",
   tls_info: "tlsInfo",
+  fps_state: "fpsState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -568,6 +570,48 @@ export interface TlsInfoMessage {
   persisted: boolean;
 }
 
+// -- framerate autoscaler (FUG-82; the "fps" feature) ------------------------
+// The player runs effects at a consistent rate on a 5-fps ladder (25..80),
+// adapted to each frame's cost with 5% headroom, and parks an effect it can't
+// run within budget (pushing fps_state{aborted}).
+
+/** Override the effect framerate (proto SetFps). `targetFps` 0 = autoscale,
+ * otherwise pin that rate (snapped to the ladder). `noAbort` holds the rung
+ * instead of parking an effect that can't keep it (benchmarks). Reply: fps_state. */
+export interface SetFpsMessage {
+  type: "set_fps";
+  targetFps: number;
+  noAbort?: boolean;
+}
+
+/** Framerate autoscaler state (proto FpsState): the set_fps reply, and pushed
+ * unsolicited with `aborted` when the player parked the effect because even the
+ * floor / pinned rate couldn't hold. `targetFps` = the pin (0 = auto). */
+export interface FpsStateMessage {
+  type: "fps_state";
+  targetFps: number;
+  currentFps: number;
+  minFps: number;
+  maxFps: number;
+  auto: boolean;
+  aborted: boolean;
+  noAbort: boolean;
+}
+
+/** Normalize a decoded fps_state (proto3 drops zero / false fields). */
+export function flatFpsState(m: Partial<FpsStateMessage>): FpsStateMessage {
+  return {
+    type: "fps_state",
+    targetFps: m.targetFps ?? 0,
+    currentFps: m.currentFps ?? 0,
+    minFps: m.minFps ?? 0,
+    maxFps: m.maxFps ?? 0,
+    auto: m.auto ?? false,
+    aborted: m.aborted ?? false,
+    noAbort: m.noAbort ?? false,
+  };
+}
+
 /** Reply to list_effects (proto EffectList). */
 export interface EffectListMessage {
   type: "effect_list";
@@ -677,6 +721,9 @@ export interface PerfReportMessage {
   fxbHash: number;
   cpuHz: number;
   budgetCycles: number;
+  /** The framerate autoscaler's live target FPS (FUG-82); budgetCycles =
+   * cpuHz / currentFps. 0/absent = firmware without it (fixed 30 fps budget). */
+  currentFps?: number;
   frameCyclesMin: number;
   frameCyclesMean: number;
   frameCyclesMax: number;

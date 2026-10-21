@@ -579,6 +579,9 @@ impl Player {
             }
             // The TLS identity is the firmware's (player_app ffi), not the core's.
             CMsg::GetTlsInfo(_) => Some(error("unsupported", "tls info is handled by the firmware")),
+            // The framerate autoscaler (FUG-82) lives in the fx layer (player_app
+            // ffi), which intercepts set_fps before the session core sees it.
+            CMsg::SetFps(_) => Some(error("unsupported", "fps is handled by the fx layer")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

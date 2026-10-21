@@ -9,7 +9,8 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     FX_TOPO_CAP, lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
-    lm_counting_color, lm_envelope_arm,
+    lm_counting_color, lm_envelope_arm, lm_fps_budget_cycles, lm_fps_build_state,
+    lm_fps_current_fps, lm_fps_on_frame, lm_fps_take_abort_notify, lm_fx_active,
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
     lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
     lm_perf_interval_ms, lm_perf_mode,
@@ -477,7 +478,10 @@ fn full_device_flow_through_the_c_abi() {
         panic!("perf_report expected from set_perf");
     };
     assert_eq!(rep0.r#cpu_hz, 160_000_000);
-    assert_eq!(rep0.r#budget_cycles, (160_000_000 / 1000) * 33);
+    // FUG-82: budget_cycles tracks the autoscaler's live target (cpu_hz /
+    // current_fps); a fresh controller starts at 30 fps.
+    assert_eq!(rep0.r#current_fps, 30);
+    assert_eq!(rep0.r#budget_cycles, 160_000_000 / 30);
     assert_eq!(rep0.r#ticks.len(), 0, "ring empty right after set_perf");
     assert_eq!(unsafe { lm_perf_mode() }, 2, "FULL latched");
     assert_eq!(unsafe { lm_perf_interval_ms() }, 250);
@@ -630,6 +634,76 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(ingest(b"not-osc"), 0, "garbage datagram dropped");
     unsafe { lm_fx_set_active(false) };
     assert_eq!(ingest(&osc_msg("/k", "f", &0.5f32.to_be_bytes())), 0, "no active effect -> inert");
+
+    // -- framerate autoscaler (FUG-82): set_fps pins / unpins / holds and
+    // replies fps_state; lm_fps_on_frame drives the controller, restarts the
+    // search when what renders changes, and parks every deck on an abort.
+    let set_fps = |target: u32, no_abort: bool, now: f64| {
+        let mut m = pb::SetFps::default();
+        m.r#target_fps = target;
+        m.r#no_abort = no_abort;
+        let Some(SMsg::FpsState(fs)) = handle(&encode(CMsg::SetFps(m)), now) else {
+            panic!("fps_state expected from set_fps");
+        };
+        fs
+    };
+    let fs = set_fps(60, false, 8000.0);
+    assert_eq!((fs.r#target_fps, fs.r#current_fps, fs.r#min_fps, fs.r#max_fps), (60, 60, 25, 80));
+    assert!(!fs.r#auto && !fs.r#aborted && !fs.r#no_abort);
+    assert_eq!(unsafe { lm_fps_current_fps() }, 60);
+    assert_eq!(unsafe { lm_fps_budget_cycles() }, 160_000_000 / 60);
+    assert_eq!(set_fps(58, false, 8010.0).r#target_fps, 60, "off-grid snaps to the nearest rung");
+    assert_eq!(set_fps(10_000, false, 8020.0).r#target_fps, 80, "a wild value clamps to the ceiling");
+    set_fps(60, false, 8030.0);
+
+    // Activating an effect restarts the search at the pinned rung; ~20 ms frames
+    // (> the 60-fps period) must ABORT a pin (not step down), park the effect and
+    // latch the notify.
+    unsafe { lm_fx_set_active(true) };
+    assert!(unsafe { lm_fx_active() });
+    let mut frames = 0;
+    while unsafe { lm_fx_active() } && frames < 200 {
+        let delay = unsafe { lm_fps_on_frame(20_000) };
+        assert!(delay >= 2, "an overrunning frame still yields >=5% ({delay} ms)");
+        frames += 1;
+    }
+    assert!(!unsafe { lm_fx_active() }, "the unholdable pin parked the effect");
+    assert_eq!(frames, 30, "abort lands at the end of the first failing window");
+    assert!(unsafe { lm_fps_take_abort_notify() }, "abort notify latched");
+    assert!(!unsafe { lm_fps_take_abort_notify() }, "latch drains");
+    let mut fbuf = vec![0u8; 512];
+    let n = unsafe { lm_fps_build_state(fbuf.as_mut_ptr(), fbuf.len(), true) };
+    assert!(n > 0, "fps_state encodes");
+    let mut fmsg = pb::ServerMessage::default();
+    fmsg.decode_from_bytes(&fbuf[..n as usize]).expect("decodes");
+    let Some(SMsg::FpsState(fab)) = fmsg.r#msg else { panic!("fps_state expected") };
+    assert!(fab.r#aborted && fab.r#current_fps == 60 && fab.r#target_fps == 60);
+
+    // no_abort (the benchmark hold): the same unholdable frames neither abort
+    // nor step a pin down, and the hold survives the effect reactivation.
+    assert!(set_fps(60, true, 8100.0).r#no_abort);
+    unsafe { lm_fx_set_active(true) };
+    for _ in 0..200 {
+        unsafe { lm_fps_on_frame(20_000) };
+    }
+    assert!(unsafe { lm_fx_active() }, "held: still rendering");
+    assert!(!unsafe { lm_fps_take_abort_notify() });
+    assert_eq!(unsafe { lm_fps_current_fps() }, 60);
+
+    // Back to autoscale + abort enabled: cheap frames climb the ladder from the
+    // kept rung to the 80-fps ceiling.
+    let fauto = set_fps(0, false, 8200.0);
+    assert!(fauto.r#auto && fauto.r#target_fps == 0 && !fauto.r#no_abort);
+    for _ in 0..(12 * 30) {
+        unsafe { lm_fps_on_frame(2_000) };
+    }
+    assert_eq!(unsafe { lm_fps_current_fps() }, 80, "a cheap effect climbs to the ceiling");
+    // A new activation restarts the search at the default 30-fps rung.
+    unsafe { lm_fx_set_active(false) };
+    unsafe { lm_fx_set_active(true) };
+    unsafe { lm_fps_on_frame(2_000) };
+    assert_eq!(unsafe { lm_fps_current_fps() }, 30);
+    unsafe { lm_fx_set_active(false) };
 
     // Last: it re-inits the player, so it must not race the flow above.
     mode_tracker_over_the_ffi();

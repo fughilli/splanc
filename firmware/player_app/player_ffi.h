@@ -356,6 +356,27 @@ void lm_perf_note_dropped(void);
 // at lm_perf_interval_ms() cadence over the active socket.
 int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 
+// -- Framerate autoscaler (FUG-82; docs/design/perf-monitoring.md) ------------
+// Effects run at a CONSISTENT rate picked from a 5-fps ladder (25..80) and
+// adapted to each frame's measured cost with >=5% headroom; when even the floor
+// (or an app-pinned rate, set_fps) can't hold, the effect is parked and the app
+// notified. Call under player_mutex.
+
+// Account for one effect frame whose cost (max of update+shade over every
+// rendering deck and the strip transmit) was cost_us; returns the ms to sleep
+// before the next frame (period - work, >= the minimum yield). Parks the effect
+// + latches an app-notify if the target is unachievable.
+uint32_t lm_fps_on_frame(uint32_t cost_us);
+// The autoscaler's current target FPS.
+uint32_t lm_fps_current_fps(void);
+// Per-frame overrun budget in CPU cycles for the current target (cpu_hz / fps).
+uint32_t lm_fps_budget_cycles(void);
+// Read + clear the abort-notify latch (loop() pushes fps_state{aborted=true}).
+bool lm_fps_take_abort_notify(void);
+// Encode an FpsState frame (aborted as given) into out. Returns the length,
+// -1 bad args, -2 out_cap too small.
+int32_t lm_fps_build_state(uint8_t *out, size_t out_cap, bool aborted);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

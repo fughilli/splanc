@@ -14,6 +14,7 @@ import {
   encodeClient,
   encodeMappingBundle,
   encodeServer,
+  flatFpsState,
 } from "../src/net/proto";
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import golden from "./golden_proto_frames.json";
@@ -194,6 +195,41 @@ test("effect arms carry the deck selector (FUG-110)", () => {
     deck: 1,
   };
   assert.deepEqual(decodeClient(encodeClient(su as never)), su);
+});
+
+test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {
+  type CMsg = Parameters<typeof encodeClient>[0];
+  type SMsg = Parameters<typeof encodeServer>[0];
+  // Pin a rate, hold (no abort), and back to autoscale (proto3 zeroes/false are
+  // implicit on the wire; flatFpsState fills them back in on the server side).
+  const pin = { type: "set_fps", targetFps: 60, noAbort: true } as const;
+  assert.deepEqual(decodeClient(encodeClient(pin as unknown as CMsg)), pin);
+  const auto = decodeClient(encodeClient({ type: "set_fps", targetFps: 0 } as unknown as CMsg)) as unknown as {
+    type: string;
+    targetFps?: number;
+  };
+  assert.equal(auto.type, "set_fps");
+  assert.equal(auto.targetFps ?? 0, 0);
+
+  const aborted = {
+    type: "fps_state",
+    targetFps: 70,
+    currentFps: 70,
+    minFps: 25,
+    maxFps: 80,
+    auto: false,
+    aborted: true,
+    noAbort: false,
+  } as const;
+  const back = flatFpsState(decodeServer(encodeServer(aborted as unknown as SMsg)) as never);
+  assert.deepEqual(back, aborted);
+  // An autoscaling state drops target_fps/aborted/no_abort on the wire.
+  const live = flatFpsState(
+    decodeServer(
+      encodeServer({ type: "fps_state", currentFps: 45, minFps: 25, maxFps: 80, auto: true } as unknown as SMsg),
+    ) as never,
+  );
+  assert.deepEqual(live, { ...aborted, targetFps: 0, currentFps: 45, auto: true, aborted: false });
 });
 
 test("TS re-encode of every golden decodes back to the same object", () => {

@@ -58,7 +58,10 @@ export class FakePlayer {
   nextUploadError: { code: string; message: string } | null = null;
   /** Error codes to answer whole request types with. */
   refuse = new Map<string, { code: string; message: string }>();
-  perf = { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
+  perf: { budgetCycles: number; frameCyclesMean: number; frameCyclesMax: number; overruns: number; currentFps?: number } =
+    { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
+  /** FUG-82: push fps_state{aborted} (the autoscaler parked the effect) on the next set_perf. */
+  abortOnNextPerf: { auto: boolean; targetFps: number } | null = null;
   /** The fake device clock = this process's performance.now() + this. */
   clockOffsetMs = 0;
   /** Delay before each time_sync_pong (simulated one-way latency). */
@@ -304,11 +307,25 @@ export class FakePlayer {
       }
       case "set_perf":
       case "get_perf_report":
+        if (m.type === "set_perf" && this.abortOnNextPerf) {
+          const a = this.abortOnNextPerf;
+          this.abortOnNextPerf = null;
+          this.reply(ws, {
+            type: "fps_state",
+            targetFps: a.targetFps,
+            currentFps: a.auto ? 25 : a.targetFps,
+            minFps: 25,
+            maxFps: 80,
+            auto: a.auto,
+            aborted: true,
+          });
+        }
         return this.reply(ws, {
           type: "perf_report",
           effectId: this.effect?.id ?? "",
           cpuHz: 160_000_000,
           budgetCycles: this.perf.budgetCycles,
+          ...(this.perf.currentFps ? { currentFps: this.perf.currentFps } : {}),
           frameCyclesMin: this.perf.frameCyclesMean,
           frameCyclesMean: this.perf.frameCyclesMean,
           frameCyclesMax: this.perf.frameCyclesMax,

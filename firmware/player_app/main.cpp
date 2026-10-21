@@ -1425,10 +1425,12 @@ static uint32_t render_once() {
   uint32_t xmit_len = total_cfg > 0 ? total_cfg : kMaxLeds;
   if (xmit_len > kMaxLeds) xmit_len = kMaxLeds;
 
-  // Perf (Tier 0): time the effect update()/shade span with the free-running
-  // cycle counter; the show() span is timed separately AFTER the strip write
-  // (it runs outside the lock). Only sampled while a perf mode is active and an
-  // effect is rendering — the built-in patterns aren't the profiling target.
+  // Time the effect update()/shade span with the free-running cycle counter;
+  // the show() span is timed separately AFTER the strip write (it runs outside
+  // the lock). Measured on EVERY effect frame — the framerate autoscaler
+  // (FUG-82) needs each frame's cost to pick the target FPS — but the perf RING
+  // is only filled while a perf mode is active (two CSR reads per span,
+  // negligible: perf-monitoring.md). The built-in patterns aren't autoscaled.
   bool perf_on = lm_perf_mode() != 0;
   bool fx_frame_rendered = false;
   uint32_t perf_seq = 0, perf_update_c = 0, perf_shade_c = 0, perf_frame_c = 0;
@@ -1554,10 +1556,10 @@ static uint32_t render_once() {
     uint32_t this_seq = fx_frame++;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
-    uint32_t c_frame_start = perf_on ? esp_cpu_get_cycle_count() : 0;
+    uint32_t c_frame_start = esp_cpu_get_cycle_count();
     uint32_t c_update_start = c_frame_start;
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
-    uint32_t c_update_end = perf_on ? esp_cpu_get_cycle_count() : 0;
+    uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
       uint32_t id;
       float xyz[3];
@@ -1596,7 +1598,7 @@ static uint32_t render_once() {
       // Effect active but not runnable (shouldn't happen) — hold black.
       fill_rgb(leds, kMaxLeds, Rgb::Black);
     }
-    if (perf_on) {
+    {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
       // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
       // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
@@ -1610,7 +1612,8 @@ static uint32_t render_once() {
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
-    next_delay_ms = 33;  // ~30 fps
+    // next_delay_ms comes from the autoscaler below (period − measured work), once
+    // the transmit span is known, so the frame INTERVAL tracks the target FPS.
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {
@@ -1655,20 +1658,29 @@ static uint32_t render_once() {
     if (fx_frame_rendered) show_c = g_show_c;
   }
 
-  // Push this effect frame's Tier-0 sample into the perf ring (drained by the
-  // phone via get_perf_report). Overrun = frame+show exceeded the ~33 ms budget.
+  // An effect frame: feed its cost to the framerate autoscaler (FUG-82) for the
+  // next sleep, and — only while a perf mode is active — push the Tier-0 sample
+  // into the perf ring (drained by the phone via get_perf_report).
   if (fx_frame_rendered) {
-    // budget_cycles = 33 ms * 160 MHz; kept in sync with ffi.rs PERF_BUDGET.
-    const uint32_t kBudgetCycles = (160000000u / 1000u) * 33u;
-    // Render and transmit now OVERLAP (async show), so the frame-rate limiter is
-    // whichever is longer, not their sum.
+    // Render and transmit OVERLAP (async show), so the frame-rate limiter is
+    // whichever is longer, not their sum. perf_frame_c already spans BOTH decks'
+    // update + shade and the crossfade blend (lm_fx_update / lm_fx_shade drive
+    // every rendering deck), so a two-deck show is costed as one frame.
     uint32_t period_c = perf_frame_c > show_c ? perf_frame_c : show_c;
-    bool overran = period_c > kBudgetCycles;
+    uint32_t cost_us = period_c / (160000000u / 1000000u);  // 160 cycles/us
     xSemaphoreTake(player_mutex, portMAX_DELAY);
-    lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size(),
-                     heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
-    lm_perf_push(perf_seq, perf_update_c, perf_shade_c, perf_frame_c, show_c,
-                 perf_led_count, overran);
+    // Sleep = target period − work (≥ the controller's minimum yield), so frame
+    // starts land one period apart. Also parks the effect + latches an
+    // app-notify if the floor / pinned rate proved unachievable.
+    next_delay_ms = lm_fps_on_frame(cost_us);
+    if (perf_on) {
+      // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
+      bool overran = period_c > lm_fps_budget_cycles();
+      lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size(),
+                       heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+      lm_perf_push(perf_seq, perf_update_c, perf_shade_c, perf_frame_c, show_c,
+                   perf_led_count, overran);
+    }
     xSemaphoreGive(player_mutex);
   }
   return next_delay_ms;
@@ -1838,6 +1850,27 @@ static void emit_perf_report_if_due() {
   if (n > 0) netstack_ws_send(tx, (size_t)n);
 #else
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+#endif
+}
+
+// -- fps autoscaler: unsolicited abort notification (FUG-82) ------------------
+// When the autoscaler can't hold even 25 fps (or an app-pinned rate) it parks the
+// effect on the render task and latches a notify; ship fps_state{aborted=true}
+// over the open session so the app can tell the user. Same push path as the perf
+// report (netstack: the TLS/WS session; vendor: the plain ws:81 socket). A client
+// that misses it sees the effect inactive in the next playback_state.
+static void emit_fps_abort_if_pending() {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  bool pending = lm_fps_take_abort_notify();
+  uint32_t fps = pending ? lm_fps_current_fps() : 0;
+  int32_t n = pending ? lm_fps_build_state(tx, sizeof tx, /*aborted=*/true) : 0;
+  xSemaphoreGive(player_mutex);
+  if (!pending) return;
+  Log().printf("[fps] effect parked: can't hold %u fps with 5%% headroom\n", (unsigned)fps);
+#if defined(LM_NETSTACK)
+  if (n > 0 && netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
+#else
+  if (n > 0 && ws_state == WsState::kOpen) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
 #endif
 }
 
@@ -2697,6 +2730,7 @@ void loop() {
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();
+  emit_fps_abort_if_pending();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

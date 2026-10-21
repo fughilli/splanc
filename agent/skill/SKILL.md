@@ -131,7 +131,9 @@ effect:
    everywhere. A player holds one effect at a time; the hub remembers the
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
-   vs budget (mean/max ms and per-window means). Over budget → it rolls back;
+   vs budget (mean/max ms and per-window means) and `current_fps`: the player
+   autoscales each effect between 25 and 80 fps (cheaper = smoother), and parks
+   one it can't run even at 25 fps (`aborted: true`). Over budget → it rolls back;
    simplify (see "Performance" in `effect-language.md`) and repeat from 2.
    Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
    nothing), then deploy + `measure_effect` to confirm — when they disagree, trust

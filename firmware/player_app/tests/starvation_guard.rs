@@ -13,7 +13,7 @@
 //!   case below is an untraced mechanism test.)
 //! * notify: a cancelled update() is reported (lm_fx_last_update_outcome feeds
 //!   the render loop's `[fx] update=budget` log) and frames main.cpp flags as
-//!   over the 33 ms frame budget are counted into the PerfReport the app polls /
+//!   over the frame budget (1 / the autoscaler's target FPS) are counted into the PerfReport the app polls /
 //!   is pushed (the over-budget decision itself is main.cpp's, not tested here);
 //! * recover: the app can switch a runaway effect off over the protocol.
 //!
@@ -31,8 +31,10 @@ use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
 
-/// main.cpp's frame budget: 33 ms at the C6's 160 MHz (render_once kBudgetCycles).
-const FRAME_BUDGET_CYCLES: u32 = (160_000_000 / 1000) * 33;
+/// The frame budget a fresh device reports: the framerate autoscaler (FUG-82)
+/// starts every effect at 30 fps and the budget tracks its live target
+/// (cpu_hz / current_fps; render_once flags overruns against lm_fps_budget_cycles).
+const FRAME_BUDGET_CYCLES: u32 = 160_000_000 / 30;
 /// LEDs per rendered frame in these tests.
 const LEDS: u32 = 64;
 /// One 30 fps frame.
@@ -262,7 +264,7 @@ fn frames_over_the_frame_budget_are_counted_once_and_reported_to_the_app() {
     fresh_device();
     set_perf(pb::SetPerf_::Mode::Basic);
     // Five rendered effect frames as render_once pushes them; two overran the
-    // 33 ms budget (frame+show cycles above it). The overran flag is passed in:
+    // frame budget (frame+show cycles above it). The overran flag is passed in:
     // the threshold decision is main.cpp's and untested here.
     let over = FRAME_BUDGET_CYCLES + 1;
     let under = FRAME_BUDGET_CYCLES / 2;

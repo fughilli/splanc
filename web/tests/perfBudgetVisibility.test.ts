@@ -19,7 +19,7 @@ import { test, type TestContext } from "node:test";
 
 import { installFakeDom, asFake, textOf, type FakeElement } from "./fakeDom";
 import type { LedMapperClient } from "../src/net/client";
-import type { PerfReportMessage } from "../src/net/proto";
+import type { FpsStateMessage, PerfReportMessage } from "../src/net/proto";
 import type { Router, Screen } from "../src/ui/app/router";
 import { budgetConsumption, computeBudget } from "../src/effects/budget";
 import {
@@ -44,6 +44,8 @@ function perfReport(o: {
   shadeMs: number;
   showMs: number;
   fps?: number;
+  /** The autoscaler's live target (FUG-82 firmware); absent = fixed 30 fps. */
+  currentFps?: number;
   leds?: number;
   instrShade?: number;
   overruns?: number;
@@ -60,7 +62,8 @@ function perfReport(o: {
     effectId: "plasma",
     fxbHash: 0x1234,
     cpuHz: CPU_HZ,
-    budgetCycles: Math.round(CPU_HZ / (o.fps ?? 30)),
+    budgetCycles: Math.round(CPU_HZ / (o.fps ?? o.currentFps ?? 30)),
+    ...(o.currentFps ? { currentFps: o.currentFps } : {}),
     frameCyclesMin: update + shade,
     frameCyclesMean: update + shade,
     frameCyclesMax: update + shade,
@@ -95,7 +98,15 @@ class PerfClient {
   readonly isConnected = true;
   readonly perfCalls: [string, number][] = [];
   private readonly subs = new Set<(r: PerfReportMessage) => void>();
+  private readonly fpsSubs = new Set<(s: FpsStateMessage) => void>();
   constructor(private readonly first: PerfReportMessage) {}
+  onFpsState(fn: (s: FpsStateMessage) => void): () => void {
+    this.fpsSubs.add(fn);
+    return () => this.fpsSubs.delete(fn);
+  }
+  pushFps(s: FpsStateMessage): void {
+    for (const fn of this.fpsSubs) fn(s);
+  }
   onPerfReport(fn: (r: PerfReportMessage) => void): () => void {
     this.subs.add(fn);
     return () => this.subs.delete(fn);
@@ -235,6 +246,26 @@ test("an overrunning effect turns the gauge and bar red, flags the drops and toa
   client.push(over);
   client.push(over);
   assert.equal(toastsSaying("Effect overruns the 30 fps budget"), before + 1);
+});
+
+test("under Auto an overrun above the floor is the autoscaler's cue, not a toast; a pin's overrun is (FUG-82)", async (t) => {
+  const client = new PerfClient(perfReport({ updateMs: 1, shadeMs: 20, showMs: 3, currentFps: 45 }));
+  const before45 = toastsSaying("Effect overruns the 45 fps budget");
+  await mountPanel(t, client);
+  assert.equal(toastsSaying("Effect overruns the 45 fps budget"), before45, "auto above the floor: no toast");
+  // The user pins 45 (the device echoes fps_state); now an overrun is worth a toast.
+  client.pushFps({
+    type: "fps_state",
+    targetFps: 45,
+    currentFps: 45,
+    minFps: 25,
+    maxFps: 80,
+    auto: false,
+    aborted: false,
+    noAbort: false,
+  });
+  client.push(perfReport({ updateMs: 1, shadeMs: 20, showMs: 3, currentFps: 45 }));
+  assert.equal(toastsSaying("Effect overruns the 45 fps budget"), before45 + 1);
 });
 
 test("headroom is measured against the device's own frame budget, not a fixed 33 ms [rr:PR-18]", async (t) => {
