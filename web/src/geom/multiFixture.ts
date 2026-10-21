@@ -1541,3 +1541,26 @@ export function nudgeRoomPose(
   const q = rotMatToQuat(R);
   return { translation: t, rotation: q[3] < 0 ? [-q[0], -q[1], -q[2], -q[3]] : q, scale: p.scale };
 }
+
+/** a ∘ b (apply b, then a): p ↦ a(b(p)). */
+export function composeRoomPose(a: RoomPose, b: RoomPose): RoomPose {
+  const Ra = quatToRotMat(a.rotation), Rb = quatToRotMat(b.rotation);
+  const R = mm(Ra, Rb);
+  const q = rotMatToQuat(R);
+  return {
+    translation: add(a.translation, scl(mv(Ra, b.translation), a.scale)),
+    rotation: q[3] < 0 ? [-q[0], -q[1], -q[2], -q[3]] : q,
+    scale: a.scale * b.scale,
+  };
+}
+
+/** a⁻¹. */
+export function invertRoomPose(a: RoomPose): RoomPose {
+  const Rt = mT(quatToRotMat(a.rotation));
+  const q = rotMatToQuat(Rt);
+  return {
+    translation: scl(mv(Rt, a.translation), -1 / a.scale),
+    rotation: q[3] < 0 ? [-q[0], -q[1], -q[2], -q[3]] : q,
+    scale: 1 / a.scale,
+  };
+}

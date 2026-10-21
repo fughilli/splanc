@@ -48,7 +48,11 @@ With several targets the result is one entry per player (`ok`, `result` or
    room", "the shelf")? Ask which fixture is where — `identify_player` blinks one
    so they can tell — then `set_room {room, players}`, and `set_fixture_pose` to
    place each fixture in the room (metres, +Y up; ask, don't guess). Rooms and
-   poses persist in the hub.
+   poses persist in the hub. Better than guessing: the Splanc app's **Room
+   localization** (Maps ▸ Localize room) films several mapped fixtures at once
+   and solves their poses; it writes them to each device (and through a bridge,
+   to the hub). Poses a device reports this way show up here automatically —
+   suggest it when the user has two or more mapped fixtures.
 3. Read `splanc://fixture/summary` (one player) or `splanc://room/<room>` (every
    fixture in the room's shared frame: per-fixture and combined bounding boxes).
    Read `splanc://player/<id>/fixture/map` / `topology` only when an effect needs

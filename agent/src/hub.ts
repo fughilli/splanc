@@ -703,8 +703,22 @@ export class Hub {
     return this.groupsOf(id)[0];
   }
 
+  /** A fixture's room pose: the hub's own record, else the one the device itself
+   * reports (welcome.pose — set by the app's room localization, or by another
+   * hub), so poses written from the phone show up in the agent's room model. */
   pose(id: string): Pose | undefined {
-    return this.config.poses[id];
+    const own = this.config.poses[id];
+    if (own) return own;
+    const w = this.sessions.get(id)?.client.welcome as { pose?: Partial<Pose> & { translation?: number[]; rotation?: number[] } } | null | undefined;
+    const p = w?.pose;
+    if (!p || !Array.isArray(p.translation) || p.translation.length !== 3) return undefined;
+    const rot = Array.isArray(p.rotation) && p.rotation.length === 4 ? p.rotation : [0, 0, 0, 1];
+    return {
+      room: p.room ?? "",
+      translation: [p.translation[0]!, p.translation[1]!, p.translation[2]!],
+      rotation: [rot[0]!, rot[1]!, rot[2]!, rot[3]!],
+      scale: p.scale && p.scale > 0 ? p.scale : 1,
+    };
   }
 
   setPose(id: string, pose: Pose): void {

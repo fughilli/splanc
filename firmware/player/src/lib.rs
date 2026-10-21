@@ -726,12 +726,20 @@ impl Player {
         // Group capture: a shared epoch in this player's clock aligns every
         // fixture's frames. A past epoch just phase-aligns the running pattern;
         // one far from now is a client clock bug.
+        // (no_std: no f64::round / abs — integer arithmetic after a range check.)
         let epoch_ms = match options.epoch_ms() {
             None => now_ms,
-            Some(e) if !e.is_finite() || (e - now_ms as f64).abs() > MAX_EPOCH_SKEW_MS => {
-                return error("bad_message", "epochMs too far from the player clock");
+            Some(e) => {
+                let d = e - now_ms as f64;
+                if !e.is_finite() || !(-MAX_EPOCH_SKEW_MS..=MAX_EPOCH_SKEW_MS).contains(&d) {
+                    return error("bad_message", "epochMs too far from the player clock");
+                }
+                if e >= 0.0 {
+                    (e + 0.5) as i64
+                } else {
+                    (e - 0.5) as i64
+                }
             }
-            Some(e) => e.round() as i64,
         };
         let spec = CodeSpec::derive(code_space, symbols, true);
         let active = ActiveCapture {

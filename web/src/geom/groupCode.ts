@@ -12,7 +12,16 @@
  */
 
 import type { DetectionRecord, OutputMap } from "@ledmapper/protocol";
-import type { CaptureView, FixtureModel } from "./multiFixture";
+import {
+  composeRoomPose,
+  invertRoomPose,
+  localizeFixtures,
+  type CaptureView,
+  type FixtureModel,
+  type LocalizeOptions,
+  type LocalizeResult,
+  type RoomPose,
+} from "./multiFixture";
 
 /** One fixture's slice of the shared code book. */
 export interface CodeSlot {
@@ -203,4 +212,89 @@ export function memberStartOptions(
  * clock offset (server = local + offset). */
 export function deviceEpochMs(localEpochMs: number, offsetMs: number): number {
   return Math.round(localEpochMs + offsetMs);
+}
+
+// ---------------------------------------------------------------------------
+// The capture session (transport-free; the screen drives it)
+// ---------------------------------------------------------------------------
+
+/** A stored pose (FixturePose wire shape) as a solver RoomPose (null: none/invalid). */
+export function flatToRoomPose(p: { translation?: number[]; rotation?: number[]; scale?: number } | null | undefined): RoomPose | null {
+  if (!p || !Array.isArray(p.translation) || p.translation.length !== 3) return null;
+  const r = Array.isArray(p.rotation) && p.rotation.length === 4 ? p.rotation : [0, 0, 0, 1];
+  const n = Math.hypot(...r) || 1;
+  return {
+    translation: [p.translation[0]!, p.translation[1]!, p.translation[2]!],
+    rotation: [r[0]! / n, r[1]! / n, r[2]! / n, r[3]! / n],
+    scale: p.scale && p.scale > 0 ? p.scale : 1,
+  };
+}
+
+export function roomPoseToFlat(room: string, p: RoomPose): { room: string; translation: number[]; rotation: number[]; scale: number } {
+  const r6 = (x: number) => Math.round(x * 1e6) / 1e6;
+  return { room, translation: p.translation.map(r6), rotation: p.rotation.map(r6), scale: r6(p.scale) };
+}
+
+/**
+ * Express solved poses (relative to the reference's levelled map frame) in the
+ * room frame to store. When the reference already has a stored pose, the room
+ * keeps its frame: everything is re-anchored on the reference's existing pose
+ * (so adding a fixture to a set-up room doesn't move the others). Otherwise the
+ * room frame IS the reference's levelled map frame.
+ */
+export function anchorPoses(
+  solved: readonly (RoomPose | null)[],
+  reference: number,
+  referenceStored: RoomPose | null,
+): (RoomPose | null)[] {
+  const ref = solved[reference];
+  if (!referenceStored || !ref) return [...solved];
+  // room ← refmap is referenceStored; solve ← refmap is ref. room ← solve = stored ∘ ref⁻¹.
+  const A = composeRoomPose(referenceStored, invertRoomPose(ref));
+  return solved.map((p) => (p ? composeRoomPose(A, p) : null));
+}
+
+export class GroupCaptureSession {
+  readonly layout: CodeLayout;
+  readonly models: FixtureModel[];
+  private readonly byT = new Map<number, CaptureView>();
+  private sorted: CaptureView[] | null = null;
+  last: LocalizeResult | null = null;
+
+  constructor(
+    readonly members: readonly { id: string; name: string; ledCount: number; map: OutputMap; imuUp?: [number, number, number] | null }[],
+    public reference: number,
+  ) {
+    this.layout = planCodeLayout(members.map((m) => ({ id: m.id, ledCount: m.ledCount })));
+    this.models = members.map((m) => fixtureModel(m.id, m.name, m.map, m.imuUp ?? null));
+  }
+
+  addRecords(records: readonly DetectionRecord[]): void {
+    for (const v of recordsToViews(records, this.layout)) {
+      const have = this.byT.get(v.t);
+      if (have) have.sightings.push(...v.sightings);
+      else this.byT.set(v.t, v);
+    }
+    this.sorted = null;
+  }
+
+  views(): CaptureView[] {
+    if (!this.sorted) this.sorted = [...this.byT.values()].sort((a, b) => a.t - b.t);
+    return this.sorted;
+  }
+
+  progress(): SeenProgress[] {
+    return seenProgress(this.views(), this.members.length);
+  }
+
+  /** Solve on what's been captured; warm-started from the previous solve. */
+  solve(options: LocalizeOptions = {}): LocalizeResult {
+    const seed = this.last?.fixtures.map((f) => f.pose);
+    this.last = localizeFixtures(this.models, this.views(), {
+      reference: this.reference,
+      ...(seed ? { seedPoses: seed } : {}),
+      ...options,
+    });
+    return this.last;
+  }
 }
