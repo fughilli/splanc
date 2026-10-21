@@ -302,7 +302,7 @@ rust_test(
     compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
     crate_root = "tests/driver_ab.rs",
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
     deps = [
         ":player_ffi_host",
         "//firmware/sensor",
