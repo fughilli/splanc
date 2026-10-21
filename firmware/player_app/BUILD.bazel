@@ -569,6 +569,7 @@ cc_binary(
         "serial_log.h",
         "tls_region.cpp",
         "tls_region.h",
+        "sta_mac.h",
         "wifi_creds.h",
         ":agent_bundle_h",
         ":build_info_h",
@@ -1011,6 +1012,21 @@ cc_test(
 
 # Persisted WiFi credentials on the netstack build (restore at boot, persist once leased,
 # restart-to-rescan backoff): the pure decisions netstack_transport.cpp drives.
+# The netstack's station MAC choice (factory efuse MAC; random per boot only opt-in).
+cc_library(
+    name = "sta_mac",
+    hdrs = ["sta_mac.h"],
+)
+
+cc_test(
+    name = "sta_mac_test",
+    srcs = ["sta_mac_test.cc"],
+    deps = [
+        ":sta_mac",
+        "@rules_requirements//cc:case",
+    ],
+)
+
 cc_library(
     name = "wifi_creds",
     hdrs = ["wifi_creds.h"],

@@ -165,6 +165,15 @@ could look right while the final didn't. Analysis and fix:
 - **The same button** is on the API key fields in AI settings and on the Splanc
   Bridge Flasher's Wi-Fi password (which had a text "Show" button).
 
+### Players keep one address
+
+Netstack players picked a random Wi-Fi MAC (02:0c:6a:…) every boot, so the router
+handed them a new IP after every reboot and the bridge kept dialling the old one.
+They now use the chip's factory MAC, so the lease (and any DHCP reservation) stays
+put, and a re-join first clears any stale association the AP still holds. mDNS
+re-announces on every new lease and after a DHCP renewal; the TXT record carries
+the device id. HITL gate: `//pi/hitl/harness:stable_identity`.
+
 ### Players stay on Wi-Fi across updates and power cuts
 
 Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
