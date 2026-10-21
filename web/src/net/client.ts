@@ -58,6 +58,8 @@ import {
   type PerfReportMessage,
   type SetTextureMessage,
   type TlsInfoMessage,
+  type FpsStateMessage,
+  flatFpsState,
   type UniformValueFlat,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
@@ -261,6 +263,11 @@ export class LedMapperClient {
   // set_perf/get_perf_report AND unsolicited while a stream is active, so it
   // can't be a single-flight waiter. The panel subscribes here for live frames.
   private perfSubs = new Set<(r: PerfReportMessage) => void>();
+
+  // fps_state subscribers (FUG-82): fps_state is both the set_fps reply AND an
+  // unsolicited push when the player parks an effect it can't run within budget,
+  // so — like perf_report — it fans out rather than going to a single waiter.
+  private fpsSubs = new Set<(s: FpsStateMessage) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -940,6 +947,22 @@ export class LedMapperClient {
     return () => this.perfSubs.delete(fn);
   }
 
+  /** Override the effect framerate (FUG-82; the "fps" feature). `targetFps` 0
+   * returns to autoscale, any other value pins that rate (snapped to the 5-fps
+   * ladder); `noAbort` holds the rung instead of parking an effect that can't
+   * keep it. Reply: the adopted fps_state. */
+  async setFps(targetFps: number, noAbort = false): Promise<FpsStateMessage> {
+    const r = await this.request({ type: "set_fps", targetFps, noAbort } as unknown as ClientMessage, "fps_state");
+    return flatFpsState(r as unknown as Partial<FpsStateMessage>);
+  }
+
+  /** Subscribe to fps_state frames: set_fps replies and the unsolicited
+   * `aborted` push. Returns an unsubscribe fn. */
+  onFpsState(fn: (s: FpsStateMessage) => void): () => void {
+    this.fpsSubs.add(fn);
+    return () => this.fpsSubs.delete(fn);
+  }
+
   /** Pull the player's stored map+topology back off the device — streamed in
    * chunks and decoded as a MappingBundle. Rejects if the player has nothing
    * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
@@ -1066,6 +1089,18 @@ export class LedMapperClient {
       if (pw) {
         this.waiters.delete("perf_report");
         pw.resolve(msg);
+      }
+      return;
+    }
+    if ((msg.type as string) === "fps_state") {
+      // Subscribers (live readout + the abort notice) first, then any pending
+      // set_fps waiter — one frame satisfies both (FUG-82).
+      const state = flatFpsState(msg as unknown as Partial<FpsStateMessage>);
+      for (const fn of this.fpsSubs) fn(state);
+      const fw = this.waiters.get("fps_state");
+      if (fw) {
+        this.waiters.delete("fps_state");
+        fw.resolve(msg);
       }
       return;
     }

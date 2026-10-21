@@ -473,6 +473,20 @@ message SetUniforms {
 // answers it. Reply: tls_info.
 message GetTlsInfo {}
 
+// Override the effect framerate target (FUG-82; firmware advertising the "fps"
+// feature). By default the player autoscales the effect FPS on a 5-fps ladder
+// (25..80) keeping at least 5% of every frame period free; `target_fps` pins an
+// exact rate (snapped to the ladder) and stops autoscaling, 0 returns to
+// autoscale. If the floor (or a pinned rate) can't be held the player parks the
+// effect and pushes fps_state{aborted=true}, unless `no_abort` is set: then it
+// just holds the rung (benchmark/profiling clients that must measure an effect
+// whatever it costs). Both settings are runtime-only and survive effect reloads.
+// Reply: fps_state.
+message SetFps {
+  uint32 target_fps = 1;
+  bool no_abort = 2;
+}
+
 // List the effects the device holds: one per FX deck (deck A's is the last
 // submit_effect, persisted and auto-resumed on boot; deck B's is runtime-only),
 // so the reply has at most two entries. Reply: effect_list.
@@ -669,6 +683,10 @@ message PerfReport {
   uint32 fxb_hash = 2;
   uint32 cpu_hz = 3;
   uint32 budget_cycles = 4;
+  // The framerate autoscaler's live target FPS (FUG-82; 0 = firmware without
+  // it, whose budget is a fixed 1/30 s). budget_cycles tracks it (cpu_hz /
+  // current_fps), so the headroom is against the rate the effect actually runs at.
+  uint32 current_fps = 5;
   uint32 frame_cycles_min = 10;
   uint32 frame_cycles_mean = 11;
   uint32 frame_cycles_max = 12;
@@ -735,6 +753,7 @@ message ClientMessage {
     GetKeypoint get_keypoint = 43;
     BlendKeypoints blend_keypoints = 44;
     GetTlsInfo get_tls_info = 45;
+    SetFps set_fps = 46;
   }
 }
 
@@ -1196,6 +1215,24 @@ message TlsInfo {
   bool persisted = 3;
 }
 
+// Framerate autoscaler state (FUG-82). Reply to set_fps, and pushed
+// unsolicited when the autoscaler parks an effect it can't run within budget.
+// `target_fps` is the pinned rate (0 = autoscaling); `current_fps` the rate the
+// effect runs at now; `min_fps`/`max_fps` the ladder bounds (25/80). `aborted`:
+// the effect (every deck that was rendering) was just parked because even the
+// floor/pinned rate couldn't keep 5% headroom — surface it to the user; the
+// effect stays loaded and set_effect resumes it.
+message FpsState {
+  uint32 target_fps = 1;
+  uint32 current_fps = 2;
+  uint32 min_fps = 3;
+  uint32 max_fps = 4;
+  bool auto = 5;
+  bool aborted = 6;
+  // Echo of SetFps.no_abort.
+  bool no_abort = 7;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -1222,5 +1259,6 @@ message ServerMessage {
     KeypointList keypoint_list = 22;
     Keypoint keypoint = 23;
     TlsInfo tls_info = 24;
+    FpsState fps_state = 25;
   }
 }

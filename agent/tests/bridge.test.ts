@@ -282,6 +282,35 @@ describe("effects", () => {
 
   });
 
+  test("measure_effect on autoscaling firmware (FUG-82): live fps, floor verdict, abort", async () => {
+    await session.deployEffect("a", EFFECT, true);
+    // 25 ms frames at a 35-fps target: overruns while it settles are the
+    // autoscaler's business, not "over budget" (the floor is 25 fps).
+    player.perf = { budgetCycles: Math.round(160_000_000 / 35), frameCyclesMean: 4_000_000, frameCyclesMax: 4_700_000, overruns: 4, currentFps: 35 };
+    const m = await session.measureEffect(1, { sleep: noSleep });
+    assert.equal(m["current_fps"], 35);
+    assert.match(String(m["verdict"]), /^within budget \(the player runs it at 35 fps\)/);
+    assert.equal(m["aborted"], undefined);
+    // Mean cost over 95% of the 25-fps period: it can't hold the floor.
+    player.perf = { budgetCycles: 160_000_000 / 25, frameCyclesMean: 6_200_000, frameCyclesMax: 6_500_000, overruns: 9, currentFps: 25 };
+    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /^over budget: it can't keep 5% headroom even at 25 fps/);
+    // The player parks it mid-measure (fps_state{aborted}): over budget + aborted.
+    player.abortOnNextPerf = { auto: true, targetFps: 0 };
+    const m3 = await session.measureEffect(1, { sleep: noSleep });
+    assert.equal(m3["aborted"], true);
+    assert.match(String(m3["verdict"]), /parked the effect — it can't hold even 25 fps/);
+    // A fresh deploy clears the parked state.
+    player.perf = { budgetCycles: Math.round(160_000_000 / 60), frameCyclesMean: 900_000, frameCyclesMax: 1_000_000, overruns: 0, currentFps: 60 };
+    await session.deployEffect("b", EFFECT, true);
+    const m4 = await session.measureEffect(1, { sleep: noSleep });
+    assert.equal(m4["aborted"], undefined);
+    assert.match(String(m4["verdict"]), /^within budget/);
+    // Pinned-rate abort names the pin.
+    player.abortOnNextPerf = { auto: false, targetFps: 70 };
+    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /the pinned 70 fps/);
+    player.perf = { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
+  });
+
   test("textures: list + stream + stop", async () => {
     await session.deployEffect("tex", EFFECT, true);
     player.effect!.textures = [{ index: 0, width: 8, height: 4, elem: 3 }];

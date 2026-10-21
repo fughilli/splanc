@@ -480,7 +480,9 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
             sock = await websockets.connect(
                 ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=hitl_ws.OPEN_TIMEOUT
             )
-            await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
+            welcome = await _rpc(
+                sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome"
+            )
             # Pin the JIT state for this run BEFORE any submit_effect (it takes
             # effect on the next load). Fire-and-forget; re-sent on every reconnect
             # (a heavy program under FULL perf can reboot the DUT mid-sweep) so the
@@ -492,6 +494,17 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
                 proto_wire.encode_client({"type": "set_jit", "enabled": bool(args.jit)})
             )
             _log(f"[jit] pinned {'ON' if args.jit else 'OFF'} for this run")
+            # FUG-82 framerate autoscaler: pin the golden's historical 30-fps cadence
+            # and HOLD it (no_abort) — the sweep's heavy programs (up to ~130 ms/frame)
+            # must be measured, not parked, and a fixed cadence keeps the numbers
+            # comparable with the golden and across firmware. Runtime-only, so it is
+            # re-sent on every reconnect like the JIT pin. Older firmware lacks the
+            # "fps" feature and runs a fixed ~30 fps anyway.
+            if "fps" in (welcome.get("features") or []):
+                st = await _rpc(
+                    sock, {"type": "set_fps", "target_fps": 30, "no_abort": True}, "fps_state"
+                )
+                _log(f"[fps] pinned {st.get('currentFps')} fps, no-abort hold")
             # Emit the chip (SoC) for this run symmetrically with the JIT pin so the
             # ingest can attribute the chip per measurement block, the same way it
             # attributes the build. Legacy logs without this line default to esp32c6.

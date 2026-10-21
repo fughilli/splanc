@@ -23,6 +23,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
+use ledmapper_fps::{FpsController, MAX_FPS, MIN_FPS};
 use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
@@ -167,6 +168,30 @@ impl DeckState {
 }
 
 static mut DECK_A: DeckState = DeckState::EMPTY;
+
+// -- FUG-82: framerate autoscaler ----------------------------------------------
+//
+// The render loop measures every effect frame's cost (update + shade of BOTH
+// decks + the crossfade blend, or the strip transmit if that is longer) and
+// feeds it to one `FpsController` (//firmware/fps), which picks the target FPS
+// on a 5-fps ladder (25..80) keeping 5% headroom, and asks for an abort when even
+// the floor (or an app-pinned rate) can't hold. The search restarts whenever what
+// renders changes (a load, clear or (de)activation on either deck; FPS_GEN), so
+// each program — or deck pairing — finds its own rung; the app's pin and no-abort
+// hold survive that. All under the player_mutex, like the perf ring.
+static mut FPS: FpsController = FpsController::new();
+/// Bumped by every change to what renders (fx_load / fx_clear / fx_set_active);
+/// the render side resets the controller when it differs from FPS_SEEN_GEN.
+static mut FPS_GEN: u32 = 0;
+static mut FPS_SEEN_GEN: u32 = 0;
+/// Set when the autoscaler just parked the effect; drained by loop()
+/// (lm_fps_take_abort_notify) to push fps_state{aborted=true}.
+static mut FPS_NOTIFY_ABORT: bool = false;
+
+/// What renders changed: restart the autoscaler's search on the next frame.
+unsafe fn fps_invalidate() {
+    FPS_GEN = FPS_GEN.wrapping_add(1);
+}
 
 // -- FUG-125: on-device JIT ---------------------------------------------------
 //
@@ -1313,6 +1338,8 @@ pub unsafe extern "C" fn lm_player_handle(
         // The per-device TLS identity's state + pin (set by the firmware through
         // lm_set_tls_info): answers over BLE too, before wss is reachable.
         Some(ARM_GET_TLS_INFO) => handle_get_tls_info(),
+        // Framerate autoscaler override (FUG-82): pin / unpin / hold the target.
+        Some(ARM_SET_FPS) => handle_set_fps(frame),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1777,6 +1804,7 @@ const ARM_LIST_KEYPOINTS: u32 = 42;
 const ARM_GET_KEYPOINT: u32 = 43;
 const ARM_BLEND_KEYPOINTS: u32 = 44;
 const ARM_GET_TLS_INFO: u32 = 45;
+const ARM_SET_FPS: u32 = 46;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1795,6 +1823,7 @@ pub const FEATURES: &[&str] =
         "crossfade",
         "keypoints",
         "tls_info",
+        "fps",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2434,6 +2463,37 @@ unsafe fn handle_get_effect_uniforms(frame: &[u8], out: *mut u8, out_cap: usize)
     write_arm(out, out_cap, 16, |w| write_effect_uniforms(w, d, p, &prog))
 }
 
+/// set_fps: pin the effect framerate to `target_fps` (snapped to the 5-fps
+/// ladder; 0 = autoscale) and set the no-abort hold. Reply: fps_state, so the
+/// app's control reflects what the player actually adopted.
+unsafe fn handle_set_fps(frame: &[u8]) -> pb::ServerMessage {
+    let (target, no_abort) = match client_arm(frame) {
+        Some(CArm::SetFps(m)) => (m.target_fps(), m.no_abort()),
+        _ => (0, false),
+    };
+    let c = &mut *addr_of_mut!(FPS);
+    // set_target snaps into [MIN_FPS, MAX_FPS]; cap first so a wild value can't
+    // overflow the snap arithmetic.
+    c.set_target(target.min(MAX_FPS));
+    c.set_abort_enabled(!no_abort);
+    build_fps_state(false)
+}
+
+/// An FpsState from the live autoscaler; `aborted` flags the unsolicited push
+/// sent when the effect was parked because its target couldn't be held.
+unsafe fn build_fps_state(aborted: bool) -> pb::ServerMessage {
+    let c = &*addr_of!(FPS);
+    let mut s = pb::FpsState::default();
+    s.r#target_fps = c.pinned_fps();
+    s.r#current_fps = c.current_fps();
+    s.r#min_fps = MIN_FPS;
+    s.r#max_fps = MAX_FPS;
+    s.r#auto = !c.is_pinned();
+    s.r#aborted = aborted;
+    s.r#no_abort = !c.abort_enabled();
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::FpsState(s)) }
+}
+
 /// get_tls_info: the per-device TLS identity as the firmware last published it.
 unsafe fn handle_get_tls_info() -> pb::ServerMessage {
     let mut t = pb::TlsInfo::default();
@@ -2854,9 +2914,9 @@ fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
 /// via a C++-provided value instead of the constant, in case a build downclocks.
 const PERF_CPU_HZ: u32 = 160_000_000;
 
-/// Target frame budget = 1/30 s. budget_cycles = 33 ms × cpu_hz (perf-
-/// monitoring.md); overruns are frames whose frame+show cycles exceed this.
-const PERF_BUDGET_CYCLES: u32 = (PERF_CPU_HZ / 1000) * 33;
+// The per-frame overrun budget is no longer a fixed 33 ms: with the framerate
+// autoscaler (FUG-82) it tracks the live target, budget_cycles = cpu_hz /
+// current_fps (lm_fps_budget_cycles, build_perf_report).
 
 /// set_perf: store the tier + push interval. Reply is an immediate PerfReport
 /// (current window), like get_perf_report — so opening the panel gets one
@@ -2916,11 +2976,14 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     let w = perf_rollup(&window_buf[..wn]);
 
     let id = core::str::from_utf8(&(*addr_of!(DECK_A.id))[..DECK_A.id_len]).unwrap_or("");
+    // FUG-82: headroom is against the rate the effect actually runs at.
+    let fps = (*addr_of!(FPS)).current_fps();
     let mut r = pb::PerfReport {
         // Identity.
         r#fxb_hash: DECK_A.hash,
         r#cpu_hz: PERF_CPU_HZ,
-        r#budget_cycles: PERF_BUDGET_CYCLES,
+        r#budget_cycles: PERF_CPU_HZ / fps.max(1),
+        r#current_fps: fps,
         // Rolling window.
         r#frame_cycles_min: w.frame_min,
         r#frame_cycles_mean: w.frame_mean,
@@ -3646,6 +3709,7 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     }
     FX_ROOM_READY = false;
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+    fps_invalidate();
     Ok(())
 }
 
@@ -3665,6 +3729,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 /// Clear deck `d` (no program, not active). Clearing deck B hands the aux region
 /// back (a video stream can claim it) and deck A the whole arena.
 unsafe fn fx_clear(d: usize) {
+    fps_invalidate();
     if d == DECK_A_IDX {
         DECK_A.len = 0;
         DECK_A.active = false;
@@ -3773,6 +3838,9 @@ pub unsafe extern "C" fn lm_fx_loaded() -> bool {
 unsafe fn fx_set_active(d: usize, active: bool) {
     if let Some(p) = deck(d) {
         if (*p).loaded() {
+            if (*p).active != active {
+                fps_invalidate();
+            }
             (*p).active = active;
         }
     }
@@ -4432,4 +4500,81 @@ pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
         Ok(_) => 0,
         Err(why) => 1 + refuse_code(why) as i32,
     }
+}
+
+// -- framerate autoscaler render-side accessors (FUG-82) ---------------------
+
+/// Account for one rendered effect frame whose measured cost was `cost_us`
+/// (update + shade of every rendering deck incl. the crossfade blend, or the
+/// strip transmit if longer — they overlap). Returns how many ms the render task
+/// sleeps before the next frame (period − work, never less than the controller's
+/// minimum yield). If the effect can't hold its floor / pinned rate this parks
+/// every rendering deck (they stay loaded; set_effect resumes) and latches a
+/// notify-the-app request for loop(). Restarts the search first when what renders
+/// changed since the last frame.
+///
+/// # Safety
+/// Render task, under the player_mutex (single-threaded player state).
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32) -> u32 {
+    let c = &mut *addr_of_mut!(FPS);
+    if FPS_SEEN_GEN != FPS_GEN {
+        FPS_SEEN_GEN = FPS_GEN;
+        c.reset();
+    }
+    let d = c.on_frame(cost_us);
+    if d.abort {
+        c.take_abort();
+        for k in 0..N_DECKS {
+            fx_set_active(k, false);
+        }
+        // Parking is ours, not a new search: don't let it reset the rung the
+        // fps_state{aborted} reports.
+        FPS_SEEN_GEN = FPS_GEN;
+        FPS_NOTIFY_ABORT = true;
+    }
+    d.delay_ms
+}
+
+/// The autoscaler's current target FPS (the rate the effect runs at now).
+///
+/// # Safety
+/// Under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_current_fps() -> u32 {
+    (*addr_of!(FPS)).current_fps()
+}
+
+/// Per-frame overrun budget in CPU cycles for the current target (cpu_hz /
+/// current_fps); the render loop flags a perf-ring overrun against it.
+///
+/// # Safety
+/// Under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_budget_cycles() -> u32 {
+    PERF_CPU_HZ / (*addr_of!(FPS)).current_fps().max(1)
+}
+
+/// Read + clear the abort-notify latch; loop() pushes fps_state{aborted=true}.
+///
+/// # Safety
+/// Under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_take_abort_notify() -> bool {
+    let n = FPS_NOTIFY_ABORT;
+    FPS_NOTIFY_ABORT = false;
+    n
+}
+
+/// Encode an FpsState frame (`aborted` as given) into `out`: the unsolicited
+/// abort push. Returns the encoded length, -1 bad args, -2 out_cap too small.
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes; under the player_mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize, aborted: bool) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    encode_reply(&build_fps_state(aborted), out, out_cap)
 }

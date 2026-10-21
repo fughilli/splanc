@@ -5,10 +5,11 @@
  * unmount it sends set_perf(OFF) so Tier-1 instrumentation isn't paid for when
  * nobody's looking (§"Real-time UI").
  *
- * Contents: a scrolling frame-time-vs-budget line graph (red above the 33 ms
- * line), a stacked per-phase breakdown (update/shade/show), a headroom gauge
- * (green/amber/red), overrun/dropped/samples-dropped badges, and a FULL-mode
- * detail readout (ops-per-LED, stack high-water, heap free/min).
+ * Contents: a scrolling frame-time-vs-budget line graph (red above the budget
+ * line — 1 / the autoscaler's live target FPS, FUG-82), a stacked per-phase
+ * breakdown (update/shade/show), a headroom gauge (green/amber/red), the
+ * Framerate control (Auto or a pinned rate), overrun/dropped/samples-dropped
+ * badges, and a FULL-mode detail readout (ops-per-LED, stack high-water, heap).
  *
  * When NO device is connected it falls back to the offline cost-model estimate
  * for the selected map's LED count, badged "predicted" with the error band — the
@@ -19,7 +20,7 @@
 import { Button, Card, EmptyState, toast } from "../kit";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
-import type { PerfMode, PerfReportMessage } from "../../net/proto";
+import type { FpsStateMessage, PerfMode, PerfReportMessage } from "../../net/proto";
 import { mapStore } from "../../store/mapStore";
 import { costTableStore } from "../../store/costTableStore";
 import {
@@ -83,16 +84,76 @@ export function PerfPanelScreen(router: Router): Screen {
   let lastReport: PerfReportMessage | null = null;
 
   let unsub: (() => void) | null = null;
+  let fpsUnsub: (() => void) | null = null;
   let pollTimer: number | null = null;
   let overrunToasted = false;
+  let curFps = 30;
+  let autoscaled = false;
+  let pinnedFps = 0; // the device's adopted pin (0 = Auto), from fps_state
 
   const client = appState.client;
   const connected = client !== null && client.isConnected;
+
+  // FUG-82 framerate control: pin the effect's target FPS (or Auto) and show the
+  // rate the autoscaler is running it at. Only meaningful with a device.
+  const fpsRow = document.createElement("div");
+  fpsRow.className = "perf-fps";
+  const fpsCap = document.createElement("span");
+  fpsCap.className = "perf-fps-label";
+  fpsCap.textContent = "Framerate";
+  const fpsSelect = document.createElement("select");
+  fpsSelect.className = "perf-fps-select";
+  // Firmware without the autoscaler ("fps" feature) runs a fixed 30 fps.
+  fpsSelect.disabled = !connected || !(client?.welcome?.features ?? []).includes("fps");
+  {
+    const auto = document.createElement("option");
+    auto.value = "0";
+    auto.textContent = "Auto";
+    fpsSelect.append(auto);
+    for (let f = 25; f <= 80; f += 5) {
+      const o = document.createElement("option");
+      o.value = String(f);
+      o.textContent = `${f} fps`;
+      fpsSelect.append(o);
+    }
+  }
+  const fpsNow = document.createElement("span");
+  fpsNow.className = "perf-fps-now";
+  fpsNow.textContent = "—";
+  fpsRow.append(fpsCap, fpsSelect, fpsNow);
+
+  function showFps(currentFps: number, auto: boolean): void {
+    if (currentFps > 0) curFps = currentFps;
+    fpsNow.textContent = curFps > 0 ? (auto ? `auto · ${curFps} fps` : `${curFps} fps`) : "—";
+  }
+
+  // Mirror the device's adopted state (the app-wide handler in app/state.ts
+  // toasts an abort; the pin stays until the user changes it here).
+  function applyFpsState(s: FpsStateMessage): void {
+    pinnedFps = s.auto ? 0 : s.targetFps;
+    fpsSelect.value = String(pinnedFps);
+    showFps(s.currentFps, s.auto);
+  }
+
+  fpsSelect.addEventListener("change", () => {
+    if (client === null) return;
+    const target = Number(fpsSelect.value) | 0;
+    void client
+      .setFps(target)
+      .then(applyFpsState)
+      .catch(() => toast("Couldn't set the framerate target", { error: true }));
+  });
 
   function pushReport(r: PerfReportMessage): void {
     lastReport = r;
     if (r.cpuHz > 0) cpuHz = r.cpuHz;
     if (r.budgetCycles > 0) budgetMs = (r.budgetCycles / cpuHz) * 1000;
+    // The autoscaler's live target (FUG-82); reflect it in the framerate readout
+    // (leave the select on the user's pin / Auto choice).
+    if ((r.currentFps ?? 0) > 0) {
+      autoscaled = true;
+      showFps(r.currentFps ?? 0, pinnedFps === 0);
+    }
     for (const t of r.ticks) {
       points.push({
         frameMs: cyc(t.frameCycles + t.showCycles),
@@ -159,9 +220,13 @@ export function PerfPanelScreen(router: Router): Screen {
       s.textContent = "metrics thinned under load";
       badges.append(s);
     }
-    if (headroomMs < 0 && !overrunToasted) {
+    // Under Auto an overrun above the floor is the autoscaler's cue to step down
+    // (FUG-82), not a problem; warn only for a pinned rate or at the floor.
+    // (Firmware without the autoscaler reports no currentFps: a fixed 30 fps.)
+    const autoAboveFloor = autoscaled && pinnedFps === 0 && curFps > 25;
+    if (headroomMs < 0 && !overrunToasted && !autoAboveFloor) {
       overrunToasted = true;
-      toast("Effect overruns the 30 fps budget", { error: true });
+      toast(`Effect overruns the ${curFps} fps budget`, { error: true });
     }
 
     // FULL-mode detail readout
@@ -332,6 +397,8 @@ export function PerfPanelScreen(router: Router): Screen {
     const { table } = await costTableStore.resolveTable().catch(() => ({ table: null }));
     if (table?.budget) budgetModel = table.budget;
     unsub = client.onPerfReport((r) => pushReport(r));
+    // Reflect autoscaler state (live target + abort notification, FUG-82).
+    fpsUnsub = client.onFpsState(applyFpsState);
     try {
       const mode: PerfMode = "FULL";
       const first = await client.setPerf(mode, 250);
@@ -381,6 +448,7 @@ export function PerfPanelScreen(router: Router): Screen {
     Card(canvas),
     Card(gauge),
     Card(budgetBar.el),
+    Card(fpsRow),
     Card(badges),
     Card(detail),
     actions,
@@ -436,6 +504,8 @@ export function PerfPanelScreen(router: Router): Screen {
     onUnmount: () => {
       unsub?.();
       unsub = null;
+      fpsUnsub?.();
+      fpsUnsub = null;
       if (pollTimer !== null) {
         clearInterval(pollTimer);
         pollTimer = null;

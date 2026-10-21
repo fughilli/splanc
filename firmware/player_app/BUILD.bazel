@@ -112,6 +112,7 @@ rust_static_library(
     }),
     deps = [
         "//firmware/arena",
+        "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/keypoint",
@@ -138,6 +139,7 @@ rust_library(
     rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
     deps = [
         "//firmware/arena",
+        "//firmware/fps",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/keypoint",

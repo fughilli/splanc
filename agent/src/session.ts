@@ -26,6 +26,7 @@ import type { ClientMessage } from "@ledmapper/protocol";
 import {
   encodeClient,
   type EffectUniformsMessage,
+  type FpsStateMessage,
   type HardwareConfigStateMessage,
   type MappingBundle,
   type PerfReportMessage,
@@ -44,6 +45,9 @@ import {
   type ManifestUniform,
   type UniformInput,
 } from "./uniforms";
+
+/** The framerate autoscaler's floor (FUG-82; firmware/fps MIN_FPS). */
+const FPS_FLOOR = 25;
 
 /** Message types the bridge must never send (spec "Safety and exclusions"). */
 export const FORBIDDEN_TYPES = new Set([
@@ -72,6 +76,7 @@ export type Feature =
   | "decks"
   | "crossfade"
   | "keypoints"
+  | "fps"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -196,6 +201,13 @@ export class DeviceSession {
   toolchain: Toolchain | undefined;
   /** The last clock sync against this player. */
   clock: ClockSync | null = null;
+  /** The framerate autoscaler's last abort (FUG-82): the player parked the
+   * running effect because it couldn't hold even the floor / a pinned rate.
+   * Cleared when this session activates an effect. */
+  private parked: (FpsStateMessage & { at: number }) | null = null;
+  /** The player's last-reported effect framerate (FUG-82 autoscaler; 0 = unknown).
+   * Ramps never stream uniforms faster than the player renders. */
+  private playerFps = 0;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
@@ -228,6 +240,20 @@ export class DeviceSession {
       // after close() (the stdio transport is what holds the CLI open).
       schedule: (fn, ms) => void setTimeout(fn, ms).unref(),
     });
+    this.client.onFpsState((st) => {
+      if (st.aborted) this.parked = { ...st, at: performance.now() };
+      if (st.currentFps > 0) this.playerFps = st.currentFps;
+    });
+    this.client.onPerfReport((r) => {
+      if ((r.currentFps ?? 0) > 0) this.playerFps = r.currentFps!;
+    });
+  }
+
+  /** Whether rollback() has an earlier effect to restore (else it turns the
+   * effect off — which would also discard an effect this bridge didn't deploy). */
+  get canRestorePrevious(): boolean {
+    const p = this.previous;
+    return p !== null && (Boolean(p.onDevice && this.decksUsable()) || Boolean(p.fxb));
   }
 
   /** Run `fn` after every earlier request on this session has settled. */
@@ -556,7 +582,9 @@ export class DeviceSession {
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
     const final = resolve(a.uniforms, targets);
     const byName = new Map(a.uniforms.map((u) => [u.name, u]));
-    const hz = Math.max(1, Math.min(opts.hz ?? this.streamHz, 60));
+    // Never faster than the player renders (its autoscaled rate, once a perf
+    // report or fps_state has told us), nor 60 Hz.
+    const hz = Math.max(1, Math.min(opts.hz ?? this.streamHz, 60, this.playerFps || 60));
     const steps = Math.max(1, Math.round(seconds * hz));
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const names = Object.keys(targets);
@@ -607,6 +635,7 @@ export class DeviceSession {
     const wasLive = activate ? this.liveDeck() : 0;
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
+      this.parked = null;
       const outgoing = this.current ?? (wasLive === 1 ? await this.deviceHeld(1) : null);
       // Deck A was just overwritten; an outgoing effect on deck B is still there.
       this.previous = outgoing ? { ...outgoing, onDevice: outgoing.deck === 1 } : null;
@@ -623,6 +652,7 @@ export class DeviceSession {
    * it is parked (then the crossfade snaps to it). */
   async setEffect(effectId: string): Promise<Record<string, unknown>> {
     const id = effectId === "off" ? "" : effectId;
+    this.parked = null;
     if (id === "") {
       if (this.current) {
         this.previous = { ...this.current, onDevice: false };
@@ -657,6 +687,7 @@ export class DeviceSession {
    * none were set). */
   async rollback(seconds = 0): Promise<Record<string, unknown>> {
     const prev = this.previous;
+    this.parked = null;
     if (prev?.onDevice && this.decksUsable()) {
       await this.run(() => this.client.setEffect(prev.effectId, prev.deck));
       await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease" });
@@ -933,13 +964,20 @@ export class DeviceSession {
     return { from: +from.toFixed(3), to: target, seconds, steps: steps + 1 };
   }
 
-  /** BASIC perf for `seconds`: frame cost vs budget, overruns, heap. */
+  /** BASIC perf for `seconds`: frame cost vs budget, overruns, heap.
+   *
+   * On firmware with the framerate autoscaler (the "fps" feature, FUG-82) the
+   * budget is the live target (cpu_hz / current_fps) and an overrun above the
+   * 25-fps floor is just the autoscaler stepping down, so the verdict is "over
+   * budget" only when the player PARKED the effect (fps_state{aborted}) or its
+   * mean frame cost can't keep 5% headroom even at the floor. */
   async measureEffect(
     seconds: number,
     opts: { sleep?: (ms: number) => Promise<void> } = {},
   ): Promise<Record<string, unknown>> {
     if (!(seconds > 0 && seconds <= 60)) throw new ToolError("seconds must be within (0, 60]");
     progress(`measuring for ${seconds} s…`);
+    const t0 = performance.now();
     const reports: PerfReportMessage[] = [];
     const unsub = this.client.onPerfReport((r) => reports.push(r));
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -952,17 +990,47 @@ export class DeviceSession {
       await this.run(() => this.client.setPerf("OFF", 0)).catch(() => undefined);
     }
     const live = reports.filter((r) => r.frameCyclesMax > 0 || r.frameCyclesMean > 0);
-    if (live.length === 0) return { reports: 0, note: "no frames were measured (is an effect active?)" };
+    // The abort counts if it landed during this measurement, or before it with
+    // nothing rendering since (an effect that is running again isn't parked).
+    const parked = this.parked && (this.parked.at >= t0 || live.length === 0) ? this.parked : null;
+    const parkedNote = parked
+      ? {
+          aborted: true,
+          verdict:
+            `over budget: the player parked the effect — it can't hold ${parked.auto ? `even ${parked.minFps || 25} fps` : `the pinned ${parked.targetFps} fps`} ` +
+            "with 5% headroom. Roll back (rollback_effect) and simplify it.",
+        }
+      : {};
+    if (live.length === 0) {
+      return { reports: 0, note: "no frames were measured (is an effect active?)", ...parkedNote };
+    }
     const last = live[live.length - 1]!;
     const meanCycles = live.reduce((s, r) => s + r.frameCyclesMean, 0) / live.length;
     const maxCycles = Math.max(...live.map((r) => r.frameCyclesMax));
     const overruns = live.reduce((s, r) => s + r.overruns, 0);
     const budget = last.budgetCycles;
+    const currentFps = last.currentFps ?? 0;
     const toMs = (c: number) => (last.cpuHz > 0 ? +((c / last.cpuHz) * 1000).toFixed(2) : null);
+    // Autoscaling firmware: the hard limit is the 25-fps floor with 5% headroom.
+    const floorCycles = currentFps > 0 && last.cpuHz > 0 ? (last.cpuHz / FPS_FLOOR) * 0.95 : 0;
+    let verdict: string;
+    if (currentFps > 0) {
+      verdict =
+        meanCycles > floorCycles
+          ? `over budget: it can't keep 5% headroom even at ${FPS_FLOOR} fps — the player will park it. Roll back and simplify.`
+          : `within budget (the player runs it at ${currentFps} fps)`;
+    } else {
+      verdict =
+        overruns > 0 || (budget > 0 && maxCycles > budget)
+          ? "over budget: roll back (set_effect / rollback) and simplify"
+          : "within budget";
+    }
     return {
       effect_id: last.effectId,
       reports: live.length,
       budget_cycles: budget,
+      // The autoscaler's live target (FUG-82); absent on fixed-30-fps firmware.
+      ...(currentFps > 0 ? { current_fps: currentFps, fps_per_window: live.map((r) => r.currentFps ?? 0) } : {}),
       frame_cycles_mean: Math.round(meanCycles),
       frame_cycles_max: maxCycles,
       // The same numbers in ms, and per window (one per ~1 s report), so stability
@@ -974,10 +1042,8 @@ export class DeviceSession {
       overruns,
       heap_free: last.heapFree,
       heap_min_free: Math.min(...live.map((r) => r.heapMinFree)),
-      verdict:
-        overruns > 0 || (budget > 0 && maxCycles > budget)
-          ? "over budget: roll back (set_effect / rollback) and simplify"
-          : "within budget",
+      verdict,
+      ...parkedNote,
     };
   }
 

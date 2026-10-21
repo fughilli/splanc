@@ -217,7 +217,8 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit â
 - **No LAN auth.** The player has none and the bridge doesn't invent one; anyone
   on the LAN can drive it. Documented in the skill too.
 - **Stream rate.** Ramps stream uncommitted at `--stream-hz` (default 20, capped
-  at 60). TODO: cap by the measured frame rate once `perf` exposes it per player.
+  at 60, and at the player's own effect framerate once a perf report / fps_state
+  has reported it â€” FUG-82 autoscaling firmware, 25..80 fps).
 
 ## Feature detection (pending the device-side PR)
 
