@@ -74,6 +74,7 @@ import { recenterToCentroid } from "../../geom/mapTransform";
 import { concatObservations, fuseMaps } from "../../geom/fuseMaps";
 import { liveUnion } from "../../geom/liveUnion";
 import { appState } from "../app/state";
+import { ImuCalSession } from "../../capture/imuCalSession";
 import {
   applyProfile,
   buildProfile,
@@ -220,6 +221,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // named library map instead of creating a new one. The prior map + its
   // observations are loaded at mount.
   const supplementId = routeQuery?.get("supplement") ?? null;
+  // "Calibrate IMU" (sensor-core.md §7.3): re-localise against this map with the
+  // code playing and collect still poses — no solve, nothing saved to the map.
+  const calibrateId = supplementId === null ? (routeQuery?.get("calibrate") ?? null) : null;
+  let calSession: ImuCalSession | null = null;
   let priorMap: OutputMap | null = null;
   // The stored map's capture profile, when this run re-captures a mapped
   // fixture (supplement / IMU re-localisation): reused instead of re-asking or
@@ -369,7 +374,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   progBar.append(progFill);
   progWrap.append(progBar, progText);
 
+  // Calibrate-IMU panel (only in ?calibrate= mode).
+  const calPanel = document.createElement("div");
+  calPanel.className = "capture-review";
+  calPanel.style.display = "none";
+  const calText = document.createElement("div");
+  calText.className = "capture-review-text metric";
+  const calBtns = document.createElement("div");
+  calBtns.className = "capture-review-btns";
+  const calCaptureBtn = Button({ label: "Capture pose", icon: "camera", onClick: () => calCapture() });
+  const calSaveBtn = Button({ label: "Save calibration", icon: "save", onClick: () => void calSave() });
+  calCaptureBtn.disabled = true;
+  calSaveBtn.disabled = true;
+  calBtns.append(calCaptureBtn, calSaveBtn);
+  calPanel.append(calText, calBtns);
+
   overlay.append(
+    calPanel,
     labelsCanvas,
     projCanvas,
     topBar,
@@ -598,6 +619,73 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     regChip.classList.add(`capture-regchip--${reg.tone}`);
   }
 
+  // -- Calibrate IMU (sensor-core.md §7.3) ------------------------------------------
+  let calTimer: ReturnType<typeof setInterval> | null = null;
+  let calLast: ReturnType<ImuCalSession["readiness"]> | null = null;
+  let calPrior: number[] = [];
+
+  /** Poll the fixture IMU + the PnP lock ~5x/s and refresh the guidance. */
+  function startCalibrationUi(c: NonNullable<ReturnType<typeof client>>): void {
+    calPanel.style.display = "";
+    calTimer = setInterval(() => {
+      void c
+        .getSensors()
+        .then((s) => {
+          if (calSession === null) return;
+          calPrior = s.mountQuat;
+          if (s.status !== "SENSOR_STATUS_RUNNING") {
+            calText.textContent = "This fixture's motion sensor isn't running.";
+            calCaptureBtn.disabled = true;
+            return;
+          }
+          const pose = projOverlay.lockedPose;
+          calLast = calSession.readiness(s, pose ? [...pose.q] : null);
+          const n = calSession.poses.length;
+          const sol = n >= 2 ? calSession.solve(s.mountQuat.length === 4 ? (s.mountQuat as [number, number, number, number]) : undefined) : null;
+          const lines = [
+            `Poses: ${n}${n < 2 ? " (need 2; 3 is better)" : n < 3 ? " (one more is better)" : ""}`,
+            n > 0 ? `Turned ${Math.round(calLast.separationDeg)}° from the nearest pose (want ≥45°, ideally ~90°)` : "",
+            calLast.blockers.length ? calLast.blockers[0]! : "Ready — capture this pose",
+            sol
+              ? `Fit: ${sol.quality}, residual ${sol.residualDeg.toFixed(1)}°, heading ±${sol.predictedYawErrDeg.toFixed(1)}°`
+              : "",
+          ];
+          calText.textContent = lines.filter(Boolean).join(" · ");
+          calCaptureBtn.disabled = !calLast.canCapture;
+          calSaveBtn.disabled = sol === null || !sol.yawResolved;
+        })
+        .catch(() => {});
+    }, 200);
+  }
+
+  function calCapture(): void {
+    if (calSession === null || calLast === null || !calLast.canCapture) return;
+    calSession.capture(calLast);
+    toast(`Pose ${calSession.poses.length} captured — now turn the fixture another way`);
+  }
+
+  async function calSave(): Promise<void> {
+    const c = client();
+    if (c === null || calSession === null || calibrateId === null) return;
+    const sol = calSession.solve(calPrior.length === 4 ? (calPrior as [number, number, number, number]) : undefined);
+    if (sol === null || !sol.yawResolved) return;
+    if (sol.quality !== "good" && !confirm(`The fit is ${sol.quality} (residual ${sol.residualDeg.toFixed(1)}°). Save anyway?`)) return;
+    await c.setSensorMount(sol.q, {
+      residualDeg: sol.residualDeg,
+      poses: calSession.poses.length,
+      yawResolved: true,
+    });
+    await mapStore.setImuCalibration(calibrateId, {
+      q: sol.q,
+      poses: calSession.poses,
+      yawResolved: true,
+      residualDeg: sol.residualDeg,
+      atMs: Date.now(),
+    });
+    toast("Motion sensor calibrated to this map");
+    void stopCapture();
+  }
+
   /** After a first map is stored on the device: record its capture profile
    * there (and in the library), and take pose 1 of the IMU calibration for free
    * — the map is gravity-levelled and the fixture hasn't moved — so a fixture
@@ -637,6 +725,33 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // Supplemental capture: load the prior map + its observations up front, so
     // the projection overlay can register against it from the first frame and
     // the strip length is inherited (FUG-112).
+    if (calibrateId !== null) {
+      const rec = await mapStore.get(calibrateId);
+      if (!rec) {
+        toast("That map isn't in the library.", { error: true });
+        router.navigate("/maps");
+        return;
+      }
+      priorMap = rec.map;
+      projOverlay.supplement = true;
+      applyLiveSolve(null); // the stored map alone: registration target
+      guideEl.textContent = "Calibrate IMU — point the camera at the fixture.";
+      // Pose 1 from the mapping, if it was recorded (else the first capture here).
+      calSession = new ImuCalSession(rec.imuCalibration?.poses ?? []);
+      try {
+        const stored = profileForMap(await c.getCaptureProfile(), rec.map.mapId);
+        profileRun = applyProfile(
+          { diffuse, strideSpacing, anchorDensity, threshold: detectorOpts.threshold, downscale: detectorOpts.downscale },
+          stored,
+        );
+        if (profileRun.applied !== null) {
+          ({ diffuse, strideSpacing, anchorDensity } = profileRun.knobs);
+          detectorOpts = { ...detectorOpts, threshold: profileRun.knobs.threshold, downscale: profileRun.knobs.downscale };
+        }
+      } catch {
+        profileRun = null;
+      }
+    }
     if (supplementId !== null) {
       const rec = await mapStore.get(supplementId);
       const obs = await mapStore.getObservations(supplementId);
@@ -825,6 +940,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       await c.syncClock(4);
       const started = await c.startMapping(ledCount, config);
       mappingStarted = true;
+      if (calibrateId !== null) startCalibrationUi(c);
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       profileDraft = {
@@ -1224,6 +1340,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           }
           const samples = rec.flush();
           localImu.push(...samples);
+          calSession?.pushPhone(samples);
           if (c.hostSolverBenchMs !== null) c.sendImuBatch(samples);
         }, 1000);
       }
@@ -1493,6 +1610,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       perf = null;
     }
     resetLiveFeedback();
+
+    // Calibrate IMU: nothing to solve or save to the map; end the code playback
+    // and go back to the map.
+    if (calibrateId !== null) {
+      if (calTimer !== null) clearInterval(calTimer);
+      calTimer = null;
+      calPanel.style.display = "none";
+      await c.stopMappingNoSolve().catch(() => undefined);
+      stopBtn.disabled = false;
+      router.navigate(`/map/${calibrateId}`);
+      return;
+    }
 
     await solverReady.catch(() => false);
     if (c.hostSolverBenchMs === null && !solverAgent.available) {

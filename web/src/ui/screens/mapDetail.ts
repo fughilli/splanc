@@ -315,6 +315,18 @@ export function MapDetailScreen(
       grid.append(actionTile("alert", "Bundle", () => void saveCaptureBundle()));
     }
     actions.append(grid, MeshPanel(mapId, rec.mesh ?? null, mesh => view?.setMesh(mesh)));
+    // Calibrate IMU (sensor-core.md §7.3): only offered when the connected
+    // fixture reports a running motion sensor.
+    const imuLabel = rec.imuCalibration?.yawResolved ? "Recalibrate IMU" : "Calibrate IMU";
+    void appState.client
+      ?.getSensors()
+      .then((s) => {
+        if (s.status !== "SENSOR_STATUS_RUNNING") return;
+        grid.append(
+          actionTile("camera", imuLabel, () => router.navigate(`/capture?calibrate=${encodeURIComponent(mapId)}`)),
+        );
+      })
+      .catch(() => {});
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
     // re-extraction, matching §4.3 "skip re-extraction unless the user opts to".
