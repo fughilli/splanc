@@ -97,12 +97,13 @@ class Live:
     async def __aenter__(self):
         import websockets
 
+        kw = {"ssl": _insecure()} if self.insecure else {}
         self.ws = await websockets.connect(
             self.url,
             subprotocols=["splanc-live.v1", f"bearer.{self.token}"],
-            ssl=_insecure() if self.insecure else None,
             open_timeout=15,
             max_size=2**22,
+            **kw,
         )
         await self.send(
             {"t": "hello", "v": 1, "client_id": "hitl-live-bridge-01", "name": "HITL live"}
@@ -204,12 +205,12 @@ async def drive(args, relay: str, token: str) -> None:
         _log(f"RESULT deploy via bridge ok: {r['results'][0]['result']}")
 
         await c.send(
-            {"t": "c", "to": ["all"], "u": {"tint": "#00ff00", "gain": 1.0}, "commit": False}
+            {"t": "c", "to": ["all"], "u": {"tint": [0.0, 1.0, 0.0], "gain": 1.0}, "commit": False}
         )
         await asyncio.sleep(1.0)
         e = await c.q("effect", to=["all"])
         cur = {u["name"]: u.get("current") for u in e["results"][0]["result"]["uniforms"]}
-        _log(f"RESULT device uniforms after tint=#00ff00: {cur}")
+        _log(f"RESULT device uniforms after tint=green: {cur}")
         assert cur.get("tint") and cur["tint"][1] > 0.99 and cur["tint"][0] < 0.01, cur
         rgb = wire_rgb(args.server, args.unit, args.capture)
         if rgb is not None:
@@ -320,7 +321,12 @@ def run(args) -> int:
             req = urllib.request.Request(
                 f"{args.relay}/pair",
                 data=json.dumps({"pairing_code": code, "label": "HITL live"}).encode(),
-                headers={"content-type": "application/json", "accept": "application/json"},
+                headers={
+                    "content-type": "application/json",
+                    "accept": "application/json",
+                    # Cloudflare refuses urllib's default User-Agent (403).
+                    "user-agent": "splanc-hitl-live-bridge/1",
+                },
             )
             token = json.load(urllib.request.urlopen(req, timeout=20))["token"]
             asyncio.run(drive(args, args.relay, token))

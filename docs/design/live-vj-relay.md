@@ -252,9 +252,23 @@ one dev container in the US, fake players on loopback), 20 samples each, 2026-10
 | Via the relay | 48 / 78 ms | 24 / 43 ms |
 | Direct (LAN endpoint) | 0.4 / 1.5 ms | 1.0 / 1.9 ms |
 
+On hardware (`//pi/hitl/harness:live_bridge`, rig-2 DUT c6-fa0324, netstack firmware
+1.8.2-6, throwaway bridge in the dev container reaching the DUT through the rig's ssh tunnel
+over the tailnet, so the bridge → C6 hop is longer than a real LAN's), 30 samples each:
+
+| Path | App ⇄ bridge ping p50 / p95 | App → bridge → C6 → back (probe) p50 | Bridge ⇄ C6 RTT p50 / p95 | Est. slider → device |
+| --- | --- | --- | --- | --- |
+| Via the relay | 31 / 54 ms | 62 ms | 23 / 32 ms | ~27 ms (+ ≤ 17 ms to the next frame) |
+| Direct (LAN endpoint) | 0.1 / 0.3 ms | 20 ms | 18 / 22 ms | ~9 ms (+ ≤ 17 ms) |
+
+Also on hardware: deploy through the bridge (compiled by it, 373 B bytecode), a colour
+uniform set from the live client read back off the device and off the LED wire (logic
+analyzer: green), a 300-move slider burst at 100 Hz → 92 frames at the client's 33 ms tick,
+ending on the final value, brightness, and `align` (time base applied, skew bound 7.7 ms).
+
 So the relay adds ≈ ½ its round trip (~24 ms one way here) on top of the LAN path; the
 bridge's own overhead (parse, coalesce, resolve the uniform, queue, encode) is ~1 ms.
-Add the real bridge → C6 hop and the player's frame (see the HITL row, when run) for
+Add the real bridge → C6 hop and the player's frame (the hardware rows) for
 slider → LED. Both targets hold with margin: ~10–35 ms direct, ~35–80 ms via the relay.
 
 Coalescing (same test): a 200-move burst over ~100 ms became ≤ 10 app frames and as many

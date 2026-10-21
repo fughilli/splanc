@@ -488,8 +488,10 @@ export function BridgeLiveScreen(_router: Router): Screen {
         inp.type = "color";
         const cur = u.current ?? u.default;
         inp.value = `#${cur.slice(0, 3).map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255).toString(16).padStart(2, "0")).join("")}`;
-        inp.addEventListener("input", () => client?.control(sel(), { deck, u: { [u.name]: inp.value } }));
-        inp.addEventListener("change", () => (client?.control(sel(), { deck, u: { [u.name]: inp.value }, commit: true }), client?.flush()));
+        // Colour uniforms take [r, g, b] in 0..1 (the bridge refuses hex strings).
+        const rgb = (): number[] => [1, 3, 5].map((i) => parseInt(inp.value.slice(i, i + 2), 16) / 255);
+        inp.addEventListener("input", () => client?.control(sel(), { deck, u: { [u.name]: rgb() } }));
+        inp.addEventListener("change", () => (client?.control(sel(), { deck, u: { [u.name]: rgb() }, commit: true }), client?.flush()));
         const row = document.createElement("label");
         row.className = "bridge-row";
         row.append(inp, document.createTextNode(` ${u.name}`));
