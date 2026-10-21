@@ -229,5 +229,21 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // Sensor core (docs/design/sensor-core.md): the firmware encodes SensorState
+    // ZERO-COPY (ffi.rs handle_get_sensors), so its profile drops the vectors and
+    // strings from the by-value ServerMessage; the host profile keeps them (xyz /
+    // a quaternion fit the default max_len 4).
+    if firmware {
+        for field in [
+            "part", "accel", "gyro", "quat", "gravity", "linear_accel", "gyro_bias",
+            "calibration_result",
+        ] {
+            g.configure(&format!(".ledmapper.v1.SensorState.{field}"), Config::new().skip(true));
+        }
+    } else {
+        g.configure(".ledmapper.v1.SensorState.part", Config::new().max_bytes(32));
+        g.configure(".ledmapper.v1.SensorState.calibration_result", Config::new().max_bytes(16));
+    }
+
     g.compile_fdset_file(&args[1], &args[2])
 }

@@ -464,9 +464,11 @@ pub mod cost {
     /// now (size -A of the netstack ELF). IRAM and DRAM share the C6's HP SRAM,
     /// so code moved out of IRAM since (#266: cold SDK code to flash, -17,398 B)
     /// became heap, and code pinned back in (#285: the per-LED fx shade entry,
-    /// +2,192 B) came out of it.
+    /// +2,192 B) came out of it. Sensor core (docs/design/sensor-core.md): +68 B,
+    /// FreeRTOS's xQueueCreateCountingSemaphoreStatic linked in by the I2C
+    /// driver (its ISR handler is moved back to flash, ld/esp32c6_iram_to_flash.txt).
     pub const IRAM_TEXT_MEASURED: usize = 114_910;
-    pub const IRAM_TEXT: usize = 99_704;
+    pub const IRAM_TEXT: usize = 99_772;
 }
 
 /// One mode-dependent component live in a state.

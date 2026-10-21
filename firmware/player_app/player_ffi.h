@@ -376,6 +376,27 @@ bool lm_fps_take_abort_notify(void);
 // Encode an FpsState frame (aborted as given) into out. Returns the length,
 // -1 bad args, -2 out_cap too small.
 int32_t lm_fps_build_state(uint8_t *out, size_t out_cap, bool aborted);
+// -- Sensor core (sensor_ffi.rs, docs/design/sensor-core.md) -------------------
+// I2C callbacks the Rust driver calls: 0 = done, 1 = address NACK, 2 = other error.
+typedef struct {
+  void *ctx;
+  int (*write_read)(void *ctx, uint8_t addr, const uint8_t *wr, size_t wn, uint8_t *rd,
+                    size_t rn);
+  int (*write)(void *ctx, uint8_t addr, const uint8_t *wr, size_t wn);
+  uint32_t (*cycles)(void);  // free-running CPU cycle counter (optional)
+} LmI2cOps;
+// Probe 0x68/0x69 through `ops` (must stay valid). Returns 1 absent, 2 unknown
+// device, 3 starting (start the sensor task), 5 fault. `cal` = NVS record or NULL.
+uint8_t lm_sensor_begin(const LmI2cOps *ops, int32_t sda, int32_t scl, int32_t int_gpio,
+                        uint64_t now_us, const uint8_t *cal, size_t cal_len);
+// Report the sensor core as disabled (config off / pin conflict).
+void lm_sensor_set_disabled(int32_t sda, int32_t scl, int32_t int_gpio);
+// Sensor task step: returns ms to sleep.
+uint32_t lm_sensor_poll(uint64_t now_us);
+// A changed calibration record to persist (length), 0 if none, -1 cap too small.
+int32_t lm_sensor_take_cal_record(uint8_t *out, size_t cap);
+// Status for the periodic log: u[6], f[5] (see sensor_ffi.rs).
+void lm_sensor_status(uint32_t *u, float *f);
 
 #ifdef __cplusplus
 }  // extern "C"

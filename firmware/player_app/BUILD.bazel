@@ -98,7 +98,12 @@ exports_files(["board_caps.textproto"])
 # via :player_ffi_host.
 rust_static_library(
     name = "player_ffi",
-    srcs = ["ffi.rs"],
+    srcs = [
+        "ffi.rs",
+        "sensor_ffi.rs",
+        "uniform_pool.rs",
+    ],
+    crate_root = "ffi.rs",
     crate_name = "ledmapper_player_ffi",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
@@ -119,6 +124,7 @@ rust_static_library(
         "//firmware/mdns",
         "//firmware/osc",
         "//firmware/player:player_fw",
+        "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
         "//oss/pbview",
@@ -132,7 +138,12 @@ rust_static_library(
 # profiles differ only in repeated-field capacities).
 rust_library(
     name = "player_ffi_host",
-    srcs = ["ffi.rs"],
+    srcs = [
+        "ffi.rs",
+        "sensor_ffi.rs",
+        "uniform_pool.rs",
+    ],
+    crate_root = "ffi.rs",
     crate_name = "ledmapper_player_ffi",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
@@ -146,6 +157,7 @@ rust_library(
         "//firmware/mdns",
         "//firmware/osc",
         "//firmware/player",
+        "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
         "//oss/pbview",
@@ -251,6 +263,26 @@ rr_rust_test(
     rule = rust_test,
     deps = [
         ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Sensor core through the C ABI over a fake MPU-6050 (shared with
+# //firmware/sensor): get_sensors / calibrate_sensors and the uniform pool.
+rust_test(
+    name = "sensor_pool_test",
+    srcs = [
+        "tests/sensor_pool.rs",
+        "//firmware/sensor:tests/fake_mpu.rs",
+    ],
+    crate_root = "tests/sensor_pool.rs",
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    deps = [
+        ":player_ffi_host",
+        "//firmware/sensor",
+        "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],
@@ -508,6 +540,8 @@ cc_binary(
         "netstack_transport.cpp",
         "netstack_transport.h",
         "player_ffi.h",
+        "sensor_bus.cpp",
+        "sensor_bus.h",
         "serial_log.h",
         "tls_region.cpp",
         "tls_region.h",
@@ -527,6 +561,8 @@ cc_binary(
     local_defines = [
         "LM_MAX_LEDS=%d" % MAX_LEDS,
         "LM_NETSTACK",
+        # Sensor core (sensor_bus.cpp): I2C IMU probe at boot + sensor task.
+        "LM_SENSORS",
     ] + select({
         # Selects the C3 controller HCI ABI (un-prefixed libbt.a symbols) in
         # improv_ble_netstack.cpp; the C6 keeps the ROM r_-prefixed transport.
@@ -986,6 +1022,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "sensor_bus.cpp",
         "serial_log.h",
         "stack_bound.json",
         ":esp32c6_netstack_elf",

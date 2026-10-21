@@ -42,6 +42,14 @@ use ledmapper_store::{
 };
 use micropb::PbRead;
 
+// Sensor core glue: lm_sensor_* C ABI, the seqlocked snapshot, get_sensors /
+// calibrate_sensors (docs/design/sensor-core.md).
+mod sensor_ffi;
+pub use sensor_ffi::*;
+// Named live values (sensor fusion outputs, driver exports) bound to effect
+// uniforms by name (docs/design/sensor-core.md).
+mod uniform_pool;
+
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
 fn client_arm(frame: &[u8]) -> Option<CArm<'_>> {
@@ -1340,6 +1348,10 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_GET_TLS_INFO) => handle_get_tls_info(),
         // Framerate autoscaler override (FUG-82): pin / unpin / hold the target.
         Some(ARM_SET_FPS) => handle_set_fps(frame),
+        // The motion sensor's snapshot (sensor_ffi.rs), zero-copy into `out`;
+        // calibrate posts to the sensor task's mailbox and replies the same.
+        Some(ARM_GET_SENSORS) => return sensor_ffi::handle_get_sensors(out, out_cap),
+        Some(ARM_CALIBRATE_SENSORS) => return sensor_ffi::handle_calibrate_sensors(frame, out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1805,6 +1817,8 @@ const ARM_GET_KEYPOINT: u32 = 43;
 const ARM_BLEND_KEYPOINTS: u32 = 44;
 const ARM_GET_TLS_INFO: u32 = 45;
 const ARM_SET_FPS: u32 = 46;
+const ARM_GET_SENSORS: u32 = 48;
+const ARM_CALIBRATE_SENSORS: u32 = 49;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -1824,6 +1838,7 @@ pub const FEATURES: &[&str] =
         "keypoints",
         "tls_info",
         "fps",
+        "sensors",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -3667,6 +3682,8 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).uses_uv = prog.uses_uv();
     (*p).uses_room = prog.uses_room();
     (*p).morph.reset(prog.manifest);
+    // Bind uniforms named like a pool entry (imu_quat, ...) to the live pool.
+    uniform_pool::bind(d, prog.manifest);
     (*p).shade_led = None;
     *addr_of_mut!(FX_SHADE_FRAME) = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
@@ -3980,6 +3997,7 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     if uses_room && (!FX_ROOM_READY || FX_ROOM_GEN != player().fixture_pose_gen()) {
         fx_rebuild_room();
     }
+    let imu = sensor_ffi::fx_imu();
     let f = FxFrame {
         time: time_s,
         dt: dt_s,
@@ -3993,6 +4011,12 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         room_max: FX_ROOM_MAX,
         room_min_fix: FX_ROOM_MIN_FIX,
         room_max_fix: FX_ROOM_MAX_FIX,
+        // imu.accel (g) / imu.gyro (rad/s) from the sensor core's snapshot
+        // (zeros with no sensor — no float work then), plus Q16.16 mirrors.
+        imu_accel: imu.0,
+        imu_gyro: imu.1,
+        imu_accel_fix: imu.2,
+        imu_gyro_fix: imu.3,
         ..Default::default()
     };
     // Capture the frame context so the per-LED shade() sweep sees the same
@@ -4018,6 +4042,9 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_INSTR_UPDATE = 0;
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
+    // Live pool values (sensor fusion, driver exports) into their bound uniforms
+    // before update(), so update() and every shade() see the same sample.
+    uniform_pool::apply_frame();
     if let Some(oc) = fx_update_deck(addr_of_mut!(DECK_A), &f, dt_s) {
         FX_LAST_UPDATE_OUTCOME = oc as u32;
     }

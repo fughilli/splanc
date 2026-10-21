@@ -116,6 +116,23 @@ effect:
   kept with `needs_description`; fill those in with `update_effect`.
 - `delete_effect` only when the user asks; the library is theirs.
 
+## Motion sensor (players with an IMU; feature `sensors`)
+
+- `read_sensors` says whether the player has a motion sensor (`status`:
+  `running` / `absent` / ...) and, when running, its orientation (`euler_deg`,
+  `tilt_deg`), the `gravity_down` vector, `shake` and tap/shake counters.
+  `samples: 20, interval_ms: 100` gives a 2 s series (e.g. "shake it now").
+- Effects get the same values as uniforms bound BY NAME: declare
+  `uniform vec3 imu_gravity = 0.0, -1.0, 0.0;` (unit down, map frame, +Y up),
+  `imu_quat` (vec4 w,x,y,z), `imu_euler` (vec3 roll,pitch,yaw rad),
+  `imu_lin_accel` / `imu_accel` (vec3, g), `imu_gyro` (vec3 rad/s),
+  `imu_shake` (0..1), `imu_tap` / `imu_shake_count` (counters: react when the
+  value changes, in `update()`). Without a sensor they are plain knobs, so the
+  effect previews and can be driven by hand. See `examples/imu_tilt.fx`.
+- `calibrate_sensors level` when the user says "this is upright"; `gyro_bias`
+  after the fixture has sat still a few seconds. Both need it held still: ask
+  first.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;

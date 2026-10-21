@@ -527,6 +527,44 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ name, deck: d, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.deleteKeypoint(name, d)))),
   );
 
+  // -- motion sensor (docs/design/sensor-core.md) ------------------------------------------
+  server.registerTool(
+    "read_sensors",
+    {
+      description:
+        "Read the player's on-board motion sensor (an I2C IMU such as an MPU-6050, fused on the device): " +
+        "status (absent / running / ...), orientation (euler degrees + quaternion), tilt from vertical, the " +
+        "gravity-down vector, linear acceleration, shake level and tap/shake counters. With samples > 1, a short " +
+        "time series. Effects read the same values through uniforms named imu_quat (vec4 w,x,y,z), imu_euler " +
+        "(vec3 roll,pitch,yaw rad), imu_gravity (vec3 unit down), imu_lin_accel / imu_accel (vec3, g), imu_gyro " +
+        "(vec3 rad/s), imu_shake (0..1), imu_tap / imu_shake_count (counters).",
+      inputSchema: {
+        samples: z.number().int().min(1).max(50).optional().describe("readings to take (default 1)"),
+        interval_ms: z.number().int().min(20).max(2000).optional().describe("spacing between readings (default 100)"),
+        players,
+      },
+    },
+    ({ samples, interval_ms, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, async (s): Promise<unknown> =>
+            (samples ?? 1) > 1 ? await s.readSensorSeries(samples ?? 1, interval_ms ?? 100) : await s.readSensors(),
+          ),
+        ),
+      ),
+  );
+  server.registerTool(
+    "calibrate_sensors",
+    {
+      description:
+        "Calibrate the player's motion sensor; persisted on the device. gyro_bias: store the zero-rate bias " +
+        "learned while still. level: declare the fixture's CURRENT pose upright (zero tilt). reset: forget the " +
+        "calibration. gyro_bias and level need the fixture held still — ask the user to set it down first.",
+      inputSchema: { action: z.enum(["gyro_bias", "level", "reset"]), players },
+    },
+    ({ action, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.calibrateSensors(action)))),
+  );
+
   // -- effect authoring -------------------------------------------------------------------
   server.registerTool(
     "compile_effect",

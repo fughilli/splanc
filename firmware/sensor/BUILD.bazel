@@ -1,0 +1,35 @@
+"""Sensor core (docs/design/sensor-core.md): I2C bus seam, MPU-6050-family
+driver, attitude fusion (Mahony; the indoor_localization ESKF slots in behind
+fusion::AttitudeFilter), tap/shake gestures, the calibration record.
+
+no_std, zero-dependency — linked into the player app (//firmware/player_app),
+which owns the hub static, the ESP-IDF i2c_master bus and the sensor task.
+Host-tested against a register-file fake MPU in :sensor_test.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "sensor",
+    srcs = glob(["src/*.rs"]),
+    crate_name = "ledmapper_sensor",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+)
+
+rust_test(
+    name = "sensor_test",
+    srcs = [
+        "tests/fake_mpu.rs",
+        "tests/sensor.rs",
+    ],
+    crate_root = "tests/sensor.rs",
+    edition = "2021",
+    deps = [":sensor"],
+)
+
+# The register-file fake MPU, shared with the player_app integration test
+# (//firmware/player_app:sensor_pool_test drives the C ABI through it).
+exports_files(["tests/fake_mpu.rs"])

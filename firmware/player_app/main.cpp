@@ -66,6 +66,9 @@
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
+#if defined(LM_SENSORS)
+#include "firmware/player_app/sensor_bus.h"  // sensor core: I2C IMU probe + task
+#endif
 #include "firmware/player_app/ws2812.h"
 #include "firmware/player_app/ws_codec.h"
 
@@ -2520,6 +2523,21 @@ void setup() {
   // configured color order. Runs synchronously — the transmit task is idle until
   // render_task starts, so a GPIO reconfigure here can't race a push.
   hardware_config_begin();
+#if defined(LM_SENSORS)
+  // Sensor core (docs/design/sensor-core.md): probe the I2C IMU pins (compile-time
+  // defaults, NVS-overridable) and start the sensor task only if one answers.
+  // Absent sensor = ~1 ms of probing, no residual heap. After the hardware config
+  // so a pin shared with an LED output disables the sensor instead.
+  {
+    uint8_t cal[96];
+    size_t cal_len = 0;
+    if (prefs.isKey("sens_cal")) cal_len = prefs.getBytes("sens_cal", cal, sizeof cal);
+    sensor_begin(prefs.getInt("sens_en", LM_SENSOR_ENABLED) != 0,
+                 prefs.getInt("sens_sda", LM_SENSOR_SDA), prefs.getInt("sens_scl", LM_SENSOR_SCL),
+                 prefs.getInt("sens_int", LM_SENSOR_INT), g_hw_gpio0, g_hw_gpio1,
+                 cal_len ? cal : nullptr, cal_len);
+  }
+#endif
 
   // BLE Improv onboarding. On the netstack build this MUST run before netstack_setup()
   // (the BT controller has to init before we hijack the MAC so our radio config wins).
@@ -2769,6 +2787,9 @@ void loop() {
                  (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks,
                  (unsigned)LM_MODE.state, (unsigned)LM_MODE.accepted, (unsigned)LM_MODE.refused,
                  (unsigned)LM_MODE.unmodeled);
+#endif
+#if defined(LM_SENSORS)
+    sensor_log_status();
 #endif
   }
   delay(1);
