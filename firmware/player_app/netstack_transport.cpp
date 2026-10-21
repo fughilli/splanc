@@ -32,6 +32,8 @@
 #include "device_cert.h"        // this device's own TLS key + cert (first-boot generated)
 #include "dhcp_reply.h"
 #include "icmp_echo.h"
+#include "wifi_creds.h"     // persisted WiFi credentials: restore / persist / rescan decisions
+#include "esp_system.h"     // esp_restart / esp_reset_reason (restart-to-rescan)
 
 extern "C" {
 void ns_mac_rx_install();
@@ -126,12 +128,17 @@ constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 uint8_t g_bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 uint8_t g_chan = 6;
 uint8_t OUR_MAC[6];
-// Active WiFi credentials for the WPA2 PMK, committed at runtime from BLE Improv OR the
-// wired serial "PROV" command — never baked into the image. We only START associating
-// once these are "committed" — see g_creds_ready.
+// Active WiFi credentials for the WPA2 PMK, committed at runtime from BLE Improv, the
+// wired serial "PROV" command, or — at boot — the NVS store (netstack_restore_credentials,
+// written by main.cpp once a provision has leased: see wifi_creds.h). Never baked into the
+// image. We only START associating once these are "committed" — see g_creds_ready.
 char g_ssid[33];
 char g_pass[65];
-bool g_creds_ready = false;  // creds committed (from BLE Improv or wired serial provisioning)
+bool g_creds_ready = false;  // creds committed (BLE Improv, wired PROV, or restored at boot)
+bool g_restore_pending = false;  // restored at boot; the PMK derivation starts on the first loop
+bool g_using_stored = false;     // the active creds are the stored ones (not a fresh provision)
+bool g_scan_matched = false;     // the boot scan saw the active SSID (scan_latch_ap)
+lm_wifi::Persist g_persist;      // whether/when the active creds still need writing to NVS
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
@@ -246,10 +253,12 @@ bool scan_latch_ap() {
       mac_own_bssid();  // re-program the hardware BSSID register for the scanned AP
       Serial.printf("[t=%lu] [scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", (unsigned long)millis(), g_ssid,
                     g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
+      g_scan_matched = true;
       return true;
     }
   }
   Serial.printf("[scan] no scan match for \"%s\" — keeping baked bssid ch=%u\n", g_ssid, g_chan);
+  g_scan_matched = false;
   return false;
 }
 
@@ -948,6 +957,7 @@ void handle_l3(const uint8_t *pt, int pl) {
       } else if (mt == 5) {
         bool first = !g_leased;
         g_leased = true;
+        g_persist.on_lease((uint32_t)millis());  // proves freshly provisioned creds (wifi_creds.h)
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
         // Drift fork: the TCP listener binds our IP exactly ONCE (g_tcp_started one-shot at
@@ -1366,6 +1376,35 @@ bool netstack_ws_open() { return netstack_ws_is_open(); }
 // or the wired console) and a DHCP lease held.
 bool netstack_creds_ready() { return g_creds_ready; }
 bool netstack_leased() { return g_leased; }
+
+// Restart-to-rescan attempts in a row (wifi_creds.h rescan_due), kept across esp_restart in
+// RTC no-init memory; any other reset (power-on, watchdog, flash) starts the count over.
+static RTC_NOINIT_ATTR uint32_t s_rescan_magic;
+static RTC_NOINIT_ATTR uint32_t s_rescan_attempt;
+static constexpr uint32_t kRescanMagic = 0x52534e31;  // "RSN1"
+static uint32_t rescan_attempt() {
+  if (s_rescan_magic != kRescanMagic || esp_reset_reason() != ESP_RST_SW) {
+    s_rescan_magic = kRescanMagic;
+    s_rescan_attempt = 0;
+  }
+  return s_rescan_attempt;
+}
+
+void netstack_restore_credentials(const char *ssid, const char *pass) {
+  if (!lm_wifi::valid(ssid, pass)) {
+    Serial.printf("[wifi] no stored credentials — waiting for Improv / wired PROV\n");
+    return;
+  }
+  strncpy(g_ssid, ssid, sizeof g_ssid - 1);
+  g_ssid[sizeof g_ssid - 1] = 0;
+  strncpy(g_pass, pass, sizeof g_pass - 1);
+  g_pass[sizeof g_pass - 1] = 0;
+  g_creds_ready = true;  // join exactly as a wired PROV would (the loop latches the scan)
+  g_restore_pending = true;
+  g_using_stored = true;
+  g_persist.on_restored();
+  Serial.printf("[wifi] restored stored credentials (ssid=%s) -> joining\n", g_ssid);
+}
 // External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
 uint32_t netstack_rekey_count() { return g_rekey_serviced; }
@@ -1598,6 +1637,10 @@ void netstack_loop() {
   // SHA1s is ~14ms — under a BLE connection interval — so improv_ble_poll above keeps the link
   // alive between chunks instead of the loop freezing ~1.8s in one synchronous PBKDF2 (which was
   // the real cause of the rig-2 provisioning flake: a mid-join loop stall dropped the BLE link).
+  if (g_restore_pending) {  // boot-restored creds: start the PMK like a PROV does
+    g_restore_pending = false;
+    ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
+  }
   if (g_creds_ready && !ns_pmk_ready()) ns_pmk_step(64);
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
@@ -1776,15 +1819,35 @@ void netstack_loop() {
         if (plen > 5 && strncmp(pbuf, "PROV ", 5) == 0 &&
             (sp = strchr(pbuf + 5, ' ')) != nullptr) {
           *sp = '\0';
-          strncpy(g_ssid, pbuf + 5, sizeof g_ssid - 1);
-          strncpy(g_pass, sp + 1, sizeof g_pass - 1);
-          g_creds_ready = true;
-          g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
-          st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
-          ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
-                       strlen(g_pass));
-          Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
-                        (unsigned long)millis(), g_ssid);
+          const char *nssid = pbuf + 5, *npass = sp + 1;
+          // The network we're already on / already joining (a board that rejoined from
+          // its stored creds, then got PROV'd again by a harness) is a no-op: tearing the
+          // link down would only re-run auth/4-way/DHCP. The re-received line carries the
+          // IP so a provisioner still learns where we are without a fresh lease line.
+          lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased, g_ssid, g_pass,
+                                                        nssid, npass);
+          if (pa == lm_wifi::Provision::kKeepJoined) {
+            Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) — already joined, link kept; "
+                          "PROV re-received at IP %u.%u.%u.%u\n", (unsigned long)millis(),
+                          nssid, g_offer_ip[0], g_offer_ip[1], g_offer_ip[2], g_offer_ip[3]);
+          } else if (pa == lm_wifi::Provision::kKeepJoining) {
+            Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) — already joining that "
+                          "network, join continues\n", (unsigned long)millis(), nssid);
+          } else {
+            strncpy(g_ssid, nssid, sizeof g_ssid - 1);
+            strncpy(g_pass, npass, sizeof g_pass - 1);
+            g_ssid[sizeof g_ssid - 1] = 0;
+            g_pass[sizeof g_pass - 1] = 0;
+            g_creds_ready = true;
+            g_using_stored = false;
+            g_persist.on_committed();  // written to NVS once this network leases
+            g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
+            st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
+            ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
+                         strlen(g_pass));
+            Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
+                          (unsigned long)millis(), g_ssid);
+          }
         }
         plen = 0;
       } else if (plen < sizeof(pbuf) - 1) {
@@ -1814,6 +1877,39 @@ void netstack_loop() {
   if (g_creds_ready && !g_ap_latched) {
     scan_latch_ap();
     g_ap_latched = true;
+  }
+  // Persist freshly provisioned credentials once they have leased (never on receipt, so a
+  // mistyped passphrase is never stored) and the provisioning central has left — or after
+  // a grace window — so the NVS write can't land inside the BLE redirect exchange. This is
+  // what lets a reboot or a firmware update (no erase) rejoin on its own (wifi_creds.h).
+  if (g_persist.due(improv_ble_central_connected(), (uint32_t)millis())) {
+    bool ok = lm_store_wifi_credentials(g_ssid, g_pass);
+    g_persist.on_written(ok, (uint32_t)millis());
+    if (ok)
+      Serial.printf("[t=%lu] [wifi] credentials stored (ssid=%s)\n", (unsigned long)millis(), g_ssid);
+    else
+      Serial.printf("[t=%lu] [wifi] storing credentials FAILED (ssid=%s) — will retry\n",
+                    (unsigned long)millis(), g_ssid);
+  }
+  // Stored network missing from the boot scan (e.g. the router still booting after a power
+  // cut): the vendor scan only runs before the MAC hijack, so rescan by restarting, on a
+  // capped backoff, never while a central is connected (it may be re-provisioning us).
+  if (PLAYER_MODE && g_ap_latched) {
+    static const uint32_t attempt = rescan_attempt();
+    static bool attempt_cleared = false;
+    if (g_scan_matched && !attempt_cleared) {
+      attempt_cleared = true;
+      s_rescan_attempt = 0;
+    }
+    if (lm_wifi::rescan_due(g_using_stored, g_scan_matched, g_leased,
+                            improv_ble_central_connected(), (uint32_t)millis(), attempt)) {
+      Serial.printf("[t=%lu] [wifi] stored network \"%s\" not in the boot scan — restarting to "
+                    "rescan (attempt %u/%u)\n", (unsigned long)millis(), g_ssid,
+                    (unsigned)(attempt + 1), (unsigned)lm_wifi::kRescanMaxAttempts);
+      s_rescan_attempt = attempt + 1;
+      delay(100);  // let the log line drain
+      esp_restart();
+    }
   }
   // Kick the state machine: (re)send auth periodically until associated (once creds committed AND
   // the PMK is derived). Gating on ns_pmk_ready() sequences the ~1.8s PBKDF2 (pure CPU, radio
@@ -1861,8 +1957,17 @@ void netstack_loop() {
       // associated to, tearing the link down (st=AUTH) drops any in-flight client — e.g. a map
       // upload mid-WSS — and re-runs auth/4-way/TLS for nothing. Treat a duplicate SendWifi for
       // the current SSID as idempotent: keep the link and just re-answer the redirect.
-      bool same_network = (strcmp(s, g_ssid) == 0 && strcmp(p, g_pass) == 0);
-      if (same_network && (st == DONE || g_leased)) {
+      lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased || st == DONE,
+                                                    g_ssid, g_pass, s, p);
+      if (pa == lm_wifi::Provision::kKeepJoining) {
+        // Already joining this network (from the stored creds): let that join finish and
+        // answer the redirect on its lease, instead of restarting it.
+        ble_creds_pending = true;
+        redirect_first_ms = 0;
+        improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) — already joining that "
+                      "network, PROVISIONING\n", (unsigned long)millis(), s);
+      } else if (pa == lm_wifi::Provision::kKeepJoined) {
         redirect_first_ms = 0;  // re-arm the resend window so the central gets another redirect
         ble_creds_pending = true;
         Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — already associated, "
@@ -1870,7 +1975,11 @@ void netstack_loop() {
       } else {
         strncpy(g_ssid, s, sizeof g_ssid - 1);
         strncpy(g_pass, p, sizeof g_pass - 1);
+        g_ssid[sizeof g_ssid - 1] = 0;
+        g_pass[sizeof g_pass - 1] = 0;
         g_creds_ready = true;  // trigger association with the provisioner's creds
+        g_using_stored = false;
+        g_persist.on_committed();  // written to NVS once this network leases
         // The provisioned SSID may differ from an AP we already latched — most often the
         // baked-cred fallback fired first (its 45s grace elapsed while the central was still
         // connecting) and latched hitl-rig-3. g_ap_latched is a one-shot, so without this the

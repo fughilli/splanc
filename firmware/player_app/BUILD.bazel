@@ -569,6 +569,7 @@ cc_binary(
         "serial_log.h",
         "tls_region.cpp",
         "tls_region.h",
+        "wifi_creds.h",
         ":agent_bundle_h",
         ":build_info_h",
     ] + WS2812_SRCS,
@@ -1004,6 +1005,22 @@ cc_test(
     srcs = ["dhcp_reply_test.cc"],
     deps = [
         ":dhcp_reply",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+# Persisted WiFi credentials on the netstack build (restore at boot, persist once leased,
+# restart-to-rescan backoff): the pure decisions netstack_transport.cpp drives.
+cc_library(
+    name = "wifi_creds",
+    hdrs = ["wifi_creds.h"],
+)
+
+cc_test(
+    name = "wifi_creds_test",
+    srcs = ["wifi_creds_test.cc"],
+    deps = [
+        ":wifi_creds",
         "@rules_requirements//cc:case",
     ],
 )

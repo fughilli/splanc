@@ -66,7 +66,10 @@ tty, ssid, pw, window, lease_timeout = sys.argv[1], sys.argv[2], sys.argv[3], fl
 subprocess.call(["stty", "-F", tty, "raw", "-echo", "115200"])
 fd = os.open(tty, os.O_RDWR | os.O_NOCTTY)
 lines, ip, done = [], [None], [False]
-lease = re.compile(r"(?:DHCP LEASE ACQUIRED.*?IP\s+|TCP LISTEN on\s+)(\d{1,3}(?:\.\d{1,3}){3})")
+lease = re.compile(
+    r"(?:DHCP LEASE ACQUIRED.*?IP\s+|TCP LISTEN on\s+|PROV re-received.*?IP\s+)"
+    r"(\d{1,3}(?:\.\d{1,3}){3})"
+)
 t_start = time.time()
 def reader():
     buf = b""
