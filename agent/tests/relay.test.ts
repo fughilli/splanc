@@ -689,7 +689,7 @@ describe("tunnel + revocation", () => {
     }
   });
 
-  test("a streamed reply cut off by the bridge dropping ends with a JSON-RPC error for the call", async () => {
+  test("a streamed reply cut off by the bridge dropping ends with a tool error result for the call", async () => {
     resetRegistrationLimit();
     const { identity } = tempIdentity();
     const link = new RelayLink({ relay, identity, backoff: { baseMs: 20, maxMs: 200 } });
@@ -706,16 +706,18 @@ describe("tunnel + revocation", () => {
     try {
       await until(() => link.online, "online");
       const { tokens } = await connectorFlow(relay, await codeFor(link, frames));
-      const r = await mcpPost(relay, tokens["access_token"]!, { jsonrpc: "2.0", id: 42, method: "tools/call" });
+      const r = await mcpPost(relay, tokens["access_token"]!, { jsonrpc: "2.0", id: 42, method: "tools/call", params: { name: "deploy_effect" } });
       assert.equal(r.status, 200);
       const text = await r.text(); // ends (doesn't hang) once the bridge is gone
       const last = text.trim().split("\n\n").at(-1)!;
       const msg = JSON.parse(last.split("\n").find((l) => l.startsWith("data: "))!.slice(6)) as {
         id: number;
-        error: { message: string };
+        result: { isError: boolean; content: { text: string }[] };
       };
       assert.equal(msg.id, 42);
-      assert.match(msg.error.message, /bridge disconnected/);
+      // A tool result naming the cause (a JSON-RPC error reads as a generic failure in MCP clients).
+      assert.equal(msg.result.isError, true);
+      assert.match(msg.result.content[0]!.text, /^deploy_effect failed: Splanc relay: the bridge disconnected/);
     } finally {
       link.stop();
     }

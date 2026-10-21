@@ -52,15 +52,37 @@ function skill(root: string, file?: string): string {
   }
 }
 
+/**
+ * SPLANC_SWEEP_HOSTS: what the LAN sweep probes instead of the local /24s — a
+ * comma-separated host[:port] list, or `@<file>` re-read on every sweep (one host
+ * per line or comma-separated). For players behind tunnels or on another subnet,
+ * and the HITL re-discovery check (tunnelled DUTs whose port changes per boot).
+ */
+function sweepHostsFromEnv(): (() => string[]) | undefined {
+  const v = process.env["SPLANC_SWEEP_HOSTS"]?.trim();
+  if (!v) return undefined;
+  const split = (t: string) => t.split(/[\s,]+/).filter(Boolean);
+  if (!v.startsWith("@")) return () => split(v);
+  return () => {
+    try {
+      return split(readFileSync(v.slice(1), "utf8"));
+    } catch {
+      return [];
+    }
+  };
+}
+
 function makeHub(p: Parsed, root: string): Hub {
   const hz = flag(p, "stream-hz");
   const pin = flag(p, "pin");
+  const sweepHosts = sweepHostsFromEnv();
   return new Hub({
     root,
     hosts: p.flags.get("host") ?? [],
     mdns: !flag(p, "no-mdns"),
     ...(hz ? { streamHz: Number(hz) } : {}),
     ...(pin ? { pin } : {}),
+    ...(sweepHosts ? { registryDeps: { sweepHosts } } : {}),
     log,
   });
 }

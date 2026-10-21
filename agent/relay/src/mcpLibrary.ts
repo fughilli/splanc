@@ -71,6 +71,38 @@ export function rpcErrorFor(id: string | number | null, code: number, message: s
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }), { status, headers: JSON_HEADERS });
 }
 
+/** The tools/call requests in a POST body: id -> tool name. */
+export function toolCalls(body: string): Map<string | number, string> {
+  const out = new Map<string | number, string>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return out;
+  }
+  for (const m of Array.isArray(parsed) ? parsed : [parsed]) {
+    const r = m as { method?: unknown; id?: unknown; params?: { name?: unknown } } | null;
+    if (r?.method === "tools/call" && (typeof r.id === "string" || typeof r.id === "number")) {
+      out.set(r.id, typeof r.params?.name === "string" ? r.params.name : "tool");
+    }
+  }
+  return out;
+}
+
+/**
+ * A tool call the relay (or the tunnel to the bridge) couldn't complete, as a TOOL
+ * RESULT with isError and the specific reason — not an HTTP error or a JSON-RPC
+ * error, which MCP clients (claude.ai) show only as a generic "MCP tool call
+ * failed", hiding why (the bridge disconnected, didn't answer in time, is offline).
+ */
+export function toolFailure(id: string | number, tool: string, why: string): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id,
+    result: { isError: true, content: [{ type: "text", text: `${tool} failed: ${why}` }] },
+  };
+}
+
 /** 404 Session not found: the client must initialize again (spec, session management). */
 export const sessionGone = () =>
   new Response(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "Session not found" } }), {

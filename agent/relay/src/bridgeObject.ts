@@ -35,6 +35,8 @@ import {
   sessionGone,
   stripDeployArgs,
   toolResultJson,
+  toolCalls,
+  toolFailure,
   withLibraryInstructions,
   type RpcRequest,
 } from "./mcpLibrary";
@@ -110,6 +112,8 @@ interface Pending {
   stream?: ReadableStreamDefaultController<Uint8Array>;
   /** JSON-RPC request ids in the tunnelled body (answered if the stream breaks). */
   ids: (string | number)[];
+  /** The tools/call requests among them: id -> tool name. */
+  tools?: Map<string | number, string>;
 }
 
 const enc = new TextEncoder();
@@ -130,6 +134,15 @@ export function requestIds(body: string): (string | number)[] {
   return ids;
 }
 
+/** The reply for a request the tunnel failed: a tool result when it was one tool
+ * call, else the transport-level JSON-RPC error. */
+function failedReply(p: Pick<Pending, "ids" | "tools">, status: number, why: string, headers: Record<string, string> = {}): Response {
+  const id = p.ids.length === 1 ? p.ids[0]! : undefined;
+  const tool = id !== undefined ? p.tools?.get(id) : undefined;
+  if (id !== undefined && tool !== undefined) return json(toolFailure(id, tool, why));
+  return rpcError(status, why, headers);
+}
+
 /** End a streamed (SSE) reply the bridge can no longer finish: answer each request
  * in it with a JSON-RPC error, so the client fails the call now with the reason
  * instead of waiting out its own timeout on a stream that ended with no response. */
@@ -137,7 +150,10 @@ function breakStream(p: Pending, why: string): void {
   const c = p.stream!;
   try {
     for (const id of p.ids) {
-      const msg = { jsonrpc: "2.0", id, error: { code: -32000, message: `Splanc relay: ${why}; retry the request` } };
+      const tool = p.tools?.get(id);
+      const msg = tool
+        ? toolFailure(id, tool, `Splanc relay: ${why}; retry the request`)
+        : { jsonrpc: "2.0", id, error: { code: -32000, message: `Splanc relay: ${why}; retry the request` } };
       c.enqueue(enc.encode(`event: message\ndata: ${JSON.stringify(msg)}\n\n`));
     }
     if (p.ids.length) c.close();
@@ -145,6 +161,17 @@ function breakStream(p: Pending, why: string): void {
   } catch {
     // cancelled already
   }
+}
+
+/** The message of a JSON-RPC error body (else the body itself, trimmed). */
+function errorText(body: string | undefined): string {
+  try {
+    const m = JSON.parse(body ?? "") as { error?: { message?: string } };
+    if (m.error?.message) return m.error.message;
+  } catch {
+    // not JSON
+  }
+  return (body ?? "").slice(0, 300) || "no details";
 }
 
 const json = (obj: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -299,6 +326,11 @@ export class BridgeObject {
         const headers = pick(f.headers, FORWARD_RESPONSE_HEADERS);
         if (f.end) {
           this.finish(f.id);
+          if (f.status >= 500 && p.ids.length === 1 && p.tools?.has(p.ids[0]!)) {
+            // An (older) bridge's internal error for a tool call: keep its message.
+            p.resolve(failedReply(p, f.status, `Splanc relay: the bridge answered HTTP ${f.status}: ${errorText(f.body)}`));
+            return;
+          }
           p.resolve(new Response(nullBody(f.status) ? null : (f.body ?? ""), { status: f.status, headers }));
           return;
         }
@@ -371,7 +403,7 @@ export class BridgeObject {
     for (const [id, p] of [...this.pending]) {
       this.finish(id);
       if (p.stream) breakStream(p, why);
-      else p.resolve(rpcError(status, `Splanc relay: ${why}; retry the request`));
+      else p.resolve(failedReply(p, status, `Splanc relay: ${why}; retry the request`));
     }
   }
 
@@ -455,7 +487,8 @@ export class BridgeObject {
       return ws ? sessionGone() : rpcErrorFor(null, -32600, "the relay's offline session takes one JSON-RPC message per request", 400);
     }
     if (!ws) {
-      return rpcError(
+      return failedReply(
+        msg ? { ids: msg.id !== undefined ? [msg.id] : [], tools: toolCalls(body) } : { ids: [] },
         503,
         "The Splanc bridge for this connector is offline. Check that the bridge (e.g. the Raspberry Pi " +
           "running `splanc-agent bridge`) is powered and online; its screen or status file shows why.",
@@ -478,14 +511,14 @@ export class BridgeObject {
         return rpcResult(msg.id, { tools: mergeTools([]) });
       case "ping":
         return relaySession ? rpcResult(msg.id, {}) : null;
-      default:
-        return relaySession
-          ? rpcErrorFor(
-              msg.id,
-              -32000,
-              "The Splanc bridge is offline: only the effects library tools work until it is back (then reconnect).",
-            )
-          : null;
+      default: {
+        if (!relaySession) return null;
+        const why = "The Splanc bridge is offline: only the effects library tools work until it is back (then reconnect).";
+        const tool = msg.method === "tools/call" && typeof msg.params?.["name"] === "string" ? (msg.params["name"] as string) : null;
+        // A tool call gets a tool result with the reason (MCP clients show a JSON-RPC
+        // error only as a generic failure).
+        return tool ? json(toolFailure(msg.id, tool, why)) : rpcErrorFor(msg.id, -32000, why);
+      }
     }
   }
 
@@ -573,14 +606,20 @@ export class BridgeObject {
         this.finish(id);
         this.send({ t: "cancel", id });
         if (p?.stream) breakStream(p, "the bridge did not finish in time");
-        else resolve(rpcError(504, "the bridge did not answer in time"));
+        else resolve(failedReply(pend, 504, `Splanc relay: the bridge did not answer within ${REQUEST_TIMEOUT_MS / 1000} s`));
       }, REQUEST_TIMEOUT_MS);
-      this.pending.set(id, { resolve, timer, ids: req.method === "POST" ? requestIds(body) : [] });
+      const pend: Pending = {
+        resolve,
+        timer,
+        ids: req.method === "POST" ? requestIds(body) : [],
+        tools: req.method === "POST" ? toolCalls(body) : new Map(),
+      };
+      this.pending.set(id, pend);
       try {
         ws.send(JSON.stringify({ t: "req", id, method: req.method, headers, body } satisfies RelayFrame));
-      } catch {
+      } catch (e) {
         this.finish(id);
-        resolve(rpcError(503, "the bridge connection dropped; retry"));
+        resolve(failedReply(pend, 503, `Splanc relay: the bridge connection dropped (${(e as Error).message}); retry`));
       }
     });
   }

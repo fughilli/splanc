@@ -304,7 +304,13 @@ describe("relay-served library", () => {
     );
     assert.equal((await call(token, "get_effect", { id }, { "mcp-session-id": "bridge-session-1" })).json.id, id);
     const dev = await mcpPost(relay, token, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "set_brightness", arguments: { level: 1 } } });
-    assert.equal(dev.status, 503);
+    // A tool call gets a tool result naming the cause, not an HTTP error (which MCP
+    // clients show only as a generic "tool call failed").
+    assert.equal(dev.status, 200);
+    const devMsg = (await dev.json()) as { id: number; result: { isError: boolean; content: { text: string }[] } };
+    assert.equal(devMsg.id, 3);
+    assert.equal(devMsg.result.isError, true);
+    assert.match(devMsg.result.content[0]!.text, /set_brightness failed: The Splanc bridge for this connector is offline/);
 
     // A real MCP client connecting now gets the relay's session: library only.
     const transport = new StreamableHTTPClientTransport(new URL(`${relay}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } });
@@ -321,7 +327,9 @@ describe("relay-served library", () => {
     const r = (await c.callTool({ name: "search_effects", arguments: { query: "ocean" } })) as { content: { text: string }[] };
     assert.equal(JSON.parse(r.content[0]!.text).results[0].id, id);
     await c.ping();
-    await assert.rejects(c.callTool({ name: "set_brightness", arguments: {} }), /bridge is offline/);
+    const off = (await c.callTool({ name: "set_brightness", arguments: {} })) as { isError?: boolean; content: { text: string }[] };
+    assert.equal(off.isError, true);
+    assert.match(off.content[0]!.text, /bridge is offline/);
 
     // The bridge comes back: the relay session ends (404 -> the client initializes again).
     fb.link.start();
