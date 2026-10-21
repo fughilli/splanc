@@ -23,11 +23,15 @@ def _answer(ip="10.42.0.37", dev="8C:FD:49:10:3A:86") -> bytes:
     hdr = struct.pack(">HHHHHH", 0x5A5A, 0x8400, 1, 1, 0, 3)
     body = q[12:]
     inst = "PixieLamp." + core.SERVICE
-    ptr = name(core.SERVICE) + struct.pack(">HHIH", core.T_PTR, 1, 120, len(name(inst))) + name(inst)
+    ptr = (
+        name(core.SERVICE) + struct.pack(">HHIH", core.T_PTR, 1, 120, len(name(inst))) + name(inst)
+    )
     host = name("splanc-103a86.local")
     srv_rd = struct.pack(">HHH", 0, 0, 443) + host
     srv = name(inst) + struct.pack(">HHIH", core.T_SRV, 0x8001, 120, len(srv_rd)) + srv_rd
-    txt_rd = b"".join(bytes([len(s)]) + s for s in (f"id={dev}".encode(), b"name=PixieLamp", b"tls=ready"))
+    txt_rd = b"".join(
+        bytes([len(s)]) + s for s in (f"id={dev}".encode(), b"name=PixieLamp", b"tls=ready")
+    )
     txt = name(inst) + struct.pack(">HHIH", core.T_TXT, 0x8001, 120, len(txt_rd)) + txt_rd
     a = host + struct.pack(">HHIH", core.T_A, 0x8001, 120, 4) + bytes(int(x) for x in ip.split("."))
     return hdr + body + ptr + srv + txt + a
@@ -68,7 +72,9 @@ def test_grade_pass():
 def test_grade_random_mac_and_moved_lease_fail():
     # The field report: a new random MAC each boot -> a new lease each boot.
     b1 = core.parse_boot(OLD_BOOT)
-    b2 = core.parse_boot(OLD_BOOT.replace("95:10:f2", "11:22:33").replace("10.42.0.37", "10.42.0.41"))
+    b2 = core.parse_boot(
+        OLD_BOOT.replace("95:10:f2", "11:22:33").replace("10.42.0.37", "10.42.0.41")
+    )
     g = core.grade(b1, b2, core.parse_answers(_answer("10.42.0.41")), _ok_refusal())
     assert g["verdict"] == "FAIL"
     assert any("factory" in p for p in g["problems"])
@@ -78,11 +84,20 @@ def test_grade_random_mac_and_moved_lease_fail():
 
 def test_grade_mdns_mismatch_and_hung_extra_client_fail():
     b = core.parse_boot(BOOT)
-    g = core.grade(b, b, core.parse_answers(_answer("10.42.0.99", "AA:BB:CC:DD:EE:FF")),
-                   {"second": "hung", "second_s": 8.0, "first_after": None})
+    g = core.grade(
+        b,
+        b,
+        core.parse_answers(_answer("10.42.0.99", "AA:BB:CC:DD:EE:FF")),
+        {"second": "hung", "second_s": 8.0, "first_after": None},
+    )
     assert g["verdict"] == "FAIL"
     text = " ".join(g["problems"])
-    assert "A record" in text and "TXT id" in text and "not refused cleanly" in text and "unusable" in text
+    assert (
+        "A record" in text
+        and "TXT id" in text
+        and "not refused cleanly" in text
+        and "unusable" in text
+    )
 
 
 def test_grade_infra_skip():
