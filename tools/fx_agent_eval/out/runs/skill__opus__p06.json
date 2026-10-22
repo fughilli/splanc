@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p06",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Thunderstorm: dark, slowly churning storm clouds wrap the lamp, and every\n// few seconds a jagged bolt of lightning strikes down one side of the\n// cylinder, lighting the whole cloud with a cold flash and flickering\n// restrikes before it fades back to darkness.\n\nuniform float storm       : 0.0 .. 1.0 = 0.6;    // how often lightning strikes\nuniform float cloud_speed : 0.0 .. 2.0 = 0.4;    // how fast the clouds churn\nuniform float cloud_level : 0.0 .. 1.0 = 0.35;   // brightness of the clouds\nuniform vec3  cloud_dark  : color = 0.005, 0.006, 0.02;\nuniform vec3  cloud_light : color = 0.06, 0.07, 0.14;\nuniform vec3  bolt_color  : color = 0.8, 0.85, 1.0;\nuniform float bolt_width  : 0.05 .. 0.6 = 0.22;  // thickness of the bolt\nuniform float glow        : 0.0 .. 1.0 = 0.4;    // how much a strike lights the clouds\n\nstate float drift;\nstate float flash;\nstate float next_t;\nstate float restrikes;\nstate float seed;\nstate float bx;\nstate float bz;\nstate float by;\nstate float w2;\n\nvoid update() {\n  drift = time * cloud_speed;\n  w2 = bolt_width * bolt_width;\n\n  if (time >= next_t) {\n    seed = hash(time * 13.7 + float(frame) * 0.37);\n    float ang = seed * 6.2832;\n    bx = cos(ang) * 0.9;\n    bz = sin(ang) * 0.9;\n    by = -1.0 + hash(seed * 91.3) * 0.9;      // how far down the bolt reaches\n    flash = 1.0;\n    restrikes = floor(hash(seed * 7.1) * 3.5);\n    float gap = mix(9.0, 0.7, storm);\n    next_t = time + gap * (0.4 + hash(seed * 3.3) * 1.2);\n  }\n\n  flash = max(flash - dt * 7.0, 0.0);\n\n  if (restrikes > 0.0 && flash < 0.12) {\n    if (hash(time * 5.1 + seed) < 0.35) {\n      flash = 0.5 + 0.5 * hash(time * 2.9);\n      restrikes = restrikes - 1.0;\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // Normalised position in the lamp: -1..1 on every axis.\n  vec3 c = (room.min + room.max) * 0.5;\n  vec3 h = max((room.max - room.min) * 0.5, vec3(0.01, 0.01, 0.01));\n  vec3 q = (led.room - c) / h;\n\n  // Churning clouds from a few cheap sine layers.\n  float n = 0.5\n          + 0.22 * sin(q.x * 3.1 + drift + q.y * 1.3)\n          + 0.18 * sin(q.y * 4.3 - drift * 0.7 + q.z * 2.7)\n          + 0.12 * sin(q.z * 5.2 + drift * 1.3 - q.x * 2.0);\n  n = clamp(n, 0.0, 1.0);\n  n = n * n;\n  vec3 col = mix(cloud_dark, cloud_light, n) * (cloud_level * 2.0);\n\n  // Lightning sheet: the whole cloud lights up, more where it's thick.\n  col = col + bolt_color * (flash * glow * (0.25 + 0.75 * n));\n\n  // The bolt itself: a jagged vertical line from the top down to `by`.\n  float jag = 0.18 * sin(q.y * 9.0 + seed * 40.0)\n            + 0.08 * sin(q.y * 23.0 + seed * 71.0);\n  float dx = q.x - (bx + jag);\n  float dz = q.z - (bz - jag * 0.6);\n  float d2 = dx * dx + dz * dz;\n  float core = w2 / (w2 + d2 * 6.0);\n  core = core * core;\n  float reach = step(by, q.y);\n  col = col + bolt_color * (core * reach * flash * 1.5);\n\n  return clamp(col, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "ad11c8ee-871b-4335-b19a-3a3955f83570",
+      "wall_s": 47.3,
+      "duration_api_ms": 34144,
+      "cost_usd": 0.07404839999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3340,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 622
+      },
+      "thinking_tokens": 1869,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2090
+    }
+  ],
+  "started": "2026-10-22T19:58:05",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.074,
+  "total_wall_s": 47.3,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p06.fx"
+}

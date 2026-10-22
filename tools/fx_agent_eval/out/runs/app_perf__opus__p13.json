@@ -1,0 +1,39 @@
+{
+  "name": "app_perf__opus__p13",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Starfield twinkle: sparse stars that each fade in and out at their own rate.\n// All per-LED random values are computed once on the first frame and cached in buffers.\n// After that, the per-LED path is fixed-point: a LUT sine and a few multiplies.\n\nuniform float density    : 0.05 .. 1.0 = 0.35;\nuniform float speed      : 0.1 .. 4.0  = 1.0;\nuniform float brightness : 0.0 .. 1.0  = 1.0;\nuniform float sharpness  : 1.0 .. 3.0  = 3.0;\nuniform vec3 warm : color = 1.0, 0.75, 0.45;\nuniform vec3 cool : color = 0.55, 0.7, 1.0;\nuniform vec3 sky  : color = 0.0, 0.004, 0.018;\n\nstate fixed sdt;\nstate fixed dens;\nstate fixed bri;\nstate int   sharpN;\nstate vec3  dcol;\nstate bool  started;\nstate bool  ready;\n\nbuffer float seed : fixed16;   // star / no-star selector (0..1)\nbuffer float rate : fixed16;   // twinkle speed in turns per second\nbuffer float ph   : fixed16;   // current twinkle phase in turns\nbuffer float temp : fixed8;    // colour temperature (0 = cool, 1 = warm)\n\nvoid update() {\n  ready = started;\n  started = true;\n  sdt = fixed(min(dt, 0.1) * speed);\n  dens = fixed(density);\n  bri = fixed(brightness);\n  sharpN = int(sharpness + 0.5);\n  dcol = warm - cool;\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    float f = float(i);\n    seed[i] = hash(f * 1.731 + 0.5);\n    rate[i] = 0.15 + hash(f * 7.13 + 2.0) * 0.6;\n    ph[i]   = hash(f * 3.37 + 9.0);\n    temp[i] = hash(f * 11.9 + 4.0);\n  }\n\n  // Advance this LED's own phase. It wraps cleanly with no discontinuity.\n  fixed p = fract(fixed(ph[i]) + fixed(rate[i]) * sdt);\n  ph[i] = p;\n\n  // Fixed sine in turns, mapped to 0..1. Squaring it repeatedly makes short sparkles.\n  fixed v = sin(p) * fixed(0.5) + fixed(0.5);\n  v = v * v;\n  v = v * v;\n  if (sharpN > 2) { v = v * v; }\n\n  // Only a \"density\" fraction of the LEDs are stars.\n  fixed b = v * step(fixed(seed[i]), dens) * bri;\n\n  float bf = float(b);\n  return sky + (cool + dcol * float(temp[i])) * bf;\n}\n```\n\nOn the first frame, each LED gets a random seed, twinkle rate, starting phase and colour temperature, cached in compact buffers. A `density` fraction of the LEDs become stars.\n\nEach frame, a star's own phase advances by its rate. The brightness is a fixed-point sine raised to the 4th or 8th power, which gives sharp, brief sparkles over a faint sky glow.\n\nThe controls are live:\n- **density**: how many LEDs are stars.\n- **speed**: how fast they twinkle.\n- **brightness**: overall star level.\n- **sharpness**: 4th power (softer) or 8th power (spikier).\n- **warm / cool**: the two star colours each star is tinted between.\n- **sky**: the background glow.\n\nThe per-LED cost after the first frame should be roughly 1\u20132k cycles, well inside the budget for 500 LEDs. That figure is my estimate; I haven't measured it with `estimate_performance`.",
+      "is_error": false,
+      "session_id": "383caf08-cad0-4672-9397-103e42e4e02f",
+      "wall_s": 42.9,
+      "duration_api_ms": 27524,
+      "cost_usd": 0.0608952,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2733,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 1443,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1210
+    }
+  ],
+  "started": "2026-10-22T20:17:38",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0609,
+  "total_wall_s": 42.9,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p13.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p04",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Slow rainbow rotating around a cylindrical lamp\n// Hue is driven by the azimuthal angle (XZ plane), drifting over time.\n\nuniform float speed     : 0.0 .. 2.0 = 0.25;   // rotations per second\nuniform float cycles    : 1.0 .. 6.0 = 1.0;    // rainbow repeats around circumference\nuniform float saturation: 0.0 .. 1.0 = 1.0;\nuniform float brightness: 0.0 .. 1.0 = 1.0;\n\n// Hoist the slowly-changing rotation phase into update() \u2014 runs once per frame.\nstate float phase;\n\nvoid update() {\n    phase = fract(time * speed);\n}\n\nvec3 shade(Led led) {\n    // atan2 gives angle in [-PI, PI]; map to [0,1) turn fraction.\n    // 0.15915 = 1 / (2*PI)\n    float angle = atan2(led.pos.z, led.pos.x);\n    float hue   = fract(angle * 0.15915 * cycles + phase);\n    return hsv2rgb(hue, saturation, brightness);\n}\n```\n\n**How it works:**\n- `atan2(z, x)` extracts the azimuthal angle around the Y-axis, giving each LED its angular position in the horizontal plane (the cylindrical coordinate \u03c6).\n- Multiplying by `1/(2\u03c0)` converts radians \u2192 turns (0..1), then `\u00d7 cycles` lets you pack multiple rainbow repeats around the circumference.\n- `phase` advances slowly in `update()` (once per frame) so the whole rainbow band sweeps around the lamp.\n- `speed = 0.25` \u2192 one full revolution every 4 seconds by default; set to 0 to freeze.",
+      "is_error": false,
+      "session_id": "eaad2cc0-00e1-43ae-8efb-3364a17d6021",
+      "wall_s": 47.5,
+      "duration_api_ms": 44906,
+      "cost_usd": 0.0508047,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3095,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 512
+      },
+      "thinking_tokens": 2636,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 636
+    }
+  ],
+  "started": "2026-10-22T19:41:06",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0508,
+  "total_wall_s": 47.5,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p04.fx"
+}

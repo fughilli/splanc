@@ -1,0 +1,39 @@
+{
+  "name": "app_perf__opus__p14",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\nuniform float speed : 0.05 .. 3.0 = 0.5;\nuniform float width : 0.01 .. 0.3 = 0.06;\nuniform float trail : 0.0 .. 1.0 = 0.35;\nuniform float trail_level : 0.0 .. 1.0 = 0.4;\nuniform vec3 tint : color = 1.0, 0.05, 0.02;\nuniform bool bounce = false;\n\nstate float ph;\nstate fixed pos;\nstate fixed dir;\nstate fixed invW;\nstate fixed invT;\nstate vec3 coreCol;\nstate vec3 trailCol;\n\nvoid update() {\n  ph = fract(ph + dt * speed * 0.5);\n  float w = width + trail;\n  float p = ph;\n  float d = 1.0;\n  if (bounce) {\n    p = 1.0 - abs(2.0 * ph - 1.0);\n    if (ph >= 0.5) { d = -1.0; }\n  }\n  // travel slightly past both edges so the beam fully exits\n  pos = fixed(p * (1.0 + 2.0 * w) - w);\n  dir = fixed(d);\n  invW = fixed(1.0 / width);\n  invT = fixed(1.0 / max(trail, 0.01));\n  // hot core: tint pushed toward white\n  coreCol = mix(tint, vec3(1.0, 1.0, 1.0), 0.35);\n  trailCol = tint * (trail_level * step(0.001, trail));\n}\n\nvec3 shade(Led led) {\n  fixed delta = (pos - fixed(led.uv.x)) * dir;\n  fixed c = clamp(fixed(1.0) - abs(delta) * invW, fixed(0.0), fixed(1.0));\n  c = c * c;\n  fixed t = clamp(fixed(1.0) - delta * invT, fixed(0.0), fixed(1.0)) * step(fixed(0.0), delta);\n  t = t * t;\n  return coreCol * c + trailCol * t;\n}\n```",
+      "is_error": false,
+      "session_id": "1211833c-4a7c-43ae-86c6-e1d2763eec95",
+      "wall_s": 31.8,
+      "duration_api_ms": 14402,
+      "cost_usd": 0.0317032,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1271,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 617
+      },
+      "thinking_tokens": 590,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1074
+    }
+  ],
+  "started": "2026-10-22T20:17:43",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0317,
+  "total_wall_s": 31.8,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p14.fx"
+}

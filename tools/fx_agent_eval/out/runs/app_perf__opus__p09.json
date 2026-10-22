@@ -1,0 +1,66 @@
+{
+  "name": "app_perf__opus__p09",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Sunrise: a warm glow climbing the lamp from the bottom up.\nuniform float speed : 0.01 .. 0.5 = 0.08;\nuniform float softness : 0.05 .. 1.0 = 0.45;\nuniform float wobble : 0.0 .. 0.15 = 0.04;\nuniform float brightness : 0.0 .. 1.0 = 0.9;\nuniform float lamp_bottom : -0.5 .. 0.5 = 0.0;\nuniform float lamp_height : 0.05 .. 1.0 = 0.30;\nuniform vec3 night : color = 0.02, 0.01, 0.06;\nuniform vec3 dawn : color = 0.6, 0.05, 0.08;\nuniform vec3 ember : color = 1.0, 0.35, 0.05;\nuniform vec3 sun : color = 1.0, 0.8, 0.4;\n\nstate fixed level;\nstate fixed ph;\nstate fixed inv_soft;\nstate fixed wob;\nstate float gain;\nstate float invh;\nstate bool started;\nstate bool ready;\n\nbuffer float hgt : fixed16;\nbuffer float ang : fixed16;\n\nvoid update() {\n  ready = started;\n  started = true;\n  invh = 1.0 / lamp_height;\n  inv_soft = fixed(1.0 / softness);\n  wob = fixed(wobble);\n  ph = fract(ph + fixed(dt * 0.3));\n\n  float lv = float(level) + dt * speed;\n  float endv = 1.0 + softness;\n  if (lv > endv + 0.4) {\n    lv = -0.05;\n  }\n  level = fixed(lv);\n  gain = brightness * clamp((endv + 0.4 - lv) * 2.5, 0.0, 1.0);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    hgt[i] = clamp((led.pos.y - lamp_bottom) * invh, 0.0, 1.0);\n    ang[i] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n  }\n  fixed h = fixed(hgt[i]) + sin(fixed(ang[i]) * fixed(3.0) + ph) * wob;\n  fixed t3 = clamp((level - h) * inv_soft, fixed(0.0), fixed(1.0)) * fixed(3.0);\n  vec3 c = mix(night, dawn, float(clamp(t3, fixed(0.0), fixed(1.0))));\n  c = mix(c, ember, float(clamp(t3 - fixed(1.0), fixed(0.0), fixed(1.0))));\n  c = mix(c, sun, float(clamp(t3 - fixed(2.0), fixed(0.0), fixed(1.0))));\n  return c * gain;\n}\n```",
+      "is_error": false,
+      "session_id": "2e9937d4-3ca3-4126-963b-e652e507b579",
+      "wall_s": 50.6,
+      "duration_api_ms": 31406,
+      "cost_usd": 0.06758720000000001,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3064,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 620
+      },
+      "thinking_tokens": 2100,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 6,
+          "col": 29,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```\n// Sunrise: a warm glow climbing the lamp from the bottom up.\nuniform float speed : 0.01 .. 0.5 = 0.08;\nuniform float softness : 0.05 .. 1.0 = 0.45;\nuniform float wobble : 0.0 .. 0.15 = 0.04;\nuniform float brightness : 0.0 .. 1.0 = 0.9;\nuniform float lamp_offset : 0.0 .. 1.0 = 0.5;\nuniform float lamp_height : 0.05 .. 1.0 = 0.30;\nuniform vec3 night : color = 0.02, 0.01, 0.06;\nuniform vec3 dawn : color = 0.6, 0.05, 0.08;\nuniform vec3 ember : color = 1.0, 0.35, 0.05;\nuniform vec3 sun : color = 1.0, 0.8, 0.4;\n\nstate fixed level;\nstate fixed ph;\nstate fixed inv_soft;\nstate fixed wob;\nstate float gain;\nstate float invh;\nstate float bottom;\nstate bool started;\nstate bool ready;\n\nbuffer float hgt : fixed16;\nbuffer float ang : fixed16;\n\nvoid update() {\n  ready = started;\n  started = true;\n  invh = 1.0 / lamp_height;\n  bottom = lamp_offset - 0.5;\n  inv_soft = fixed(1.0 / softness);\n  wob = fixed(wobble);\n  ph = fract(ph + fixed(dt * 0.3));\n\n  float lv = float(level) + dt * speed;\n  float endv = 1.0 + softness;\n  if (lv > endv + 0.4) {\n    lv = 0.0 - 0.05;\n  }\n  level = fixed(lv);\n  gain = brightness * clamp((endv + 0.4 - lv) * 2.5, 0.0, 1.0);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    hgt[i] = clamp((led.pos.y - bottom) * invh, 0.0, 1.0);\n    ang[i] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n  }\n  fixed h = fixed(hgt[i]) + sin(fixed(ang[i]) * fixed(3.0) + ph) * wob;\n  fixed t3 = clamp((level - h) * inv_soft, fixed(0.0), fixed(1.0)) * fixed(3.0);\n  vec3 c = mix(night, dawn, float(clamp(t3, fixed(0.0), fixed(1.0))));\n  c = mix(c, ember, float(clamp(t3 - fixed(1.0), fixed(0.0), fixed(1.0))));\n  c = mix(c, sun, float(clamp(t3 - fixed(2.0), fixed(0.0), fixed(1.0))));\n  return c * gain;\n}\n```",
+      "is_error": false,
+      "session_id": "2e9937d4-3ca3-4126-963b-e652e507b579",
+      "wall_s": 22.8,
+      "duration_api_ms": 41280,
+      "cost_usd": 0.1258744,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1200,
+        "cache_read_input_tokens": 7316,
+        "cache_creation_input_tokens": 4102
+      },
+      "thinking_tokens": 210,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1697
+    }
+  ],
+  "started": "2026-10-22T20:16:29",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1935,
+  "total_wall_s": 73.4,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p09.fx"
+}

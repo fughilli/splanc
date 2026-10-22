@@ -1,0 +1,93 @@
+{
+  "name": "skill__sonnet__p06",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Thunderstorm \u2014 dark churning clouds with random lightning flashes\n// and faint rain streaks falling along the helix.\n//\n// cloud_dark  deep storm-shadow base colour\n// cloud_mid   lighter cloud body\n// bolt_col    flash colour (blue-white default)\n// speed       cloud churn / drift rate\n// rate        lightning strikes per second\n// drama       peak flash brightness (0 = no lightning)\n// rain        rain-streak intensity (0 = dry)\n\nuniform vec3  cloud_dark : color = 0.010, 0.018, 0.055;\nuniform vec3  cloud_mid  : color = 0.038, 0.046, 0.105;\nuniform vec3  bolt_col   : color = 0.850, 0.900, 1.000;\nuniform float speed      : 0.0 .. 2.0 = 0.50;\nuniform float rate       : 0.2 .. 4.0 = 1.20;\nuniform float drama      : 0.0 .. 1.0 = 0.85;\nuniform float rain       : 0.0 .. 1.0 = 0.35;\n\n// \u2500\u2500 bolt ring-buffer (two slots) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nstate bool  b0_on;\nstate float b0_born;\nstate float b0_ang;    // angular position 0..1 around cylinder\n\nstate bool  b1_on;\nstate float b1_born;\nstate float b1_ang;\n\nstate float next_t;    // scheduled time for next strike\n\n// \u2500\u2500 per-frame cache (hoisted out of shade to keep exp() off the LED loop) \u2500\u2500\u2500\nstate float flash0;\nstate float flash1;\nstate float zdrift;\n\nvoid update() {\n  zdrift = time * speed * 0.12;\n\n  // Fire a new bolt when the clock says so\n  if (time >= next_t) {\n    // push b0 \u2192 b1\n    b1_on   = b0_on;\n    b1_born = b0_born;\n    b1_ang  = b0_ang;\n    // create new b0\n    b0_on   = true;\n    b0_born = time;\n    b0_ang  = hash(vec3(time * 3.713, 0.137, 2.791));\n    // random inter-bolt gap: 0.12..1.92 s scaled by rate\n    float gap = (0.12 + hash(vec3(time * 9.173, 1.337, 4.129)) * 1.8) / rate;\n    next_t  = time + gap;\n  }\n\n  // Bolt 0 flash intensity\n  flash0 = 0.0;\n  if (b0_on) {\n    float age = time - b0_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      // secondary flicker burst (80\u2013380 ms after strike)\n      if (age > 0.06 && age < 0.38) {\n        f += hash(vec3(floor(age * 20.0), b0_born * 0.1, 3.17))\n             * 0.50 * exp(-age * 5.0);\n      }\n      flash0 = min(f * drama, 1.0);\n    }\n  }\n\n  // Bolt 1 flash intensity\n  flash1 = 0.0;\n  if (b1_on) {\n    float age = time - b1_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      if (age > 0.06 && age < 0.38) {\n        f += hash(vec3(floor(age * 20.0), b1_born * 0.1, 3.17))\n             * 0.50 * exp(-age * 5.0);\n      }\n      flash1 = min(f * drama, 1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // \u2500\u2500 cloud: 3-D value noise over led.pos (metres), drifting in Z \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  vec3  p  = led.pos * 4.5 + vec3(0.0, 0.0, zdrift);\n  vec3  gi = floor(p);\n  vec3  gf = fract(p);\n  vec3  u  = gf * gf * (3.0 - 2.0 * gf);          // smoothstep curve\n  float na = mix(hash(gi),                         hash(gi + vec3(1.0, 0.0, 0.0)), u.x);\n  float nb = mix(hash(gi + vec3(0.0, 1.0, 0.0)),  hash(gi + vec3(1.0, 1.0, 0.0)), u.x);\n  float nc = mix(hash(gi + vec3(0.0, 0.0, 1.0)),  hash(gi + vec3(1.0, 0.0, 1.0)), u.x);\n  float nd = mix(hash(gi + vec3(0.0, 1.0, 1.0)),  hash(gi + vec3(1.0, 1.0, 1.0)), u.x);\n  float n  = mix(mix(na, nb, u.y), mix(nc, nd, u.y), u.z);\n  vec3 cloud = mix(cloud_dark, cloud_mid, n);\n\n  // \u2500\u2500 rain: thin streaks falling down the helix (uv.y: 1=top \u2192 0=bottom) \u2500\u2500\n  float rcol   = hash(float(led.seg) * 1.618);          // per-segment column offset\n  float rphase = fract(time * 3.5 - led.uv.y * 3.2 + rcol);\n  float drop   = smoothstep(0.80, 0.88, rphase)\n               * (1.0 - smoothstep(0.88, 0.96, rphase));\n  cloud += vec3(0.04, 0.09, 0.17) * drop * rain;\n\n  // \u2500\u2500 lightning flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float bolt = max(flash0, flash1);\n\n  // Subtle angular bias: the strike side is slightly brighter (realistic for\n  // a lamp \u2014 even a small cylinder reads the directionality faintly)\n  float ang    = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;   // 0..1 around Y\n  float adist0 = b0_on ? abs(fract(ang - b0_ang + 0.5) - 0.5) * 2.0 : 1.0;\n  float adist1 = b1_on ? abs(fract(ang - b1_ang + 0.5) - 0.5) * 2.0 : 1.0;\n  float near   = min(adist0, adist1);           // 0 = bolt side, 1 = far side\n  float spread = mix(1.0, 0.58, smoothstep(0.0, 0.9, near));    // 58%\u2013100%\n\n  return mix(cloud, bolt_col, bolt * spread);\n}\n```",
+      "is_error": false,
+      "session_id": "c6d98e39-6c8d-421b-85cb-6f9290821d58",
+      "wall_s": 309.5,
+      "duration_api_ms": 286701,
+      "cost_usd": 0.33090179999999997,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 21679,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 508
+      },
+      "thinking_tokens": 19815,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 62,
+          "col": 11,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The language does not support compound-assignment operators (`+=`). Every `+=` must be written as `x = x + \u2026`. There are three occurrences: two inside `update()` (one per bolt slot) and one in `shade()`. Nothing else is changed.\n\n```glsl\n// Thunderstorm \u2014 dark churning clouds with random lightning flashes\n// and faint rain streaks falling along the helix.\n//\n// cloud_dark  deep storm-shadow base colour\n// cloud_mid   lighter cloud body\n// bolt_col    flash colour (blue-white default)\n// speed       cloud churn / drift rate\n// rate        lightning strikes per second\n// drama       peak flash brightness (0 = no lightning)\n// rain        rain-streak intensity (0 = dry)\n\nuniform vec3  cloud_dark : color = 0.010, 0.018, 0.055;\nuniform vec3  cloud_mid  : color = 0.038, 0.046, 0.105;\nuniform vec3  bolt_col   : color = 0.850, 0.900, 1.000;\nuniform float speed      : 0.0 .. 2.0 = 0.50;\nuniform float rate       : 0.2 .. 4.0 = 1.20;\nuniform float drama      : 0.0 .. 1.0 = 0.85;\nuniform float rain       : 0.0 .. 1.0 = 0.35;\n\n// \u2500\u2500 bolt ring-buffer (two slots) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nstate bool  b0_on;\nstate float b0_born;\nstate float b0_ang;    // angular position 0..1 around cylinder\n\nstate bool  b1_on;\nstate float b1_born;\nstate float b1_ang;\n\nstate float next_t;    // scheduled time for next strike\n\n// \u2500\u2500 per-frame cache (hoisted out of shade to keep exp() off the LED loop) \u2500\u2500\u2500\nstate float flash0;\nstate float flash1;\nstate float zdrift;\n\nvoid update() {\n  zdrift = time * speed * 0.12;\n\n  // Fire a new bolt when the clock says so\n  if (time >= next_t) {\n    // push b0 \u2192 b1\n    b1_on   = b0_on;\n    b1_born = b0_born;\n    b1_ang  = b0_ang;\n    // create new b0\n    b0_on   = true;\n    b0_born = time;\n    b0_ang  = hash(vec3(time * 3.713, 0.137, 2.791));\n    // random inter-bolt gap: 0.12..1.92 s scaled by rate\n    float gap = (0.12 + hash(vec3(time * 9.173, 1.337, 4.129)) * 1.8) / rate;\n    next_t  = time + gap;\n  }\n\n  // Bolt 0 flash intensity\n  flash0 = 0.0;\n  if (b0_on) {\n    float age = time - b0_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      // secondary flicker burst (80\u2013380 ms after strike)\n      if (age > 0.06 && age < 0.38) {\n        f = f + hash(vec3(floor(age * 20.0), b0_born * 0.1, 3.17))\n              * 0.50 * exp(-age * 5.0);\n      }\n      flash0 = min(f * drama, 1.0);\n    }\n  }\n\n  // Bolt 1 flash intensity\n  flash1 = 0.0;\n  if (b1_on) {\n    float age = time - b1_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      if (age > 0.06 && age < 0.38) {\n        f = f + hash(vec3(floor(age * 20.0), b1_born * 0.1, 3.17))\n              * 0.50 * exp(-age * 5.0);\n      }\n      flash1 = min(f * drama, 1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // \u2500\u2500 cloud: 3-D value noise over led.pos (metres), drifting in Z \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  vec3  p  = led.pos * 4.5 + vec3(0.0, 0.0, zdrift);\n  vec3  gi = floor(p);\n  vec3  gf = fract(p);\n  vec3  u  = gf * gf * (3.0 - 2.0 * gf);          // smoothstep curve\n  float na = mix(hash(gi),                         hash(gi + vec3(1.0, 0.0, 0.0)), u.x);\n  float nb = mix(hash(gi + vec3(0.0, 1.0, 0.0)),  hash(gi + vec3(1.0, 1.0, 0.0)), u.x);\n  float nc = mix(hash(gi + vec3(0.0, 0.0, 1.0)),  hash(gi + vec3(1.0, 0.0, 1.0)), u.x);\n  float nd = mix(hash(gi + vec3(0.0, 1.0, 1.0)),  hash(gi + vec3(1.0, 1.0, 1.0)), u.x);\n  float n  = mix(mix(na, nb, u.y), mix(nc, nd, u.y), u.z);\n  vec3 cloud = mix(cloud_dark, cloud_mid, n);\n\n  // \u2500\u2500 rain: thin streaks falling down the helix (uv.y: 1=top \u2192 0=bottom) \u2500\u2500\n  float rcol   = hash(float(led.seg) * 1.618);          // per-segment column offset\n  float rphase = fract(time * 3.5 - led.uv.y * 3.2 + rcol);\n  float drop   = smoothstep(0.80, 0.88, rphase)\n               * (1.0 - smoothstep(0.88, 0.96, rphase));\n  cloud = cloud + vec3(0.04, 0.09, 0.17) * drop * rain;\n\n  // \u2500\u2500 lightning flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float bolt = max(flash0, flash1);\n\n  // Subtle angular bias: the strike side is slightly brighter (realistic for\n  // a lamp \u2014 even a small cylinder reads the directionality faintly)\n  float ang    = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;   // 0..1 around Y\n  float adist0 = b0_on ? abs(fract(ang - b0_ang + 0.5) - 0.5) * 2.0 : 1.0;\n  float adist1 = b1_on ? abs(fract(ang - b1_ang + 0.5) - 0.5) * 2.0 : 1.0;\n  float near   = min(adist0, adist1);           // 0 = bolt side, 1 = far side\n  float spread = mix(1.0, 0.58, smoothstep(0.0, 0.9, near));    // 58%\u2013100%\n\n  return mix(cloud, bolt_col, bolt * spread);\n}\n```",
+      "is_error": false,
+      "session_id": "c6d98e39-6c8d-421b-85cb-6f9290821d58",
+      "wall_s": 44.7,
+      "duration_api_ms": 321689,
+      "cost_usd": 0.533622,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3885,
+        "cache_read_input_tokens": 9374,
+        "cache_creation_input_tokens": 23604
+      },
+      "thinking_tokens": 1955,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 110,
+          "col": 24,
+          "msg": "expected ';'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "Line 110's `? :` ternary operator is not supported by the language. Replace both ternary expressions with initialise-then-if rewrites; everything else stays identical.\n\n```glsl\n// Thunderstorm \u2014 dark churning clouds with random lightning flashes\n// and faint rain streaks falling along the helix.\n//\n// cloud_dark  deep storm-shadow base colour\n// cloud_mid   lighter cloud body\n// bolt_col    flash colour (blue-white default)\n// speed       cloud churn / drift rate\n// rate        lightning strikes per second\n// drama       peak flash brightness (0 = no lightning)\n// rain        rain-streak intensity (0 = dry)\n\nuniform vec3  cloud_dark : color = 0.010, 0.018, 0.055;\nuniform vec3  cloud_mid  : color = 0.038, 0.046, 0.105;\nuniform vec3  bolt_col   : color = 0.850, 0.900, 1.000;\nuniform float speed      : 0.0 .. 2.0 = 0.50;\nuniform float rate       : 0.2 .. 4.0 = 1.20;\nuniform float drama      : 0.0 .. 1.0 = 0.85;\nuniform float rain       : 0.0 .. 1.0 = 0.35;\n\n// \u2500\u2500 bolt ring-buffer (two slots) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nstate bool  b0_on;\nstate float b0_born;\nstate float b0_ang;    // angular position 0..1 around cylinder\n\nstate bool  b1_on;\nstate float b1_born;\nstate float b1_ang;\n\nstate float next_t;    // scheduled time for next strike\n\n// \u2500\u2500 per-frame cache (hoisted out of shade to keep exp() off the LED loop) \u2500\u2500\u2500\nstate float flash0;\nstate float flash1;\nstate float zdrift;\n\nvoid update() {\n  zdrift = time * speed * 0.12;\n\n  // Fire a new bolt when the clock says so\n  if (time >= next_t) {\n    // push b0 \u2192 b1\n    b1_on   = b0_on;\n    b1_born = b0_born;\n    b1_ang  = b0_ang;\n    // create new b0\n    b0_on   = true;\n    b0_born = time;\n    b0_ang  = hash(vec3(time * 3.713, 0.137, 2.791));\n    // random inter-bolt gap: 0.12..1.92 s scaled by rate\n    float gap = (0.12 + hash(vec3(time * 9.173, 1.337, 4.129)) * 1.8) / rate;\n    next_t  = time + gap;\n  }\n\n  // Bolt 0 flash intensity\n  flash0 = 0.0;\n  if (b0_on) {\n    float age = time - b0_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      // secondary flicker burst (80\u2013380 ms after strike)\n      if (age > 0.06 && age < 0.38) {\n        f = f + hash(vec3(floor(age * 20.0), b0_born * 0.1, 3.17))\n              * 0.50 * exp(-age * 5.0);\n      }\n      flash0 = min(f * drama, 1.0);\n    }\n  }\n\n  // Bolt 1 flash intensity\n  flash1 = 0.0;\n  if (b1_on) {\n    float age = time - b1_born;\n    if (age < 1.3) {\n      float f = exp(-age * 8.0);\n      if (age > 0.06 && age < 0.38) {\n        f = f + hash(vec3(floor(age * 20.0), b1_born * 0.1, 3.17))\n              * 0.50 * exp(-age * 5.0);\n      }\n      flash1 = min(f * drama, 1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // \u2500\u2500 cloud: 3-D value noise over led.pos (metres), drifting in Z \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  vec3  p  = led.pos * 4.5 + vec3(0.0, 0.0, zdrift);\n  vec3  gi = floor(p);\n  vec3  gf = fract(p);\n  vec3  u  = gf * gf * (3.0 - 2.0 * gf);          // smoothstep curve\n  float na = mix(hash(gi),                         hash(gi + vec3(1.0, 0.0, 0.0)), u.x);\n  float nb = mix(hash(gi + vec3(0.0, 1.0, 0.0)),  hash(gi + vec3(1.0, 1.0, 0.0)), u.x);\n  float nc = mix(hash(gi + vec3(0.0, 0.0, 1.0)),  hash(gi + vec3(1.0, 0.0, 1.0)), u.x);\n  float nd = mix(hash(gi + vec3(0.0, 1.0, 1.0)),  hash(gi + vec3(1.0, 1.0, 1.0)), u.x);\n  float n  = mix(mix(na, nb, u.y), mix(nc, nd, u.y), u.z);\n  vec3 cloud = mix(cloud_dark, cloud_mid, n);\n\n  // \u2500\u2500 rain: thin streaks falling down the helix (uv.y: 1=top \u2192 0=bottom) \u2500\u2500\n  float rcol   = hash(float(led.seg) * 1.618);          // per-segment column offset\n  float rphase = fract(time * 3.5 - led.uv.y * 3.2 + rcol);\n  float drop   = smoothstep(0.80, 0.88, rphase)\n               * (1.0 - smoothstep(0.88, 0.96, rphase));\n  cloud = cloud + vec3(0.04, 0.09, 0.17) * drop * rain;\n\n  // \u2500\u2500 lightning flash \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float bolt = max(flash0, flash1);\n\n  // Subtle angular bias: the strike side is slightly brighter (realistic for\n  // a lamp \u2014 even a small cylinder reads the directionality faintly)\n  float ang    = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;   // 0..1 around Y\n  float adist0 = 1.0;\n  if (b0_on) { adist0 = abs(fract(ang - b0_ang + 0.5) - 0.5) * 2.0; }\n  float adist1 = 1.0;\n  if (b1_on) { adist1 = abs(fract(ang - b1_ang + 0.5) - 0.5) * 2.0; }\n  float near   = min(adist0, adist1);           // 0 = bolt side, 1 = far side\n  float spread = mix(1.0, 0.58, smoothstep(0.0, 0.9, near));    // 58%\u2013100%\n\n  return mix(cloud, bolt_col, bolt * spread);\n}\n```",
+      "is_error": false,
+      "session_id": "c6d98e39-6c8d-421b-85cb-6f9290821d58",
+      "wall_s": 62.5,
+      "duration_api_ms": 368377,
+      "cost_usd": 0.6596664000000001,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 5416,
+        "cache_read_input_tokens": 32978,
+        "cache_creation_input_tokens": 5817
+      },
+      "thinking_tokens": 3485,
+      "round": 2,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1935
+    }
+  ],
+  "started": "2026-10-22T20:03:55",
+  "status": "ok",
+  "n_calls": 3,
+  "total_cost_usd": 1.5242,
+  "total_wall_s": 416.7,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p06.fx"
+}

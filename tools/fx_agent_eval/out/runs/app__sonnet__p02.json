@@ -1,0 +1,66 @@
+{
+  "name": "app__sonnet__p02",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\nuniform float speed   : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.1 .. 2.0 = 1.0;\n\nstruct Ember {\n  fixed pos;\n  fixed life;\n  float drift;\n  float green;\n};\n\nstruct Spark {\n  fixed pos;\n  fixed life;\n};\n\nstate Ember embers[12];\nstate Spark sparks[4];\nstate bool  inited;\nstate float bg_flicker;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 12; i = i + 1) {\n      float fi = float(i);\n      embers[i].pos   = fixed(hash(fi * 1.7));\n      embers[i].life  = fixed(hash(fi * 2.3));\n      embers[i].drift = 0.02 + hash(fi * 5.1) * 0.05;\n      embers[i].green = hash(fi * 7.3) * 0.35;\n    }\n    for (int i = 0; i < 4; i = i + 1) {\n      sparks[i].life = fixed(0.0);\n      sparks[i].pos  = fixed(0.5);\n    }\n    inited = true;\n  }\n\n  bg_flicker = 0.5 + 0.5 * sin(time * 2.3);\n\n  float fdt = dt * speed;\n  for (int i = 0; i < 12; i = i + 1) {\n    embers[i].pos  = fract(embers[i].pos + fixed(embers[i].drift * fdt));\n    embers[i].life = embers[i].life - fixed(0.2 * fdt);\n    if (embers[i].life < fixed(0.0)) {\n      float fi = float(i);\n      float ff = float(frame);\n      embers[i].pos   = fixed(hash(ff * 17.3 + fi * 5.7));\n      embers[i].life  = fixed(0.4 + hash(ff * 23.9 + fi * 8.1) * 0.6);\n      embers[i].drift = 0.01 + hash(ff * 31.1 + fi * 13.3) * 0.05;\n      embers[i].green = hash(ff * 41.7 + fi * 19.1) * 0.35;\n    }\n  }\n\n  for (int i = 0; i < 4; i = i + 1) {\n    sparks[i].life = sparks[i].life - fixed(4.0 * dt);\n    if (sparks[i].life < fixed(0.0)) {\n      float fi = float(i);\n      float ff = float(frame);\n      float trigger = hash(ff * 47.3 + fi * 13.7);\n      if (trigger < 0.05) {\n        sparks[i].pos  = fixed(hash(ff * 23.1 + fi * 7.3));\n        sparks[i].life = fixed(0.3 + hash(ff * 31.7 + fi * 11.1) * 0.4);\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed ls = fixed(led.s);\n\n  // Warm base glow strongest at the bottom of the cylinder\n  float inv_y = 1.0 - clamp(led.pos.y * 3.333, 0.0, 1.0);\n  float base  = inv_y * inv_y * (0.12 + 0.05 * bg_flicker) * intensity;\n  vec3 c = vec3(base, base * 0.15, 0.0);\n\n  // Embers \u2014 distance in fixed, one float multiply per ember for color\n  for (int i = 0; i < 12; i = i + 1) {\n    fixed d = abs(ls - embers[i].pos);\n    d = min(d, fixed(1.0) - d);\n    fixed bright = max(fixed(0.0), fixed(0.05) - d) * fixed(20.0);\n    bright = bright * bright * embers[i].life;\n    float fb = float(bright) * intensity;\n    c.r = c.r + fb;\n    c.g = c.g + fb * embers[i].green;\n  }\n\n  // Sparks \u2014 brief, narrow, hot-white flashes\n  for (int i = 0; i < 4; i = i + 1) {\n    fixed d = abs(ls - sparks[i].pos);\n    d = min(d, fixed(1.0) - d);\n    fixed sbright = max(fixed(0.0), fixed(0.018) - d) * fixed(55.0);\n    sbright = sbright * sbright * max(fixed(0.0), sparks[i].life);\n    float fsb = float(sbright) * intensity;\n    c.r = c.r + fsb * 1.5;\n    c.g = c.g + fsb * 1.2;\n    c.b = c.b + fsb * 0.4;\n  }\n\n  return c;\n}\n```",
+      "is_error": false,
+      "session_id": "47e45527-a025-45ac-887d-52c6b793171a",
+      "wall_s": 659.0,
+      "duration_api_ms": 654332,
+      "cost_usd": 0.7233054,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 47624,
+        "cache_read_input_tokens": 8658,
+        "cache_creation_input_tokens": 1055
+      },
+      "thinking_tokens": 46282,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 82,
+          "col": 6,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler doesn't support component-assignment swizzles (`c.r = \u2026`). Replace those with whole-vector additions.\n\n```glsl\nuniform float speed   : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.1 .. 2.0 = 1.0;\n\nstruct Ember {\n  fixed pos;\n  fixed life;\n  float drift;\n  float green;\n};\n\nstruct Spark {\n  fixed pos;\n  fixed life;\n};\n\nstate Ember embers[12];\nstate Spark sparks[4];\nstate bool  inited;\nstate float bg_flicker;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 12; i = i + 1) {\n      float fi = float(i);\n      embers[i].pos   = fixed(hash(fi * 1.7));\n      embers[i].life  = fixed(hash(fi * 2.3));\n      embers[i].drift = 0.02 + hash(fi * 5.1) * 0.05;\n      embers[i].green = hash(fi * 7.3) * 0.35;\n    }\n    for (int i = 0; i < 4; i = i + 1) {\n      sparks[i].life = fixed(0.0);\n      sparks[i].pos  = fixed(0.5);\n    }\n    inited = true;\n  }\n\n  bg_flicker = 0.5 + 0.5 * sin(time * 2.3);\n\n  float fdt = dt * speed;\n  for (int i = 0; i < 12; i = i + 1) {\n    embers[i].pos  = fract(embers[i].pos + fixed(embers[i].drift * fdt));\n    embers[i].life = embers[i].life - fixed(0.2 * fdt);\n    if (embers[i].life < fixed(0.0)) {\n      float fi = float(i);\n      float ff = float(frame);\n      embers[i].pos   = fixed(hash(ff * 17.3 + fi * 5.7));\n      embers[i].life  = fixed(0.4 + hash(ff * 23.9 + fi * 8.1) * 0.6);\n      embers[i].drift = 0.01 + hash(ff * 31.1 + fi * 13.3) * 0.05;\n      embers[i].green = hash(ff * 41.7 + fi * 19.1) * 0.35;\n    }\n  }\n\n  for (int i = 0; i < 4; i = i + 1) {\n    sparks[i].life = sparks[i].life - fixed(4.0 * dt);\n    if (sparks[i].life < fixed(0.0)) {\n      float fi = float(i);\n      float ff = float(frame);\n      float trigger = hash(ff * 47.3 + fi * 13.7);\n      if (trigger < 0.05) {\n        sparks[i].pos  = fixed(hash(ff * 23.1 + fi * 7.3));\n        sparks[i].life = fixed(0.3 + hash(ff * 31.7 + fi * 11.1) * 0.4);\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed ls = fixed(led.s);\n\n  // Warm base glow strongest at the bottom of the cylinder\n  float inv_y = 1.0 - clamp(led.pos.y * 3.333, 0.0, 1.0);\n  float base  = inv_y * inv_y * (0.12 + 0.05 * bg_flicker) * intensity;\n  vec3 c = vec3(base, base * 0.15, 0.0);\n\n  // Embers \u2014 distance in fixed, one float multiply per ember for color\n  for (int i = 0; i < 12; i = i + 1) {\n    fixed d = abs(ls - embers[i].pos);\n    d = min(d, fixed(1.0) - d);\n    fixed bright = max(fixed(0.0), fixed(0.05) - d) * fixed(20.0);\n    bright = bright * bright * embers[i].life;\n    float fb = float(bright) * intensity;\n    c = c + vec3(fb, fb * embers[i].green, 0.0);\n  }\n\n  // Sparks \u2014 brief, narrow, hot-white flashes\n  for (int i = 0; i < 4; i = i + 1) {\n    fixed d = abs(ls - sparks[i].pos);\n    d = min(d, fixed(1.0) - d);\n    fixed sbright = max(fixed(0.0), fixed(0.018) - d) * fixed(55.0);\n    sbright = sbright * sbright * max(fixed(0.0), sparks[i].life);\n    float fsb = float(sbright) * intensity;\n    c = c + vec3(fsb * 1.5, fsb * 1.2, fsb * 0.4);\n  }\n\n  return c;\n}\n```",
+      "is_error": false,
+      "session_id": "47e45527-a025-45ac-887d-52c6b793171a",
+      "wall_s": 36.8,
+      "duration_api_ms": 678197,
+      "cost_usd": 0.8756595,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3248,
+        "cache_read_input_tokens": 4877,
+        "cache_creation_input_tokens": 17027
+      },
+      "thinking_tokens": 1906,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1432
+    }
+  ],
+  "started": "2026-10-22T19:40:58",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 1.599,
+  "total_wall_s": 695.8,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p02.fx"
+}

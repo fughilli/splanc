@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p13",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Starfield twinkle: a night sky wrapped around the lamp. A sparse set of LEDs\n// are stars; each one slowly fades in, twinkles with its own rhythm and colour\n// temperature, then fades out and is reborn elsewhere in time, so the sky\n// keeps changing. Everything is per-LED hash, so it suits any shape and stays\n// cheap (no smoothstep/pow in the hot path).\n\nuniform float density    : 0.0 .. 1.0 = 0.22;        // share of LEDs that are stars at a time\nuniform float twinkle    : 0.0 .. 4.0 = 1.2;         // twinkle speed (Hz-ish)\nuniform float depth      : 0.0 .. 1.0 = 0.7;         // how deep each twinkle dips\nuniform float lifetime   : 1.0 .. 30.0 = 9.0;        // seconds a star lives before re-seeding\nuniform vec3  warm       : color = 1.0, 0.78, 0.5;   // warm star colour\nuniform vec3  cool       : color = 0.6, 0.75, 1.0;   // cool star colour\nuniform vec3  night      : color = 0.01, 0.015, 0.06; // sky between the stars\nuniform float sky        : 0.0 .. 1.0 = 0.5;         // sky glow amount\nuniform float brightness : 0.0 .. 1.0 = 1.0;         // overall star brightness\n\nstate float tw;\nstate float lt;\nstate float skyBreath;\n\nvoid update() {\n  tw = time * twinkle * 6.2832;\n  lt = time / lifetime;\n  skyBreath = sky * (0.85 + 0.15 * sin(time * 0.2));\n}\n\nvec3 shade(Led led) {\n  float id = float(led.idx);\n  float h1 = hash(id * 1.37 + 0.5);\n  float h2 = hash(id * 7.13 + 2.1);\n  float h3 = hash(id * 3.71 + 9.4);\n\n  // Life cycle: each LED runs its own slow cycle; every new generation\n  // re-rolls whether it is a star.\n  float cyc = lt * (0.6 + 0.8 * h2) + h1;\n  float gen = floor(cyc);\n  float p = cyc - gen;\n  float on = step(hash(id + gen * 17.3), density);\n  float env = sin(p * 3.14159);\n  env = env * env;\n\n  // Twinkle: per-star rate and phase, squared for sharper glints.\n  float f = 0.5 + 0.5 * sin(tw * (0.5 + h3) + h1 * 6.2832);\n  f = f * f;\n\n  float b = on * env * (1.0 - depth + depth * f) * (0.35 + 0.65 * h3);\n  vec3 sc = mix(warm, cool, h2);\n\n  return night * skyBreath + sc * (b * brightness);\n}\n```",
+      "is_error": false,
+      "session_id": "85727720-980b-459a-a57d-661d0bf4898e",
+      "wall_s": 43.4,
+      "duration_api_ms": 22283,
+      "cost_usd": 0.048120399999999994,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2048,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 1066,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1743
+    }
+  ],
+  "started": "2026-10-22T20:00:02",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0481,
+  "total_wall_s": 43.4,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p13.fx"
+}

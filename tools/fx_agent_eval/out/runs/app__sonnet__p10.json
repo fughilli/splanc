@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p10",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\nuniform float speed       : 0.2 .. 5.0  = 2.0;\nuniform float tail_length : 0.05 .. 0.60 = 0.25;\nuniform float n_turns     : 2.0 .. 12.0 = 8.0;\n\nstruct Drop {\n  fixed pos;\n  fixed spd;\n  int   col;\n};\n\nstate Drop  drops[32];\nstate bool  inited;\nstate fixed tail_f;\nstate fixed tail_inv;\nstate fixed inv_height;\nstate fixed ntf;\n\nvoid update() {\n  tail_f     = fixed(tail_length);\n  tail_inv   = fixed(1.0) / tail_f;\n  inv_height = fixed(1.0 / 0.30);\n  ntf        = fixed(n_turns);\n\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      float fi      = float(i);\n      drops[i].col  = int(hash(fi * 1.13) * 16.0);\n      drops[i].pos  = fixed(hash(fi * 2.67));\n      drops[i].spd  = fixed(0.12 + hash(fi * 5.31) * 0.40);\n    }\n    inited = true;\n  }\n\n  fixed sdt = fixed(speed) * fixed(dt);\n  for (int i = 0; i < 32; i = i + 1) {\n    drops[i].pos = drops[i].pos + drops[i].spd * sdt;\n    if (drops[i].pos > fixed(1.0) + tail_f) {\n      float r      = hash(float(i * 13 + frame));\n      drops[i].col = int(r * 16.0);\n      drops[i].pos = fixed(-0.05) - fixed(hash(r * 3.71) * 0.40);\n      drops[i].spd = fixed(0.12 + hash(r * 7.13) * 0.40);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // Angular column (0..15) from helix phase\n  fixed ang = fract(fixed(led.s) * ntf);\n  int   col = int(ang * fixed(16));\n\n  // Normalized height: 0 = top (high Y), 1 = bottom (low Y) \u2014 rain falls down\n  fixed h = fixed(1.0) - fixed(led.pos.y) * inv_height;\n  h = clamp(h, fixed(0.0), fixed(1.0));\n\n  fixed br     = fixed(0.0);\n  fixed hd     = fixed(0.0);\n  fixed head_w = fixed(0.05);\n\n  for (int i = 0; i < 32; i = i + 1) {\n    if (drops[i].col == col) {\n      fixed d       = h - drops[i].pos;\n      // in_tail: 1 when 0 <= d < tail_f\n      fixed in_tail = step(fixed(0.0), d) * (fixed(1.0) - step(tail_f, d));\n      fixed t       = (tail_f - d) * tail_inv * in_tail;\n      br            = max(br, t);\n      // in_head: 1 when 0 <= d < head_w  (bright leading tip)\n      fixed in_head = step(fixed(0.0), d) * (fixed(1.0) - step(head_w, d));\n      hd            = max(hd, (head_w - d) / head_w * in_head);\n    }\n  }\n\n  // Per-LED digit shimmer \u2014 hash changes every ~3 frames, simulates scrolling glyphs\n  int   ts = frame / 3;\n  float cv = 0.50 + 0.50 * hash(float(led.idx + ts * 503));\n\n  float fbr = float(br) * cv;\n  float fhd = float(hd);\n\n  // Dark tail \u2192 bright green body \u2192 white-green head flash\n  return vec3(fhd * 0.80, fbr * 0.85 + fhd * 0.15, fhd * 0.80);\n}\n```\n\n**How it works:**\n\n- **32 drop agents** tracked in `state`, each assigned to one of 16 angular columns. `update()` advances them with per-drop speed variation, respawning from a random position above the top when they exit the bottom \u2014 all in native `fixed` arithmetic.\n- **Column assignment** in `shade()` via `fract(led.s \u00d7 n_turns)` \u2014 the helix's angular phase within the current turn \u2014 mapped to 16 columns. No `atan2` needed.\n- **Height** maps `led.pos.y / 0.30 m` to 0 (top) \u2192 1 (bottom) so rain falls in the \u2212Y direction.\n- **Tail fade** uses branchless `step()` masking (native on `fixed`) so the hot loop is free of nested `if`s.\n- **Digit shimmer** hashes `led.idx + time_bucket` every ~3 frames for the classic scrolling-glyph flicker, computed once in float before the final `vec3` construction.\n- Colors: deep-black background \u2192 fading dark green \u2192 bright green body \u2192 white-green head flash, matching the iconic Matrix palette.",
+      "is_error": false,
+      "session_id": "93bec0be-e75a-44a8-94aa-4f94fe40ec04",
+      "wall_s": 432.7,
+      "duration_api_ms": 426733,
+      "cost_usd": 0.4825047,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 31877,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 507
+      },
+      "thinking_tokens": 30517,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1160
+    }
+  ],
+  "started": "2026-10-22T19:48:18",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.4825,
+  "total_wall_s": 432.7,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p10.fx"
+}
