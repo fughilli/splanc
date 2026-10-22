@@ -902,10 +902,9 @@ for how to run it.</p>
 (<code class="docutils literal notranslate"><span class="pre">deviceKey:</span> <span class="pre">esp32c6-hitl-golden</span></code>, <code class="docutils literal notranslate"><span class="pre">cpuHz:</span> <span class="pre">160_000_000</span></code>; 65 fit programs + 7
 held-out). Regenerate with <code class="docutils literal notranslate"><span class="pre">fx_bench</span> <span class="pre">--emit-golden</span> <span class="pre">&lt;path&gt;</span></code>.</p></li>
 <li><p><strong>Regression gate:</strong> a program fails if <code class="docutils literal notranslate"><span class="pre">abs(measured/golden</span> <span class="pre">−</span> <span class="pre">1)</span></code> exceeds its
-margin — default <strong>10%</strong>, with <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> and <code class="docutils literal notranslate"><span class="pre">empty</span></code> at 15% (the two
-overhead-floor programs, whose few hundred k cycles move by a constant ~7–10 k
-with flash-cache layout; see <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ld/esp32c6_iram_to_flash.txt</span></code>).
-<strong>Only frame cycles are gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
+margin — default <strong>10%</strong>, with <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> at 15% (a deliberately safe band until
+per-effect run-to-run variance is characterized). <strong>Only frame cycles are
+gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
 </ul>
 <p>Representative measured frame-cycle costs at 160 MHz (full set in the golden):</p>
 <div class="table-wrapper colwidths-auto docutils container">

@@ -128,7 +128,7 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    | #291 | exact-size topology decode (count, then fill) into one shared vertex array; `ARENA_MEM` 8 → 12 KB, capacity 16·J + 24·S + 12·V bytes (a 27 / 51 / 206 scan takes 4,128 B, ~880 vertices of headroom at 27 J / 51 S; beyond it `map_too_large`) | +4 KB static, not re-measured on this scenario | — |
    | #285 | FX deck B + uniform keypoints: +6.5 KB static (`DECK_A` with its morph state, the video/deck-B aux union 8,192 → 11,436 B, `KP_IO`); the per-LED fx shade entry (`lm_fx_shade`, `Program::parse`, `Vm::run_shade_bounded`) pinned in IRAM (`.iram0.text` 97,512 → 99,704 B, +2,192) | not re-measured on this scenario (fx_keypoints HITL, final tip: min free 72.7 KB (72,672 B) with both decks + a wss session; the ~1.9 KB below the previous run is the IRAM pin) | — |
 
-   | LED cap | **1024 LEDs per channel** (2048 total, was 512 total): render + PARLIO buffers 6.2 → 24.6 KB, per-LED map caches packed (`FX_LED_TOPO` 20 → 10 B/LED, `FX_LED_POS` 12 → 9 B/LED as [`F24`](#led-capacity-1024-per-channel), `FX_LED_ROOM` dropped for a per-LED pose transform) — static RAM +38.1 KB | 67.3 → 29.1 KB (ImprovBLE, both channels at 1024, 2048-LED map + topology + plasma effect; largest block 56.3 → 17.9 KB) | 75.4 → 37.2 KB |
+   | LED cap | **1024 LEDs per channel**, buffers sized at boot for the configured strip; per-LED caches packed (50 → 31 B/LED), `FX_LED_ROOM` dropped — static RAM −25.6 KB, heap at boot −16.0 KB at the default 512 | 67.3 → 76.9 KB at 256 + 256 (ImprovBLE + map + topology + effect); 29.7 KB at 1024 + 1024 | 75.4 → 85.0 KB (37.1 KB at 1024 + 1024) |
 
    #272 deliberately *reserves* 24 KiB that a session used to take from the
    shared heap. In exchange, a handshake can no longer fail on a fragmented
@@ -159,48 +159,63 @@ draws, paired with the device's `esp_get_free_heap_size()`:
 
 ## LED capacity (1024 per channel)
 
-`firmware/player_app/led_caps.bzl` sets `MAX_LEDS_PER_CHANNEL = 1024` on the C6
-(the C3 keeps 256 per channel — the C6's caches overflow its DRAM by ~23 KB):
-2048 LEDs across the two channels, one global index space (channel 0 first).
-Every LED of capacity is paid in static RAM whether or not a strip uses it, so
-the cap is a heap trade. Per LED of capacity, after this change:
+`firmware/player_app/led_caps.bzl` caps the C6 at `MAX_LEDS_PER_CHANNEL = 1024`
+(2048 across the two channels, one global index space, channel 0 first; the C3
+keeps 256 per channel). The cap only bounds what a config may ask for: the
+per-LED buffers are **sized for the configured strip**, once at boot
+(`led_store_begin` in main.cpp), from the counts persisted in NVS (`hw_len0/1`;
+512 LEDs when none are set), before the radios or a TLS session fragment the
+heap. A 300-LED lamp pays for 300 LEDs. Per LED of configuration:
 
-| Buffer | B/LED | At 2048 | Notes |
-| --- | ---: | ---: | --- |
-| `leds` (render target) | 3 | 6,144 | the frame being shaded |
-| `g_buf` (PARLIO/GDMA frame) | 9 | 18,440 | 24 bits x 3 samples; both channels at 1024 go out as one 2-lane parallel frame |
-| `FX_LED_TOPO` | 10 | 20,480 | was 20: seg + branch bit (i16), d_perp (i16 mm), `s` and `dist` as F24 |
-| `FX_LED_POS` | 9 | 18,432 | was 12: three F24 (16-bit mantissa, ~1.5e-5 relative, 0.08 mm at 5 m) |
-| `FX_LED_MAPPED` | 1/8 | 256 | one bit per LED |
-| `FX_LED_ROOM` | 0 | 0 | was 6: the pose is applied per LED in `shade()` (9 multiply-adds, only for room-reading effects on a posed fixture) |
-| **total** | **~31** | **63,752** | was 50 B/LED (25.7 KB at 512) |
+| Buffer | B/LED | At 512 | At 2048 | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `leds` (render target) | 3 | 1,536 | 6,144 | heap, boot |
+| PARLIO/GDMA frame | 9 | 4,616 | 18,440 | heap (DMA-capable), boot; room for twice the longest channel so both always go out in parallel |
+| `FX_LED_TOPO` | 10 | 5,120 | 20,480 | was 20: seg + branch bit (i16), d_perp (i16 mm), `s` and `dist` as F24 |
+| `FX_LED_POS` | 9 | 4,608 | 18,432 | was 12: three F24 (16-bit mantissa, ~1.5e-5 relative, 0.08 mm at 5 m) |
+| `FX_LED_MAPPED` | 1/8 | 64 | 256 | one bit per LED |
+| `FX_LED_ROOM` | 0 | 0 | 0 | was 6: the pose is applied per LED in `shade()` |
+| **total** | **~31** | **15,992** | **63,800** | main paid 25.7 KB of statics for a fixed 512 |
 
-F24 is an f32 with its low mantissa byte rounded away: decoding is a shift
-(no soft-float on the per-LED path) and it is exact for 0 and ±1. The stored
-map dump (`get_stored_map`) returns positions at that precision; an
-association's foot arclength is no longer resident and is re-derived as
-`s × segment length`, and `d_perp` is echoed in whole millimetres.
+F24 is an f32 with its low mantissa byte rounded away: decoding is a shift (no
+soft-float on the per-LED path), exact for 0 and ±1. The stored-map dump
+(`get_stored_map`) returns positions at that precision; an association's foot
+arclength is no longer resident and is re-derived as `s × segment length`, and
+`d_perp` is echoed in whole millimetres.
 
-Measured on HITL rig-2 (c6-fa0324, `//pi/hitl/harness:led_capacity --improv`,
-both channels at the cap, a 2048-LED map + 12-segment topology + the plasma
+**Growing the strip.** `set_hardware_config` / `set_led_count` within this
+boot's capacity just apply. A total past it (within `board.max_leds`) is
+accepted, persisted even as a preview, answered `reboot_required = true`
+(`HardwareConfigState` / `LedCountState`), and the player restarts 1.5 s later
+into buffers sized for it (`HardwareConfigState.led_capacity` reports the
+current size). `board.max_leds` is computed at boot as the largest total whose
+buffers still leave a **24 KB floor** after the running board's own heap use
+(`kRuntimeHeapReserve` = 62 KB, measured: 155,200 B free before the buffers −
+63,800 B of buffers at 2048 − 29,676 B loaded minimum = 61,724 B); a total past
+it is refused (`led_count exceeds the board's max_leds`). On this image every
+config up to the 2048 cap fits.
+
+Measured on HITL rig-2 (c6-fa0324, `//pi/hitl/harness:led_capacity --improv`:
+ImprovBLE provisioning, a 2 × per-channel map + 12-segment topology, the plasma
 effect, then three fresh wss handshakes):
 
-| Firmware | Free | Min free | Largest block |
+| Firmware / config | Free | Min free | Largest block |
 | --- | ---: | ---: | ---: |
-| main (512 total, 256 + 256) | 75,408 | 67,340 | 56,308 |
-| 1024 + 1024 | 37,208 | 29,144 | 17,908 |
+| main (512 static), 256 + 256 | 75,408 | 67,340 | 56,308 |
+| this, 256 + 256 (512 allocated) | 84,984 | 76,940 | 65,524 |
+| this, 1024 + 1024 (2048 allocated, after the resize reboot) | 37,104 | 29,676 | 17,908 |
 
-The 38.2 KB drop is the static growth (`.dram0.heap_start` +38,120 B). The
-headroom that is left still serves a fresh TLS session (mbedTLS has its own
-region since #272) and the 6.5 KB WS upgrade; `loaded_tls_netstack` now loads
-2048 LEDs by default. `//firmware/sysmode:reachability_test` models the map
-store and the LED frame at the new sizes: the worst modeled state (BLE central
-+ wss + video + map) keeps 18,276 B of headroom (was 56,540).
+The 2048-LED config is the **max-config cost**: ~29 KB at the minimum, still
+above the 24 KB floor; it serves a fresh TLS session (mbedTLS has its own region
+since #272) and the 6.5 KB WS upgrade. `//firmware/sysmode:reachability_test`
+models the boot-sized buffers as a function of the configured LEDs: at the
+default 512 the worst modeled state (BLE central + wss + video + map) needs
+161,479 B (65,974 B headroom; main 164,975 B / 56,540 B); at 2048 it needs
+209,287 B (18,166 B headroom).
 
-What it would take to get the heap back without lowering the cap: stream the
-PARLIO frame through two small DMA buffers instead of encoding it whole
-(−18 KB), at the price of a refill deadline — the prebuilt IDF's PARLIO ISR is
-not cache-safe, so a flash write mid-frame would stall the refill and glitch
-the wire (the Bug A failure class the whole-frame DMA fixed), unless flash
-writes are gated to the inter-frame gap.
-
+What it would take to shrink the max-config cost further: stream the PARLIO
+frame through two small DMA buffers instead of encoding it whole (−18 KB at
+2048), at the price of a refill deadline — the prebuilt IDF's PARLIO ISR is not
+cache-safe, so a flash write mid-frame would stall the refill and glitch the
+wire (the Bug A failure class the whole-frame DMA fixed), unless flash writes
+are gated to the inter-frame gap.

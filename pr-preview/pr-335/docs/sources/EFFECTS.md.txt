@@ -342,10 +342,9 @@ for how to run it.
   (`deviceKey: esp32c6-hitl-golden`, `cpuHz: 160_000_000`; 65 fit programs + 7
   held-out). Regenerate with `fx_bench --emit-golden <path>`.
 - **Regression gate:** a program fails if `abs(measured/golden − 1)` exceeds its
-  margin — default **10%**, with `sweep16` and `empty` at 15% (the two
-  overhead-floor programs, whose few hundred k cycles move by a constant ~7–10 k
-  with flash-cache layout; see `firmware/player_app/ld/esp32c6_iram_to_flash.txt`).
-  **Only frame cycles are gated**; show cycles (transmit) are noisier and excluded.
+  margin — default **10%**, with `sweep16` at 15% (a deliberately safe band until
+  per-effect run-to-run variance is characterized). **Only frame cycles are
+  gated**; show cycles (transmit) are noisier and excluded.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
