@@ -3890,25 +3890,28 @@ fn arena_need(prog: &Program) -> usize {
     (prog.arena_bytes(unsafe { fx_arena_leds() }) + 3) & !3
 }
 
-/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing): the buffers get
-/// the front (their worst-case need), and the per-LED memo cache the largest
-/// group prefix that fits in the rest of the slice for FX_MEMO_LEDS LEDs.
-/// (Re)binding the cache empties it — the next shade sweep recomputes.
+/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing). The per-LED memo
+/// cache takes the largest group prefix (for FX_MEMO_LEDS LEDs) that fits in
+/// what the buffers' need leaves free, carved from the END of the slice; the
+/// buffers keep everything in front of it (all of the slice when there is no
+/// cache, exactly as before). (Re)binding the cache empties it.
 unsafe fn bind_arena(p: *mut DeckState) {
     let (o, n) = ((*p).arena_off, (*p).arena_len);
     let arena = &mut *addr_of_mut!(FX_ARENA);
     let bytes = &(*p).bytes[..(*p).len];
-    let need = Program::parse(bytes).map(|pr| arena_need(&pr)).unwrap_or(n).min(n);
-    let words = Program::parse(bytes)
-        .map(|pr| pr.led_cache_fit(FX_MEMO_LEDS, n - need))
-        .unwrap_or(0);
+    let (need, words) = match Program::parse(bytes) {
+        Ok(pr) => {
+            let need = arena_need(&pr).min(n);
+            (need, pr.led_cache_fit(FX_MEMO_LEDS, n - need))
+        }
+        Err(_) => (n, 0),
+    };
+    let m = ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS).min(n - need);
     if let Some(vm) = (*p).vm.as_mut() {
         // Disjoint sub-slices: the VM never sees the cache as buffer memory.
-        let (bufs, tail) = arena[o..o + n].split_at_mut(need);
+        let (bufs, tail) = arena[o..o + n].split_at_mut(n - m);
         vm.set_arena(bufs);
-        let m = ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS);
-        let m = m.min(tail.len());
-        vm.set_led_cache(&mut tail[..m], words, FX_MEMO_LEDS);
+        vm.set_led_cache(tail, words, FX_MEMO_LEDS);
     }
 }
 
