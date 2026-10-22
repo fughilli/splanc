@@ -645,7 +645,12 @@ py_test(
     },
     imports = ["."],
     main = "hitl_ota.py",
-    tags = ["hitl"],
+    # manual: needs a rig, so `bazel test //...` (test / test-macos) skips it; the
+    # HITL lane picks it up by the `hitl` tag.
+    tags = [
+        "hitl",
+        "manual",
+    ],
     deps = [
         ":harness",
         "//pi/server",

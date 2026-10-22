@@ -75,7 +75,7 @@ uint8_t reset_class() {
 // hangs anywhere still resets — and a reset while pending verify rolls back. The
 // inline LL calls, as the swarm loader found the wdt_hal_* path never armed it.
 void arm_health_deadline(uint32_t ms) {
-  lp_wdt_dev_t *hw = &LP_WDT;
+  rwdt_dev_t *hw = RWDT_DEV_GET();  // LP_WDT on the C6, RTCCNTL on the C3
   uint32_t ticks = (uint32_t)((uint64_t)ms * rtc_clk_slow_freq_get_hz() / 1000);
   rwdt_ll_write_protect_disable(hw);
   rwdt_ll_disable(hw);
@@ -92,7 +92,7 @@ void arm_health_deadline(uint32_t ms) {
 }
 
 void disarm_health_deadline() {
-  lp_wdt_dev_t *hw = &LP_WDT;
+  rwdt_dev_t *hw = RWDT_DEV_GET();  // LP_WDT on the C6, RTCCNTL on the C3
   rwdt_ll_write_protect_disable(hw);
   rwdt_ll_disable(hw);
   rwdt_ll_write_protect_enable(hw);
