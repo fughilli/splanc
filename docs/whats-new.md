@@ -73,6 +73,12 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 - Not yet through **Live via bridge**: the bridge doesn't forward the stored
   map, so connect to the fixture directly to copy it.
 
+### A quickstart guide
+
+- **New: [the Splanc quickstart](quickstart.md)**. Wiring, flashing, Wi-Fi,
+  mapping, effects and AI agents, one short section each, from a bare ESP32-C6
+  to animated lights.
+
 ### The motion sensor knows which way the map is
 
 - **Mapping now calibrates the IMU's tilt for free**: the map is gravity-levelled

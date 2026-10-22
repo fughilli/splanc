@@ -18,7 +18,8 @@ on the controller.
 
 This is the **developer** documentation: how splanc is built, how the pieces fit
 together, and how to work on each subsystem. If you just want to _use_ the app,
-start at the [live PWA](https://splanc.io/app) — nothing to install. To drive
+start at the {doc}`docs/quickstart` and the [live PWA](https://splanc.io/app) —
+nothing to install. To drive
 the lights from an AI agent, see {doc}`subsystems/agent`.
 
 Everything here (including the generated figures and animations below) is
@@ -34,6 +35,14 @@ See {doc}`about-these-docs` for how that works.
 
 ::::{grid} 1 2 2 3
 :gutter: 3
+
+:::{grid-item-card} 🚀 Quickstart
+:link: docs/quickstart
+:link-type: doc
+
+From a bare ESP32-C6 and an LED strip to mapped, animated lights: wiring,
+flashing, Wi-Fi, mapping, effects and AI agents, one short section each.
+:::
 
 :::{grid-item-card} 📜 The manifesto
 :link: docs/manifesto
@@ -106,6 +115,7 @@ solver exploration, blob detection, the C6 memory work, and the agent design.
 :hidden:
 :caption: Overview
 
+Quickstart <docs/quickstart>
 The manifesto <docs/manifesto>
 What's new <docs/whats-new>
 architecture
