@@ -5,6 +5,26 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Copy a fixture's map onto a new phone
+
+- **The Maps tab shows the map on the connected device.** A card at the top
+  shows its LED count, mapped vs interpolated LEDs, and whether this phone
+  already has it. On a fresh install, **Save to this phone** copies the map
+  into the library, and **Preview** opens it without saving. Only a small
+  header is read on each visit. A large map is downloaded when you save or
+  preview it.
+- **Calibrate IMU without mapping again.** The card and the device's detail
+  sheet offer **Calibrate IMU** when the device's motion sensor is running.
+  If the map isn't on this phone yet, it is copied first.
+- **Supplement works on every map.** A map copied from a device or imported
+  has positions but no raw capture data. A supplemental scan now aligns to
+  those stored positions and averages with them, using a cautious accuracy of
+  ¼ LED pitch for the stored positions. Before, the button was hidden for these
+  maps. Maps that kept their capture data still get the joint re-solve. The
+  debug **Bundle** tile is now greyed out with the reason, not hidden.
+- Not yet through **Live via bridge**: the bridge doesn't forward the stored
+  map, so connect to the fixture directly to copy it.
+
 ### The motion sensor knows which way the map is
 
 - **Mapping now calibrates the IMU's tilt for free**: the map is gravity-levelled

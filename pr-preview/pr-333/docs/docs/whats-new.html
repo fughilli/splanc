@@ -321,6 +321,28 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="copy-a-fixture-s-map-onto-a-new-phone">
+<h3>Copy a fixture’s map onto a new phone<a class="headerlink" href="#copy-a-fixture-s-map-onto-a-new-phone" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The Maps tab shows the map on the connected device.</strong> A card at the top
+shows its LED count, mapped vs interpolated LEDs, and whether this phone
+already has it. On a fresh install, <strong>Save to this phone</strong> copies the map
+into the library, and <strong>Preview</strong> opens it without saving. Only a small
+header is read on each visit. A large map is downloaded when you save or
+preview it.</p></li>
+<li><p><strong>Calibrate IMU without mapping again.</strong> The card and the device’s detail
+sheet offer <strong>Calibrate IMU</strong> when the device’s motion sensor is running.
+If the map isn’t on this phone yet, it is copied first.</p></li>
+<li><p><strong>Supplement works on every map.</strong> A map copied from a device or imported
+has positions but no raw capture data. A supplemental scan now aligns to
+those stored positions and averages with them, using a cautious accuracy of
+¼ LED pitch for the stored positions. Before, the button was hidden for these
+maps. Maps that kept their capture data still get the joint re-solve. The
+debug <strong>Bundle</strong> tile is now greyed out with the reason, not hidden.</p></li>
+<li><p>Not yet through <strong>Live via bridge</strong>: the bridge doesn’t forward the stored
+map, so connect to the fixture directly to copy it.</p></li>
+</ul>
+</section>
 <section id="the-motion-sensor-knows-which-way-the-map-is">
 <h3>The motion sensor knows which way the map is<a class="headerlink" href="#the-motion-sensor-knows-which-way-the-map-is" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -859,6 +881,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#copy-a-fixture-s-map-onto-a-new-phone">Copy a fixture’s map onto a new phone</a></li>
 <li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
 <li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
 <li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>
