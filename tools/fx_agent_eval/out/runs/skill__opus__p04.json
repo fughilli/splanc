@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p04",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Slow rainbow rotating around a cylindrical lamp.\n// Hue follows each LED's angle around the lamp's vertical axis (+Y), so the\n// full spectrum wraps once (or more) around the cylinder and slowly rotates.\n// Optional twist adds a spiral by shifting hue with height.\n\nuniform float speed      : 0.0 .. 1.0 = 0.05;   // revolutions per second\nuniform bool  reverse    = false;               // rotate the other way\nuniform float bands      : 1.0 .. 4.0 = 1.0;    // rainbows around the lamp\nuniform float twist      : 0.0 .. 2.0 = 0.0;    // hue shift from bottom to top (spiral)\nuniform float saturation : 0.0 .. 1.0 = 0.9;\nuniform float brightness : 0.0 .. 1.0 = 0.8;\nuniform float center_x   : 0.0 .. 0.2 = 0.1;    // axis nudge, 0.1 = centred\nuniform float center_z   : 0.0 .. 0.2 = 0.1;\n\nstate float phase;\nstate float cx;\nstate float cz;\n\nvoid update() {\n  float dir = 1.0;\n  if (reverse) {\n    dir = -1.0;\n  }\n  phase = fract(phase + dt * speed * dir);\n  // Axis of the cylinder: centre of the fixture's bounding box, plus a trim.\n  vec3 c = (room.min + room.max) * 0.5;\n  cx = c.x + (center_x - 0.1);\n  cz = c.z + (center_z - 0.1);\n}\n\nvec3 shade(Led led) {\n  float a = atan2(led.room.z - cz, led.room.x - cx);   // -pi .. pi\n  float u = a * 0.15915494 + 0.5;                       // 0 .. 1 around the lamp\n  float h = fract(u * floor(bands + 0.5) + led.uv.y * twist - phase);\n  return hsv2rgb(h, saturation, brightness);\n}\n```",
+      "is_error": false,
+      "session_id": "c83ce9e1-451b-4ce7-979b-55265ade3198",
+      "wall_s": 25.3,
+      "duration_api_ms": 12060,
+      "cost_usd": 0.0281644,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1045,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 624
+      },
+      "thinking_tokens": 353,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1337
+    }
+  ],
+  "started": "2026-10-22T19:57:43",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0282,
+  "total_wall_s": 25.3,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p04.fx"
+}

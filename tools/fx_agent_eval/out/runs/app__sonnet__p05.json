@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p05",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Heartbeat pulse radiating from mid-height outward \u2014 lub then dub, centre to rim.\n\nuniform float bpm     : 40.0 .. 180.0 = 72.0;\nuniform float speed   : 1.0  .. 8.0   = 3.5;\nuniform float tail    : 0.02 .. 0.30  = 0.07;\nuniform vec3  col_lub : color          = 1.0, 0.08, 0.04;\nuniform vec3  col_dub : color          = 0.9, 0.30, 0.08;\nuniform float ambient : 0.0  .. 0.15  = 0.04;\n\n// All time-varying scalars hoisted to update() \u2014 shade() stays lean.\nstate float s_front1;    // lub wave-front position in normalised dist space\nstate float s_front2;    // dub wave-front position\nstate float s_dub_gate;  // 1.0 once the dub pulse has fired this cycle\n\nvoid update() {\n    float period = 60.0 / bpm;\n    float bt     = mod(time, period);        // position in current beat cycle\n\n    // Lub fires immediately at cycle start\n    s_front1   = bt * speed;\n\n    // Dub fires at 15 % into the cycle\n    float t2   = bt - period * 0.15;\n    s_dub_gate = step(0.0, t2);             // gate: 0 before dub fires, 1 after\n    s_front2   = max(0.0, t2) * speed;\n}\n\nvec3 shade(Led led) {\n    // Normalised distance from mid-height: 0 at y=0.15 m, 1 at top/bottom rim.\n    float dist = abs(led.pos.y - 0.15) / 0.15;\n\n    // Lub \u2014 strong leading pulse, bright at the wave-front, tails behind it.\n    float b1     = s_front1 - dist;          // positive once wave has passed this LED\n    float pulse1 = clamp(1.0 - b1 / tail, 0.0, 1.0) * step(0.0, b1);\n\n    // Dub \u2014 softer secondary pulse, gated so it is silent before it fires.\n    float b2     = s_front2 - dist;\n    float pulse2 = clamp(1.0 - b2 / tail, 0.0, 1.0) * step(0.0, b2)\n                   * s_dub_gate * 0.65;\n\n    return col_lub * (ambient + pulse1) + col_dub * pulse2;\n}\n```\n\n**How it works:**\n\n| Stage | What happens |\n|---|---|\n| `beat_t = 0` | Lub wave-front spawns at `dist = 0` (mid-cylinder), rushes up *and* down simultaneously |\n| `beat_t \u2248 0.15 \u00d7 period` | Dub wave spawns the same way \u2014 dimmer, slightly warmer colour |\n| Both waves travel from `dist 0 \u2192 1`, fade at the trailing edge over `tail` | LEDs behind the front light with a smooth ramp then go dark |\n| Rest of cycle | Strip returns to the dim `ambient` glow until the next lub |\n\nEvery per-LED calculation is a handful of `clamp`/`step`/`abs` ops on floats \u2014 the heavy `60/bpm`, `mod`, and wave-front multiplications happen once in `update()`.",
+      "is_error": false,
+      "session_id": "cd3201b4-ea84-4313-bca0-a59749eeaf4b",
+      "wall_s": 140.4,
+      "duration_api_ms": 138125,
+      "cost_usd": 0.1624857,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 10542,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 508
+      },
+      "thinking_tokens": 9655,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 979
+    }
+  ],
+  "started": "2026-10-22T19:41:09",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1625,
+  "total_wall_s": 140.4,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p05.fx"
+}

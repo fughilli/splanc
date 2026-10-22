@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p01",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Calm ocean swell rolling up the lamp\n// Three sinusoidal harmonics combined in native fixed-point;\n// only the height-to-fixed conversion uses soft-float per LED.\n\nuniform float speed      : 0.1 .. 2.0 = 0.35;   // swell travel speed\nuniform float swell_size : 1.0 .. 5.0 = 2.0;    // spatial wavelength (turns/lamp)\nuniform float foam       : 0.0 .. 1.0 = 0.50;   // crest brightness\nuniform vec3  deep_col   : color = 0.01, 0.07, 0.25;\nuniform vec3  mid_col    : color = 0.03, 0.28, 0.52;\nuniform vec3  crest_col  : color = 0.55, 0.85, 0.95;\n\n// One phase + frequency set per harmonic, hoisted to update()\nstate fixed phase1;\nstate fixed phase2;\nstate fixed phase3;\nstate fixed freq;   // swell_size          (in turns per lamp height)\nstate fixed freq2;  // swell_size * 1.618  (golden-ratio harmonic)\nstate fixed freq3;  // swell_size * 3.0    (micro-ripple)\n\nvoid update() {\n    // All float math lives here \u2014 runs once per frame\n    phase1 = fixed(fract(time * speed));\n    phase2 = fixed(fract(time * speed * 0.618));\n    phase3 = fixed(fract(time * speed * 1.732));\n    freq   = fixed(swell_size);\n    freq2  = fixed(swell_size * 1.618);\n    freq3  = fixed(swell_size * 3.0);\n}\n\nvec3 shade(Led led) {\n    // One soft-float conversion; everything else is native fixed/fixed16\n    fixed y = fixed(led.pos.y) * fixed(3.333);  // 0..1 along height (1/0.30)\n\n    // Three harmonics via native LUT sin (angle in turns)\n    fixed16 w1 = sin(fixed16(fract(y * freq  - phase1)));\n    fixed16 w2 = sin(fixed16(fract(y * freq2 - phase2))) * fixed16(0.4);\n    fixed16 w3 = sin(fixed16(fract(y * freq3 - phase3))) * fixed16(0.15);\n\n    // Normalise combined sum [-1.55, 1.55] \u2192 [0, 1]\n    // scale = 0.5 / 1.55 \u2248 0.3226\n    fixed16 t = clamp(\n        (w1 + w2 + w3) * fixed16(0.323) + fixed16(0.5),\n        fixed16(0.0), fixed16(1.0)\n    );\n\n    // Ocean colour ramp (soft-float, but lean \u2014 2 smoothstep + 2 mix)\n    float tf = float(t);\n    vec3 col = mix(deep_col,  mid_col,   smoothstep(0.20, 0.65, tf));\n         col = mix(col,       crest_col, smoothstep(0.72, 0.95, tf) * foam);\n    return col;\n}\n```\n\n**How it works**\n\n| Layer | Role |\n|---|---|\n| `w1` \u2014 primary swell | full-amplitude sine rolling upward |\n| `w2` \u2014 golden-ratio harmonic | 40 % amplitude, slightly different speed \u2014 destroys repetition |\n| `w3` \u2014 micro-ripple | 15 % amplitude, 3\u00d7 frequency \u2014 surface texture |\n| Colour ramp | deep navy \u2192 ocean blue \u2192 foam white, driven by combined wave height |\n\n**Performance** \u2014 `shade()` hot path: one `fixed(led.pos.y)` conversion (the only soft-float hit), three native LUT `sin(fixed16)` calls, fixed arithmetic, then two `smoothstep`/`mix` pairs for colour. Well inside the 33 ms budget at 500 LEDs.",
+      "is_error": false,
+      "session_id": "3766445e-0907-4ee1-851c-39a671ca9338",
+      "wall_s": 185.8,
+      "duration_api_ms": 183839,
+      "cost_usd": 0.24021599999999999,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 14079,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 4837
+      },
+      "thinking_tokens": 13046,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1115
+    }
+  ],
+  "started": "2026-10-22T19:35:24",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2402,
+  "total_wall_s": 185.8,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p01.fx"
+}

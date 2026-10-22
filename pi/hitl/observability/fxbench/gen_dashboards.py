@@ -46,6 +46,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DASH_DIR = os.path.abspath(os.path.join(HERE, "..", "dashboards"))
 DATA_DIR = os.path.join(HERE, "data")
 
+
+# What the plotted numbers ARE (docs/design/fx-perf-study.md §"Reading the fx_bench
+# numbers"). Shown on every panel as its description and as a text panel, because
+# "negM = 1.57 M" reads like a per-op or per-LED cost and is neither.
+METRIC_DOC = (
+    "**frame** = CPU cycles (C6 @ 160 MHz, so 160 k cycles = 1 ms) for ONE rendered "
+    "frame of the program: update() once + shade() over every mapped LED, including "
+    "the firmware's per-LED framing (map read, Led setup, VM entry/exit, RGB "
+    "conversion, colour correction; ~2.3 k cycles/LED on its own — see `empty`). It "
+    "is the window MINIMUM over a settled perf window (interrupt-free cost), on the "
+    "netstack firmware, with the program compiled `--no-opt`. The LED count is the "
+    "program's own (`leds` column): 128 for the `*M` calibration programs, 16/256 for "
+    "`sweep16`/`sweep256`, 200 for `lavalamp`. **show** = mean CPU cycles inside the "
+    "LED transmit call (not compute; not gated).\n\n"
+    "Calibration programs repeat ONE operation: `xM` = 32 statements of op x per "
+    "LED, `x2M` = 64. So per-LED cost = frame / leds, and the cost of one x "
+    "statement (incl. its operand loads/stores and dispatch) ≈ "
+    "(frame/leds − empty/leds) / 32 for `xM` (/ 64 for `x2M`). Example: negM "
+    "1.57 M / 128 LEDs = 12.3 k cycles/LED; minus `empty` 2.3 k = 10 k for 32 "
+    "`a = -a` statements ≈ 310 cycles each (3 opcodes: load, neg, store)."
+)
+
 INFINITY = {"type": "yesoreyeram-infinity-datasource", "uid": "grafanacloud-infinity"}
 
 # The dataset URLs Grafana fetches. The parsed data is multi-MB and grows every
@@ -129,6 +151,30 @@ def _target(url, root, columns, refid="A"):
 
 
 # ---- template variables ---------------------------------------------------------
+
+
+def _per_led_transform():
+    """Grafana calculateField: cycles / leds → a "cycles/LED" column, so a table
+    row reads as a per-LED cost next to the whole-frame number."""
+    return {
+        "id": "calculateField",
+        "options": {
+            "mode": "binary",
+            "binary": {"left": "cycles", "operator": "/", "right": "leds"},
+            "alias": "cycles/LED",
+            "replaceFields": False,
+        },
+    }
+
+
+def _doc_panel(y=0):
+    return {
+        "id": 99,
+        "type": "text",
+        "title": "What these numbers are",
+        "gridPos": {"h": 6, "w": 24, "x": 0, "y": y},
+        "options": {"mode": "markdown", "content": METRIC_DOC},
+    }
 
 
 def _var_custom(name, label, options, default):
@@ -237,7 +283,11 @@ def drift_dashboard(labels):
     panel = {
         "id": 1,
         "type": "timeseries",
-        "title": "$effect · $metric cycles over commit time ($build) — per-branch series + golden band",
+        "title": (
+            "$effect · $metric CPU cycles per frame (all $effect LEDs) over commit time ($build)"
+            " — per-branch series + golden band"
+        ),
+        "description": METRIC_DOC,
         "datasource": INFINITY,
         "gridPos": {"h": 13, "w": 24, "x": 0, "y": 1},
         "fieldConfig": {
@@ -249,6 +299,7 @@ def drift_dashboard(labels):
                     "lineWidth": 2,
                     "spanNulls": True,
                     "lineInterpolation": "stepAfter",
+                    "axisLabel": "CPU cycles / frame (update + shade × LEDs)",
                 },
                 "unit": "short",
             },
@@ -291,8 +342,10 @@ def drift_dashboard(labels):
     table = {
         "id": 2,
         "type": "table",
-        "title": "$effect samples ($build, $metric) — every CI sample",
+        "title": "$effect samples ($build, $metric) — every CI sample (cycles = per frame; cycles/LED derived)",
+        "description": METRIC_DOC,
         "datasource": INFINITY,
+        "transformations": [_per_led_transform()],
         "gridPos": {"h": 10, "w": 24, "x": 0, "y": 14},
         "targets": [
             _target(
@@ -322,6 +375,7 @@ def drift_dashboard(labels):
             "list": [_var_effect(labels), _var_build(), _var_metric(), _var_chip(), _var_branch()]
         },
         "panels": [
+            _doc_panel(),
             {
                 "id": 100,
                 "type": "row",
@@ -341,7 +395,8 @@ def distribution_dashboard(labels):
         return {
             "id": pid,
             "type": "histogram",
-            "title": f"{metric} cycles distribution · $effect ($build) — all branches",
+            "title": f"{metric} CPU cycles per frame — distribution · $effect ($build) — all branches",
+            "description": METRIC_DOC,
             "datasource": INFINITY,
             "gridPos": {"h": 12, "w": 12, "x": x, "y": 1},
             "fieldConfig": {
@@ -369,6 +424,7 @@ def distribution_dashboard(labels):
         "time": {"from": "now-90d", "to": "now"},
         "templating": {"list": [_var_effect(labels), _var_build(), _var_chip()]},
         "panels": [
+            _doc_panel(),
             {
                 "id": 100,
                 "type": "row",
@@ -403,6 +459,7 @@ def overview_dashboard(labels):
             _col("build", "build", "string"),
             _col("branch", "branch", "string"),
             _col("cycles", "cycles", "number"),
+            _col("leds", "leds", "number"),
             _col("time", "time", "string"),
         ],
     )
@@ -417,6 +474,7 @@ def overview_dashboard(labels):
         "time": {"from": "now-90d", "to": "now"},
         "templating": {"list": [_var_chip()]},
         "panels": [
+            _doc_panel(),
             {
                 "id": 100,
                 "type": "row",
@@ -426,7 +484,8 @@ def overview_dashboard(labels):
             {
                 "id": 1,
                 "type": "table",
-                "title": "Golden reference (frame cycles) + margin band per effect/build",
+                "title": "Golden reference (frame cycles = per frame, all LEDs) + margin band per effect/build",
+                "description": METRIC_DOC,
                 "datasource": INFINITY,
                 "gridPos": {"h": 16, "w": 12, "x": 0, "y": 1},
                 "targets": [goldens],
@@ -434,8 +493,10 @@ def overview_dashboard(labels):
             {
                 "id": 2,
                 "type": "table",
-                "title": "All frame-cycle samples (filter/sort in the panel header)",
+                "title": "All frame-cycle samples (per frame; cycles/LED derived; filter/sort in the header)",
+                "description": METRIC_DOC,
                 "datasource": INFINITY,
+                "transformations": [_per_led_transform()],
                 "gridPos": {"h": 16, "w": 12, "x": 12, "y": 1},
                 "targets": [samples],
             },

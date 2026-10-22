@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p01",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Calm ocean swell rolling up a cylindrical helix lamp.\n// Long, slow swells travel upward (+Y), two wave trains at slightly\n// different scales so the pattern never quite repeats. Each swell gets a\n// gentle lean around the cylinder so the crests read as rolling water\n// rather than flat rings. Crests lift towards a pale sea-glass colour\n// with a faint foam glint, and troughs fall back into deep blue.\n\nuniform float speed     : 0.0 .. 1.0 = 0.25;   // how fast the swells roll up\nuniform float swell     : 0.05 .. 0.6 = 0.22;  // wavelength in metres\nuniform float lean      : 0.0 .. 1.0 = 0.4;    // how much crests tilt around the lamp\nuniform float foam      : 0.0 .. 1.0 = 0.35;   // whiteness at the wave tops\nuniform float shimmer   : 0.0 .. 1.0 = 0.3;    // fine sparkle on the surface\nuniform vec3  deep      : color = 0.0, 0.04, 0.18;\nuniform vec3  shallow   : color = 0.02, 0.35, 0.55;\nuniform vec3  crest     : color = 0.45, 0.85, 0.9;\nuniform float level     : 0.1 .. 1.0 = 0.8;    // overall brightness\n\nstate float p1;\nstate float p2;\nstate float p3;\nstate float k1;\nstate float k2;\nstate float breath;\n\nvoid update() {\n  float w = max(swell, 0.05);\n  k1 = 6.2831 / w;\n  k2 = 6.2831 / (w * 1.618);\n  p1 = time * speed * 2.2;\n  p2 = time * speed * 1.37 + 1.7;\n  p3 = time * 0.9;\n  breath = 0.9 + 0.1 * sin(time * 0.21);\n}\n\nvec3 shade(Led led) {\n  vec3 p = led.pos;\n\n  // Crests lean around the cylinder (cheap sin LUTs on x/z).\n  float tiltA = lean * 0.5 * (sin(p.x * 18.0 + p3 * 0.2) + cos(p.z * 15.0 - p3 * 0.15));\n  float tiltB = lean * 0.5 * (cos(p.x * 13.0 - p3 * 0.17) + sin(p.z * 20.0 + p3 * 0.11));\n\n  // Two upward-travelling swells.\n  float a = 0.5 + 0.5 * sin(p.y * k1 - p1 + tiltA);\n  float b = 0.5 + 0.5 * sin(p.y * k2 - p2 + tiltB);\n  float h = a * 0.65 + b * 0.35;\n\n  // Sharpen the crests a little, keep the troughs broad and soft.\n  float h2 = h * h;\n  float top = h2 * h2;\n\n  // Fine shimmer on the surface, strongest near the crests.\n  float sp = 0.5 + 0.5 * sin(float(led.idx) * 2.399 + p3 * (1.0 + hash(float(led.idx)) * 2.0));\n  float glint = sp * sp * sp * shimmer * h2;\n\n  vec3 col = mix(deep, shallow, h);\n  col = mix(col, crest, top * foam * 1.6);\n  col = col + vec3(0.6, 0.8, 0.85) * glint * 0.35;\n\n  return clamp(col * level * breath, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "20caf485-1988-4876-b9d4-e764f8e55702",
+      "wall_s": 27.9,
+      "duration_api_ms": 19835,
+      "cost_usd": 0.131776,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1812,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 11941
+      },
+      "thinking_tokens": 618,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1901
+    }
+  ],
+  "started": "2026-10-22T19:56:50",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1318,
+  "total_wall_s": 27.9,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p01.fx"
+}

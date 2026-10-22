@@ -1,0 +1,66 @@
+{
+  "name": "skill__opus__p12",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing meditation glow for a cylindrical helix lamp.\n// A soft light rises up the cylinder as you breathe in, rests at the top\n// during the hold, and sinks back down as you breathe out. The whole lamp\n// also swells gently in brightness and warms toward the \"full\" colour.\n// The defaults give a calm 4-2-6-1 breath (inhale, hold, exhale, rest).\n// Height comes from led.room.y over the fixture's box, not led.uv.y,\n// because led.uv is a top-down projection on this lamp.\n\nuniform float inhale     : 1.0 .. 12.0 = 4.0;   // seconds breathing in\nuniform float hold_in    : 0.0 .. 10.0 = 2.0;   // seconds holding full\nuniform float exhale     : 1.0 .. 16.0 = 6.0;   // seconds breathing out\nuniform float hold_out   : 0.0 .. 10.0 = 1.0;   // seconds resting empty\nuniform vec3  rest_color : color = 0.9, 0.35, 0.08;  // colour when empty\nuniform vec3  full_color : color = 0.55, 0.4, 0.9;   // colour when full\nuniform float softness   : 0.05 .. 1.0 = 0.35;  // how soft the rising edge is\nuniform float floor_glow : 0.0 .. 0.5 = 0.12;   // glow left above the breath line\nuniform float depth      : 0.1 .. 1.0 = 0.8;    // overall intensity\nuniform float shimmer    : 0.0 .. 0.3 = 0.06;   // slow living texture\n\nstate float t;        // position within the breath cycle, seconds\nstate float breath;   // 0 = empty .. 1 = full, eased\nstate float fill;     // normalized height of the breath line\nstate float inv_soft;\nstate float y0;\nstate float inv_h;\nstate vec3  col;\nstate float swell;\n\nvoid update() {\n  float cycle = inhale + hold_in + exhale + hold_out;\n  t = mod(t + dt, cycle);\n\n  float b = 0.0;\n  if (t < inhale) {\n    b = 0.5 - 0.5 * cos(3.14159 * t / inhale);\n  } else if (t < inhale + hold_in) {\n    b = 1.0;\n  } else if (t < inhale + hold_in + exhale) {\n    b = 0.5 + 0.5 * cos(3.14159 * (t - inhale - hold_in) / exhale);\n  } else {\n    b = 0.0;\n  }\n  breath = b;\n\n  fill = mix(-0.1, 1.1, b);\n  inv_soft = 1.0 / softness;\n  y0 = room.min.y;\n  inv_h = 1.0 / max(room.max.y - room.min.y, 0.01);\n  col = mix(rest_color, full_color, b * 0.7);\n  swell = depth * (0.55 + 0.45 * b);\n}\n\nvec3 shade(Led led) {\n  float h = clamp((led.room.y - y0) * inv_h, 0.0, 1.0);\n\n  // soft edge of the rising light (cheap smoothstep)\n  float e = clamp((fill - h) * inv_soft + 0.5, 0.0, 1.0);\n  e = e * e * (3.0 - 2.0 * e);\n\n  float lvl = floor_glow + (1.0 - floor_glow) * e;\n\n  // slow, gentle drift along the helix so the light feels alive\n  float s = 1.0 + shimmer * sin(time * 0.4 + float(led.idx) * 0.07);\n\n  // slightly warmer at the base, cooler toward the top\n  vec3 c = mix(col, mix(col, full_color, 0.5), h * breath);\n\n  return c * (lvl * swell * s);\n}\n```",
+      "is_error": false,
+      "session_id": "32964088-b241-4486-9467-dc60b5649d0a",
+      "wall_s": 46.3,
+      "duration_api_ms": 22406,
+      "cost_usd": 0.0506084,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2172,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 612
+      },
+      "thinking_tokens": 889,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 36,
+          "col": 10,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Breathing meditation glow for a cylindrical helix lamp.\n// A soft light rises up the cylinder as you breathe in, rests at the top\n// during the hold, and sinks back down as you breathe out. The whole lamp\n// also swells gently in brightness and warms toward the \"full\" colour.\n// The defaults give a calm 4-2-6-1 breath (inhale, hold, exhale, rest).\n// Height comes from led.room.y over the fixture's box, not led.uv.y,\n// because led.uv is a top-down projection on this lamp.\n\nuniform float inhale     : 1.0 .. 12.0 = 4.0;   // seconds breathing in\nuniform float hold_in    : 0.0 .. 10.0 = 2.0;   // seconds holding full\nuniform float exhale     : 1.0 .. 16.0 = 6.0;   // seconds breathing out\nuniform float hold_out   : 0.0 .. 10.0 = 1.0;   // seconds resting empty\nuniform vec3  rest_color : color = 0.9, 0.35, 0.08;  // colour when empty\nuniform vec3  full_color : color = 0.55, 0.4, 0.9;   // colour when full\nuniform float softness   : 0.05 .. 1.0 = 0.35;  // how soft the rising edge is\nuniform float floor_glow : 0.0 .. 0.5 = 0.12;   // glow left above the breath line\nuniform float depth      : 0.1 .. 1.0 = 0.8;    // overall intensity\nuniform float shimmer    : 0.0 .. 0.3 = 0.06;   // slow living texture\n\nstate float t;        // position within the breath cycle, seconds\nstate float breath;   // 0 = empty .. 1 = full, eased\nstate float fill;     // normalized height of the breath line\nstate float inv_soft;\nstate float y0;\nstate float inv_h;\nstate vec3  col;\nstate float swell;\n\nvoid update() {\n  float cycle = inhale + hold_in + exhale + hold_out;\n  t = mod(t + dt, cycle);\n\n  float b = 0.0;\n  if (t < inhale) {\n    b = 0.5 - 0.5 * cos(3.14159 * t / inhale);\n  } else {\n    if (t < inhale + hold_in) {\n      b = 1.0;\n    } else {\n      if (t < inhale + hold_in + exhale) {\n        b = 0.5 + 0.5 * cos(3.14159 * (t - inhale - hold_in) / exhale);\n      } else {\n        b = 0.0;\n      }\n    }\n  }\n  breath = b;\n\n  fill = mix(-0.1, 1.1, b);\n  inv_soft = 1.0 / softness;\n  y0 = room.min.y;\n  inv_h = 1.0 / max(room.max.y - room.min.y, 0.01);\n  col = mix(rest_color, full_color, b * 0.7);\n  swell = depth * (0.55 + 0.45 * b);\n}\n\nvec3 shade(Led led) {\n  float h = clamp((led.room.y - y0) * inv_h, 0.0, 1.0);\n\n  // soft edge of the rising light (cheap smoothstep)\n  float e = clamp((fill - h) * inv_soft + 0.5, 0.0, 1.0);\n  e = e * e * (3.0 - 2.0 * e);\n\n  float lvl = floor_glow + (1.0 - floor_glow) * e;\n\n  // slow, gentle drift along the helix so the light feels alive\n  float s = 1.0 + shimmer * sin(time * 0.4 + float(led.idx) * 0.07);\n\n  // slightly warmer at the base, cooler toward the top\n  vec3 c = mix(col, mix(col, full_color, 0.5), h * breath);\n\n  return c * (lvl * swell * s);\n}\n```",
+      "is_error": false,
+      "session_id": "32964088-b241-4486-9467-dc60b5649d0a",
+      "wall_s": 33.6,
+      "duration_api_ms": 34238,
+      "cost_usd": 0.1098192,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1430,
+        "cache_read_input_tokens": 11934,
+        "cache_creation_input_tokens": 3527
+      },
+      "thinking_tokens": 135,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2053
+    }
+  ],
+  "started": "2026-10-22T19:59:57",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1604,
+  "total_wall_s": 79.9,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p12.fx"
+}

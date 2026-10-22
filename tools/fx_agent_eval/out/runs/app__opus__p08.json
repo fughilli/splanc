@@ -1,0 +1,66 @@
+{
+  "name": "app__opus__p08",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Lava lamp: metaball blobs of wax rising and sinking inside a cylinder.\n// Blob motion runs once per frame in update(). Per-LED field math is in fixed-point.\n\nuniform float speed : 0.0 .. 3.0 = 0.5;\nuniform float size : 0.2 .. 1.5 = 0.6;\nuniform float softness : 0.05 .. 1.0 = 0.35;\nuniform float swirl : 0.0 .. 2.0 = 0.4;\nuniform float baseY : -0.5 .. 0.5 = 0.0;\nuniform float lampHeight : 0.05 .. 1.0 = 0.30;\nuniform float lampRadius : 0.02 .. 0.3 = 0.08;\nuniform vec3 waxHot : color = 1.0, 0.25, 0.03;\nuniform vec3 waxCore : color = 1.0, 0.75, 0.15;\nuniform vec3 liquid : color = 0.18, 0.0, 0.12;\nuniform float ambient : 0.0 .. 1.0 = 0.35;\n\nstate float clock;\nstate fixed bx[6];\nstate fixed by[6];\nstate fixed bz[6];\nstate fixed r2;\nstate fixed edgeLo;\nstate fixed edgeInv;\nstate float invR;\n\nvoid update() {\n  clock = clock + dt * speed;\n  invR = 1.0 / lampRadius;\n  float hUnits = lampHeight * invR;\n  float yBase = baseY * invR;\n  for (int i = 0; i < 6; i = i + 1) {\n    float fi = float(i);\n    float w = 0.35 + hash(fi * 3.1) * 0.5;\n    float p = hash(fi * 7.7) * 6.2831;\n    // 0.5 - 0.5*cos makes blobs linger at the top and bottom, like real wax\n    float v = 0.5 - 0.5 * cos(clock * w + p);\n    float yy = yBase + hUnits * (0.08 + 0.84 * v);\n    float th = p * 1.7 + clock * swirl * (0.3 + hash(fi * 1.3) * 0.4) + v * 1.5;\n    float rr = 0.35 + 0.4 * hash(fi * 5.3);\n    bx[i] = fixed(rr * cos(th));\n    bz[i] = fixed(rr * sin(th));\n    by[i] = fixed(yy);\n  }\n  r2 = fixed(size * size);\n  edgeLo = fixed(1.0 - softness);\n  edgeInv = fixed(1.0 / (2.0 * softness));\n}\n\nvec3 shade(Led led) {\n  fixed x = fixed(led.pos.x * invR);\n  fixed y = fixed(led.pos.y * invR);\n  fixed z = fixed(led.pos.z * invR);\n  fixed eps = fixed(0.03);\n  fixed f = fixed(0.0);\n  for (int i = 0; i < 6; i = i + 1) {\n    fixed dx = x - bx[i];\n    fixed dy = y - by[i];\n    fixed dz = z - bz[i];\n    fixed d2 = dx * dx + dy * dy + dz * dz;\n    f = f + r2 / (d2 + eps);\n  }\n  fixed zero = fixed(0.0);\n  fixed one = fixed(1.0);\n  fixed e = clamp((f - edgeLo) * edgeInv, zero, one);\n  e = e * e * (fixed(3.0) - fixed(2.0) * e);\n  fixed core = clamp((f - fixed(1.6)) * fixed(0.5), zero, one);\n  fixed glow = min(f, one);\n  float ef = float(e);\n  float cf = float(core);\n  vec3 bg = liquid * (ambient + 0.5 * float(glow));\n  vec3 wax = mix(waxHot, waxCore, cf);\n  return mix(bg, wax, ef);\n}\n```",
+      "is_error": false,
+      "session_id": "830cdee3-3337-4759-8c67-4f0d5d29e781",
+      "wall_s": 28.9,
+      "duration_api_ms": 27722,
+      "cost_usd": 0.0631786,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2858,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 612
+      },
+      "thinking_tokens": 1518,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 8,
+          "col": 23,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```\n// Lava lamp: metaball blobs of wax rising and sinking inside a cylinder.\n// Blob motion runs once per frame in update(). Per-LED field math is in fixed-point.\n\nuniform float speed : 0.0 .. 3.0 = 0.5;\nuniform float size : 0.2 .. 1.5 = 0.6;\nuniform float softness : 0.05 .. 1.0 = 0.35;\nuniform float swirl : 0.0 .. 2.0 = 0.4;\nuniform float baseOffset : 0.0 .. 1.0 = 0.5;\nuniform float lampHeight : 0.05 .. 1.0 = 0.30;\nuniform float lampRadius : 0.02 .. 0.3 = 0.08;\nuniform vec3 waxHot : color = 1.0, 0.25, 0.03;\nuniform vec3 waxCore : color = 1.0, 0.75, 0.15;\nuniform vec3 liquid : color = 0.18, 0.0, 0.12;\nuniform float ambient : 0.0 .. 1.0 = 0.35;\n\nstate float clock;\nstate fixed bx[6];\nstate fixed by[6];\nstate fixed bz[6];\nstate fixed r2;\nstate fixed edgeLo;\nstate fixed edgeInv;\nstate float invR;\n\nvoid update() {\n  clock = clock + dt * speed;\n  invR = 1.0 / lampRadius;\n  float baseY = baseOffset - 0.5;\n  float hUnits = lampHeight * invR;\n  float yBase = baseY * invR;\n  for (int i = 0; i < 6; i = i + 1) {\n    float fi = float(i);\n    float w = 0.35 + hash(fi * 3.1) * 0.5;\n    float p = hash(fi * 7.7) * 6.2831;\n    // 0.5 - 0.5*cos makes blobs linger at the top and bottom, like real wax\n    float v = 0.5 - 0.5 * cos(clock * w + p);\n    float yy = yBase + hUnits * (0.08 + 0.84 * v);\n    float th = p * 1.7 + clock * swirl * (0.3 + hash(fi * 1.3) * 0.4) + v * 1.5;\n    float rr = 0.35 + 0.4 * hash(fi * 5.3);\n    bx[i] = fixed(rr * cos(th));\n    bz[i] = fixed(rr * sin(th));\n    by[i] = fixed(yy);\n  }\n  r2 = fixed(size * size);\n  edgeLo = fixed(1.0 - softness);\n  edgeInv = fixed(1.0 / (2.0 * softness));\n}\n\nvec3 shade(Led led) {\n  fixed x = fixed(led.pos.x * invR);\n  fixed y = fixed(led.pos.y * invR);\n  fixed z = fixed(led.pos.z * invR);\n  fixed eps = fixed(0.03);\n  fixed f = fixed(0.0);\n  for (int i = 0; i < 6; i = i + 1) {\n    fixed dx = x - bx[i];\n    fixed dy = y - by[i];\n    fixed dz = z - bz[i];\n    fixed d2 = dx * dx + dy * dy + dz * dz;\n    f = f + r2 / (d2 + eps);\n  }\n  fixed zero = fixed(0.0);\n  fixed one = fixed(1.0);\n  fixed e = clamp((f - edgeLo) * edgeInv, zero, one);\n  e = e * e * (fixed(3.0) - fixed(2.0) * e);\n  fixed core = clamp((f - fixed(1.6)) * fixed(0.5), zero, one);\n  fixed glow = min(f, one);\n  float ef = float(e);\n  float cf = float(core);\n  vec3 bg = liquid * (ambient + 0.5 * float(glow));\n  vec3 wax = mix(waxHot, waxCore, cf);\n  return mix(bg, wax, ef);\n}\n```",
+      "is_error": false,
+      "session_id": "830cdee3-3337-4759-8c67-4f0d5d29e781",
+      "wall_s": 14.4,
+      "duration_api_ms": 38992,
+      "cost_usd": 0.12879960000000001,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1510,
+        "cache_read_input_tokens": 6185,
+        "cache_creation_input_tokens": 4272
+      },
+      "thinking_tokens": 150,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2124
+    }
+  ],
+  "started": "2026-10-22T19:39:51",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.192,
+  "total_wall_s": 43.3,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p08.fx"
+}
