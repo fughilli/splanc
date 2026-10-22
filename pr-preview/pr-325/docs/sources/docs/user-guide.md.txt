@@ -23,6 +23,8 @@ static site at `/user-guide/` on the deployed app.
 - **Maps**
   - [The maps library](#the-maps-library) — Browse, search, organize, import, and export your
     captured fixtures.
+  - [Calibrating a fixture's motion sensor](#calibrating-a-fixtures-motion-sensor) — Tell a fixture
+    with an IMU which way its LED map is up, so tilt effects follow it.
   - [Mapping a fixture with the camera](#mapping-a-fixture-with-the-camera) — Point the camera at a
     running fixture to reconstruct its LEDs in 3D.
   - [The mapping workspace](#the-mapping-workspace) — Inspect the 3D solve, clean up topology, and
@@ -47,6 +49,8 @@ static site at `/user-guide/` on the deployed app.
   - [MIDI controllers](#midi-controllers) — Name physical knobs and bind them to effect parameters.
   - [Appearance & behavior](#appearance--behavior) — Theme the app, pick fonts, and tune the 3D view
     and capture defaults.
+  - [Debug mode & capture bundles](#debug-mode--capture-bundles) — Turn on debug mode to save and
+    share everything needed to reproduce a failed mapping run.
   - [Help, tutorial & about](#help-tutorial--about) — Restart this tutorial any time, and find
     licensing and credits.
 
@@ -95,6 +99,41 @@ installations.
 - The tab's ⋯ menu **imports and exports** the whole library as a bundle, so you can move maps
   between phones or back them up.
 
+#### The map on your connected device
+
+While a device is connected, a card at the top of the tab shows the map stored **on the device**:
+its LED count, how many LEDs were mapped versus interpolated, and when it was mapped (when the
+device knows). A fresh install, or a second phone, starts with an empty library, but the fixture
+still has its map. Use this card to copy it here.
+
+- **Saved on this phone**: the library already has this map (it was captured or saved here).
+  **Open** goes to it.
+- **Not on this phone**: **Save to this phone** copies the map into the library and opens it.
+  **Preview** loads it without saving, so you can look at it in 3D or export it first.
+- **Calibrate IMU** appears when the device's motion sensor is running. It copies the map first if
+  needed, then opens the calibration. It's also in the device's detail sheet (Device tab ▸ ⋯).
+- **No map on this device yet**: map the fixture with **+**, or open a map and **Push** it.
+- Large maps show a short summary first. The whole map is only downloaded when you save or preview
+  it.
+- Through **Live via bridge**, a fixture's stored map can't be copied yet. Connect to the fixture
+  directly to copy it.
+
+### Calibrating a fixture's motion sensor
+
+_Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it._
+
+![Calibrating a fixture's motion sensor — Splanc app screen](user-guide/img/calibrate-imu.png)
+
+A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
+the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
+at least 45° between them. Save when the fit says good.
+
+The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
+and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
+capture settings (it was mapped before they were recorded, or pulled from a device) the panel says
+what it is using instead; what works is saved with the calibration for next time.
+
 ### Mapping a fixture with the camera
 
 _Point the camera at a running fixture to reconstruct its LEDs in 3D._
@@ -120,6 +159,12 @@ the fixture.
 The heavy solve can run on-device (WASM) or on a host server; the app picks the better placement
 automatically.
 
+The final solve starts both from scratch and from the best live-preview solve, and keeps whichever
+comes out better. If it still comes back degenerate (no LEDs in front of the camera, a collapsed
+size, far fewer LEDs than the preview had) while the preview looked right, the app keeps the
+preview's map instead and says so in a warning on the map. With debug mode on, such runs also save a
+reproduction bundle (see **Debug mode & capture bundles**).
+
 ### The mapping workspace
 
 _Inspect the 3D solve, clean up topology, and push maps to a device._
@@ -135,6 +180,12 @@ refine and use the map.
 - **Edit topology** — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
   handles most fixtures; a Fine-tune disclosure exposes the full extraction options.
 - **Send to / pull from a device** so the fixture and the app agree on the map.
+- **Supplement** re-scans part of the fixture and merges the new scan into the map, to fill gaps or
+  improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
+  captures. A map without that data (copied from a device, imported, or captured before it was kept)
+  still works: the new scan is aligned to the stored positions and averaged with them.
+- **Calibrate IMU** (when the connected device's motion sensor is running) aligns the sensor to this
+  map. A map copied from the device works too.
 - **Jump to Effects** to start animating this fixture.
 - **Export** the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
   Studio) fixture file. See below.
@@ -292,7 +343,9 @@ build bundles over Web Serial, with live progress, a log, and a diagnostics pane
 - Works on desktop Chromium (native Web Serial) and Android Chrome (via a WebUSB polyfill).
 - iOS Safari has neither API, so flashing isn't available there — the sheet says so rather than
   failing silently.
-- After flashing, provision the fresh board onto Wi-Fi like any other device.
+- After flashing, provision a fresh board onto Wi-Fi like any other device. Updating a board that
+  was already on Wi-Fi keeps its network (from the firmware release after v1.8.2), so it rejoins by
+  itself.
 
 ### Color correction
 
@@ -361,6 +414,40 @@ persists across reloads, with a live 3D preview so the render knobs show their e
 
 - **Manual exposure ceiling** — the top of the capture screen's manual exposure slider, for lighting
   a frame under artificial light.
+
+### Debug mode & capture bundles
+
+_Turn on debug mode to save and share everything needed to reproduce a failed mapping run._
+
+**Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings** is the app's debug mode. It adds a
+**Debugging** tab, and while it's on, every mapping run that fails, comes out degenerate, falls back
+to its live preview, or disagrees with the preview saves a **capture bundle** on the phone.
+
+A bundle holds what a developer needs to replay the run's solves exactly: every LED detection with
+its timestamp and camera intrinsics, the motion-sensor stream, the capture settings (stride, diffuse
+mode, exposure, brightness, LED count, the fixture and its firmware version), the live-preview
+solves, the final solve's result and diagnostics, and the app, solver and phone versions.
+
+#### Export or share a bundle
+
+- Open **Settings ▸ Debugging ▸ Mapping capture bundles**. Each run is listed with its outcome (for
+  example `fallback-degenerate`), LED count and size.
+- **Export** saves the bundle as one `.splanc-capture.json` file (on iPhone the share sheet opens,
+  so you can **Save to Files**).
+- **Share** opens the phone's share sheet (AirDrop, Mail, Messages…) with the file attached. If it
+  says **Ready — tap Share again**, tap once more.
+- Attach the file to your bug report. **Delete** removes one bundle; **Delete all** clears them. The
+  phone keeps the newest 20 (up to 150 MB).
+
+#### Options
+
+- **Keep successful runs too** saves a bundle for runs that ended fine, to compare against a failed
+  one.
+- **Include camera frames** adds a small camera snapshot every 2 seconds (about 1–2 MB per minute).
+  Not available with the native iPhone camera.
+
+Bundles stay on your phone until you export or share them. They contain the capture's measurements
+and your fixture's name, nothing from the camera unless you turn on camera frames.
 
 ### Help, tutorial & about
 

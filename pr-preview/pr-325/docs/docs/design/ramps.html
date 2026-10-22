@@ -385,8 +385,8 @@ when something overrides it. <code class="docutils literal notranslate"><span cl
 <p><code class="docutils literal notranslate"><span class="pre">BlendKeypoints</span></code> gains <code class="docutils literal notranslate"><span class="pre">ease</span></code> (6, optional: unset keeps the original
 smoothstep), <code class="docutils literal notranslate"><span class="pre">start_at_ms</span></code> (7) and <code class="docutils literal notranslate"><span class="pre">id</span></code> (8). A timed morph is then a ramp like
 the others: time based, any ease, a shared start, and a <code class="docutils literal notranslate"><span class="pre">ramp_state</span></code> event.</p>
-<p>The numbers 47..59 and 26..39 are left free for in-flight branches (sensors,
-driver VM, OTA).</p>
+<p><code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> 57..59 and <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> 31..39 are unused. The ramp numbers
+were picked while the sensor and OTA branches were still in flight.</p>
 <p>Common fields:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">duration_ms</span></code>: up to 1 hour. 0 makes a jump at <code class="docutils literal notranslate"><span class="pre">start_at_ms</span></code>.</p></li>

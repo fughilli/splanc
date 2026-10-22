@@ -50,8 +50,8 @@ when something overrides it. `kind` is 0 for uniforms, 1 for the crossfade and
 smoothstep), `start_at_ms` (7) and `id` (8). A timed morph is then a ramp like
 the others: time based, any ease, a shared start, and a `ramp_state` event.
 
-The numbers 47..59 and 26..39 are left free for in-flight branches (sensors,
-driver VM, OTA).
+`ClientMessage` 57..59 and `ServerMessage` 31..39 are unused. The ramp numbers
+were picked while the sensor and OTA branches were still in flight.
 
 Common fields:
 

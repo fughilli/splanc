@@ -72,7 +72,7 @@ enums. Details: {doc}`../docs/design/uniform-keypoints`.
 The canned-ramp arms (feature `ramps`) also add `ease` (6), `start_at_ms` (7)
 and `id` (8) to `BlendKeypoints`. `ramp_state` is both the STARTED reply and the
 DONE / CANCELLED push. `start_at_ms` is in the device clock, like
-`set_time_base`. Arms 47..59 / 26..39 are left to in-flight branches. Details:
+`set_time_base`. Details:
 {doc}`../docs/design/ramps`.
 
 ## Freshness gate

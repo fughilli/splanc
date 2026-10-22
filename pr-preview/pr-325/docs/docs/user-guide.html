@@ -342,6 +342,8 @@ from your phone.</p></li>
 <ul>
 <li><p><a class="reference internal" href="#the-maps-library">The maps library</a> — Browse, search, organize, import, and export your
 captured fixtures.</p></li>
+<li><p><a class="reference internal" href="#calibrating-a-fixture-s-motion-sensor">Calibrating a fixture’s motion sensor</a> — Tell a fixture
+with an IMU which way its LED map is up, so tilt effects follow it.</p></li>
 <li><p><a class="reference internal" href="#mapping-a-fixture-with-the-camera">Mapping a fixture with the camera</a> — Point the camera at a
 running fixture to reconstruct its LEDs in 3D.</p></li>
 <li><p><a class="reference internal" href="#the-mapping-workspace">The mapping workspace</a> — Inspect the 3D solve, clean up topology, and
@@ -375,6 +377,8 @@ calibrate a device’s cost model.</p></li>
 <li><p><a class="reference internal" href="#midi-controllers">MIDI controllers</a> — Name physical knobs and bind them to effect parameters.</p></li>
 <li><p><a class="reference internal" href="#appearance-behavior">Appearance &amp; behavior</a> — Theme the app, pick fonts, and tune the 3D view
 and capture defaults.</p></li>
+<li><p><a class="reference internal" href="#debug-mode-capture-bundles">Debug mode &amp; capture bundles</a> — Turn on debug mode to save and
+share everything needed to reproduce a failed mapping run.</p></li>
 <li><p><a class="reference internal" href="#help-tutorial-about">Help, tutorial &amp; about</a> — Restart this tutorial any time, and find
 licensing and credits.</p></li>
 </ul>
@@ -424,6 +428,39 @@ installations.</p>
 between phones or back them up.</p></li>
 </ul>
 </section>
+<section id="the-map-on-your-connected-device">
+<h4>The map on your connected device<a class="headerlink" href="#the-map-on-your-connected-device" title="Link to this heading">¶</a></h4>
+<p>While a device is connected, a card at the top of the tab shows the map stored <strong>on the device</strong>:
+its LED count, how many LEDs were mapped versus interpolated, and when it was mapped (when the
+device knows). A fresh install, or a second phone, starts with an empty library, but the fixture
+still has its map. Use this card to copy it here.</p>
+<ul class="simple">
+<li><p><strong>Saved on this phone</strong>: the library already has this map (it was captured or saved here).
+<strong>Open</strong> goes to it.</p></li>
+<li><p><strong>Not on this phone</strong>: <strong>Save to this phone</strong> copies the map into the library and opens it.
+<strong>Preview</strong> loads it without saving, so you can look at it in 3D or export it first.</p></li>
+<li><p><strong>Calibrate IMU</strong> appears when the device’s motion sensor is running. It copies the map first if
+needed, then opens the calibration. It’s also in the device’s detail sheet (Device tab ▸ ⋯).</p></li>
+<li><p><strong>No map on this device yet</strong>: map the fixture with <strong>+</strong>, or open a map and <strong>Push</strong> it.</p></li>
+<li><p>Large maps show a short summary first. The whole map is only downloaded when you save or preview
+it.</p></li>
+<li><p>Through <strong>Live via bridge</strong>, a fixture’s stored map can’t be copied yet. Connect to the fixture
+directly to copy it.</p></li>
+</ul>
+</section>
+</section>
+<section id="calibrating-a-fixture-s-motion-sensor">
+<h3>Calibrating a fixture’s motion sensor<a class="headerlink" href="#calibrating-a-fixture-s-motion-sensor" title="Link to this heading">¶</a></h3>
+<p><em>Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it.</em></p>
+<p><img alt="Calibrating a fixture's motion sensor — Splanc app screen" src="docs/user-guide/img/calibrate-imu.png" /></p>
+<p>A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
+the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
+at least 45° between them. Save when the fit says good.</p>
+<p>The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
+and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
+capture settings (it was mapped before they were recorded, or pulled from a device) the panel says
+what it is using instead; what works is saved with the calibration for next time.</p>
 </section>
 <section id="mapping-a-fixture-with-the-camera">
 <h3>Mapping a fixture with the camera<a class="headerlink" href="#mapping-a-fixture-with-the-camera" title="Link to this heading">¶</a></h3>
@@ -447,6 +484,11 @@ is set in Settings ▸ Behavior).</p></li>
 </ul>
 <p>The heavy solve can run on-device (WASM) or on a host server; the app picks the better placement
 automatically.</p>
+<p>The final solve starts both from scratch and from the best live-preview solve, and keeps whichever
+comes out better. If it still comes back degenerate (no LEDs in front of the camera, a collapsed
+size, far fewer LEDs than the preview had) while the preview looked right, the app keeps the
+preview’s map instead and says so in a warning on the map. With debug mode on, such runs also save a
+reproduction bundle (see <strong>Debug mode &amp; capture bundles</strong>).</p>
 </section>
 </section>
 <section id="the-mapping-workspace">
@@ -462,6 +504,12 @@ refine and use the map.</p>
 <li><p><strong>Edit topology</strong> — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
 handles most fixtures; a Fine-tune disclosure exposes the full extraction options.</p></li>
 <li><p><strong>Send to / pull from a device</strong> so the fixture and the app agree on the map.</p></li>
+<li><p><strong>Supplement</strong> re-scans part of the fixture and merges the new scan into the map, to fill gaps or
+improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
+captures. A map without that data (copied from a device, imported, or captured before it was kept)
+still works: the new scan is aligned to the stored positions and averaged with them.</p></li>
+<li><p><strong>Calibrate IMU</strong> (when the connected device’s motion sensor is running) aligns the sensor to this
+map. A map copied from the device works too.</p></li>
 <li><p><strong>Jump to Effects</strong> to start animating this fixture.</p></li>
 <li><p><strong>Export</strong> the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
 Studio) fixture file. See below.</p></li>
@@ -618,7 +666,9 @@ build bundles over Web Serial, with live progress, a log, and a diagnostics pane
 <li><p>Works on desktop Chromium (native Web Serial) and Android Chrome (via a WebUSB polyfill).</p></li>
 <li><p>iOS Safari has neither API, so flashing isn’t available there — the sheet says so rather than
 failing silently.</p></li>
-<li><p>After flashing, provision the fresh board onto Wi-Fi like any other device.</p></li>
+<li><p>After flashing, provision a fresh board onto Wi-Fi like any other device. Updating a board that
+was already on Wi-Fi keeps its network (from the firmware release after v1.8.2), so it rejoins by
+itself.</p></li>
 </ul>
 </section>
 </section>
@@ -687,6 +737,41 @@ a frame under artificial light.</p></li>
 </ul>
 </section>
 </section>
+<section id="debug-mode-capture-bundles">
+<h3>Debug mode &amp; capture bundles<a class="headerlink" href="#debug-mode-capture-bundles" title="Link to this heading">¶</a></h3>
+<p><em>Turn on debug mode to save and share everything needed to reproduce a failed mapping run.</em></p>
+<p><strong>Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings</strong> is the app’s debug mode. It adds a
+<strong>Debugging</strong> tab, and while it’s on, every mapping run that fails, comes out degenerate, falls back
+to its live preview, or disagrees with the preview saves a <strong>capture bundle</strong> on the phone.</p>
+<p>A bundle holds what a developer needs to replay the run’s solves exactly: every LED detection with
+its timestamp and camera intrinsics, the motion-sensor stream, the capture settings (stride, diffuse
+mode, exposure, brightness, LED count, the fixture and its firmware version), the live-preview
+solves, the final solve’s result and diagnostics, and the app, solver and phone versions.</p>
+<section id="export-or-share-a-bundle">
+<h4>Export or share a bundle<a class="headerlink" href="#export-or-share-a-bundle" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p>Open <strong>Settings ▸ Debugging ▸ Mapping capture bundles</strong>. Each run is listed with its outcome (for
+example <code class="docutils literal notranslate"><span class="pre">fallback-degenerate</span></code>), LED count and size.</p></li>
+<li><p><strong>Export</strong> saves the bundle as one <code class="docutils literal notranslate"><span class="pre">.splanc-capture.json</span></code> file (on iPhone the share sheet opens,
+so you can <strong>Save to Files</strong>).</p></li>
+<li><p><strong>Share</strong> opens the phone’s share sheet (AirDrop, Mail, Messages…) with the file attached. If it
+says <strong>Ready — tap Share again</strong>, tap once more.</p></li>
+<li><p>Attach the file to your bug report. <strong>Delete</strong> removes one bundle; <strong>Delete all</strong> clears them. The
+phone keeps the newest 20 (up to 150 MB).</p></li>
+</ul>
+</section>
+<section id="options">
+<h4>Options<a class="headerlink" href="#options" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>Keep successful runs too</strong> saves a bundle for runs that ended fine, to compare against a failed
+one.</p></li>
+<li><p><strong>Include camera frames</strong> adds a small camera snapshot every 2 seconds (about 1–2 MB per minute).
+Not available with the native iPhone camera.</p></li>
+</ul>
+<p>Bundles stay on your phone until you export or share them. They contain the capture’s measurements
+and your fixture’s name, nothing from the camera unless you turn on camera frames.</p>
+</section>
+</section>
 <section id="help-tutorial-about">
 <h3>Help, tutorial &amp; about<a class="headerlink" href="#help-tutorial-about" title="Link to this heading">¶</a></h3>
 <p><em>Restart this tutorial any time, and find licensing and credits.</em></p>
@@ -749,8 +834,10 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#maps">Maps</a><ul>
 <li><a class="reference internal" href="#the-maps-library">The maps library</a><ul>
 <li><a class="reference internal" href="#managing-the-library">Managing the library</a></li>
+<li><a class="reference internal" href="#the-map-on-your-connected-device">The map on your connected device</a></li>
 </ul>
 </li>
+<li><a class="reference internal" href="#calibrating-a-fixture-s-motion-sensor">Calibrating a fixture’s motion sensor</a></li>
 <li><a class="reference internal" href="#mapping-a-fixture-with-the-camera">Mapping a fixture with the camera</a><ul>
 <li><a class="reference internal" href="#how-a-capture-goes">How a capture goes</a></li>
 </ul>
@@ -799,6 +886,11 @@ source, and lists the open-source components the app ships.</p>
 <li><a class="reference internal" href="#appearance-behavior">Appearance &amp; behavior</a><ul>
 <li><a class="reference internal" href="#appearance">Appearance</a></li>
 <li><a class="reference internal" href="#behavior">Behavior</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#debug-mode-capture-bundles">Debug mode &amp; capture bundles</a><ul>
+<li><a class="reference internal" href="#export-or-share-a-bundle">Export or share a bundle</a></li>
+<li><a class="reference internal" href="#options">Options</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#help-tutorial-about">Help, tutorial &amp; about</a></li>

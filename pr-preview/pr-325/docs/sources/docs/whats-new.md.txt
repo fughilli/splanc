@@ -28,6 +28,58 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   for each step to be acknowledged so the player doesn't fall behind.
   Design: [ramps.md](design/ramps.md).
 
+### Copy a fixture's map onto a new phone
+
+- **The Maps tab shows the map on the connected device.** A card at the top
+  shows its LED count, mapped vs interpolated LEDs, and whether this phone
+  already has it. On a fresh install, **Save to this phone** copies the map
+  into the library, and **Preview** opens it without saving. Only a small
+  header is read on each visit. A large map is downloaded when you save or
+  preview it.
+- **Calibrate IMU without mapping again.** The card and the device's detail
+  sheet offer **Calibrate IMU** when the device's motion sensor is running.
+  If the map isn't on this phone yet, it is copied first.
+- **Supplement works on every map.** A map copied from a device or imported
+  has positions but no raw capture data. A supplemental scan now aligns to
+  those stored positions and averages with them, using a cautious accuracy of
+  ¼ LED pitch for the stored positions. Before, the button was hidden for these
+  maps. Maps that kept their capture data still get the joint re-solve. The
+  debug **Bundle** tile is now greyed out with the reason, not hidden.
+- Not yet through **Live via bridge**: the bridge doesn't forward the stored
+  map, so connect to the fixture directly to copy it.
+
+### The motion sensor knows which way the map is
+
+- **Mapping now calibrates the IMU's tilt for free**: the map is gravity-levelled
+  and the fixture stands still while it's captured, so the sensor's settled
+  "up" is pinned to the map's +Y as soon as the map is stored; effects tilt the
+  right way at once. Heading needs a second, re-oriented pose (the guided
+  "Calibrate IMU" screen is next); the solver and device side are in
+  ([sensor-core.md §7](design/sensor-core.md)).
+- **Fixtures remember how they were mapped**: diffuse mode, LED stride, code
+  timing and brightness are stored on the device with the map, and a later
+  supplemental or calibration capture reuses them instead of re-probing.
+
+### Sensor drivers an agent can write
+
+- **Any I2C sensor, no firmware release.** Agents scan the player's sensor bus
+  (`scan_i2c`), write a small driver in the effect language (`void poll()` +
+  `export`s, `i2c_read*` / `i2c_write`), and load it live (`deploy_driver`); every
+  export drives the effect uniform of the same name. Supersedes PR #96; the
+  native-vs-VM MPU-6050 A/B and when to use which: [sensor-core.md §8](design/sensor-core.md).
+
+### Fixtures that feel motion: the sensor core
+
+- **Wire an MPU-6050 and the player finds it.** At boot the C6 player probes
+  its I2C pins (SDA 6 / SCL 7, INT 21 by default) for an MPU-6050-family IMU,
+  fuses it on the device (orientation, gravity, linear acceleration, shake and
+  tap), and costs nothing when none is fitted.
+- **Effects react by name.** Declare `uniform vec3 imu_gravity`, `imu_quat`,
+  `imu_shake`, `imu_tap`, ... and the firmware drives them every frame; without
+  a sensor they stay ordinary knobs. Try `agent/skill/examples/imu_tilt.fx`.
+- **Agents can read and calibrate it** (`read_sensors`, `calibrate_sensors`).
+  Design: [sensor-core.md](design/sensor-core.md) (#315).
+
 ### Live VJ through your bridge: every fixture from one phone
 
 - **⋯ → Live via bridge** in the app pairs with your Splanc bridge (the code on its screen,
@@ -97,6 +149,43 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   users. Design: [cloud-relay.md § Effects library](design/cloud-relay.md#effects-library);
   how to use it: [cloud-agent.md](guides/cloud-agent.md#effects-library).
 
+### A good live preview no longer ends in an empty map
+
+Some captures showed the fixture correctly in the live preview, then the final
+solve came back degenerate. The cause: the final solve started over from
+scratch, and on gentle or decode-swapped captures its first scale estimate can
+come out negative. That flips the whole scene behind the camera, and the
+optimizer can't recover. Each preview solve rolled its own sign, so the preview
+could look right while the final didn't. Analysis and fix:
+[mapping-solve-paths.md](design/mapping-solve-paths.md).
+
+- **The solver rejects an implausible starting scale** and starts from an
+  arm's-length guess instead. The optimizer and the motion data then find the
+  real size.
+- **The final solve also starts from the best live-preview solve** and keeps
+  whichever start solves better.
+- **If the final is still degenerate** (it failed, has far fewer LEDs, or
+  collapsed) while the preview wasn't, the app keeps the preview's map and adds
+  a warning that says why.
+
+### Debug mode logs failed mapping runs
+
+- **Turn on Settings ▸ Behavior ▸ Developer ▸ Enable Debug Settings**, and
+  every mapping run that fails, comes out degenerate, or disagrees with its
+  preview saves a capture bundle on the phone. **Keep successful runs too**
+  saves the rest as well.
+- **A bundle holds everything needed to replay the run's solves exactly**:
+  detections, motion data, capture settings, the fixture's firmware version,
+  the preview and final solves with their diagnostics, and the app and solver
+  builds.
+- **Export or share bundles** from **Settings ▸ Debugging ▸ Mapping capture
+  bundles**, as one `.splanc-capture.json` file. A saved map's **Bundle** tile
+  (in debug mode) rebuilds one from a map you already captured.
+- **Developers replay a bundle** bit-for-bit through the wasm build with
+  `bazel run //solver:replay_bundle -- FILE`, or natively with per-stage
+  traces with `solver_cli --replay FILE`. See the
+  [user guide](user-guide.md#debug-mode--capture-bundles).
+
 ### Splanc works as a ChatGPT plugin
 
 - **Add `https://splanc.pages.dev/mcp`** in ChatGPT as a custom MCP server with OAuth, sign in
@@ -118,6 +207,32 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   autocorrect or capitalize the field, and password managers leave it alone.
 - **The same button** is on the API key fields in AI settings and on the Splanc
   Bridge Flasher's Wi-Fi password (which had a text "Show" button).
+
+### Players keep one address
+
+Netstack players picked a random Wi-Fi MAC (02:0c:6a:…) every boot, so the router
+handed them a new IP after every reboot and the bridge kept dialling the old one.
+They now use the chip's factory MAC, so the lease (and any DHCP reservation) stays
+put, and a re-join first clears any stale association the AP still holds. mDNS
+re-announces on every new lease and after a DHCP renewal; the TXT record carries
+the device id. HITL gate: `//pi/hitl/harness:stable_identity`.
+
+### Players stay on Wi-Fi across updates and power cuts
+
+Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
+(a power cut, a reset, a firmware update over USB) brought the board back
+unprovisioned, and it had to be put back on the network. Now the credentials are
+saved to NVS once the board has actually joined with them (a mistyped password is
+never saved), and the board rejoins on its own at boot. Re-provisioning the
+network a board is already on keeps the link instead of restarting the join. If
+the saved network wasn't visible at boot (the router still starting after a power
+cut), the board restarts to rescan on a capped backoff. Design notes:
+`firmware/player_app/wifi_creds.h`; HITL gate `//pi/hitl/harness:upgrade_keeps_wifi`.
+
+- **One last re-provision.** A board running a release before this fix has no
+  saved credentials to keep, so the update that installs this firmware still needs
+  one provision; every update after that keeps them.
+- **Factory reset** (a full flash erase) still clears them.
 
 ### Every player has its own TLS certificate
 
