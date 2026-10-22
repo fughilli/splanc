@@ -36,6 +36,7 @@
 #include "esp_system.h"     // esp_restart / esp_reset_reason (restart-to-rescan)
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
+#include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
 
 extern "C" {
 void ns_mac_rx_install();
@@ -130,6 +131,16 @@ constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 uint8_t g_bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 uint8_t g_chan = 6;
 uint8_t OUR_MAC[6];
+// 802.11 sequence numbers for every frame we build (seeded randomly each boot) and the
+// unanswered-Authentication guard: see join_guard.h for why both matter with a stable MAC.
+lm_join::SeqCounter g_seq;
+lm_join::AuthWatch g_authw;
+bool g_mac_fallback = false;  // this boot gave up on the factory MAC (last resort)
+static inline void put_seq(uint8_t *hdr) {
+  uint16_t sc = g_seq.next();
+  hdr[22] = (uint8_t)(sc & 0xff);
+  hdr[23] = (uint8_t)(sc >> 8);
+}
 // Active WiFi credentials for the WPA2 PMK, committed at runtime from BLE Improv, the
 // wired serial "PROV" command, or — at boot — the NVS store (netstack_restore_credentials,
 // written by main.cpp once a provision has leased: see wifi_creds.h). Never baked into the
@@ -274,7 +285,7 @@ int mgmt_hdr(uint8_t *f, uint8_t fc) {
   memcpy(f + n, g_bssid, 6); n += 6;
   memcpy(f + n, OUR_MAC, 6); n += 6;
   memcpy(f + n, g_bssid, 6); n += 6;
-  f[n++] = 0x00; f[n++] = 0x00;
+  put_seq(f); n += 2;
   return n;
 }
 int build_auth(uint8_t *f) {
@@ -289,6 +300,13 @@ int build_auth(uint8_t *f) {
 int build_deauth(uint8_t *f) {
   int n = mgmt_hdr(f, 0xc0);
   f[n++] = 0x03; f[n++] = 0x00;
+  return n;
+}
+// Disassociation (reason 8: STA leaving the BSS) — sent with the deauth, since some APs
+// tear a station down on one but not the other.
+int build_disassoc(uint8_t *f) {
+  int n = mgmt_hdr(f, 0xa0);
+  f[n++] = 0x08; f[n++] = 0x00;
   return n;
 }
 int build_assoc(uint8_t *f) {
@@ -540,7 +558,7 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
   // is always pairwise — see sta.rs encrypt_data), so a broadcast a3 is safe here.
   const uint8_t bcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
-  hdr[22] = 0x00; hdr[23] = 0x00;
+  put_seq(hdr);
   char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
   tx_l2(hdr, payload, pn, lbl);
 }
@@ -553,7 +571,7 @@ void send_ping(const uint8_t *src, uint16_t seq) {
   uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
-  hdr[22] = 0x00; hdr[23] = 0x00;
+  put_seq(hdr);
   tx_l2(hdr, payload, pn, "PING sent");
 }
 
@@ -607,7 +625,7 @@ static void send_ip_l2(const uint8_t *ip, int iplen, const uint8_t *da) {
   uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=DA
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, da, 6);
-  hdr[22] = 0x00; hdr[23] = 0x00;
+  put_seq(hdr);
   tx_l2(hdr, payload, 8 + iplen, nullptr);
 }
 
@@ -692,7 +710,7 @@ void send_eapol_encrypted(const uint8_t *eapol, int elen) {
   uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
-  hdr[22] = 0x00; hdr[23] = 0x00;
+  put_seq(hdr);
   tx_l2(hdr, payload, 8 + elen, "group-m2");
 }
 
@@ -781,7 +799,7 @@ void handle_arp(const uint8_t *pt, int pl) {
   uint8_t hdr[24];               // ToDS + Protected; a3 = DA = requester's MAC
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, arp + 8, 6);
-  hdr[22] = 0; hdr[23] = 0;
+  put_seq(hdr);
   tx_l2(hdr, payload, 8 + 28, nullptr);
 }
 
@@ -812,7 +830,7 @@ void send_gratuitous_arp() {
   uint8_t hdr[24]; // ToDS + Protected; a3 = broadcast so the AP floods it to the BSS
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
   memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, bcast, 6);
-  hdr[22] = 0; hdr[23] = 0;
+  put_seq(hdr);
   tx_l2(hdr, payload, 8 + 28, "gratuitous ARP");
 }
 
@@ -1477,6 +1495,7 @@ void netstack_setup() {
   uint8_t rnd[4]; esp_fill_random(rnd, 4);
   bool factory = lm_sta_mac::choose(factory_mac, lm_sta_mac::random_mac_is_build_default(), rnd,
                                     OUR_MAC);
+  g_seq.seed((uint16_t)(rnd[3] | (rnd[0] << 8)));  // a new boot never reuses the last one's
   Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
                 OUR_MAC[3], OUR_MAC[4], OUR_MAC[5], factory ? "factory" : "random per boot");
   g_our_mac_ptr = OUR_MAC;
@@ -1709,11 +1728,26 @@ void netstack_loop() {
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
-      if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis(); Serial.println("auth ok -> assoc"); }
+      g_authw.on_auth_response();
+      if (status == 0) {
+        int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis();
+        Serial.printf("[t=%lu] auth ok -> assoc\n", (unsigned long)millis());
+      } else {
+        static uint32_t arl = 0;
+        if (arl++ < 8) Serial.printf("[t=%lu] auth refused status=%u\n", (unsigned long)millis(), status);
+      }
     } else if (rx[0] == 0x10 && st == ASSOC) { // assoc resp
       uint16_t status = rx[26] | (rx[27] << 8);
       Serial.printf("assoc status=%u\n", status);
       if (status == 0) { st = FOURWAY; t = millis(); Serial.println("ASSOCIATED -> 4-way"); }
+    } else if ((rx[0] == 0xc0 || rx[0] == 0xa0) && st == AUTH) {
+      // The AP tearing down (its view of) our old association while we try to re-auth:
+      // log it (rate-limited) — it says the AP heard us and dropped the stale station.
+      static uint32_t adl = 0;
+      if (adl++ < 8)
+        Serial.printf("[t=%lu] [join] AP %s (reason=%u) while authenticating\n", (unsigned long)millis(),
+                      rx[0] == 0xc0 ? "deauth" : "disassoc",
+                      (unsigned)((n >= 26) ? (rx[24] | (rx[25] << 8)) : 0));
     } else if ((rx[0] == 0xc0 || rx[0] == 0xa0) && st != AUTH) { // deauth / disassoc from our AP
       // The AP dropped us mid-session (missed beacons under heavy FULL-perf render load,
       // an AP inactivity/keepalive timeout, roaming, or RF). Nothing used to handle this:
@@ -1938,13 +1972,44 @@ void netstack_loop() {
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
-    if (!deauthed && !lm_sta_mac::random_mac_is_build_default()) {
-      deauthed = true;
-      int d = build_deauth(f);
+    uint32_t now_ms = (uint32_t)millis();
+    bool stable = !lm_sta_mac::random_mac_is_build_default() && !g_mac_fallback;
+    bool resend = deauthed && g_authw.resend_due(now_ms);
+    if (stable && (!deauthed || resend)) {
+      // Goodbye for any association the AP still holds for our MAC (a reset never sends
+      // one): disassoc + deauth, each with a fresh sequence number (join_guard.h). On a
+      // re-send, first jump the sequence counter out of any "already seen" window.
+      if (resend) g_seq.jump();
+      int d = build_disassoc(f);
       ns_mac_send(f, d, 0);
-      Serial.printf("[t=%lu] deauth sent to clear any stale association for our MAC\n",
-                    (unsigned long)millis());
+      d = build_deauth(f);
+      ns_mac_send(f, d, 0);
+      if (!deauthed) {
+        Serial.printf("[t=%lu] deauth sent to clear any stale association for our MAC\n",
+                      (unsigned long)now_ms);
+      } else {
+        Serial.printf("[t=%lu] [join] no auth response after %lu tries (%lu ms) — re-sending "
+                      "disassoc+deauth, seq -> %u\n", (unsigned long)now_ms,
+                      (unsigned long)g_authw.tries(), (unsigned long)g_authw.waited_ms(now_ms),
+                      (unsigned)((g_seq.peek() + 1024) & 0x0fff));
+      }
+      deauthed = true;
     }
+    if (stable && g_authw.give_up(now_ms, g_mac_fallback)) {
+      // Last resort: this AP won't talk to the factory MAC (it is still holding a stale
+      // station for it). Join as a per-boot random MAC instead — a new lease/IP, but online.
+      uint8_t rnd[4];
+      esp_fill_random(rnd, 4);
+      lm_sta_mac::random_mac(rnd, OUR_MAC);
+      g_mac_fallback = true;
+      mac_own_bssid();
+      g_authw.reset();
+      Serial.printf("[t=%lu] [join] no auth response for %lu ms — falling back to random MAC "
+                    "%02x:%02x:%02x:%02x:%02x:%02x for this boot\n", (unsigned long)now_ms,
+                    (unsigned long)lm_join::kGiveUpMs, OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
+                    OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
+    }
+    g_authw.on_auth_sent(now_ms);
     t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
   }
   // Join watchdog: auth is re-sent every 200ms above, but the Association Request and the
