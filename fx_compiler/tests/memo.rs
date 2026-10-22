@@ -144,7 +144,7 @@ fn render(
     let n = leds1.len();
     let mut arena = vec![0u8; prog.arena_bytes(n) + 64];
     vm.set_arena(&mut arena);
-    let mut mem = vec![0u8; led_cache_bytes(prog.led_cache_words, n).max(4)];
+    let mut mem = vec![0u8; led_cache_bytes(prog.led_cache_words(), n).max(4)];
     match cache {
         Cache::Unbound => {}
         Cache::Full => {
@@ -309,9 +309,9 @@ fn memoizes_and_hoists_cylinder() {
     assert!(r.n_state >= 1, "hoisted values live in state");
     // The .fxb carries the trailer + an update() entry was synthesized.
     let p = Program::parse(&c.fxb).unwrap();
-    assert_eq!(p.led_cache_words, r.led_cache_words);
+    assert_eq!(p.led_cache_words(), r.led_cache_words);
     assert_ne!(
-        p.prep_entry, 0xFFFF,
+        p.prep_entry(), 0xFFFF,
         "the hoisted work rides a per-frame prep entry"
     );
     assert_eq!(
@@ -452,7 +452,7 @@ fn cheap_ranges_are_left_alone() {
         "{:#?}",
         c.memo
     );
-    assert_eq!(Program::parse(&c.fxb).unwrap().led_cache_words, 0);
+    assert_eq!(Program::parse(&c.fxb).unwrap().led_cache_words(), 0);
 }
 
 #[test]
@@ -504,5 +504,5 @@ void poll() {
     let p = Program::parse(&c.fxb).unwrap();
     assert_eq!(p.flags & ledmapper_fx_vm::FLAG_MEMO, 0);
     assert_ne!(p.flags & ledmapper_fx_vm::FLAG_DRIVER, 0);
-    assert_eq!(p.prep_entry, 0xFFFF);
+    assert_eq!(p.prep_entry(), 0xFFFF);
 }

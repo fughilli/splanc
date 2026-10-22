@@ -1060,7 +1060,7 @@ fn memo_prog() -> Vec<u8> {
 fn led_cache_parse_and_fit() {
     let buf = fxb_memo(&[0.0], &memo_prog(), 3, &[1, 3]);
     let prog = Program::parse(&buf).expect("parse");
-    assert_eq!(prog.led_cache_words, 3);
+    assert_eq!(prog.led_cache_words(), 3);
     // record = 1 mask byte + 4*words.
     assert_eq!(led_cache_stride(1), 5);
     assert_eq!(led_cache_stride(3), 13);
@@ -1072,7 +1072,7 @@ fn led_cache_parse_and_fit() {
     // No trailer -> no cache.
     let plain_buf = fxb(0, 0, NO_ENTRY, 0, &[0.0], &memo_prog());
     let plain = Program::parse(&plain_buf).unwrap();
-    assert_eq!(plain.led_cache_words, 0);
+    assert_eq!(plain.led_cache_words(), 0);
     assert_eq!(plain.led_cache_fit(100, 1 << 20), 0);
 }
 
@@ -1168,7 +1168,7 @@ fn prep_entry_runs_once_per_frame_and_on_uniform_change() {
     buf.push(0);
     buf.push(0);
     let prog = Program::parse(&buf).expect("parse");
-    assert_eq!(prog.prep_entry, 11);
+    assert_eq!(prog.prep_entry(), 11);
     let mut vm = Vm::new();
     vm.set_uniform(0, &[0.25]);
     let big = Budget::instructions(10_000);

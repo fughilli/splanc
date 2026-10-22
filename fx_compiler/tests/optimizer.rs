@@ -189,7 +189,7 @@ fn optimizer_preserves_output_and_reduces_ops() {
         // Bind the per-LED memo cache like the firmware does (the variance pass
         // runs as part of -O), so the measured ops are the shipped steady state.
         let n_leds = leds.len();
-        let mut memo = vec![0u8; led_cache_bytes(pb.led_cache_words, n_leds)];
+        let mut memo = vec![0u8; led_cache_bytes(pb.led_cache_words(), n_leds)];
         let words = pb.led_cache_fit(n_leds, memo.len());
         vb.set_led_cache(&mut memo, words, n_leds);
 

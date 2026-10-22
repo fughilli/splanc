@@ -509,19 +509,12 @@ pub struct Program<'a> {
     /// The `.fxb` header flags byte (FLAG_*), retained so the host can cheaply
     /// query program capabilities without re-scanning the code.
     pub flags: u8,
-    /// Per-LED memo words the program's `LoadLedCache`/`StoreLedCache` slots
-    /// span (0 = no LED cache requested). See [`FLAG_MEMO`].
-    pub led_cache_words: u8,
-    /// The per-frame PREPARE entry (NO_ENTRY if absent): code the compiler
-    /// hoisted out of `shade()` because it is the same for every LED of a frame
-    /// (`sin(time*speed)`, uniform math, …). It stores into extra `state` slots
-    /// that `shade()` then just loads. The VM runs it itself, once per frame,
-    /// right before the first `shade()` (see [`Vm::run_shade_counted`]).
-    pub prep_entry: u16,
-    /// Cumulative word boundaries of the memo groups, in the compiler's priority
-    /// order (best cycles-saved-per-byte first). A host short on RAM binds the
-    /// largest prefix that fits ([`Program::led_cache_fit`]).
-    led_cache_groups: &'a [u8],
+    /// The raw memo trailer (FLAG_MEMO; empty when absent): `prep_entry(u16)
+    /// words(u8) n_groups(u8) group_end(u8) × n_groups`. Held raw and decoded by
+    /// [`Program::prep_entry`] / [`Program::led_cache_words`] on demand, so the
+    /// per-LED `Program::parse` on the firmware's shade path stays as cheap as
+    /// it was (decoding it eagerly cost fx_bench ~300 cycles/LED).
+    memo_trailer: &'a [u8],
 }
 
 /// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
@@ -765,26 +758,12 @@ impl<'a> Program<'a> {
         } else {
             (0, &buf[buf.len()..])
         };
-        if flags & FLAG_BUFFERS != 0 {
-            o += n_buffers as usize * BUF_DESC_LEN;
-        }
-        // Optional memo trailer (FLAG_MEMO). A malformed one just disables the
-        // cache (the bracketing ops are no-ops without one) and the prep entry.
-        let (prep_entry, led_cache_words, led_cache_groups) = if flags & FLAG_MEMO != 0 {
-            let prep = match buf.get(o..o + 2) {
-                Some(b) if (u16::from_le_bytes([b[0], b[1]]) as usize) < code_len => {
-                    u16::from_le_bytes([b[0], b[1]])
-                }
-                _ => NO_ENTRY,
-            };
-            let words = buf.get(o + 2).copied().unwrap_or(0);
-            let ng = buf.get(o + 3).copied().unwrap_or(0) as usize;
-            match buf.get(o + 4..o + 4 + ng) {
-                Some(g) if (words as usize) <= LED_CACHE_MAX_WORDS => (prep, words, g),
-                _ => (prep, 0, &buf[buf.len()..]),
-            }
+        // Optional memo trailer (FLAG_MEMO), decoded lazily (see `memo_trailer`).
+        let memo_trailer = if flags & FLAG_MEMO != 0 {
+            let t = o + buffers.len(); // `o` is past the n_buffers byte when present
+            buf.get(t..).unwrap_or(&[])
         } else {
-            (NO_ENTRY, 0, &buf[buf.len()..])
+            &[]
         };
         Ok(Program {
             consts,
@@ -797,10 +776,47 @@ impl<'a> Program<'a> {
             n_buffers,
             buffers,
             flags,
-            led_cache_words,
-            led_cache_groups,
-            prep_entry,
+            memo_trailer,
         })
+    }
+
+    /// The per-frame PREPARE entry (NO_ENTRY if absent): code the compiler
+    /// hoisted out of `shade()` because it is the same for every LED of a frame
+    /// (`sin(time*speed)`, uniform math, …). It stores into extra `state` slots
+    /// that `shade()` then just loads. The VM runs it itself, once per frame,
+    /// right before the first `shade()` (see [`Vm::run_shade_counted`]).
+    #[inline]
+    pub fn prep_entry(&self) -> u16 {
+        match self.memo_trailer {
+            [a, b, ..] => {
+                let e = u16::from_le_bytes([*a, *b]);
+                if (e as usize) < self.code.len() {
+                    e
+                } else {
+                    NO_ENTRY
+                }
+            }
+            _ => NO_ENTRY,
+        }
+    }
+
+    /// Per-LED memo words the program's `LoadLedCache`/`StoreLedCache` slots
+    /// span (0 = no LED cache requested). See [`FLAG_MEMO`].
+    pub fn led_cache_words(&self) -> u8 {
+        let w = self.memo_trailer.get(2).copied().unwrap_or(0);
+        if (w as usize) <= LED_CACHE_MAX_WORDS && self.led_cache_groups().len() == self.memo_trailer.get(3).copied().unwrap_or(0) as usize {
+            w
+        } else {
+            0
+        }
+    }
+
+    /// Cumulative word boundaries of the memo groups, in the compiler's priority
+    /// order (best cycles-saved-per-byte first). A host short on RAM binds the
+    /// largest prefix that fits ([`Program::led_cache_fit`]).
+    fn led_cache_groups(&self) -> &'a [u8] {
+        let ng = self.memo_trailer.get(3).copied().unwrap_or(0) as usize;
+        self.memo_trailer.get(4..4 + ng).unwrap_or(&[])
     }
 
     /// The largest memo prefix (in words, at a group boundary so no expression
@@ -809,8 +825,9 @@ impl<'a> Program<'a> {
     /// effect then runs uncached, exactly as before.
     pub fn led_cache_fit(&self, leds: usize, avail: usize) -> u8 {
         let mut best = 0u8;
-        for &end in self.led_cache_groups {
-            if end <= self.led_cache_words && led_cache_bytes(end, leds) <= avail {
+        let words = self.led_cache_words();
+        for &end in self.led_cache_groups() {
+            if end <= words && led_cache_bytes(end, leds) <= avail {
                 best = best.max(end);
             } else {
                 // Groups are in priority order: stop at the first that doesn't
@@ -1050,14 +1067,99 @@ fn prep_key(prog: &Program, f: &Frame) -> [u32; PREP_KEY_WORDS] {
     [prog.code.as_ptr() as usize as u32, f.frame, f.time.to_bits()]
 }
 
-/// The per-LED memo cache as `run()` sees it (empty = unbound).
-struct Memo<'a> {
-    mem: &'a mut [u8],
+/// `LoadLedCache` hit path: push LED `idx`'s `n` cached words for `slot` (at
+/// stack depth `sp`) if filled, returning the new depth (None = miss; the
+/// caller then computes the expression). Takes/returns `sp` BY VALUE: taking
+/// `&mut sp` would force the interpreter's stack pointer out of a register for
+/// the whole dispatch loop (measured ~5% on every fx_bench program).
+#[inline(never)]
+fn memo_load(idx: u32, slot: usize, n: usize, stack: &mut [f32; MAX_STACK], sp: usize) -> Option<usize> {
+    // SAFETY: written only by run_shade_counted while it holds MEMO_LOCK.
+    let memo = unsafe { ACTIVE_MEMO }.filter(|m| m.owner == stack.as_ptr())?;
+    let o = memo.record(idx, slot, n)?;
+    let mem = memo.mem();
+    if mem[o + slot / 8] & (1 << (slot % 8)) == 0 || sp + n > MAX_STACK {
+        return None;
+    }
+    let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
+    for k in 0..n {
+        let b = &mem[w + k * 4..w + k * 4 + 4];
+        stack[sp + k] = f32::from_bits(u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    }
+    Some(sp + n)
+}
+
+/// `StoreLedCache`: record the top `n` stack words into LED `idx`'s `slot`.
+#[inline(never)]
+fn memo_store(idx: u32, slot: usize, n: usize, stack: &[f32; MAX_STACK], sp: usize) {
+    // SAFETY: as in memo_load.
+    let Some(memo) = (unsafe { ACTIVE_MEMO }).filter(|m| m.owner == stack.as_ptr()) else { return };
+    let Some(o) = memo.record(idx, slot, n) else { return };
+    let mem = memo.mem();
+    if sp < n {
+        return;
+    }
+    let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
+    for k in 0..n {
+        let bits = stack[sp - n + k].to_bits().to_le_bytes();
+        mem[w + k * 4..w + k * 4 + 4].copy_from_slice(&bits);
+    }
+    mem[o + slot / 8] |= 1 << (slot % 8);
+}
+
+/// The per-LED memo cache for the shade() invocation in flight: set by
+/// `run_shade_counted` while it holds [`MEMO_LOCK`] (None otherwise), read by
+/// the interpreter's memo ops. A static, not an argument — see the op arms.
+#[derive(Clone, Copy)]
+struct Memo {
+    /// The owning VM's operand stack: a memo op only honours the binding of the
+    /// VM that is executing it (another thread's VM may be mid-invocation).
+    owner: *const f32,
+    ptr: *mut u8,
+    len: usize,
     words: u8,
     leds: usize,
 }
 
-impl Memo<'_> {
+
+static mut ACTIVE_MEMO: Option<Memo> = None;
+/// Serializes cache-bound shade() invocations across threads (host tests run
+/// VMs concurrently; the device is single-threaded, so it is never contended).
+static MEMO_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Holds MEMO_LOCK with ACTIVE_MEMO set; clears + releases on drop (incl. unwind).
+struct MemoGuard;
+
+impl MemoGuard {
+    fn bind(memo: Memo) -> MemoGuard {
+        use core::sync::atomic::Ordering;
+        while MEMO_LOCK
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        // SAFETY: we hold MEMO_LOCK.
+        unsafe { ACTIVE_MEMO = Some(memo) };
+        MemoGuard
+    }
+}
+
+impl Drop for MemoGuard {
+    fn drop(&mut self) {
+        // SAFETY: we hold MEMO_LOCK.
+        unsafe { ACTIVE_MEMO = None };
+        MEMO_LOCK.store(false, core::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Memo {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn mem(&self) -> &mut [u8] {
+        // SAFETY: set from a set_led_cache binding of at least `len` bytes.
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
     /// Byte offset of LED `idx`'s record if `[slot, slot+n)` is cacheable.
     #[inline]
     fn record(&self, idx: u32, slot: usize, n: usize) -> Option<usize> {
@@ -1324,8 +1426,6 @@ impl Vm {
             self.jit_len,
             self.jit_consts,
             // update() never touches the per-LED memo (the compiler only brackets
-            // shade-only code), so it runs with no cache bound.
-            Memo { mem: &mut [], words: 0, leds: 0 },
         );
         (outcome, counters)
     }
@@ -1382,8 +1482,6 @@ impl Vm {
             self.jit_blocks,
             self.jit_len,
             self.jit_consts,
-            // A driver's poll() never touches the per-LED memo.
-            Memo { mem: &mut [], words: 0, leds: 0 },
         );
         unsafe { POLL_BUS = None };
         (outcome, counters)
@@ -1396,12 +1494,27 @@ impl Vm {
         }
     }
 
+    /// Run the prepare entry if this frame (or a uniform / update()) made it stale.
+    #[cold]
+    #[inline(never)]
+    fn prep_if_stale(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Counters {
+        if prog.prep_entry() == NO_ENTRY {
+            return Counters::default();
+        }
+        let key = prep_key(prog, frame);
+        if self.prep_valid && self.prep_key == key {
+            return Counters::default();
+        }
+        self.run_prep(prog, frame, budget)
+    }
+
     /// Run the program's per-frame prepare entry (hoisted shade() work) into its
     /// `state` slots. Normally implicit (run_shade does it once per frame); a host
     /// may call it eagerly right after update() to keep the cost out of the first
     /// LED. update()-like context: no LED, no memo cache.
     pub fn run_prep(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Counters {
-        if prog.prep_entry == NO_ENTRY {
+        let prep_entry = prog.prep_entry();
+        if prep_entry == NO_ENTRY {
             return Counters::default();
         }
         let led = Led::default();
@@ -1431,12 +1544,11 @@ impl Vm {
             &mut self.stack,
             &mut self.locals,
             &mut self.call_stack,
-            prog.prep_entry as usize,
+            prep_entry as usize,
             budget,
             self.jit_blocks,
             self.jit_len,
             self.jit_consts,
-            Memo { mem: &mut [], words: 0, leds: 0 },
         );
         self.prep_key = prep_key(prog, frame);
         self.prep_valid = true;
@@ -1474,15 +1586,13 @@ impl Vm {
     ) -> (Rgb, Outcome, Counters) {
         // Per-frame prepare (hoisted shade() work): once per frame, before the
         // first LED. Its ops count toward this invocation's counters.
-        let mut prep_counters = Counters::default();
-        if prog.prep_entry != NO_ENTRY {
-            let key = prep_key(prog, frame);
-            if !self.prep_valid || self.prep_key != key {
-                prep_counters = self.run_prep(prog, frame, budget);
-                self.prep_key = key;
-                self.prep_valid = true;
-            }
-        }
+        // Kept to one flag test on the hot path: shade() runs per LED and fx_bench
+        // measures this framing (an eager check here cost ~300 C6 cycles/LED).
+        let prep_counters = if prog.flags & FLAG_MEMO != 0 {
+            self.prep_if_stale(prog, frame, budget)
+        } else {
+            Counters::default()
+        };
         // shade() is read-only on `state` (the compiler never emits StoreState in
         // shade), so we pass `state`/`dist_src` by mutable ref WITHOUT the old
         // per-LED copy — the values are unchanged on return. This was ~900 B of
@@ -1493,22 +1603,17 @@ impl Vm {
         } else {
             unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
         };
-        // The per-LED memo cache, if bound (disjoint host memory, see set_led_cache).
-        let memo = if self.memo_ptr.is_null() {
-            Memo { mem: &mut [], words: 0, leds: 0 }
-        } else {
-            Memo {
-                // SAFETY: set_led_cache checked the binding covers stride*leds bytes.
-                mem: unsafe {
-                    core::slice::from_raw_parts_mut(
-                        self.memo_ptr,
-                        led_cache_bytes(self.memo_words, self.memo_leds),
-                    )
-                },
+        // The per-LED memo cache, if bound (disjoint host memory, see
+        // set_led_cache), for this invocation's memo ops.
+        let _memo_guard = (!self.memo_ptr.is_null()).then(|| {
+            MemoGuard::bind(Memo {
+                owner: self.stack.as_ptr(),
+                ptr: self.memo_ptr,
+                len: led_cache_bytes(self.memo_words, self.memo_leds),
                 words: self.memo_words,
                 leds: self.memo_leds,
-            }
-        };
+            })
+        });
         let g = GraphRef {
             n_seg: self.n_seg,
             seg_len: &self.seg_len,
@@ -1534,7 +1639,6 @@ impl Vm {
             self.jit_blocks,
             self.jit_len,
             self.jit_consts,
-            memo,
         );
         let counters = Counters {
             instrs: counters.instrs.saturating_add(prep_counters.instrs),
@@ -1682,8 +1786,6 @@ fn run(
     jit_blocks: *const JitBlock,
     jit_len: usize,
     jit_consts: *const i32,
-    // Per-LED memo cache (empty when unbound / in update()).
-    memo: Memo,
 ) -> ([f32; 3], Option<Rgb>, Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
@@ -3048,36 +3150,25 @@ fn run(
                     u16::from_be_bytes([buf[0], buf[1]]) as i32
                 });
             }
+            // Out-of-line helpers reading the invocation's cache from a static:
+            // anything more (a `run()` argument, a GraphRef field, a combined
+            // arm) measurably raised register pressure across the whole dispatch
+            // loop — fx_bench +3..7% on EVERY program, cached or not.
             Op::LoadLedCache => {
                 let slot = code[pc] as usize;
                 let n = code[pc + 1] as usize;
                 let rel = i16::from_le_bytes([code[pc + 2], code[pc + 3]]);
                 pc += 4;
-                if let Some(o) = memo.record(led.idx, slot, n) {
-                    if memo.mem[o + slot / 8] & (1 << (slot % 8)) != 0 {
-                        let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
-                        for k in 0..n {
-                            let b = &memo.mem[w + k * 4..w + k * 4 + 4];
-                            push!(f32::from_bits(u32::from_le_bytes([b[0], b[1], b[2], b[3]])));
-                        }
-                        pc = (pc as isize + rel as isize) as usize;
-                    }
+                if let Some(nsp) = memo_load(led.idx, slot, n, stack, sp) {
+                    sp = nsp;
+                    pc = (pc as isize + rel as isize) as usize;
                 }
             }
             Op::StoreLedCache => {
                 let slot = code[pc] as usize;
                 let n = code[pc + 1] as usize;
                 pc += 2;
-                if let Some(o) = memo.record(led.idx, slot, n) {
-                    if sp >= n {
-                        let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
-                        for k in 0..n {
-                            let bits = stack[sp - n + k].to_bits().to_le_bytes();
-                            memo.mem[w + k * 4..w + k * 4 + 4].copy_from_slice(&bits);
-                        }
-                        memo.mem[o + slot / 8] |= 1 << (slot % 8);
-                    }
-                }
+                memo_store(led.idx, slot, n, stack, sp);
             }
         }
     }
