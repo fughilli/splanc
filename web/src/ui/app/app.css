@@ -2597,6 +2597,27 @@ body.is-locked {
   gap: var(--sp-2);
   justify-content: flex-end;
 }
+/* Calibrate IMU: the capture controls (diffuse / stride / exposure / LED
+   brightness) inside the calibration panel, which sits over the Advanced
+   disclosure. */
+.capture-review.capture-cal {
+  /* Sits above "Stop & finish" (which cancels a calibration). */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+}
+.capture-cal-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.capture-cal-settings .k-slider-head,
+.capture-cal-settings .k-slider-val {
+  color: #d5d5dd;
+}
 
 /* --- device sheet --- */
 .device-row {

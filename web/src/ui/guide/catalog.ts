@@ -314,6 +314,32 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     ],
   },
   {
+    id: "calibrate-imu",
+    title: "Calibrating a fixture's motion sensor",
+    icon: "camera",
+    tab: "maps",
+    route: "/maps",
+    summary: "Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it.",
+    screenshot: "#/capture?calibrate=__demo__",
+    screenshotDemo: "device,camera,imu",
+    sections: [
+      {
+        body: [
+          "A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt " +
+            "automatically when you map it. To also fix its heading, open the map and tap " +
+            "Calibrate IMU: the LEDs play the mapping code, the camera locks onto the known " +
+            "map, and you capture two or three still poses, tipping the fixture at least " +
+            "45° between them. Save when the fit says good.",
+          "The panel also holds the capture settings — diffuse on/off, the LED stride, " +
+            "manual camera exposure and LED brightness — so you can make the LEDs readable " +
+            "in your lighting. If the map has no saved capture settings (it was mapped " +
+            "before they were recorded, or pulled from a device) the panel says what it is " +
+            "using instead; what works is saved with the calibration for next time.",
+        ],
+      },
+    ],
+  },
+  {
     id: "capture",
     title: "Mapping a fixture with the camera",
     icon: "camera",

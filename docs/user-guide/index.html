@@ -135,7 +135,7 @@
     <div class="layout">
       <nav class="toc">
 <div class="nav-group"><div class="nav-head">Getting started</div><a href="#welcome">Welcome to Splanc</a></div>
-<div class="nav-group"><div class="nav-head">Maps</div><a href="#maps-library">The maps library</a><a href="#capture">Mapping a fixture with the camera</a><a href="#map-workspace">The mapping workspace</a></div>
+<div class="nav-group"><div class="nav-head">Maps</div><a href="#maps-library">The maps library</a><a href="#calibrate-imu">Calibrating a fixture's motion sensor</a><a href="#capture">Mapping a fixture with the camera</a><a href="#map-workspace">The mapping workspace</a></div>
 <div class="nav-group"><div class="nav-head">Effects</div><a href="#effects-library">The effects library</a><a href="#effect-editor">The effect editor</a></div>
 <div class="nav-group"><div class="nav-head">Devices</div><a href="#connect-device">Connecting a device</a><a href="#device-management">Managing devices</a><a href="#flashing">Flashing firmware</a><a href="#color-correction">Color correction</a><a href="#performance">Performance &amp; calibration</a></div>
 <div class="nav-group"><div class="nav-head">Settings &amp; help</div><a href="#midi">MIDI controllers</a><a href="#appearance">Appearance &amp; behavior</a><a href="#debug-bundles">Debug mode &amp; capture bundles</a><a href="#help">Help, tutorial &amp; about</a></div>
@@ -185,6 +185,15 @@
 <li>Large maps show a short summary first. The whole map is only downloaded when you save or preview it.</li>
 <li>Through <strong>Live via bridge</strong>, a fixture's stored map can't be copied yet. Connect to the fixture directly to copy it.</li>
 </ul>
+</div>
+</article>
+<article class="topic" id="calibrate-imu">
+<div class="topic-figure"><img class="shot" src="img/calibrate-imu.png" alt="Calibrating a fixture's motion sensor screen" loading="lazy" /></div>
+<div class="topic-body">
+<h3>Calibrating a fixture's motion sensor</h3>
+<p class="summary">Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it.</p>
+<p>A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code, the camera locks onto the known map, and you capture two or three still poses, tipping the fixture at least 45° between them. Save when the fit says good.</p>
+<p>The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved capture settings (it was mapped before they were recorded, or pulled from a device) the panel says what it is using instead; what works is saved with the calibration for next time.</p>
 </div>
 </article>
 <article class="topic" id="capture">

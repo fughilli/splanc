@@ -1480,5 +1480,6 @@ function normalizeProfile(r: Partial<CaptureProfileFlat>): CaptureProfileFlat {
     downscale: r.downscale ?? 0,
     lcGain: r.lcGain ?? 0,
     capturedAtMs: Number(r.capturedAtMs ?? 0),
+    exposure: r.exposure ?? 0,
   };
 }

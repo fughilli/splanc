@@ -78,6 +78,7 @@ import { ImuCalSession } from "../../capture/imuCalSession";
 import {
   applyProfile,
   buildProfile,
+  captureSettingsNote,
   postMappingPose,
   profileForMap,
   type CaptureKnobs,
@@ -231,8 +232,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // re-probing (sensor-core.md §7.5).
   let profileRun: ProfiledRun | null = null;
   // What this run used, recorded on the device after a successful first map.
-  let profileDraft: { knobs: CaptureKnobs; symbols?: number; bitPeriodMs: number; brightness?: number } | null =
-    null;
+  let profileDraft: {
+    knobs: CaptureKnobs;
+    symbols?: number;
+    bitPeriodMs: number;
+    brightness?: number;
+    exposure?: number;
+  } | null = null;
+  // The stride is pinned (a stored profile or the calibrate screen's control
+  // chose it): a diffuse toggle must keep it rather than re-reading the device
+  // default (that silently dropped a profile's stride).
+  let strideLocked = false;
+  // Set while mapping: fold the live knobs into profileDraft.
+  let noteDraft: () => void = () => undefined;
   let priorObs: CaptureObservations | null = null;
 
   // -- full-screen layout (design doc §4.2). The camera <video> is prepended to
@@ -466,16 +478,80 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         toast(`Switching to ${on ? "strided (diffuse)" : "dense"} capture…`);
         return;
       }
-      // Before the map starts: re-resolve so the flip applies to this run.
+      // Before the map starts: re-resolve so the flip applies to this run —
+      // keeping a pinned stride (stored profile / the calibrate control).
+      const keep = { strideSpacing, anchorDensity };
       ({ diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts } =
         resolveCaptureConfig());
+      if (strideLocked) ({ strideSpacing, anchorDensity } = keep);
+      updateCalSettingsNote();
       toast(`Diffuse capture ${on ? "on" : "off"}`);
     },
   });
 
+  // LED stride for strided (diffuse) capture: the calibrate screen exposes it
+  // (a map without saved capture settings must be correctable here).
+  let strideHook: ((spacing: number) => void) | null = null;
+  const strideSlider = Slider({
+    label: "LED stride (diffuse)",
+    min: 1,
+    max: 16,
+    step: 1,
+    value: strideSpacing,
+    format: (v) => `${Math.round(v)}`,
+    onInput: () => undefined,
+  });
+  strideSlider.input.addEventListener("change", () => {
+    const v = Math.max(1, Math.round(parseFloat(strideSlider.input.value)));
+    strideLocked = true;
+    if (strideHook !== null && diffuse) {
+      strideHook(v);
+    } else {
+      strideSpacing = v;
+    }
+    updateCalSettingsNote();
+  });
+
   advBody.append(diffuseBtn, modeBtn, brightSlider.el, expSlider.el, hudStats);
+  // Calibrate IMU: the capture controls live IN the calibration panel, always
+  // visible (manual exposure / LED brightness matter in varying light while the
+  // auto servo is unreliable), with a note on where the settings came from.
+  const calSettings = document.createElement("div");
+  calSettings.className = "capture-cal-settings";
+  const calSettingsNote = document.createElement("div");
+  calSettingsNote.className = "capture-review-text metric";
+  if (calibrateId !== null) {
+    // Visible from the start: the settings matter BEFORE the code starts (the
+    // light probe and the first poses run with them).
+    calPanel.style.display = "";
+    calPanel.classList.add("capture-cal");
+    advWrap.style.display = "none"; // its controls moved into the panel
+    calText.textContent = "Starting the mapping code…";
+    calSettings.append(calSettingsNote, diffuseBtn, strideSlider.el, modeBtn, brightSlider.el, expSlider.el);
+    calPanel.insertBefore(calSettings, calBtns);
+  }
+  function updateCalSettingsNote(): void {
+    if (calibrateId === null) return;
+    calSettingsNote.textContent = captureSettingsNote(profileRun, {
+      diffuse,
+      strideSpacing,
+      anchorDensity,
+      threshold: detectorOpts.threshold,
+      downscale: detectorOpts.downscale,
+    });
+    strideSlider.input.value = String(strideSpacing);
+    strideSlider.setValueText(String(strideSpacing));
+    strideSlider.el.style.display = diffuse ? "" : "none";
+  }
   brightSlider.input.addEventListener("change", () => {
+    if (!manualMode && calibrateId !== null) setManualMode(true);
     if (manualMode) manualHooks?.applyBrightness(parseInt(brightSlider.input.value, 10) / 100);
+  });
+  expSlider.input.addEventListener("input", () => {
+    if (!manualMode && calibrateId !== null) {
+      setManualMode(true);
+      applyManualExposure(true);
+    }
   });
   let lastExpApply = 0;
   function applyManualExposure(final: boolean): void {
@@ -488,8 +564,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   expSlider.input.addEventListener("change", () => applyManualExposure(true));
   function setManualMode(on: boolean): void {
     manualMode = on;
-    brightSlider.el.style.display = on ? "" : "none";
-    expSlider.el.style.display = on ? "" : "none";
+    // On the calibrate screen the sliders stay visible (they track the servo
+    // while it runs; touching one takes manual control).
+    const show = on || calibrateId !== null;
+    brightSlider.el.style.display = show ? "" : "none";
+    expSlider.el.style.display = show ? "" : "none";
     modeBtn.querySelector("span")!.textContent = on ? "Back to servo" : "Manual override";
   }
   function syncManualSliders(brightness01: number, exposure01: number): void {
@@ -682,6 +761,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       residualDeg: sol.residualDeg,
       atMs: Date.now(),
     });
+    // What worked here becomes the map's capture profile (device + library), so
+    // the next calibration / supplement starts from it.
+    noteDraft();
+    if (profileDraft !== null && priorMap !== null) {
+      const p = buildProfile(priorMap.mapId, profileDraft.knobs, profileDraft, Date.now());
+      await mapStore.setCaptureProfile(calibrateId, p).catch(() => {});
+      await c.setCaptureProfile(p).catch(() => {});
+    }
     toast("Motion sensor calibrated to this map");
     void stopCapture();
   }
@@ -693,6 +780,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
    * firmware answers "unsupported"; both steps are best-effort. */
   async function afterMapStored(c: NonNullable<ReturnType<typeof client>>, id: string, mapId: string): Promise<void> {
     try {
+      noteDraft();
       if (profileDraft !== null) {
         const p = buildProfile(mapId, profileDraft.knobs, profileDraft, Date.now());
         await mapStore.setCaptureProfile(id, p).catch(() => {});
@@ -711,6 +799,51 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     } catch {
       /* no sensor core on this firmware */
     }
+  }
+
+  /** Apply the device's stored capture profile for `mapId` (if any) to this
+   * run's knobs; without one keep the normal-capture defaults (per-device
+   * stride, global diffuse), never a silent dense fallback. */
+  async function loadStoredProfile(c: NonNullable<ReturnType<typeof client>>, mapId: string): Promise<void> {
+    const defaults: CaptureKnobs = {
+      diffuse,
+      strideSpacing,
+      anchorDensity,
+      threshold: detectorOpts.threshold,
+      downscale: detectorOpts.downscale,
+      ...(detectorOpts.localContrast ? { lcGain: detectorOpts.localContrast.gain } : {}),
+    };
+    let stored = null;
+    try {
+      stored = profileForMap(await c.getCaptureProfile(), mapId);
+    } catch {
+      stored = null; // firmware without capture profiles
+    }
+    profileRun = applyProfile(defaults, stored);
+    if (profileRun.applied === null) return;
+    const k = profileRun.knobs;
+    diffuse = k.diffuse;
+    strideSpacing = k.strideSpacing;
+    anchorDensity = k.anchorDensity;
+    strideLocked = true;
+    detectorOpts = {
+      ...detectorOpts,
+      threshold: k.threshold,
+      downscale: k.downscale,
+      ...(k.diffuse && k.lcGain !== undefined ? { localContrast: { gain: k.lcGain } } : {}),
+    };
+    if (profileRun.brightness !== undefined) {
+      brightSlider.input.value = String(Math.round(profileRun.brightness * 100));
+      brightSlider.setValueText(`${Math.round(profileRun.brightness * 100)}%`);
+    }
+    if (profileRun.exposure !== undefined) {
+      // A recorded exposure means a manual setting worked: start there, manual.
+      expSlider.input.value = profileRun.exposure.toFixed(2);
+      expSlider.setValueText(profileRun.exposure.toFixed(2));
+      setManualMode(true);
+    }
+    const span = diffuseBtn.querySelector("span");
+    if (span) span.textContent = `Diffuse capture: ${diffuse ? "On" : "Off"}`;
   }
 
   async function startCapture(): Promise<void> {
@@ -738,19 +871,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       guideEl.textContent = "Calibrate IMU — point the camera at the fixture.";
       // Pose 1 from the mapping, if it was recorded (else the first capture here).
       calSession = new ImuCalSession(rec.imuCalibration?.poses ?? []);
-      try {
-        const stored = profileForMap(await c.getCaptureProfile(), rec.map.mapId);
-        profileRun = applyProfile(
-          { diffuse, strideSpacing, anchorDensity, threshold: detectorOpts.threshold, downscale: detectorOpts.downscale },
-          stored,
-        );
-        if (profileRun.applied !== null) {
-          ({ diffuse, strideSpacing, anchorDensity } = profileRun.knobs);
-          detectorOpts = { ...detectorOpts, threshold: profileRun.knobs.threshold, downscale: profileRun.knobs.downscale };
-        }
-      } catch {
-        profileRun = null;
-      }
+      await loadStoredProfile(c, rec.map.mapId);
+      updateCalSettingsNote();
     }
     if (supplementId !== null) {
       const rec = await mapStore.get(supplementId);
@@ -767,36 +889,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       priorObs = obs ?? null;
       if (!obs) toast("No raw capture data for this map: the new scan will be registered and fused with its stored positions");
       // Reuse the capture settings that produced this map, if the device still
-      // holds them for it. Older firmware / a pre-profile map: defaults.
-      try {
-        const stored = profileForMap(await c.getCaptureProfile(), rec.map.mapId);
-        profileRun = applyProfile(
-          {
-            diffuse,
-            strideSpacing,
-            anchorDensity,
-            threshold: detectorOpts.threshold,
-            downscale: detectorOpts.downscale,
-            ...(detectorOpts.localContrast ? { lcGain: detectorOpts.localContrast.gain } : {}),
-          },
-          stored,
-        );
-        if (profileRun.applied !== null) {
-          const k = profileRun.knobs;
-          diffuse = k.diffuse;
-          strideSpacing = k.strideSpacing;
-          anchorDensity = k.anchorDensity;
-          detectorOpts = {
-            ...detectorOpts,
-            threshold: k.threshold,
-            downscale: k.downscale,
-            ...(k.diffuse && k.lcGain !== undefined ? { localContrast: { gain: k.lcGain } } : {}),
-          };
-          toast("Reusing this map's capture settings");
-        }
-      } catch {
-        profileRun = null; // firmware without capture profiles
-      }
+      // holds them for it. Older firmware / a pre-profile map: the same
+      // per-device stride + global diffuse a normal capture uses, said out loud.
+      await loadStoredProfile(c, rec.map.mapId);
+      toast(
+        profileRun?.applied
+          ? "Reusing this map's capture settings"
+          : captureSettingsNote(profileRun, {
+              diffuse,
+              strideSpacing,
+              anchorDensity,
+              threshold: detectorOpts.threshold,
+              downscale: detectorOpts.downscale,
+            }),
+      );
       projOverlay.supplement = true;
       applyLiveSolve(null); // base map alone until the live solve registers
       guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
@@ -815,7 +921,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       localDetections = [];
       localImu = [];
       const cached = prefs.getCalibratedK();
-      const initialExposure = servoExposure ? EXPOSURE_SERVO_START : forcedExposure;
+      const initialExposure =
+        profileRun?.exposure ?? (servoExposure ? EXPOSURE_SERVO_START : forcedExposure);
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
       // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
       // control at all and its camera is unreachable from this process, so the
@@ -959,6 +1066,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ...(config.symbols !== undefined ? { symbols: config.symbols } : {}),
         bitPeriodMs: params.bitPeriodMs,
         ...(params.brightness !== undefined ? { brightness: params.brightness } : {}),
+        ...(profileRun?.exposure !== undefined ? { exposure: profileRun.exposure } : {}),
       };
       if (initialExposure !== null) {
         void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
@@ -1385,6 +1493,24 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           });
       };
 
+      // What the run is using NOW goes into the profile a success records (the
+      // start-of-run snapshot missed live diffuse / stride / exposure changes).
+      noteDraft = (): void => {
+        if (profileDraft === null) return;
+        profileDraft.knobs = {
+          ...profileDraft.knobs,
+          diffuse,
+          strideSpacing,
+          anchorDensity,
+          threshold: detector.threshold,
+        };
+        profileDraft.bitPeriodMs = params.bitPeriodMs;
+        if (params.brightness !== undefined) profileDraft.brightness = params.brightness;
+        // Only a hand-set exposure is worth replaying (it starts the next run
+        // in manual); a servo-chosen one would just pin the servo off.
+        if (manualMode) profileDraft.exposure = servoedExposure;
+        else delete profileDraft.exposure;
+      };
       syncManualSliders(params.brightness ?? 1, servoedExposure);
       manualHooks = {
         applyBrightness: (b01) => applyReconfigure({ brightness: b01 }),
@@ -1396,7 +1522,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // code across a hue transition — that's the deliberate manual trade
           // (FUG-62). The auto servo below keeps the Nyquist cap.
           void exposureTarget.setExposure(e01, prefs.getManualExposureCeilingMs());
+          noteDraft();
         },
+      };
+      // The calibrate screen's stride control, live: re-stride the running code.
+      strideHook = (spacing) => {
+        if (renegotiating) return;
+        applyReconfigure({ strideSpacing: spacing, anchorDensity, stridePhase: 0 }, () => {
+          strideSpacing = spacing;
+          phaseTotal = stridePhaseCount({ spacing, anchorDensity });
+          phaseIdx = 0;
+          lastPhaseAt = performance.now();
+          noteDraft();
+          updateCalSettingsNote();
+        });
       };
 
       // Live strided ⇄ dense switch (the inline diffuse toggle while capturing).
@@ -1409,7 +1548,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         if (wantDiffuse === diffuse || renegotiating) return;
         const target = wantDiffuse;
         const bp = prefs.getDiffuseParams();
-        if (target) {
+        if (target && !strideLocked) {
           const cfg = resolveCaptureConfig();
           strideSpacing = cfg.strideSpacing;
           anchorDensity = cfg.anchorDensity;
@@ -1427,6 +1566,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             detector.setLocalContrast(gain);
             nativeSource?.setDetectParams({ threshold: detector.threshold });
             nativeLog(`[capture] switched to ${target ? `strided (stride ${strideSpacing})` : "dense"} capture`);
+            noteDraft();
+            updateCalSettingsNote();
           },
         );
       };
@@ -1507,10 +1648,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           pendingBrightness = wantBright;
         }
         syncManualSliders(params.brightness ?? 1, servoedExposure);
-        if (profileDraft !== null) {
-          profileDraft.bitPeriodMs = params.bitPeriodMs;
-          if (params.brightness !== undefined) profileDraft.brightness = params.brightness;
-        }
+        noteDraft();
 
         // Diffuse capture: rotate the stride phase so every LED eventually lands
         // in a lit (sparse, non-overlapping) subset. Fixed dwell of a few code
@@ -1534,6 +1672,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       manualHooks = null;
       diffuseHook = null;
+      strideHook = null;
       capturing = false;
       stopTimer();
       imuRecorder?.stop();
@@ -1567,6 +1706,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (capturing) {
       capturing = false;
       diffuseHook = null;
+      strideHook = null;
       stopTimer();
       imuRecorder?.stop();
       previewVideo?.remove();
@@ -1587,6 +1727,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     capturing = false;
     manualHooks = null;
     diffuseHook = null;
+    strideHook = null;
     stopBtn.disabled = true;
     stopTimer();
     imuRecorder?.stop();
@@ -2111,6 +2252,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ?.submitMap(fusion.map)
         .then(() => true)
         .catch(() => false);
+      // Uploading the fused map makes the device drop the old map's capture
+      // profile: record what this scan used (it worked) for the new map.
+      if (pushed) {
+        noteDraft();
+        if (profileDraft !== null) {
+          const p = buildProfile(fusion.map.mapId, profileDraft.knobs, profileDraft, Date.now());
+          await mapStore.setCaptureProfile(supplementId, p).catch(() => {});
+          await client()?.setCaptureProfile(p).catch(() => {});
+        }
+      }
       toast(
         `Merged — +${fusion.report.added} LEDs, ${fusion.report.resolved} re-solved` +
           (pushed ? "" : " — device offline, not pushed"),

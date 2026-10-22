@@ -23,6 +23,8 @@ static site at `/user-guide/` on the deployed app.
 - **Maps**
   - [The maps library](#the-maps-library) — Browse, search, organize, import, and export your
     captured fixtures.
+  - [Calibrating a fixture's motion sensor](#calibrating-a-fixtures-motion-sensor) — Tell a fixture
+    with an IMU which way its LED map is up, so tilt effects follow it.
   - [Mapping a fixture with the camera](#mapping-a-fixture-with-the-camera) — Point the camera at a
     running fixture to reconstruct its LEDs in 3D.
   - [The mapping workspace](#the-mapping-workspace) — Inspect the 3D solve, clean up topology, and
@@ -115,6 +117,22 @@ still has its map. Use this card to copy it here.
   it.
 - Through **Live via bridge**, a fixture's stored map can't be copied yet. Connect to the fixture
   directly to copy it.
+
+### Calibrating a fixture's motion sensor
+
+_Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it._
+
+![Calibrating a fixture's motion sensor — Splanc app screen](user-guide/img/calibrate-imu.png)
+
+A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
+the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
+at least 45° between them. Save when the fit says good.
+
+The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
+and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
+capture settings (it was mapped before they were recorded, or pulled from a device) the panel says
+what it is using instead; what works is saved with the calibration for next time.
 
 ### Mapping a fixture with the camera
 
