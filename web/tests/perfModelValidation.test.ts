@@ -93,7 +93,10 @@ test("every held-out effect's measured C6 frame time lies inside the calibrated 
   const bundle = golden();
   const { table } = buildDeviceProfile(bundle, TOLERANCE);
   for (const h of bundle.heldout) {
-    const est = estimateFrameTime({ bytecode: h.fxb, ledCount: h.ledCount, table });
+    // fx_bench runs every program with the firmware's zeroed uniforms (it never
+    // sends set_uniforms), so the walker is told so: uniform-driven branches
+    // (lavalamp's `i < int(waves)`) then cost what actually ran.
+    const est = estimateFrameTime({ bytecode: h.fxb, ledCount: h.ledCount, table, uniforms: [] });
     const ms = measuredMs(h, bundle.cpuHz);
     assert.ok(
       est.errorBand.lowMs <= ms && ms <= est.errorBand.highMs,

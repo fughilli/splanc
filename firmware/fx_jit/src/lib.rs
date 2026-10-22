@@ -381,8 +381,10 @@ pub fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         | PowFix | HashFix | Hash3Fix | RetRgbFix | I2cRead => 2,
         PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | UnMath
         | BinMath | BrFalse | Jmp | Swap | Call | ScaleFix | DotFix | LengthFix | DistanceFix
-        | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall => 3,
+        | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall
+        | StoreLedCache => 3,
         LoadCtxFix | IncLocalI | BrCmpI => 4,
+        LoadLedCache => 5,
         LoadStateIdx | StoreStateIdx | LoadLocalIdx | StoreLocalIdx => 6,
     })
 }
@@ -416,6 +418,9 @@ fn branch_target(code: &[u8], pc: usize) -> Option<usize> {
     match op {
         Op::BrFalse | Op::Jmp => Some((pc as isize + 3 + rel16(pc + 1) as isize) as usize),
         Op::BrCmpI => Some((pc as isize + 4 + rel16(pc + 2) as isize) as usize),
+        // The per-LED memo's cache-hit skip lands just past its StoreLedCache, so
+        // a JIT block must never swallow that landing point.
+        Op::LoadLedCache => Some((pc as isize + 5 + rel16(pc + 3) as isize) as usize),
         Op::Call => Some(u16::from_le_bytes([code[pc + 1], code[pc + 2]]) as usize),
         _ => None,
     }

@@ -48,6 +48,9 @@ interface CompilerResult {
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
   fx_compile(src: string): CompilerResult;
+  /** Compile with the variance pass (per-frame hoisting + per-LED memo) off.
+   * Optional: older compiler bundles lack it. */
+  fx_compile_no_memo?(src: string): CompilerResult;
 }
 interface FxPreviewWasm {
   set_uniform(slot: number, vals: Float32Array): void;
@@ -108,9 +111,16 @@ function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
 }
 
 /** Compile GLSL-ish effect source to `.fxb` bytecode + a uniform manifest. */
-export async function compileScript(src: string): Promise<FxCompiled> {
+export interface CompileScriptOptions {
+  /** Run the variance pass (hoisting + per-LED memoization). Default true; the
+   * calibration micro-benchmarks turn it off so they measure the raw ops (a
+   * memoized chain would measure a cache load). */
+  memo?: boolean;
+}
+
+export async function compileScript(src: string, opts: CompileScriptOptions = {}): Promise<FxCompiled> {
   const mod = await loadCompiler();
-  const r = mod.fx_compile(src);
+  const r = opts.memo === false && mod.fx_compile_no_memo ? mod.fx_compile_no_memo(src) : mod.fx_compile(src);
   return {
     ok: r.ok,
     bytecode: r.bytecode,

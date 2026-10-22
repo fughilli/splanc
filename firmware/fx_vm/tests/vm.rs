@@ -868,6 +868,8 @@ fn classify(op: Op) -> Cov {
         JitCall => TypeAgnostic,
         // FUG-107 I2C driver intrinsics: integer bus I/O, no soft-float.
         I2cWrite | I2cRead => TypeAgnostic,
+        // Per-LED memo bracket (raw-slot cache load/store, any type, no soft-float).
+        LoadLedCache | StoreLedCache => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
@@ -918,7 +920,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::I2cRead as u8) {
+    for b in 0..=(Op::StoreLedCache as u8) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.
@@ -1019,4 +1021,166 @@ fn jitcall_renders_identically_to_the_interpreter() {
     // (no crash) rather than asserting a specific colour.
     vm.clear_jit();
     let _ = vm.run_shade(&progj, &Frame::default(), &Led::default());
+}
+
+// --- per-LED memo cache (LoadLedCache / StoreLedCache) -----------------------
+
+/// `.fxb` with a memo trailer (FLAG_MEMO): no prep entry, `words`, then the
+/// group boundaries.
+fn fxb_memo(consts: &[f32], code: &[u8], words: u8, groups: &[u8]) -> Vec<u8> {
+    let mut b = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    b[5] |= FLAG_MEMO;
+    b.extend_from_slice(&NO_ENTRY.to_le_bytes());
+    b.push(words);
+    b.push(groups.len() as u8);
+    b.extend_from_slice(groups);
+    b
+}
+
+/// shade(): red = hash1(led.idx), memoized in slot 0 (one word). Layout:
+///    0: LoadLedCache 0,1,+6  (cached -> push + jump to 11, past the store)
+///    5: LoadCtx idx ; Hash1   (the memoized expression)
+///    8: StoreLedCache 0,1     (records the top word, no pop)
+///   11: g, b = 0 ; Ret 3
+fn memo_prog() -> Vec<u8> {
+    #[rustfmt::skip]
+    let code = vec![
+        Op::LoadLedCache as u8, 0, 1, 6, 0,   // 0: rel +6 from byte 5 -> 11
+        Op::LoadCtx as u8, C_LED_IDX,         // 5
+        Op::Hash1 as u8,                      // 7
+        Op::StoreLedCache as u8, 0, 1,        // 8..10 (ends at 11)
+        Op::PushConst as u8, 0, 0,            // 11: g = 0
+        Op::PushConst as u8, 0, 0,            // 14: b = 0
+        Op::Ret as u8, 3,                     // 17
+    ];
+    code
+}
+
+#[test]
+fn led_cache_parse_and_fit() {
+    let buf = fxb_memo(&[0.0], &memo_prog(), 3, &[1, 3]);
+    let prog = Program::parse(&buf).expect("parse");
+    assert_eq!(prog.led_cache_words, 3);
+    // record = 1 mask byte + 4*words.
+    assert_eq!(led_cache_stride(1), 5);
+    assert_eq!(led_cache_stride(3), 13);
+    assert_eq!(led_cache_bytes(3, 100), 1300);
+    // Fit picks the largest GROUP boundary that fits, never a split group.
+    assert_eq!(prog.led_cache_fit(100, 1300), 3);
+    assert_eq!(prog.led_cache_fit(100, 1299), 1);
+    assert_eq!(prog.led_cache_fit(100, 499), 0);
+    // No trailer -> no cache.
+    let plain_buf = fxb(0, 0, NO_ENTRY, 0, &[0.0], &memo_prog());
+    let plain = Program::parse(&plain_buf).unwrap();
+    assert_eq!(plain.led_cache_words, 0);
+    assert_eq!(plain.led_cache_fit(100, 1 << 20), 0);
+}
+
+#[test]
+fn led_cache_is_bit_identical_and_skips_the_body() {
+    let code = memo_prog();
+    let buf = fxb_memo(&[0.0], &code, 1, &[1]);
+    let prog = Program::parse(&buf).expect("parse");
+    let frame = Frame::default();
+    let leds: Vec<Led> = (0..16).map(|i| Led { idx: i, ..Default::default() }).collect();
+    let big = Budget::instructions(10_000);
+
+    // Uncached reference (no cache bound: the bracket ops are no-ops).
+    let mut plain = Vm::new();
+    let want: Vec<(Rgb, u32)> = leds
+        .iter()
+        .map(|l| {
+            let (c, _, k) = plain.run_shade_counted(&prog, &frame, l, &big);
+            (c, k.instrs)
+        })
+        .collect();
+
+    let mut vm = Vm::new();
+    let mut mem = vec![0u8; led_cache_bytes(1, 16)];
+    vm.set_led_cache(&mut mem, 1, 16);
+    assert_eq!(vm.led_cache_words_bound(), 1);
+    for frame_no in 0..3 {
+        for (l, (rgb, ops)) in leds.iter().zip(&want) {
+            let (c, oc, k) = vm.run_shade_counted(&prog, &frame, l, &big);
+            assert_eq!(oc, Outcome::Ok);
+            assert_eq!(c, *rgb, "led {} frame {frame_no}: cached != computed", l.idx);
+            if frame_no == 0 {
+                assert_eq!(k.instrs, *ops, "first visit computes (same op count)");
+            } else {
+                assert_eq!(k.instrs, *ops - 3, "cached visit skips LoadCtx+Hash1+Store");
+            }
+        }
+    }
+    // Invalidate -> recompute once, still identical.
+    vm.invalidate_led_cache();
+    let (c, _, k) = vm.run_shade_counted(&prog, &frame, &leds[3], &big);
+    assert_eq!((c, k.instrs), want[3]);
+    // An idx past the bound LED count just computes (no out-of-bounds).
+    let far = Led { idx: 999, ..Default::default() };
+    let (c, _, _) = vm.run_shade_counted(&prog, &frame, &far, &big);
+    assert_eq!(c, plain.run_shade(&prog, &frame, &far));
+    // Too-small memory binds nothing (graceful fallback).
+    let mut tiny = vec![0u8; 4];
+    vm.set_led_cache(&mut tiny, 1, 16);
+    assert_eq!(vm.led_cache_words_bound(), 0);
+    assert_eq!(vm.run_shade(&prog, &frame, &leds[5]), want[5].0);
+}
+
+#[test]
+fn led_cache_slot_outside_bound_words_falls_through() {
+    // Slot 1 of a 1-word binding is not cached: identical output, no skip.
+    let mut code = memo_prog();
+    code[1] = 1; // LoadLedCache slot 1
+    code[9] = 1; // StoreLedCache slot 1
+    let buf = fxb_memo(&[0.0], &code, 2, &[1, 2]);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let mut mem = vec![0u8; led_cache_bytes(1, 4)];
+    vm.set_led_cache(&mut mem, 1, 4);
+    let led = Led { idx: 2, ..Default::default() };
+    let big = Budget::instructions(10_000);
+    let a = vm.run_shade_counted(&prog, &Frame::default(), &led, &big);
+    let b = vm.run_shade_counted(&prog, &Frame::default(), &led, &big);
+    assert_eq!(a.0, b.0);
+    assert_eq!(a.2.instrs, b.2.instrs, "never cached -> never skips");
+}
+
+#[test]
+fn prep_entry_runs_once_per_frame_and_on_uniform_change() {
+    // prep (at 11): state[0] = uniform[0] * 2 ; shade (at 0): r = state[0].
+    // The VM runs prep itself before the first shade of a frame, and again only
+    // when the frame, a uniform, or update() changes what it may read.
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadState as u8, 0, 1,     // 0
+        Op::PushConst as u8, 0, 0,     // 3
+        Op::PushConst as u8, 0, 0,     // 6
+        Op::Ret as u8, 3,              // 9
+        Op::LoadUniform as u8, 0, 1,   // 11: prep
+        Op::PushConst as u8, 1, 0,     // 14: 2.0
+        Op::Mul as u8, 1,              // 17
+        Op::StoreState as u8, 0, 1,    // 19
+        Op::Ret as u8, 0,              // 22
+    ];
+    let mut buf = fxb(1, 1, NO_ENTRY, 0, &[0.0, 2.0], &code);
+    buf[5] |= FLAG_MEMO;
+    buf.extend_from_slice(&11u16.to_le_bytes());
+    buf.push(0);
+    buf.push(0);
+    let prog = Program::parse(&buf).expect("parse");
+    assert_eq!(prog.prep_entry, 11);
+    let mut vm = Vm::new();
+    vm.set_uniform(0, &[0.25]);
+    let big = Budget::instructions(10_000);
+    let f0 = Frame { frame: 0, ..Default::default() };
+    let (c, _, k0) = vm.run_shade_counted(&prog, &f0, &Led::default(), &big);
+    assert_eq!(c, (127, 0, 0), "prep ran before the first shade");
+    let (_, _, k1) = vm.run_shade_counted(&prog, &f0, &Led::default(), &big);
+    assert_eq!(k0.instrs, k1.instrs + 5, "prep runs once per frame, not per LED");
+    vm.set_uniform(0, &[0.5]);
+    assert_eq!(vm.run_shade(&prog, &f0, &Led::default()), (255, 0, 0), "uniform change re-preps");
+    vm.state[0] = 0.0; // a host poking state directly is only seen next frame...
+    assert_eq!(vm.run_shade(&prog, &f0, &Led::default()), (0, 0, 0));
+    let f1 = Frame { frame: 1, ..Default::default() };
+    assert_eq!(vm.run_shade(&prog, &f1, &Led::default()), (255, 0, 0), "...a new frame re-preps");
 }

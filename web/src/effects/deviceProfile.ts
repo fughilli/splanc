@@ -19,7 +19,7 @@
  * hardware collection lives in the Python harness.
  */
 
-import { parseFxb, walkEntry, type OpHistogram } from "./costModel";
+import { parseFxb, walkEntry, histWithDispatch, type OpHistogram } from "./costModel";
 import { fitCosts, presentFeatures, type BenchSample } from "./calibrationFit";
 import { FITTED_OPCODES } from "./calibrationBenchmarks";
 import {
@@ -76,7 +76,7 @@ function hashFxb(fxb: Uint8Array): number {
 /** Abstract-interpret a program's shade() opcode histogram (one shade() call). */
 function shadeHistogram(fxb: Uint8Array): OpHistogram {
   const hdr = parseFxb(fxb);
-  return walkEntry(hdr.code, hdr.shadeEntry).max;
+  return histWithDispatch(walkEntry(hdr.code, hdr.shadeEntry, hdr.consts));
 }
 
 function pickFinite(v: number, fallback: number): number {
@@ -123,7 +123,12 @@ export function buildDeviceProfile(
   // Fit only opcodes the bundle actually measured (presence-aware), so an op a
   // run didn't exercise keeps its seeded default rather than being zeroed.
   const fitted = presentFeatures(samples, FITTED_OPCODES);
-  const fit = fitCosts(samples, fitted);
+  // Everything NOT fitted is priced as KNOWN at its seeded cost and subtracted
+  // before solving — notably the interpreter's per-op `@dispatch` (fitted once
+  // on the full HITL bundle; not separable from the ops in an M/2M isolation
+  // design) and the structural loads/stores. So each fitted cost is that op's
+  // compute alone, exactly the form estimateFrameTime prices with this table.
+  const fit = fitCosts(samples, fitted, undefined, DEFAULT_COSTS);
   // Measured opcodes override the default table; everything else keeps defaults.
   const costs: Record<string, number> = { ...DEFAULT_COSTS };
   for (const op of fitted) {
@@ -152,6 +157,9 @@ export function buildDeviceProfile(
     bytecode: s.fxb,
     ledCount: s.ledCount,
     measuredMs: ((s.measuredFrameCycles + s.measuredShowCycles) / cpuHz) * 1000,
+    // fx_bench submits each program without set_uniforms, and the firmware
+    // doesn't seed manifest defaults: every uniform runs at 0.
+    uniforms: [],
   }));
   const validation = validateCostModel(table, heldoutSamples, tolerance);
 

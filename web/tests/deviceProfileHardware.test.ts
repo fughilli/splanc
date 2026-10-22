@@ -26,8 +26,10 @@ import { parseDeviceBundle, buildDeviceProfile } from "../src/effects/deviceProf
 import bundleJson from "./testdata/device-bench-esp32c6.json";
 
 // The tightest tolerance the current linear model meets on this golden's held-out
-// spread (measured RMS ~9.9%), with headroom for golden regen / noise.
-const TOLERANCE = 0.13;
+// spread, with headroom for golden regen / noise. Measured RMS 1.7% since the
+// model prices the interpreter's per-op dispatch and the fit subtracts every
+// seeded (unfitted) cost (was ~9.9–12% without; docs/design/fx-memoization.md).
+const TOLERANCE = 0.06;
 
 test("fitted model predicts held-out cost on the real C6 within tolerance", () => {
   const bundle = parseDeviceBundle(JSON.stringify(bundleJson));

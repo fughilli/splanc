@@ -388,6 +388,20 @@ static mut OSC_BY_NAME: bool = true;
 const FX_ARENA_BYTES: usize = 24 * 1024; // 24 KB
 static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
 
+// -- per-LED memo cache (fx_compiler::memo / fx_vm LoadLedCache) --------------
+// An effect's LED-invariant subexpressions (atan2(pos.x,pos.z), hash(idx), …)
+// are cached per LED in the SPARE tail of the deck's FX_ARENA slice, after its
+// buffers — no new RAM: a deck binds only the best prefix of the compiler's
+// priority-ordered groups that fits (Program::led_cache_fit), and nothing at all
+// when the arena is full (the effect then runs uncached, exactly as before).
+// The cache is keyed by LED index for the CURRENT map, so it is invalidated
+// (re-bound) whenever the map/topology changes or the LED count does.
+/// LED count the deck caches are bound for (the last lm_fx_update's count).
+static mut FX_MEMO_LEDS: usize = 0;
+/// A map/topology upload changed the per-LED attributes: re-bind (= invalidate)
+/// every deck's cache before the next shade sweep.
+static mut FX_MEMO_DIRTY: bool = false;
+
 /// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
 /// One buffer — video streams target a single texture at a time. A frame whose
 /// quantized byte size exceeds this is dropped (keep the transport small).
@@ -1602,6 +1616,7 @@ pub unsafe extern "C" fn lm_player_handle(
 /// Drop the resident topology (geometry + per-LED cache). The geometry
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
+    FX_MEMO_DIRTY = true; // led.seg/s/branch (and, via a map upload, pos/uv) change
     *addr_of_mut!(GEOM) = None;
     for e in topo_store().iter_mut() {
         *e = FxLedTopo::NONE;
@@ -3875,13 +3890,53 @@ fn arena_need(prog: &Program) -> usize {
     (prog.arena_bytes(unsafe { fx_arena_leds() }) + 3) & !3
 }
 
-/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing).
+/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing): the buffers get
+/// the front (their worst-case need), and the per-LED memo cache the largest
+/// group prefix that fits in the rest of the slice for FX_MEMO_LEDS LEDs.
+/// (Re)binding the cache empties it — the next shade sweep recomputes.
 unsafe fn bind_arena(p: *mut DeckState) {
     let (o, n) = ((*p).arena_off, (*p).arena_len);
     let arena = &mut *addr_of_mut!(FX_ARENA);
+    let bytes = &(*p).bytes[..(*p).len];
+    let need = Program::parse(bytes).map(|pr| arena_need(&pr)).unwrap_or(n).min(n);
+    let words = Program::parse(bytes)
+        .map(|pr| pr.led_cache_fit(FX_MEMO_LEDS, n - need))
+        .unwrap_or(0);
     if let Some(vm) = (*p).vm.as_mut() {
-        vm.set_arena(&mut arena[o..o + n]);
+        // Disjoint sub-slices: the VM never sees the cache as buffer memory.
+        let (bufs, tail) = arena[o..o + n].split_at_mut(need);
+        vm.set_arena(bufs);
+        let m = ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS);
+        let m = m.min(tail.len());
+        vm.set_led_cache(&mut tail[..m], words, FX_MEMO_LEDS);
     }
+}
+
+/// Re-bind every loaded deck's memo cache for `leds` LEDs (empties them). Cold:
+/// runs once per map/topology/LED-count change, off the per-LED path.
+#[cold]
+#[inline(never)]
+unsafe fn fx_memo_rebind(leds: usize) {
+    FX_MEMO_LEDS = leds.min(FX_TOPO_CAP);
+    FX_MEMO_DIRTY = false;
+    for d in 0..N_DECKS {
+        if let Some(p) = deck(d) {
+            if (*p).loaded() {
+                bind_arena(p);
+            }
+        }
+    }
+}
+
+/// Memo words bound on deck `d` (0 = uncached) — diagnostics / tests.
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_led_cache_words(d: u32) -> u32 {
+    deck(deck_index(d))
+        .and_then(|p| (*p).vm.as_ref())
+        .map_or(0, |vm| vm.led_cache_words_bound() as u32)
 }
 
 /// Load (parse + hold) a `.fxb` onto deck `d`, copying it into the deck's
@@ -3920,7 +3975,12 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         if a_need + need > FX_ARENA_BYTES {
             return Err(FxLoadError::ArenaFull);
         }
-        (FX_ARENA_BYTES - need, need)
+        // Deck B also takes up to half the spare arena for its per-LED memo
+        // cache (deck A keeps the rest of the spare for its own).
+        let spare = FX_ARENA_BYTES - a_need - need;
+        let words = prog.led_cache_fit(FX_MEMO_LEDS, spare / 2);
+        let cache = (ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS) + 3) & !3;
+        (FX_ARENA_BYTES - need - cache, need + cache)
     };
     let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
     if d == DECK_A_IDX {
@@ -4290,6 +4350,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     if !FX_TOPO_READY {
         fx_rebuild_topo();
         fx_push_graph_all();
+    }
+    // Per-LED memo caches follow the map: a map/topology upload (dirty) or a new
+    // LED count re-binds them (empty) before this frame's shade sweep refills.
+    if FX_MEMO_DIRTY || FX_MEMO_LEDS != (led_count as usize).min(FX_TOPO_CAP) {
+        fx_memo_rebind(led_count as usize);
     }
     // A new frame: reset the per-frame Tier-1 accumulators (they sum over both
     // decks' update + the coming per-LED sweep).

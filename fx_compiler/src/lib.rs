@@ -12,7 +12,10 @@ use std::fmt::Write as _;
 
 // Bytecode optimizer (FUG-125): decode → peephole/local/CFG passes → re-encode,
 // run over the emitted code just before it is serialized in `finish`.
+mod memo;
 mod opt;
+
+pub use memo::{MemoConfig, MemoItem, MemoReport, Variance};
 
 // -- types --------------------------------------------------------------------
 
@@ -208,6 +211,25 @@ pub struct Compiled {
     pub uniforms: Vec<UniformInfo>,
     /// Driver exports (empty for an effect).
     pub exports: Vec<ExportInfo>,
+    /// What the variance pass hoisted into update() / bracketed with the per-LED
+    /// cache (empty when the optimizer or the pass is off). See `memo.rs`.
+    pub memo: MemoReport,
+}
+
+/// Compiler knobs (see [`compile_with`]).
+#[derive(Clone, Debug)]
+pub struct CompileOptions {
+    /// Run the bytecode optimizer (FUG-125). Off for differential tests.
+    pub optimize: bool,
+    /// The variance pass (per-frame hoisting + per-LED memoization); only runs
+    /// with `optimize`. `None` disables it (the `--no-memo` A/B leg).
+    pub memo: Option<MemoConfig>,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        CompileOptions { optimize: true, memo: Some(MemoConfig::default()) }
+    }
 }
 
 // -- lexer --------------------------------------------------------------------
@@ -434,6 +456,8 @@ pub struct Compiler {
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
+    // The variance pass config (None = off); runs inside the optimizer.
+    memo: Option<MemoConfig>,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -467,6 +491,41 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
 /// prove the fx_vm renders identical RGB) and for measuring the optimizer's
 /// instruction-count win against the golden device profile.
 pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnostic>> {
+    compile_with(src, &CompileOptions { optimize, ..Default::default() })
+}
+
+/// Variance classification of `shade()`'s maximal non-dynamic value ranges
+/// (mnemonic listing, class) — what the memo pass reasons about, for tests and
+/// tooling. Empty on a compile error.
+pub fn classify_shade(src: &str) -> Vec<(String, Variance)> {
+    let Some(mut c) = parse_program(src, true) else { return Vec::new() };
+    let bufs = c.buf_shapes();
+    opt::classify(&c.code, &mut c.consts, c.update_entry, c.shade_entry, &bufs)
+}
+
+fn parse_program(src: &str, optimize: bool) -> Option<Compiler> {
+    let mut lx = Lexer::new(src);
+    let mut toks = Vec::new();
+    loop {
+        match lx.next() {
+            Ok(t) => {
+                let eof = t.0 == Tok::Eof;
+                toks.push(t);
+                if eof {
+                    break;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    let mut c = Compiler::new(toks, std::mem::take(&mut lx.comments), optimize, None);
+    c.program().ok()?;
+    Some(c)
+}
+
+/// Compile with explicit [`CompileOptions`].
+pub fn compile_with(src: &str, opts: &CompileOptions) -> Result<Compiled, Vec<Diagnostic>> {
+    let optimize = opts.optimize;
     let mut lx = Lexer::new(src);
     let mut toks = Vec::new();
     loop {
@@ -481,34 +540,7 @@ pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnosti
             Err(d) => return Err(vec![d]),
         }
     }
-    let mut c = Compiler {
-        lx_toks: toks,
-        comments: std::mem::take(&mut lx.comments),
-        p: 0,
-        syms: HashMap::new(),
-        funcs: HashMap::new(),
-        structs: Vec::new(),
-        arrays: Vec::new(),
-        buffers: Vec::new(),
-        struct_names: HashMap::new(),
-        cur_fn_is_entry: false,
-        uniforms: Vec::new(),
-        n_uniform_slots: 0,
-        n_state: 0,
-        n_locals: 0,
-        consts: Vec::new(),
-        code: Vec::new(),
-        update_entry: 0xFFFF,
-        shade_entry: 0xFFFF,
-        ctx_prov: None,
-        last_const: None,
-        emitted_ctxfix: false,
-        uses_uv: false,
-        uses_room: false,
-        exports: Vec::new(),
-        poll_entry: NO_ENTRY,
-        optimize,
-    };
+    let mut c = Compiler::new(toks, std::mem::take(&mut lx.comments), optimize, opts.memo.clone());
     match c.program() {
         Ok(()) => Ok(c.finish()),
         Err(d) => Err(vec![d]),
@@ -522,6 +554,48 @@ const MAX_STATE: usize = 128;
 const MAX_LOCALS: usize = 128;
 
 impl Compiler {
+    fn new(
+        toks: Vec<(Tok, u32, u32)>,
+        comments: Vec<(u32, bool, String)>,
+        optimize: bool,
+        memo: Option<MemoConfig>,
+    ) -> Compiler {
+        Compiler {
+            lx_toks: toks,
+            comments,
+            p: 0,
+            syms: HashMap::new(),
+            funcs: HashMap::new(),
+            structs: Vec::new(),
+            arrays: Vec::new(),
+            buffers: Vec::new(),
+            struct_names: HashMap::new(),
+            cur_fn_is_entry: false,
+            uniforms: Vec::new(),
+            n_uniform_slots: 0,
+            n_state: 0,
+            n_locals: 0,
+            consts: Vec::new(),
+            code: Vec::new(),
+            update_entry: 0xFFFF,
+            shade_entry: 0xFFFF,
+            ctx_prov: None,
+            last_const: None,
+            emitted_ctxfix: false,
+            uses_uv: false,
+            uses_room: false,
+            exports: Vec::new(),
+            poll_entry: NO_ENTRY,
+            optimize,
+            memo,
+        }
+    }
+
+    /// Per-buffer element counts (the memo pass's stack model needs them).
+    fn buf_shapes(&self) -> Vec<memo::BufShape> {
+        self.buffers.iter().map(|b| memo::BufShape { elem: b.elem }).collect()
+    }
+
     fn err<T>(&self, msg: impl Into<String>) -> Result<T, Diagnostic> {
         let (_, line, col) = &self.lx_toks[self.p.min(self.lx_toks.len() - 1)];
         Err(Diagnostic {
@@ -2741,13 +2815,25 @@ impl Compiler {
         if is_driver {
             self.shade_entry = self.poll_entry;
         }
+        let mut report = MemoReport { n_state: self.n_state, prep_entry: NO_ENTRY, ..Default::default() };
         if self.optimize {
-            self.code = opt::optimize(
+            let bufs = self.buf_shapes();
+            let memo_cfg = self.memo.clone();
+            let (code, rep) = opt::optimize(
                 &self.code,
                 &mut self.consts,
                 &mut self.update_entry,
                 &mut self.shade_entry,
+                // A driver's poll() (in the shade slot) runs with no LED and no
+                // per-frame shade sweep: the variance pass never applies to it.
+                memo_cfg.as_ref().filter(|_| !is_driver).map(|m| (m, bufs.as_slice(), self.n_state)),
             );
+            self.code = code;
+            if let Some(r) = rep {
+                // Hoisted per-frame values live in fresh state slots.
+                self.n_state = r.n_state;
+                report = r;
+            }
         }
         let mut b = Vec::new();
         let mut flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
@@ -2762,6 +2848,10 @@ impl Compiler {
         }
         if is_driver {
             flags |= FLAG_DRIVER;
+        }
+        let has_memo = report.led_cache_words > 0 || report.prep_entry != NO_ENTRY;
+        if has_memo {
+            flags |= FLAG_MEMO;
         }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
@@ -2803,7 +2893,15 @@ impl Compiler {
                 b.extend_from_slice(&buf.h.to_le_bytes());
             }
         }
-        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports }
+        // Optional memo trailer (FLAG_MEMO) — mirrors fx_vm::Program::parse:
+        // prep_entry(u16), words, n_groups, cumulative group ends.
+        if has_memo {
+            b.extend_from_slice(&report.prep_entry.to_le_bytes());
+            b.push(report.led_cache_words);
+            b.push(report.led_cache_groups.len() as u8);
+            b.extend_from_slice(&report.led_cache_groups);
+        }
+        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports, memo: report }
     }
 }
 
@@ -2866,12 +2964,31 @@ pub fn disassemble(fxb: &[u8]) -> String {
         return out;
     }
     let code = &fxb[code_off..code_off + code_len];
+    // Memo trailer (FLAG_MEMO): after the optional buffer table.
+    let flags = fxb[5];
+    let mut t = code_off + code_len;
+    if flags & FLAG_BUFFERS != 0 {
+        t += 1 + *fxb.get(t).unwrap_or(&0) as usize * 7;
+    }
+    let mut prep_entry = NO_ENTRY;
+    if flags & FLAG_MEMO != 0 && t + 4 <= fxb.len() {
+        prep_entry = u16::from_le_bytes([fxb[t], fxb[t + 1]]);
+        let _ = writeln!(
+            out,
+            "; memo: prep_entry={}  led_cache_words={}",
+            entry_label(prep_entry),
+            fxb[t + 2]
+        );
+    }
 
     let mut pc = 0usize;
     while pc < code.len() {
         // Label the entry points as the disassembler reaches them.
         if pc == update_entry as usize && update_entry != NO_ENTRY {
             out.push_str("update:\n");
+        }
+        if pc == prep_entry as usize && prep_entry != NO_ENTRY {
+            out.push_str("prep:\n");
         }
         if pc == shade_entry as usize && shade_entry != NO_ENTRY {
             out.push_str("shade:\n");
@@ -3071,6 +3188,13 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         JIT_CALL => (format!("JIT_CALL block={}", u16at(0)), 3),
         I2C_WRITE => ("I2C_WRITE".into(), 1),
         I2C_READ => (format!("I2C_READ mode=0x{:02x}", b(0)), 2),
+        // Per-LED memo bracket (fx_compiler::memo).
+        LOAD_LED_CACHE => {
+            let next = pc + 5;
+            let tgt = next as isize + i16::from_le_bytes([b(2), b(3)]) as isize;
+            (format!("LOAD_LED_CACHE slot={} n={} hit-> {tgt}", b(0), b(1)), 5)
+        }
+        STORE_LED_CACHE => (format!("STORE_LED_CACHE slot={} n={}", b(0), b(1)), 3),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -3296,6 +3420,9 @@ mod fx_vm_op {
     // FUG-107 I2C driver intrinsics (mirror fx_vm::Op::I2cWrite / I2cRead).
     pub const I2C_WRITE: u8 = 106;
     pub const I2C_READ: u8 = 107;
+    // Per-LED memoization bracket (emitted by fx_compiler::memo).
+    pub const LOAD_LED_CACHE: u8 = 108;
+    pub const STORE_LED_CACHE: u8 = 109;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
@@ -3314,6 +3441,10 @@ const FLAG_USES_ROOM: u8 = 0x08;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_DRIVER): a sensor driver whose poll()
 /// entry sits in the shade slot and whose manifest is the export table.
 const FLAG_DRIVER: u8 = 0x10;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_MEMO): a memo trailer —
+/// `prep_entry(u16) words(u8) n_groups(u8) group_end(u8) × n_groups` — follows
+/// the buffer table (the variance pass's per-frame prep + per-LED cache).
+const FLAG_MEMO: u8 = 0x20;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

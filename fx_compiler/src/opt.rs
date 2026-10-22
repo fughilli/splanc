@@ -38,11 +38,11 @@ const NO_ENTRY: u16 = 0xFFFF;
 /// `BrFalse`/`Jmp`/`Call` `target` is the id of the destination and `ops` is
 /// empty; for every other opcode `ops` is the verbatim operand bytes.
 #[derive(Clone)]
-struct Ins {
-    id: u32,
-    op: u8,
-    ops: Vec<u8>,
-    target: u32,
+pub(crate) struct Ins {
+    pub(crate) id: u32,
+    pub(crate) op: u8,
+    pub(crate) ops: Vec<u8>,
+    pub(crate) target: u32,
 }
 
 impl Ins {
@@ -67,7 +67,29 @@ fn branch_prefix(o: u8) -> Option<usize> {
     match o {
         op::BR_FALSE | op::JMP => Some(0),
         op::BR_CMP_I => Some(1), // the compare `kind` byte
+        // The per-LED memo's cache-hit skip (slot, n) — see crate::memo.
+        op::LOAD_LED_CACHE => Some(2),
         _ => None,
+    }
+}
+
+/// The local slot range a plain load reads (`LoadLocal slot,n`), if any.
+pub(crate) fn op_reads_locals(ins: &Ins) -> Option<(u8, u8)> {
+    (ins.op == op::LOAD_LOCAL).then(|| (ins.ops[0], ins.ops[1]))
+}
+
+/// Human-readable mnemonic of one decoded instruction (branch targets shown as
+/// stable ids), via the authoritative disassembler table.
+pub(crate) fn mnemonic(ins: &Ins) -> String {
+    let mut bytes = vec![ins.op];
+    bytes.extend_from_slice(&ins.ops);
+    if is_branch(ins.op) || ins.op == op::CALL {
+        bytes.extend_from_slice(&[0, 0]);
+    }
+    let (text, _) = crate::decode_op(&bytes, 0);
+    match text.find(" -> ") {
+        Some(i) => text[..i].to_string(),
+        None => text,
     }
 }
 
@@ -137,6 +159,8 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         JIT_CALL => 3,
         I2C_WRITE => 1,
         I2C_READ => 2,
+        LOAD_LED_CACHE => 5,
+        STORE_LED_CACHE => 3,
         _ => return None,
     };
     Some(n)
@@ -146,15 +170,21 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
 /// compiler's raw outputs (byte-offset entries). Returns the optimized code with
 /// `update`/`shade` repointed. On any structural surprise it returns the input
 /// untouched — correctness first, optimization best-effort.
+///
+/// After the classic passes it runs the variance pass ([`crate::memo`]) —
+/// per-frame hoisting into `update()` + per-LED memo brackets — when `memo` is
+/// given. Its report is returned only when the transformed program encoded; if
+/// that fails the classic result ships without it (and `n_state` must not grow).
 pub(crate) fn optimize(
     code: &[u8],
     consts: &mut Vec<u32>,
     update: &mut u16,
     shade: &mut u16,
-) -> Vec<u8> {
+    memo: Option<(&crate::memo::MemoConfig, &[crate::memo::BufShape], u8)>,
+) -> (Vec<u8>, Option<crate::memo::MemoReport>) {
     let mut prog = match decode(code, *update, *shade) {
         Some(p) => p,
-        None => return code.to_vec(),
+        None => return (code.to_vec(), None),
     };
 
     // Fixed-point: passes expose opportunities for each other (folding a
@@ -174,37 +204,77 @@ pub(crate) fn optimize(
     }
 
     let (u0, s0) = (*update, *shade);
+    if let Some((cfg, bufs, n_state)) = memo {
+        let mut memo_prog = prog.clone();
+        let mut report = crate::memo::run(&mut memo_prog, bufs, n_state, cfg);
+        if let Some(bytes) = encode(&memo_prog, update, shade) {
+            report.prep_entry = prep_offset(&memo_prog);
+            return (bytes, Some(report));
+        }
+        *update = u0;
+        *shade = s0;
+    }
     match encode(&prog, update, shade) {
-        Some(bytes) => bytes,
+        Some(bytes) => (bytes, None),
         None => {
             // Dangling target or an out-of-range branch slipped through: discard
             // the optimized program and ship the original bytes/entries.
             *update = u0;
             *shade = s0;
-            code.to_vec()
+            (code.to_vec(), None)
         }
     }
+}
+
+/// Decode `code` and return the variance classification of shade()'s maximal
+/// non-dynamic value ranges (tests/tools). Runs the classic passes first so the
+/// listing matches what the memo pass sees.
+pub(crate) fn classify(
+    code: &[u8],
+    consts: &mut Vec<u32>,
+    update: u16,
+    shade: u16,
+    bufs: &[crate::memo::BufShape],
+) -> Vec<(String, crate::memo::Variance)> {
+    let Some(mut prog) = decode(code, update, shade) else { return Vec::new() };
+    for _ in 0..8 {
+        let mut changed = false;
+        changed |= fold_constants(&mut prog, consts);
+        changed |= simplify_algebraic(&mut prog, consts);
+        changed |= fold_branches(&mut prog, consts);
+        changed |= eliminate_dead_locals(&mut prog);
+        changed |= remove_unreachable(&mut prog);
+        changed |= fuse_superinstructions(&mut prog, consts);
+        if !changed {
+            break;
+        }
+    }
+    crate::memo::classify(&prog, bufs)
 }
 
 /// Decoded program: instructions (each with a stable id) plus the two
 /// entry-point ids (`None` = no such entry). `next_id` hands out fresh ids for
 /// instructions the passes synthesize.
-struct Prog {
-    ins: Vec<Ins>,
-    update: Option<u32>,
-    shade: Option<u32>,
+#[derive(Clone)]
+pub(crate) struct Prog {
+    pub(crate) ins: Vec<Ins>,
+    pub(crate) update: Option<u32>,
+    pub(crate) shade: Option<u32>,
+    /// The per-frame prepare entry the memo pass synthesizes (never decoded:
+    /// it only exists after `crate::memo::run`).
+    pub(crate) prep: Option<u32>,
     next_id: u32,
 }
 
 impl Prog {
-    fn fresh_id(&mut self) -> u32 {
+    pub(crate) fn fresh_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
     /// Ids referenced as a branch/call target or an entry point — an
     /// instruction with such an id must not be deleted or its referent dangles.
-    fn referenced(&self) -> HashSet<u32> {
+    pub(crate) fn referenced(&self) -> HashSet<u32> {
         let mut r: HashSet<u32> = self
             .ins
             .iter()
@@ -213,6 +283,7 @@ impl Prog {
             .collect();
         r.extend(self.update);
         r.extend(self.shade);
+        r.extend(self.prep);
         r
     }
 }
@@ -262,6 +333,7 @@ fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
         ins,
         update: entry(update)?,
         shade: entry(shade)?,
+        prep: None,
         next_id: offs.len() as u32,
     })
 }
@@ -303,7 +375,24 @@ fn encode(prog: &Prog, update: &mut u16, shade: &mut u16) -> Option<Vec<u8>> {
         Some(id) => u16::try_from(*id_off.get(&id)?).ok()?,
         None => NO_ENTRY,
     };
+    // The prep entry rides in the memo trailer, so it must also be a valid u16.
+    if let Some(id) = prog.prep {
+        u16::try_from(*id_off.get(&id)?).ok()?;
+    }
     Some(out)
+}
+
+/// Byte offset of the prep entry in an encoding of `prog` (NO_ENTRY if none).
+fn prep_offset(prog: &Prog) -> u16 {
+    let Some(pid) = prog.prep else { return NO_ENTRY };
+    let mut p = 0usize;
+    for ii in &prog.ins {
+        if ii.id == pid {
+            return p as u16;
+        }
+        p += ii.enc_len();
+    }
+    NO_ENTRY
 }
 
 // -- const pool helpers -------------------------------------------------------
@@ -542,7 +631,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         prog.ins.iter().enumerate().map(|(p, ii)| (ii.id, p)).collect();
     let mut reachable = vec![false; n];
     let mut stack: Vec<usize> = Vec::new();
-    for e in [prog.update, prog.shade].into_iter().flatten() {
+    for e in [prog.update, prog.shade, prog.prep].into_iter().flatten() {
         if let Some(&p) = pos_of.get(&e) {
             stack.push(p);
         }
@@ -561,7 +650,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         match ii.op {
             op::JMP => goto(ii.target, &mut stack),
             op::RET | op::RET_FN | op::RET_RGB8 | op::RET_RGB_FIX => {}
-            op::BR_FALSE | op::BR_CMP_I | op::CALL => {
+            op::BR_FALSE | op::BR_CMP_I | op::CALL | op::LOAD_LED_CACHE => {
                 goto(ii.target, &mut stack);
                 stack.push(i + 1);
             }

@@ -13,7 +13,7 @@
 //! regression (optimized retiring MORE ops than baseline) fails the test.
 
 use ledmapper_fx_compiler::compile_opts;
-use ledmapper_fx_vm::{Budget, Frame, Led, Program, Vm};
+use ledmapper_fx_vm::{led_cache_bytes, Budget, Frame, Led, Program, Vm};
 
 /// Representative corpus — mirrors `tools/fx_profile` plus loop/function/fixed
 /// programs that exercise the control-flow and dead-local passes.
@@ -186,6 +186,12 @@ fn optimizer_preserves_output_and_reduces_ops() {
         for u in &opt.uniforms {
             vb.set_uniform(u.slot as usize, &u.default);
         }
+        // Bind the per-LED memo cache like the firmware does (the variance pass
+        // runs as part of -O), so the measured ops are the shipped steady state.
+        let n_leds = leds.len();
+        let mut memo = vec![0u8; led_cache_bytes(pb.led_cache_words, n_leds)];
+        let words = pb.led_cache_fit(n_leds, memo.len());
+        vb.set_led_cache(&mut memo, words, n_leds);
 
         let mut base_ops = 0u64;
         let mut opt_ops = 0u64;

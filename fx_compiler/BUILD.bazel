@@ -17,6 +17,7 @@ rust_library(
     name = "fx_compiler",
     srcs = [
         "src/lib.rs",
+        "src/memo.rs",
         "src/opt.rs",
     ],
     crate_name = "ledmapper_fx_compiler",
@@ -72,6 +73,19 @@ rust_test(
 rust_test(
     name = "optimizer_test",
     srcs = ["tests/optimizer.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Variance analysis + per-frame hoisting + per-LED memoization: classification,
+# cache selection under budget, and cached-vs-uncached bit-identity in the VM.
+rust_test(
+    name = "memo_test",
+    srcs = ["tests/memo.rs"],
+    compile_data = ["tests/testdata/rain.fx"],
     edition = "2021",
     deps = [
         ":fx_compiler",

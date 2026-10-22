@@ -312,6 +312,50 @@ export const BUCKETED_OPCODES: Record<string, string> = {
   PaintTex: "texture write; needs a texture + arena — resource tier TODO",
   GraphQuery: "topology query; needs a bound graph — resource tier TODO",
   FloodFrom: "geodesic flood source; needs a bound graph — resource tier TODO",
+  // FUG-122 integer/fixed ISA (frac-operand builtins, fixed vector /
+  // transcendental / colour / I-O ops). Integer-core, so the interpreter's
+  // @dispatch dominates; their small compute extras are seeded from the memo
+  // HITL fixed-point micro-benchmarks (docs/design/fx-memoization.md).
+  AbsI: "integer/fixed abs (FUG-122 ISA); dispatch-dominated, seeded",
+  MinI: "integer/fixed min; dispatch-dominated, seeded",
+  MaxI: "integer/fixed max; dispatch-dominated, seeded",
+  ClampI: "integer/fixed clamp; dispatch-dominated, seeded",
+  SignI: "integer/fixed sign; dispatch-dominated, seeded",
+  StepI: "integer/fixed step; dispatch-dominated, seeded",
+  FloorFix: "fixed floor (shift); dispatch-dominated, seeded",
+  CeilFix: "fixed ceil; dispatch-dominated, seeded",
+  FractFix: "fixed fract (mask); dispatch-dominated, seeded",
+  MixFix: "fixed lerp; dispatch-dominated, seeded",
+  SqrtFix: "fixed isqrt; seeded from the fixed-point micro-benchmarks",
+  ScaleFix: "fixed vec*scalar; dispatch-dominated, seeded",
+  DotFix: "fixed dot; dispatch-dominated, seeded",
+  LengthFix: "fixed length (isqrt); seeded from the fixed-point micro-benchmarks",
+  DistanceFix: "fixed distance (isqrt); seeded",
+  NormalizeFix: "fixed normalize (isqrt + divides); seeded",
+  CrossFix: "fixed cross; dispatch-dominated, seeded",
+  SmoothstepFix: "fixed smoothstep; seeded",
+  ClampVFix: "fixed vector clamp; dispatch-dominated, seeded",
+  MixVFix: "fixed vector lerp; dispatch-dominated, seeded",
+  Hsv2RgbFix: "fixed hsv2rgb; seeded",
+  PaletteFix: "fixed palette; seeded",
+  Atan2Fix: "fixed atan2 (LUT); seeded from the fixed-point micro-benchmarks",
+  LogFix: "fixed log; seeded",
+  TanFix: "fixed tan (sin/cos LUT + divide); seeded",
+  PowFix: "fixed pow (exp(b*log a)); seeded",
+  HashFix: "fixed hash (integer mix); dispatch-dominated, seeded",
+  Hash3Fix: "fixed 3-arg hash; dispatch-dominated, seeded",
+  RetRgb8: "shade return of int RGB (one per LED); rides shade_fixed",
+  RetRgbFix: "shade return of fixed RGB (one per LED); rides shade_fixed",
+  LoadCtxFix: "structural: fixed context load; dispatch only",
+  FillLocal: "structural: array/struct local zeroing; dispatch only",
+  // FUG-125 superinstructions: exact fusions of structural sequences.
+  TeeLocal: "superinstruction StoreLocal+LoadLocal; structural, dispatch + slot move",
+  IncLocalI: "superinstruction `i = i + k` (loop counters); dispatch-dominated",
+  BrCmpI: "superinstruction CmpI+BrFalse (loop guards); control flow",
+  // Per-LED memo bracket (fx_compiler memo.rs): a hit is one dispatch + record
+  // lookup; the miss/record path runs once per LED per map.
+  LoadLedCache: "per-LED memo load (cache hit = dispatch + lookup); seeded",
+  StoreLedCache: "per-LED memo record (once per LED per map); seeded",
 };
 
 /**
@@ -321,6 +365,9 @@ export const BUCKETED_OPCODES: Record<string, string> = {
 export const EXCLUDED_OPCODES: Record<string, string> = {
   Scale: "unreachable: the compiler lowers vec×scalar to Swizzle-broadcast + Mul, never Scale",
   Pop: "unreachable: `_POP` in fx_compiler — the compiler never emits an explicit stack pop",
+  JitCall: "never in compiled bytecode: the firmware JIT patches it over a hot block at load",
+  I2cWrite: "sensor-driver I2C write (FUG-107): only in driver poll(), never in an effect",
+  I2cRead: "sensor-driver I2C read (FUG-107): only in driver poll(), never in an effect",
 };
 
 /**
