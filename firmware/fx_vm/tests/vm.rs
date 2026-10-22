@@ -1184,3 +1184,26 @@ fn prep_entry_runs_once_per_frame_and_on_uniform_change() {
     let f1 = Frame { frame: 1, ..Default::default() };
     assert_eq!(vm.run_shade(&prog, &f1, &Led::default()), (255, 0, 0), "...a new frame re-preps");
 }
+
+/// The integer RGB epilogue == the float one, for every f32 in [0, 1.5]
+/// (stride 1) plus specials.
+#[test]
+fn unit_u8_matches_float_epilogue() {
+    use ledmapper_fx_vm::{clamp01, unit_u8};
+    let f = |x: f32| (clamp01(x) * 255.0) as u8;
+    let lo = 0u32;
+    let hi = 0x3fc0_0000u32; // 1.5
+    let mut bad = 0u64;
+    let mut b = lo;
+    while b <= hi {
+        let x = f32::from_bits(b);
+        if unit_u8(x) != f(x) {
+            bad += 1;
+        }
+        b += 1;
+    }
+    for x in [-0.0f32, -1e-30, -0.5, f32::NAN, -f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.0, 2.0e30] {
+        assert_eq!(unit_u8(x), f(x), "{x}");
+    }
+    assert_eq!(bad, 0);
+}

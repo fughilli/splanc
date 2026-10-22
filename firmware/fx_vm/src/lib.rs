@@ -1656,19 +1656,54 @@ impl Vm {
         if let Some(rgb) = rgb {
             return (rgb, outcome, counters);
         }
-        let r = clamp01(out[0]);
-        let g = clamp01(out[1]);
-        let b = clamp01(out[2]);
-        (
-            ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-            outcome,
-            counters,
-        )
+        // Integer epilogue: bit-exact `(clamp01(x) * 255.0) as u8`
+        // without the ~6 soft-float calls per channel.
+        ((unit_u8(out[0]), unit_u8(out[1]), unit_u8(out[2])), outcome, counters)
+    }
+}
+
+/// Bit-exact integer twin of `(clamp01(x) * 255.0) as u8` (IEEE round-to-nearest-
+/// even on the product, then truncation), with no soft-float.
+#[inline]
+pub fn unit_u8(x: f32) -> u8 {
+    let b = x.to_bits();
+    if b & 0x8000_0000 != 0 {
+        return 0; // negative, -0.0, or a negative NaN
+    }
+    if b >= 0x3f80_0000 {
+        return if b > 0x7f80_0000 { 0 } else { 255 }; // >= 1.0 / inf ; NaN -> 0
+    }
+    let e = (b >> 23) as i32;
+    if e == 0 {
+        return 0; // zero / subnormal: x*255 < 1
+    }
+    let m = (b & 0x007f_ffff) | 0x0080_0000;
+    let p = m as u64 * 255; // exact, < 2^32
+    let nb = 64 - p.leading_zeros();
+    let pr = if nb > 24 {
+        let sh = nb - 24;
+        let mut q = p >> sh;
+        let rem = p & ((1u64 << sh) - 1);
+        let half = 1u64 << (sh - 1);
+        if rem > half || (rem == half && q & 1 == 1) {
+            q += 1;
+        }
+        q << sh
+    } else {
+        p
+    };
+    // value = pr * 2^(e-150); x < 1 so e <= 126 and the shift is >= 24; pr < 2^33,
+    // so any shift past 40 is 0 (and must not wrap the shift amount).
+    let shift = (150 - e) as u32;
+    if shift >= 40 {
+        0
+    } else {
+        (pr >> shift) as u8
     }
 }
 
 #[inline]
-fn clamp01(x: f32) -> f32 {
+pub fn clamp01(x: f32) -> f32 {
     if x < 0.0 {
         0.0
     } else if x > 1.0 {
@@ -1678,6 +1713,88 @@ fn clamp01(x: f32) -> f32 {
     } else {
         x
     }
+}
+
+/// `LoadCtx` body, kept out of line on purpose (see the call site).
+#[inline(never)]
+fn load_ctx(id: u8, frame: &Frame, led: &Led, graph: &GraphRef, dist: &DistSrc, v: &mut [f32; 3]) -> usize {
+    let mut k = 0usize;
+    match id {
+                    C_TIME => { v[k] = frame.time; k += 1; },
+                    C_DT => { v[k] = frame.dt; k += 1; },
+                    C_FRAME => { v[k] = frame.frame as f32; k += 1; },
+                    C_LED_POS => {
+                        { v[k] = led.pos[0]; k += 1; }
+                        { v[k] = led.pos[1]; k += 1; }
+                        { v[k] = led.pos[2]; k += 1; }
+                    }
+                    C_LED_IDX => { v[k] = led.idx as f32; k += 1; },
+                    C_LED_COUNT => { v[k] = frame.led_count as f32; k += 1; },
+                    C_LED_SEG => { v[k] = led.seg as f32; k += 1; },
+                    C_LED_S => { v[k] = led.s; k += 1; },
+                    C_LED_BRANCH => { v[k] = if led.branch { 1.0 } else { 0.0 }; k += 1; },
+                    C_IMU_ACCEL => {
+                        { v[k] = frame.imu_accel[0]; k += 1; }
+                        { v[k] = frame.imu_accel[1]; k += 1; }
+                        { v[k] = frame.imu_accel[2]; k += 1; }
+                    }
+                    C_IMU_GYRO => {
+                        { v[k] = frame.imu_gyro[0]; k += 1; }
+                        { v[k] = frame.imu_gyro[1]; k += 1; }
+                        { v[k] = frame.imu_gyro[2]; k += 1; }
+                    }
+                    C_LED_DIST => {
+                        // With a flood_from source set, report this LED's geodesic
+                        // distance from that source (normalized 0..1); otherwise
+                        // the map-load root field carried in the Led struct.
+                        if dist.set
+                            && led.seg >= 0
+                            && (led.seg as usize) < (graph.n_seg as usize).min(MAX_SEG)
+                        {
+                            let si = led.seg as usize;
+                            let a = graph.seg_node[si][0];
+                            let b = graph.seg_node[si][1];
+                            let l = graph.seg_len[si];
+                            let da = if a >= 0 && (a as usize) < MAX_NODE {
+                                dist.d[a as usize] + led.s * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let db = if b >= 0 && (b as usize) < MAX_NODE {
+                                dist.d[b as usize] + (1.0 - led.s) * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let g = if da < db { da } else { db };
+                            v[k] = if g.is_finite() { (g / dist.max).min(1.0) } else { 1.0 };
+                            k += 1;
+                        } else {
+                            { v[k] = led.dist; k += 1; }
+                        }
+                    }
+                    C_LED_UV => {
+                        { v[k] = led.uv[0]; k += 1; }
+                        { v[k] = led.uv[1]; k += 1; }
+                    }
+                    C_LED_ROOM => {
+                        let r = if frame.room_posed { &led.room } else { &led.pos };
+                        { v[k] = r[0]; k += 1; }
+                        { v[k] = r[1]; k += 1; }
+                        { v[k] = r[2]; k += 1; }
+                    }
+                    C_ROOM_MIN => {
+                        { v[k] = frame.room_min[0]; k += 1; }
+                        { v[k] = frame.room_min[1]; k += 1; }
+                        { v[k] = frame.room_min[2]; k += 1; }
+                    }
+                    C_ROOM_MAX => {
+                        { v[k] = frame.room_max[0]; k += 1; }
+                        { v[k] = frame.room_max[1]; k += 1; }
+                        { v[k] = frame.room_max[2]; k += 1; }
+                    }
+                    _ => { v[k] = 0.0; k += 1; },
+                }
+    k
 }
 
 /// A borrow of the VM's topology graph tables, passed to `run()` so the
@@ -1977,79 +2094,14 @@ fn run(
             Op::LoadCtx => {
                 let id = cb!(pc);
                 pc += 1;
-                match id {
-                    C_TIME => push!(frame.time),
-                    C_DT => push!(frame.dt),
-                    C_FRAME => push!(frame.frame as f32),
-                    C_LED_POS => {
-                        push!(led.pos[0]);
-                        push!(led.pos[1]);
-                        push!(led.pos[2]);
-                    }
-                    C_LED_IDX => push!(led.idx as f32),
-                    C_LED_COUNT => push!(frame.led_count as f32),
-                    C_LED_SEG => push!(led.seg as f32),
-                    C_LED_S => push!(led.s),
-                    C_LED_BRANCH => push!(if led.branch { 1.0 } else { 0.0 }),
-                    C_IMU_ACCEL => {
-                        push!(frame.imu_accel[0]);
-                        push!(frame.imu_accel[1]);
-                        push!(frame.imu_accel[2]);
-                    }
-                    C_IMU_GYRO => {
-                        push!(frame.imu_gyro[0]);
-                        push!(frame.imu_gyro[1]);
-                        push!(frame.imu_gyro[2]);
-                    }
-                    C_LED_DIST => {
-                        // With a flood_from source set, report this LED's geodesic
-                        // distance from that source (normalized 0..1); otherwise
-                        // the map-load root field carried in the Led struct.
-                        if dist.set
-                            && led.seg >= 0
-                            && (led.seg as usize) < (graph.n_seg as usize).min(MAX_SEG)
-                        {
-                            let si = led.seg as usize;
-                            let a = graph.seg_node[si][0];
-                            let b = graph.seg_node[si][1];
-                            let l = graph.seg_len[si];
-                            let da = if a >= 0 && (a as usize) < MAX_NODE {
-                                dist.d[a as usize] + led.s * l
-                            } else {
-                                f32::INFINITY
-                            };
-                            let db = if b >= 0 && (b as usize) < MAX_NODE {
-                                dist.d[b as usize] + (1.0 - led.s) * l
-                            } else {
-                                f32::INFINITY
-                            };
-                            let g = if da < db { da } else { db };
-                            push!(if g.is_finite() { (g / dist.max).min(1.0) } else { 1.0 });
-                        } else {
-                            push!(led.dist);
-                        }
-                    }
-                    C_LED_UV => {
-                        push!(led.uv[0]);
-                        push!(led.uv[1]);
-                    }
-                    C_LED_ROOM => {
-                        let r = if frame.room_posed { &led.room } else { &led.pos };
-                        push!(r[0]);
-                        push!(r[1]);
-                        push!(r[2]);
-                    }
-                    C_ROOM_MIN => {
-                        push!(frame.room_min[0]);
-                        push!(frame.room_min[1]);
-                        push!(frame.room_min[2]);
-                    }
-                    C_ROOM_MAX => {
-                        push!(frame.room_max[0]);
-                        push!(frame.room_max[1]);
-                        push!(frame.room_max[2]);
-                    }
-                    _ => push!(0.0),
+                // Out of line on purpose (docs/design/fx-perf-study.md): inlined,
+                // LLVM hoists this arm's loop-invariant soft-float (1.0 - led.s,
+                // int->f32 of idx/seg/frame, ...) into run()'s prologue, so EVERY
+                // invocation paid it whether or not the program reads them.
+                let mut v = [0.0f32; 3];
+                let k = load_ctx(id, frame, led, graph, dist, &mut v);
+                for x in v.iter().take(k) {
+                    push!(*x);
                 }
             }
             Op::Add | Op::Sub | Op::Mul | Op::Div => {
