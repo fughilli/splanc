@@ -1,0 +1,3 @@
+# The user's own effects library (user data): drop .fx files here locally to
+# include them in the bench image; never commit them.
+user/
