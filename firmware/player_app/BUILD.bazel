@@ -686,6 +686,7 @@ cc_library(
         "ble_address.h",
         "dhcp_reply.h",
         "icmp_echo.h",
+        "join_guard.h",
         "netstack_transport.cpp",
         "serial_log.h",
         "sta_mac.h",
@@ -1244,6 +1245,21 @@ cc_test(
 # Persisted WiFi credentials on the netstack build (restore at boot, persist once leased,
 # restart-to-rescan backoff): the pure decisions netstack_transport.cpp drives.
 # The netstack's station MAC choice (factory efuse MAC; random per boot only opt-in).
+# Stable-MAC rejoin guards: per-boot 802.11 sequence numbers + the unanswered-auth watch.
+cc_library(
+    name = "join_guard",
+    hdrs = ["join_guard.h"],
+)
+
+cc_test(
+    name = "join_guard_test",
+    srcs = ["join_guard_test.cc"],
+    deps = [
+        ":join_guard",
+        "@rules_requirements//cc:case",
+    ],
+)
+
 cc_library(
     name = "sta_mac",
     hdrs = ["sta_mac.h"],
