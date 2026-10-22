@@ -193,5 +193,10 @@ fn live_set_fits_the_budget() {
 // +4,096 B: the topology arena ARENA_MEM grew 8 -> 12 KB (exact-size decode, #291).
 // fx-keypoints: deck B + the video/deck-B aux union (16 more states) and the
 // keypoint statics (+6,594 B in the worst live set).
+// +44,264 B: 1024 LEDs per channel (2048 total, led_caps.bzl): the map store
+// 31,776 -> 51,456 (FX_LED_TOPO packed 20 -> 10 B/LED, FX_LED_POS 12 -> 9 B/LED,
+// FX_LED_ROOM dropped) and the LED frame (render + PARLIO buffers, now a modeled
+// component) 6,152 -> 24,584. Worst-state headroom 56,540 -> 18,276 B; on HITL
+// the loaded board's minimum free heap is ~23-29 KB (docs/design/ram-budget.md).
 const PINNED_STATES: usize = 73;
-const PINNED_WORST: usize = 164_975;
+const PINNED_WORST: usize = 209_239;

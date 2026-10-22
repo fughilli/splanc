@@ -1685,6 +1685,7 @@ static uint32_t render_once() {
   // for the PREVIOUS frame — the two now overlap, so the effective frame period
   // is max(frame_c, show_c), not their sum.
   uint32_t show_c = 0;
+  uint32_t wire_leds = 0;  // the longest channel: both clock out in parallel
   if (show) {
     // Split the active range across the channels at the channel-0 boundary. With
     // channel 1 unconfigured (ch1_len == 0) this is count0 = xmit_len, count1 = 0
@@ -1697,6 +1698,10 @@ static uint32_t render_once() {
       count0 = direct0;
       count1 = direct1;
     }
+    // (An effect frame's channels are each within the per-channel cap, so the
+    // driver always sends them as one parallel frame: the longer one is the
+    // wire time — see ws2812_parlio.cpp's layouts.)
+    wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
     if (fx_frame_rendered) show_c = g_show_c;
   }
@@ -1715,7 +1720,10 @@ static uint32_t render_once() {
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
     // starts land one period apart. Also parks the effect + latches an
     // app-notify if the floor / pinned rate proved unachievable.
-    next_delay_ms = lm_fps_on_frame(cost_us);
+    // With the strip: its wire floor (28.8 us per LED of the longest channel +
+    // the latch) caps the ladder at what the wire can carry, and its length
+    // lowers the abort floor past 512 LEDs (heavy effects run slower, not parked).
+    next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
     if (perf_on) {
       // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
       bool overran = period_c > lm_fps_budget_cycles();

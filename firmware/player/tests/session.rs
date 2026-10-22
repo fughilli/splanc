@@ -685,3 +685,88 @@ fn hardware_config_led_counts() {
     assert_eq!(st.r#channels[1].r#led_count, 0);
     assert_eq!(player.led_count(1), None);
 }
+
+/// 1024 LEDs per channel (firmware/player_app/led_caps.bzl): each hardware
+/// channel is bounded by the per-channel cap as well as the shared total, through
+/// both set_hardware_config and set_led_count, and the board reports the cap
+/// (board.max_leds_per_channel) next to max_leds.
+#[test]
+fn per_channel_led_cap() {
+    let mut player = Player::new("esp32-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_hw_defaults(1, 14, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_output_caps(2, 2048);
+    player.set_channel_cap(1024);
+    let Some(SMsg::HardwareConfigState(st)) = send(
+        &mut player,
+        CMsg::GetHardwareConfig(pb::GetHardwareConfig::default()),
+        0.0,
+    ) else {
+        panic!("hardware_config_state");
+    };
+    let board = st.r#board().expect("board reported");
+    assert_eq!(
+        (
+            board.r#led_channels,
+            board.r#max_leds,
+            board.r#max_leds_per_channel
+        ),
+        (2, 2048, 1024)
+    );
+
+    let hw = |ch: i32, n: i32| {
+        let mut cfg = pb::SetHardwareConfig::default();
+        cfg.set_channel(ch);
+        cfg.set_led_count(n);
+        CMsg::SetHardwareConfig(cfg)
+    };
+    let count = |ch: i32, n: i32| {
+        let mut m = pb::SetLedCount {
+            r#led_count: n,
+            ..Default::default()
+        };
+        m.set_channel(ch);
+        CMsg::SetLedCount(m)
+    };
+    // One past the per-channel cap is refused on either path; state untouched.
+    expect_error(send(&mut player, hw(0, 1025), 1.0), "bad_message");
+    expect_error(send(&mut player, count(1, 1025), 2.0), "bad_message");
+    assert_eq!((player.led_count(0), player.led_count(1)), (None, None));
+    // Exactly the cap on both channels: the full 2048.
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, hw(0, 1024), 3.0) else {
+        panic!("1024 on channel 0 fits");
+    };
+    let Some(SMsg::LedCountState(s)) = send(&mut player, count(1, 1024), 4.0) else {
+        panic!("1024 on channel 1 fits");
+    };
+    assert_eq!((s.r#channel, s.r#led_count), (1, 1024));
+    assert_eq!(
+        (player.led_count(0), player.led_count(1)),
+        (Some(1024), Some(1024))
+    );
+    let Some(SMsg::Welcome(w)) = send(&mut player, CMsg::Hello(pb::Hello::default()), 5.0) else {
+        panic!("welcome");
+    };
+    assert_eq!(
+        w.r#code_params.r#led_count, 2048,
+        "the code book covers both channels"
+    );
+    // Logical channels past the hardware are not bounded by the output caps.
+    let Some(SMsg::LedCountState(_)) = send(&mut player, count(5, 4000), 6.0) else {
+        panic!("a logical channel isn't a hardware output");
+    };
+
+    // A descriptor that sets max_leds_per_channel itself keeps it.
+    let mut caps = pb::BoardCapabilities::default();
+    caps.r#board = micropb::heapless::String::try_from("custom").unwrap();
+    caps.r#max_leds_per_channel = 600;
+    let encoded: &'static [u8] = {
+        use micropb::{MessageEncode, PbEncoder};
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
+        caps.encode(&mut enc).unwrap();
+        Vec::leak(enc.into_writer().to_vec())
+    };
+    assert!(player.set_board_caps(encoded));
+    let b = get_hw(&mut player).r#board().cloned().expect("board");
+    assert_eq!((b.r#max_leds, b.r#max_leds_per_channel), (2048, 600));
+}

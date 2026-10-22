@@ -60,7 +60,9 @@ from urllib.parse import urlparse
 
 import hitl_ws
 from loaded_tls_core import (
+    PER_CHANNEL_CAP,
     bars_effect_src,
+    channel_split,
     rgb565_gradient_frame,
     scan_serial_for_oom,
     set_texture_msg,
@@ -274,7 +276,12 @@ async def _load_device(sock, args, fxb: bytes) -> None:
 
     # (1) A full map + strip length, so the effect renders over the whole strip.
     await _submit_map_sharded(sock, synth_output_map(args.led_count, "__fug133"))
-    await _rpc(sock, {"type": "set_led_count", "led_count": args.led_count}, "led_count_state")
+    # Channel 0 first, the rest on channel 1 (each channel holds up to
+    # PER_CHANNEL_CAP; both then clock out in parallel).
+    for ch, n in enumerate(channel_split(args.led_count)):
+        await _rpc(
+            sock, {"type": "set_led_count", "led_count": n, "channel": ch}, "led_count_state"
+        )
 
     # (2) The texture-sampling effect, activated.
     await _rpc(
@@ -621,9 +628,10 @@ def main() -> None:
     ap.add_argument(
         "--led-count",
         type=int,
-        default=512,
-        help="LEDs in the resident map + strip length (512 = LM_MAX_LEDS/kMaxLeds, the "
-        "worst case; a larger count exceeds the firmware cap and the LOAD is rejected)",
+        default=2 * PER_CHANNEL_CAP,
+        help="LEDs in the resident map + strip length, split over the two channels (2048 = "
+        "LM_MAX_LEDS, 1024 per channel: the worst case; a larger count exceeds the firmware "
+        "cap and the LOAD is rejected)",
     )
     ap.add_argument("--effect-id", dest="effect_id", default="__fug133")
     ap.add_argument("--tex-index", type=int, default=0)

@@ -400,11 +400,20 @@ pub mod cost {
     pub const SCAN_STATIC: usize = 960;
 
     // -- stored map ---------------------------------------------------------------
-    /// ARENA_MEM 12,288 (topology geometry) + FX_LED_TOPO 10,240 + FX_LED_POS
-    /// 6,144 + FX_LED_MAPPED 32 + FX_LED_ROOM 3,072 (i16 mm x3 x 512 LEDs, the
-    /// room-frame cache for multi-fixture effects) (nm): the per-LED caches the
-    /// map decodes into.
-    pub const MAP_STORE_STATIC: usize = 12_288 + 10_240 + 6_144 + 32 + 3_072;
+    /// ARENA_MEM 12,288 (topology geometry) + FX_LED_TOPO 20,480 (10 B x 2048
+    /// LEDs) + FX_LED_POS 18,432 (3 x F24 = 9 B x 2048) + FX_LED_MAPPED 256 (nm):
+    /// the per-LED caches the map decodes into, at the 1024-per-channel cap
+    /// (firmware/player_app/led_caps.bzl). At the old 512-LED cap this was
+    /// 12,288 + 10,240 + 6,144 + 32 + FX_LED_ROOM 3,072; the room cache is gone
+    /// (the pose is applied per LED in shade()).
+    pub const MAP_STORE_STATIC: usize = 12_288 + 20_480 + 18_432 + 256;
+
+    // -- LED output -------------------------------------------------------------------
+    /// The render buffer `leds` 6,144 (3 B x 2048) + the PARLIO/GDMA encoded
+    /// frame g_buf 18,440 (9 B x 2048 + pad) (nm). Resident in every mode (the
+    /// strip is driven, or blanked, from boot), so it is a live component of
+    /// every state; its 512-LED size (1,536 + 4,616) is in [`MEASURED_STATICS`].
+    pub const LED_FRAME_STATIC: usize = 6_144 + 18_440;
 
     // -- activity -------------------------------------------------------------------
     /// The loaded fx VM (deck A): FX_ARENA 24,576 (shared by both decks) + DECK_A
@@ -430,14 +439,20 @@ pub mod cost {
         + SCAN_STATIC
         + MAP_STORE_STATIC
         + EFFECT_STATIC
-        + AUX_STATIC;
+        + AUX_STATIC
+        + LED_FRAME_STATIC;
 
     /// [`ALL_MODE_STATICS`] on the image [`MIN_FREE_MEASURED`] was measured on
     /// (#262). Statics added since come out of that free heap, so the budget is
     /// fixed by the old figure (growing a static must shrink the headroom, not
     /// grow the budget).
-    pub const MEASURED_STATICS: usize =
-        7_388 + 8_208 + 960 + 24_608 + (24_576 + 5_120 + 4_096 + 3_473 + 1_024 + 900 + 512) + 8_192;
+    pub const MEASURED_STATICS: usize = 7_388
+        + 8_208
+        + 960
+        + 24_608
+        + (24_576 + 5_120 + 4_096 + 3_473 + 1_024 + 900 + 512)
+        + 8_192
+        + (1_536 + 4_616);
 
     /// Measured minimum free heap on the `ram_audit` worst case after #262
     /// (device esp_get_minimum_free_heap_size, HITL rig-2, 2026-10-19).
@@ -452,7 +467,9 @@ pub mod cost {
     /// Statics added to ALL_MODE_STATICS since MIN_FREE_MEASURED was taken: the
     /// image that measured it had them as free heap, so they move from "free"
     /// to "static" rather than adding RAM — ARENA_MEM 8 -> 12 KB (+4,096, #291),
-    /// FX_LED_ROOM (+3,072, #280), deck B + keypoints (+6,594). Derived from
+    /// FX_LED_ROOM (+3,072, #280), deck B + keypoints (+6,594), the 1024-per-
+    /// channel LED cap (map store 31,776 -> 51,456, LED frame 6,152 -> 24,584;
+    /// FX_LED_ROOM dropped). Derived from
     /// [`MEASURED_STATICS`] so a new static can't be forgotten here.
     pub const STATICS_ADDED_SINCE_MEASURED: usize = ALL_MODE_STATICS - MEASURED_STATICS;
 
@@ -471,7 +488,9 @@ pub mod cost {
     /// FreeRTOS's xQueueCreateCountingSemaphoreStatic linked in by the I2C
     /// driver (its ISR handler is moved back to flash, ld/esp32c6_iram_to_flash.txt).
     pub const IRAM_TEXT_MEASURED: usize = 114_910;
-    pub const IRAM_TEXT: usize = 99_772;
+    /// The 1024-per-channel LED cap: +152 B (the FX shade entry's packed
+    /// topology / F24 position decode and the room transform, all pinned).
+    pub const IRAM_TEXT: usize = 99_924;
 }
 
 /// One mode-dependent component live in a state.
@@ -492,6 +511,7 @@ pub fn components(s: SysMode) -> impl Iterator<Item = Component> {
     let parts = [
         c(true, "ble_controller", BLE_CONTROLLER_HEAP, true),
         c(true, "ble_host", BLE_HOST_STATIC, false),
+        c(true, "led_frame", LED_FRAME_STATIC, false),
         c(s.ble == Ble::Connected, "ble_link", BLE_LINK_HEAP, true),
         c(s.wss, "tls_session", TLS_SESSION_HEAP, true),
         c(s.wss, "ws_buffers", WS_BUFFERS_STATIC, false),

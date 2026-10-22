@@ -83,7 +83,9 @@ fn main() -> std::io::Result<()> {
         Config::new().max_len(if firmware { 1 } else { 32 }),
     );
 
-    // Map + solve preview collections: on the host, sized for a 1024-LED
+    // Map + solve preview collections: on the host, sized past the firmware's
+    // 2048-LED cap (tests feed maps a little past it; heapless Vecs live inline,
+    // so much more overflows host test stacks); was a 1024-LED
     // fixture; on firmware these arms are never decoded through the
     // generated bindings (arena path / never sent to a player).
     g.configure_many(
@@ -93,7 +95,7 @@ fn main() -> std::io::Result<()> {
             ".ledmapper.v1.SolveStatus.leds",
             ".ledmapper.v1.Topology.associations",
         ],
-        Config::new().max_len(if firmware { 1 } else { 1024 }),
+        Config::new().max_len(if firmware { 1 } else { 2560 }),
     );
     // Camera paths are decimated before upload; nothing on the player side
     // consumes them at all.

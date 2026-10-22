@@ -402,8 +402,11 @@ fn narrow_buffers_keep_per_led_state_in_a_quarter_of_the_memory() {
     let narrow_bytes = Program::parse(&narrow).expect("parses").arena_bytes(cap);
     assert_eq!(wide_bytes, cap * 4 * 4 * 4, "f32 storage: 16 B per vec4 per LED per buffer");
     assert_eq!(narrow_bytes * 4, wide_bytes, "fixed8 storage packs the same state in a quarter");
-    // The packed effect runs at the LED cap with every buffer of every LED intact.
-    let colours = second_frame_colours(&narrow, cap as u32);
+    // The packed effect runs with every buffer of every LED intact at the LED
+    // cap, or — past 1536 LEDs, where even packed vec4 state outgrows the 24 KB
+    // FX_ARENA — at the longest strip it fits.
+    let leds = cap.min(24 * 1024 / (narrow_bytes / cap));
+    let colours = second_frame_colours(&narrow, leds as u32);
     assert!(colours.iter().all(|c| *c == [127, 63, 255]), "every LED read back its stored state");
 }
 

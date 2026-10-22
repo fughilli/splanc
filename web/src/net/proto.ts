@@ -456,6 +456,9 @@ export interface BoardCapabilitiesFlat {
   ledChannels: number;
   /** Most LEDs the board drives, summed across channels (0 = not reported). */
   maxLeds: number;
+  /** Most LEDs ONE channel carries (absent/0 = not reported: only maxLeds bounds
+   * a channel). */
+  maxLedsPerChannel?: number;
 }
 
 /** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel

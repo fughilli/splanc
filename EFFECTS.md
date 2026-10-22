@@ -342,9 +342,10 @@ for how to run it.
   (`deviceKey: esp32c6-hitl-golden`, `cpuHz: 160_000_000`; 65 fit programs + 7
   held-out). Regenerate with `fx_bench --emit-golden <path>`.
 - **Regression gate:** a program fails if `abs(measured/golden − 1)` exceeds its
-  margin — default **10%**, with `sweep16` at 15% (a deliberately safe band until
-  per-effect run-to-run variance is characterized). **Only frame cycles are
-  gated**; show cycles (transmit) are noisier and excluded.
+  margin — default **10%**, with `sweep16` and `empty` at 15% (the two
+  overhead-floor programs, whose few hundred k cycles move by a constant ~7–10 k
+  with flash-cache layout; see `firmware/player_app/ld/esp32c6_iram_to_flash.txt`).
+  **Only frame cycles are gated**; show cycles (transmit) are noisier and excluded.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
@@ -382,6 +383,47 @@ they land far below the other transcendentals. A practical consequence of the
 FPU-less C6: hoist per-frame constants out of the per-LED `shade()` into
 `update()`/uniforms, and prefer int/fixed types (`fixed8`/`fixed16`) on hot paths
 so the arithmetic builtins take their native opcodes instead of soft-float.
+
+### Long strips: what sets the frame rate
+
+The C6 drives up to **1024 LEDs on each of its two channels** (2048 total;
+`firmware/player_app/led_caps.bzl`). Two things bound an effect's frame rate,
+and the autoscaler (`firmware/fps`, FUG-82) runs at whichever is lower:
+
+- **The wire.** Each bit is three 400 ns samples, so an LED takes 28.8 µs, plus
+  a ~300 µs latch. Both channels clock out in parallel, so only the _longest_
+  channel counts. The render of frame N+1 overlaps the transmit of frame N, so
+  the wire is a floor under the frame period, not an addition to it. The ladder
+  never climbs above the fastest rung whose 95% budget fits one wire frame
+  (`FpsState.max_fps` reports it):
+
+  | Longest channel | Wire time | Wire-limited fps | Ladder ceiling |
+  | --------------: | --------: | ---------------: | -------------: |
+  |             150 |    4.6 ms |              216 |             80 |
+  |             300 |    8.9 ms |              112 |             80 |
+  |             512 |   15.0 ms |               66 |             60 |
+  |             768 |   22.4 ms |               45 |             40 |
+  |            1024 |   29.8 ms |               34 |             30 |
+
+  Measured on the analyzer (rig-2, 1024 + 1024): every frame 29,497 µs on both
+  channels, no runts, gaps or bad bits, idle or under a ping flood.
+
+- **The effect.** Shading costs at least ~3.8 k cycles per LED (`sweep256`), so
+  2048 LEDs need ≥ 7.8 M cycles (~49 ms) per frame even for a trivial effect:
+  at the full cap every effect is CPU-bound near 20 fps (measured: `ledTimingRamp`
+  ~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
+  reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.
+
+The autoscaler's abort floor scales with the strip, so a long strip runs a heavy
+effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
+rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
+20 fps at 600, 10 fps at 1024, 5 fps at 2048. `FpsState.min_fps` reports it.
+
+LED-arity `buffer` arrays are sized for the stored map / configured strip (at
+least 512 LEDs), not the 2048 cap, and both decks share the 24 KB `FX_ARENA`:
+a `buffer vec4` costs 16 B per LED (32 KB at 2048 — it doesn't fit); declare it
+`: fixed8` (4 B per LED) for long strips. A deck whose buffers outgrow its slice
+reads 0 past the end rather than faulting.
 
 ## AI effect generation
 

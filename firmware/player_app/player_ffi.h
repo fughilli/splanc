@@ -366,7 +366,12 @@ int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 // rendering deck and the strip transmit) was cost_us; returns the ms to sleep
 // before the next frame (period - work, >= the minimum yield). Parks the effect
 // + latches an app-notify if the target is unachievable.
-uint32_t lm_fps_on_frame(uint32_t cost_us);
+// `wire_leds` LEDs of that frame clocked out one after another (the longest
+// channel; the two go out in parallel): their WS2812 wire time (28.8 us per LED
+// + the latch) caps the ladder at what the wire can carry. The `leds` it shaded
+// set the abort floor (25 fps up to 512 LEDs, proportionally lower past it, so a
+// long strip slows a heavy effect down instead of parking it).
+uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t wire_leds, uint32_t leds);
 // The autoscaler's current target FPS.
 uint32_t lm_fps_current_fps(void);
 // Per-frame overrun budget in CPU cycles for the current target (cpu_hz / fps).

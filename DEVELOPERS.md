@@ -346,8 +346,14 @@ DUT onto the rig's AP, then exercises its slice over wss:
 - **`rename_wss`** — the cert-restart regression: renaming re-issues the cert and
   restarts the TLS server; this hammers reconnects and reports time-to-recovery.
 - **`video_stream`** — streams a scrolling pattern and asserts a sustained ≥10 FPS.
-- **`loaded_tls_netstack`** — fresh TLS handshakes on a heap loaded with a 512-LED
-  map + texture effect (the FUG-71 failure mode).
+- **`loaded_tls_netstack`** — fresh TLS handshakes on a heap loaded with a 2048-LED
+  map (1024 per channel) + texture effect (the FUG-71 failure mode).
+- **`led_capacity`** — both channels at the per-channel cap (`--per-channel 1024
+--expect-refusal` checks 1025 is refused), a 2 × cap map + topology round trip
+  through `get_stored_map`, an animated effect's `fps_state` (wire ceiling, floor)
+  and PerfReport heap, then fresh handshakes on that heap. `--improv` provisions
+  over BLE. Pair it with `led_timing --leds 2048 --split 1024` for the per-channel
+  wire timing on the analyzer.
 - **`ram_audit`** — the same worst case under a non-halting JTAG heap watcher
   (`ram_watch.tcl`); dumps SRAM at the minimum watermark and reads the heap
   census / sysmode counters at the end. `--hang` adds `hang_watch.tcl`, which

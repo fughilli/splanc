@@ -33,7 +33,7 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 | deviceKey          | esp32c6                                     |
 | CPU clock          | 160 MHz (160,000,000 Hz)                    |
 | Programs           | 65 fit + 7 held-out                         |
-| Regression margins | default 10%, sweep16 15%                    |
+| Regression margins | default 10%, empty 15%, sweep16 15%         |
 | Fit residual       | ±69.0%                                      |
 | Held-out accuracy  | RMS 7.8% · mean 6.5% · max 15.8% · R² 0.985 |
 | Verdict            | PASS (RMS 7.8% vs 13% tolerance)            |
