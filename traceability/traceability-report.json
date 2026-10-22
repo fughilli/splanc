@@ -1,6 +1,6 @@
 {
   "schema": "rules_requirements/report/v1",
-  "title": "splanc requirements traceability (software; no HITL run yet)",
+  "title": "splanc requirements traceability (software + hardware)",
   "project": {
     "name": "splanc",
     "source": "FUG-88 \"Draft requirements and risk assessment for Splanc\" baseline (UN-1..8, PR-1..25, RISK-1..12), verbatim. The per-risk mitigations FUG-88 states as prose are mitigations MIT-1..12, each implemented by a risk-control requirement PR-26..37 (FUG-89). PR-38+ are later product requirements."
@@ -10,16 +10,16 @@
     "user_needs_validated": 0,
     "requirements": 38,
     "requirements_verified": 10,
-    "requirements_under_verified": 17,
+    "requirements_under_verified": 18,
     "requirements_partial": 0,
     "requirements_failed": 0,
-    "requirements_unverified": 11,
+    "requirements_unverified": 10,
     "risks": 12,
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1941,
-    "gaps": 34
+    "test_cases": 1989,
+    "gaps": 35
   },
   "levels": [
     {
@@ -2233,6 +2233,27 @@
           "kind": "target"
         },
         {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        },
+        {
+          "name": "hitl_e2e::improv_provision",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        },
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        },
+        {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
           "status": "passed",
           "level": "simulation",
@@ -3516,6 +3537,13 @@
           "status": "passed",
           "level": "simulation",
           "target": "//firmware/player_app:memory_workloads_test"
+        },
+        {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
         }
       ],
       "demanded_level": "hil",
@@ -3587,6 +3615,13 @@
       "status": "VERIFIED",
       "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
       "evidence": [
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        },
         {
           "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
           "status": "passed",
@@ -4238,6 +4273,13 @@
           "status": "passed",
           "level": "simulation",
           "target": "//firmware/player_app:memory_bounds_test"
+        },
+        {
+          "name": "hitl_e2e::flash_boot",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
         }
       ],
       "demanded_level": "hitl",
@@ -4764,6 +4806,13 @@
       "description": "Improve readiness checks, investigate coexistence/reconnect behavior, perform repeated provisioning validation, and harden naming/discovery so provisioning/association is reliable.",
       "category": "risk-control",
       "evidence": [
+        {
+          "name": "hitl_e2e::improv_provision",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        },
         {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
           "status": "passed",
@@ -6149,11 +6198,20 @@
     {
       "id": "PR-35",
       "title": "Reconcile device identity on stable attributes",
-      "status": "UNVERIFIED",
+      "status": "UNDER-VERIFIED",
       "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
       "category": "risk-control",
+      "evidence": [
+        {
+          "name": "hitl_e2e::websocket_checks",
+          "status": "passed",
+          "level": "hitl",
+          "target": "//pi/hitl/harness:e2e_netstack",
+          "stale": true
+        }
+      ],
       "demanded_level": "hitl",
-      "provided_level": null,
+      "provided_level": "hitl",
       "satisfies": [
         "UN-5"
       ],
@@ -6166,6 +6224,8 @@
         "firmware",
         "web"
       ],
+      "stale": true,
+      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -6611,7 +6671,7 @@
     {
       "id": "MIT-10",
       "title": "Reconcile device identity on stable attributes",
-      "status": "UNVERIFIED",
+      "status": "PARTIAL",
       "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
       "type": null,
       "mitigates": [
@@ -6783,7 +6843,7 @@
     {
       "id": "RISK-10",
       "title": "Device identity inconsistencies across IP/hostname/AP/records",
-      "status": "OPEN",
+      "status": "PARTIAL",
       "description": "Cause connection confusion, harming UN-5.",
       "severity": "medium",
       "likelihood": null,
@@ -6842,7 +6902,9 @@
     "RISK-4",
     "RISK-5"
   ],
-  "pyramid_violations": [],
+  "pyramid_violations": [
+    "PR-35"
+  ],
   "unknown_evidence": {},
   "gaps": [
     {
@@ -7036,11 +7098,20 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "stale",
       "entity": "PR-35",
-      "message": "no test evidence",
+      "message": "only passing evidence is against an older build",
       "route": "human-gate",
-      "demanded_level": "hitl"
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
+    },
+    {
+      "kind": "pyramid",
+      "entity": "PR-35",
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "under-verified",
