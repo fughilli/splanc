@@ -229,6 +229,14 @@
       "route": "autonomous"
     },
     {
+      "kind": "under-verified",
+      "entity": "PR-39",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",

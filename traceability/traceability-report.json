@@ -8,9 +8,9 @@
   "summary": {
     "user_needs": 8,
     "user_needs_validated": 0,
-    "requirements": 38,
+    "requirements": 39,
     "requirements_verified": 10,
-    "requirements_under_verified": 18,
+    "requirements_under_verified": 19,
     "requirements_partial": 0,
     "requirements_failed": 0,
     "requirements_unverified": 10,
@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1993,
-    "gaps": 35
+    "test_cases": 2043,
+    "gaps": 36
   },
   "levels": [
     {
@@ -114,7 +114,8 @@
         "PR-29",
         "PR-32",
         "PR-35",
-        "PR-38"
+        "PR-38",
+        "PR-39"
       ]
     },
     {
@@ -147,7 +148,8 @@
         "PR-28",
         "PR-31",
         "PR-34",
-        "PR-38"
+        "PR-38",
+        "PR-39"
       ]
     },
     {
@@ -6530,6 +6532,99 @@
           "symbol": "fn ble_and_wss_coexist"
         }
       ]
+    },
+    {
+      "id": "PR-39",
+      "title": "Firmware updates over the air with a recoverable loader",
+      "status": "UNDER-VERIFIED",
+      "description": "An ESP32-C6 player with the loader + app flash layout shall take a firmware update over Wi-Fi (web app, agent update_firmware, bridge) without USB: a small loader in the factory slot verifies the image against an ECDSA P-256 signed manifest before booting it; a new app must prove healthy before it is marked valid, and an app that crashes, hangs or fails its health check rolls back to the loader, which stays reachable to take another image. A transfer interrupted by a dropped link or a reset resumes. Wi-Fi credentials, the TLS identity and the stored map survive both the one-time USB migration from the legacy layout and every update (docs/design/ota.md).",
+      "evidence": [
+        {
+          "name": "//agent:firmware_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//agent:firmware_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/loader:layout_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/loader:layout_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/ota:ota_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/ota:ota_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/ota:sign_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/ota:sign_test",
+          "kind": "target"
+        },
+        {
+          "name": "//firmware/ota:wire_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//firmware/ota:wire_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:otaUpdate_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:otaUpdate_test",
+          "kind": "target"
+        },
+        {
+          "name": "//web:partitionTable_test",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//web:partitionTable_test",
+          "kind": "target"
+        }
+      ],
+      "demanded_level": "hitl",
+      "provided_level": "simulation",
+      "satisfies": [
+        "UN-5",
+        "UN-7"
+      ],
+      "refines": [],
+      "implements": [],
+      "method": "hitl",
+      "modules": [
+        "firmware",
+        "web",
+        "agent",
+        "pi/hitl"
+      ],
+      "implemented_in": [
+        {
+          "ids": [
+            "PR-39"
+          ],
+          "relation": "implements",
+          "path": "firmware/loader/BUILD.bazel",
+          "line": 6,
+          "text": "implemented in this package (see requirements/requirements.yaml)"
+        },
+        {
+          "ids": [
+            "PR-39"
+          ],
+          "relation": "implements",
+          "path": "firmware/ota/BUILD.bazel",
+          "line": 8,
+          "text": "implemented in this package (see requirements/requirements.yaml)"
+        }
+      ],
+      "verified_in": []
     }
   ],
   "mitigations": [
@@ -6882,6 +6977,7 @@
   ],
   "test_methods": [],
   "modules": {
+    "agent": "PARTIAL",
     "firmware": "PARTIAL",
     "fx_compiler": "PARTIAL",
     "pi/hitl": "PARTIAL",
@@ -7134,6 +7230,14 @@
       "entity": "PR-38",
       "message": "no source annotation implements it",
       "route": "autonomous"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-39",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
     },
     {
       "kind": "high-risk-open",
