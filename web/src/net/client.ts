@@ -1098,6 +1098,23 @@ export class LedMapperClient {
     return decodeMappingBundle(assembled);
   }
 
+  /** Read just the first `peekLen` bytes of the player's stored bundle: one small
+   * get_stored_map window, enough for the map header (map_id, led_count; see
+   * store/deviceMap.ts parseBundleHeader) plus the whole bundle's size, without
+   * pulling every LED. Rejects with a {@link ServerErrorReply} (`no_map`, or
+   * `unsupported` on a player without the dump) like {@link pullStoredMap}. */
+  async peekStoredMap(
+    peekLen = 192,
+    timeoutMs = 8000,
+  ): Promise<{ totalLen: number; hasTopology: boolean; prefix: Uint8Array }> {
+    const reply = (await this.request(
+      { type: "get_stored_map", offset: 0, maxLen: peekLen },
+      "stored_map_chunk",
+      timeoutMs,
+    )) as StoredMapChunkMessage;
+    return { totalLen: reply.totalLen, hasTopology: reply.hasTopology, prefix: b64ToBytes(reply.data) };
+  }
+
   /** Host solver-benchmark score from welcome (ms); null while measuring. */
   get hostSolverBenchMs(): number | null {
     return this.welcome_?.solverBenchMs ?? null;

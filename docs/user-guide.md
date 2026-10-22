@@ -97,6 +97,25 @@ installations.
 - The tab's ⋯ menu **imports and exports** the whole library as a bundle, so you can move maps
   between phones or back them up.
 
+#### The map on your connected device
+
+While a device is connected, a card at the top of the tab shows the map stored **on the device**:
+its LED count, how many LEDs were mapped versus interpolated, and when it was mapped (when the
+device knows). A fresh install, or a second phone, starts with an empty library, but the fixture
+still has its map. Use this card to copy it here.
+
+- **Saved on this phone**: the library already has this map (it was captured or saved here).
+  **Open** goes to it.
+- **Not on this phone**: **Save to this phone** copies the map into the library and opens it.
+  **Preview** loads it without saving, so you can look at it in 3D or export it first.
+- **Calibrate IMU** appears when the device's motion sensor is running. It copies the map first if
+  needed, then opens the calibration. It's also in the device's detail sheet (Device tab ▸ ⋯).
+- **No map on this device yet**: map the fixture with **+**, or open a map and **Push** it.
+- Large maps show a short summary first. The whole map is only downloaded when you save or preview
+  it.
+- Through **Live via bridge**, a fixture's stored map can't be copied yet. Connect to the fixture
+  directly to copy it.
+
 ### Mapping a fixture with the camera
 
 _Point the camera at a running fixture to reconstruct its LEDs in 3D._
@@ -143,6 +162,12 @@ refine and use the map.
 - **Edit topology** — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
   handles most fixtures; a Fine-tune disclosure exposes the full extraction options.
 - **Send to / pull from a device** so the fixture and the app agree on the map.
+- **Supplement** re-scans part of the fixture and merges the new scan into the map, to fill gaps or
+  improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
+  captures. A map without that data (copied from a device, imported, or captured before it was kept)
+  still works: the new scan is aligned to the stored positions and averaged with them.
+- **Calibrate IMU** (when the connected device's motion sensor is running) aligns the sensor to this
+  map. A map copied from the device works too.
 - **Jump to Effects** to start animating this fixture.
 - **Export** the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
   Studio) fixture file. See below.

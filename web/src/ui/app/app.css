@@ -406,6 +406,10 @@ body.is-locked {
   border-color: var(--accent);
   color: var(--text);
 }
+.detail-preview-note {
+  margin: 0 0 var(--sp-3);
+  color: var(--text-dim);
+}
 .detail-actions {
   margin-bottom: var(--sp-3);
 }

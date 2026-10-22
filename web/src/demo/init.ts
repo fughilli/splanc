@@ -12,6 +12,9 @@
  *   bluetooth  — a Web Bluetooth seam so the add-device BLE button appears
  *                (instead of the "not available in this browser" note).
  *   camera     — a simulated camera frame for the mapping/capture screen.
+ *   devmap-none / devmap-saved / devmap-unsaved — `device`, plus a stored map
+ *                on it (none; one this phone already has; one it doesn't) and a
+ *                running IMU, for the Maps tab's "On <device>" card.
  *
  * These are genuine seams into the real stores/clients — no production path
  * calls them. Each scenario is independent so a shot can combine them
@@ -20,13 +23,17 @@
 
 import { appState } from "../ui/app/state";
 import { deviceStore } from "../store/deviceStore";
-import { LedMapperClient } from "../net/client";
+import { LedMapperClient, ServerErrorReply } from "../net/client";
+import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
+import { mapStore } from "../store/mapStore";
 
 /** Canvas that also exposes captureStream (not in the base DOM lib types). */
 type CaptureCanvas = HTMLCanvasElement & { captureStream(fps?: number): MediaStream };
 
 export function initDemoMode(scenarios: Set<string>): void {
-  if (scenarios.has("device")) setupConnectedDevice();
+  const devmap = [...scenarios].find((s) => s.startsWith("devmap-"))?.slice("devmap-".length);
+  if (scenarios.has("device") || devmap) setupConnectedDevice();
+  if (devmap) setupDeviceMap(devmap);
   if (scenarios.has("bluetooth")) setupWebBluetooth();
   if (scenarios.has("camera")) setupFakeCamera();
   if (scenarios.has("effect")) setupEffectEditor();
@@ -58,6 +65,62 @@ function setupConnectedDevice(): void {
     certUrl: null,
     error: null,
   });
+}
+
+/** Give the demo controller a stored map + running IMU (the Maps tab's device
+ * card): `none` = nothing stored, `saved` = the first library map (so the card
+ * matches it), `unsaved` = the same geometry under a new id with a few LEDs
+ * unmapped. */
+function setupDeviceMap(kind: string): void {
+  const client = appState.client;
+  if (!client) return;
+  const welcome = {
+    type: "welcome",
+    sessionId: "demo",
+    deviceName: "Living Room",
+    mac: "AA:BB:CC:12:34:56",
+    features: ["effects", "stored_map", "sensors", "imu_extrinsic"],
+    codeParams: { ledCount: 64 },
+  };
+  Object.defineProperty(client, "welcome", { configurable: true, get: () => welcome });
+  let bytes: Promise<Uint8Array> | null = null;
+  const stored = (): Promise<Uint8Array> =>
+    (bytes ??= (async () => {
+      // The app seeds its sample maps at boot; wait for one.
+      for (let i = 0; i < 50; i++) {
+        const first = (await mapStore.list({ sort: "name" }))[0];
+        const rec = first && (await mapStore.get(first.id));
+        if (rec) {
+          const map = { ...rec.map };
+          if (kind === "unsaved") {
+            map.mapId = "demo-device-map";
+            map.createdAt = "2026-09-14T19:20:00Z";
+            map.unmapped = map.leds.slice(0, 6).map((l) => l.id);
+            map.leds = map.leds.slice(6);
+          }
+          const topology = rec.topology ?? { mapId: map.mapId, branchPoints: [], segments: [], associations: [] };
+          return encodeMappingBundle({ map, topology });
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error("no sample map");
+    })());
+  const chunk = async (offset: number, len: number) => {
+    if (kind === "none") throw new ServerErrorReply("no_map", "no stored map to dump");
+    const b = await stored();
+    return { totalLen: b.length, data: b.subarray(offset, Math.min(b.length, offset + len)) };
+  };
+  const c = client as unknown as Record<string, unknown>;
+  c["peekStoredMap"] = async (peekLen = 192) => {
+    const w = await chunk(0, peekLen);
+    return { totalLen: w.totalLen, hasTopology: true, prefix: w.data };
+  };
+  c["pullStoredMap"] = async (onProgress?: (done: number, total: number) => void) => {
+    const w = await chunk(0, Number.MAX_SAFE_INTEGER);
+    onProgress?.(w.totalLen, w.totalLen);
+    return decodeMappingBundle(w.data);
+  };
+  c["getSensors"] = async () => ({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING" });
 }
 
 /** Provide a minimal `navigator.bluetooth` so `bleAvailable()` (net/improv.ts)

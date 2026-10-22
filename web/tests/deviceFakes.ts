@@ -118,6 +118,13 @@ export class FakePlayer {
   welcomeDelayMs = 0;
   /** Every client message received, decoded, in arrival order. */
   readonly received: ClientMsg[] = [];
+  /** welcome.features (omitted from the welcome when null, like old firmware). */
+  features: string[] | null = null;
+  /** The serialized MappingBundle get_stored_map dumps; null = nothing stored
+   * (error `no_map`), "unsupported" = a player without the dump. */
+  storedMap: Uint8Array | null | "unsupported" = null;
+  /** get_sensors status (null = never answers, like firmware without sensors). */
+  sensorStatus: string | null = null;
 
   constructor(public identity: PlayerIdentity) {}
 
@@ -132,6 +139,7 @@ export class FakePlayer {
       fwGitCommit: this.identity.fwGitCommit ?? "",
       fwGitDirty: this.identity.fwGitDirty ?? false,
       fwVersion: this.identity.fwVersion ?? "",
+      ...(this.features ? { features: this.features } : {}),
     } as unknown as ServerMessage;
   }
 
@@ -163,6 +171,32 @@ export class FakePlayer {
             uploadId: msg["uploadId"],
             seq: msg["seq"] ?? 0,
           } as unknown as ServerMessage);
+        }
+        return;
+      case "get_stored_map": {
+        const m = this.storedMap;
+        if (m === "unsupported") {
+          reply({ type: "error", code: "unsupported", message: "map dump handled by the arena layer" } as ServerMessage);
+          return;
+        }
+        if (m === null) {
+          reply({ type: "error", code: "no_map", message: "no stored map to dump" } as ServerMessage);
+          return;
+        }
+        const off = Number(msg["offset"] ?? 0);
+        const slice = m.subarray(off, Math.min(m.length, off + Math.max(1, Number(msg["maxLen"] ?? 0))));
+        reply({
+          type: "stored_map_chunk",
+          totalLen: m.length,
+          offset: off,
+          data: btoa(String.fromCharCode(...slice)),
+          hasTopology: true,
+        } as unknown as ServerMessage);
+        return;
+      }
+      case "get_sensors":
+        if (this.sensorStatus !== null) {
+          reply({ type: "sensor_state", status: this.sensorStatus, part: "MPU-6050" } as unknown as ServerMessage);
         }
         return;
       case "submit_map":

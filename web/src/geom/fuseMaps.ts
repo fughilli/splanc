@@ -39,7 +39,7 @@
 import type { DetectionRecord, ImuSample, LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
 import { applySimilarity, fitSimilarity, type Similarity } from "./fit";
 import { isInferred } from "./inferred";
-import { ledSigmaM, mapSigmaContext } from "./ledVariance";
+import { ledSigmaM, ledSpacingM, mapSigmaContext } from "./ledVariance";
 
 /** Where an LED's current position came from, relative to the base map. */
 export type Provenance = "base" | "scan" | "updated";
@@ -62,6 +62,40 @@ export interface FuseOptions {
    * validateJoint check the joint solve really used them even when the
    * standalone supplemental solve failed. */
   observedIds?: ReadonlySet<number>;
+  /** 1-σ (meters) to give every prior LED when the prior carries no per-LED
+   * statistics (see {@link statslessPrior}): its LEDs then count as measured
+   * (registration evidence, inverse-variance fused with the new scan) instead
+   * of strip-prior placements the scan overwrites. Defaults to
+   * {@link importedPriorSigmaM} for a stats-less prior; ignored otherwise. */
+  priorSigmaM?: number;
+}
+
+/**
+ * A prior with positions but no solve statistics: every LED has nViews = 0 and
+ * confidence = 0. That is what a map pulled off a player looks like (the
+ * device stores positions only; store/src/lib.rs enc_map_src), and it is
+ * indistinguishable per LED from a strip-prior placement (geom/inferred), so
+ * without this check a supplemental scan could not register to it at all.
+ */
+export function statslessPrior(map: Pick<OutputMap, "leds">): boolean {
+  return map.leds.length > 0 && map.leds.every(isInferred);
+}
+
+/** Conservative 1-σ for a stats-less prior's LEDs: a quarter of the LED pitch
+ * (positions good enough to tell neighbours apart, but no better claimed),
+ * clamped to [3 mm, 30 mm]; 10 mm when the pitch is unknown. A fresh scan's
+ * well-measured LEDs (σ ~1–3 mm) then dominate the fusion, while the stored
+ * positions still pull weak new rays toward where the LED was. */
+export function importedPriorSigmaM(map: Pick<OutputMap, "leds">): number {
+  const pitch = ledSpacingM(map.leds.map((l) => l.xyz));
+  if (pitch === null) return 0.01;
+  return Math.min(0.03, Math.max(0.003, 0.25 * pitch));
+}
+
+/** The σ override in effect for `prior` (undefined = use its own statistics). */
+function priorSigmaFor(prior: OutputMap, opts: Pick<FuseOptions, "priorSigmaM">): number | undefined {
+  if (!statslessPrior(prior)) return undefined;
+  return opts.priorSigmaM ?? importedPriorSigmaM(prior);
 }
 
 export interface FusionReport {
@@ -186,8 +220,9 @@ export interface Registration {
 export function registerInto(
   prior: OutputMap,
   addition: OutputMap,
-  opts: Pick<FuseOptions, "minCommon" | "maxRmsFrac" | "anchorConfidence"> = {},
+  opts: Pick<FuseOptions, "minCommon" | "maxRmsFrac" | "anchorConfidence" | "priorSigmaM"> = {},
 ): Registration {
+  const priorMeasured = priorSigmaFor(prior, opts) !== undefined;
   const minCommon = opts.minCommon ?? 4;
   const maxRmsFrac = opts.maxRmsFrac ?? 0.08;
   const anchorConf = opts.anchorConfidence ?? ANCHOR_CONFIDENCE;
@@ -197,7 +232,7 @@ export function registerInto(
     const p = priorById.get(a.id);
     // Strip-prior placements are interpolations, not measurements — never
     // registration evidence on either side.
-    if (p && !isInferred(p) && !isInferred(a)) {
+    if (p && (priorMeasured || !isInferred(p)) && !isInferred(a)) {
       common.push({ a: a.xyz, p: p.xyz, anchor: p.confidence >= anchorConf });
     }
   }
@@ -380,6 +415,9 @@ export function fuseMaps(prior: OutputMap, addition: OutputMap | null, opts: Fus
   const priorById = new Map(prior.leds.map((l) => [l.id, l]));
   const priorCtx = mapSigmaContext(prior);
   const srcCtx = mapSigmaContext(source);
+  // A stats-less prior (pulled off a device): its LEDs are measurements with a
+  // fixed conservative σ, not placements.
+  const priorSigma = priorSigmaFor(prior, opts);
 
   const merged = new Map<number, LedEntry>(priorById);
   const provenance = baseProvenance();
@@ -393,7 +431,7 @@ export function fuseMaps(prior: OutputMap, addition: OutputMap | null, opts: Fus
     const xyzReg = applySimilarity(sim, a.xyz);
     const p = priorById.get(id);
     if (p && isInferred(a)) continue; // a placement never overrides what the base holds
-    if (p && isInferred(p)) {
+    if (p && priorSigma === undefined && isInferred(p)) {
       // The base only interpolated this LED; the new scan placed it from rays
       // (or a fresh interpolation with more neighbours measured): take it.
       merged.set(id, { ...a, id, xyz: xyzReg });
@@ -443,7 +481,7 @@ export function fuseMaps(prior: OutputMap, addition: OutputMap | null, opts: Fus
     } else if (agrees) {
       // Two independent estimates of the same point: inverse-variance fusion.
       // σ of the addition is scaled into the prior frame by the fit's scale.
-      const sp = ledSigmaM(p, priorCtx);
+      const sp = priorSigma ?? ledSigmaM(p, priorCtx);
       const sa = ledSigmaM(a, srcCtx) * sim.c;
       const wp = 1 / Math.max(1e-12, sp * sp);
       const wa = 1 / Math.max(1e-12, sa * sa);
