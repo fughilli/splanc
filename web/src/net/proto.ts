@@ -456,6 +456,9 @@ export interface BoardCapabilitiesFlat {
   ledChannels: number;
   /** Most LEDs the board drives, summed across channels (0 = not reported). */
   maxLeds: number;
+  /** Most LEDs ONE channel carries (absent/0 = not reported: only maxLeds bounds
+   * a channel). */
+  maxLedsPerChannel?: number;
 }
 
 /** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel
@@ -466,6 +469,12 @@ export interface HardwareConfigStateMessage {
   /** Static board capabilities (pin catalog + LED modes). Undefined on older
    * firmware that doesn't report them — the app falls back to a built-in catalog. */
   board?: BoardCapabilitiesFlat;
+  /** The change outgrew this boot's LED buffers: persisted, and the device is
+   * restarting to resize them (the connection drops; reconnect). */
+  rebootRequired?: boolean;
+  /** LEDs (summed across channels) this boot's buffers hold (absent on older
+   * firmware). */
+  ledCapacity?: number;
 }
 
 // -- Color-correction read-back (flat shapes) -------------------------------

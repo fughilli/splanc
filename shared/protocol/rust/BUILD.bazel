@@ -88,7 +88,7 @@ rust_test(
         "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
         # The envelope structs carry inline heapless storage (hundreds of KB
         # for the map/solve arms) and land on the test thread's stack.
-        "RUST_MIN_STACK": "16777216",
+        "RUST_MIN_STACK": "67108864",
     },
     deps = [
         ":ledmapper_pb",

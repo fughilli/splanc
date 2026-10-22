@@ -23,7 +23,7 @@ load("//tools:flash_bundle.bzl", "flash_bundle")
 load("//tools:ram_chart.bzl", "ram_chart")
 load("//tools/build_info:build_info.bzl", "build_info_file")
 load(":agent_bundle.bzl", "agent_bundle_info")
-load(":led_caps.bzl", "MAX_LEDS")
+load(":led_caps.bzl", "led_cap_defines", "led_cap_rustc_env")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -108,7 +108,7 @@ rust_static_library(
     crate_root = "ffi.rs",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
-    rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
+    rustc_env = led_cap_rustc_env(),
     # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
     # the player core is board-agnostic so it compiles for both ESP RISC-V SKUs.
     target_compatible_with = select({
@@ -145,11 +145,14 @@ rust_library(
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
+    # The host tests never allocate the per-LED store: lm_player_init binds a
+    # static one for the whole cap (the firmware sizes its own at boot).
+    crate_features = ["host_store"],
     crate_name = "ledmapper_player_ffi",
     crate_root = "ffi.rs",
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
-    rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
+    rustc_env = led_cap_rustc_env(),
     deps = [
         "//firmware/arena",
         "//firmware/fps",
@@ -176,7 +179,7 @@ rr_rust_test(
     # On the wrapper; the test binary it runs inherits it. Host-profile
     # envelopes carry big inline heapless storage; a debug (fastbuild)
     # ClientMessage::decode frame alone is ~12 MB with every arm's temporary.
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -193,7 +196,7 @@ rust_test(
     name = "agent_surface_test",
     srcs = ["tests/agent_surface.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
         "//firmware/fx_vm",
@@ -210,7 +213,7 @@ rust_test(
     name = "decks_keypoints_test",
     srcs = ["tests/decks_keypoints.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -226,7 +229,7 @@ rust_test(
     srcs = ["tests/room_frame.rs"],
     compile_data = ["//pi/hitl/harness:ab_demo/timeBaseClock.fx"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -244,7 +247,7 @@ rr_rust_test(
     edition = "2021",
     # On the wrapper; the test binary it runs inherits it. Host-profile
     # envelopes carry big inline heapless storage.
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -262,7 +265,7 @@ rr_rust_test(
     edition = "2021",
     # On the wrapper; the test binary it runs inherits it. Host-profile
     # envelopes carry big inline heapless storage.
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -281,7 +284,7 @@ rust_test(
     ],
     crate_root = "tests/sensor_pool.rs",
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
         "//firmware/sensor",
@@ -302,7 +305,7 @@ rust_test(
     compile_data = ["//firmware/sensor:drivers/mpu6050.fx"],
     crate_root = "tests/driver_ab.rs",
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
         "//firmware/sensor",
@@ -586,11 +589,10 @@ cc_binary(
     # in favour of the software ECP (@mbedtls_src//:mbedtls_src_esp32c3).
     linkopts = ["-Wl,--allow-multiple-definition"],
     local_defines = [
-        "LM_MAX_LEDS=%d" % MAX_LEDS,
         "LM_NETSTACK",
         # Sensor core (sensor_bus.cpp): I2C IMU probe at boot + sensor task.
         "LM_SENSORS",
-    ] + select({
+    ] + led_cap_defines() + select({
         # Selects the C3 controller HCI ABI (un-prefixed libbt.a symbols) in
         # improv_ble_netstack.cpp; the C6 keeps the ROM r_-prefixed transport.
         "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
@@ -721,8 +723,7 @@ cc_binary(
     copts = ["-fno-rtti"],
     local_defines = [
         "LM_OSC_BENCH",
-        "LM_MAX_LEDS=%d" % MAX_LEDS,
-    ],
+    ] + led_cap_defines(),
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -797,8 +798,7 @@ cc_binary(
     copts = ["-fno-rtti"],
     local_defines = [
         "LM_FX_JIT_BENCH",
-        "LM_MAX_LEDS=%d" % MAX_LEDS,
-    ],
+    ] + led_cap_defines(),
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -857,7 +857,7 @@ rr_rust_test(
     srcs = ["tests/device_identity.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -874,7 +874,7 @@ rr_rust_test(
     srcs = ["tests/starvation_guard.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -893,7 +893,7 @@ rr_rust_test(
     srcs = ["tests/playback_rate.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -909,7 +909,7 @@ rr_rust_test(
     srcs = ["tests/memory_workloads.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -928,7 +928,7 @@ rr_rust_test(
     srcs = ["tests/memory_bounds.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -947,7 +947,7 @@ rr_rust_test(
     srcs = ["tests/embedded_types.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -963,7 +963,7 @@ rr_rust_test(
     srcs = ["tests/color_calibration.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",
@@ -980,7 +980,7 @@ rr_rust_test(
     srcs = ["tests/perf_cost_counters.rs"],
     args = ["--test-threads=1"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "33554432"},
+    env = {"RUST_MIN_STACK": "100663296"},
     rule = rust_test,
     deps = [
         ":player_ffi_host",

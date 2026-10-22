@@ -49,6 +49,7 @@ import {
 } from "../../net/proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
+import { wireFpsCeiling } from "../../net/ledWire";
 
 // Output-capable C6 GPIOs for LED data, grouped by how safe they are to use.
 // Categories + caveats follow the ESP32-C6 SuperMini pinout published at
@@ -350,7 +351,13 @@ export function HardwareSetupScreen(_router: Router): Screen {
       const total = totalLeds();
       if (total > 0) prefs.setCaptureLedCount(total);
       render();
-      toast(ledCount > 0 ? `Channel ${ch} → ${ledCount} LEDs` : `Channel ${ch} LED count cleared`);
+      toast(
+        st.rebootRequired
+          ? `Channel ${ch} → ${ledCount} LEDs. The device is restarting to make room for them; it reconnects in a few seconds.`
+          : ledCount > 0
+            ? `Channel ${ch} → ${ledCount} LEDs`
+            : `Channel ${ch} LED count cleared`,
+      );
       return true;
     } catch {
       toast("Failed to set LED count", { error: true });
@@ -561,7 +568,9 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const note = document.createElement("div");
     note.className = "hw-hint";
     const max = boardCaps?.maxLeds ?? 0;
+    const perChannel = boardCaps?.maxLedsPerChannel ?? 0;
     const total = totalLeds();
+    const longest = Math.max(0, ...channels.map((x) => x.ledCount || 0));
     const ranges: string[] = [];
     let start = 0;
     for (const x of [...channels].sort((a, b) => a.channel - b.channel)) {
@@ -574,8 +583,16 @@ export function HardwareSetupScreen(_router: Router): Screen {
     note.textContent =
       total > 0
         ? `Mapping and effects treat the channels as one strip of ${total} LEDs` +
-          (max > 0 ? ` (this board drives up to ${max})` : "") +
-          `: ${ranges.join(", ")}. Map with ${total} LEDs to cover every channel.`
+          (max > 0
+            ? perChannel > 0
+              ? ` (this board drives up to ${perChannel} per channel, ${max} in all)`
+              : ` (this board drives up to ${max})`
+            : "") +
+          `: ${ranges.join(", ")}. Map with ${total} LEDs to cover every channel.` +
+          (longest > 0
+            ? ` The channels clock out in parallel, so the longest (${longest} LEDs) ` +
+              `caps effects at about ${wireFpsCeiling(longest)} fps.`
+            : "")
         : "Set each channel's LED count so mapping covers every channel. " +
           "Channels are numbered in order: channel 0's LEDs first, then channel 1's.";
     g.append(note);
@@ -591,7 +608,8 @@ export function HardwareSetupScreen(_router: Router): Screen {
     input.step = "1";
     input.inputMode = "numeric";
     input.placeholder = "not set";
-    const max = boardCaps?.maxLeds ?? 0;
+    // The per-channel cap when the board reports one, else the total.
+    const max = boardCaps?.maxLedsPerChannel || boardCaps?.maxLeds || 0;
     if (max > 0) input.max = String(max);
     input.value = cfg.ledCount > 0 ? String(cfg.ledCount) : "";
     input.addEventListener("change", () => {

@@ -105,19 +105,25 @@ async def _submit_map(sock, leds: int) -> None:
 async def _setup(ws_url: str, fxb_b64: str, leds: int, split: int) -> None:
     """Load a linear map + strip length (split across both channels when `split`
     > 0: channel 0 drives the first `split` LEDs) and activate the effect."""
+    counts = ((0, split), (1, leds - split)) if split > 0 else ((0, leds),)
+    # Strip lengths first: the per-LED buffers are sized at boot for the persisted
+    # counts, so outgrowing them persists + restarts the device into the new size.
     sock = await _connect_ws(ws_url, _ssl_ctx(ws_url))
     async with sock:
         await _rpc(sock, {"type": "hello", "client": "led_timing", "app_version": "1"}, "welcome")
+        reboot = False
+        for ch, n in counts:
+            st = await _rpc(
+                sock, {"type": "set_led_count", "led_count": n, "channel": ch}, "led_count_state"
+            )
+            reboot |= bool(st.get("rebootRequired"))
+    if reboot:
+        _log("[drive] device restarting to resize its LED buffers; reconnecting…")
+        await asyncio.sleep(10.0)
+    sock = await _connect_ws(ws_url, _ssl_ctx(ws_url), 90.0)
+    async with sock:
+        await _rpc(sock, {"type": "hello", "client": "led_timing", "app_version": "1"}, "welcome")
         await _submit_map(sock, leds)
-        if split > 0:
-            for ch, n in ((0, split), (1, leds - split)):
-                await _rpc(
-                    sock,
-                    {"type": "set_led_count", "led_count": n, "channel": ch},
-                    "led_count_state",
-                )
-        else:
-            await _rpc(sock, {"type": "set_led_count", "led_count": leds}, "led_count_state")
         await _rpc(
             sock,
             {"type": "submit_effect", "effect_id": "__ledtiming", "fxb": fxb_b64, "activate": True},

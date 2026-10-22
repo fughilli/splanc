@@ -27,6 +27,19 @@ from typing import Any
 from map_upload_core import synth_output_map  # noqa: F401  (re-exported)
 from video_bench_core import bars_effect_src  # noqa: F401  (re-exported)
 
+# LEDs one C6 output channel carries (firmware/player_app/led_caps.bzl
+# MAX_LEDS_PER_CHANNEL); the player refuses a channel past it.
+PER_CHANNEL_CAP = 1024
+
+
+def channel_split(n_leds: int, per_channel: int = PER_CHANNEL_CAP) -> list[int]:
+    """Per-channel LED counts for an `n_leds` strip: channel 0 filled first, the
+    rest on channel 1 (`[n]` when it fits one channel)."""
+    if n_leds <= per_channel:
+        return [n_leds]
+    return [per_channel, n_leds - per_channel]
+
+
 # SetTexture.format wire code for a 2 B/texel RGB565 frame. A plain keyframe is
 # flags=0 (no DELTA bit0, no RLE bit1), so the firmware zeroes its prev buffer and
 # copies our bytes straight in (handle_set_texture in firmware/player_app/ffi.rs).

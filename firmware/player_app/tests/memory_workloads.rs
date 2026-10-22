@@ -215,7 +215,9 @@ fn a_map_at_the_full_led_cap_uploads_in_small_windows_and_decodes_off_flash() {
         let (mut id, mut xyz) = (0u32, [0f32; 3]);
         assert!(unsafe { lm_map_led(i, &mut id, xyz.as_mut_ptr()) });
         assert_eq!(id, i);
-        assert!((xyz[0] - i as f32 * 0.003).abs() < 1e-5, "led {i} x = {}", xyz[0]);
+        // Stored with a 16-bit mantissa (ffi.rs F24): ~1.5e-5 relative.
+        let want = i as f32 * 0.003;
+        assert!((xyz[0] - want).abs() <= want.abs() * 2e-5 + 1e-6, "led {i} x = {}", xyz[0]);
         assert!((xyz[2] - 1.25).abs() < 1e-6);
     }
 }

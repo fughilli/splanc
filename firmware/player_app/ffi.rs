@@ -23,7 +23,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
-use ledmapper_fps::{FpsController, MAX_FPS, MIN_FPS};
+use ledmapper_fps::{FpsController, MAX_FPS};
 use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
@@ -491,6 +491,9 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 /// is //firmware/player_app:led_caps.bzl (`MAX_LEDS`), injected here as the
 /// `LM_MAX_LEDS` rustc_env and as `-DLM_MAX_LEDS` into main.cpp / led_config.h.
 pub const FX_TOPO_CAP: usize = parse_cap(env!("LM_MAX_LEDS"));
+/// LEDs one output channel carries (led_caps.bzl `MAX_LEDS_PER_CHANNEL`).
+pub const FX_MAX_LEDS_PER_CHANNEL: usize = parse_cap(env!("LM_MAX_LEDS_PER_CHANNEL"));
+const _: () = assert!(FX_MAX_LEDS_PER_CHANNEL <= FX_TOPO_CAP);
 
 /// Parse the LM_MAX_LEDS build env (a decimal literal) at compile time.
 const fn parse_cap(s: &str) -> usize {
@@ -509,25 +512,81 @@ const fn parse_cap(s: &str) -> usize {
 const FX_BRANCH_DIST_M: f32 = 0.05;
 
 /// One LED's derived topology terms, in map-index order (== led_id; the render
-/// is index-based). `seg` is the segment INDEX (position in topo.segments),
-/// -1 = no association; `s` is
-/// normalized 0..1; `branch` = near a junction; `dist` is the geodesic distance
-/// from the topology root, 0..1. `foot`/`dperp` are the raw association terms
-/// (meters): `foot` feeds the resolve, and both are echoed by the stored-map
-/// dump. This cache is the SOLE resident copy of the associations (the raw
-/// upload is not kept). 20 bytes/entry.
+/// is index-based), packed into 10 bytes/entry (was 20: at 2048 LEDs that is
+/// 20 KB of heap back): `seg` is the segment INDEX (position in topo.segments)
+/// with [`TOPO_BRANCH`] (near a junction) in bit 14, -1 = no association; `s`
+/// (normalized 0..1 arclength) and `dist` (geodesic distance from the topology
+/// root, 0..1) are f32s with the low mantissa byte dropped ([`F24`]: 16-bit
+/// mantissa, ~1.5e-5 relative — decoded with a shift, no soft-float on the
+/// shade path); `dperp_mm` is the association's perpendicular offset in whole
+/// millimetres (echoed by the stored-map dump). The association's foot arclength
+/// is NOT kept: the streaming sink parks it in `s` (and the raw segment_id in
+/// `seg`) until fx_rebuild_topo resolves both, and the dump re-derives it as
+/// `s * segment.length`. This cache is the SOLE resident copy of the
+/// associations (the raw upload is not kept).
 #[derive(Clone, Copy)]
 struct FxLedTopo {
     seg: i16,
-    s: f32,
-    branch: bool,
-    dist: f32,
-    foot: f32,
-    dperp: f32,
+    dperp_mm: i16,
+    s: F24,
+    dist: F24,
 }
 impl FxLedTopo {
-    const NONE: FxLedTopo =
-        FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0, foot: 0.0, dperp: 0.0 };
+    const NONE: FxLedTopo = FxLedTopo {
+        seg: -1,
+        dperp_mm: 0,
+        s: F24::ZERO,
+        dist: F24::ZERO,
+    };
+    /// Segment index (-1 = none), once resolved.
+    #[inline]
+    fn seg_index(&self) -> i16 {
+        if self.seg < 0 {
+            -1
+        } else {
+            self.seg & !TOPO_BRANCH
+        }
+    }
+    #[inline]
+    fn branch(&self) -> bool {
+        self.seg >= 0 && self.seg & TOPO_BRANCH != 0
+    }
+}
+
+/// Bit 14 of a resolved [`FxLedTopo::seg`]: the LED is near a junction. Segment
+/// indices stay far below it (a topology's segments fit ARENA_MEM).
+const TOPO_BRANCH: i16 = 0x4000;
+
+/// An f32 stored in 3 bytes: sign, exponent and the top 15 mantissa bits (the
+/// low byte is rounded away). Exact for 0 and +-1; ~1.5e-5 relative otherwise.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct F24([u8; 3]);
+impl F24 {
+    const ZERO: F24 = F24([0; 3]);
+    #[inline]
+    fn new(v: f32) -> F24 {
+        let b = v.to_bits();
+        // Round to nearest (ties away) on the dropped byte; a mantissa carry
+        // into the exponent is still the correctly rounded value. Inf/NaN as is.
+        let r = if b & 0x7f80_0000 == 0x7f80_0000 {
+            b
+        } else {
+            b + 0x80
+        };
+        F24([(r >> 8) as u8, (r >> 16) as u8, (r >> 24) as u8])
+    }
+    #[inline]
+    fn get(self) -> f32 {
+        f32::from_bits(
+            ((self.0[0] as u32) << 8) | ((self.0[1] as u32) << 16) | ((self.0[2] as u32) << 24),
+        )
+    }
+}
+
+/// Metres -> saturating whole millimetres (an association's d_perp).
+fn mm_sat(m: f32) -> i16 {
+    let v = m * 1000.0;
+    (if v >= 0.0 { v + 0.5 } else { v - 0.5 }) as i16
 }
 
 /// Convert a float to Q16.16 (the canonical fixed context width, CTX_FIX_FRAC).
@@ -538,22 +597,120 @@ fn q16_16(x: f32) -> i32 {
     (x * 65536.0) as i32
 }
 
-static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
+// -- the per-LED store: sized at boot for the CONFIGURED strip -----------------
+// FX_LED_TOPO (10 B/LED), FX_LED_POS (9 B/LED) and FX_LED_MAPPED (1 bit/LED) are
+// NOT sized for the 2048-LED cap: the firmware allocates ONE block for them once
+// at boot (before the radios fragment the heap), sized for the persisted channel
+// counts (lm_led_store_bytes / lm_led_store_bind), so a 300-LED lamp pays for
+// 300 LEDs. A count change past it persists and reboots into the new size
+// (Player::set_led_capacity). FX_TOPO_CAP stays the hard cap.
+//
+// FX_LED_TOPO: the per-LED topology cache (see FxLedTopo), map-index order.
+// FX_LED_POS: the flash-backed map's per-LED positions (metres), the ONLY map
+// data resident at render time. Fed by the streaming submit_map decode;
+// lm_map_led / get_stored_map / led.uv all read it (the raw StoredMap is gone).
+// Indexed by LED id (= strip position; the render is index-based) — NOT by the
+// entry's position in the uploaded list, which skips unmapped LEDs. Unmapped
+// slots hold a position interpolated from their mapped neighbours (see
+// fill_unmapped). Each axis is an [`F24`] (9 B/LED instead of 12; ~1.5e-5
+// relative — 0.08 mm at 5 m, far under a solve's accuracy — and a shift to
+// decode, so the per-LED read stays free of soft-float): use pos_get / pos_set.
+// FX_LED_MAPPED: one bit per LED id, set when the uploaded map solved that LED
+// (its position is measured), clear when it is interpolated.
+static mut FX_LED_TOPO: *mut FxLedTopo = core::ptr::null_mut();
+static mut FX_LED_POS: *mut [F24; 3] = core::ptr::null_mut();
+static mut FX_LED_MAPPED: *mut u32 = core::ptr::null_mut();
+/// LEDs the bound store holds (0 = none bound: no map positions are kept).
+static mut FX_STORE_LEDS: usize = 0;
 
-/// Flash-backed map: the per-LED positions (meters), the ONLY map data resident
-/// at render time. Fed by the streaming submit_map decode; lm_map_led /
-/// get_stored_map / led.uv all read this (the raw StoredMap is gone). Indexed by
-/// LED id (= strip position; the render is index-based) — NOT by the entry's
-/// position in the uploaded list, which skips unmapped LEDs. Unmapped slots hold
-/// a position interpolated from their mapped neighbours (see fill_unmapped).
-static mut FX_LED_POS: [[f32; 3]; FX_TOPO_CAP] = [[0.0; 3]; FX_TOPO_CAP];
-/// One bit per LED id: set when the uploaded map solved that LED (its
-/// FX_LED_POS is measured), clear when FX_LED_POS[id] is interpolated.
-static mut FX_LED_MAPPED: [u32; FX_TOPO_CAP.div_ceil(32)] = [0; FX_TOPO_CAP.div_ceil(32)];
+/// Bytes the per-LED store needs for `leds` LEDs (incl. alignment): the mapped
+/// bitset (u32 words) first, then the topology cache (2-aligned), then the
+/// positions.
+pub const fn led_store_bytes(leds: usize) -> usize {
+    leds.div_ceil(32) * 4 + leds * core::mem::size_of::<FxLedTopo>() + leds * 9
+}
+
+/// Bytes the per-LED store needs for `leds` LEDs (see [`lm_led_store_bind`]).
+#[no_mangle]
+pub extern "C" fn lm_led_store_bytes(leds: u32) -> usize {
+    led_store_bytes(leds as usize)
+}
+
+/// Bind the per-LED store to `mem[0..bytes)` (4-aligned, from the firmware's
+/// boot-time allocation) for `leds` LEDs, at most the FX_TOPO_CAP cap; it is
+/// cleared (no map). Returns false when the block is too small or misaligned.
+/// Call before [`lm_player_init`]; the block must live for the process.
+///
+/// # Safety
+/// `mem` must be valid for `bytes` writes and never used elsewhere.
+#[no_mangle]
+pub unsafe extern "C" fn lm_led_store_bind(mem: *mut u8, bytes: usize, leds: u32) -> bool {
+    let n = (leds as usize).min(FX_TOPO_CAP);
+    if mem.is_null() || (mem as usize) % 4 != 0 || bytes < led_store_bytes(n) {
+        return false;
+    }
+    let words = n.div_ceil(32);
+    FX_LED_MAPPED = mem as *mut u32;
+    FX_LED_TOPO = mem.add(words * 4) as *mut FxLedTopo;
+    FX_LED_POS = mem.add(words * 4 + n * core::mem::size_of::<FxLedTopo>()) as *mut [F24; 3];
+    FX_STORE_LEDS = n;
+    mapped_store().fill(0);
+    topo_store().fill(FxLedTopo::NONE);
+    pos_store().fill([F24::ZERO; 3]);
+    true
+}
+
+/// LEDs the per-LED store holds: map positions / topology past it aren't kept.
+#[inline]
+fn fx_cap() -> usize {
+    unsafe { FX_STORE_LEDS }
+}
+
+#[inline]
+unsafe fn topo_store() -> &'static mut [FxLedTopo] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_TOPO, FX_STORE_LEDS)
+}
+
+#[inline]
+unsafe fn pos_store() -> &'static mut [[F24; 3]] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_POS, FX_STORE_LEDS)
+}
+
+#[inline]
+unsafe fn mapped_store() -> &'static mut [u32] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_MAPPED, FX_STORE_LEDS.div_ceil(32))
+}
+
+/// The host build's store (`host_store` feature: the host tests never allocate
+/// one): the whole cap, bound by lm_player_init when nothing is.
+#[cfg(feature = "host_store")]
+static mut HOST_STORE: [u32; led_store_bytes(FX_TOPO_CAP).div_ceil(4)] =
+    [0; led_store_bytes(FX_TOPO_CAP).div_ceil(4)];
+
+/// LED `i`'s resident position (metres).
+#[inline]
+unsafe fn pos_get(i: usize) -> [f32; 3] {
+    let p = &pos_store()[i];
+    [p[0].get(), p[1].get(), p[2].get()]
+}
+
+#[inline]
+unsafe fn pos_set(i: usize, v: [f32; 3]) {
+    pos_store()[i] = [F24::new(v[0]), F24::new(v[1]), F24::new(v[2])];
+}
 
 #[inline]
 unsafe fn led_mapped(i: usize) -> bool {
-    (*addr_of!(FX_LED_MAPPED))[i / 32] & (1 << (i % 32)) != 0
+    mapped_store()[i / 32] & (1 << (i % 32)) != 0
 }
 
 /// Fill every unmapped LED in [0, n) with a position linearly interpolated (by
@@ -562,7 +719,6 @@ unsafe fn led_mapped(i: usize) -> bool {
 /// everything stays at the origin. Interpolated points lie on the segment
 /// between two mapped ones, so they never widen the map's bounding box.
 unsafe fn fill_unmapped(n: usize) {
-    let pos = &mut *addr_of_mut!(FX_LED_POS);
     let mut prev: Option<usize> = None;
     let mut i = 0;
     while i < n {
@@ -576,20 +732,21 @@ unsafe fn fill_unmapped(n: usize) {
             next += 1;
         }
         for j in i..next {
-            pos[j] = match (prev, next < n) {
+            let v = match (prev, next < n) {
                 (Some(a), true) => {
                     let t = (j - a) as f32 / (next - a) as f32;
-                    let (pa, pb) = (pos[a], pos[next]);
+                    let (pa, pb) = (pos_get(a), pos_get(next));
                     [
                         pa[0] + (pb[0] - pa[0]) * t,
                         pa[1] + (pb[1] - pa[1]) * t,
                         pa[2] + (pb[2] - pa[2]) * t,
                     ]
                 }
-                (Some(a), false) => pos[a],
-                (None, true) => pos[next],
+                (Some(a), false) => pos_get(a),
+                (None, true) => pos_get(next),
                 (None, false) => [0.0; 3],
             };
+            pos_set(j, v);
         }
         i = next;
     }
@@ -610,12 +767,15 @@ static mut FX_TOPO_READY: bool = false;
 static mut FX_UV_READY: bool = false;
 
 // -- room frame (multi-fixture, set_fixture_pose) -----------------------------
-/// Each LED's ROOM-frame position (pose applied to FX_LED_POS), in integer
-/// MILLIMETRES: 6 B/LED (3 KB at 512 LEDs) instead of 12 B as f32 — +-32.7 m at
-/// 1 mm covers any room. Rebuilt off the render path's lm_fx_update when the
-/// pose or the map changes; only read while posed (unposed, led.room == led.pos).
-static mut FX_LED_ROOM: [[i16; 3]; FX_TOPO_CAP] = [[0; 3]; FX_TOPO_CAP];
-/// The cache matches the current map + pose (FX_ROOM_GEN = the pose gen it used).
+/// The pose as an affine map, room = FX_ROOM_T + FX_ROOM_M * pos (M = scale *
+/// R(q)): applied per LED in shade() while posed, for effects that read the room
+/// frame. There is no per-LED room cache — at the 2048-LED cap it would cost
+/// 12 KB of heap (6 B/LED); the transform is 9 multiply-adds per LED, paid only
+/// by room-reading effects on a posed fixture (unposed, led.room == led.pos).
+static mut FX_ROOM_M: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+static mut FX_ROOM_T: [f32; 3] = [0.0; 3];
+/// The pose + room box match the current map + pose (FX_ROOM_GEN = the pose gen
+/// they used).
 static mut FX_ROOM_READY: bool = false;
 static mut FX_ROOM_GEN: u32 = 0;
 /// A pose is set (Frame::room_posed).
@@ -847,22 +1007,58 @@ unsafe fn arena_mut() -> &'static mut Arena<'static> {
 #[no_mangle]
 pub extern "C" fn lm_player_init(default_led_count: u32) {
     unsafe {
+        #[cfg(feature = "host_store")]
+        if FX_STORE_LEDS == 0 {
+            let mem = addr_of_mut!(HOST_STORE) as *mut u8;
+            lm_led_store_bind(mem, led_store_bytes(FX_TOPO_CAP), FX_TOPO_CAP as u32);
+        }
         *addr_of_mut!(MAP_META) = None;
         *addr_of_mut!(GEOM) = None;
         FX_TOPO_READY = false;
         FX_UV_READY = false;
         FX_ROOM_READY = false;
-        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+        for e in topo_store().iter_mut() {
             *e = FxLedTopo::NONE;
         }
         *addr_of_mut!(ARENA) = Some(Arena::new(&mut *addr_of_mut!(ARENA_MEM)));
         let mut p = Player::new("esp32c6-player", default_led_count.max(1));
         // The render buffer (FX_TOPO_CAP == LM_MAX_LEDS) is shared by every
-        // output channel, so it's the cap on the SUM of the channel counts.
+        // output channel, so it's the cap on the SUM of the channel counts; each
+        // channel alone is capped at LM_MAX_LEDS_PER_CHANNEL (both at the cap
+        // still clock out in parallel).
         p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, FX_TOPO_CAP as u32);
+        p.set_channel_cap(FX_MAX_LEDS_PER_CHANNEL as u32);
+        // Boot-time sizing (lm_set_led_limits) narrows these to the store.
         p.set_features(FEATURES, ledmapper_fx_vm::FORMAT_VERSION as u32);
         *addr_of_mut!(PLAYER) = Some(p);
     }
+}
+
+/// The boot-time LED sizing: this boot's per-LED buffers hold `capacity` LEDs
+/// (summed across channels; the persisted counts it was sized from), and the
+/// heap can buffer at most `max_leds` (board.max_leds: the largest total whose
+/// boot allocation still leaves the safe heap floor). A count change within
+/// `max_leds` but past `capacity` is accepted, persisted and answered
+/// `reboot_required`; past `max_leds` it is refused. Call after
+/// [`lm_player_init`].
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_led_limits(capacity: u32, max_leds: u32) {
+    let p = player();
+    p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, max_leds.min(FX_TOPO_CAP as u32));
+    p.set_led_capacity(capacity);
+}
+
+/// Read + clear the player's reboot request: a count change outgrew this boot's
+/// LED buffers (its config is persisted); restart once the reply is out.
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_take_reboot_request() -> bool {
+    player().take_reboot_request()
 }
 
 /// Set the player's hardware identity (MAC + current display name) echoed in
@@ -1403,7 +1599,7 @@ pub unsafe extern "C" fn lm_player_handle(
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
     *addr_of_mut!(GEOM) = None;
-    for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+    for e in topo_store().iter_mut() {
         *e = FxLedTopo::NONE;
     }
     FX_TOPO_READY = false;
@@ -1422,23 +1618,23 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     // Nothing from a previous map may survive into this one.
     // (Filled in place: a whole-array assignment would build the temporary on
     // the task stack.)
-    (*addr_of_mut!(FX_LED_POS)).fill([0.0; 3]);
-    (*addr_of_mut!(FX_LED_MAPPED)).fill(0);
+    pos_store().fill([F24::ZERO; 3]);
+    mapped_store().fill(0);
     let res = decode_submit_map_streamed(reader, total, |_idx, led_count, led| {
         // Key by the LED's id, not its list position: a map with unmapped LEDs
         // omits them, so positions past the first gap would land in the wrong
         // slot. Ids past the strip (led_count) or the render cap aren't stored
         // (the strip can't drive them); the decode still validates the frame.
         let i = led.id as usize;
-        if led.id < led_count && i < FX_TOPO_CAP {
-            (*addr_of_mut!(FX_LED_POS))[i] = led.xyz;
-            (*addr_of_mut!(FX_LED_MAPPED))[i / 32] |= 1 << (i % 32);
+        if led.id < led_count && i < fx_cap() {
+            pos_set(i, led.xyz);
+            mapped_store()[i / 32] |= 1 << (i % 32);
         }
         Ok(())
     });
     match res {
         Ok((map_id, led_count)) => {
-            fill_unmapped((led_count as usize).min(FX_TOPO_CAP));
+            fill_unmapped((led_count as usize).min(fx_cap()));
             let reply = player().map_stored(map_id.as_str());
             *addr_of_mut!(MAP_META) = Some((map_id, led_count));
             reply
@@ -1462,14 +1658,12 @@ unsafe fn handle_topology_upload<R: PbRead<Error = Infallible>>(
     arena_mut().reset();
     let res = decode_submit_topology_streamed(&mut reader, rewind, total, arena_ref(), |a: &StoredAssociation| {
         let i = a.led_id as usize;
-        if i < FX_TOPO_CAP && a.segment_id <= i16::MAX as u32 {
-            (*addr_of_mut!(FX_LED_TOPO))[i] = FxLedTopo {
+        if i < fx_cap() && a.segment_id <= i16::MAX as u32 {
+            topo_store()[i] = FxLedTopo {
                 seg: a.segment_id as i16, // TEMP raw id; resolved in fx_rebuild_topo
-                s: 0.0,
-                branch: false,
-                dist: 0.0,
-                foot: a.foot_arclength,
-                dperp: a.d_perp,
+                dperp_mm: mm_sat(a.d_perp),
+                s: F24::new(a.foot_arclength), // TEMP foot (m); resolved to s
+                dist: F24::ZERO,
             };
         }
         Ok(())
@@ -1532,10 +1726,10 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
     // mapped LEDs (real ids, xyz from FX_LED_POS) + the unmapped ids (their
     // interpolated positions are a render detail, not map data), associations
     // recovered from FX_LED_TOPO with the segment_id read back out of the geometry.
-    let n_leds = (led_count as usize).min(FX_TOPO_CAP);
+    let n_leds = (led_count as usize).min(fx_cap());
     let led_each = |f: &mut dyn FnMut(u32, [f32; 3])| {
         for i in (0..n_leds).filter(|&i| led_mapped(i)) {
-            f(i as u32, (*addr_of!(FX_LED_POS))[i]);
+            f(i as u32, pos_get(i));
         }
     };
     let unmapped_each = |f: &mut dyn FnMut(u32)| {
@@ -1552,11 +1746,20 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
     let geom = (*addr_of!(GEOM)).as_ref();
     let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
         if let Some(g) = geom {
-            let n = (led_count as usize).min(FX_TOPO_CAP);
+            let n = (led_count as usize).min(fx_cap());
             for i in 0..n {
-                let e = &(*addr_of!(FX_LED_TOPO))[i];
-                if e.seg >= 0 && (e.seg as usize) < g.segments.len() {
-                    f(i as u32, g.segments[e.seg as usize].id, e.foot, e.dperp);
+                let e = &topo_store()[i];
+                let si = e.seg_index();
+                if si >= 0 && (si as usize) < g.segments.len() {
+                    // The foot isn't resident: it is s * the segment length (s was
+                    // clamped to the segment by the resolve).
+                    let seg = &g.segments[si as usize];
+                    f(
+                        i as u32,
+                        seg.id,
+                        e.s.get() * seg.length,
+                        e.dperp_mm as f32 * 0.001,
+                    );
                 }
             }
         }
@@ -2509,8 +2712,8 @@ unsafe fn handle_set_fps(frame: &[u8]) -> pb::ServerMessage {
         _ => (0, false),
     };
     let c = &mut *addr_of_mut!(FPS);
-    // set_target snaps into [MIN_FPS, MAX_FPS]; cap first so a wild value can't
-    // overflow the snap arithmetic.
+    // set_target snaps onto the ladder (held to the strip's floor and wire
+    // ceiling); cap first so a wild value can't overflow the snap arithmetic.
     c.set_target(target.min(MAX_FPS));
     c.set_abort_enabled(!no_abort);
     build_fps_state(false)
@@ -2523,8 +2726,10 @@ unsafe fn build_fps_state(aborted: bool) -> pb::ServerMessage {
     let mut s = pb::FpsState::default();
     s.r#target_fps = c.pinned_fps();
     s.r#current_fps = c.current_fps();
-    s.r#min_fps = MIN_FPS;
-    s.r#max_fps = MAX_FPS;
+    // The abort floor for this strip (25 fps up to 512 LEDs, lower past it).
+    s.r#min_fps = c.min_fps();
+    // The ladder's top as the strip's wire allows it (MAX_FPS when unbounded).
+    s.r#max_fps = c.max_fps();
     s.r#auto = !c.is_pinned();
     s.r#aborted = aborted;
     s.r#no_abort = !c.abort_enabled();
@@ -3240,10 +3445,10 @@ pub unsafe extern "C" fn lm_map_len() -> u32 {
 pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> bool {
     let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c);
     let i = index as usize;
-    if index >= len || i >= FX_TOPO_CAP {
+    if index >= len || i >= fx_cap() {
         return false;
     }
-    let pos = (*addr_of!(FX_LED_POS))[i];
+    let pos = pos_get(i);
     *id = index;
     *xyz = pos[0];
     *xyz.add(1) = pos[1];
@@ -3255,20 +3460,9 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
 // Single-threaded, like the rest of this file: the render task and the message
 // handler both call these under the C++ player_mutex.
 
-/// Rebuild [`FX_LED_TOPO`] from the stored map + topology (in map-index order),
-/// deriving each LED's segment index, normalized arclength and junction flag
-/// from its [`StoredAssociation`]. Cheap to call every frame — it early-returns
-/// via [`FX_TOPO_READY`] unless a map/topology upload invalidated the cache.
-/// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
-/// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
-/// Millimetres -> Q16.16 metres, integer-only.
-fn mm_q16(v: i16) -> i32 {
-    ((v as i64 * 65536) / 1000) as i32
-}
-
-/// Rebuild the room-frame LED cache + room box from the stored map and the
-/// player's pose: room = t + R(q) * (scale * pos). Unposed, only the box is
-/// derived (this fixture's own map box), since led.room then reads led.pos.
+/// Rebuild the room transform + room box from the stored map and the player's
+/// pose: room = t + R(q) * (scale * pos). Unposed, only the box is derived (this
+/// fixture's own map box), since led.room then reads led.pos.
 // Cold (once per map/pose change): out of the per-frame update's hot code.
 #[cold]
 #[inline(never)]
@@ -3276,8 +3470,7 @@ unsafe fn fx_rebuild_room() {
     FX_ROOM_READY = true;
     let p = player();
     FX_ROOM_GEN = p.fixture_pose_gen();
-    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(FX_TOPO_CAP);
-    let pos = &*addr_of!(FX_LED_POS);
+    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(fx_cap());
     let pose = p.fixture_pose();
     FX_ROOM_POSED = pose.is_some();
     // Rotation matrix from the (normalized) quaternion; identity when unposed.
@@ -3295,19 +3488,19 @@ unsafe fn fx_rebuild_room() {
         [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
         [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
     ];
+    let mut m = [[0.0f32; 3]; 3];
+    for k in 0..3 {
+        for j in 0..3 {
+            m[k][j] = sc * r[k][j];
+        }
+    }
+    *addr_of_mut!(FX_ROOM_M) = m;
+    *addr_of_mut!(FX_ROOM_T) = t;
     let mut mn = [f32::INFINITY; 3];
     let mut mx = [f32::NEG_INFINITY; 3];
-    let room = &mut *addr_of_mut!(FX_LED_ROOM);
     for i in 0..len {
-        let v = pos[i];
-        let mut o = [0.0f32; 3];
-        for (k, ok) in o.iter_mut().enumerate() {
-            *ok = t[k] + sc * (r[k][0] * v[0] + r[k][1] * v[1] + r[k][2] * v[2]);
-        }
-        if FX_ROOM_POSED {
-            room[i] = [mm_i16(o[0]), mm_i16(o[1]), mm_i16(o[2])];
-        }
         if led_mapped(i) {
+            let o = room_of(pos_get(i));
             for k in 0..3 {
                 mn[k] = mn[k].min(o[k]);
                 mx[k] = mx[k].max(o[k]);
@@ -3327,11 +3520,16 @@ unsafe fn fx_rebuild_room() {
     }
 }
 
-/// Metres -> clamped integer millimetres (the FX_LED_ROOM storage).
-fn mm_i16(m: f32) -> i16 {
-    // Round half away from zero (no_std: no f32::round); `as` saturates.
-    let v = m * 1000.0;
-    (if v >= 0.0 { v + 0.5 } else { v - 0.5 }) as i16
+/// A map position in the room frame under the current pose (FX_ROOM_M/T).
+#[inline]
+unsafe fn room_of(v: [f32; 3]) -> [f32; 3] {
+    let m = &*addr_of!(FX_ROOM_M);
+    let t = &*addr_of!(FX_ROOM_T);
+    [
+        t[0] + m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        t[1] + m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        t[2] + m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    ]
 }
 
 /// The room pose's change generation (set_fixture_pose), polled after each
@@ -3371,6 +3569,12 @@ pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
     }
 }
 
+/// Rebuild [`FX_LED_TOPO`] from the stored map + topology (in map-index order),
+/// deriving each LED's segment index, normalized arclength and junction flag
+/// from its [`StoredAssociation`]. Cheap to call every frame — it early-returns
+/// via [`FX_TOPO_READY`] unless a map/topology upload invalidated the cache.
+/// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
+/// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
 // Cold (once per map/pose change): out of the per-frame update's hot code.
 #[cold]
 #[inline(never)]
@@ -3383,12 +3587,11 @@ unsafe fn fx_rebuild_topo() {
         let len = (*addr_of!(MAP_META))
             .as_ref()
             .map_or(0, |(_, c)| *c as usize)
-            .min(FX_TOPO_CAP);
+            .min(fx_cap());
         let mut mn = [f32::INFINITY; 2];
         let mut mx = [f32::NEG_INFINITY; 2];
         // Measured LEDs only (interpolated ones lie inside their hull anyway).
-        let pos = &*addr_of!(FX_LED_POS);
-        for p in (0..len).filter(|&i| led_mapped(i)).map(|i| &pos[i]) {
+        for p in (0..len).filter(|&i| led_mapped(i)).map(|i| pos_get(i)) {
             for k in 0..2 {
                 mn[k] = mn[k].min(p[k]);
                 mx[k] = mx[k].max(p[k]);
@@ -3411,7 +3614,7 @@ unsafe fn fx_rebuild_topo() {
     FX_TOPO_READY = true;
     let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
         // No topology stored — clear any stale association entries.
-        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+        for e in topo_store().iter_mut() {
             *e = FxLedTopo::NONE;
         }
         return;
@@ -3513,14 +3716,14 @@ unsafe fn fx_rebuild_topo() {
     // segment_id → map it to the segment INDEX, and derive s/branch/dist.
     // foot/dperp are kept. O(associations × segments), once per upload — and
     // lm_fx_shade's topology reads are then O(1) per frame.
-    let cache = &mut *addr_of_mut!(FX_LED_TOPO);
+    let cache = topo_store();
     let mut max_geo = 0.0f32;
     for e in cache.iter_mut() {
         if e.seg < 0 {
             continue; // no association
         }
         let seg_id = e.seg as u32; // TEMP raw id from the streaming sink
-        let foot = e.foot;
+        let foot = e.s.get(); // TEMP foot from the streaming sink
         let Some(seg_idx) = topo.segments.iter().position(|s| s.id == seg_id) else {
             *e = FxLedTopo::NONE; // dangling association
             continue;
@@ -3546,15 +3749,14 @@ unsafe fn fx_rebuild_topo() {
         if geo > max_geo {
             max_geo = geo;
         }
-        e.seg = seg_idx as i16; // resolve id → index
-        e.s = s_norm;
-        e.branch = branch;
-        e.dist = geo;
+        e.seg = seg_idx as i16 | if branch { TOPO_BRANCH } else { 0 }; // resolve id → index
+        e.s = F24::new(s_norm);
+        e.dist = F24::new(geo);
     }
     // Normalize the raw geodesic distances to 0..1 (unassociated LEDs stay 0).
     if max_geo > 1e-6 {
         for e in cache.iter_mut() {
-            e.dist /= max_geo;
+            e.dist = F24::new(e.dist.get() / max_geo);
         }
     }
 
@@ -3641,10 +3843,31 @@ enum FxLoadError {
     Bad,
 }
 
-/// Arena bytes a program's buffers need at the LED cap (its worst case),
-/// rounded up to a word.
+/// LED-arity buffers are sized for at least this many LEDs: the LED cap before
+/// it grew to 1024 per channel, so an effect that loaded then still loads (and
+/// reserves the same deck-B slice) whatever the strip.
+const FX_ARENA_LED_FLOOR: usize = 512;
+
+/// LED count an effect's LED-arity buffers are sized for: the stored map / the
+/// configured strip (whichever is longer), at least [`FX_ARENA_LED_FLOOR`], at
+/// most the cap. Sizing them for the 2048-LED cap would make one f32 vec3 trail
+/// fill the whole 24 KB arena; sizing them for the strip that's there keeps
+/// short-strip effects loading exactly as before. A map that later outgrows a
+/// deck-B slice only degrades that deck (the VM bounds every buffer access:
+/// reads past the slice give 0, writes are dropped) — deck A always owns
+/// everything deck B doesn't reserve.
+unsafe fn fx_arena_leds() -> usize {
+    let map = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize);
+    let strip = (*addr_of!(PLAYER)).as_ref().map_or(0, |p| {
+        (0..ledmapper_player::HW_CHANNELS).map(|c| p.led_count(c).unwrap_or(0) as usize).sum()
+    });
+    map.max(strip).clamp(FX_ARENA_LED_FLOOR.min(FX_TOPO_CAP), FX_TOPO_CAP)
+}
+
+/// Arena bytes a program's buffers need for [`fx_arena_leds`] LEDs, rounded up
+/// to a word.
 fn arena_need(prog: &Program) -> usize {
-    (prog.arena_bytes(FX_TOPO_CAP) + 3) & !3
+    (prog.arena_bytes(unsafe { fx_arena_leds() }) + 3) & !3
 }
 
 /// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing).
@@ -4148,7 +4371,7 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
-    let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
+    let t = topo_store().get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
     // The uv projection is per-LED soft-float; skip it entirely unless the effect
     // reads led.uv (FUG-122).
     let uv = if (*p).uses_uv {
@@ -4166,16 +4389,23 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
     let led: &mut FxLed = (*p).shade_led.get_or_insert_with(FxLed::default);
     led.pos = [x, y, z];
     led.idx = idx;
-    led.seg = t.seg as i32;
-    led.s = t.s;
-    led.branch = t.branch;
-    led.dist = t.dist;
+    if t.seg < 0 {
+        // No association (or no topology stored): skip the decode.
+        led.seg = -1;
+        led.s = 0.0;
+        led.branch = false;
+        led.dist = 0.0;
+    } else {
+        led.seg = (t.seg & !TOPO_BRANCH) as i32;
+        led.s = t.s.get();
+        led.branch = t.seg & TOPO_BRANCH != 0;
+        led.dist = t.dist.get();
+    }
     led.uv = uv;
     if (*p).uses_room && FX_ROOM_POSED {
-        let mm = (*addr_of!(FX_LED_ROOM)).get(idx as usize).copied().unwrap_or([0; 3]);
-        led.room = [mm[0] as f32 * 0.001, mm[1] as f32 * 0.001, mm[2] as f32 * 0.001];
-        // mm -> Q16.16 metres in integer math: v * 65536 / 1000.
-        led.room_fix = [mm_q16(mm[0]), mm_q16(mm[1]), mm_q16(mm[2])];
+        let o = room_of([x, y, z]);
+        led.room = o;
+        led.room_fix = [q16_16(o[0]), q16_16(o[1]), q16_16(o[2])];
     }
     // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the effect
     // actually reads them (FUG-122), so an all-float shader pays zero per-LED
@@ -4183,8 +4413,8 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
     if (*p).uses_ctxfix {
         led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
         led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
-        led.s_fix = q16_16(t.s);
-        led.dist_fix = q16_16(t.dist);
+        led.s_fix = q16_16(led.s);
+        led.dist_fix = q16_16(led.dist);
     }
     let (c, outcome) = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
@@ -4568,15 +4798,24 @@ pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
 /// notify-the-app request for loop(). Restarts the search first when what renders
 /// changed since the last frame.
 ///
+/// The strip comes with it: `wire_leds` LEDs clocked out one after another (the
+/// longest channel — both go out in parallel), whose WS2812 wire time
+/// (`ledmapper_fps::wire_frame_us`) caps the ladder at what the wire can carry,
+/// and the `leds` the frame shaded set the abort floor
+/// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect runs slower
+/// instead of being parked).
+///
 /// # Safety
 /// Render task, under the player_mutex (single-threaded player state).
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32) -> u32 {
+pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32) -> u32 {
     let c = &mut *addr_of_mut!(FPS);
     if FPS_SEEN_GEN != FPS_GEN {
         FPS_SEEN_GEN = FPS_GEN;
         c.reset();
     }
+    c.set_wire_us(ledmapper_fps::wire_frame_us(wire_leds));
+    c.set_leds(leds);
     let d = c.on_frame(cost_us);
     if d.abort {
         c.take_abort();

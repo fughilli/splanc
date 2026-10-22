@@ -242,7 +242,8 @@
       "properties": {
         "type": { "const": "led_count_state" },
         "ledCount": { "type": "integer", "minimum": 0 },
-        "channel": { "type": "integer", "minimum": 0 }
+        "channel": { "type": "integer", "minimum": 0 },
+        "rebootRequired": { "type": "boolean" }
       }
     },
     "PlaybackState": {
