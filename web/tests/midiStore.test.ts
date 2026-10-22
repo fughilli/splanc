@@ -131,3 +131,38 @@ test("show binding: a control moves to its newest action (one control, one actio
   assert.equal(midiStore.showBindingFor("list.next"), undefined);
   assert.equal(controlKey(midiStore.showBindingFor("list.prev")!), controlKey(FADER));
 });
+
+test("show binding: an encoder's relative mode is stored with the mapping", () => {
+  midiStore.setShowBinding("deckA.browse", KNOB, "binOffset");
+  assert.equal(midiStore.showBindingMode("deckA.browse"), "binOffset");
+  // The stored binding still keys like the bare control.
+  assert.equal(controlKey(midiStore.showBindingFor("deckA.browse")!), controlKey(KNOB));
+  midiStore.setShowBindingMode("deckA.browse", "twos");
+  assert.equal(midiStore.showBindingMode("deckA.browse"), "twos");
+  midiStore.setShowBindingMode("deckA.browse", "absolute");
+  assert.equal(midiStore.showBindingMode("deckA.browse"), "absolute");
+  assert.equal(midiStore.showBindingFor("deckA.browse")!.mode, undefined, "absolute is the default, not stored");
+  // Unbound action / unknown stored value fall back to absolute.
+  assert.equal(midiStore.showBindingMode("deckB.browse"), "absolute");
+  mem.setItem(
+    "ledmapper.midi",
+    JSON.stringify({ semantics: [], bindings: {}, showBindings: { "deckB.browse": { ...KNOB, mode: "weird" } } }),
+  );
+  assert.equal(midiStore.showBindingMode("deckB.browse"), "absolute");
+  // Re-learning a control without a mode resets it to absolute.
+  midiStore.setShowBinding("deckB.browse", KNOB, "signMag");
+  midiStore.setShowBinding("deckB.browse", KNOB);
+  assert.equal(midiStore.showBindingMode("deckB.browse"), "absolute");
+});
+
+test("show options: load behaviour (cue/take) + take fade, with defaults", () => {
+  assert.deepEqual(midiStore.showOptions(), { loadBehavior: "cue", takeSeconds: 1.5 });
+  midiStore.setShowOptions({ loadBehavior: "take" });
+  assert.deepEqual(midiStore.showOptions(), { loadBehavior: "take", takeSeconds: 1.5 });
+  midiStore.setShowOptions({ takeSeconds: 4 });
+  assert.equal(midiStore.showOptions().takeSeconds, 4);
+  assert.equal(midiStore.showOptions().loadBehavior, "take", "patches merge");
+  // Old configs (no showOptions) and junk values read as defaults.
+  mem.setItem("ledmapper.midi", JSON.stringify({ showOptions: { loadBehavior: "x", takeSeconds: -3 } }));
+  assert.deepEqual(midiStore.showOptions(), { loadBehavior: "cue", takeSeconds: 1.5 });
+});

@@ -12,6 +12,13 @@
  *   - the crossfader pushes set_crossfade(position, mode),
  *   - keypoint pads / the morph fader push blend_keypoints(deck, weights),
  *   - play/pause is set_effect("", deck) / set_effect(id, deck).
+ *
+ * The effects list is its own scroll container (it never scrolls the page) and
+ * a keyboard listbox. A per-deck MIDI encoder moves its highlight — endless in
+ * a relative encoder mode (midi/encoder.ts), so it scrolls indefinitely — and
+ * the encoder's push loads the highlighted effect onto that deck: cue, or take
+ * (load + crossfade to it). midi/twister.ts can set a Midi Fighter Twister up
+ * for this over SysEx (twisterSetup.ts).
  */
 
 import { Button, IconButton, Sheet, EmptyState, toast, icon } from "../kit";
@@ -19,7 +26,22 @@ import { effectStore, type StoredEffect } from "../../store/effectStore";
 import { deviceEffects } from "../../store/deviceEffects";
 import { deviceStore } from "../../store/deviceStore";
 import { midiStore } from "../../store/midiStore";
-import { midiManager, midiSupported, controlLabel, type MidiControlEvent } from "../../midi/manager";
+import {
+  midiManager,
+  midiSupported,
+  controlKey,
+  controlLabel,
+  type MidiControlEvent,
+} from "../../midi/manager";
+import {
+  ENCODER_MODES,
+  EncoderTracker,
+  detectEncoderMode,
+  isEncoderMode,
+  type EncoderMode,
+} from "../../midi/encoder";
+import { listKeyAction, scrollTopToReveal, stepIndex } from "../../midi/listNav";
+import { openTwisterSetup } from "./twisterSetup";
 import {
   SHOW_ACTIONS,
   resolveShowAction,
@@ -52,6 +74,9 @@ export function ShowModeScreen(_router: Router): Screen {
   let focusIndex = 0;
   let crossfade = 0; // 0..1 (0 = all A, 1 = all B)
   let mode = 0; // 0 = linear RGB, 1 = linear HSV
+  // The deck whose encoder last moved the highlight (tints it; Enter loads there).
+  let browseDeck: 0 | 1 = 0;
+  const encoders = new EncoderTracker();
 
   // -- device push helpers --------------------------------------------------
 
@@ -72,16 +97,16 @@ export function ShowModeScreen(_router: Router): Screen {
     KeypointStrip({ deck: d as 0 | 1, client: () => appState.client }),
   ) as [ReturnType<typeof KeypointStrip>, ReturnType<typeof KeypointStrip>];
 
-  async function cueDeck(deck: 0 | 1, e: StoredEffect): Promise<void> {
+  async function cueDeck(deck: 0 | 1, e: StoredEffect): Promise<boolean> {
     const c = appState.client;
     if (!c?.isConnected) {
       toast("Connect a device first", { error: true });
-      return;
+      return false;
     }
     const r = await compiler.compile(e.source);
     if (!r.ok) {
       toast(`"${e.name}" has compile errors`, { error: true });
-      return;
+      return false;
     }
     try {
       await c.submitEffect(e.id, r.bytecode, true, deck);
@@ -90,9 +115,42 @@ export function ShowModeScreen(_router: Router): Screen {
       toast(`Cued "${e.name}" → Deck ${deck === 0 ? "A" : "B"}`);
       render();
       void strips[deck].refresh(); // this effect's keypoints, off the device
+      return true;
     } catch (err) {
       toast(`Cue failed: ${String(err)}`, { error: true });
+      return false;
     }
+  }
+
+  // Crossfade animation for "take" (load + fade to the deck).
+  let fadeRaf = 0;
+  function fadeTo(target: number, seconds: number): void {
+    cancelAnimationFrame(fadeRaf);
+    const from = crossfade;
+    if (seconds <= 0 || from === target) {
+      setCrossfade(target);
+      return;
+    }
+    const t0 = performance.now();
+    const tick = (now: number): void => {
+      const t = Math.min(1, (now - t0) / (seconds * 1000));
+      // Smoothstep: eases in/out so the cut isn't felt at either end.
+      const k = t * t * (3 - 2 * t);
+      setCrossfade(from + (target - from) * k);
+      if (t < 1) fadeRaf = requestAnimationFrame(tick);
+    };
+    fadeRaf = requestAnimationFrame(tick);
+  }
+
+  /** Load the highlighted effect onto `deck`: cue it, or (take) also
+   * crossfade to that deck. */
+  async function loadHighlighted(deck: 0 | 1): Promise<void> {
+    const e = library[focusIndex];
+    if (!e) return;
+    const ok = await cueDeck(deck, e);
+    if (!ok) return;
+    const o = midiStore.showOptions();
+    if (o.loadBehavior === "take") fadeTo(deck === 0 ? 0 : 1, o.takeSeconds);
   }
 
   function playPauseDeck(deck: 0 | 1): void {
@@ -107,7 +165,8 @@ export function ShowModeScreen(_router: Router): Screen {
     render();
   }
 
-  function setCrossfade(v: number): void {
+  function setCrossfade(v: number, fromUser = false): void {
+    if (fromUser) cancelAnimationFrame(fadeRaf);
     crossfade = Math.min(1, Math.max(0, v));
     fader.value = String(Math.round(crossfade * 100));
     xfReadout.textContent = crossfadeLabel();
@@ -125,11 +184,34 @@ export function ShowModeScreen(_router: Router): Screen {
     return pct === 0 ? "A" : pct === 100 ? "B" : `${100 - pct} / ${pct}`;
   }
 
-  function moveFocus(delta: number): void {
+  /** Move the highlight by `delta` rows (wrapping for the prev/next buttons,
+   * stopping at the ends for encoders and keys). */
+  function moveFocus(delta: number, wrap = true): void {
+    if (library.length === 0 || delta === 0) return;
+    setFocus(stepIndex(focusIndex, delta, library.length, wrap));
+  }
+
+  /** Highlight row `i` and scroll ONLY the list (never the page) to show it. */
+  function setFocus(i: number): void {
     if (library.length === 0) return;
-    focusIndex = (focusIndex + delta + library.length) % library.length;
-    renderList();
-    listEl.children[focusIndex]?.scrollIntoView({ block: "nearest" });
+    const prev = rowEls[focusIndex];
+    focusIndex = Math.min(Math.max(0, i), library.length - 1);
+    const row = rowEls[focusIndex];
+    if (prev && prev !== row) {
+      prev.classList.remove("show-row--focus");
+      prev.setAttribute("aria-selected", "false");
+    }
+    if (!row) return;
+    row.classList.add("show-row--focus");
+    row.setAttribute("aria-selected", "true");
+    listEl.setAttribute("aria-activedescendant", row.id);
+    listEl.dataset["browse"] = String(browseDeck);
+    const top = scrollTopToReveal(
+      { scrollTop: listEl.scrollTop, height: listEl.clientHeight },
+      { top: row.offsetTop - listEl.offsetTop, height: row.offsetHeight },
+      Math.round(row.offsetHeight / 2),
+    );
+    if (top !== null) listEl.scrollTop = top;
   }
 
   // -- MIDI dispatch --------------------------------------------------------
@@ -141,7 +223,15 @@ export function ShowModeScreen(_router: Router): Screen {
     const resolved = resolveShowAction(ev, midiStore.showBindings());
     if (!resolved) return;
     const { action, value } = resolved;
-    if (showActionKind(action) === "value") {
+    const kind = showActionKind(action);
+    if (kind === "encoder") {
+      const steps = encoders.delta(action, ev.raw, midiStore.showBindingMode(action));
+      if (action === "deckA.browse") browseDeck = 0;
+      else if (action === "deckB.browse") browseDeck = 1;
+      moveFocus(steps, false);
+      return;
+    }
+    if (kind === "value") {
       if (action === "crossfade") setCrossfade(value);
       else if (action === "deckA.morph") strips[0].setMorph(value);
       else if (action === "deckB.morph") strips[1].setMorph(value);
@@ -166,6 +256,14 @@ export function ShowModeScreen(_router: Router): Screen {
         break;
       case "list.next":
         moveFocus(1);
+        break;
+      case "deckA.load":
+        browseDeck = 0;
+        void loadHighlighted(0);
+        break;
+      case "deckB.load":
+        browseDeck = 1;
+        void loadHighlighted(1);
         break;
       case "deckA.cue":
         if (library[focusIndex]) void cueDeck(0, library[focusIndex]!);
@@ -264,7 +362,7 @@ export function ShowModeScreen(_router: Router): Screen {
   fader.value = "0";
   fader.className = "show-xfader-input";
   fader.setAttribute("aria-label", "Crossfade A to B");
-  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100));
+  fader.addEventListener("input", () => setCrossfade(Number(fader.value) / 100, true));
   const modeBtn = Button({ label: "RGB", variant: "quiet", onClick: toggleMode });
   modeBtn.classList.add("show-mode-btn");
   modeBtn.title = "Blend colour space: linear RGB vs linear HSV";
@@ -275,12 +373,35 @@ export function ShowModeScreen(_router: Router): Screen {
   listWrap.className = "show-list-wrap";
   const listHead = document.createElement("div");
   listHead.className = "show-list-head";
-  listHead.textContent = "Effects";
+  listHead.id = "show-list-head";
+  const listTitle = document.createElement("span");
+  listTitle.textContent = "Effects";
+  const listCount = document.createElement("span");
+  listCount.className = "show-list-count metric";
+  listHead.append(listTitle, listCount);
   const listEl = document.createElement("div");
   listEl.className = "show-list";
+  // A listbox: focusable, arrow keys move the highlight; aria-activedescendant
+  // keeps keyboard focus on the list itself while the highlight moves.
+  listEl.tabIndex = 0;
+  listEl.setAttribute("role", "listbox");
+  listEl.setAttribute("aria-labelledby", "show-list-head");
+  listEl.addEventListener("keydown", (ev) => {
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    const rowH = rowEls[0]?.offsetHeight || 40;
+    const a = listKeyAction(ev.key, library.length, listEl.clientHeight / rowH - 1);
+    if (!a) return;
+    ev.preventDefault();
+    if (a.kind === "move") moveFocus(a.steps, false);
+    else if (a.kind === "jump") setFocus(a.index);
+    else void loadHighlighted(a.deck === "browse" ? browseDeck : a.deck);
+  });
+  let rowEls: HTMLElement[] = [];
 
   function renderList(): void {
     listEl.replaceChildren();
+    rowEls = [];
+    listCount.textContent = library.length ? String(library.length) : "";
     if (library.length === 0) {
       listEl.append(EmptyState({ icon: "sparkles", title: "No effects in your library yet" }));
       return;
@@ -288,6 +409,9 @@ export function ShowModeScreen(_router: Router): Screen {
     library.forEach((e, i) => {
       const r = document.createElement("div");
       r.className = "show-row";
+      r.id = `show-row-${i}`;
+      r.setAttribute("role", "option");
+      r.setAttribute("aria-selected", String(i === focusIndex));
       if (i === focusIndex) r.classList.add("show-row--focus");
       const nm = document.createElement("span");
       nm.className = "show-row-name";
@@ -304,13 +428,16 @@ export function ShowModeScreen(_router: Router): Screen {
         ev.stopPropagation();
         void cueDeck(1, e);
       });
-      r.addEventListener("click", () => {
-        focusIndex = i;
-        renderList();
-      });
+      cueA.tabIndex = -1;
+      cueB.tabIndex = -1;
+      r.addEventListener("click", () => setFocus(i));
       r.append(nm, cueA, cueB);
       listEl.append(r);
+      rowEls.push(r);
     });
+    listEl.dataset["browse"] = String(browseDeck);
+    const row = rowEls[focusIndex];
+    if (row) listEl.setAttribute("aria-activedescendant", row.id);
   }
   listWrap.append(listHead, listEl);
 
@@ -327,30 +454,115 @@ export function ShowModeScreen(_router: Router): Screen {
     // Teardown for the learn listener; runs on EVERY close path (scrim/✕/prog)
     // via the Sheet's onClose hook.
     let unsub: () => void = () => {};
-    const sheet = Sheet("MIDI mapping — Show mode", { onClose: () => unsub() });
+    let learnTimer: ReturnType<typeof setTimeout> | undefined;
+    const sheet = Sheet("MIDI mapping — Show mode", {
+      onClose: () => {
+        unsub();
+        clearTimeout(learnTimer);
+      },
+    });
     const body = sheet.body;
     if (!midiSupported()) {
       const p = document.createElement("p");
       p.className = "sheet-hint";
-      p.textContent = "This browser has no Web MIDI support.";
+      p.textContent =
+        "This browser has no Web MIDI support (iOS/iPadOS Safari has none). Use Chrome or Edge on a computer or Android.";
       body.append(p);
       return;
     }
 
     let listening: string | null = null; // action id awaiting a control wiggle
-    const rows = new Map<string, HTMLElement>();
+    // After an encoder action is learned, keep watching that control for a
+    // moment to guess its encoding from the values it sends.
+    let sampling: { action: string; key: string; raws: number[] } | null = null;
+    const guesses = new Map<string, string>(); // action -> reason shown in the row
 
-    // While the sheet is open, capture the next control for the learning action.
     unsub = midiManager.onControl((ev) => {
+      if (sampling && controlKey(ev.control) === sampling.key) {
+        sampling.raws.push(ev.raw);
+        const g = detectEncoderMode(sampling.raws);
+        if (g) {
+          if (midiStore.showBindingMode(sampling.action) !== g.mode) {
+            midiStore.setShowBindingMode(sampling.action, g.mode);
+          }
+          guesses.set(sampling.action, `Detected: ${g.reason}`);
+          rebuild();
+        }
+        return;
+      }
       if (listening === null) return;
-      midiStore.setShowBinding(listening, ev.control);
+      const action = listening;
+      midiStore.setShowBinding(action, ev.control);
       listening = null;
+      guesses.delete(action);
+      if (showActionKind(action) === "encoder" && ev.control.kind === "cc") {
+        sampling = { action, key: controlKey(ev.control), raws: [ev.raw] };
+        guesses.set(action, "Keep turning slowly, both ways, to detect its mode…");
+        clearTimeout(learnTimer);
+        learnTimer = setTimeout(() => {
+          if (sampling?.action === action && sampling.raws.length < 3) {
+            guesses.set(action, "Couldn't tell its mode — pick it below.");
+          }
+          sampling = null;
+          rebuild();
+        }, 3000);
+      }
       rebuild();
     });
 
     async function ensureEnabled(): Promise<void> {
       if (!midiManager.enabled) await midiManager.enable();
       rebuild();
+    }
+
+    function optionsBlock(): HTMLElement {
+      const box = document.createElement("div");
+      box.className = "show-midi-options";
+      const twister = Button({
+        label: "Set up Midi Fighter Twister",
+        icon: "midi",
+        variant: "quiet",
+        onClick: () => openTwisterSetup({ onDone: rebuild }),
+      });
+      const o = midiStore.showOptions();
+      const lbl = document.createElement("label");
+      lbl.className = "show-midi-opt";
+      const cap = document.createElement("span");
+      cap.textContent = "Encoder push";
+      const sel = document.createElement("select");
+      sel.className = "show-midi-select";
+      for (const [v, t] of [
+        ["cue", "Cue — load onto the deck"],
+        ["take", "Take — load + crossfade to it"],
+      ] as const) {
+        const op = document.createElement("option");
+        op.value = v;
+        op.textContent = t;
+        op.selected = o.loadBehavior === v;
+        sel.append(op);
+      }
+      sel.addEventListener("change", () =>
+        midiStore.setShowOptions({ loadBehavior: sel.value === "take" ? "take" : "cue" }),
+      );
+      lbl.append(cap, sel);
+      const secs = document.createElement("label");
+      secs.className = "show-midi-opt";
+      const cap2 = document.createElement("span");
+      cap2.textContent = "Take fade (s)";
+      const num = document.createElement("input");
+      num.type = "number";
+      num.min = "0";
+      num.max = "30";
+      num.step = "0.1";
+      num.value = String(o.takeSeconds);
+      num.className = "show-midi-num";
+      num.addEventListener("change", () => {
+        const v = Number(num.value);
+        if (Number.isFinite(v) && v >= 0 && v <= 30) midiStore.setShowOptions({ takeSeconds: v });
+      });
+      secs.append(cap2, num);
+      box.append(twister, lbl, secs);
+      return box;
     }
 
     function rebuild(): void {
@@ -366,13 +578,13 @@ export function ShowModeScreen(_router: Router): Screen {
         );
         return;
       }
+      body.append(optionsBlock());
       const hint = document.createElement("p");
       hint.className = "sheet-hint";
       hint.textContent = listening
         ? "Move a control to bind it…"
-        : "Tap an action, then move the knob/button to bind it.";
+        : "Tap an action, then move the knob/button to bind it. Encoders: turn slowly a few clicks so the mode can be detected.";
       body.append(hint);
-      rows.clear();
       for (const a of SHOW_ACTIONS) {
         body.append(actionRow(a));
       }
@@ -382,6 +594,8 @@ export function ShowModeScreen(_router: Router): Screen {
       const row = document.createElement("div");
       row.className = "show-midi-row";
       if (listening === a.id) row.classList.add("show-midi-row--learn");
+      const main = document.createElement("div");
+      main.className = "show-midi-main";
       const label = document.createElement("div");
       label.className = "show-midi-label";
       label.textContent = a.label;
@@ -401,10 +615,45 @@ export function ShowModeScreen(_router: Router): Screen {
       clear.disabled = !bound;
       clear.addEventListener("click", () => {
         midiStore.clearShowBinding(a.id);
+        guesses.delete(a.id);
         rebuild();
       });
-      row.append(label, val, learn, clear);
-      rows.set(a.id, row);
+      main.append(label, val, learn, clear);
+      row.append(main);
+
+      // Encoder actions on a CC: how the control encodes its movement.
+      if (a.kind === "encoder" && bound && bound.kind === "cc") {
+        const sub = document.createElement("div");
+        sub.className = "show-midi-sub";
+        const sel = document.createElement("select");
+        sel.className = "show-midi-select";
+        sel.setAttribute("aria-label", `${a.label} — encoder mode`);
+        const cur = midiStore.showBindingMode(a.id);
+        for (const m of ENCODER_MODES) {
+          const op = document.createElement("option");
+          op.value = m.id;
+          op.textContent = m.label;
+          op.selected = m.id === cur;
+          sel.append(op);
+        }
+        sel.addEventListener("change", () => {
+          const m: EncoderMode = isEncoderMode(sel.value) ? sel.value : "absolute";
+          midiStore.setShowBindingMode(a.id, m);
+          if (sampling?.action === a.id) sampling = null; // manual choice wins
+          guesses.delete(a.id);
+          rebuild();
+        });
+        sub.append(sel);
+        const note = guesses.get(a.id) ??
+          (cur === "absolute" ? "Absolute knobs stop at the ends — a relative mode scrolls endlessly." : "");
+        if (note) {
+          const n = document.createElement("div");
+          n.className = "show-midi-note";
+          n.textContent = note;
+          sub.append(n);
+        }
+        row.append(sub);
+      }
       return row;
     }
 
@@ -420,6 +669,7 @@ export function ShowModeScreen(_router: Router): Screen {
     library = await effectStore.list({ sort: "updated" });
     if (focusIndex >= library.length) focusIndex = 0;
     renderList();
+    setFocus(focusIndex);
   }
 
   return {
@@ -455,6 +705,7 @@ export function ShowModeScreen(_router: Router): Screen {
       midiUnsub = null;
       stateUnsub?.();
       stateUnsub = null;
+      cancelAnimationFrame(fadeRaf);
       compiler.dispose();
     },
   };

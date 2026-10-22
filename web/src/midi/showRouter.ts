@@ -10,8 +10,9 @@ import { controlKey } from "./manager";
 
 /** The fixed set of MIDI-mappable Show-Mode actions. `value` actions consume
  * the control's 0..1 position (a fader); `trigger` actions fire on a button
- * press (rising edge). */
-export type ShowActionKind = "value" | "trigger";
+ * press (rising edge); `encoder` actions move by the control's delta (an
+ * endless encoder in a relative mode, or the change of an absolute knob). */
+export type ShowActionKind = "value" | "trigger" | "encoder";
 
 export interface ShowAction {
   id: string;
@@ -26,6 +27,11 @@ export const SHOW_ACTIONS: readonly ShowAction[] = [
   { id: "deckB.playPause", label: "Deck B play / pause", kind: "trigger" },
   { id: "list.prev", label: "Effect list — previous", kind: "trigger" },
   { id: "list.next", label: "Effect list — next", kind: "trigger" },
+  { id: "list.scroll", label: "Effect list — scroll (encoder)", kind: "encoder" },
+  { id: "deckA.browse", label: "Deck A browse (encoder)", kind: "encoder" },
+  { id: "deckA.load", label: "Deck A load highlighted (encoder push)", kind: "trigger" },
+  { id: "deckB.browse", label: "Deck B browse (encoder)", kind: "encoder" },
+  { id: "deckB.load", label: "Deck B load highlighted (encoder push)", kind: "trigger" },
   { id: "deckA.cue", label: "Cue selection → Deck A", kind: "trigger" },
   { id: "deckB.cue", label: "Cue selection → Deck B", kind: "trigger" },
   // Uniform keypoints (docs/design/uniform-keypoints.md): morph between two
