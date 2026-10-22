@@ -274,14 +274,20 @@ async def _load_device(sock, args, fxb: bytes) -> None:
     board)."""
     from server import proto_wire
 
-    # (1) A full map + strip length, so the effect renders over the whole strip.
-    await _submit_map_sharded(sock, synth_output_map(args.led_count, "__fug133"))
-    # Channel 0 first, the rest on channel 1 (each channel holds up to
-    # PER_CHANNEL_CAP; both then clock out in parallel).
+    # (1) The strip length first — channel 0, then the rest on channel 1 (each
+    # holds up to PER_CHANNEL_CAP; both clock out in parallel). The per-LED
+    # buffers are sized at boot for the persisted counts, so outgrowing them
+    # persists + reboots the device: reconnect (the retry loop) and go on.
+    reboot = False
     for ch, n in enumerate(channel_split(args.led_count)):
-        await _rpc(
+        st = await _rpc(
             sock, {"type": "set_led_count", "led_count": n, "channel": ch}, "led_count_state"
         )
+        reboot |= bool(st.get("rebootRequired"))
+    if reboot:
+        raise _Resizing()
+    # ...then a full map, so the effect renders over the whole strip.
+    await _submit_map_sharded(sock, synth_output_map(args.led_count, "__fug133"))
 
     # (2) The texture-sampling effect, activated.
     await _rpc(
@@ -324,6 +330,10 @@ async def _load_device(sock, args, fxb: bytes) -> None:
     )
 
 
+class _Resizing(Exception):
+    """The device is restarting to resize its LED buffers for the new counts."""
+
+
 async def _load_with_retry(ws_url: str, insecure: bool, args, fxb: bytes, settle_s: float) -> None:
     """Load the device, retrying the whole setup on a fresh connection if a
     freshly-provisioned board drops the socket mid-setup (a `1001 going away` as it
@@ -332,12 +342,22 @@ async def _load_with_retry(ws_url: str, insecure: bool, args, fxb: bytes, settle
     import websockets
 
     last: Exception | None = None
-    for attempt in range(1, 4):
+    attempt = 0
+    resized = False
+    while attempt < 3:
+        attempt += 1
         sock, _ = await _open_ws(ws_url, insecure, time.monotonic() + settle_s)
         try:
             await _load_device(sock, args, fxb)
             await sock.close()
             return
+        except _Resizing:
+            if resized:
+                raise SystemExit("FAIL: the device asked to resize its LED buffers twice")
+            resized = True
+            attempt -= 1  # not a failure: the planned resize reboot
+            _log("[load] device restarting to resize its LED buffers; reconnecting…")
+            await asyncio.sleep(8.0)
         except (websockets.exceptions.ConnectionClosed, OSError, asyncio.TimeoutError) as e:
             last = e
             _log(f"[load] socket dropped ({type(e).__name__}); attempt {attempt}/3, retrying…")

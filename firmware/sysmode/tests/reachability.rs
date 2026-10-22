@@ -6,7 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use ledmapper_sysmode::{
-    components, cost, heap_bytes, is_quiescent, live_bytes, step, Activity, Ble, Event, SysMode,
+    components, cost, heap_bytes, is_quiescent, live_bytes, live_bytes_at, step, Activity, Ble, Event,
+    SysMode,
     Wifi,
 };
 
@@ -193,10 +194,40 @@ fn live_set_fits_the_budget() {
 // +4,096 B: the topology arena ARENA_MEM grew 8 -> 12 KB (exact-size decode, #291).
 // fx-keypoints: deck B + the video/deck-B aux union (16 more states) and the
 // keypoint statics (+6,594 B in the worst live set).
-// +44,264 B: 1024 LEDs per channel (2048 total, led_caps.bzl): the map store
-// 31,776 -> 51,456 (FX_LED_TOPO packed 20 -> 10 B/LED, FX_LED_POS 12 -> 9 B/LED,
-// FX_LED_ROOM dropped) and the LED frame (render + PARLIO buffers, now a modeled
-// component) 6,152 -> 24,584. Worst-state headroom 56,540 -> 18,276 B; on HITL
-// the loaded board's minimum free heap is ~23-29 KB (docs/design/ram-budget.md).
+// Per-LED buffers sized at boot for the configured strip (pinned at the default
+// 512 LEDs): the map store 31,776 -> 22,096 (FX_LED_TOPO packed 20 -> 10 B/LED,
+// FX_LED_POS 12 -> 9 B/LED, FX_LED_ROOM dropped) and the LED frame (render +
+// PARLIO buffers, now a modeled component) 6,152 -> 6,184: worst 164,975 ->
+// 161,479 B (headroom 65,974 B).
 const PINNED_STATES: usize = 73;
-const PINNED_WORST: usize = 209_239;
+const PINNED_WORST: usize = 161_479;
+
+/// The largest config (1024 + 1024 LEDs): the boot-sized buffers grow with it
+/// and the worst state must still fit the budget; the headroom left there is
+/// the max-config cost (docs/design/ram-budget.md "LED capacity").
+/// 209,287 B: 18,166 B of modeled headroom in the worst state (BLE central +
+/// wss + video + map).
+const PINNED_WORST_AT_MAX: usize = 209_287;
+
+#[test]
+fn the_max_led_config_still_fits_the_budget() {
+    let seen = explore();
+    let (s, bytes) = worst(&seen, |st| live_bytes_at(st, cost::MAX_LEDS));
+    println!(
+        "worst live set at {} LEDs: {bytes} B ({} B headroom)\n  {}",
+        cost::MAX_LEDS,
+        cost::BUDGET as i64 - bytes as i64,
+        describe(s)
+    );
+    assert!(
+        bytes <= cost::BUDGET,
+        "{} LEDs need {bytes} B > budget {}",
+        cost::MAX_LEDS,
+        cost::BUDGET
+    );
+    assert_eq!(bytes, PINNED_WORST_AT_MAX);
+    // Each LED of configuration costs ~31 B of the budget, nothing more.
+    let per_led = (live_bytes_at(s, cost::MAX_LEDS) - live_bytes_at(s, cost::DEFAULT_LEDS))
+        / (cost::MAX_LEDS - cost::DEFAULT_LEDS);
+    assert_eq!(per_led, 31);
+}

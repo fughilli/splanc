@@ -550,6 +550,9 @@ export interface LedCountStateMessage {
   type: "led_count_state";
   ledCount: number;
   channel: number;
+  /** The count outgrew the LED buffers this boot allocated: persisted, and
+   * the player restarts in a moment to resize them. */
+  rebootRequired?: boolean;
 }
 
 /** Reply to set_playback / get_playback: the effective configuration (the

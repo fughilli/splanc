@@ -145,6 +145,9 @@ rust_library(
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
+    # The host tests never allocate the per-LED store: lm_player_init binds a
+    # static one for the whole cap (the firmware sizes its own at boot).
+    crate_features = ["host_store"],
     crate_name = "ledmapper_player_ffi",
     crate_root = "ffi.rs",
     edition = "2021",

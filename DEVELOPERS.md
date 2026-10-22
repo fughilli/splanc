@@ -348,11 +348,13 @@ DUT onto the rig's AP, then exercises its slice over wss:
 - **`video_stream`** — streams a scrolling pattern and asserts a sustained ≥10 FPS.
 - **`loaded_tls_netstack`** — fresh TLS handshakes on a heap loaded with a 2048-LED
   map (1024 per channel) + texture effect (the FUG-71 failure mode).
-- **`led_capacity`** — both channels at the per-channel cap (`--per-channel 1024
---expect-refusal` checks 1025 is refused), a 2 × cap map + topology round trip
-  through `get_stored_map`, an animated effect's `fps_state` (wire ceiling, floor)
-  and PerfReport heap, then fresh handshakes on that heap. `--improv` provisions
-  over BLE. Pair it with `led_timing --leds 2048 --split 1024` for the per-channel
+- **`led_capacity`** — `--per-channel N` on both channels (`--expect-refusal`
+  checks one past the board's per-channel cap is refused; growing past the boot's
+  LED buffers must answer `reboot_required` and come back resized), a 2 × N map +
+  topology round trip through `get_stored_map`, an animated effect's `fps_state`
+  (wire ceiling, floor) and PerfReport heap, then fresh handshakes on that heap.
+  `--improv` provisions over BLE. Run it at 256 and 1024 (the default and the max
+  config). Pair it with `led_timing --leds 2048 --split 1024` for the per-channel
   wire timing on the analyzer.
 - **`ram_audit`** — the same worst case under a non-halting JTAG heap watcher
   (`ram_watch.tcl`); dumps SRAM at the minimum watermark and reads the heap

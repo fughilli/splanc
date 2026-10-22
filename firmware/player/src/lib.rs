@@ -382,6 +382,12 @@ pub struct Player {
     /// LEDs ONE channel can carry (0 = only the total bounds a channel), set at
     /// boot via [`Player::set_channel_cap`].
     out_max_per_channel: u32,
+    /// LEDs (summed) this boot's per-LED buffers hold (0 = unbounded / not
+    /// reported): a count change past it is accepted, persisted, and asks the
+    /// firmware to reboot into the bigger size ([`Player::take_reboot_request`]).
+    led_capacity: u32,
+    /// Latched by a count change past `led_capacity`; drained by the firmware.
+    reboot_request: bool,
 }
 
 impl Player {
@@ -423,6 +429,8 @@ impl Player {
             out_channels: 0,
             out_max_leds: 0,
             out_max_per_channel: 0,
+            led_capacity: 0,
+            reboot_request: false,
         }
     }
 
@@ -857,10 +865,18 @@ impl Player {
             }
         }
         self.apply_led_count(channel as usize, led_count as u32);
-        let state = pb::LedCountState {
+        let mut state = pb::LedCountState {
             r#led_count: led_count,
             r#channel,
+            ..Default::default()
         };
+        if (channel as usize) < HW_CHANNELS && self.outgrew_capacity() {
+            // Persist the new counts (the firmware polls the gen) so the reboot
+            // comes up sized for them.
+            self.hw_config_commit = true;
+            self.hw_config_gen = self.hw_config_gen.wrapping_add(1);
+            state.r#reboot_required = true;
+        }
         reply(SMsg::LedCountState(state))
     }
 
@@ -911,8 +927,18 @@ impl Player {
             self.apply_led_count(ch, n as u32);
         }
         self.hw_config_commit = m.commit().unwrap_or(true);
+        // Outgrowing this boot's LED buffers persists (even a preview) so the
+        // reboot that resizes them comes up with the new counts.
+        let reboot = m.led_count().is_some() && self.outgrew_capacity();
+        if reboot {
+            self.hw_config_commit = true;
+        }
         self.hw_config_gen = self.hw_config_gen.wrapping_add(1);
-        self.hardware_config_state()
+        let mut st = self.hardware_config_state();
+        if let Some(SMsg::HardwareConfigState(s)) = st.r#msg.as_mut() {
+            s.r#reboot_required = reboot;
+        }
+        st
     }
 
     /// Drain the rendered-frame timing log into a FrameTiming reply. Reports
@@ -1075,6 +1101,7 @@ impl Player {
             };
             let _ = state.r#channels.push(hc);
         }
+        state.r#led_capacity = self.led_capacity;
         // `board` is NOT set here: encode_reply splices it in from the encoded
         // descriptor, so the struct never holds the catalog.
         reply(SMsg::HardwareConfigState(state))
@@ -1353,17 +1380,53 @@ impl Player {
         if self.out_max_per_channel > 0 && n > self.out_max_per_channel {
             return Some("led_count exceeds the board's max_leds_per_channel");
         }
-        if self.out_max_leds > 0 {
-            // The channels share one render buffer: the SUM must fit.
-            let others: u32 = (0..HW_CHANNELS)
-                .filter(|&c| c != ch)
-                .map(|c| self.led_counts[c].unwrap_or(0))
-                .sum();
-            if others.saturating_add(n) > self.out_max_leds {
-                return Some("led_count exceeds the board's max_leds");
-            }
+        if self.out_max_leds > 0 && self.total_with(ch, n) > self.out_max_leds {
+            // The channels share one set of per-LED buffers: the SUM must fit
+            // what this board's heap can buffer (board.max_leds).
+            return Some(
+                "led_count exceeds the board's max_leds (the LED buffers this board's heap can hold)",
+            );
         }
         None
+    }
+
+    /// The hardware channels' LED total with channel `ch` set to `n`.
+    fn total_with(&self, ch: usize, n: u32) -> u32 {
+        (0..HW_CHANNELS)
+            .map(|c| if c == ch { n } else { self.led_counts[c].unwrap_or(0) })
+            .fold(0u32, |a, b| a.saturating_add(b))
+    }
+
+    /// Record how many LEDs (summed across channels) this boot's per-LED
+    /// buffers hold — the firmware sizes them once at boot from the persisted
+    /// counts. A later count change that needs more is accepted (within
+    /// board.max_leds), forced to persist, flagged `reboot_required` in its
+    /// reply, and latched for [`take_reboot_request`](Self::take_reboot_request).
+    /// Reported as `hardware_config_state.led_capacity`. Call once at boot.
+    pub fn set_led_capacity(&mut self, leds: u32) {
+        self.led_capacity = leds;
+    }
+
+    /// LEDs this boot's per-LED buffers hold (0 = not reported).
+    pub fn led_capacity(&self) -> u32 {
+        self.led_capacity
+    }
+
+    /// Read + clear the reboot latch: a count change outgrew this boot's LED
+    /// buffers; the firmware restarts (after the reply goes out) to resize.
+    pub fn take_reboot_request(&mut self) -> bool {
+        core::mem::take(&mut self.reboot_request)
+    }
+
+    /// After a count change: true (and the config forced to persist, the latch
+    /// set) when the hardware total outgrew this boot's buffers.
+    fn outgrew_capacity(&mut self) -> bool {
+        let total = self.total_with(0, self.led_counts[0].unwrap_or(0));
+        if self.led_capacity == 0 || total <= self.led_capacity {
+            return false;
+        }
+        self.reboot_request = true;
+        true
     }
 
     /// Seed channel `channel`'s LED count at boot from what the firmware

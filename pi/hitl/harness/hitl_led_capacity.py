@@ -115,12 +115,35 @@ async def _drive(ws_url: str, args) -> dict:
 
         # (1) per-channel counts, and the refusal one past the cap.
         if args.expect_refusal:
-            over = await _hw(sock, 0, per + 1)
-            check(over.get("type") == "error", f"channel 0 = {per + 1} refused ({over})")
+            # One past the board's per-channel cap (not --per-channel) is refused.
+            cap = int(board.get("maxLedsPerChannel") or 0)
+            over = await _hw(sock, 0, cap + 1)
+            check(
+                over.get("type") == "error",
+                f"channel 0 = {cap + 1} refused ({over.get('message') or over.get('type')})",
+            )
+        before = int(hw.get("ledCapacity", 0) or 0)
+        reboot = False
         for ch in (0, 1):
             st = await _hw(sock, ch, per)
             check(st.get("type") == "hardware_config_state", f"channel {ch} = {per} accepted")
+            reboot |= bool(st.get("rebootRequired"))
+        # The per-LED buffers are sized at boot for the persisted counts: growing
+        # past this boot's capacity persists and reboots into the new size.
+        want_reboot = 2 * per > before > 0
+        check(
+            reboot == want_reboot,
+            f"reboot_required={reboot} (capacity {before} -> {2 * per} LEDs)",
+        )
+        if reboot:
+            await sock.close()
+            _log("[cap] device restarting to resize its LED buffers; reconnecting…")
+            await asyncio.sleep(args.reboot_wait_s)
+            sock = await _open_ws(ws_url, True, time.monotonic() + hitl_ws.CONNECT_SETTLE)
         hw = await _rpc(sock, {"type": "get_hardware_config"}, "hardware_config_state")
+        out["led_capacity"] = {"before": before, "after": hw.get("ledCapacity")}
+        _log(f"RESULT led_capacity {out['led_capacity']}")
+        check(int(hw.get("ledCapacity", 0) or 0) >= 2 * per, "the buffers hold both channels")
         counts = {
             int(c.get("channel", 0)): int(c.get("ledCount", 0)) for c in hw.get("channels", [])
         }
@@ -218,6 +241,12 @@ def run(args) -> int:
             )
             if fp.returncode != 0:
                 raise SystemExit(f"[cap] flash failed rc={fp.returncode}")
+            boot_log = fp.stdout or ""
+            if isinstance(boot_log, bytes):
+                boot_log = boot_log.decode("utf-8", "replace")
+            for line in boot_log.splitlines():
+                if "[led]" in line:
+                    _log(f"RESULT boot {line.strip()}")
         if args.improv:
             # ImprovBLE: the heap's global minimum (the first wss handshake with
             # the provisioning central still connected) is on this path.
@@ -259,7 +288,7 @@ def main() -> int:
     ap.add_argument(
         "--expect-refusal",
         action="store_true",
-        help="assert one LED past --per-channel is refused (it is the firmware's cap)",
+        help="assert one LED past the board's max_leds_per_channel is refused",
     )
     ap.add_argument(
         "--improv",
@@ -268,6 +297,7 @@ def main() -> int:
     )
     ap.add_argument("--rounds", type=int, default=3, help="fresh wss handshakes after loading")
     ap.add_argument("--recover-s", type=float, default=40.0)
+    ap.add_argument("--reboot-wait-s", type=float, default=8.0, help="wait after a resize reboot")
     ap.add_argument("--settle-s", type=float, default=6.0, help="effect settle before fps_state")
     ap.add_argument(
         "--heap-floor", type=int, default=0, help="fail if heap_min_free ends below this (B)"

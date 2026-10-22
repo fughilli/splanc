@@ -515,7 +515,6 @@
   "fxBenchMargins": {
     "default": 0.1,
     "perLabel": {
-      "empty": 0.15,
       "sweep16": 0.15
     }
   }

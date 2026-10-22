@@ -351,7 +351,13 @@ export function HardwareSetupScreen(_router: Router): Screen {
       const total = totalLeds();
       if (total > 0) prefs.setCaptureLedCount(total);
       render();
-      toast(ledCount > 0 ? `Channel ${ch} → ${ledCount} LEDs` : `Channel ${ch} LED count cleared`);
+      toast(
+        st.rebootRequired
+          ? `Channel ${ch} → ${ledCount} LEDs. The device is restarting to make room for them; it reconnects in a few seconds.`
+          : ledCount > 0
+            ? `Channel ${ch} → ${ledCount} LEDs`
+            : `Channel ${ch} LED count cleared`,
+      );
       return true;
     } catch {
       toast("Failed to set LED count", { error: true });

@@ -1141,6 +1141,14 @@ message HardwareConfigState {
   // Static, board-specific capabilities (pin catalog + LED modes). Unset on
   // older firmware — the app falls back to a built-in default catalog.
   BoardCapabilities board = 2;
+  // The change just applied needs more LED buffer than this boot allocated: the
+  // config is persisted and the player restarts in a moment to resize (expect the
+  // connection to drop). Only ever set on the reply to a change.
+  bool reboot_required = 3;
+  // LEDs (summed across channels) this boot's per-LED buffers hold: the
+  // persisted configured counts (512 when none is set), sized once at boot.
+  // 0 = not reported (older firmware: the whole board.max_leds).
+  uint32 led_capacity = 4;
 }
 
 // How safe a GPIO is to repurpose for LED data on a given board. Drives how the
@@ -1274,6 +1282,9 @@ message CountingState {
 message LedCountState {
   int32 led_count = 1;
   int32 channel = 2;
+  // As HardwareConfigState.reboot_required: the new count needs a bigger LED
+  // buffer, so it is persisted and the player restarts in a moment to resize.
+  bool reboot_required = 3;
 }
 
 // Reply to set_playback / get_playback: the effective configuration (the

@@ -597,38 +597,120 @@ fn q16_16(x: f32) -> i32 {
     (x * 65536.0) as i32
 }
 
-static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
+// -- the per-LED store: sized at boot for the CONFIGURED strip -----------------
+// FX_LED_TOPO (10 B/LED), FX_LED_POS (9 B/LED) and FX_LED_MAPPED (1 bit/LED) are
+// NOT sized for the 2048-LED cap: the firmware allocates ONE block for them once
+// at boot (before the radios fragment the heap), sized for the persisted channel
+// counts (lm_led_store_bytes / lm_led_store_bind), so a 300-LED lamp pays for
+// 300 LEDs. A count change past it persists and reboots into the new size
+// (Player::set_led_capacity). FX_TOPO_CAP stays the hard cap.
+//
+// FX_LED_TOPO: the per-LED topology cache (see FxLedTopo), map-index order.
+// FX_LED_POS: the flash-backed map's per-LED positions (metres), the ONLY map
+// data resident at render time. Fed by the streaming submit_map decode;
+// lm_map_led / get_stored_map / led.uv all read it (the raw StoredMap is gone).
+// Indexed by LED id (= strip position; the render is index-based) — NOT by the
+// entry's position in the uploaded list, which skips unmapped LEDs. Unmapped
+// slots hold a position interpolated from their mapped neighbours (see
+// fill_unmapped). Each axis is an [`F24`] (9 B/LED instead of 12; ~1.5e-5
+// relative — 0.08 mm at 5 m, far under a solve's accuracy — and a shift to
+// decode, so the per-LED read stays free of soft-float): use pos_get / pos_set.
+// FX_LED_MAPPED: one bit per LED id, set when the uploaded map solved that LED
+// (its position is measured), clear when it is interpolated.
+static mut FX_LED_TOPO: *mut FxLedTopo = core::ptr::null_mut();
+static mut FX_LED_POS: *mut [F24; 3] = core::ptr::null_mut();
+static mut FX_LED_MAPPED: *mut u32 = core::ptr::null_mut();
+/// LEDs the bound store holds (0 = none bound: no map positions are kept).
+static mut FX_STORE_LEDS: usize = 0;
 
-/// Flash-backed map: the per-LED positions (meters), the ONLY map data resident
-/// at render time. Fed by the streaming submit_map decode; lm_map_led /
-/// get_stored_map / led.uv all read this (the raw StoredMap is gone). Indexed by
-/// LED id (= strip position; the render is index-based) — NOT by the entry's
-/// position in the uploaded list, which skips unmapped LEDs. Unmapped slots hold
-/// a position interpolated from their mapped neighbours (see fill_unmapped).
-/// Each axis is an [`F24`] (9 B/LED instead of 12: 6 KB back at 2048 LEDs;
-/// ~1.5e-5 relative — 0.08 mm at 5 m, far under a solve's accuracy — and a
-/// shift to decode, so the per-LED read stays free of soft-float). Read and
-/// write it through [`pos_get`] / [`pos_set`].
-static mut FX_LED_POS: [[F24; 3]; FX_TOPO_CAP] = [[F24::ZERO; 3]; FX_TOPO_CAP];
+/// Bytes the per-LED store needs for `leds` LEDs (incl. alignment): the mapped
+/// bitset (u32 words) first, then the topology cache (2-aligned), then the
+/// positions.
+pub const fn led_store_bytes(leds: usize) -> usize {
+    leds.div_ceil(32) * 4 + leds * core::mem::size_of::<FxLedTopo>() + leds * 9
+}
+
+/// Bytes the per-LED store needs for `leds` LEDs (see [`lm_led_store_bind`]).
+#[no_mangle]
+pub extern "C" fn lm_led_store_bytes(leds: u32) -> usize {
+    led_store_bytes(leds as usize)
+}
+
+/// Bind the per-LED store to `mem[0..bytes)` (4-aligned, from the firmware's
+/// boot-time allocation) for `leds` LEDs, at most the FX_TOPO_CAP cap; it is
+/// cleared (no map). Returns false when the block is too small or misaligned.
+/// Call before [`lm_player_init`]; the block must live for the process.
+///
+/// # Safety
+/// `mem` must be valid for `bytes` writes and never used elsewhere.
+#[no_mangle]
+pub unsafe extern "C" fn lm_led_store_bind(mem: *mut u8, bytes: usize, leds: u32) -> bool {
+    let n = (leds as usize).min(FX_TOPO_CAP);
+    if mem.is_null() || (mem as usize) % 4 != 0 || bytes < led_store_bytes(n) {
+        return false;
+    }
+    let words = n.div_ceil(32);
+    FX_LED_MAPPED = mem as *mut u32;
+    FX_LED_TOPO = mem.add(words * 4) as *mut FxLedTopo;
+    FX_LED_POS = mem.add(words * 4 + n * core::mem::size_of::<FxLedTopo>()) as *mut [F24; 3];
+    FX_STORE_LEDS = n;
+    mapped_store().fill(0);
+    topo_store().fill(FxLedTopo::NONE);
+    pos_store().fill([F24::ZERO; 3]);
+    true
+}
+
+/// LEDs the per-LED store holds: map positions / topology past it aren't kept.
+#[inline]
+fn fx_cap() -> usize {
+    unsafe { FX_STORE_LEDS }
+}
+
+#[inline]
+unsafe fn topo_store() -> &'static mut [FxLedTopo] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_TOPO, FX_STORE_LEDS)
+}
+
+#[inline]
+unsafe fn pos_store() -> &'static mut [[F24; 3]] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_POS, FX_STORE_LEDS)
+}
+
+#[inline]
+unsafe fn mapped_store() -> &'static mut [u32] {
+    if FX_STORE_LEDS == 0 {
+        return &mut [];
+    }
+    core::slice::from_raw_parts_mut(FX_LED_MAPPED, FX_STORE_LEDS.div_ceil(32))
+}
+
+/// The host build's store (`host_store` feature: the host tests never allocate
+/// one): the whole cap, bound by lm_player_init when nothing is.
+#[cfg(feature = "host_store")]
+static mut HOST_STORE: [u32; led_store_bytes(FX_TOPO_CAP).div_ceil(4)] =
+    [0; led_store_bytes(FX_TOPO_CAP).div_ceil(4)];
 
 /// LED `i`'s resident position (metres).
 #[inline]
 unsafe fn pos_get(i: usize) -> [f32; 3] {
-    let p = &(*addr_of!(FX_LED_POS))[i];
+    let p = &pos_store()[i];
     [p[0].get(), p[1].get(), p[2].get()]
 }
 
 #[inline]
 unsafe fn pos_set(i: usize, v: [f32; 3]) {
-    (*addr_of_mut!(FX_LED_POS))[i] = [F24::new(v[0]), F24::new(v[1]), F24::new(v[2])];
+    pos_store()[i] = [F24::new(v[0]), F24::new(v[1]), F24::new(v[2])];
 }
-/// One bit per LED id: set when the uploaded map solved that LED (its
-/// FX_LED_POS is measured), clear when FX_LED_POS[id] is interpolated.
-static mut FX_LED_MAPPED: [u32; FX_TOPO_CAP.div_ceil(32)] = [0; FX_TOPO_CAP.div_ceil(32)];
 
 #[inline]
 unsafe fn led_mapped(i: usize) -> bool {
-    (*addr_of!(FX_LED_MAPPED))[i / 32] & (1 << (i % 32)) != 0
+    mapped_store()[i / 32] & (1 << (i % 32)) != 0
 }
 
 /// Fill every unmapped LED in [0, n) with a position linearly interpolated (by
@@ -925,12 +1007,17 @@ unsafe fn arena_mut() -> &'static mut Arena<'static> {
 #[no_mangle]
 pub extern "C" fn lm_player_init(default_led_count: u32) {
     unsafe {
+        #[cfg(feature = "host_store")]
+        if FX_STORE_LEDS == 0 {
+            let mem = addr_of_mut!(HOST_STORE) as *mut u8;
+            lm_led_store_bind(mem, led_store_bytes(FX_TOPO_CAP), FX_TOPO_CAP as u32);
+        }
         *addr_of_mut!(MAP_META) = None;
         *addr_of_mut!(GEOM) = None;
         FX_TOPO_READY = false;
         FX_UV_READY = false;
         FX_ROOM_READY = false;
-        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+        for e in topo_store().iter_mut() {
             *e = FxLedTopo::NONE;
         }
         *addr_of_mut!(ARENA) = Some(Arena::new(&mut *addr_of_mut!(ARENA_MEM)));
@@ -941,9 +1028,37 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
         // still clock out in parallel).
         p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, FX_TOPO_CAP as u32);
         p.set_channel_cap(FX_MAX_LEDS_PER_CHANNEL as u32);
+        // Boot-time sizing (lm_set_led_limits) narrows these to the store.
         p.set_features(FEATURES, ledmapper_fx_vm::FORMAT_VERSION as u32);
         *addr_of_mut!(PLAYER) = Some(p);
     }
+}
+
+/// The boot-time LED sizing: this boot's per-LED buffers hold `capacity` LEDs
+/// (summed across channels; the persisted counts it was sized from), and the
+/// heap can buffer at most `max_leds` (board.max_leds: the largest total whose
+/// boot allocation still leaves the safe heap floor). A count change within
+/// `max_leds` but past `capacity` is accepted, persisted and answered
+/// `reboot_required`; past `max_leds` it is refused. Call after
+/// [`lm_player_init`].
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_led_limits(capacity: u32, max_leds: u32) {
+    let p = player();
+    p.set_output_caps(ledmapper_player::HW_CHANNELS as u32, max_leds.min(FX_TOPO_CAP as u32));
+    p.set_led_capacity(capacity);
+}
+
+/// Read + clear the player's reboot request: a count change outgrew this boot's
+/// LED buffers (its config is persisted); restart once the reply is out.
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_take_reboot_request() -> bool {
+    player().take_reboot_request()
 }
 
 /// Set the player's hardware identity (MAC + current display name) echoed in
@@ -1484,7 +1599,7 @@ pub unsafe extern "C" fn lm_player_handle(
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
     *addr_of_mut!(GEOM) = None;
-    for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+    for e in topo_store().iter_mut() {
         *e = FxLedTopo::NONE;
     }
     FX_TOPO_READY = false;
@@ -1503,23 +1618,23 @@ unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     // Nothing from a previous map may survive into this one.
     // (Filled in place: a whole-array assignment would build the temporary on
     // the task stack.)
-    (*addr_of_mut!(FX_LED_POS)).fill([F24::ZERO; 3]);
-    (*addr_of_mut!(FX_LED_MAPPED)).fill(0);
+    pos_store().fill([F24::ZERO; 3]);
+    mapped_store().fill(0);
     let res = decode_submit_map_streamed(reader, total, |_idx, led_count, led| {
         // Key by the LED's id, not its list position: a map with unmapped LEDs
         // omits them, so positions past the first gap would land in the wrong
         // slot. Ids past the strip (led_count) or the render cap aren't stored
         // (the strip can't drive them); the decode still validates the frame.
         let i = led.id as usize;
-        if led.id < led_count && i < FX_TOPO_CAP {
+        if led.id < led_count && i < fx_cap() {
             pos_set(i, led.xyz);
-            (*addr_of_mut!(FX_LED_MAPPED))[i / 32] |= 1 << (i % 32);
+            mapped_store()[i / 32] |= 1 << (i % 32);
         }
         Ok(())
     });
     match res {
         Ok((map_id, led_count)) => {
-            fill_unmapped((led_count as usize).min(FX_TOPO_CAP));
+            fill_unmapped((led_count as usize).min(fx_cap()));
             let reply = player().map_stored(map_id.as_str());
             *addr_of_mut!(MAP_META) = Some((map_id, led_count));
             reply
@@ -1543,8 +1658,8 @@ unsafe fn handle_topology_upload<R: PbRead<Error = Infallible>>(
     arena_mut().reset();
     let res = decode_submit_topology_streamed(&mut reader, rewind, total, arena_ref(), |a: &StoredAssociation| {
         let i = a.led_id as usize;
-        if i < FX_TOPO_CAP && a.segment_id <= i16::MAX as u32 {
-            (*addr_of_mut!(FX_LED_TOPO))[i] = FxLedTopo {
+        if i < fx_cap() && a.segment_id <= i16::MAX as u32 {
+            topo_store()[i] = FxLedTopo {
                 seg: a.segment_id as i16, // TEMP raw id; resolved in fx_rebuild_topo
                 dperp_mm: mm_sat(a.d_perp),
                 s: F24::new(a.foot_arclength), // TEMP foot (m); resolved to s
@@ -1611,7 +1726,7 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
     // mapped LEDs (real ids, xyz from FX_LED_POS) + the unmapped ids (their
     // interpolated positions are a render detail, not map data), associations
     // recovered from FX_LED_TOPO with the segment_id read back out of the geometry.
-    let n_leds = (led_count as usize).min(FX_TOPO_CAP);
+    let n_leds = (led_count as usize).min(fx_cap());
     let led_each = |f: &mut dyn FnMut(u32, [f32; 3])| {
         for i in (0..n_leds).filter(|&i| led_mapped(i)) {
             f(i as u32, pos_get(i));
@@ -1631,9 +1746,9 @@ unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i
     let geom = (*addr_of!(GEOM)).as_ref();
     let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
         if let Some(g) = geom {
-            let n = (led_count as usize).min(FX_TOPO_CAP);
+            let n = (led_count as usize).min(fx_cap());
             for i in 0..n {
-                let e = &(*addr_of!(FX_LED_TOPO))[i];
+                let e = &topo_store()[i];
                 let si = e.seg_index();
                 if si >= 0 && (si as usize) < g.segments.len() {
                     // The foot isn't resident: it is s * the segment length (s was
@@ -3330,7 +3445,7 @@ pub unsafe extern "C" fn lm_map_len() -> u32 {
 pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> bool {
     let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c);
     let i = index as usize;
-    if index >= len || i >= FX_TOPO_CAP {
+    if index >= len || i >= fx_cap() {
         return false;
     }
     let pos = pos_get(i);
@@ -3355,7 +3470,7 @@ unsafe fn fx_rebuild_room() {
     FX_ROOM_READY = true;
     let p = player();
     FX_ROOM_GEN = p.fixture_pose_gen();
-    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(FX_TOPO_CAP);
+    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c as usize).min(fx_cap());
     let pose = p.fixture_pose();
     FX_ROOM_POSED = pose.is_some();
     // Rotation matrix from the (normalized) quaternion; identity when unposed.
@@ -3472,7 +3587,7 @@ unsafe fn fx_rebuild_topo() {
         let len = (*addr_of!(MAP_META))
             .as_ref()
             .map_or(0, |(_, c)| *c as usize)
-            .min(FX_TOPO_CAP);
+            .min(fx_cap());
         let mut mn = [f32::INFINITY; 2];
         let mut mx = [f32::NEG_INFINITY; 2];
         // Measured LEDs only (interpolated ones lie inside their hull anyway).
@@ -3499,7 +3614,7 @@ unsafe fn fx_rebuild_topo() {
     FX_TOPO_READY = true;
     let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
         // No topology stored — clear any stale association entries.
-        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+        for e in topo_store().iter_mut() {
             *e = FxLedTopo::NONE;
         }
         return;
@@ -3601,7 +3716,7 @@ unsafe fn fx_rebuild_topo() {
     // segment_id → map it to the segment INDEX, and derive s/branch/dist.
     // foot/dperp are kept. O(associations × segments), once per upload — and
     // lm_fx_shade's topology reads are then O(1) per frame.
-    let cache = &mut *addr_of_mut!(FX_LED_TOPO);
+    let cache = topo_store();
     let mut max_geo = 0.0f32;
     for e in cache.iter_mut() {
         if e.seg < 0 {
@@ -4256,7 +4371,7 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
-    let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
+    let t = topo_store().get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
     // The uv projection is per-LED soft-float; skip it entirely unless the effect
     // reads led.uv (FUG-122).
     let uv = if (*p).uses_uv {

@@ -12,6 +12,13 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   refuses a channel past 1024. The board reports the per-channel cap
   (`hardware_config_state.board.max_leds_per_channel`), and the app's count
   field uses it.
+- **LED memory is sized for the strip you configure, at boot.** A board pays
+  for its own LEDs, not the cap. A 256 + 256 fixture now has _more_ free heap
+  than before: 77 KB at the minimum, up from 67 KB. Raising the total past what
+  the device booted with saves the counts and restarts it into the bigger size
+  (`reboot_required` on the reply; the app says so and reconnects). The full
+  1024 + 1024 leaves ~29 KB at the minimum, which is the max-config cost. A
+  total the board's heap can't hold is refused.
 - **Long strips run slower instead of stopping.** A WS2812 LED takes 28.8 µs to
   clock out, and the two channels go out in parallel, so the longest channel
   caps the frame rate: 60 fps at 512 LEDs, 40 at 768, 30 at 1024. The
@@ -21,11 +28,9 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   the strip: 25 fps up to 512 LEDs, then 10 fps at 1024 and 5 fps at 2048. A
   heavy effect on a big fixture now steps down rather than being parked. See
   [EFFECTS.md → Long strips](../EFFECTS.md#long-strips-what-sets-the-frame-rate).
-- **What it costs:** 38 KB of the device's free heap (75 → 37 KB loaded, 67 →
-  29 KB at the minimum). To keep that cost down, the per-LED caches were packed:
-  topology 20 → 10 B per LED, positions stored at 16-bit-mantissa precision
-  (0.08 mm at 5 m), and the multi-fixture room position computed per frame
-  instead of cached. Details:
+- The per-LED caches were packed (50 → 31 B per LED): topology 20 → 10 B,
+  positions stored at 16-bit-mantissa precision (0.08 mm at 5 m), and the
+  multi-fixture room position computed per frame instead of cached. Details:
   [ram-budget.md → LED capacity](design/ram-budget.md#led-capacity-1024-per-channel).
 - Effects' per-LED `buffer` arrays are now sized for the strip you have, not the
   cap. A wide buffer on 2048 LEDs can outgrow the 24 KB effect arena; declare it

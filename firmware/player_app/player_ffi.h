@@ -13,7 +13,20 @@ extern "C" {
 
 // Initialize (or reset) the player. default_led_count seeds the code-book
 // until the counting handshake / start_mapping override it.
+// The per-LED store (map positions, topology cache, mapped bits) is sized at
+// boot for the CONFIGURED strip, not the LED cap: lm_led_store_bytes(n) bytes
+// (4-aligned, allocated once for the process) bound with lm_led_store_bind
+// BEFORE lm_player_init. Returns false on a short / misaligned block.
+size_t lm_led_store_bytes(uint32_t leds);
+bool lm_led_store_bind(uint8_t *mem, size_t bytes, uint32_t leds);
 void lm_player_init(uint32_t default_led_count);
+// After lm_player_init: this boot's buffers hold `capacity` LEDs (summed across
+// channels) and the heap can buffer at most `max_leds` (reported as
+// board.max_leds). A count change past `capacity` (within `max_leds`) is
+// persisted and answered reboot_required; lm_take_reboot_request() then reads
+// true — restart once the reply has gone out.
+void lm_set_led_limits(uint32_t capacity, uint32_t max_leds);
+bool lm_take_reboot_request(void);
 
 // Set the player's hardware identity (factory MAC + current display name),
 // echoed in every welcome. Call once after lm_player_init.

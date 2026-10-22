@@ -646,7 +646,8 @@
       "decoded": {
         "type": "led_count_state",
         "ledCount": 300,
-        "channel": 0
+        "channel": 0,
+        "rebootRequired": false
       }
     },
     {

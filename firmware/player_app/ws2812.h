@@ -23,8 +23,9 @@
 #include <stdint.h>
 
 // Bring up the output on `gpio0` (and `gpio1` if >= 0), sized for up to
-// `max_leds` pixels TOTAL across both channels. Returns false on
-// allocation/peripheral failure. Call once.
+// `max_leds` pixels TOTAL across both channels: the transmit buffer
+// (ws2812_buffer_bytes(max_leds)) is allocated here, once, from the heap.
+// Returns false on allocation/peripheral failure. Call once.
 bool ws2812_init(int gpio0, int gpio1, uint32_t max_leds);
 
 // Encode `count0` pixels for channel 0 (from rgb[0..count0)) and `count1` for
@@ -65,6 +66,9 @@ void ws2812_set_color_order(int ch, uint8_t s0, uint8_t s1, uint8_t s2);
 // single channel. Returns false on peripheral/allocation failure (the driver is
 // left uninitialized — the caller should treat that as fatal).
 bool ws2812_reconfigure(int gpio0, int gpio1);
+
+// Heap bytes ws2812_init(max_leds) allocates for its transmit buffer.
+size_t ws2812_buffer_bytes(uint32_t max_leds);
 
 // Diagnostics: the number of channels that initialized (1 or 2), the last
 // transmit result (esp_err_t as int; 0 == ESP_OK) for channel `ch`, and the
