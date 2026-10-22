@@ -169,6 +169,8 @@ void ws2812_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
   ws2812_send();
 }
 
+size_t ws2812_buffer_bytes(uint32_t max_leds) { return static_cast<size_t>(max_leds) * 3; }
+
 int ws2812_channels(void) { return g_n_chan; }
 const char *ws2812_backend(void) { return "rmt"; }
 int ws2812_last_error(int ch) {

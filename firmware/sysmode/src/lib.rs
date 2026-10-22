@@ -399,12 +399,42 @@ pub mod cost {
     /// The scan-record buffer g_scan (nm).
     pub const SCAN_STATIC: usize = 960;
 
-    // -- stored map ---------------------------------------------------------------
-    /// ARENA_MEM 12,288 (topology geometry) + FX_LED_TOPO 10,240 + FX_LED_POS
-    /// 6,144 + FX_LED_MAPPED 32 + FX_LED_ROOM 3,072 (i16 mm x3 x 512 LEDs, the
-    /// room-frame cache for multi-fixture effects) (nm): the per-LED caches the
-    /// map decodes into.
-    pub const MAP_STORE_STATIC: usize = 12_288 + 10_240 + 6_144 + 32 + 3_072;
+    // -- per-LED buffers: sized at boot for the CONFIGURED strip --------------------
+    /// LEDs the per-LED buffers are sized for when no count is persisted (and
+    /// the configuration the pinned model figures use): main.cpp
+    /// `kDefaultLedCapacity`, the LED cap before 1024 per channel.
+    pub const DEFAULT_LEDS: usize = 512;
+    /// The LED cap (led_caps.bzl: 1024 per channel x 2): the largest config.
+    pub const MAX_LEDS: usize = 2048;
+    /// TLSF header + alignment per boot-time allocation (main.cpp
+    /// led_buffer_bytes' 16 B, one per buffer).
+    pub const BLOCK: usize = 16;
+
+    /// The stored map for a strip of `leds`: ARENA_MEM 12,288 (topology
+    /// geometry, static) + the per-LED store ffi.rs allocates at boot —
+    /// FX_LED_MAPPED (1 bit/LED in u32s) + FX_LED_TOPO (10 B/LED) + FX_LED_POS
+    /// (3 x F24 = 9 B/LED). Before the boot-time sizing this was a static sized
+    /// for the cap: 12,288 + 10,240 + 6,144 + 32 + FX_LED_ROOM 3,072 at 512 LEDs
+    /// (the room cache is gone: the pose is applied per LED in shade()).
+    pub const fn map_store(leds: usize) -> usize {
+        12_288 + leds.div_ceil(32) * 4 + 10 * leds + 9 * leds + BLOCK
+    }
+
+    /// The LED output for a balanced strip of `leds`: the render buffer `leds`
+    /// (3 B/LED) + the PARLIO/GDMA encoded frame (9 B/LED + 8 B pad), both
+    /// allocated at boot. Resident in every mode (the strip is driven, or blanked,
+    /// from boot), so a live component of every state; its old static 512-LED
+    /// size (1,536 + 4,616) is in [`MEASURED_STATICS`].
+    pub const fn led_frame(leds: usize) -> usize {
+        3 * leds + 9 * leds + 8 + 2 * BLOCK
+    }
+
+    /// [`map_store`] / [`led_frame`] at [`DEFAULT_LEDS`]: what the pinned model
+    /// figures (and an unconfigured or <= 512-LED board) pay. The boot blocks are
+    /// heap, but allocated once before anything else and held for the process, so
+    /// they are modeled as statics.
+    pub const MAP_STORE_STATIC: usize = map_store(DEFAULT_LEDS);
+    pub const LED_FRAME_STATIC: usize = led_frame(DEFAULT_LEDS);
 
     // -- activity -------------------------------------------------------------------
     /// The loaded fx VM (deck A): FX_ARENA 24,576 (shared by both decks) + DECK_A
@@ -430,14 +460,20 @@ pub mod cost {
         + SCAN_STATIC
         + MAP_STORE_STATIC
         + EFFECT_STATIC
-        + AUX_STATIC;
+        + AUX_STATIC
+        + LED_FRAME_STATIC;
 
     /// [`ALL_MODE_STATICS`] on the image [`MIN_FREE_MEASURED`] was measured on
     /// (#262). Statics added since come out of that free heap, so the budget is
     /// fixed by the old figure (growing a static must shrink the headroom, not
     /// grow the budget).
-    pub const MEASURED_STATICS: usize =
-        7_388 + 8_208 + 960 + 24_608 + (24_576 + 5_120 + 4_096 + 3_473 + 1_024 + 900 + 512) + 8_192;
+    pub const MEASURED_STATICS: usize = 7_388
+        + 8_208
+        + 960
+        + 24_608
+        + (24_576 + 5_120 + 4_096 + 3_473 + 1_024 + 900 + 512)
+        + 8_192
+        + (1_536 + 4_616);
 
     /// Measured minimum free heap on the `ram_audit` worst case after #262
     /// (device esp_get_minimum_free_heap_size, HITL rig-2, 2026-10-19).
@@ -452,7 +488,10 @@ pub mod cost {
     /// Statics added to ALL_MODE_STATICS since MIN_FREE_MEASURED was taken: the
     /// image that measured it had them as free heap, so they move from "free"
     /// to "static" rather than adding RAM — ARENA_MEM 8 -> 12 KB (+4,096, #291),
-    /// FX_LED_ROOM (+3,072, #280), deck B + keypoints (+6,594). Derived from
+    /// FX_LED_ROOM (+3,072, #280), deck B + keypoints (+6,594), the per-LED
+    /// buffers sized for the configured strip (at the default 512 LEDs: map
+    /// store 31,776 -> 22,096, LED frame 6,152 -> 6,184; FX_LED_ROOM dropped).
+    /// Derived from
     /// [`MEASURED_STATICS`] so a new static can't be forgotten here.
     pub const STATICS_ADDED_SINCE_MEASURED: usize = ALL_MODE_STATICS - MEASURED_STATICS;
 
@@ -471,7 +510,9 @@ pub mod cost {
     /// FreeRTOS's xQueueCreateCountingSemaphoreStatic linked in by the I2C
     /// driver (its ISR handler is moved back to flash, ld/esp32c6_iram_to_flash.txt).
     pub const IRAM_TEXT_MEASURED: usize = 114_910;
-    pub const IRAM_TEXT: usize = 99_772;
+    /// The 1024-per-channel LED cap: +214 B (the FX shade entry's packed
+    /// topology / F24 position decode off the boot-sized store, pinned).
+    pub const IRAM_TEXT: usize = 99_986;
 }
 
 /// One mode-dependent component live in a state.
@@ -487,17 +528,24 @@ pub struct Component {
 /// the vendor driver never frees it (today's firmware; see
 /// docs/design/memory-regions.md for the removal).
 pub fn components(s: SysMode) -> impl Iterator<Item = Component> {
+    components_at(s, cost::DEFAULT_LEDS)
+}
+
+/// [`components`] for a board configured with `leds` LEDs (summed across the
+/// channels): the per-LED buffers are sized for it at boot.
+pub fn components_at(s: SysMode, leds: usize) -> impl Iterator<Item = Component> {
     use cost::*;
     let c = |live: bool, name, bytes, heap| (live, Component { name, bytes, heap });
     let parts = [
         c(true, "ble_controller", BLE_CONTROLLER_HEAP, true),
         c(true, "ble_host", BLE_HOST_STATIC, false),
+        c(true, "led_frame", led_frame(leds), false),
         c(s.ble == Ble::Connected, "ble_link", BLE_LINK_HEAP, true),
         c(s.wss, "tls_session", TLS_SESSION_HEAP, true),
         c(s.wss, "ws_buffers", WS_BUFFERS_STATIC, false),
         c(s.wifi != Wifi::Unprovisioned, "scan_residue", SCAN_RESIDUE_HEAP, true),
         c(s.wifi == Wifi::Scanning, "scan", SCAN_STATIC, false),
-        c(s.map || s.activity == Activity::Upload, "map_store", MAP_STORE_STATIC, false),
+        c(s.map || s.activity == Activity::Upload, "map_store", map_store(leds), false),
         c(matches!(s.activity, Activity::Effect { .. }), "effect", EFFECT_STATIC, false),
         c(
             matches!(s.activity, Activity::Effect { video: true, .. } | Activity::Effect { deck_b: true, .. }),
@@ -514,6 +562,11 @@ pub fn components(s: SysMode) -> impl Iterator<Item = Component> {
 /// mode-union region layout must hold at once.
 pub fn live_bytes(s: SysMode) -> usize {
     components(s).map(|c| c.bytes).sum()
+}
+
+/// [`live_bytes`] for a board configured with `leds` LEDs.
+pub fn live_bytes_at(s: SysMode, leds: usize) -> usize {
+    components_at(s, leds).map(|c| c.bytes).sum()
 }
 
 /// The part of [`live_bytes`] drawn from the shared heap in TODAY's layout

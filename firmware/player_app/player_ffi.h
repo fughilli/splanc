@@ -13,7 +13,20 @@ extern "C" {
 
 // Initialize (or reset) the player. default_led_count seeds the code-book
 // until the counting handshake / start_mapping override it.
+// The per-LED store (map positions, topology cache, mapped bits) is sized at
+// boot for the CONFIGURED strip, not the LED cap: lm_led_store_bytes(n) bytes
+// (4-aligned, allocated once for the process) bound with lm_led_store_bind
+// BEFORE lm_player_init. Returns false on a short / misaligned block.
+size_t lm_led_store_bytes(uint32_t leds);
+bool lm_led_store_bind(uint8_t *mem, size_t bytes, uint32_t leds);
 void lm_player_init(uint32_t default_led_count);
+// After lm_player_init: this boot's buffers hold `capacity` LEDs (summed across
+// channels) and the heap can buffer at most `max_leds` (reported as
+// board.max_leds). A count change past `capacity` (within `max_leds`) is
+// persisted and answered reboot_required; lm_take_reboot_request() then reads
+// true — restart once the reply has gone out.
+void lm_set_led_limits(uint32_t capacity, uint32_t max_leds);
+bool lm_take_reboot_request(void);
 
 // Set the player's hardware identity (factory MAC + current display name),
 // echoed in every welcome. Call once after lm_player_init.
@@ -366,7 +379,12 @@ int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 // rendering deck and the strip transmit) was cost_us; returns the ms to sleep
 // before the next frame (period - work, >= the minimum yield). Parks the effect
 // + latches an app-notify if the target is unachievable.
-uint32_t lm_fps_on_frame(uint32_t cost_us);
+// `wire_leds` LEDs of that frame clocked out one after another (the longest
+// channel; the two go out in parallel): their WS2812 wire time (28.8 us per LED
+// + the latch) caps the ladder at what the wire can carry. The `leds` it shaded
+// set the abort floor (25 fps up to 512 LEDs, proportionally lower past it, so a
+// long strip slows a heavy effect down instead of parking it).
+uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t wire_leds, uint32_t leds);
 // The autoscaler's current target FPS.
 uint32_t lm_fps_current_fps(void);
 // Per-frame overrun budget in CPU cycles for the current target (cpu_hz / fps).

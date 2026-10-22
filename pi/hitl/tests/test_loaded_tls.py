@@ -11,7 +11,9 @@ from __future__ import annotations
 import base64
 
 from loaded_tls_core import (
+    PER_CHANNEL_CAP,
     bars_effect_src,
+    channel_split,
     rgb565_gradient_frame,
     scan_serial_for_oom,
     set_texture_msg,
@@ -100,10 +102,17 @@ def test_scan_serial_is_case_insensitive_and_counts_each_line():
 
 
 def test_reexports_load_fixtures():
-    # The gate loads the device via the shared sibling fixtures. 512 = LM_MAX_LEDS
-    # (led_caps.bzl), the worst case the driver defaults to.
-    m = synth_output_map(512, "__fug133")
+    # The gate loads the device via the shared sibling fixtures. 2048 = LM_MAX_LEDS
+    # (led_caps.bzl: 1024 per channel), the worst case the driver defaults to.
+    m = synth_output_map(2048, "__fug133")
     assert m["type"] == "submit_map"
-    assert m["map"]["led_count"] == 512
+    assert m["map"]["led_count"] == 2048
     src = bars_effect_src(40, 40)
     assert "texture" in src and "40, 40" in src
+
+
+def test_channel_split_fills_channel_0_first():
+    assert channel_split(300) == [300]
+    assert channel_split(PER_CHANNEL_CAP) == [PER_CHANNEL_CAP]
+    assert channel_split(1500) == [PER_CHANNEL_CAP, 1500 - PER_CHANNEL_CAP]
+    assert channel_split(2 * PER_CHANNEL_CAP) == [PER_CHANNEL_CAP, PER_CHANNEL_CAP]

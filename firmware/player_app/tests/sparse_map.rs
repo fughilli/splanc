@@ -76,7 +76,9 @@ fn led(i: u32) -> (u32, [f32; 3]) {
 
 fn assert_close(got: [f32; 3], want: [f32; 3], what: &str) {
     for k in 0..3 {
-        assert!((got[k] - want[k]).abs() < 1e-5, "{what}: got {got:?}, want {want:?}");
+        // Positions are stored with a 16-bit mantissa (ffi.rs F24): ~1.5e-5 relative.
+        let tol = want[k].abs() * 2e-5 + 1e-6;
+        assert!((got[k] - want[k]).abs() <= tol, "{what}: got {got:?}, want {want:?}");
     }
 }
 
@@ -139,7 +141,8 @@ fn sparse_map_positions_are_keyed_by_led_id() {
     for l in m.r#leds.iter() {
         let p = xyz_of(l.r#id as u32);
         for k in 0..3 {
-            assert!((l.r#xyz[k] - p[k] as f64).abs() < 1e-5, "dumped xyz of LED {}", l.r#id);
+            let tol = p[k].abs() as f64 * 2e-5 + 1e-6; // F24 storage, see assert_close
+            assert!((l.r#xyz[k] - p[k] as f64).abs() <= tol, "dumped xyz of LED {}", l.r#id);
         }
     }
     let got_unmapped: Vec<i32> = m.r#unmapped.iter().copied().collect();

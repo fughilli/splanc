@@ -10,10 +10,11 @@
 // Every bit ends low, so the line rests low after the last bit and the
 // inter-frame idle latches the frame.
 //
-// The staged frame lives in one static buffer sized for LM_MAX_LEDS on one lane
-// (9 bytes per LED; on the C6 all HP SRAM is DMA-capable and the netstack build
-// runs close to empty, so this replaces main.cpp's show_buf snapshot rather than
-// adding to it). It is staged in one of three layouts:
+// The staged frame lives in one DMA-capable heap buffer, allocated once by
+// ws2812_init for `max_leds` (the boot-time LED capacity: the configured strip,
+// not the LED cap) on one lane — 9 bytes per LED; it replaces main.cpp's old
+// show_buf snapshot rather than adding to it. It is staged in one of three
+// layouts:
 //   * one live channel: a single-lane transfer on that channel's GPIO;
 //   * two channels whose longer one fits half the buffer: a 2-bit-wide transfer,
 //     lane k on channel k's GPIO, both clocking out in parallel (18 bytes per LED
@@ -22,6 +23,7 @@
 //     the unit's data line between the GPIOs. Still DMA, just not parallel.
 #include <driver/gpio.h>
 #include <driver/parlio_tx.h>
+#include <esp_heap_caps.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
 
@@ -47,11 +49,11 @@ constexpr size_t kTailPad = 4;
 constexpr size_t padded(size_t bytes) {
   return ((bytes + 3) & ~static_cast<size_t>(3)) + kTailPad;
 }
-constexpr size_t kFrameBytes = static_cast<size_t>(LM_MAX_LEDS) * kBytesPerLedLane;
-// Room for the sequential layout's two padded blocks.
-constexpr size_t kBufBytes = padded(kFrameBytes) + padded(0);
-// Longest channel a parallel (2-lane) frame can carry.
-constexpr uint32_t kMaxParallelLeds = kFrameBytes / (2 * kBytesPerLedLane);
+// Room for `max_leds` on one lane, plus the sequential layout's two padded
+// blocks.
+constexpr size_t buf_bytes(uint32_t max_leds) {
+  return padded(static_cast<size_t>(max_leds) * kBytesPerLedLane) + padded(0);
+}
 
 // One wire byte -> its 24 samples, first-transmitted sample in bit 0 (the unit
 // packs LSB-first). The byte goes MSB-first, as WS2812 shifts it.
@@ -80,7 +82,10 @@ constexpr std::array<uint16_t, 256> kSpread = [] {
   return t;
 }();
 
-alignas(4) uint8_t g_buf[kBufBytes];
+uint8_t *g_buf = nullptr;  // buf_bytes(g_max_leds), DMA-capable (ws2812_init)
+size_t g_buf_bytes = 0;
+// Longest channel a parallel (2-lane) frame can carry: half the buffer.
+uint32_t g_max_parallel_leds = 0;
 
 // What's staged in g_buf.
 enum class Layout { kNone, kSingle, kParallel, kSequential };
@@ -136,7 +141,7 @@ esp_err_t ensure_unit(int width) {
   cfg.clk_out_gpio_num = GPIO_NUM_NC;
   cfg.valid_gpio_num = GPIO_NUM_NC;
   cfg.trans_queue_depth = 2;
-  cfg.max_transfer_size = kBufBytes;
+  cfg.max_transfer_size = g_buf_bytes;
   cfg.sample_edge = PARLIO_SAMPLE_EDGE_POS;
   cfg.bit_pack_order = PARLIO_BIT_PACK_ORDER_LSB;
   esp_err_t err = parlio_new_tx_unit(&cfg, &g_unit);
@@ -210,8 +215,16 @@ esp_err_t transmit(const uint8_t *block, size_t bytes) {
 
 bool ws2812_init(int gpio0, int gpio1, uint32_t max_leds) {
   if (g_n_chan) return true;  // idempotent
-  if (max_leds > static_cast<uint32_t>(LM_MAX_LEDS)) return false;
+  if (max_leds == 0 || max_leds > static_cast<uint32_t>(LM_MAX_LEDS)) return false;
+  g_buf_bytes = buf_bytes(max_leds);
+  g_buf = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(4, g_buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+  if (!g_buf) {
+    g_buf_bytes = 0;
+    return false;
+  }
   g_max_leds = max_leds;
+  g_max_parallel_leds = max_leds / 2;
   g_txcfg.idle_value = 0;
   return ws2812_reconfigure(gpio0, gpio1);
 }
@@ -260,7 +273,7 @@ void ws2812_stage(const uint8_t *rgb, uint32_t count0, uint32_t count1,
     return;
   }
   const uint32_t len = count0 > count1 ? count0 : count1;
-  if (len <= kMaxParallelLeds) {
+  if (len <= g_max_parallel_leds) {
     g_bytes[0] = static_cast<size_t>(len) * 2 * kBytesPerLedLane;
     encode_two(g_buf, len, rgb, count0, ord0, rgb1, count1, ord1);
     pad_block(g_buf, g_bytes[0]);
@@ -316,6 +329,8 @@ void ws2812_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
   ws2812_stage(rgb, count0, count1, order_override);
   ws2812_send();
 }
+
+size_t ws2812_buffer_bytes(uint32_t max_leds) { return buf_bytes(max_leds); }
 
 int ws2812_channels(void) { return g_n_chan; }
 int ws2812_last_error(int ch) {

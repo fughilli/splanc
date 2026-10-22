@@ -8,9 +8,9 @@
 //! headroom (cheap effect) or starves the WiFi/BLE tasks and stutters (heavy
 //! effect). This controller closes the loop:
 //!
-//! - **Ladder.** Targets live on a 5-fps grid from [`MIN_FPS`] to [`MAX_FPS`]
-//!   (25..80). Discrete steps make the cadence legible to the app and damp
-//!   oscillation vs. a continuous controller.
+//! - **Ladder.** Targets live on a 5-fps grid from [`LADDER_MIN_FPS`] to
+//!   [`MAX_FPS`] (5..80). Discrete steps make the cadence legible to the app and
+//!   damp oscillation vs. a continuous controller.
 //! - **5% headroom.** A frame is *missed* when its measured cost exceeds
 //!   [`HEADROOM_PCT`]% of the current target's period — i.e. we want at least
 //!   5% of every frame period left for the other threads.
@@ -18,8 +18,10 @@
 //!   [`miss_limit`](FpsController::miss_limit) frames were missed, drop one
 //!   rung. A clean window whose worst frame still fits the *next* rung's
 //!   headroom budget steps up one rung.
-//! - **Abort.** If we are already at the floor (25 fps, or a user-pinned
-//!   target) and a window still fails, the effect can't run within budget:
+//! - **Abort.** If we are already at the floor ([`MIN_FPS`] = 25 fps for a strip
+//!   of up to 512 LEDs, proportionally lower for a longer one — see
+//!   [`floor_fps_for`] — or a user-pinned target) and a window still fails, the
+//!   effect can't run within budget:
 //!   [`take_abort`](FpsController::take_abort) reports it so the caller parks
 //!   the effect (freeing the CPU) and notifies the app.
 //! - **Override.** The app can pin an exact target with [`set_target`]; the
@@ -29,6 +31,13 @@
 //!   effect whatever it costs (the HITL fx_bench sweep runs programs up to
 //!   ~130 ms/frame) turns the abort off with [`set_abort_enabled`]: a failing
 //!   floor/pinned window then just holds the rung.
+//! - **Wire ceiling.** The WS2812 wire itself bounds the rate: 24 bits at
+//!   ~833 kHz is [`WIRE_NS_PER_LED`] = 28.8 µs per LED, plus the latch low, on the
+//!   LONGEST channel (the two channels clock out in parallel). The caller reports
+//!   that floor with [`set_wire_us`](FpsController::set_wire_us); the ladder never
+//!   climbs (and a pin never lands) above the highest rung whose headroom budget
+//!   still holds one wire frame, and a frame that is slow ONLY because the wire is
+//!   is not the effect's fault — it never counts toward an abort.
 //! - **Minimum yield.** Even a frame that overran its period sleeps at least
 //!   `cost / 19` (≥ 5% of the wall clock to the lower-priority network task),
 //!   so an over-budget effect can't starve WiFi/TLS while the window decides.
@@ -38,15 +47,61 @@
 
 #![no_std]
 
-/// Lowest / highest ladder rungs, in FPS. Below the floor an effect is deemed
-/// unrunnable (abort); above the ceiling there is nothing to gain from a faster
-/// strip write than the eye resolves.
+/// The abort floor, in FPS, for a strip of up to [`FLOOR_REF_LEDS`] LEDs: below
+/// it an effect is deemed unrunnable (abort). A longer strip's floor scales down
+/// with its length ([`floor_fps_for`]) — shading 2048 LEDs at 10 fps is the same
+/// per-LED throughput as 512 at 40 — so a big fixture runs heavy effects slower
+/// instead of having them parked.
 pub const MIN_FPS: u32 = 25;
+/// Strip length the [`MIN_FPS`] floor is defined for (the LED cap before 1024
+/// LEDs per channel): the floor holds 25 x 512 = 12,800 shaded LEDs/s.
+pub const FLOOR_REF_LEDS: u32 = 512;
+/// The ladder's bottom rung: the lowest floor a long strip can scale down to.
+pub const LADDER_MIN_FPS: u32 = 5;
+/// Above the ceiling there is nothing to gain from a faster strip write than
+/// the eye resolves.
 pub const MAX_FPS: u32 = 80;
-/// Ladder step. Rungs are MIN_FPS, MIN_FPS+STEP, ..., MAX_FPS.
+/// Ladder step. Rungs are LADDER_MIN_FPS, LADDER_MIN_FPS+STEP, ..., MAX_FPS.
 pub const FPS_STEP: u32 = 5;
-/// Number of rungs on the ladder (25,30,...,80 = 12).
-pub const LADDER_LEN: u32 = (MAX_FPS - MIN_FPS) / FPS_STEP + 1;
+
+/// The abort floor for a strip of `leds` shaded LEDs: [`MIN_FPS`] up to
+/// [`FLOOR_REF_LEDS`], then the rung (rounded down) that keeps the same shaded
+/// LEDs per second, never below [`LADDER_MIN_FPS`] (1024 LEDs -> 10 fps,
+/// 2048 -> 5 fps).
+#[inline]
+pub fn floor_fps_for(leds: u32) -> u32 {
+    if leds <= FLOOR_REF_LEDS {
+        return MIN_FPS;
+    }
+    let f = (MIN_FPS * FLOOR_REF_LEDS) / leds;
+    ((f / FPS_STEP) * FPS_STEP).max(LADDER_MIN_FPS)
+}
+/// WS2812 wire time per LED, in ns: 24 bits x 1.2 µs. Both C6 backends clock
+/// each bit as three 400 ns samples (0.4/0.8 µs high, 1.2 µs period — inside the
+/// WS2812 1.25 µs ± 600 ns window), so this is 28.8 µs, a hair under the
+/// nominal 800 kHz's 30 µs.
+pub const WIRE_NS_PER_LED: u32 = 28_800;
+/// The latch (reset) low after a frame's last bit before the strip shows it:
+/// WS2812B-V5 and later need >= 280 µs (the original WS2812 50 µs).
+pub const LATCH_US: u32 = 300;
+/// Measured transmit spans jitter a little over the ideal wire time (DMA
+/// set-up, the transmit task's wake-up): a frame within this of the wire floor
+/// is the wire's cost, not the effect's.
+pub const WIRE_SLACK_US: u32 = 1_000;
+
+/// Wire time of one frame whose longest channel carries `leds` LEDs (channels
+/// clock out in parallel), including the latch. 0 LEDs = no wire floor.
+#[inline]
+pub fn wire_frame_us(leds: u32) -> u32 {
+    if leds == 0 {
+        0
+    } else {
+        ((leds as u64 * WIRE_NS_PER_LED as u64) / 1000) as u32 + LATCH_US
+    }
+}
+
+/// Number of rungs on the ladder (5,10,...,80 = 16).
+pub const LADDER_LEN: u32 = (MAX_FPS - LADDER_MIN_FPS) / FPS_STEP + 1;
 
 /// A frame "misses" when its cost exceeds this percent of the target period —
 /// i.e. we insist on (100 - this)% = 5% headroom for the other tasks.
@@ -62,10 +117,10 @@ pub const WINDOW_N: u32 = 30;
 /// a visible stutter while it finds its ceiling.
 pub const DEFAULT_FPS: u32 = 30;
 
-/// FPS of ladder index `i` (0 = MIN_FPS). Saturates at the ceiling.
+/// FPS of ladder index `i` (0 = LADDER_MIN_FPS). Saturates at the ceiling.
 #[inline]
 pub fn fps_at(idx: u32) -> u32 {
-    let f = MIN_FPS + idx.min(LADDER_LEN - 1) * FPS_STEP;
+    let f = LADDER_MIN_FPS + idx.min(LADDER_LEN - 1) * FPS_STEP;
     if f > MAX_FPS {
         MAX_FPS
     } else {
@@ -73,13 +128,14 @@ pub fn fps_at(idx: u32) -> u32 {
     }
 }
 
-/// Ladder index whose rung is closest to `fps`, clamped to [MIN_FPS, MAX_FPS].
-/// A user override that isn't exactly on the grid snaps to the nearest rung.
+/// Ladder index whose rung is closest to `fps`, clamped to
+/// [LADDER_MIN_FPS, MAX_FPS]. A user override that isn't exactly on the grid
+/// snaps to the nearest rung.
 #[inline]
 pub fn idx_for_fps(fps: u32) -> u32 {
-    let clamped = fps.clamp(MIN_FPS, MAX_FPS);
+    let clamped = fps.clamp(LADDER_MIN_FPS, MAX_FPS);
     // Round to the nearest step rather than truncating.
-    ((clamped - MIN_FPS) + FPS_STEP / 2) / FPS_STEP
+    ((clamped - LADDER_MIN_FPS) + FPS_STEP / 2) / FPS_STEP
 }
 
 /// Target-period in microseconds for `fps` (integer; 80 fps = 12_500 µs).
@@ -123,6 +179,12 @@ pub struct FpsController {
     /// False = never abort (hold the floor / pinned rung instead); for
     /// benchmark/profiling clients. Survives [`reset`](Self::reset), like a pin.
     abort_enabled: bool,
+    /// The WS2812 wire floor of the frames being shown, in µs (0 = unknown /
+    /// none): a hardware property of the strip lengths, so it survives reset.
+    wire_us: u32,
+    /// LEDs each frame shades (0 = unknown): sets the abort floor
+    /// ([`floor_fps_for`]). Survives reset, like the wire floor.
+    leds: u32,
 }
 
 impl Default for FpsController {
@@ -134,13 +196,15 @@ impl Default for FpsController {
 impl FpsController {
     pub const fn new() -> Self {
         FpsController {
-            idx: (DEFAULT_FPS - MIN_FPS) / FPS_STEP,
+            idx: (DEFAULT_FPS - LADDER_MIN_FPS) / FPS_STEP,
             pinned_fps: 0,
             win_frames: 0,
             win_missed: 0,
             win_max_cost_us: 0,
             abort: false,
             abort_enabled: true,
+            wire_us: 0,
+            leds: 0,
         }
     }
 
@@ -148,11 +212,11 @@ impl FpsController {
     /// is preserved — the app's chosen rate should survive an effect reload —
     /// but the abort latch and window clear so the new program starts clean.
     pub fn reset(&mut self) {
-        self.idx = if self.pinned_fps != 0 {
+        self.idx = self.clamp_idx(if self.pinned_fps != 0 {
             idx_for_fps(self.pinned_fps)
         } else {
-            (DEFAULT_FPS - MIN_FPS) / FPS_STEP
-        };
+            (DEFAULT_FPS - LADDER_MIN_FPS) / FPS_STEP
+        });
         self.win_frames = 0;
         self.win_missed = 0;
         self.win_max_cost_us = 0;
@@ -162,6 +226,84 @@ impl FpsController {
     /// Current target FPS.
     pub fn current_fps(&self) -> u32 {
         fps_at(self.idx)
+    }
+
+    /// Report the wire floor of the frames being shown ([`wire_frame_us`] of the
+    /// longest channel). Cheap; the render loop calls it every frame. A rung
+    /// above the new ceiling (a strip just grew) is clamped down immediately.
+    pub fn set_wire_us(&mut self, us: u32) {
+        if us == self.wire_us {
+            return;
+        }
+        self.wire_us = us;
+        let ceil = self.ceiling_idx();
+        if self.is_pinned() {
+            // A pin tracks the wire both ways: held at the ceiling while the strip
+            // is too long for it, back on the asked rung once it isn't.
+            self.idx = self.clamp_idx(idx_for_fps(self.pinned_fps));
+        } else if self.idx > ceil {
+            self.idx = ceil;
+        }
+    }
+
+    /// Report how many LEDs each frame shades: a strip past [`FLOOR_REF_LEDS`]
+    /// lowers the abort floor ([`floor_fps_for`]), so its heavy effects step down
+    /// to a slower rung instead of being parked. A rung below a risen floor (the
+    /// strip got shorter) is lifted to it.
+    pub fn set_leds(&mut self, leds: u32) {
+        if leds == self.leds {
+            return;
+        }
+        self.leds = leds;
+        if self.is_pinned() {
+            self.idx = self.clamp_idx(idx_for_fps(self.pinned_fps));
+        } else {
+            let lift = self.floor_idx().min(self.ceiling_idx());
+            if self.idx < lift {
+                self.idx = lift;
+            }
+        }
+    }
+
+    /// The abort floor for the reported strip ([`MIN_FPS`] until one is).
+    pub fn min_fps(&self) -> u32 {
+        floor_fps_for(self.leds)
+    }
+
+    /// `i` held to [floor, ceiling]; the wire ceiling wins when it is the lower.
+    fn clamp_idx(&self, i: u32) -> u32 {
+        i.max(self.floor_idx()).min(self.ceiling_idx())
+    }
+
+    /// Ladder index of [`min_fps`](Self::min_fps).
+    fn floor_idx(&self) -> u32 {
+        idx_for_fps(self.min_fps())
+    }
+
+    /// The wire floor last reported via [`set_wire_us`](Self::set_wire_us).
+    pub fn wire_us(&self) -> u32 {
+        self.wire_us
+    }
+
+    /// The highest ladder index the wire allows: the fastest rung whose headroom
+    /// budget still fits one wire frame (the floor when even it doesn't — the
+    /// wire then sets the rate and the effect isn't blamed for it).
+    pub fn ceiling_idx(&self) -> u32 {
+        let mut i = LADDER_LEN - 1;
+        while i > 0 && headroom_budget_us(period_us(fps_at(i))) < self.wire_us {
+            i -= 1;
+        }
+        i
+    }
+
+    /// The fastest rate this strip's wire allows ([`MAX_FPS`] when unbounded).
+    pub fn max_fps(&self) -> u32 {
+        fps_at(self.ceiling_idx())
+    }
+
+    /// True when the wire alone can't fit even the current rung's budget.
+    fn wire_bound(&self) -> bool {
+        self.wire_us > headroom_budget_us(period_us(self.current_fps()))
     }
 
     /// User-pinned FPS (0 = autoscale).
@@ -203,7 +345,10 @@ impl FpsController {
         } else {
             let idx = idx_for_fps(fps);
             self.pinned_fps = fps_at(idx);
-            self.idx = idx;
+            // A pin above the wire ceiling runs at the ceiling (no strip can be
+            // driven faster than its wire), one below the floor at the floor; the
+            // pin itself is kept as asked.
+            self.idx = self.clamp_idx(idx);
         }
         self.win_frames = 0;
         self.win_missed = 0;
@@ -224,7 +369,15 @@ impl FpsController {
         let headroom_budget = headroom_budget_us(period);
 
         self.win_frames += 1;
-        if cost_us > headroom_budget {
+        // A frame no slower than the wire floor is the wire's cost: only when the
+        // wire alone overruns this rung (the ceiling is the floor rung) does that
+        // matter, and then it isn't a miss — the effect can't fix the wire.
+        let miss_over = if self.wire_bound() {
+            headroom_budget.max(self.wire_us.saturating_add(WIRE_SLACK_US))
+        } else {
+            headroom_budget
+        };
+        if cost_us > miss_over {
             self.win_missed += 1;
         }
         if cost_us > self.win_max_cost_us {
@@ -258,7 +411,7 @@ impl FpsController {
 
         if over_limit {
             // Too many missed frames at this rung.
-            if self.idx == 0 || self.is_pinned() {
+            if self.idx <= self.floor_idx() || self.is_pinned() {
                 // Already at the floor, or the app pinned this rate — the effect
                 // cannot run within budget. Ask the caller to park + notify
                 // (unless a benchmark asked us to hold instead).
@@ -269,7 +422,7 @@ impl FpsController {
                 // Back off one rung and try again.
                 self.idx -= 1;
             }
-        } else if !self.is_pinned() && missed == 0 && self.idx + 1 < LADDER_LEN {
+        } else if !self.is_pinned() && missed == 0 && self.idx + 1 <= self.ceiling_idx() {
             // Clean window and room to climb: step up only if the worst frame we
             // saw would still leave 5% headroom at the FASTER rung, so we don't
             // immediately bounce back down.
@@ -332,15 +485,17 @@ mod tests {
 
     #[test]
     fn ladder_maps_indices_and_fps() {
-        assert_eq!(LADDER_LEN, 12);
-        assert_eq!(fps_at(0), 25);
-        assert_eq!(fps_at(1), 30);
-        assert_eq!(fps_at(11), 80);
+        assert_eq!(LADDER_LEN, 16);
+        assert_eq!(fps_at(0), 5);
+        assert_eq!(fps_at(4), 25);
+        assert_eq!(fps_at(5), 30);
+        assert_eq!(fps_at(15), 80);
         assert_eq!(fps_at(99), 80); // saturates
-        assert_eq!(idx_for_fps(25), 0);
-        assert_eq!(idx_for_fps(80), 11);
-        assert_eq!(idx_for_fps(10), 0); // clamps up to the floor
-        assert_eq!(idx_for_fps(200), 11); // clamps down to the ceiling
+        assert_eq!(idx_for_fps(5), 0);
+        assert_eq!(idx_for_fps(25), 4);
+        assert_eq!(idx_for_fps(80), 15);
+        assert_eq!(idx_for_fps(1), 0); // clamps up to the ladder bottom
+        assert_eq!(idx_for_fps(200), 15); // clamps down to the ceiling
         assert_eq!(idx_for_fps(58), idx_for_fps(60)); // snaps to nearest rung
         assert_eq!(fps_at(idx_for_fps(58)), 60);
     }
@@ -541,5 +696,170 @@ mod tests {
         assert_eq!(c.current_fps(), 45); // pin preserved
         assert!(c.is_pinned());
         assert!(!c.take_abort());
+    }
+
+    // -- wire ceiling (WS2812: 28.8 µs/LED on the longest channel) -------------
+
+    #[test]
+    fn wire_frame_time_is_30us_per_led_plus_latch() {
+        assert_eq!(wire_frame_us(0), 0);
+        assert_eq!(wire_frame_us(1), 28 + LATCH_US);
+        assert_eq!(wire_frame_us(512), 14_745 + LATCH_US);
+        assert_eq!(wire_frame_us(1024), 29_491 + LATCH_US);
+    }
+
+    #[test]
+    fn ceiling_is_the_fastest_rung_one_wire_frame_fits() {
+        let mut c = FpsController::new();
+        assert_eq!(c.max_fps(), MAX_FPS, "no wire floor reported = unbounded");
+        // The documented floor table (docs/user-guide.md "Hardware limits").
+        for (leds, fps) in [
+            (150, 80),
+            (300, 80),
+            (400, 80),
+            (450, 70),
+            (512, 60),
+            (600, 50),
+            (768, 40),
+            (900, 35),
+            (1024, 30),
+        ] {
+            c.set_wire_us(wire_frame_us(leds));
+            assert_eq!(c.max_fps(), fps, "{leds} LEDs");
+            // ...and the rung above really wouldn't fit one wire frame.
+            if fps < MAX_FPS {
+                assert!(headroom_budget_us(period_us(fps + FPS_STEP)) < wire_frame_us(leds));
+            }
+        }
+    }
+
+    #[test]
+    fn never_climbs_above_the_wire_ceiling() {
+        let mut c = FpsController::new();
+        // 29.8 ms -> 30 fps ceiling.
+        c.set_wire_us(wire_frame_us(1024));
+        // A trivially cheap effect: the CPU alone would climb to MAX_FPS.
+        for _ in 0..(WINDOW_N * 20) {
+            c.on_frame(500);
+        }
+        assert_eq!(c.current_fps(), 30);
+    }
+
+    #[test]
+    fn a_growing_strip_clamps_the_rung_at_once() {
+        let mut c = FpsController::new();
+        for _ in 0..(WINDOW_N * 20) {
+            c.on_frame(500);
+        }
+        assert_eq!(c.current_fps(), MAX_FPS);
+        c.set_wire_us(wire_frame_us(768));
+        assert_eq!(
+            c.current_fps(),
+            40,
+            "clamped on the report, not a window later"
+        );
+        c.set_wire_us(wire_frame_us(100));
+        assert_eq!(
+            c.current_fps(),
+            40,
+            "a shrink doesn't jump; the window climbs"
+        );
+    }
+
+    #[test]
+    fn a_pin_above_the_ceiling_runs_at_the_ceiling_without_aborting() {
+        let mut c = FpsController::new();
+        c.set_wire_us(wire_frame_us(1024));
+        c.set_target(60);
+        assert_eq!(c.pinned_fps(), 60, "the pin is kept as asked");
+        assert_eq!(c.current_fps(), 30, "but runs at the wire ceiling");
+        // Frames cost what the wire costs: never an abort.
+        for _ in 0..(WINDOW_N * 4) {
+            assert!(!c.on_frame(wire_frame_us(1024) + 200).abort);
+        }
+        assert_eq!(c.current_fps(), 30);
+        // The strip gets shorter: the pin is honoured again.
+        c.set_wire_us(wire_frame_us(256));
+        assert_eq!(c.current_fps(), 60);
+    }
+
+    #[test]
+    fn the_abort_floor_scales_down_with_the_strip() {
+        assert_eq!(floor_fps_for(0), MIN_FPS);
+        assert_eq!(floor_fps_for(512), MIN_FPS);
+        assert_eq!(floor_fps_for(600), 20);
+        assert_eq!(floor_fps_for(1024), 10);
+        assert_eq!(floor_fps_for(2048), LADDER_MIN_FPS);
+        assert_eq!(floor_fps_for(100_000), LADDER_MIN_FPS);
+    }
+
+    #[test]
+    fn a_heavy_effect_on_a_long_strip_slows_down_instead_of_aborting() {
+        // 2048 LEDs at ~3.6k cycles each (a plasma) = ~46 ms of shading: under
+        // the 25 fps floor (38 ms budget) a 512-LED strip would park it.
+        let mut c = FpsController::new();
+        c.set_wire_us(wire_frame_us(1024)); // two parallel 1024-LED channels
+        c.set_leds(2048);
+        assert_eq!(c.min_fps(), 5);
+        let cost = 46_000;
+        for _ in 0..(WINDOW_N * 12) {
+            assert!(!c.on_frame(cost).abort, "a long strip's floor is lower");
+        }
+        assert_eq!(c.current_fps(), 20, "the fastest rung that fits 46 ms");
+        // The same cost on a reference-length strip is over its floor: abort.
+        let mut c = FpsController::new();
+        c.set_leds(512);
+        let mut aborted = false;
+        for _ in 0..(WINDOW_N * 12) {
+            aborted |= c.on_frame(cost).abort;
+        }
+        assert!(aborted);
+    }
+
+    #[test]
+    fn a_shorter_strip_lifts_the_rung_to_its_floor() {
+        let mut c = FpsController::new();
+        c.set_leds(2048);
+        for _ in 0..(WINDOW_N * 12) {
+            c.on_frame(120_000); // ~8 fps of work
+        }
+        assert_eq!(c.current_fps(), 5);
+        c.set_leds(256);
+        assert_eq!(c.current_fps(), MIN_FPS, "back on the short strip's floor");
+    }
+
+    #[test]
+    fn a_wire_bound_floor_blames_the_effect_only_beyond_the_wire() {
+        let mut c = FpsController::new();
+        // A wire longer than even the 25-fps budget (38 ms) under the reference
+        // floor (no strip length reported, so the floor stays 25 fps): the wire
+        // ceiling (40.6 ms fits 20 fps) wins over the floor.
+        let wire = wire_frame_us(1400);
+        c.set_wire_us(wire);
+        assert_eq!(c.min_fps(), MIN_FPS);
+        assert_eq!(c.current_fps(), 20);
+        for _ in 0..(WINDOW_N * 4) {
+            assert!(
+                !c.on_frame(wire + 300).abort,
+                "the wire's own cost never aborts"
+            );
+        }
+        let mut aborted = false;
+        for _ in 0..WINDOW_N {
+            aborted |= c.on_frame(wire + 10 * WIRE_SLACK_US).abort;
+        }
+        assert!(
+            aborted,
+            "an effect slower than the wire still aborts at the floor"
+        );
+    }
+
+    #[test]
+    fn reset_keeps_the_wire_ceiling() {
+        let mut c = FpsController::new();
+        c.set_wire_us(wire_frame_us(1024));
+        c.reset();
+        assert_eq!(c.wire_us(), wire_frame_us(1024));
+        assert_eq!(c.current_fps(), 30);
     }
 }

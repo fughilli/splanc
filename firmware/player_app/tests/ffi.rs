@@ -178,7 +178,9 @@ fn full_device_flow_through_the_c_abi() {
     let (mut id, mut xyz) = (0u32, [0f32; 3]);
     assert!(unsafe { lm_map_led(cap - 1, &mut id, xyz.as_mut_ptr()) });
     assert_eq!(id, cap - 1);
-    assert!((xyz[0] - (cap - 1) as f32 * 0.01).abs() < 1e-6);
+    // Positions are stored with a 16-bit mantissa (ffi.rs F24): ~1.5e-5 relative.
+    let want = (cap - 1) as f32 * 0.01;
+    assert!((xyz[0] - want).abs() <= want.abs() * 2e-5, "x = {} want {want}", xyz[0]);
     assert!(!unsafe { lm_map_led(cap, &mut id, xyz.as_mut_ptr()) });
 
     // Topology for the stored map: result_ready through the arena path.
@@ -663,7 +665,7 @@ fn full_device_flow_through_the_c_abi() {
     assert!(unsafe { lm_fx_active() });
     let mut frames = 0;
     while unsafe { lm_fx_active() } && frames < 200 {
-        let delay = unsafe { lm_fps_on_frame(20_000) };
+        let delay = unsafe { lm_fps_on_frame(20_000, 0, 0) };
         assert!(delay >= 2, "an overrunning frame still yields >=5% ({delay} ms)");
         frames += 1;
     }
@@ -684,7 +686,7 @@ fn full_device_flow_through_the_c_abi() {
     assert!(set_fps(60, true, 8100.0).r#no_abort);
     unsafe { lm_fx_set_active(true) };
     for _ in 0..200 {
-        unsafe { lm_fps_on_frame(20_000) };
+        unsafe { lm_fps_on_frame(20_000, 0, 0) };
     }
     assert!(unsafe { lm_fx_active() }, "held: still rendering");
     assert!(!unsafe { lm_fps_take_abort_notify() });
@@ -695,14 +697,29 @@ fn full_device_flow_through_the_c_abi() {
     let fauto = set_fps(0, false, 8200.0);
     assert!(fauto.r#auto && fauto.r#target_fps == 0 && !fauto.r#no_abort);
     for _ in 0..(12 * 30) {
-        unsafe { lm_fps_on_frame(2_000) };
+        unsafe { lm_fps_on_frame(2_000, 0, 0) };
     }
     assert_eq!(unsafe { lm_fps_current_fps() }, 80, "a cheap effect climbs to the ceiling");
     // A new activation restarts the search at the default 30-fps rung.
     unsafe { lm_fx_set_active(false) };
     unsafe { lm_fx_set_active(true) };
-    unsafe { lm_fps_on_frame(2_000) };
+    unsafe { lm_fps_on_frame(2_000, 0, 0) };
     assert_eq!(unsafe { lm_fps_current_fps() }, 30);
+    // A 2 x 1024-LED strip: the wire (1024 LEDs x 28.8 us + latch = 29.8 ms)
+    // caps the ladder at 30 fps however cheap the frames, and the 2048 shaded
+    // LEDs lower the abort floor to 5 fps; fps_state reports both.
+    for _ in 0..(12 * 30) {
+        unsafe { lm_fps_on_frame(2_000, 1024, 2048) };
+    }
+    assert_eq!(unsafe { lm_fps_current_fps() }, 30, "the wire caps the climb");
+    let fs = set_fps(0, false, 8300.0);
+    assert_eq!((fs.r#current_fps, fs.r#min_fps, fs.r#max_fps), (30, 5, 30));
+    // ~45 ms frames (a plasma over 2048 LEDs) step down to 20 fps, not abort.
+    for _ in 0..(12 * 30) {
+        unsafe { lm_fps_on_frame(45_000, 1024, 2048) };
+    }
+    assert!(unsafe { lm_fx_active() }, "a long strip's heavy effect keeps running");
+    assert_eq!(unsafe { lm_fps_current_fps() }, 20);
     unsafe { lm_fx_set_active(false) };
 
     // Last: it re-inits the player, so it must not race the flow above.

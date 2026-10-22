@@ -902,6 +902,41 @@ py_binary(
     ],
 )
 
+# LED capacity (1024 LEDs per channel): both channels at the per-channel cap, the
+# 2 x cap map + topology round trip (get_stored_map), an animated effect's
+# fps_state (wire ceiling) + PerfReport heap on the loaded board, and fresh wss
+# handshakes on that heap. Wire timing per channel: :led_timing --split.
+#   bazel run //pi/hitl/harness:led_capacity -- --server http://hitl-rig-2:8087 \
+#       --device c6-fa0324 --per-channel 1024 --expect-refusal
+py_binary(
+    name = "led_capacity",
+    srcs = [
+        "hitl_led_capacity.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "LED_CAPACITY_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+    },
+    imports = ["."],
+    main = "hitl_led_capacity.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Shared-time-base skew (multi-fixture §3): two DUTs, one room epoch via
 # set_time_base, both WS2812 wires in ONE analyzer capture; reads each frame's
 # effect time off the wire (binary clock) and reports the inter-fixture skew.

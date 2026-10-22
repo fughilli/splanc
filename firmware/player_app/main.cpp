@@ -227,11 +227,34 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char *fn) {
   heap_fail_backtrace();
 }
 
-// Render buffer cap; the actual rendered count follows the active pattern /
-// counting configuration at runtime (min'd against this). LM_MAX_LEDS is the
-// LED-cap SSOT, injected by the build from //firmware/player_app:led_caps.bzl.
+// LED cap (LM_MAX_LEDS, the SSOT in //firmware/player_app:led_caps.bzl): the most
+// any config may ask for. The per-LED buffers are NOT sized for it: led_store_begin
+// allocates them once at boot (before the radios fragment the heap) for the
+// PERSISTED channel counts — `leds` (the render buffer), the PARLIO transmit
+// buffer and the player's per-LED store (map positions / topology) — so a
+// 300-LED lamp pays for 300 LEDs. A count change past g_led_cap is persisted and
+// the player reboots into the new size (lm_set_led_limits / reboot_required).
 static const uint32_t kMaxLeds = LM_MAX_LEDS;
-static Rgb leds[kMaxLeds];
+// Sized for when no count is persisted (fresh / never configured): the old cap.
+static const uint32_t kDefaultLedCapacity = 512;
+// Heap the running board takes AFTER the boot-time LED buffers and before its
+// low-water mark: the radios, the BLE controller, the netstack, a TLS session
+// and an effect (HITL: heap at boot before the LED buffers, minus the buffers,
+// minus the loaded min-free; led_capacity on rig-2, docs/design/ram-budget.md).
+// Measured 61,724 B (rig-2 c6-fa0324: 155,200 B free before the buffers, 63,800 B
+// of buffers at 2048 LEDs, 29,676 B min free); rounded up for margin.
+static const uint32_t kRuntimeHeapReserve = 62 * 1024;
+// Never size the LED buffers so big that the boot-time floor would dip under
+// this much free heap: refuse the config instead (board.max_leds).
+static const uint32_t kHeapFloor = 24 * 1024;
+static uint32_t g_led_cap = 0;      // LEDs `leds` + the store hold this boot
+static uint32_t g_led_dma = 0;      // LEDs the transmit buffer holds (>= g_led_cap)
+static uint32_t g_led_max_heap = 0;  // largest total the heap could size at boot
+static Rgb *leds = nullptr;
+// A count change outgrew this boot's LED buffers (lm_take_reboot_request): the
+// config is persisted; restart this long after, once the reply has gone out.
+static const uint32_t kResizeRebootDelayMs = 1500;
+static uint32_t g_reboot_at_ms = 0;
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------
 // The WS2812 strip write is ~30 µs/LED (256 LEDs ≈ 7.7 ms), and the transmit
@@ -739,6 +762,14 @@ static void poll_hardware_config() {
     }
     Log().printf("[hw] committed gpio=%d/%d order=%s/%s leds=%d/%d (gen=%u)\n", g0, g1, ord0,
                  ord1, (int)lm_led_count(0), (int)lm_led_count(1), gen);
+    if (lm_take_reboot_request()) {
+      // Persisted above (each put commits); the reply (reboot_required) goes out
+      // before the restart.
+      g_reboot_at_ms = millis() + kResizeRebootDelayMs;
+      if (g_reboot_at_ms == 0) g_reboot_at_ms = 1;
+      Log().printf("[led] %d+%d LEDs outgrow this boot's %u-LED buffers: rebooting to resize\n",
+                   (int)lm_led_count(0), (int)lm_led_count(1), (unsigned)g_led_cap);
+    }
   } else {
     Log().printf("[hw] preview gpio=%d/%d (gen=%u)\n", g0, g1, gen);
   }
@@ -1469,8 +1500,8 @@ static uint32_t render_once() {
   uint32_t ch0_len = c0 > 0 ? (uint32_t)c0 : 0;
   uint32_t ch1_len = c1 > 0 ? (uint32_t)c1 : 0;
   uint32_t total_cfg = ch0_len + ch1_len;
-  uint32_t xmit_len = total_cfg > 0 ? total_cfg : kMaxLeds;
-  if (xmit_len > kMaxLeds) xmit_len = kMaxLeds;
+  uint32_t xmit_len = total_cfg > 0 ? total_cfg : g_led_cap;
+  if (xmit_len > g_led_cap) xmit_len = g_led_cap;
 
   // Time the effect update()/shade span with the free-running cycle counter;
   // the show() span is timed separately AFTER the strip write (it runs outside
@@ -1499,7 +1530,7 @@ static uint32_t render_once() {
     uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
     uint32_t frame_index = seq % cycle_frames;
     if (frame_index != last_shown_frame) {
-      uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
+      uint32_t n = led_count < g_led_cap ? led_count : g_led_cap;
       xmit_len = n;  // drive exactly the mapping strip
       for (uint32_t i = 0; i < n; i++) {
         if (lm_pattern_color(i, frame_index, rgb)) {
@@ -1545,10 +1576,10 @@ static uint32_t render_once() {
     counting_hwm[other] = 0;  // blanked this frame
     uint32_t cn = lm_counting_len();
     if (cn == 0) cn = 1;
-    if (cn > kMaxLeds) cn = kMaxLeds;
+    if (cn > g_led_cap) cn = g_led_cap;
     uint32_t extent = cn > counting_hwm[cch] ? cn : counting_hwm[cch];
-    if (extent > kMaxLeds) extent = kMaxLeds;
-    if (other_len > kMaxLeds - extent) other_len = kMaxLeds - extent;
+    if (extent > g_led_cap) extent = g_led_cap;
+    if (other_len > g_led_cap - extent) other_len = g_led_cap - extent;
     // Buffer layout follows the transmit: channel 0's pixels first, then 1's.
     uint32_t probe_off = cch == 0 ? 0 : other_len;
     uint32_t other_off = cch == 0 ? extent : 0;
@@ -1598,7 +1629,7 @@ static uint32_t render_once() {
     // flag at the start of each frame. The instruction budget is the primary
     // guard and is fully effective without the timer.
     uint32_t n = lm_map_len();
-    if (n > kMaxLeds) n = kMaxLeds;
+    if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
@@ -1643,7 +1674,7 @@ static uint32_t render_once() {
       }
     } else {
       // Effect active but not runnable (shouldn't happen) — hold black.
-      fill_rgb(leds, kMaxLeds, Rgb::Black);
+      fill_rgb(leds, g_led_cap, Rgb::Black);
     }
     {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
@@ -1664,7 +1695,7 @@ static uint32_t render_once() {
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {
-      fill_rgb(leds, kMaxLeds, Rgb::Black);
+      fill_rgb(leds, g_led_cap, Rgb::Black);
       show = true;
       was_active = false;
     } else {
@@ -1689,6 +1720,7 @@ static uint32_t render_once() {
   // for the PREVIOUS frame — the two now overlap, so the effective frame period
   // is max(frame_c, show_c), not their sum.
   uint32_t show_c = 0;
+  uint32_t wire_leds = 0;  // the longest channel: both clock out in parallel
   if (show) {
     // Split the active range across the channels at the channel-0 boundary. With
     // channel 1 unconfigured (ch1_len == 0) this is count0 = xmit_len, count1 = 0
@@ -1701,6 +1733,10 @@ static uint32_t render_once() {
       count0 = direct0;
       count1 = direct1;
     }
+    // (The transmit buffer is sized at boot for twice the longest configured
+    // channel, so an effect frame always goes out as one parallel frame: the
+    // longer channel is the wire time — see led_store_begin.)
+    wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
     if (fx_frame_rendered) show_c = g_show_c;
   }
@@ -1719,7 +1755,10 @@ static uint32_t render_once() {
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
     // starts land one period apart. Also parks the effect + latches an
     // app-notify if the floor / pinned rate proved unachievable.
-    next_delay_ms = lm_fps_on_frame(cost_us);
+    // With the strip: its wire floor (28.8 us per LED of the longest channel +
+    // the latch) caps the ladder at what the wire can carry, and its length
+    // lowers the abort floor past 512 LEDs (heavy effects run slower, not parked).
+    next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
     if (perf_on) {
       // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
       bool overran = period_c > lm_fps_budget_cycles();
@@ -1826,8 +1865,9 @@ static void xmit_task(void *) {
 static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
                            const uint8_t *order_override) {
   uint32_t total = count0 + count1;
-  if (total > kMaxLeds) {  // clamp defensively; render never exceeds the cap
-    count1 = count1 > kMaxLeds - count0 ? kMaxLeds - count0 : count1;
+  if (total > g_led_cap) {  // clamp defensively; render never exceeds the cap
+    if (count0 > g_led_cap) count0 = g_led_cap;
+    count1 = count1 > g_led_cap - count0 ? g_led_cap - count0 : count1;
     total = count0 + count1;
   }
   if (xmit_task_handle == nullptr) {
@@ -2410,6 +2450,66 @@ static void run_fx_jit_bench() {
 }
 #endif  // LM_FX_JIT_BENCH
 
+// Size + allocate the per-LED buffers ONCE, for the persisted channel counts
+// (hw_len0/1; kDefaultLedCapacity when none), before anything else takes heap:
+// the render buffer `leds`, the player's per-LED store (bound to the Rust core),
+// and — sized here, allocated by ws2812_init — the transmit buffer (room for
+// twice the longest channel, so both channels always go out in parallel). Also
+// derives board.max_leds: the largest total whose buffers still leave
+// kHeapFloor free after the running board's kRuntimeHeapReserve.
+static uint32_t led_buffer_bytes(uint32_t leds_n, uint32_t dma_n) {
+  const uint32_t kBlock = 16;  // TLSF block header + alignment, per allocation
+  return leds_n * sizeof(Rgb) + (uint32_t)ws2812_buffer_bytes(dma_n) +
+         (uint32_t)lm_led_store_bytes(leds_n) + 3 * kBlock;
+}
+
+static void led_store_begin() {
+  Preferences boot;
+  boot.begin("ledmapper", true);  // read-only peek at the persisted counts
+  int n0 = boot.getInt("hw_len0", 0), n1 = boot.getInt("hw_len1", 0);
+  boot.end();
+  const uint32_t kPerCh = LM_MAX_LEDS_PER_CHANNEL;
+  uint32_t c0 = n0 > 0 ? ((uint32_t)n0 < kPerCh ? (uint32_t)n0 : kPerCh) : 0;
+  uint32_t c1 = n1 > 0 ? ((uint32_t)n1 < kPerCh ? (uint32_t)n1 : kPerCh) : 0;
+  const uint32_t heap = (uint32_t)esp_get_free_heap_size();
+  const uint32_t spare = heap > kRuntimeHeapReserve + kHeapFloor
+                             ? heap - kRuntimeHeapReserve - kHeapFloor
+                             : 0;
+  // board.max_leds: the largest total (both channels balanced) the heap can size.
+  uint32_t lo = 0, hi = kMaxLeds;
+  while (lo < hi) {
+    uint32_t mid = (lo + hi + 1) / 2;
+    if (led_buffer_bytes(mid, mid) <= spare) lo = mid; else hi = mid - 1;
+  }
+  g_led_max_heap = lo < kDefaultLedCapacity ? kDefaultLedCapacity : lo;
+  uint32_t cap = c0 + c1 > 0 ? c0 + c1 : kDefaultLedCapacity;
+  if (cap > g_led_max_heap) cap = g_led_max_heap;  // a persisted config the heap outgrew
+  uint32_t longest = c0 > c1 ? c0 : c1;
+  uint32_t dma = 2 * longest > cap ? 2 * longest : cap;
+  if (dma > kMaxLeds) dma = kMaxLeds;
+  leds = static_cast<Rgb *>(heap_caps_malloc(cap * sizeof(Rgb), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  size_t store_bytes = lm_led_store_bytes(cap);
+  uint8_t *store = static_cast<uint8_t *>(
+      heap_caps_aligned_alloc(4, store_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  if (!leds || !store || !lm_led_store_bind(store, store_bytes, cap)) {
+    // Can't happen at boot with the floor above; never run without a buffer.
+    Log().printf("[led] LED buffers for %u LEDs FAILED; falling back to 64\n", (unsigned)cap);
+    free(leds);
+    free(store);
+    cap = dma = 64;
+    leds = static_cast<Rgb *>(heap_caps_malloc(cap * sizeof(Rgb), MALLOC_CAP_INTERNAL));
+    store_bytes = lm_led_store_bytes(cap);
+    store = static_cast<uint8_t *>(heap_caps_aligned_alloc(4, store_bytes, MALLOC_CAP_INTERNAL));
+    lm_led_store_bind(store, store_bytes, cap);
+  }
+  g_led_cap = cap;
+  g_led_dma = dma;
+  Log().printf("[led] capacity %u LEDs (configured %u+%u, tx buffer %u) = %u B; heap %u before, "
+               "max %u LEDs\n",
+               (unsigned)cap, (unsigned)c0, (unsigned)c1, (unsigned)dma,
+               (unsigned)led_buffer_bytes(cap, dma), (unsigned)heap, (unsigned)g_led_max_heap);
+}
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -2456,7 +2556,8 @@ void setup() {
   // WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless driver).
   // Frames are staged into its own buffer (the transmit snapshot), so the async
   // transmit task never reads `leds` while the render task fills it.
-  if (!ws2812_init(LED_DATA_PIN, LED_DATA_PIN_2, kMaxLeds)) {
+  led_store_begin();
+  if (!ws2812_init(LED_DATA_PIN, LED_DATA_PIN_2, g_led_dma)) {
     Log().printf("[led] ws2812 RMT init FAILED (backend=%s)\n", ws2812_backend());
   }
   // No global hardware dimming. Output brightness is owned by the software
@@ -2465,8 +2566,8 @@ void setup() {
   // patterns (counting probe / mapping gray-code), which must reach the wire at
   // their exact known values for the camera + logic-analyzer to decode.
   // (No render task yet, so `leds` is free to use as boot scratch.)
-  fill_rgb(leds, kMaxLeds, Rgb::Black);
-  ws2812_show(reinterpret_cast<const uint8_t *>(leds), kMaxLeds, 0);  // blank the strip
+  fill_rgb(leds, g_led_cap, Rgb::Black);
+  ws2812_show(reinterpret_cast<const uint8_t *>(leds), g_led_cap, 0);  // blank the strip
   // Boot self-test: drive ONE pixel on each channel so a silent transmit
   // failure on channel 1 (GPIO14) shows up in the boot log, independent of the
   // logic-analyzer tap. leds[0] -> ch0, leds[1] -> ch1 (count0==1 splits).
@@ -2475,8 +2576,8 @@ void setup() {
   ws2812_show(reinterpret_cast<const uint8_t *>(leds), 1, 1);
   Log().printf("[led] ws2812 backend=%s channels=%d ch0_err=0x%x ch1_err=0x%x\n",
                ws2812_backend(), ws2812_channels(), ws2812_last_error(0), ws2812_last_error(1));
-  fill_rgb(leds, kMaxLeds, Rgb::Black);
-  ws2812_show(reinterpret_cast<const uint8_t *>(leds), kMaxLeds, 0);  // re-blank
+  fill_rgb(leds, g_led_cap, Rgb::Black);
+  ws2812_show(reinterpret_cast<const uint8_t *>(leds), g_led_cap, 0);  // re-blank
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.
@@ -2491,7 +2592,8 @@ void setup() {
   // Guards every call into the single-threaded Rust core; must exist before
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
-  lm_player_init(NUM_LEDS);
+  lm_player_init(g_led_cap);
+  lm_set_led_limits(g_led_cap, g_led_max_heap);
   // Install this board's static capability descriptor (GPIO safety catalog + LED
   // modes), compiled from board_caps.textproto and embedded in the image, so the
   // app's Hardware Setup pin picker reflects THIS board. Ignored if it can't
@@ -2788,6 +2890,11 @@ static void mode_observe() {
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
+  if (g_reboot_at_ms && (int32_t)(millis() - g_reboot_at_ms) >= 0) {
+    Log().printf("[led] restarting to resize the LED buffers\n");
+    delay(50);  // let the log drain
+    esp_restart();
+  }
 #if !defined(LM_NETSTACK)
   if (sta_relisten_pending) {
     // The STA (re)acquired an IP; the old listeners died with the netif. Rebind

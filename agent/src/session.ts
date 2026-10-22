@@ -47,8 +47,19 @@ import {
   type UniformInput,
 } from "./uniforms";
 
-/** The framerate autoscaler's floor (FUG-82; firmware/fps MIN_FPS). */
+/** The framerate autoscaler's abort floor (FUG-82; firmware/fps MIN_FPS) for a
+ * strip of up to FPS_FLOOR_REF_LEDS LEDs. */
 const FPS_FLOOR = 25;
+const FPS_FLOOR_REF_LEDS = 512;
+
+/** The abort floor for a strip of `leds` (firmware/fps `floor_fps_for`): 25 fps
+ * up to 512 LEDs, then the 5-fps rung (rounded down, >= 5) that keeps the same
+ * shaded LEDs per second — a long strip runs heavy effects slower, not parked. */
+export function fpsFloorFor(leds: number): number {
+  if (leds <= FPS_FLOOR_REF_LEDS) return FPS_FLOOR;
+  const f = Math.floor((FPS_FLOOR * FPS_FLOOR_REF_LEDS) / leds);
+  return Math.max(5, Math.floor(f / 5) * 5);
+}
 
 /** Message types the bridge must never send (spec "Safety and exclusions"). */
 export const FORBIDDEN_TYPES = new Set([
@@ -1309,13 +1320,17 @@ export class DeviceSession {
     const budget = last.budgetCycles;
     const currentFps = last.currentFps ?? 0;
     const toMs = (c: number) => (last.cpuHz > 0 ? +((c / last.cpuHz) * 1000).toFixed(2) : null);
-    // Autoscaling firmware: the hard limit is the 25-fps floor with 5% headroom.
-    const floorCycles = currentFps > 0 && last.cpuHz > 0 ? (last.cpuHz / FPS_FLOOR) * 0.95 : 0;
+    // Autoscaling firmware: the hard limit is the strip's floor (25 fps up to 512
+    // LEDs, lower past it) with 5% headroom.
+    // (The strip length from the already-pulled fixture: no extra round trip.)
+    const fx = this.fixture?.bundle.map;
+    const floorFps = fpsFloorFor(fx?.ledCount ?? fx?.leds?.length ?? 0);
+    const floorCycles = currentFps > 0 && last.cpuHz > 0 ? (last.cpuHz / floorFps) * 0.95 : 0;
     let verdict: string;
     if (currentFps > 0) {
       verdict =
         meanCycles > floorCycles
-          ? `over budget: it can't keep 5% headroom even at ${FPS_FLOOR} fps — the player will park it. Roll back and simplify.`
+          ? `over budget: it can't keep 5% headroom even at ${floorFps} fps — the player will park it. Roll back and simplify.`
           : `within budget (the player runs it at ${currentFps} fps)`;
     } else {
       verdict =

@@ -536,6 +536,8 @@ class LedCountStateMessage(_StrictModel):
     type: Literal["led_count_state"]
     ledCount: int = Field(ge=0)
     channel: int = Field(ge=0)
+    # The count outgrew this boot's LED buffers: persisted; the player restarts.
+    rebootRequired: bool = False
 
 
 class PlaybackStateMessage(_StrictModel):

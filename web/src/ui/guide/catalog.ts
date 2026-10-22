@@ -775,6 +775,30 @@ export const GUIDE_TOPICS: GuideTopic[] = [
           "**Performance profiles** manages saved per-device cost tables.",
         ],
       },
+      {
+        heading: "Hardware limits",
+        bullets: [
+          "The ESP32-C6 player drives two LED channels (GPIO 20 and GPIO 14 by default), up " +
+            "to **1024 LEDs on each**, 2048 in all. Set each channel's count on the Hardware " +
+            "screen; the device refuses a channel past 1024.",
+          "**The device sizes its LED memory for the counts you set**, once at boot, so a " +
+            "small fixture keeps its memory for everything else. Raising the total past what " +
+            "it booted with saves the counts and restarts the device (a few seconds; the app " +
+            "reconnects). A total the board's memory can't hold is refused.",
+          "**The wire caps the frame rate.** A WS2812 LED takes 28.8 µs to clock out and the " +
+            "two channels go out in parallel, so the longest channel sets a ceiling: 80 fps up " +
+            "to about 400 LEDs, 60 at 512, 40 at 768, 30 at 1024. The Hardware screen shows " +
+            "the ceiling for your layout; splitting a long strip across both channels halves " +
+            "its wire time.",
+          "**The effect sets the rest.** Per-LED work grows with the LED count, so a heavy " +
+            "effect on 2048 LEDs runs slower than on 300. The player picks the fastest steady " +
+            "rate (in 5 fps steps) the effect can hold, and stops it only below a floor: 25 fps " +
+            "up to 512 LEDs, lower on longer strips (10 fps at 1024, 5 fps at 2048).",
+          "Effects with per-LED `buffer` state share a 24 KB arena, so on very long strips a " +
+            "wide buffer may not fit; packed types (`: fixed8`) store it in a quarter of the " +
+            "space.",
+        ],
+      },
     ],
   },
   {

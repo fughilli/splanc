@@ -619,14 +619,14 @@ def test_set_counting_pattern_empty_blocks_clears(tmp_path):
 def test_set_led_count_persists_and_defaults_channel_zero(tmp_path):
     handler, ctx, _ = _make_handler(tmp_path)
     m = _dump(_run(handler, '{"type":"set_led_count","ledCount":300}')[0])
-    assert m == {"type": "led_count_state", "ledCount": 300, "channel": 0}
+    assert m == {"type": "led_count_state", "ledCount": 300, "channel": 0, "rebootRequired": False}
     # Channel 0 becomes the fallback code-book ledCount...
     assert ctx.default_led_count == 300
     welcome = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
     assert welcome["codeParams"]["ledCount"] == 300
     # ...while other channels are recorded without touching the default.
     m = _dump(_run(handler, '{"type":"set_led_count","ledCount":150,"channel":1}')[0])
-    assert m == {"type": "led_count_state", "ledCount": 150, "channel": 1}
+    assert m == {"type": "led_count_state", "ledCount": 150, "channel": 1, "rebootRequired": False}
     assert ctx.default_led_count == 300
     assert ctx.led_counts == {0: 300, 1: 150}
 

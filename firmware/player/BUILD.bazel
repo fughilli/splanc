@@ -49,7 +49,7 @@ rust_test(
         "GOLDEN_SECDED16": "$(rootpath //web:tests/golden_secded16.json)",
         # Envelope structs carry inline heapless storage (see
         # //shared/protocol/rust) and land on the test thread's stack.
-        "RUST_MIN_STACK": "16777216",
+        "RUST_MIN_STACK": "67108864",
     },
     deps = [
         ":player",
@@ -67,7 +67,7 @@ rust_test(
     name = "agent_manifest_test",
     srcs = ["tests/agent_manifest.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "67108864"},
     deps = [
         ":player",
         "//shared/protocol/rust:ledmapper_pb",
@@ -83,7 +83,7 @@ rust_test(
     edition = "2021",
     env = {
         "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
-        "RUST_MIN_STACK": "16777216",
+        "RUST_MIN_STACK": "67108864",
     },
     deps = [
         ":player",
@@ -104,7 +104,7 @@ rust_test(
     edition = "2021",
     env = {
         "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
-        "RUST_MIN_STACK": "16777216",
+        "RUST_MIN_STACK": "67108864",
     },
     deps = [
         ":player",
