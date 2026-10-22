@@ -491,7 +491,7 @@ anything could copy them. The migration runs in **two phases**:
 - `//web:partitionTable_test` and `//agent:firmware_test` cover table parsing,
   package resolution and the canary rollout.
 
-**HITL gate** (`//pi/hitl/harness:ota_gate`, tag `hitl`, one reservation):
+**HITL gate** (`//pi/hitl/harness:ota_gate`, tags `hitl` + `manual`, one reservation):
 
 1. **migrate:** legacy bundle, provision, upload a 120-LED map, read the cert pin,
    then the two-phase USB migration. The device must rejoin with no provisioning,
