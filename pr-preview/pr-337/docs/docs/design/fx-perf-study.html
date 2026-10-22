@@ -884,7 +884,7 @@ idiomatic GLSL. The compiler emits <code class="docutils literal notranslate"><s
 VM indexes below its stack (an index-out-of-bounds panic), and the player’s
 panic handler is <code class="docutils literal notranslate"><span class="pre">loop</span> <span class="pre">{}</span></code>, so the render task hangs. 8 of the 9 are
 skill/opus programs. The compiler fix (broadcast scalar bounds, or reject
-them) is follow-up PR <code class="docutils literal notranslate"><span class="pre">agent/fx-clamp-broadcast-fix</span></code>. The VM should also never
+them) is follow-up PR #338. The VM should also never
 panic on a malformed stack (recommendation R3).</p></li>
 <li><p>The two prompts <strong>contradict the compiler</strong> in places. The in-app prompt
 says <code class="docutils literal notranslate"><span class="pre">sqrt</span> <span class="pre">log</span> <span class="pre">tan</span> <span class="pre">pow</span> <span class="pre">atan2</span> <span class="pre">hsv2rgb</span></code> are float-only, but the compiler has
@@ -1286,7 +1286,7 @@ epilogue <code class="docutils literal notranslate"><span class="pre">unit_u8()<
 <code class="docutils literal notranslate"><span class="pre">(clamp01(x)</span> <span class="pre">*</span> <span class="pre">255.0)</span> <span class="pre">as</span> <span class="pre">u8</span></code>: it is tested on every f32 bit pattern in
 [0, 1.5] plus specials, and the fx_vm, compiler and optimizer differential
 suites pass. An empty invocation drops from <strong>1,790 to 1,031 cycles</strong>. P2
-should be a PR of its own; the fx_bench goldens move (empty −54%, sweep256
+is draft PR #339; the fx_bench goldens move (empty −54%, sweep256
 −45%), so it needs a golden regeneration on a rig.</p></li>
 <li><p><strong>P3, the interpreter in IRAM</strong> (<code class="docutils literal notranslate"><span class="pre">#[link_section</span> <span class="pre">=</span> <span class="pre">&quot;.iram1&quot;]</span></code> on the 37 KB
 <code class="docutils literal notranslate"><span class="pre">run()</span></code>) gains <strong>&lt;1%</strong>. The flash I-cache is not the bottleneck.</p></li>
@@ -1408,7 +1408,7 @@ and native-q16 7–70×.</p>
 <td><p>Fix <code class="docutils literal notranslate"><span class="pre">clamp(vecN,</span> <span class="pre">scalar,</span> <span class="pre">scalar)</span></code> codegen</p></td>
 <td><p>9 of 90 agent programs stop hanging the device</p></td>
 <td><p>S (done)</p></td>
-<td><p>PR <code class="docutils literal notranslate"><span class="pre">agent/fx-clamp-broadcast-fix</span></code></p></td>
+<td><p>#338</p></td>
 </tr>
 <tr class="row-odd"><td><p>R2</p></td>
 <td><p>Land #328 (memo + refit estimator + walker ≥ 70)</p></td>
@@ -1425,7 +1425,7 @@ and native-q16 7–70×.</p>
 <tr class="row-odd"><td><p>R4</p></td>
 <td><p>P2: out-of-line <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code> + integer RGB epilogue</p></td>
 <td><p>−760 cyc/LED: −41% solid, −16% rain, −6% library median</p></td>
-<td><p>S (prototype done)</p></td>
+<td><p>S (draft #339)</p></td>
 <td><p>fx_vm + goldens</p></td>
 </tr>
 <tr class="row-even"><td><p>R5</p></td>
