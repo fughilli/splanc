@@ -407,6 +407,11 @@ pub enum Outcome {
     /// The wall-time deadline flag was raised (hardware timer) — treat as
     /// timeout. The caller holds last/black for the affected LED.
     Timeout,
+    /// The program was malformed at runtime (operand-stack underflow, an
+    /// unknown opcode, an out-of-range operand). The invocation stopped instead
+    /// of panicking; treat it like a timeout (hold last/black). A compiler bug,
+    /// never a property of a well-formed program.
+    Fault,
 }
 
 impl Outcome {
@@ -924,13 +929,12 @@ impl<'a> Program<'a> {
 
     #[inline]
     fn const_f32(&self, idx: usize) -> f32 {
+        // Out-of-range index reads 0.0 (never panics; see `Outcome::Fault`).
         let o = idx * 4;
-        f32::from_le_bytes([
-            self.consts[o],
-            self.consts[o + 1],
-            self.consts[o + 2],
-            self.consts[o + 3],
-        ])
+        match self.consts.get(o..o + 4) {
+            Some(b) => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            None => 0.0,
+        }
     }
 }
 
@@ -1808,37 +1812,82 @@ fn run(
     let mut csp: usize = 0;
     let mut outcome = Outcome::Ok;
 
-    macro_rules! push {
-        ($v:expr) => {{
-            if sp < MAX_STACK {
-                stack[sp] = $v;
-                sp += 1;
-            }
-        }};
-    }
-    macro_rules! pop {
-        () => {{
-            sp = sp.saturating_sub(1);
-            stack[sp]
-        }};
-    }
-    // Integers/fixed ride in the f32 slots bit-for-bit (the compiler types every
-    // op, so the runtime interpretation is unambiguous).
-    macro_rules! popi {
-        () => {{
-            pop!().to_bits() as i32
-        }};
-    }
-    macro_rules! pushi {
-        ($v:expr) => {{
-            let vv: i32 = $v;
-            push!(f32::from_bits(vv as u32));
-        }};
-    }
-
     #[cfg(feature = "profile")]
     let mut prof_prev: usize = usize::MAX;
-    while pc < code.len() {
+    'exec: while pc < code.len() {
+        // (The macros live inside the loop so `break 'exec` resolves: labels are
+        // hygienic at the macro's definition site.)
+        // Never panic (R3): a malformed or miscompiled program (operand-stack
+        // underflow, a truncated operand, an out-of-range count) ends the invocation
+        // with `Outcome::Fault` instead of indexing out of bounds. Operand bytes past
+        // the end of the code read as 0 (the next dispatch then stops at code end).
+        macro_rules! fault {
+            () => {{
+                outcome = Outcome::Fault;
+                break 'exec;
+            }};
+        }
+        // `sp - k`, or Fault on underflow.
+        macro_rules! sub {
+            ($k:expr) => {{
+                match sp.checked_sub($k) {
+                    Some(b) => b,
+                    None => fault!(),
+                }
+            }};
+        }
+        // A fixed-point `frac` operand: the compiler emits 0..=16; anything
+        // past 30 would shift out of range, so it is a malformed program.
+        macro_rules! frac {
+            ($e:expr) => {{
+                let f = $e as u32;
+                if f > 30 {
+                    fault!();
+                }
+                f
+            }};
+        }
+        macro_rules! cb {
+            ($o:expr) => {
+                *code.get($o).unwrap_or(&0)
+            };
+        }
+        macro_rules! rd16 {
+            ($o:expr) => {{
+                let o = $o;
+                u16::from_le_bytes([cb!(o), cb!(o + 1)])
+            }};
+        }
+        macro_rules! push {
+            ($v:expr) => {{
+                if sp < MAX_STACK {
+                    stack[sp] = $v;
+                    sp += 1;
+                }
+            }};
+        }
+        macro_rules! pop {
+            () => {{
+                if sp == 0 {
+                    fault!();
+                }
+                sp -= 1;
+                stack[sp]
+            }};
+        }
+        // Integers/fixed ride in the f32 slots bit-for-bit (the compiler types every
+        // op, so the runtime interpretation is unambiguous).
+        macro_rules! popi {
+            () => {{
+                pop!().to_bits() as i32
+            }};
+        }
+        macro_rules! pushi {
+            ($v:expr) => {{
+                let vv: i32 = $v;
+                push!(f32::from_bits(vv as u32));
+            }};
+        }
         if budget == 0 {
             outcome = Outcome::Budget;
             break;
@@ -1865,7 +1914,7 @@ fn run(
         }
         let op = match Op::from_u8(code[pc]) {
             Some(o) => o,
-            None => break,
+            None => fault!(),
         };
         pc += 1;
         #[cfg(feature = "profile")]
@@ -1875,29 +1924,29 @@ fn run(
         }
         match op {
             Op::PushConst => {
-                let idx = rd_u16(code, pc) as usize;
+                let idx = rd16!(pc) as usize;
                 pc += 2;
                 push!(prog.const_f32(idx));
             }
             Op::LoadUniform => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*uniforms.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::LoadState => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*state.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::StoreState => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in (0..n).rev() {
                     let v = pop!();
@@ -1907,16 +1956,16 @@ fn run(
                 }
             }
             Op::LoadLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*locals.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::StoreLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in (0..n).rev() {
                     let v = pop!();
@@ -1926,7 +1975,7 @@ fn run(
                 }
             }
             Op::LoadCtx => {
-                let id = code[pc];
+                let id = cb!(pc);
                 pc += 1;
                 match id {
                     C_TIME => push!(frame.time),
@@ -2004,10 +2053,10 @@ fn run(
                 }
             }
             Op::Add | Op::Sub | Op::Mul | Op::Div => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 // stack: a(n) b(n) ; result a op b
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -2027,34 +2076,37 @@ fn run(
                 sp = base + n;
             }
             Op::Neg => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
+                let base = sub!(n);
                 for i in 0..n {
-                    stack[sp - n + i] = -stack[sp - n + i];
+                    stack[base + i] = -stack[base + i];
                 }
             }
             Op::Scale => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 let s = pop!();
+                let base = sub!(n);
                 for i in 0..n {
-                    stack[sp - n + i] *= s;
+                    stack[base + i] *= s;
                 }
             }
             Op::UnMath => {
-                let f = code[pc];
-                let n = code[pc + 1] as usize;
+                let f = cb!(pc);
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
+                let base = sub!(n);
                 for i in 0..n {
-                    let x = stack[sp - n + i];
-                    stack[sp - n + i] = un_math(f, x);
+                    let x = stack[base + i];
+                    stack[base + i] = un_math(f, x);
                 }
             }
             Op::BinMath => {
-                let f = code[pc];
-                let n = code[pc + 1] as usize;
+                let f = cb!(pc);
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -2063,9 +2115,9 @@ fn run(
                 sp = base + n;
             }
             Op::Clamp => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let x = stack[base + i];
                     let lo = stack[base + n + i];
@@ -2081,10 +2133,10 @@ fn run(
                 sp = base + n;
             }
             Op::Mix => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 let t = pop!(); // scalar t
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -2093,9 +2145,9 @@ fn run(
                 sp = base + n;
             }
             Op::Smoothstep => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let e0 = stack[base + i];
                     let e1 = stack[base + n + i];
@@ -2106,9 +2158,9 @@ fn run(
                 sp = base + n;
             }
             Op::Dot => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + n + i];
@@ -2118,7 +2170,7 @@ fn run(
             }
             Op::Cross => {
                 pc += 1; // n operand (always 3), ignore
-                let base = sp - 6;
+                let base = sub!(6);
                 let a = [stack[base], stack[base + 1], stack[base + 2]];
                 let b = [stack[base + 3], stack[base + 4], stack[base + 5]];
                 stack[base] = a[1] * b[2] - a[2] * b[1];
@@ -2127,9 +2179,9 @@ fn run(
                 sp = base + 3;
             }
             Op::Length => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + i];
@@ -2138,9 +2190,9 @@ fn run(
                 push!(sqrtf(acc));
             }
             Op::Distance => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     let d = stack[base + i] - stack[base + n + i];
@@ -2150,9 +2202,9 @@ fn run(
                 push!(sqrtf(acc));
             }
             Op::Normalize => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + i];
@@ -2165,13 +2217,16 @@ fn run(
                 }
             }
             Op::Swizzle => {
-                let src_n = code[pc] as usize;
-                let dst_n = code[pc + 1] as usize;
+                let src_n = cb!(pc) as usize;
+                let dst_n = cb!(pc + 1) as usize;
                 pc += 2;
                 let mut tmp = [0.0f32; 4];
-                let base = sp - src_n;
+                let base = sub!(src_n);
+                if dst_n > 4 || base + dst_n > MAX_STACK {
+                    fault!();
+                }
                 for i in 0..dst_n {
-                    let ci = code[pc + i] as usize;
+                    let ci = cb!(pc + i) as usize;
                     tmp[i] = *stack.get(base + ci).unwrap_or(&0.0);
                 }
                 pc += dst_n;
@@ -2184,7 +2239,7 @@ fn run(
                 sp = base + dst_n;
             }
             Op::Cmp => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let b = pop!();
                 let a = pop!();
@@ -2199,7 +2254,7 @@ fn run(
                 push!(if r { 1.0 } else { 0.0 });
             }
             Op::Logic => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 if kind == 2 {
                     let a = pop!();
@@ -2216,7 +2271,7 @@ fn run(
                 }
             }
             Op::BrFalse => {
-                let rel = i16::from_le_bytes([code[pc], code[pc + 1]]);
+                let rel = rd16!(pc) as i16;
                 pc += 2;
                 let c = pop!();
                 if c == 0.0 {
@@ -2224,7 +2279,7 @@ fn run(
                 }
             }
             Op::Jmp => {
-                let rel = i16::from_le_bytes([code[pc], code[pc + 1]]);
+                let rel = rd16!(pc) as i16;
                 pc += 2;
                 pc = (pc as isize + rel as isize) as usize;
             }
@@ -2248,7 +2303,7 @@ fn run(
                 push!(b);
             }
             Op::Palette => {
-                let id = code[pc];
+                let id = cb!(pc);
                 pc += 1;
                 let t = pop!();
                 let (r, g, b) = palette(id, t);
@@ -2257,12 +2312,12 @@ fn run(
                 push!(b);
             }
             Op::Pop => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 sp = sp.saturating_sub(n);
             }
             Op::Ret => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 let mut out = [0.0f32; 3];
                 let base = sp.saturating_sub(n);
                 // Perf-golden hot path (fx_bench): keep the scalar copy.
@@ -2276,11 +2331,14 @@ fn run(
                 return (out, None, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
             }
             Op::Swap => {
-                let an = code[pc] as usize;
-                let bn = code[pc + 1] as usize;
+                let an = cb!(pc) as usize;
+                let bn = cb!(pc + 1) as usize;
                 pc += 2;
                 // stack: [.. a(an) b(bn)] -> [.. b(bn) a(an)]
-                let base = sp - an - bn;
+                let base = sub!(an + bn);
+                if an > 8 {
+                    fault!();
+                }
                 let mut tmp = [0.0f32; 8];
                 // Perf-golden hot path (fx_bench): keep the scalar shuffle so the
                 // emitted code (and its cycle count) matches the benchmark golden.
@@ -2326,7 +2384,7 @@ fn run(
                 pushi!(a.wrapping_neg());
             }
             Op::CmpI => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let b = popi!();
                 let a = popi!();
@@ -2375,7 +2433,7 @@ fn run(
                 pushi!(a >> 16);
             }
             Op::Call => {
-                let target = rd_u16(code, pc) as usize;
+                let target = rd16!(pc) as usize;
                 pc += 2;
                 if csp < call_stack.len() {
                     call_stack[csp] = pc;
@@ -2393,11 +2451,11 @@ fn run(
             // Indexed load: pop the (int) index, push `n` slots from
             // base + clamp(i,0,count-1)*stride + off.
             Op::LoadStateIdx | Op::LoadLocalIdx => {
-                let base = code[pc] as usize;
-                let stride = code[pc + 1] as usize;
-                let off = code[pc + 2] as usize;
-                let n = code[pc + 3] as usize;
-                let count = code[pc + 4] as usize;
+                let base = cb!(pc) as usize;
+                let stride = cb!(pc + 1) as usize;
+                let off = cb!(pc + 2) as usize;
+                let n = cb!(pc + 3) as usize;
+                let count = cb!(pc + 4) as usize;
                 pc += 5;
                 let i = popi!();
                 let hi = count.saturating_sub(1) as i32;
@@ -2411,11 +2469,11 @@ fn run(
             // Indexed store: the `n` values are on top, the (int) index just
             // below them. Writes to base + clamp(i,0,count-1)*stride + off.
             Op::StoreStateIdx | Op::StoreLocalIdx => {
-                let base = code[pc] as usize;
-                let stride = code[pc + 1] as usize;
-                let off = code[pc + 2] as usize;
-                let n = code[pc + 3] as usize;
-                let count = code[pc + 4] as usize;
+                let base = cb!(pc) as usize;
+                let stride = cb!(pc + 1) as usize;
+                let off = cb!(pc + 2) as usize;
+                let n = cb!(pc + 3) as usize;
+                let count = cb!(pc + 4) as usize;
                 pc += 5;
                 // Perf-golden hot path (fx_bench): keep the literal guard form.
                 #[allow(clippy::int_plus_one)]
@@ -2439,7 +2497,7 @@ fn run(
                 }
             }
             Op::GraphQuery => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let (a, b) = match kind {
                     gq::SEG_LEN | gq::NODE_DEG | gq::TERM => (popi!(), 0),
@@ -2452,7 +2510,7 @@ fn run(
                 push!(graph.query(kind, a, b));
             }
             Op::LoadBuf => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
@@ -2470,7 +2528,7 @@ fn run(
                 }
             }
             Op::StoreBuf => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
@@ -2495,7 +2553,7 @@ fn run(
                 }
             }
             Op::SampleTex => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
@@ -2540,7 +2598,7 @@ fn run(
                 }
             }
             Op::PaintTex => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
@@ -2618,52 +2676,52 @@ fn run(
             }
             // --- reduced-precision fixed-point (FUG-10) ----------------------
             Op::MulFixN => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
                 pushi!(((a * b) >> frac) as i32);
             }
             Op::DivFixN => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
-                pushi!(if b == 0 { 0 } else { ((a << frac) / b) as i32 });
+                pushi!(if b == 0 { 0 } else { a.wrapping_shl(frac).wrapping_div(b) as i32 });
             }
             Op::FixRescale => {
-                let sh = code[pc] as i8;
+                let sh = cb!(pc) as i8;
                 pc += 1;
                 let a = popi!();
-                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a >> ((-(sh as i32)) as u32) });
+                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a.wrapping_shr((-(sh as i32)) as u32) });
             }
             Op::FixToF => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 push!(a as f32 / (1u32 << frac) as f32);
             }
             Op::FixFromF => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = pop!();
                 pushi!((a * (1u32 << frac) as f32) as i32);
             }
             Op::SinFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(sin_fix(a, frac));
             }
             Op::CosFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 // cos(t) = sin(t + quarter turn); one turn = 1<<frac.
-                pushi!(sin_fix(a.wrapping_add(1 << (frac - 2)), frac));
+                pushi!(sin_fix(a.wrapping_add(1i32.wrapping_shl(frac.wrapping_sub(2))), frac));
             }
             Op::ExpFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(exp_fix(a, frac));
@@ -2697,7 +2755,7 @@ fn run(
                 });
             }
             Op::SignI => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let one = 1i32 << frac;
@@ -2715,122 +2773,123 @@ fn run(
                 pushi!(signed);
             }
             Op::StepI => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!(); // second arg (top)
                 let edge = popi!(); // first arg
                 pushi!(if x >= edge { 1i32 << frac } else { 0 });
             }
             Op::FloorFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 pushi!((x >> frac) << frac); // arithmetic shift rounds toward -inf
             }
             Op::CeilFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let fl = (x >> frac) << frac;
                 pushi!(if fl != x { fl.wrapping_add(1i32 << frac) } else { fl });
             }
             Op::FractFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 pushi!(x & ((1i32 << frac) - 1)); // frac 0 -> mask 0 -> 0
             }
             Op::MixFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let t = popi!() as i64;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
-                pushi!((a + (((b - a) * t) >> frac)) as i32);
+                pushi!(a.wrapping_add((b - a).wrapping_mul(t) >> frac) as i32);
             }
             // --- FUG-122: fixed/int variants of the vector, transcendental,
             // colour and I/O opcodes (complete the native-datatype ISA). All read
             // and write the raw scaled integer in the slot word — no soft-float.
             Op::SqrtFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(sqrt_fix(a, frac));
             }
             Op::ScaleFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let s = popi!() as i64;
+                let base = sub!(n);
                 for i in 0..n {
-                    let a = stack[sp - n + i].to_bits() as i32 as i64;
-                    stack[sp - n + i] = f32::from_bits((((a * s) >> frac) as i32) as u32);
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    stack[base + i] = f32::from_bits((a.wrapping_mul(s).wrapping_shr(frac) as i32) as u32);
                 }
             }
             Op::DotFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
                     let b = stack[base + n + i].to_bits() as i32 as i64;
-                    acc += (a * b) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(b) >> frac);
                 }
                 sp = base;
                 pushi!(acc as i32);
             }
             Op::LengthFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
-                    acc += (a * a) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(a) >> frac);
                 }
                 sp = base;
                 pushi!(sqrt_fix_i64(acc, frac) as i32);
             }
             Op::DistanceFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let d = (stack[base + i].to_bits() as i32 as i64)
                         - (stack[base + n + i].to_bits() as i32 as i64);
-                    acc += (d * d) >> frac;
+                    acc = acc.wrapping_add(d.wrapping_mul(d) >> frac);
                 }
                 sp = base;
                 pushi!(sqrt_fix_i64(acc, frac) as i32);
             }
             Op::NormalizeFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
-                    acc += (a * a) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(a) >> frac);
                 }
                 let len = sqrt_fix_i64(acc, frac);
                 if len > 0 {
                     for i in 0..n {
                         let a = stack[base + i].to_bits() as i32 as i64;
-                        let v = ((a << frac) / len) as i32;
+                        let v = (a.wrapping_shl(frac) / len) as i32;
                         stack[base + i] = f32::from_bits(v as u32);
                     }
                 }
             }
             Op::CrossFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1; // n operand (always 3), folded into the fixed math below
-                let base = sp - 6;
+                let base = sub!(6);
                 let a = [
                     stack[base].to_bits() as i32 as i64,
                     stack[base + 1].to_bits() as i32 as i64,
@@ -2841,20 +2900,20 @@ fn run(
                     stack[base + 4].to_bits() as i32 as i64,
                     stack[base + 5].to_bits() as i32 as i64,
                 ];
-                let cx = ((a[1] * b[2] - a[2] * b[1]) >> frac) as i32;
-                let cy = ((a[2] * b[0] - a[0] * b[2]) >> frac) as i32;
-                let cz = ((a[0] * b[1] - a[1] * b[0]) >> frac) as i32;
+                let cx = ((a[1] * b[2]).wrapping_sub(a[2] * b[1]) >> frac) as i32;
+                let cy = ((a[2] * b[0]).wrapping_sub(a[0] * b[2]) >> frac) as i32;
+                let cz = ((a[0] * b[1]).wrapping_sub(a[1] * b[0]) >> frac) as i32;
                 stack[base] = f32::from_bits(cx as u32);
                 stack[base + 1] = f32::from_bits(cy as u32);
                 stack[base + 2] = f32::from_bits(cz as u32);
                 sp = base + 3;
             }
             Op::SmoothstepFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let one = 1i64 << frac;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let e0 = stack[base + i].to_bits() as i32 as i64;
                     let e1 = stack[base + n + i].to_bits() as i32 as i64;
@@ -2862,18 +2921,18 @@ fn run(
                     let t = if e1 == e0 {
                         0
                     } else {
-                        (((x - e0) << frac) / (e1 - e0)).clamp(0, one)
+                        (x - e0).wrapping_shl(frac).wrapping_div(e1 - e0).clamp(0, one)
                     };
-                    let t2 = (t * t) >> frac;
-                    let val = (t2 * (3 * one - 2 * t)) >> frac; // t²(3−2t)
+                    let t2 = t.wrapping_mul(t) >> frac;
+                    let val = t2.wrapping_mul(3 * one - 2 * t) >> frac; // t²(3−2t)
                     stack[base + i] = f32::from_bits((val as i32) as u32);
                 }
                 sp = base + n;
             }
             Op::ClampVFix => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let x = stack[base + i].to_bits() as i32;
                     let lo = stack[base + n + i].to_bits() as i32;
@@ -2890,21 +2949,21 @@ fn run(
                 sp = base + n;
             }
             Op::MixVFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let t = popi!() as i64;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
                     let b = stack[base + n + i].to_bits() as i32 as i64;
-                    let v = (a + (((b - a) * t) >> frac)) as i32;
+                    let v = a.wrapping_add((b - a).wrapping_mul(t) >> frac) as i32;
                     stack[base + i] = f32::from_bits(v as u32);
                 }
                 sp = base + n;
             }
             Op::Hsv2RgbFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let v = popi!();
                 let s = popi!();
@@ -2915,8 +2974,8 @@ fn run(
                 pushi!(b);
             }
             Op::PaletteFix => {
-                let id = code[pc];
-                let frac = code[pc + 1] as u32;
+                let id = cb!(pc);
+                let frac = frac!(cb!(pc + 1));
                 pc += 2;
                 let t = popi!();
                 let (r, g, b) = palette_fix(id, t, frac);
@@ -2925,39 +2984,39 @@ fn run(
                 pushi!(b);
             }
             Op::Atan2Fix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let y = popi!();
                 pushi!(atan2_fix(y, x, frac));
             }
             Op::LogFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(log_fix(a, frac));
             }
             Op::TanFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(tan_fix(a, frac));
             }
             Op::PowFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!();
                 let a = popi!();
                 pushi!(pow_fix(a, b, frac));
             }
             Op::HashFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = pop!().to_bits();
                 pushi!(hash_fix(x, frac));
             }
             Op::Hash3Fix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let z = pop!().to_bits();
                 let y = pop!().to_bits();
@@ -2982,12 +3041,12 @@ fn run(
                 );
             }
             Op::RetRgbFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 // (returns immediately; no pc advance needed for the frac operand)
                 // top 3 slots are Q1.frac channels in [0,1] — scale to 0..255 in
                 // integer ((v*255)>>frac), no clamp01()*255 soft-float.
                 let base = sp.saturating_sub(3);
-                let to8 = |v: i64| ((v * 255) >> frac).clamp(0, 255) as u8;
+                let to8 = |v: i64| (v.wrapping_mul(255) >> frac).clamp(0, 255) as u8;
                 let r = to8(stack[base].to_bits() as i32 as i64);
                 let g = to8(stack.get(base + 1).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
                 let b = to8(stack.get(base + 2).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
@@ -3002,9 +3061,9 @@ fn run(
                 );
             }
             Op::LoadCtxFix => {
-                let id = code[pc];
-                let comp = code[pc + 1] as usize;
-                let frac = code[pc + 2] as u32;
+                let id = cb!(pc);
+                let comp = cb!(pc + 1) as usize;
+                let frac = frac!(cb!(pc + 2));
                 pc += 3;
                 // Canonical cache form is Q16.16 for continuous quantities, raw
                 // int (frac 0) for counters/indices; rescale to the shader's frac.
@@ -3032,13 +3091,13 @@ fn run(
                 let v = if sh >= 0 {
                     raw.wrapping_shl(sh as u32)
                 } else {
-                    raw >> ((-sh) as u32)
+                    raw.wrapping_shr((-sh) as u32)
                 };
                 pushi!(v);
             }
             Op::FillLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     if slot + i < MAX_LOCALS {
@@ -3050,8 +3109,8 @@ fn run(
             Op::TeeLocal => {
                 // StoreLocal slot,n ; LoadLocal slot,n : write the top n stack
                 // slots to local[slot..] but leave them on the stack.
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     if slot + i < MAX_LOCALS && sp >= n {
@@ -3062,8 +3121,8 @@ fn run(
             Op::IncLocalI => {
                 // LoadLocal s,1 ; PushConst k ; AddI ; StoreLocal s,1 : the
                 // integer compound-add idiom `i = i + k` (loop counters, indices).
-                let slot = code[pc] as usize;
-                let idx = rd_u16(code, pc + 1) as usize;
+                let slot = cb!(pc) as usize;
+                let idx = rd16!(pc + 1) as usize;
                 pc += 3;
                 let k = prog.const_f32(idx).to_bits() as i32;
                 if slot < MAX_LOCALS {
@@ -3074,8 +3133,8 @@ fn run(
             Op::BrCmpI => {
                 // CmpI kind ; BrFalse rel : compare two ints and branch when the
                 // comparison is FALSE (BrFalse branched on the 0 that CmpI pushed).
-                let kind = code[pc];
-                let rel = i16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                let kind = cb!(pc);
+                let rel = rd16!(pc + 1) as i16;
                 pc += 3;
                 let b = popi!();
                 let a = popi!();
@@ -3098,7 +3157,7 @@ fn run(
                 // a2 = the aligned const pool. Then apply the block's net stack
                 // delta and resume interpreting at its end. Ints ride bit-for-bit
                 // in the f32 slots, so the i32 view is exact.
-                let idx = rd_u16(code, pc) as usize;
+                let idx = rd16!(pc) as usize;
                 pc += 2;
                 // SAFETY: the firmware installed this table via `set_jit` and keeps
                 // both the descriptors and the executable code alive for the
@@ -3113,7 +3172,11 @@ fn run(
                             jit_consts,
                         );
                     }
-                    sp = (sp as isize + blk.net_delta as isize) as usize;
+                    let nsp = sp as isize + blk.net_delta as isize;
+                    if nsp < 0 || nsp as usize > MAX_STACK {
+                        fault!();
+                    }
+                    sp = nsp as usize;
                     pc = blk.end as usize;
                 }
             }
@@ -3130,7 +3193,7 @@ fn run(
                 pushi!(ok as i32);
             }
             Op::I2cRead => {
-                let mode = code[pc];
+                let mode = cb!(pc);
                 pc += 1;
                 let n = ((mode & 3) as usize).clamp(1, 2);
                 let reg = popi!();
@@ -3155,9 +3218,9 @@ fn run(
             // arm) measurably raised register pressure across the whole dispatch
             // loop — fx_bench +3..7% on EVERY program, cached or not.
             Op::LoadLedCache => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
-                let rel = i16::from_le_bytes([code[pc + 2], code[pc + 3]]);
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
+                let rel = rd16!(pc + 2) as i16;
                 pc += 4;
                 if let Some(nsp) = memo_load(led.idx, slot, n, stack, sp) {
                     sp = nsp;
@@ -3165,8 +3228,8 @@ fn run(
                 }
             }
             Op::StoreLedCache => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 memo_store(led.idx, slot, n, stack, sp);
             }
@@ -3183,7 +3246,7 @@ fn sqrtf(x: f32) -> f32 {
         return 0.0;
     }
     // Newton from a bit-twiddle seed.
-    let mut y = f32::from_bits(0x5f37_59df - (x.to_bits() >> 1));
+    let mut y = f32::from_bits(0x5f37_59dfu32.wrapping_sub(x.to_bits() >> 1));
     y = y * (1.5 - 0.5 * x * y * y);
     y = y * (1.5 - 0.5 * x * y * y);
     x * y // x * rsqrt(x) = sqrt(x)
@@ -3269,7 +3332,7 @@ fn expf(x: f32) -> f32 {
     let i = floorf(xln);
     let f = xln - i;
     let poly = 1.0 + f * (core::f32::consts::LN_2 + f * (0.2402265 + f * 0.0555041));
-    let bits = ((i as i32 + 127) as u32) << 23;
+    let bits = ((i as i32).wrapping_add(127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
 fn logf(x: f32) -> f32 {
@@ -3674,7 +3737,7 @@ fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
 /// the f32 `hash1`. The top `frac` bits of the mixed value form the fraction.
 fn hash_fix(bits: u32, frac: u32) -> i32 {
     let h = mix32(bits ^ 0x9e37_79b9);
-    (h >> (32 - frac)) as i32
+    h.wrapping_shr(32 - frac) as i32
 }
 
 /// 3-input fixed hash -> [0,1) in Q1.`frac` (folds three slot words).
@@ -3682,7 +3745,7 @@ fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
     let mut h = mix32(x ^ 0x9e37_79b9);
     h = mix32(h ^ y.wrapping_add(0x85eb_ca6b));
     h = mix32(h ^ z.wrapping_add(0xc2b2_ae35));
-    (h >> (32 - frac)) as i32
+    h.wrapping_shr(32 - frac) as i32
 }
 
 /// `hsv2rgb` entirely in Q1.`frac`. `h` is in TURNS (wrapped), `s`,`v` in [0,1];

@@ -1667,10 +1667,10 @@ static uint32_t render_once() {
       static uint32_t fx_log_ms = 0;
       if (now - fx_log_ms >= 1000) {
         fx_log_ms = now;
-        static const char *kOc[] = {"ok", "budget", "timeout"};
+        static const char *kOc[] = {"ok", "budget", "timeout", "fault"};
         uint32_t oc = lm_fx_last_update_outcome();
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
-                     fx_time_s, this_seq, kOc[oc <= 2 ? oc : 0], shade_bad, n);
+                     fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
       }
     } else {
       // Effect active but not runnable (shouldn't happen) — hold black.

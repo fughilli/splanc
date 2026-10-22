@@ -39,6 +39,14 @@ rust_test(
     deps = [":fx_vm"],
 )
 
+# Fuzz: any .fxb that parses runs to an Outcome, never a panic (R3).
+rust_test(
+    name = "fx_vm_no_panic_test",
+    srcs = ["tests/no_panic.rs"],
+    edition = "2021",
+    deps = [":fx_vm"],
+)
+
 # The exact firmware VM compiled to wasm so the browser preview can't drift.
 rust_shared_library(
     name = "fx_vm_wasm",

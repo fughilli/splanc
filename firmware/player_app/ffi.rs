@@ -1002,10 +1002,33 @@ fn fxb_hash(bytes: &[u8]) -> u32 {
 // bring their own.
 #[cfg(all(not(test), target_os = "none"))]
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    // The player contract is bounded errors, never panics; reaching this is
-    // a firmware bug. Halt where a debugger can see it.
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // The player contract is bounded errors, never panics; reaching this is a
+    // firmware bug. Say where on the console, then abort(): ESP-IDF's panic
+    // path reboots with reset reason PANIC, which the OTA crash-loop guard
+    // (ota_app.cpp) counts, so a crash-looping image falls back to the loader
+    // instead of the old `loop {}` that left the fixture dark until power-cycled.
+    extern "C" {
+        fn esp_rom_printf(fmt: *const u8, ...) -> i32;
+        fn abort() -> !;
+    }
+    unsafe {
+        match info.location() {
+            Some(l) => {
+                let f = l.file();
+                esp_rom_printf(
+                    b"[rust] panic at %.*s:%u\n\0".as_ptr(),
+                    f.len() as i32,
+                    f.as_ptr(),
+                    l.line(),
+                );
+            }
+            None => {
+                esp_rom_printf(b"[rust] panic\n\0".as_ptr());
+            }
+        }
+        abort()
+    }
 }
 
 unsafe fn player() -> &'static mut Player {
@@ -4216,7 +4239,8 @@ pub extern "C" fn lm_fx_set_deadline(hit: bool) {
 }
 
 /// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
-/// timeout. For the rate-limited `[fx]` diagnostic log in the render loop.
+/// timeout, 3=fault (a malformed program stopped instead of panicking). For
+/// the rate-limited `[fx]` diagnostic log in the render loop.
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
