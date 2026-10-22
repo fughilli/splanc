@@ -7,7 +7,7 @@
         <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
-        <title>Getting started - splanc developer docs</title>
+        <title>Quickstart - splanc developer docs</title>
       <link rel="stylesheet" type="text/css" href="static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="static/copybutton.css?v=76b2166b" />
@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
@@ -224,7 +225,7 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Getting started</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="#how-it-works">How it works</a></li>
@@ -354,22 +355,25 @@ camera path and the LED positions together.</p>
   <br />
   <em>▶ Watch the intro video</em>
 </p>
-<section id="getting-started">
-<h1>Getting started<a class="headerlink" href="#getting-started" title="Link to this heading">¶</a></h1>
-<p>The app is a PWA — nothing to install:</p>
-<p><strong>→ <a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong></p>
+<section id="quickstart">
+<h1>Quickstart<a class="headerlink" href="#quickstart" title="Link to this heading">¶</a></h1>
+<p><strong>→ <a class="reference internal" href="docs/quickstart.html"><span class="std std-doc">The Splanc quickstart</span></a></strong>: from a bare ESP32-C6
+board to mapped, animated lights in a browser. The app is a PWA, nothing to
+install: <strong><a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong>.</p>
 <ol class="arabic simple">
-<li><p><strong>Onboard your controller.</strong> Starting from a brand-new ESP32-C6 dev board?
-Flash the firmware onto it straight from the PWA over USB (desktop
-Chrome/Edge via Web Serial, or Android Chrome via WebUSB) — no toolchain
-needed. Then put it on your WiFi over Bluetooth and connect to it on your LAN
-(you accept its self-signed certificate once).</p></li>
-<li><p><strong>Capture a map.</strong> Start a mapping session and walk a slow arc around the lit
-fixture until the live preview converges, then save the map.</p></li>
-<li><p><strong>Clean it up.</strong> In the mapping workspace, tidy the recovered topology
-(skeleton extraction, junction cleanup) and send the map to the device.</p></li>
-<li><p><strong>Design effects.</strong> Open the effects editor, pick or write an effect, preview
-it against your map, and send it to the controller to play for real.</p></li>
+<li><p><strong>Wire it.</strong> Any ESP32-C6 board (the C6 SuperMini is the reference), a
+WS2812/NeoPixel strip with its data on <strong>GPIO20</strong> (a second strip on
+GPIO14), and a 5 V supply for the strip with a common ground.</p></li>
+<li><p><strong>Flash it.</strong> Open the app in Chrome or Edge on a computer (or Chrome on
+Android; the iPhone app can’t set up new hardware), tap <strong>Flash new device
+(USB)</strong>, then <strong>Connect a board &amp; flash</strong>. No toolchain needed.</p></li>
+<li><p><strong>Put it on Wi-Fi.</strong> <strong>Add device (Bluetooth)</strong>: enter your Wi-Fi, pick the
+board, and accept its certificate once. From firmware 1.10.0 it remembers
+the network across reboots and updates.</p></li>
+<li><p><strong>Map it.</strong> <strong>Maps ▸ + New</strong>, then walk slowly around the lit fixture with
+your phone until the live preview converges. You get a 3D map of every LED.</p></li>
+<li><p><strong>Play.</strong> Pick or write an effect, perform in Show mode, bind MIDI knobs, or
+hand the lights to your AI agent (below).</p></li>
 </ol>
 </section>
 <section id="ask-an-ai-agent">
@@ -420,6 +424,8 @@ secure WebSocket — so what you see in the editor is what lights up.</p></li>
 <section id="learn-more">
 <h1>Learn more<a class="headerlink" href="#learn-more" title="Link to this heading">¶</a></h1>
 <ul class="simple">
+<li><p><strong>Quickstart:</strong> <a class="reference internal" href="docs/quickstart.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/quickstart.md</span></code></span></a> — wiring,
+flashing, Wi-Fi, mapping, effects and agents, one short section each</p></li>
 <li><p><strong>Using the app:</strong> <a class="reference internal" href="docs/user-guide.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/user-guide.md</span></code></span></a> — a walkthrough of
 every feature (also an interactive tutorial in the app, from Settings ▸ Help)</p></li>
 <li><p><strong>Why it’s built this way:</strong> <a class="reference internal" href="docs/manifesto.html"><span class="std std-doc">the Splanc manifesto</span></a>:
