@@ -538,20 +538,30 @@ manifest and boot decisions.
 - **The OTA client is single-session per device.** An update holds the device's
   wss slot for its duration.
 
-## HITL results (2026-10-21, rig-2 / c6-003f08, ESP32-C6FH4 4 MB)
+## HITL results
 
-`//pi/hitl/harness:ota_gate`, every phase in one reservation: **verdict PASS**
-(run 6, branch head 8f213252 + the follow-up fixes).
+`//pi/hitl/harness:ota_gate`, every phase in one reservation on rig-2 / c6-003f08
+(ESP32-C6FH4, 4 MB).
+
+**Run 8, 2026-10-22: verdict PASS.** Layout loader 1344K / littlefs 384K / app
+2304K, rebased on main (#311, #326 factory MAC, the sensor core), 512-LED map.
 
 | phase | result | numbers |
 |---|---|---|
-| migrate (USB, two phases) | PASS | loader copied 3 littlefs files; rejoined Wi-Fi with no provisioning; same TLS cert pin; same 120-LED stored map (byte-identical) |
-| upgrade A→B | PASS | 99 s total: handoff 31 s, 2.08 MB in 39 s (52 KiB/s through the rig tunnel), verify 0.6 s, boot 28 s, healthy at 20 s uptime; runs `+b`, map kept |
-| crash at boot | PASS | rolled back by the bootloader to the loader (`rolled_back`); B over the air recovered it (72 s) |
-| never healthy | PASS | the health check rolled it back at 120 s (205 s total); B recovered it |
-| reset mid-transfer | PASS | chip reset at 1,044,480 B; the loader came back in recovery (`incomplete`) on a new IP; resumed at 983,040 (the persisted 64 KB boundary), verified and booted |
+| migrate (USB, two phases) | PASS | loader copied 3 littlefs files (512-LED map, topology, TLS identity); rejoined Wi-Fi with no provisioning; same TLS cert pin; same map, byte-identical |
+| upgrade A→B | PASS | 96 s total: handoff 31 s, 2.16 MB in 36 s (58 KiB/s through the rig tunnel), verify 0.6 s, boot 28 s, healthy at 20 s uptime; runs `+b`, map kept |
+| crash at boot | PASS | the bootloader rolled it back to the loader; B over the air recovered it (66 s) |
+| never healthy | PASS | the health check rolled it back at 120 s (202 s total); B recovered it |
+| reset mid-transfer | PASS | chip reset at 1.08 MB. The AP never answered auth for the factory MAC, so after 12 s the netstack fell back to a random MAC (new lease). The loader resumed at 1,048,576, verified and booted; the app came back on the factory MAC and its usual IP |
 | bad signature | PASS | refused (`bad_signature`), nothing written, the device returned to its app |
 | key rotation | PASS | image signed by the (test) backup key with an epoch revoking the release key: installed; then a release-key image refused (`revoked_key`); status reports epoch 1 / revoked 0x1 |
 
-IP: planned restarts kept the lease (one IP for the whole run except after the
-deliberate reset, which drew a new MAC and lease as designed).
+Run 6 (2026-10-21, previous layout 1600K / 192K / 2240K, BLE in the loader) also
+passed every phase.
+
+**MAC fallback (netstack).** After an *unplanned* reset in the middle of traffic,
+the rig AP kept the stale association for the factory MAC. #326's deauth didn't
+clear it, and authentication went unanswered for minutes. The netstack now falls
+back to a random locally administered MAC after 12 s of unanswered auth. That
+costs one new lease (mDNS re-announces); without it the device would be
+unreachable. Planned restarts deauth first and keep the factory MAC and its IP.

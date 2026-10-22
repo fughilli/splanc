@@ -209,6 +209,10 @@ struct ApRec {
 ApRec g_scan[24];
 uint8_t g_scan_n = 0;
 bool g_ap_latched = false;
+// When the current join's first auth went out (0 = not joining), and whether this boot
+// already fell back from the factory MAC to a random one (see the auth kick in the loop).
+uint32_t g_auth_since = 0;
+bool g_mac_fell_back = false;
 
 // Run one blocking vendor scan and cache the results. Called once in setup() before the
 // MAC hijack — the vendor WiFi RX is still live there, so its scan machinery works; after
@@ -1726,7 +1730,7 @@ void netstack_loop() {
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
-      if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis(); Serial.println("auth ok -> assoc"); }
+      if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis(); g_auth_since = 0; Serial.println("auth ok -> assoc"); }
     } else if (rx[0] == 0x10 && st == ASSOC) { // assoc resp
       uint16_t status = rx[26] | (rx[27] << 8);
       Serial.printf("assoc status=%u\n", status);
@@ -1962,8 +1966,26 @@ void netstack_loop() {
       Serial.printf("[t=%lu] deauth sent to clear any stale association for our MAC\n",
                     (unsigned long)millis());
     }
+    // Fallback: an AP that still holds a stale association for the factory MAC (seen on
+    // rig-2 after an unplanned reset mid-transfer, 2026-10-22: the deauth above went out,
+    // then auth was never answered for minutes) would strand the board unreachable. After
+    // 12 s of unanswered auth, join with a random locally administered MAC instead — a new
+    // lease (new IP; mDNS re-announces) beats no network.
+    if (g_auth_since == 0) g_auth_since = millis();
+    if (!g_mac_fell_back && OUR_MAC[0] != 0x02 && millis() - g_auth_since > 12000) {
+      g_mac_fell_back = true;
+      uint8_t rnd[3];
+      esp_fill_random(rnd, sizeof rnd);
+      OUR_MAC[0] = 0x02; OUR_MAC[1] = 0x0c; OUR_MAC[2] = 0x6a;
+      OUR_MAC[3] = rnd[0]; OUR_MAC[4] = rnd[1]; OUR_MAC[5] = rnd[2];
+      mac_own_bssid();
+      Serial.printf("[t=%lu] auth unanswered for 12 s with the factory MAC — joining as "
+                    "%02x:%02x:%02x:%02x:%02x:%02x (random) instead\n", (unsigned long)millis(),
+                    OUR_MAC[0], OUR_MAC[1], OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
+    }
     t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
   }
+
   // Join watchdog: auth is re-sent every 200ms above, but the Association Request and the
   // 4-way go out ONCE. A single lost Association Request/Response (seen on the Mac Internet
   // Sharing AP: "auth ok -> assoc" then silence) or a stalled 4-way used to park the join in
