@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Getting started" href="README.html"><link rel="prev" title="HITL &amp; tooling (pi/hitl/, tools/)" href="subsystems/hitl.html">
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Quickstart" href="README.html"><link rel="prev" title="HITL &amp; tooling (pi/hitl/, tools/)" href="subsystems/hitl.html">
         <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="docs/quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
@@ -224,7 +225,7 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="README.html#how-it-works">How it works</a></li>
@@ -686,8 +687,16 @@ the gray-code pattern.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">rename_wss</span></code></strong> — the cert-restart regression: renaming re-issues the cert and
 restarts the TLS server; this hammers reconnects and reports time-to-recovery.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">video_stream</span></code></strong> — streams a scrolling pattern and asserts a sustained ≥10 FPS.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">loaded_tls_netstack</span></code></strong> — fresh TLS handshakes on a heap loaded with a 512-LED
-map + texture effect (the FUG-71 failure mode).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">loaded_tls_netstack</span></code></strong> — fresh TLS handshakes on a heap loaded with a 2048-LED
+map (1024 per channel) + texture effect (the FUG-71 failure mode).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">led_capacity</span></code></strong> — <code class="docutils literal notranslate"><span class="pre">--per-channel</span> <span class="pre">N</span></code> on both channels (<code class="docutils literal notranslate"><span class="pre">--expect-refusal</span></code>
+checks one past the board’s per-channel cap is refused; growing past the boot’s
+LED buffers must answer <code class="docutils literal notranslate"><span class="pre">reboot_required</span></code> and come back resized), a 2 × N map +
+topology round trip through <code class="docutils literal notranslate"><span class="pre">get_stored_map</span></code>, an animated effect’s <code class="docutils literal notranslate"><span class="pre">fps_state</span></code>
+(wire ceiling, floor) and PerfReport heap, then fresh handshakes on that heap.
+<code class="docutils literal notranslate"><span class="pre">--improv</span></code> provisions over BLE. Run it at 256 and 1024 (the default and the max
+config). Pair it with <code class="docutils literal notranslate"><span class="pre">led_timing</span> <span class="pre">--leds</span> <span class="pre">2048</span> <span class="pre">--split</span> <span class="pre">1024</span></code> for the per-channel
+wire timing on the analyzer.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">ram_audit</span></code></strong> — the same worst case under a non-halting JTAG heap watcher
 (<code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code>); dumps SRAM at the minimum watermark and reads the heap
 census / sysmode counters at the end. <code class="docutils literal notranslate"><span class="pre">--hang</span></code> adds <code class="docutils literal notranslate"><span class="pre">hang_watch.tcl</span></code>, which
@@ -887,7 +896,7 @@ behind the big ones: <code class="docutils literal notranslate"><span class="pre
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Getting started</div>
+                <div class="title">Quickstart</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>

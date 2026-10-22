@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../docs/quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
@@ -224,7 +225,7 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
@@ -342,7 +343,7 @@ to stand up your own rig are documented in <a class="reference internal" href=".
 <section id="memory-auditing-over-jtag-ram-audit">
 <h3>Memory auditing over JTAG (<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>)<a class="headerlink" href="#memory-auditing-over-jtag-ram-audit" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ram_audit</span></code> drives the field worst case: BLE provisioning,
-then the first wss handshake with BLE still up, then a 512-LED map, a texture
+then the first wss handshake with BLE still up, then a 2048-LED map, a texture
 effect and loaded handshakes. Meanwhile <code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code> polls every heap’s
 free bytes over the C6’s system bus, <strong>without halting</strong> the core. At each new
 low it halts just long enough to dump HP + LP SRAM and the registers, so the
