@@ -60,6 +60,11 @@
     "demo": "effect"
   },
   {
+    "id": "show-mode",
+    "route": "#/show",
+    "demo": "device"
+  },
+  {
     "id": "device-management",
     "route": "#/maps",
     "click": ".tab[data-tab='device']",

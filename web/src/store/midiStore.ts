@@ -20,6 +20,24 @@
 
 import type { MidiControlId } from "../midi/manager";
 import { controlKey } from "../midi/manager";
+import { isEncoderMode, type EncoderMode } from "../midi/encoder";
+
+/** A Show-Mode binding: the physical control plus how it encodes its value
+ * (absolute by default; a relative mode makes an endless encoder scroll the
+ * effects list indefinitely). */
+export type ShowBinding = MidiControlId & { mode?: EncoderMode };
+
+/** What an encoder push (the deck "load" actions) does with the highlighted
+ * effect: `cue` loads it onto the deck; `take` loads it and crossfades to it. */
+export type LoadBehavior = "cue" | "take";
+
+export interface ShowOptions {
+  loadBehavior: LoadBehavior;
+  /** Crossfade duration for `take`, seconds. */
+  takeSeconds: number;
+}
+
+export const DEFAULT_SHOW_OPTIONS: ShowOptions = { loadBehavior: "cue", takeSeconds: 1.5 };
 
 /** A physical MIDI control given a semantic name (global, effect-independent). */
 export interface SemanticControl {
@@ -48,7 +66,8 @@ interface MidiConfig {
   /** Show-Mode action id -> the physical control bound to it (FUG-110). Unlike
    * uniform bindings these map straight to a fixed set of transport actions
    * (crossfade, play/pause, cue, list navigation) rather than to a semantic. */
-  showBindings: Record<string, MidiControlId>;
+  showBindings: Record<string, ShowBinding>;
+  showOptions?: Partial<ShowOptions>;
 }
 
 const STORAGE_KEY = "ledmapper.midi";
@@ -67,6 +86,8 @@ function read(): MidiConfig {
       bindings: parsed.bindings && typeof parsed.bindings === "object" ? parsed.bindings : {},
       showBindings:
         parsed.showBindings && typeof parsed.showBindings === "object" ? parsed.showBindings : {},
+      showOptions:
+        parsed.showOptions && typeof parsed.showOptions === "object" ? parsed.showOptions : {},
     };
   } catch {
     return emptyConfig();
@@ -222,13 +243,48 @@ class MidiStore {
   // -- Show-Mode action bindings (FUG-110) --------------------------------
 
   /** All Show-Mode action bindings (action id -> physical control). */
-  showBindings(): Record<string, MidiControlId> {
+  showBindings(): Record<string, ShowBinding> {
     return read().showBindings;
   }
 
   /** The control bound to a Show-Mode action, if any. */
-  showBindingFor(action: string): MidiControlId | undefined {
+  showBindingFor(action: string): ShowBinding | undefined {
     return read().showBindings[action];
+  }
+
+  /** The encoding of an action's control (absolute when unset/unknown). */
+  showBindingMode(action: string): EncoderMode {
+    const m = read().showBindings[action]?.mode;
+    return isEncoderMode(m) ? m : "absolute";
+  }
+
+  /** Change how an existing binding's control is decoded. */
+  setShowBindingMode(action: string, mode: EncoderMode): void {
+    const cfg = read();
+    const b = cfg.showBindings[action];
+    if (!b) return;
+    if (mode === "absolute") delete b.mode;
+    else b.mode = mode;
+    write(cfg);
+    this.emit();
+  }
+
+  showOptions(): ShowOptions {
+    const o = read().showOptions ?? {};
+    return {
+      loadBehavior: o.loadBehavior === "take" ? "take" : "cue",
+      takeSeconds:
+        typeof o.takeSeconds === "number" && o.takeSeconds >= 0 && o.takeSeconds <= 30
+          ? o.takeSeconds
+          : DEFAULT_SHOW_OPTIONS.takeSeconds,
+    };
+  }
+
+  setShowOptions(patch: Partial<ShowOptions>): void {
+    const cfg = read();
+    cfg.showOptions = { ...this.showOptions(), ...patch };
+    write(cfg);
+    this.emit();
   }
 
   /** The Show-Mode action a physical control drives (reverse lookup by key),
@@ -243,13 +299,20 @@ class MidiStore {
 
   /** Bind a physical control to a Show-Mode action. A control already bound to
    * another action is moved (one control drives one action). */
-  setShowBinding(action: string, control: MidiControlId): void {
+  setShowBinding(action: string, control: MidiControlId, mode?: EncoderMode): void {
     const cfg = read();
     const key = controlKey(control);
     for (const a of Object.keys(cfg.showBindings)) {
       if (controlKey(cfg.showBindings[a]!) === key) delete cfg.showBindings[a];
     }
-    cfg.showBindings[action] = control;
+    const b: ShowBinding = {
+      device: control.device,
+      kind: control.kind,
+      channel: control.channel,
+      number: control.number,
+    };
+    if (mode && mode !== "absolute") b.mode = mode;
+    cfg.showBindings[action] = b;
     write(cfg);
     this.emit();
   }

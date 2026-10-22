@@ -71,3 +71,11 @@ test("SHOW_ACTIONS covers the transport surface the issue calls for", () => {
     assert.ok(ids.has(id), `missing show action ${id}`);
   }
 });
+
+test("browse actions are encoders; load actions are triggers", () => {
+  for (const id of ["list.scroll", "deckA.browse", "deckB.browse"]) {
+    assert.equal(showActionKind(id), "encoder", id);
+  }
+  assert.equal(showActionKind("deckA.load"), "trigger");
+  assert.equal(showActionKind("deckB.load"), "trigger");
+});

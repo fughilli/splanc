@@ -839,10 +839,28 @@ body.is-locked {
 }
 
 /* --- FUG-110: Show mode workspace --- */
+/* The screen fills the outlet's (definite) height so the effects list can take
+ * what's left and scroll on its own; the page itself doesn't scroll. */
 .show-screen {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+  height: 100%;
+  box-sizing: border-box;
+}
+/* Short viewports (phone landscape): let the page scroll to the list, which
+ * keeps a usable fixed height of its own. */
+@media (max-height: 560px) {
+  .show-screen {
+    height: auto;
+  }
+  .show-list-wrap {
+    flex: none;
+  }
+  .show-list {
+    height: 60vh;
+    height: 60dvh;
+  }
 }
 .show-header {
   display: flex;
@@ -934,20 +952,43 @@ body.is-locked {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  min-height: 0;
+  flex: 1 1 0;
+  /* Never squeeze the list below a few rows; past that the page scrolls. */
+  min-height: 13rem;
 }
 .show-list-head {
+  display: flex;
+  justify-content: space-between;
   font-size: 0.8em;
   font-weight: 600;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.show-list-count {
+  font-weight: 400;
+}
+/* The nested scroll view: its own scroller, no scroll chaining into the page
+ * (overscroll-behavior), momentum touch scrolling on iOS, vertical pans only. */
 .show-list {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  padding: var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  scroll-padding-block: var(--sp-2);
+}
+.show-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .show-row {
   display: flex;
@@ -965,6 +1006,11 @@ body.is-locked {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+/* Deck B's encoder moved the highlight last: tint it in deck B's colour. */
+.show-list[data-browse="1"] .show-row--focus {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
 .show-row-name {
   flex: 1;
   white-space: nowrap;
@@ -979,9 +1025,90 @@ body.is-locked {
 }
 .show-midi-row {
   display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) 0;
+}
+.show-midi-main {
+  display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) 0;
+}
+.show-midi-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-left: var(--sp-3);
+}
+.show-midi-note {
+  color: var(--text-dim);
+  font-size: 0.8em;
+}
+.show-midi-select,
+.show-midi-num {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85em;
+}
+.show-midi-num {
+  width: 5em;
+}
+.show-midi-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.show-midi-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 0.85em;
+}
+/* Set up Midi Fighter Twister sheet (twisterSetup.ts). */
+.twister-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.twister-found {
+  font-weight: 600;
+}
+.twister-now {
+  margin: calc(-1 * var(--sp-2)) 0 0;
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+.twister-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.twister-plan {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.9em;
+}
+.twister-status {
+  color: var(--accent);
+}
+.twister-warn {
+  color: var(--text);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--alert, #e0533d) 15%, transparent);
+}
+.twister-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
 }
 .show-midi-label {
   flex: 1;
