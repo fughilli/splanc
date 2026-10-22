@@ -107,6 +107,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
+        "ramp_shape_core.py",
         "rejoin_loop_core.py",
         "rig_isolation_core.py",
         "serial_capture.py",
@@ -919,6 +920,33 @@ py_binary(
     env = {"HITL_SKU": "esp32c6"},
     imports = ["."],
     main = "hitl_fx_keypoints.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Canned interpolation profiles on hardware (docs/design/ramps.md): ramp shape +
+# timing vs the expected curve, two-fixture sync on one shared start, a live set
+# cancelling a ramp mid-way, a crossfade ramp, and the per-frame cost — all read
+# off both DUTs' LED wires by ONE two-channel analyzer capture. Holds both DUTs.
+py_binary(
+    name = "ramps",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_ramps.py",
+    ],
+    data = [
+        ":kp_fxbs",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {"HITL_SKU": "esp32c6"},
+    imports = ["."],
+    main = "hitl_ramps.py",
     tags = ["manual"],
     deps = [
         ":harness",

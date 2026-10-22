@@ -800,13 +800,95 @@ message KeypointWeight {
 // `color_mode` (0 linear RGB, 1 HSV shortest hue), toggles/dropdowns take the
 // heaviest keypoint's value. Live-only unless `commit` (deck A: persist the
 // blend's target like set_uniforms). A set_uniforms on the deck cancels a morph.
-// Reply: playback_state (or error `no_effect`, `no_keypoint`).
+// Firmware advertising "ramps" also takes the canned-profile fields below (a
+// morph is then a ramp like ramp_uniforms: time based, any ease, a shared
+// start, a ramp_state event when it lands), and a morph takes over the deck's
+// uniform ramps. Reply: playback_state (or error `no_effect`, `no_keypoint`).
 message BlendKeypoints {
   uint32 deck = 1;
   repeated KeypointWeight weights = 2;
   float seconds = 3;
   uint32 color_mode = 4;
   optional bool commit = 5;
+  // The morph's ease (see RampUniforms.ease); unset = smoothstep (the original
+  // morph curve).
+  optional uint32 ease = 6;
+  // Start time in the device clock (see RampUniforms.start_at_ms); 0 = now.
+  int64 start_at_ms = 7;
+  // Client-chosen id echoed in the ramp_state event when the morph lands or is
+  // overridden; 0 = no event.
+  uint32 id = 8;
+}
+
+// -- Canned interpolation profiles (docs/design/ramps.md) --------------------
+// When the endpoint, duration and ease are known, the DEVICE interpolates once
+// per frame instead of a client streaming set_uniforms / set_crossfade steps:
+// one request per player, no traffic while it runs, and a shared start time so
+// several fixtures move in step. Ramps are time based (frame-rate changes don't
+// stretch them). Live control stays direct: a set_uniforms (or OSC write) on a
+// uniform cancels that uniform's ramp and a set_crossfade cancels the crossfade
+// ramp — last writer wins, nothing queues. A newer ramp on a uniform takes it
+// over; loading / clearing a deck's effect cancels its ramps. At most 16 ramped
+// uniforms at once (both decks) plus one crossfade ramp. Firmware advertising the
+// "ramps" feature serves these arms.
+//
+// ease: 0 = linear, 1 = ease (cubic in-out), 2 = ease_in (cubic), 3 = ease_out
+// (cubic), 4 = smoothstep. start_at_ms: the start in the DEVICE's clock (the
+// millis() domain of time_sync_pong and set_time_base); 0 = on receipt. A start
+// in the past joins the ramp mid-way (a late fixture lands in step); one more
+// than 10 minutes ahead is refused.
+
+// Ramp uniforms of the effect on `deck` from their current values to `targets`
+// (slot-addressed like set_uniforms). On landing the targets are applied exactly
+// and — deck A, commit unset or true — the deck's uniforms are persisted like a
+// set_uniforms commit (false = live only). Reply: ramp_state (state STARTED) or
+// error `no_effect`, `bad_ramp`, `too_many_ramps`.
+message RampUniforms {
+  uint32 deck = 1;
+  repeated UniformValue targets = 2;
+  uint32 duration_ms = 3;
+  uint32 ease = 4;
+  int64 start_at_ms = 5;
+  // Client-chosen id, echoed in ramp_state (0 = no completion event).
+  uint32 id = 6;
+  optional bool commit = 7;
+}
+
+// Ramp the global FX crossfade from where it is to `position` (0.0 deck A ..
+// 1.0 deck B), blending in colour `mode` (0 linear RGB, 1 HSV, as
+// set_crossfade) from the ramp's start. Runtime only, like set_crossfade.
+// Reply: ramp_state (state STARTED) or error `bad_ramp`.
+message RampCrossfade {
+  double position = 1;
+  uint32 mode = 2;
+  uint32 duration_ms = 3;
+  uint32 ease = 4;
+  int64 start_at_ms = 5;
+  uint32 id = 6;
+}
+
+// Stop ramps where they are: the one(s) with `id`, or every ramp (uniform,
+// crossfade and keypoint morph) for id 0. Each stopped ramp with an id reports
+// ramp_state CANCELLED. Reply: ramp_state (state CANCELLED, `id`, `active`).
+message CancelRamp {
+  uint32 id = 1;
+}
+
+// A ramp's lifecycle: the reply to ramp_uniforms / ramp_crossfade (STARTED,
+// with the resolved device-clock schedule), and pushed unsolicited when a ramp
+// with a non-zero id lands (DONE) or is overridden (CANCELLED).
+message RampState {
+  uint32 id = 1;
+  // 0 = STARTED, 1 = DONE, 2 = CANCELLED.
+  uint32 state = 2;
+  // 0 = uniforms, 1 = crossfade, 2 = keypoint morph.
+  uint32 kind = 3;
+  // The schedule in the device clock (STARTED only).
+  int64 start_at_ms = 4;
+  int64 end_at_ms = 5;
+  // Ramped uniforms in flight after this event (of 16), plus 1 while a
+  // crossfade ramp runs.
+  uint32 active = 6;
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +1021,10 @@ message ClientMessage {
     SetSensorMount set_sensor_mount = 54;
     SetCaptureProfile set_capture_profile = 55;
     GetCaptureProfile get_capture_profile = 56;
+    // 57..59: unused. Canned ramps (docs/design/ramps.md) start at 60.
+    RampUniforms ramp_uniforms = 60;
+    RampCrossfade ramp_crossfade = 61;
+    CancelRamp cancel_ramp = 62;
   }
 }
 
@@ -977,7 +1063,8 @@ message Welcome {
   // infer them from fw_version: "effects", "perf", "textures", "stored_map",
   // "uniform_commit" (SetUniforms.commit), "list_effects" (ListEffects), "decks"
   // (the `deck` fields), "crossfade" (SetCrossfade), "keypoints" (the *_keypoint
-  // arms). The same list is in the /.well-known/splanc.json manifest. Empty on
+  // arms), "ramps" (RampUniforms / RampCrossfade / CancelRamp + the
+  // BlendKeypoints canned-profile fields). The same list is in the /.well-known/splanc.json manifest. Empty on
   // older firmware.
   repeated string features = 10;
   // The .fxb bytecode format version the device's VM accepts (the version byte of
@@ -1450,5 +1537,7 @@ message ServerMessage {
     I2cScanResult i2c_scan_result = 28;
     DriverState driver_state = 29;
     CaptureProfile capture_profile = 30;
+    // 31..39: unused.
+    RampState ramp_state = 40;
   }
 }

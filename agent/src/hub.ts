@@ -727,6 +727,24 @@ export class Hub {
   }
 
   /**
+   * One shared start for a canned ramp across the selected players
+   * (docs/design/ramps.md): with two or more players that run ramps themselves,
+   * re-sync any stale clock, then pick a hub time `leadMs` ahead; each player gets
+   * it in its own clock (DeviceSession.deviceTime), so they start together and a
+   * request that arrives late joins mid-way in step. Undefined for a single
+   * player (it starts on receipt).
+   */
+  async rampStart(sel: Selector, leadMs = 200): Promise<number | undefined> {
+    const synced = await this.each(sel, async (s) => {
+      if (!s.rampsUsable()) return false;
+      if (!s.clock || performance.now() - s.clock.at >= RESYNC_MS) await s.syncClock();
+      return true;
+    });
+    if (synced.filter((r) => r.ok && r.result).length < 2) return undefined;
+    return performance.now() + leadMs;
+  }
+
+  /**
    * Give every selected player the same effect-clock epoch ("now", unless an
    * epoch on the hub clock is passed): sync clocks (re-using a fresh sync), then
    * SetTimeBase on the players that support it. Reports the skew bound and who

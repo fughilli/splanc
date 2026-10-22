@@ -71,7 +71,7 @@ describe("keypoints", { skip }, () => {
     assert.deepEqual((await session.getKeypoint("storm"))["values"], { rain: 1, tint: [1, 1, 1] });
 
     const r = await session.blendKeypoints({ storm: 1 }, { seconds: 5 });
-    assert.deepEqual(r, { weights: { storm: 1 }, seconds: 5, color_mode: "rgb", committed: false });
+    assert.deepEqual(r, { weights: { storm: 1 }, seconds: 5, color_mode: "rgb", committed: false, curve: "smoothstep" });
     const last = player.blends.at(-1)!;
     assert.equal(last["seconds"], 5);
     assert.deepEqual(last["weights"], [{ name: "storm", weight: 1 }]);

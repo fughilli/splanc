@@ -140,7 +140,10 @@ player: its data, as before; several: keyed by player).
 
 Device tools (each takes `players`: name | MAC | room | `"all"` | list; default
 the only player, or all of them in one room): `set_brightness`, `list_uniforms`,
-`set_uniforms`, `ramp_uniforms`, `compile_effect`, `preview_effect` (several
+`set_uniforms`, `ramp_uniforms` (feature `ramps`: one request the player
+interpolates itself, several players on one shared start; older firmware:
+acknowledged steps; `curve`, `wait`; design
+[ramps.md](../docs/design/ramps.md)), `compile_effect`, `preview_effect` (several
 players: one room-frame image per time), `deploy_effect` (fleet budget check via
 `web/src/effects/multiDevice.ts`, refuses an overrun unless `force`; then a shared
 time base), `set_effect`, `rollback_effect`, `estimate_effect` (offline cost
@@ -150,7 +153,8 @@ model, touches nothing), `measure_effect` (windowed on-device perf stream),
 `delete_keypoint` (feature `keypoints`; design
 [uniform-keypoints.md](../docs/design/uniform-keypoints.md); deck default = the
 live deck), `crossfade_to` (features `decks` + `crossfade`: cue the effect on the
-idle FX deck, then stream the crossfade on one hub clock for every player, after
+idle FX deck, then fade on one hub clock for every player (one `ramp_crossfade`
+per player on firmware with `ramps`, else acknowledged steps), after
 re-using/applying the room's time base; the outgoing effect stays loaded as the
 rollback target, so `rollback_effect {seconds}` fades back), `list_decks` (both
 decks, crossfade position, live deck), `plot_fixture` (a four-view 3D PNG of the

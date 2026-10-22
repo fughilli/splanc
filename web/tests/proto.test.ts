@@ -15,6 +15,7 @@ import {
   encodeMappingBundle,
   encodeServer,
   flatFpsState,
+  flatRampState,
 } from "../src/net/proto";
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import golden from "./golden_proto_frames.json";
@@ -244,4 +245,39 @@ test("TS re-encode of every golden decodes back to the same object", () => {
       assert.deepEqual(stripNulls(again), stripNulls(flat));
     }
   }
+});
+
+test("canned ramp arms round-trip (the ramps feature)", () => {
+  const ru = {
+    type: "ramp_uniforms",
+    deck: 1,
+    targets: [{ slot: 3, value: [0.5] }],
+    durationMs: 2000,
+    ease: 1,
+    startAtMs: 123456789,
+    id: 7,
+    commit: false,
+  };
+  const back = decodeClient(encodeClient(ru as never)) as unknown as Record<string, unknown>;
+  assert.deepEqual({ ...back, startAtMs: Number(back["startAtMs"]) }, ru);
+  const rx = { type: "ramp_crossfade", position: 1, mode: 1, durationMs: 500, ease: 4, startAtMs: 0, id: 9 };
+  const bx = decodeClient(encodeClient(rx as never)) as unknown as Record<string, unknown>;
+  assert.equal(bx["position"], 1);
+  assert.equal(bx["ease"], 4);
+  assert.equal(bx["id"], 9);
+  const bc = decodeClient(encodeClient({ type: "cancel_ramp", id: 3 } as never)) as unknown as Record<string, unknown>;
+  assert.equal(bc["id"], 3);
+  // blend_keypoints' canned-profile fields.
+  const bk = decodeClient(
+    encodeClient({ type: "blend_keypoints", deck: 0, weights: [{ name: "a", weight: 1 }], seconds: 2, ease: 2, id: 5 } as never),
+  ) as unknown as Record<string, unknown>;
+  assert.equal(bk["ease"], 2);
+  assert.equal(bk["id"], 5);
+  // ramp_state from the device: int64 schedule fields normalize to numbers.
+  const st = decodeServer(
+    encodeServer({ type: "ramp_state", id: 7, state: 1, kind: 2, startAtMs: 5000, endAtMs: 7000, active: 3 } as never),
+  );
+  const flat = flatRampState(st as never);
+  assert.deepEqual(flat, { type: "ramp_state", id: 7, state: 1, kind: 2, startAtMs: 5000, endAtMs: 7000, active: 3 });
+  assert.equal(flatRampState({}).state, 0, "STARTED is the proto3 default");
 });

@@ -1,7 +1,7 @@
 """Uniform keypoints: manifest blend rules, the on-device parameter-space blend /
 morph, and the littlefs record format (docs/design/uniform-keypoints.md).
 
-no_std, zero-dependency — linked into the player app (//firmware/player_app), which
+no_std, depends only on //firmware/ramp (the shared ease + clock) — linked into the player app (//firmware/player_app), which
 owns the decks, the VM binding and the filesystem hooks. Host-tested in :keypoint_test.
 """
 
@@ -14,6 +14,7 @@ rust_library(
     srcs = ["src/lib.rs"],
     crate_name = "ledmapper_keypoint",
     edition = "2021",
+    deps = ["//firmware/ramp"],
 )
 
 rust_test(
