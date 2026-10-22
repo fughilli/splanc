@@ -78,6 +78,12 @@ class RewriteTest(unittest.TestCase):
             self.assertTrue(iram < at[0] < flash, stmt)
             self.assertEqual(lines[at[0] - 1].strip(), "*(.iram1 .iram1.*)")
 
+    def test_interpreter_dispatch_tables_are_in_sram(self):
+        # fx_vm::run's jump tables are read on every opcode of every LED; in flash
+        # their offset (any rodata growth shifts it) swung fx_bench by up to +45%.
+        pins = [x for r in self.rules if r[0] == "iram:" for x in r[1]]
+        self.assertIn(".rodata._ZN15ledmapper_fx_vm3run*", pins)
+
     def test_flash_first_pins_open_flash_text(self):
         # Rule kind 5: each `flash-first:` rule is one `*(...)` statement that is the
         # first statement of .flash.text, so the per-frame render path's flash
