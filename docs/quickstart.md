@@ -211,7 +211,8 @@ The technical documentation behind each step:
   [FX VM performance tables](fx-vm-performance.md).
 - **The protocol** between the app, agents and players:
   [`shared/protocol/README.md`](../shared/protocol/README.md).
-- **Firmware**: [per-device certificates](design/per-device-cert.md), the
+- **Firmware**: [over-the-air updates](design/ota.md) (the split loader, signing,
+  recovery and key rotation), [per-device certificates](design/per-device-cert.md), the
   [RAM budget](design/ram-budget.md) and [memory regions](design/memory-regions.md),
   and [the manifesto](manifesto.md) on why it's built this way.
 - **Sensors**: [sensor-core.md](design/sensor-core.md), with the IMU pins, fusion,

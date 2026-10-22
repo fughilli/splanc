@@ -333,15 +333,21 @@ or equal epoch is ignored. Neither value is ever lowered, and an NVS erase (USB
      with it (a planned rotation).
 5. Put the backup key back in cold storage.
 
-**What the owner must do now:**
+**The backup key (provisioned 2026-10-22):** the owner generated it on an offline
+machine and committed only the public half, `firmware/ota/keys/backup.pub`. Every
+loader built from then on trusts it. Loaders flashed before that have an `UNSET`
+backup slot, so a compromise of `release` can only reach them by a USB re-flash.
 
-1. Generate the offline backup key on a machine that will never hold the online
-   secret: `bazel run //firmware/ota:ota_sign -- keygen`.
-2. Store the **private** line offline (paper or hardware, never in the repo or CI).
-3. Send only the **public** line. It gets committed as `firmware/ota/keys/backup.pub`.
+To make a replacement backup key, run `bazel run //firmware/ota:ota_sign -- keygen`,
+or use plain `openssl`:
 
-Until then, the backup slot is `UNSET` and a compromise of `release` can only be
-answered by a USB re-flash with a new loader.
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -out backup.pem
+openssl ec -in backup.pem -outform DER | head -c 39 | tail -c 32 | od -An -v -tx1 | tr -d ' \n'  # private (64 hex)
+openssl ec -in backup.pem -pubout -outform DER | tail -c 65 | od -An -v -tx1 | tr -d ' \n'      # public (130 hex)
+```
+
+Store the private half offline, never in the repo or CI. Commit only the public half.
 
 ### Loader self-update: not implemented (USB only)
 
