@@ -222,6 +222,7 @@ class StartMappingOptions(_StrictModel):
     codeOffset: Union[int, None] = Field(default=None, ge=0)
     codeSpace: Union[int, None] = Field(default=None, ge=1)
     epochMs: Union[float, None] = None
+    stopAfterMs: Union[int, None] = None
 
 
 class StartMappingMessage(_StrictModel):

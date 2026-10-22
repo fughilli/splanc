@@ -899,3 +899,34 @@ fn group_capture_rejects_bad_layouts() {
     assert_eq!(started.r#code_params.r#code_offset().copied(), None);
     assert_eq!(started.r#pattern_clock_epoch, 2000.0);
 }
+
+#[test]
+fn group_capture_auto_stops() {
+    // stop_after_ms: the pattern ends by itself (a dead phone can't leave the
+    // fixture flashing); a Configure keeps the original deadline.
+    let mut player = Player::new("esp32-0004", 64);
+    send(&mut player, CMsg::Hello(pb::Hello::default()), 1.0);
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 16;
+    opts.set_stop_after_ms(60_000);
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    assert!(matches!(send(&mut player, CMsg::StartMapping(start), 1000.0), Some(SMsg::MappingStarted(_))));
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_brightness(0.5);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    assert!(matches!(send(&mut player, CMsg::Configure(configure), 30_000.0), Some(SMsg::PatternState(_))));
+    assert!(!player.expire_pattern(60_999));
+    assert!(player.pattern_timing().is_some());
+    assert!(player.expire_pattern(61_000));
+    assert!(player.pattern_timing().is_none());
+    assert!(!player.expire_pattern(70_000));
+    // Without stop_after_ms it never expires.
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 16;
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    send(&mut player, CMsg::StartMapping(start), 80_000.0);
+    assert!(!player.expire_pattern(i64::MAX / 2));
+}

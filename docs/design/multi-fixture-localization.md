@@ -47,7 +47,7 @@ the camera is a 9 cm depth error, so relative scale is **solved, not assumed**
 | Sync | **Shared epoch on the phone's clock**, converted per fixture with the existing TimeSync offset; firmware starts the pattern on `epoch_ms` | The decoder is unchanged: one `CvPipeline`, identity clock. Its self-clocking alignment absorbs the common offset and camera latency. Only the *inter-fixture* skew matters (§5). |
 | Driving several fixtures (one TLS socket each; the app holds one at a time) | **Arm-then-film**: firmware keeps flashing after the socket closes. (a) **Bridge**: one live `group_capture` query arms all of them (the bridge holds every socket). (b) **Direct fallback**: connect → sync → start → disconnect, per fixture in turn | The capture itself needs no connection, so both paths are the same protocol and the same decode. The direct path costs about 2–3 s per fixture to arm (TLS ≈ 0.8 s on a C6 + sync + start) and the same again to stop. |
 | Solver location | **TypeScript** (`web/src/geom/multiFixture.ts`), not the Rust/WASM mapping solver | The problem is small: 7·(F−1) fixture parameters after the Schur step. It reuses `geom/pnp.ts` (FUG-112). It runs in the app's live preview, in node tests and in the agent. Worst synthetic solve ≈ 0.5 s. |
-| Capture parameters | The per-fixture **capture profile** (sensor stack `get_capture_profile`: diffuse, stride, timing, brightness), else the app's per-device stride + global diffuse toggle | One decoder reads every fixture, so **timing is shared**: the most conservative alphabet and the slowest bit period of the group (≥ 100 ms). Diffuse fixtures light ONE coverage phase of their stride schedule, which is plenty to register a known map. Brightness is per fixture. |
+| Capture parameters | The per-fixture **capture profile** (#320 `get_capture_profile`: diffuse, stride, timing, brightness, detector settings), else the app's per-device stride + global diffuse toggle | One decoder reads every fixture, so **timing is shared**: the most conservative alphabet and the slowest bit period of the group (≥ 100 ms). Diffuse fixtures light ONE coverage phase of their stride schedule, which is plenty to register a known map. Brightness is per fixture. |
 | Reference / world frame | User-chosen reference fixture = origin; **levelled by gravity** when its "up" is known (+Y of a `gravity_leveled` map, or an IMU-measured up in the map frame); otherwise its +Y is assumed up (and the result says so). If the reference already has a stored pose, the room keeps its frame and everything is re-anchored on it | Adding a fixture to an already set-up room must not move the others. |
 
 ## 3. Method
@@ -174,6 +174,7 @@ StartMappingOptions {
   optional int32  code_offset = 8;   // LED i transmits id i + code_offset
   optional int32  code_space  = 9;   // shared code-book size (>= offset + led_count)
   optional double epoch_ms    = 10;  // pattern epoch in THIS player's clock
+  optional int32  stop_after_ms = 11; // auto-stop (the app arms with 10 min)
 }
 CodeParams { ...; optional int32 code_offset = 13; }  // echo; led_count = code space
 ```
@@ -190,7 +191,12 @@ Firmware (`firmware/player/src/lib.rs`, feature `"group_capture"`):
 - `configure` keeps the group layout. `code_space` ≤ 4096 (13 data bits +
   SEC-DED).
 - The pattern keeps running after the client disconnects. That was already
-  true; now it's documented and relied on. `stop_mapping` ends it.
+  true; now it's documented and relied on. `stop_mapping` ends it, and so does
+  **`stop_after_ms`**: the frame loop calls `lm_pattern_expire(millis())` each
+  pass, so a phone that dies mid-capture can't leave fixtures flashing. The app
+  arms with 10 minutes; a `configure` keeps the original deadline. Expiry on
+  "the arming client's socket dropped" doesn't fit: the direct path disconnects
+  on purpose.
 - Unset fields leave single-fixture capture unchanged (tested).
 
 Bridge (`agent/src/bridge/live.ts`): live query `group_capture`:
@@ -301,13 +307,14 @@ automatically; the review screen also has "Save debug bundle".
   - the camera screen on iOS (native source) and Android.
 - Bridge path: tested against the fake player through the real relay + bridge.
   Not tested with real players.
-- Capture profile: read duck-typed (`getCaptureProfile` + feature
-  `capture_profile`), so it lights up when the sensor stack merges. Until then,
-  the per-device stride + global diffuse toggle are used.
+- Capture profile (#320): read on both paths (`get_capture_profile`, only
+  when it belongs to the device's current map). It supplies diffuse / stride /
+  timing / brightness per fixture, and the detector threshold / downscale /
+  local-contrast gain of the diffuse members for the one shared detector.
+  Fixtures mapped before profiles existed fall back to the per-device stride +
+  global diffuse toggle.
 - The IMU "up" input is plumbed (`fixtureModel(…, imuUp)`) but nothing fills it
-  yet. It needs the sensor stack's calibrated mount (gravity in the map frame).
-- There is no auto-stop on the device. If the phone dies mid-capture, the
-  fixtures keep flashing until something sends `stop_mapping` (or a reboot). A
-  firmware `stop_after_ms` would be a small follow-up.
+  yet. The next step is to fill it from the IMU-to-fixture extrinsic now on
+  main (#320/#321): gravity from `get_sensors` rotated into the map frame.
 - A device-side automatic stride-phase rotation would let diffuse fixtures
   cover all their LEDs in one group capture. One phase is enough to localize.

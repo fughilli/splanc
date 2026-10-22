@@ -297,10 +297,15 @@ message StartMappingOptions {
   //   - epoch_ms: the pattern epoch in THIS player's clock (the millis() domain
   //     time_sync_pong reports), so every fixture's frames line up; a past epoch
   //     just phase-aligns the running pattern.
-  // The pattern keeps running after the client disconnects (stop_mapping ends it).
+  // The pattern keeps running after the client disconnects (stop_mapping, or
+  // stop_after_ms below, ends it).
   optional int32 code_offset = 8;
   optional int32 code_space = 9;
   optional double epoch_ms = 10;
+  // Auto-stop (group capture): the pattern ends by itself this many ms after
+  // start_mapping, so a phone that dies (or loses its socket) mid-capture
+  // doesn't leave fixtures flashing. Unset/<=0 = run until stop_mapping.
+  optional int32 stop_after_ms = 11;
 }
 
 message StartMapping {

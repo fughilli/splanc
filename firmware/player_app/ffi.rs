@@ -3370,6 +3370,14 @@ pub unsafe extern "C" fn lm_pattern_timing(
     }
 }
 
+/// End the active mapping pattern if its auto-stop deadline (start_mapping's
+/// stop_after_ms) has passed; the frame loop calls this, under the player
+/// lock, before lm_pattern_timing. True when it just stopped.
+#[no_mangle]
+pub unsafe extern "C" fn lm_pattern_expire(now_ms: i64) -> bool {
+    player().expire_pattern(now_ms)
+}
+
 /// Record that the frame loop just pushed mapping-pattern frame `seq` (the
 /// absolute frame index since the pattern epoch, before the cycle modulo) to
 /// the LEDs at player monotonic clock `t_mono_us` (raw micros(), integer µs).

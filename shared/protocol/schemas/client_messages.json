@@ -108,6 +108,10 @@
             "epochMs": {
               "type": ["number", "null"],
               "description": "Group capture: the pattern epoch in the PLAYER's clock (time_sync_pong domain), so every fixture's frames align. Null -> now."
+            },
+            "stopAfterMs": {
+              "type": ["integer", "null"],
+              "description": "Auto-stop: the pattern ends by itself this many ms after start_mapping (a dead phone can't leave fixtures flashing). Null/<=0 -> until stop_mapping."
             }
           }
         }

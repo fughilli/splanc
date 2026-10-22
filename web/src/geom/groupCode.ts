@@ -148,6 +148,10 @@ export interface CaptureProfileLike {
   symbols?: number;
   bitPeriodMs?: number;
   brightness?: number;
+  /** Detector settings that worked for this fixture (#320 profile). */
+  detectThreshold?: number;
+  downscale?: number;
+  lcGain?: number;
 }
 
 /** What one member flashes in the group capture. */
@@ -165,19 +169,36 @@ export interface GroupTiming {
   bitPeriodMs: number;
 }
 
+/** Detector overrides for the ONE phone detector reading every fixture: taken
+ * from the stored profiles of the members that need the diffuse prefilter
+ * (lowest threshold / finest downscale wins, so the hardest fixture still
+ * detects); empty when no profile says anything. */
+export interface GroupDetector {
+  threshold?: number;
+  downscale?: number;
+  lcGain?: number;
+}
+
 /** Resolve each member's capture knobs from its stored profile (falling back to
  * the app's per-device stride + global diffuse toggle), and the SHARED timing:
  * one decoder reads every fixture, so all use the most conservative alphabet
  * and the slowest bit period any profile needed (never faster than 100 ms). */
 export function resolveGroupCapture(
   members: readonly { profile: CaptureProfileLike | null; fallback: { diffuse: boolean; strideSpacing: number; anchorDensity: number } }[],
-): { members: MemberCapture[]; timing: GroupTiming } {
+): { members: MemberCapture[]; timing: GroupTiming; detector: GroupDetector } {
   let symbols: 2 | 4 = 4;
   let bitPeriodMs = 100;
+  const detector: GroupDetector = {};
   const out = members.map(({ profile: p, fallback }) => {
     if (p?.symbols === 2) symbols = 2;
     if (p?.bitPeriodMs && p.bitPeriodMs > bitPeriodMs) bitPeriodMs = p.bitPeriodMs;
     const diffuse = p?.diffuse ?? fallback.diffuse;
+    if (p && diffuse) {
+      if (p.detectThreshold && p.detectThreshold > 0)
+        detector.threshold = Math.min(detector.threshold ?? Infinity, p.detectThreshold);
+      if (p.downscale && p.downscale >= 1) detector.downscale = Math.min(detector.downscale ?? Infinity, p.downscale);
+      if (p.lcGain && p.lcGain > 0 && detector.lcGain === undefined) detector.lcGain = p.lcGain;
+    }
     return {
       diffuse,
       strideSpacing: diffuse ? Math.max(1, Math.floor(p?.strideSpacing ?? fallback.strideSpacing)) : 1,
@@ -185,8 +206,13 @@ export function resolveGroupCapture(
       brightness: p?.brightness && p.brightness > 0 && p.brightness <= 1 ? p.brightness : null,
     };
   });
-  return { members: out, timing: { symbols, bitPeriodMs } };
+  return { members: out, timing: { symbols, bitPeriodMs }, detector };
 }
+
+/** Group patterns stop by themselves after this long (firmware stop_after_ms),
+ * so a phone that dies mid-capture doesn't leave the room flashing. Generous:
+ * arming + a slow walk past five fixtures is a few minutes. */
+export const GROUP_AUTO_STOP_MS = 10 * 60 * 1000;
 
 /** StartMappingOptions (camelCase wire shape, minus ledCount) for one member. */
 export function memberStartOptions(
@@ -201,6 +227,7 @@ export function memberStartOptions(
     bitPeriodMs: timing.bitPeriodMs,
     codeOffset: slot.offset,
     codeSpace: layout.codeSpace,
+    stopAfterMs: GROUP_AUTO_STOP_MS,
     ...(cap.brightness !== null ? { brightness: cap.brightness } : {}),
     ...(cap.diffuse && cap.strideSpacing > 1
       ? { strideSpacing: cap.strideSpacing, anchorDensity: cap.anchorDensity, stridePhase: 0 }

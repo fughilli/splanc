@@ -229,6 +229,8 @@ export interface StartMappingOptions {
   codeOffset?: number;
   codeSpace?: number;
   epochMs?: number;
+  /** Auto-stop after this many ms (null/<=0: until stop_mapping). */
+  stopAfterMs?: number;
 }
 
 export interface StartMappingMessage {

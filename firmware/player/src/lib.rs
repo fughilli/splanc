@@ -143,6 +143,9 @@ struct ActiveCapture {
     led_count: u32,
     /// Group capture: LED i transmits code-book id `i + code_offset` (0 = solo).
     code_offset: u32,
+    /// Auto-stop deadline (player-clock ms; start_mapping + stop_after_ms), or
+    /// None = run until stop_mapping. Checked by the frame loop (expire_pattern).
+    stop_at_ms: Option<i64>,
 }
 
 /// Upper bound on a group capture's shared code space (ids): keeps the codeword
@@ -741,6 +744,10 @@ impl Player {
                 }
             }
         };
+        let stop_at_ms = match options.stop_after_ms() {
+            Some(ms) if ms > 0 => Some(now_ms + ms as i64),
+            _ => None,
+        };
         let spec = CodeSpec::derive(code_space, symbols, true);
         let active = ActiveCapture {
             epoch_ms,
@@ -752,6 +759,7 @@ impl Player {
             stride_phase,
             led_count: led_count as u32,
             code_offset,
+            stop_at_ms,
         };
         self.active = Some(active);
         let mut started = pb::MappingStarted {
@@ -825,6 +833,8 @@ impl Player {
             stride_phase,
             led_count: led_count as u32,
             code_offset: active.code_offset,
+            // A renegotiation keeps the original auto-stop deadline.
+            stop_at_ms: active.stop_at_ms,
         });
         self.pattern_state()
     }
@@ -1652,6 +1662,18 @@ impl Player {
     /// unconditionally.
     pub fn record_frame_shown(&mut self, seq: u32, t_us: u32) {
         self.frame_log.push(seq, t_us);
+    }
+
+    /// End the active capture if its auto-stop deadline (stop_after_ms) has
+    /// passed. Called by the frame loop each pass; true when it just stopped.
+    pub fn expire_pattern(&mut self, now_ms: i64) -> bool {
+        match self.active {
+            Some(ActiveCapture { stop_at_ms: Some(t), .. }) if now_ms >= t => {
+                self.active = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Pattern clock epoch of the active capture, if any (integer ms).

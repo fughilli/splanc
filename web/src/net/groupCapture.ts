@@ -23,6 +23,7 @@ import type { CodeParams, OutputMap } from "@ledmapper/protocol";
 import type { LedMapperClient } from "./client";
 import type { FixturePoseFlat, MappingBundle } from "./proto";
 import type { BridgeLiveClient } from "./bridgeLive";
+import { profileForMap } from "../capture/captureProfile";
 import { deviceEpochMs, type CaptureProfileLike } from "../geom/groupCode";
 
 /** What a fixture tells us before a group capture. */
@@ -181,13 +182,12 @@ async function readMember(dev: DirectDevice, c: LedMapperClient): Promise<GroupM
   if (features.includes("stored_map")) {
     map = await c.pullStoredMap().then((b: MappingBundle) => b.map ?? null, () => null);
   }
-  // Capture profile (sensor stack: get_capture_profile, feature "capture_profile");
-  // duck-typed so this builds before that client method exists.
+  // The capture profile stored next to the map (#320, feature "capture_profile"):
+  // only when it belongs to THIS map (the device drops it on a new upload).
   let profile: CaptureProfileLike | null = null;
-  const gp = (c as unknown as { getCaptureProfile?: () => Promise<CaptureProfileLike> }).getCaptureProfile;
-  if (features.includes("capture_profile") && typeof gp === "function") {
-    profile = await gp.call(c).then(
-      (p) => (p && (!map || !p.mapId || p.mapId === map.mapId) ? p : null),
+  if (features.includes("capture_profile") && map) {
+    profile = await c.getCaptureProfile().then(
+      (p) => profileForMap(p, map!.mapId),
       () => null,
     );
   }

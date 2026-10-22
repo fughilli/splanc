@@ -28,6 +28,7 @@ import {
   resolveGroupCapture,
   roomPoseToFlat,
   SHARED_FRAMES_GOAL,
+  type GroupDetector,
   type GroupTiming,
   type MemberCapture,
 } from "../../geom/groupCode";
@@ -237,7 +238,7 @@ export function RoomLocalizeScreen(router: Router): Screen {
       okMembers.map((m) => ({ id: m.id, name: m.name, ledCount: m.map!.ledCount || m.ledCount, map: m.map! })),
       reference,
     );
-    const { members: caps, timing } = resolveGroupCapture(
+    const { members: caps, timing, detector } = resolveGroupCapture(
       okMembers.map((m) => ({
         profile: m.profile,
         fallback: {
@@ -270,14 +271,20 @@ export function RoomLocalizeScreen(router: Router): Screen {
       return;
     }
     runInfo = { session, arm, caps, timing, startedAt: performance.now() };
-    await runCamera(session, arm.codeParams, arm.epochLocalMs, caps.some((c) => c.diffuse));
+    await runCamera(session, arm.codeParams, arm.epochLocalMs, caps.some((c) => c.diffuse), detector);
   }
 
   // ---------------------------------------------------------------------------
   // 3. Capture
   // ---------------------------------------------------------------------------
 
-  async function runCamera(session: GroupCaptureSession, params: CodeParams, epochLocal: number, diffuse: boolean): Promise<void> {
+  async function runCamera(
+    session: GroupCaptureSession,
+    params: CodeParams,
+    epochLocal: number,
+    diffuse: boolean,
+    prof: GroupDetector,
+  ): Promise<void> {
     el.innerHTML = "";
     el.classList.add("room-screen--capture");
     const hud = h("div", "room-hud");
@@ -291,11 +298,12 @@ export function RoomLocalizeScreen(router: Router): Screen {
     el.append(hud);
 
     const bp = prefs.getDiffuseParams();
+    // Stored capture profiles (#320) override the app-global diffuse params.
     const detectorOpts = {
-      threshold: diffuse ? bp.threshold : 0.6,
-      downscale: bp.downscale,
+      threshold: diffuse ? (prof.threshold ?? bp.threshold) : 0.6,
+      downscale: prof.downscale ?? bp.downscale,
       flipV: bp.flipV,
-      ...(diffuse ? { localContrast: { gain: bp.lcGain } } : {}),
+      ...(diffuse ? { localContrast: { gain: prof.lcGain ?? bp.lcGain } } : {}),
     };
     let detectGl: WebGL2RenderingContext;
     let onFrame: (cb: Parameters<MediaStreamCaptureSource["onFrame"]>[0]) => void;

@@ -80,6 +80,7 @@ test("group timing is the most conservative profile; diffuse members light one s
     bitPeriodMs: 133,
     codeOffset: 10,
     codeSpace: 60,
+    stopAfterMs: 600_000,
     strideSpacing: 3,
     anchorDensity: 3,
     stridePhase: 0,

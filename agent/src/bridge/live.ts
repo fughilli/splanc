@@ -31,6 +31,7 @@ import {
   type QueryMsg,
   type UniformInput,
 } from "../../../web/src/net/liveProtocol";
+import { profileForMap } from "../../../web/src/capture/captureProfile";
 import { encodeClient, type UniformValueFlat } from "../../../web/src/net/proto";
 import type { Hub, PlayerResult } from "../hub";
 import type { PlayerRecord } from "../registry";
@@ -691,9 +692,13 @@ export class LiveMux {
             async (s, p) => {
               const w = s.client.welcome as (Record<string, unknown> & { features?: string[]; codeParams?: { ledCount?: number } }) | null;
               const bundle = await s.mappingBundle().catch(() => null);
-              const gp = (s.client as unknown as { getCaptureProfile?: () => Promise<unknown> }).getCaptureProfile;
+              // The map's capture profile (#320) — only if it belongs to this map.
               const profile =
-                (w?.features ?? []).includes("capture_profile") && typeof gp === "function" ? await gp.call(s.client).catch(() => null) : null;
+                (w?.features ?? []).includes("capture_profile") && bundle?.map
+                  ? await s
+                      .run(() => s.client.getCaptureProfile())
+                      .then((p) => profileForMap(p, bundle.map!.mapId), () => null)
+                  : null;
               return {
                 name: p.name,
                 features: w?.features ?? [],
