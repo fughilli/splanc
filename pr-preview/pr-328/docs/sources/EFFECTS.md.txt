@@ -460,3 +460,16 @@ hand-written effect takes.
 
 The web app loads `fx_compiler_wasm_pkg.js` and `fx_vm_wasm_pkg.js` dynamically
 (`web/src/fx/preview.ts`, `web/src/effects/editor/compile-worker.ts`).
+
+## Sensor values and drivers
+
+Live sensor values reach effects as **uniforms bound by name** (the uniform
+pool, docs/design/sensor-core.md §6): declare `uniform vec3 imu_gravity = 0.0,
+-1.0, 0.0;` (or `imu_quat`, `imu_euler`, `imu_shake`, `imu_tap`, ...) and the
+firmware writes it every frame while a sensor runs; otherwise it is an ordinary
+knob. Sensor **drivers** (FUG-107) are `.fxb` programs too: `void poll()`
+instead of `shade()`, `export` declarations instead of uniforms, the
+`i2c_write` / `i2c_read8` / `i2c_read16` / `i2c_read16s` intrinsics, and
+`FLAG_DRIVER` (0x10) in the header with `poll()` in the shade-entry slot and
+the export table as the manifest. Ops `I2cWrite` (106) / `I2cRead` (107, u8
+mode: bytes 1..2, bit 7 signed) are inert outside `Vm::run_poll`.

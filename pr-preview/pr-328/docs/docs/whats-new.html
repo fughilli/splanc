@@ -337,6 +337,85 @@ cost table is now fitted to the HITL benchmark bundle (4.5% rms).</p></li>
 <li><p>Design, cost table and numbers: <a class="reference internal" href="design/fx-memoization.html"><span class="std std-doc">fx-memoization.md</span></a>.</p></li>
 </ul>
 </section>
+<section id="show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">
+<h3>Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc<a class="headerlink" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The effects list scrolls on its own.</strong> In Show Mode the list is a nested scroll area:
+swiping, the wheel or the keyboard (↑/↓, Page Up/Down, Home/End, Enter, A/B) moves it without
+moving the page, and the highlight stays in view.</p></li>
+<li><p><strong>Browse with an encoder, load with its push.</strong> Each deck gets a MIDI-mappable <strong>browse</strong>
+encoder and <strong>load</strong> button. Load either <strong>cues</strong> the highlighted effect onto the deck or
+<strong>takes</strong> it (loads and crossfades to that deck); pick which in the MIDI map.</p></li>
+<li><p><strong>Relative encoders scroll forever.</strong> Mappings store an encoder mode: absolute (default),
+binary offset (3F/41, the Twister’s “ENC 3FH/41H”), two’s complement (7F/01) or signed bit.
+MIDI learn detects the mode from the values the knob sends. A faster turn moves further.</p></li>
+<li><p><strong>Set up Midi Fighter Twister</strong> (MIDI map, or Settings ▸ MIDI) switches the encoders you pick
+to relative mode over SysEx. It reads the Twister’s settings, shows what will change, writes only
+those fields, reads them back to check, and maps the encoders. It needs Chrome or Edge on a
+computer or Android; iOS has no Web MIDI. Not yet tested on a real Twister.</p></li>
+<li><p>Guide: <a class="reference internal" href="user-guide.html#show-mode-the-mixing-deck"><span class="std std-ref">Show Mode &amp; the mixing deck</span></a>.</p></li>
+</ul>
+</section>
+<section id="copy-a-fixture-s-map-onto-a-new-phone">
+<h3>Copy a fixture’s map onto a new phone<a class="headerlink" href="#copy-a-fixture-s-map-onto-a-new-phone" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The Maps tab shows the map on the connected device.</strong> A card at the top
+shows its LED count, mapped vs interpolated LEDs, and whether this phone
+already has it. On a fresh install, <strong>Save to this phone</strong> copies the map
+into the library, and <strong>Preview</strong> opens it without saving. Only a small
+header is read on each visit. A large map is downloaded when you save or
+preview it.</p></li>
+<li><p><strong>Calibrate IMU without mapping again.</strong> The card and the device’s detail
+sheet offer <strong>Calibrate IMU</strong> when the device’s motion sensor is running.
+If the map isn’t on this phone yet, it is copied first.</p></li>
+<li><p><strong>Supplement works on every map.</strong> A map copied from a device or imported
+has positions but no raw capture data. A supplemental scan now aligns to
+those stored positions and averages with them, using a cautious accuracy of
+¼ LED pitch for the stored positions. Before, the button was hidden for these
+maps. Maps that kept their capture data still get the joint re-solve. The
+debug <strong>Bundle</strong> tile is now greyed out with the reason, not hidden.</p></li>
+<li><p>Not yet through <strong>Live via bridge</strong>: the bridge doesn’t forward the stored
+map, so connect to the fixture directly to copy it.</p></li>
+</ul>
+</section>
+<section id="the-motion-sensor-knows-which-way-the-map-is">
+<h3>The motion sensor knows which way the map is<a class="headerlink" href="#the-motion-sensor-knows-which-way-the-map-is" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Mapping now calibrates the IMU’s tilt for free</strong>: the map is gravity-levelled
+and the fixture stands still while it’s captured, so the sensor’s settled
+“up” is pinned to the map’s +Y as soon as the map is stored; effects tilt the
+right way at once. Heading needs a second, re-oriented pose (the guided
+“Calibrate IMU” screen is next); the solver and device side are in
+(<a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §7</span></a>).</p></li>
+<li><p><strong>Fixtures remember how they were mapped</strong>: diffuse mode, LED stride, code
+timing and brightness are stored on the device with the map, and a later
+supplemental or calibration capture reuses them instead of re-probing.</p></li>
+</ul>
+</section>
+<section id="sensor-drivers-an-agent-can-write">
+<h3>Sensor drivers an agent can write<a class="headerlink" href="#sensor-drivers-an-agent-can-write" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Any I2C sensor, no firmware release.</strong> Agents scan the player’s sensor bus
+(<code class="docutils literal notranslate"><span class="pre">scan_i2c</span></code>), write a small driver in the effect language (<code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code> +
+<code class="docutils literal notranslate"><span class="pre">export</span></code>s, <code class="docutils literal notranslate"><span class="pre">i2c_read*</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_write</span></code>), and load it live (<code class="docutils literal notranslate"><span class="pre">deploy_driver</span></code>); every
+export drives the effect uniform of the same name. Supersedes PR #96; the
+native-vs-VM MPU-6050 A/B and when to use which: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §8</span></a>.</p></li>
+</ul>
+</section>
+<section id="fixtures-that-feel-motion-the-sensor-core">
+<h3>Fixtures that feel motion: the sensor core<a class="headerlink" href="#fixtures-that-feel-motion-the-sensor-core" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Wire an MPU-6050 and the player finds it.</strong> At boot the C6 player probes
+its I2C pins (SDA 6 / SCL 7, INT 21 by default) for an MPU-6050-family IMU,
+fuses it on the device (orientation, gravity, linear acceleration, shake and
+tap), and costs nothing when none is fitted.</p></li>
+<li><p><strong>Effects react by name.</strong> Declare <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">vec3</span> <span class="pre">imu_gravity</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_quat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">imu_shake</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_tap</span></code>, … and the firmware drives them every frame; without
+a sensor they stay ordinary knobs. Try <code class="docutils literal notranslate"><span class="pre">agent/skill/examples/imu_tilt.fx</span></code>.</p></li>
+<li><p><strong>Agents can read and calibrate it</strong> (<code class="docutils literal notranslate"><span class="pre">read_sensors</span></code>, <code class="docutils literal notranslate"><span class="pre">calibrate_sensors</span></code>).
+Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md</span></a> (#315).</p></li>
+</ul>
+</section>
 <section id="live-vj-through-your-bridge-every-fixture-from-one-phone">
 <h3>Live VJ through your bridge: every fixture from one phone<a class="headerlink" href="#live-vj-through-your-bridge-every-fixture-from-one-phone" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -478,6 +557,33 @@ picking a saved network keeps your choice. Phone keyboards no longer
 autocorrect or capitalize the field, and password managers leave it alone.</p></li>
 <li><p><strong>The same button</strong> is on the API key fields in AI settings and on the Splanc
 Bridge Flasher’s Wi-Fi password (which had a text “Show” button).</p></li>
+</ul>
+</section>
+<section id="players-keep-one-address">
+<h3>Players keep one address<a class="headerlink" href="#players-keep-one-address" title="Link to this heading">¶</a></h3>
+<p>Netstack players picked a random Wi-Fi MAC (02:0c:6a:…) every boot, so the router
+handed them a new IP after every reboot and the bridge kept dialling the old one.
+They now use the chip’s factory MAC, so the lease (and any DHCP reservation) stays
+put, and a re-join first clears any stale association the AP still holds. mDNS
+re-announces on every new lease and after a DHCP renewal; the TXT record carries
+the device id. HITL gate: <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:stable_identity</span></code>.</p>
+</section>
+<section id="players-stay-on-wi-fi-across-updates-and-power-cuts">
+<h3>Players stay on Wi-Fi across updates and power cuts<a class="headerlink" href="#players-stay-on-wi-fi-across-updates-and-power-cuts" title="Link to this heading">¶</a></h3>
+<p>Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
+(a power cut, a reset, a firmware update over USB) brought the board back
+unprovisioned, and it had to be put back on the network. Now the credentials are
+saved to NVS once the board has actually joined with them (a mistyped password is
+never saved), and the board rejoins on its own at boot. Re-provisioning the
+network a board is already on keeps the link instead of restarting the join. If
+the saved network wasn’t visible at boot (the router still starting after a power
+cut), the board restarts to rescan on a capped backoff. Design notes:
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/wifi_creds.h</span></code>; HITL gate <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:upgrade_keeps_wifi</span></code>.</p>
+<ul class="simple">
+<li><p><strong>One last re-provision.</strong> A board running a release before this fix has no
+saved credentials to keep, so the update that installs this firmware still needs
+one provision; every update after that keeps them.</p></li>
+<li><p><strong>Factory reset</strong> (a full flash erase) still clears them.</p></li>
 </ul>
 </section>
 <section id="every-player-has-its-own-tls-certificate">
@@ -811,6 +917,11 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
+<li><a class="reference internal" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc</a></li>
+<li><a class="reference internal" href="#copy-a-fixture-s-map-onto-a-new-phone">Copy a fixture’s map onto a new phone</a></li>
+<li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
+<li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
+<li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>
 <li><a class="reference internal" href="#live-vj-through-your-bridge-every-fixture-from-one-phone">Live VJ through your bridge: every fixture from one phone</a></li>
 <li><a class="reference internal" href="#the-bridge-follows-players-that-come-back-on-a-new-ip">The bridge follows players that come back on a new IP</a></li>
 <li><a class="reference internal" href="#agents-crossfade-between-effects-and-look-at-your-fixtures-in-3d">Agents crossfade between effects, and look at your fixtures in 3D</a></li>
@@ -819,6 +930,8 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#debug-mode-logs-failed-mapping-runs">Debug mode logs failed mapping runs</a></li>
 <li><a class="reference internal" href="#splanc-works-as-a-chatgpt-plugin">Splanc works as a ChatGPT plugin</a></li>
 <li><a class="reference internal" href="#show-the-wi-fi-password-while-you-type-it">Show the Wi-Fi password while you type it</a></li>
+<li><a class="reference internal" href="#players-keep-one-address">Players keep one address</a></li>
+<li><a class="reference internal" href="#players-stay-on-wi-fi-across-updates-and-power-cuts">Players stay on Wi-Fi across updates and power cuts</a></li>
 <li><a class="reference internal" href="#every-player-has-its-own-tls-certificate">Every player has its own TLS certificate</a></li>
 <li><a class="reference internal" href="#export-a-map-to-touchdesigner-or-chromatik">Export a map to TouchDesigner or Chromatik</a></li>
 <li><a class="reference internal" href="#splanc-bridge-sd-image-splanc-bridge-flasher-no-terminal">Splanc bridge SD image + Splanc Bridge Flasher (no terminal)</a></li>
