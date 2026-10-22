@@ -293,13 +293,15 @@ def main() -> int:
             rows.append((m, s, c, est, own, p))
         rows.sort(key=lambda r: -r[1]["frame"])
         for m, s, c, est, own, p in rows:
+            ratio = f"{own['frame'] / CPU * 1e3 / est:.0f}×" if est else "—"
+            delta = f"{(p['frame'] / s['frame'] - 1) * 100:+.0f}%" if p else "—"
             md.append(
                 f"| {m['name']} | {m['target'].replace('signcyl', 'both')} | {s['frame']/CPU*1e3:.1f} | "
                 f"{c['frame']/CPU*1e3:.1f} | "
                 f"{s['frame']/500:,.0f} | {c['frame']/250:,.0f} | {s['ops']/500:.0f} | "
                 f"{(f'{est} ({chr(115) if own is s else chr(99)})' if est else '—')} | "
-                f"{(f'{own['frame']/CPU*1e3/est:.0f}×' if est else '—')} | "
-                f"{(f'{(p['frame']/s['frame']-1)*100:+.0f}%' if p else '—')} |"
+                f"{ratio} | "
+                f"{delta} |"
             )
         fig, ax = plt.subplots(figsize=(7.6, 8.0))
         ys = list(range(len(rows)))
