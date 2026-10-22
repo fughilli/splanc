@@ -1,5 +1,5 @@
 # Backup OTA signing key (key id 1, "backup"): OFFLINE, kept in cold storage by
 # the owner; only this public half is in the repo. Signs key-epoch records that
 # revoke a compromised release key (docs/design/ota.md "Key rotation").
-# UNSET until the owner provides it.
-UNSET
+# SEC1 uncompressed P-256, hex. Provisioned 2026-10-22.
+04f275ed59bd1275249f2eca20759b9e6a36e4703309e9be7458230d8ddf613d5be079d668ac64fd7d3153b0b1996479c04c2163273ea9a1c1d0c15f35ee387c2d
