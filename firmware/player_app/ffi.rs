@@ -16,6 +16,10 @@
 
 #![no_std]
 
+// The OTA core's C ABI (ota_ffi.h) rides in this staticlib for the app's
+// update hooks (ota_app.cpp): linked here, not referenced from Rust.
+extern crate splanc_ota;
+
 use core::convert::Infallible;
 use core::ffi::c_void;
 use core::ptr::{addr_of, addr_of_mut};
@@ -1861,6 +1865,7 @@ pub const FEATURES: &[&str] =
         "drivers",
         "imu_extrinsic",
         "capture_profile",
+        "ota",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.

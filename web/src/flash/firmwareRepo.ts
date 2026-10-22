@@ -69,6 +69,10 @@ export async function loadFlashRequest(entry: FirmwareEntry): Promise<FlashReque
     }),
   );
 
+  if (manifest.ota?.package) {
+    const res = await fetch(`${base}/${manifest.ota.package}`, { cache: "no-cache" });
+    if (res.ok) return { entry, manifest, images, otaPackage: new Uint8Array(await res.arrayBuffer()) };
+  }
   return { entry, manifest, images };
 }
 
@@ -92,7 +96,19 @@ function tarBytesToFlashRequest(entry: FirmwareEntry, bytes: Uint8Array): FlashR
     if (!data) throw new Error(`Firmware archive is missing image ${img.file}.`);
     return { offset: img.offset, data };
   });
-  return { entry, manifest, images };
+  // The signed over-the-air package rides in OTA-layout bundles (named by
+  // flash.json's ota.package, else the one *.ota member).
+  const otaName =
+    manifest.ota?.package ?? [...members.keys()].find((n) => n.toLowerCase().endsWith(".ota"));
+  const otaPackage = otaName ? members.get(otaName) : undefined;
+  const keyEpoch = members.get("key-epoch.bin");
+  return {
+    entry,
+    manifest,
+    images,
+    ...(otaPackage ? { otaPackage } : {}),
+    ...(keyEpoch ? { keyEpoch } : {}),
+  };
 }
 
 /** Download a release's `.tar` asset bytes through the CORS proxy — GitHub's asset CDN

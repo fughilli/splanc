@@ -9,6 +9,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Before a PLANNED restart (esp_restart for an OTA handoff / install): leave the AP
+// cleanly (the factory MAC comes straight back with the same DHCP lease).
+void netstack_prepare_restart(void);
+
 // Bring up the transport. Call from setup() AFTER the shared player init + improv_ble_begin
 // (BLE must init before we hijack the MAC so our radio config wins). Runs AES self-test +
 // the heapless STA RX bring-up + TLS server init.

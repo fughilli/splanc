@@ -14,6 +14,7 @@ import { certChangedMessage, certPins } from "../../net/deviceTrust";
 import { deviceProber } from "../../net/deviceProber";
 import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
+import { inLoader } from "../../net/otaUpdate";
 
 export interface ConnStatus {
   state: PillState;
@@ -151,12 +152,22 @@ class AppState {
         await this.checkCert(client, dev.id);
         const sync = await client.syncClock();
         deviceStore.upsert(wssUrl, label); // refresh lastSeen
+        // A device in its OTA updater (recovery, docs/design/ota.md) answers only the
+        // update protocol: say so, so the user goes to Flash firmware -> Update over Wi-Fi.
+        const updater = inLoader(client.welcome);
         this.setStatus({
           state: "connected",
-          text: "connected",
+          text: updater ? "in updater" : "connected",
           certUrl: null,
           error: null,
         });
+        if (updater) {
+          const ota = (client.welcome as unknown as { ota?: { loaderReason?: string } }).ota;
+          toast(
+            `This device is in its firmware updater (${ota?.loaderReason || "recovery"}). ` +
+              "Open Flash firmware to install an update over Wi-Fi.",
+          );
+        }
         void sync;
       } catch {
         // Drop a PROVISIONAL BLE entry that never learned an identity (no welcome

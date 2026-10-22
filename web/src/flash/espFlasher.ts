@@ -28,6 +28,14 @@ import type {
 import type { Flasher, FlashHooks, FlashRequest, FlashResult } from "./flasher";
 import { appResetSequence, connectPlanFor, connectWithReconnect, errMessage } from "./reconnect";
 import { isPolyfillActive } from "./webserial";
+import {
+  hasLittlefsSuperblock,
+  hasOtaLayout,
+  littlefsPartition,
+  parsePartitionTable,
+  PARTITION_TABLE_LEN,
+  PARTITION_TABLE_OFFSET,
+} from "./partitionTable";
 
 // esptool-js renegotiates the baud only when baudrate !== romBaudrate (115200),
 // and that renegotiation CLOSES and REOPENS the port (Transport.disconnect() then
@@ -110,12 +118,12 @@ export function createEspFlasher(): Flasher {
         }
       };
 
-      try {
-        // Connect + detect the chip from the ROM bootloader (the "self-report"
-        // the issue asks for — authoritative over the ambiguous USB VID/PID),
-        // retried across the USB drop-off that the reset into the bootloader
-        // causes on the native USB-Serial-JTAG.
-        const { port: livePort, session: loader } = await connectWithReconnect({
+      // Connect + detect the chip from the ROM bootloader (the "self-report"
+      // the issue asks for — authoritative over the ambiguous USB VID/PID),
+      // retried across the USB drop-off that the reset into the bootloader
+      // causes on the native USB-Serial-JTAG.
+      const connectRom = () =>
+        connectWithReconnect({
           port,
           serial: typeof navigator !== "undefined" && "serial" in navigator ? navigator.serial : null,
           plan: connectPlanFor(port.getInfo(), isPolyfillActive()),
@@ -144,6 +152,9 @@ export function createEspFlasher(): Flasher {
           status: (phase) => hooks.progress({ phase, written: 0, total: 1 }),
         });
 
+      try {
+        let { port: livePort, session: loader } = await connectRom();
+
         const want = normChip(req.manifest.chip);
         const got = normChip(loader.chip.CHIP_NAME);
         if (want && got && want !== got) {
@@ -160,19 +171,68 @@ export function createEspFlasher(): Flasher {
           /* MAC read is best-effort; not fatal to flashing */
         }
 
-        hooks.log(`Writing ${req.images.length} image(s)…`);
-        await loader.writeFlash({
-          fileArray: req.images.map((im) => ({ data: im.data, address: im.offset })),
-          // Pass the manifest's params straight through. "keep" leaves each
-          // image header's stamped mode/freq/size intact — matching the Bazel
-          // esptool_flash defaults, so the webapp writes the same bytes.
-          flashMode: req.manifest.flashMode as FlashModeValues,
-          flashFreq: req.manifest.flashFreq as FlashFreqValues,
-          flashSize: req.manifest.flashSize as FlashSizeValues,
-          eraseAll: false,
-          compress: true,
-          reportProgress: overallProgress(req, hooks),
-        });
+        const write = async (images: FlashRequest["images"]): Promise<void> => {
+          hooks.log(`Writing ${images.length} image(s)…`);
+          await loader.writeFlash({
+            fileArray: images.map((im) => ({ data: im.data, address: im.offset })),
+            // Pass the manifest's params straight through. "keep" leaves each
+            // image header's stamped mode/freq/size intact — matching the Bazel
+            // esptool_flash defaults, so the webapp writes the same bytes.
+            flashMode: req.manifest.flashMode as FlashModeValues,
+            flashFreq: req.manifest.flashFreq as FlashFreqValues,
+            flashSize: req.manifest.flashSize as FlashSizeValues,
+            eraseAll: false,
+            compress: true,
+            reportProgress: overallProgress({ ...req, images }, hooks),
+          });
+        };
+
+        // An OTA-layout bundle onto a board that still has the legacy layout: the
+        // one-time migration (docs/design/ota.md "Migration"). The app slot now
+        // covers where littlefs used to live, so write everything BELOW it first,
+        // let the new loader boot and copy littlefs (maps, the TLS identity) to its
+        // new home, check it did, and only then write the app.
+        const ota = req.manifest.ota;
+        let legacy = false;
+        if (ota) {
+          try {
+            const table = await loader.readFlash(PARTITION_TABLE_OFFSET, PARTITION_TABLE_LEN);
+            legacy = !hasOtaLayout(parsePartitionTable(table));
+          } catch (err) {
+            throw new Error(`Couldn't read the board's partition table (${errMessage(err)}); nothing was written.`);
+          }
+        }
+        if (ota && legacy) {
+          const phase1 = req.images.filter((im) => im.offset < ota.phase1Below);
+          const phase2 = req.images.filter((im) => im.offset >= ota.phase1Below);
+          hooks.log("This board has the old flash layout: moving it to the updatable layout (one time).");
+          await write(phase1);
+          hooks.log(`Letting the updater move your saved settings (${ota.waitSeconds} s)…`);
+          try {
+            await loader.after("custom_reset", undefined, appResetSequence(livePort.getInfo()));
+          } catch {
+            /* the port drops as the board reboots — expected */
+          }
+          await closeTransport();
+          for (let t = ota.waitSeconds; t > 0; t--) {
+            hooks.progress({ phase: `Moving settings (${t} s)`, written: ota.waitSeconds - t, total: ota.waitSeconds });
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          ({ port: livePort, session: loader } = await connectRom());
+          const lfs = littlefsPartition(
+            parsePartitionTable(await loader.readFlash(PARTITION_TABLE_OFFSET, PARTITION_TABLE_LEN)),
+          );
+          const head = lfs ? await loader.readFlash(lfs.offset, 8192) : new Uint8Array();
+          if (!hasLittlefsSuperblock(head)) {
+            throw new Error(
+              "The updater didn't finish moving the board's settings, so the app was NOT written " +
+                "(your map and settings are still safe in the old location). Replug the board and flash again.",
+            );
+          }
+          await write(phase2);
+        } else {
+          await write(req.images);
+        }
 
         // Everything is written and MD5-verified by now; the reset only boots
         // the app. A real EN pulse (esptool-js's "hard_reset" never asserts it),

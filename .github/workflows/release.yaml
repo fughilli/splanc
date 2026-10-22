@@ -99,7 +99,9 @@ jobs:
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
             --//firmware/player_app:agent_bundle_url="${AGENT_BUNDLE_URL}" \
             --//firmware/player_app:agent_bundle_sha256="${AGENT_BUNDLE_SHA256}" \
-            //firmware/player_app:esp32c6_netstack_flashbundle
+            //firmware/player_app:esp32c6_netstack_flashbundle \
+            //firmware/player_app:esp32c6_ota_flashbundle \
+            //firmware/ota:ota_sign
 
       # Rename to a versioned, variant-tagged asset name the webapp's release source
       # matches (web/src/flash/githubReleaseRepo.ts ASSET_RE = esp32c6-<variant>-*.tar).
@@ -110,11 +112,53 @@ jobs:
           cp bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar "_assets/esp32c6-netstack-${VER}.tar"
           cp "bazel-bin/agent/splanc-agent-${VER}.tgz" "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256" _assets/
 
+      # Over-the-air updates (docs/design/ota.md): sign the app with the release key
+      # (the loader in esp32c6-ota-<ver>.tar trusts only firmware/ota/keys/release.pub)
+      # -> esp32c6-netstack-<ver>.ota (what update_firmware / "Update over Wi-Fi"
+      # stream) + esp32c6-ota-<ver>.tar (the loader + app USB bundle, package inside).
+      # A release without the key can't ship an OTA layout nobody could update, so
+      # this fails loudly instead of skipping.
+      # Fail before anything is published if the secret isn't the key whose public
+      # half the loaders trust (firmware/ota/keys/release.pub): images signed with any
+      # other key would be refused by every loader in the field.
+      - name: Check the OTA signing key matches release.pub
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          if [ -z "${OTA_SIGNING_KEY}" ]; then
+            echo "::error::the OTA_SIGNING_KEY repository secret is not set (docs/design/ota.md \"Signing\")"
+            exit 1
+          fi
+          derived="$(bazel-bin/firmware/ota/ota_sign pubkey --key-env OTA_SIGNING_KEY)"
+          committed="$(bazel-bin/firmware/ota/ota_sign check-pub --in firmware/ota/keys/release.pub)"
+          if [ "${derived}" != "${committed}" ]; then
+            echo "::error::OTA_SIGNING_KEY's public key (${derived}) is not firmware/ota/keys/release.pub (${committed})"
+            exit 1
+          fi
+          echo "OTA signing key matches release.pub"
+
+      - name: Sign the OTA package
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          if [ -z "${OTA_SIGNING_KEY}" ]; then
+            echo "::error::the OTA_SIGNING_KEY secret is not set (docs/design/ota.md \"Signing\")"
+            exit 1
+          fi
+          python3 tools/ota_release.py \
+            --bundle bazel-bin/firmware/player_app/esp32c6_ota_flashbundle.tar \
+            --version "${VER}" --signer bazel-bin/firmware/ota/ota_sign \
+            --pubkey firmware/ota/keys/release.pub --key-epoch firmware/ota/keys/epoch.bin \
+            --out-dir _assets
+
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             _assets/*.tar
+            _assets/*.ota
+            _assets/key-epoch.bin
             _assets/*.tgz
             _assets/*.tgz.sha256
           generate_release_notes: true

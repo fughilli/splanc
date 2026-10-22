@@ -55,6 +55,7 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   align_time: write("Align effect clocks", false, true),
   // device control
   set_brightness: write("Set brightness", false, true),
+  update_firmware: write("Update firmware over Wi-Fi", true, true),
   list_uniforms: read("List effect controls"),
   set_uniforms: write("Set effect controls", false, true),
   ramp_uniforms: write("Glide effect controls", false, true),
@@ -106,7 +107,7 @@ export const SERVER_INSTRUCTIONS =
   "keypoints are saved looks. New scene or mood: search_effects first (past effects), " +
   "else compile_effect, preview_effect, deploy_effect; rollback_effect undoes it.\n\n" +
   "Rules: ask the user before deleting or overwriting their keypoints, renaming a player " +
-  "(set_device_name), re-trusting a certificate (trust_player) or forgetting a player. Ask where fixtures " +
+  "(set_device_name), re-trusting a certificate (trust_player), updating firmware (update_firmware) or forgetting a player. Ask where fixtures " +
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
   "Splanc app. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +

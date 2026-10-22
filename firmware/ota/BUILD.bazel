@@ -1,0 +1,168 @@
+"""Firmware update core (docs/design/ota.md): the signed manifest (the swarm
+loader's 108-byte format), the resumable receive session, the loader's boot
+decision, the app's health + crash-loop rules, and the hand-coded OTA arms of
+the player protocol. no_std and dependency-free; the loader
+(//firmware/loader) and the app (//firmware/player_app) call it from C++ via
+ota_ffi.h. The signer (:ota_sign) is host-only.
+
+@rr(PR-39): implemented in this package (see requirements/requirements.yaml)
+"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load(":ring.bzl", "ring_cmd")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "ota",
+    srcs = glob(["src/*.rs"]),
+    crate_name = "splanc_ota",
+    edition = "2021",
+)
+
+cc_library(
+    name = "ota_ffi_hdr",
+    hdrs = ["ota_ffi.h"],
+    include_prefix = "firmware/ota",
+)
+
+rr_rust_test(
+    name = "ota_test",
+    srcs = ["tests/ota.rs"],
+    edition = "2021",
+    rule = rust_test,
+    deps = [":ota"],
+)
+
+# Every hand-coded field number in src/wire.rs against the generated host
+# bindings of ledmapper.proto (both directions).
+rr_rust_test(
+    name = "wire_test",
+    srcs = ["tests/wire.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "16777216"},
+    rule = rust_test,
+    deps = [
+        ":ota",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# keygen / sign / verify (see sign/main.rs). Host-only: pure-Rust P-256 from the
+# isolated player_crates universe, so no crypto crate reaches the firmware graph.
+rust_binary(
+    name = "ota_sign",
+    srcs = ["sign/main.rs"],
+    edition = "2021",
+    deps = [
+        ":ota",
+        "@player_crates//:p256",
+        "@player_crates//:rand_core",
+    ],
+)
+
+# Real signatures end to end: sign with the checked-in TEST key, verify with
+# its public key, and refuse tampered manifests / images / wrong keys.
+rust_test(
+    name = "sign_test",
+    srcs = ["tests/sign.rs"],
+    data = [
+        "keys/release.pub",
+        "keys/test.key",
+        "keys/test.pub",
+        "keys/test_backup.key",
+        "keys/test_backup.pub",
+        ":ota_sign",
+        "//firmware/loader:ota_kat.h",
+    ],
+    edition = "2021",
+    env = {
+        "OTA_KAT_H": "$(rootpath //firmware/loader:ota_kat.h)",
+        "OTA_RELEASE_PUB": "$(rootpath keys/release.pub)",
+        "OTA_TEST_BACKUP_KEY": "$(rootpath keys/test_backup.key)",
+        "OTA_TEST_BACKUP_PUB": "$(rootpath keys/test_backup.pub)",
+        "OTA_SIGN": "$(rootpath :ota_sign)",
+        "OTA_TEST_KEY": "$(rootpath keys/test.key)",
+        "OTA_TEST_PUB": "$(rootpath keys/test.pub)",
+    },
+    deps = [":ota"],
+)
+
+# Which public key the loader trusts. "release": firmware/ota/keys/release.pub,
+# whose private half is the OTA_SIGNING_KEY Actions secret (release builds).
+# "test": the checked-in TEST key (keys/test.key is public knowledge — HITL and
+# local development only; never ship a test-trust loader).
+string_flag(
+    name = "trust",
+    build_setting_default = "release",
+    values = [
+        "release",
+        "test",
+    ],
+)
+
+config_setting(
+    name = "trust_test",
+    flag_values = {":trust": "test"},
+)
+
+py_binary(
+    name = "gen_key_header",
+    srcs = ["gen_key_header.py"],
+)
+
+RELEASE_RING = {
+    "0": "keys/release.pub",
+    "1": "keys/backup.pub",
+    "2": "keys/next.pub",
+}
+
+TEST_RING = {
+    "0": "keys/test.pub",
+    "1": "keys/test_backup.pub",
+}
+
+genrule(
+    name = "ota_key_h",
+    srcs = select({
+        ":trust_test": TEST_RING.values(),
+        "//conditions:default": RELEASE_RING.values(),
+    }),
+    outs = ["ota_key.h"],
+    cmd = select({
+        ":trust_test": ring_cmd(TEST_RING),
+        "//conditions:default": ring_cmd(RELEASE_RING),
+    }),
+    tools = [":gen_key_header"],
+)
+
+genrule(
+    name = "ota_key_h_test",
+    srcs = TEST_RING.values(),
+    outs = ["test/ota_key.h"],
+    cmd = ring_cmd(TEST_RING),
+    tools = [":gen_key_header"],
+)
+
+# The trusted public key as `ota_key::kPublic[65]` (+ kHasKey, kName), included
+# as "firmware/ota/ota_key.h". Only the loader holds it (it is the authority on
+# signatures; the app checks only the manifest's shape). :ota_key_test is the
+# TEST key regardless of --trust, for the HITL loader variant.
+cc_library(
+    name = "ota_key",
+    hdrs = [":ota_key_h"],
+)
+
+cc_library(
+    name = "ota_key_test",
+    hdrs = [":ota_key_h_test"],
+    include_prefix = "firmware/ota",
+    strip_include_prefix = "test",
+)
+
+exports_files(glob(["keys/*"]))

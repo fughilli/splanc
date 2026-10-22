@@ -229,6 +229,37 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // Firmware update (docs/design/ota.md). Neither firmware image decodes or encodes
+    // these through the generated bindings: the app and the loader intercept the OTA
+    // arms and use the hand-coded codec in //firmware/ota (wire.rs, cross-checked
+    // against the host profile by //firmware/ota:wire_test). So the firmware profile
+    // stubs every variable-size field (and drops welcome.ota, which only the loader
+    // sends); the host profile sizes them for a real manifest / chunk / status.
+    g.configure(
+        ".ledmapper.v1.OtaBegin.manifest",
+        Config::new().max_bytes(if firmware { 1 } else { 108 }),
+    );
+    g.configure(
+        ".ledmapper.v1.OtaBegin.key_epoch",
+        Config::new().max_bytes(if firmware { 1 } else { 80 }),
+    );
+    g.configure(
+        ".ledmapper.v1.OtaChunk.data",
+        Config::new().max_bytes(if firmware { 1 } else { 4096 }),
+    );
+    for field in [
+        ".ledmapper.v1.OtaStatus.error",
+        ".ledmapper.v1.OtaStatus.app_fw_version",
+        ".ledmapper.v1.OtaStatus.loader_reason",
+        ".ledmapper.v1.OtaStatus.last_result",
+    ] {
+        g.configure(field, Config::new().max_bytes(if firmware { 1 } else { 64 }));
+    }
+    // Welcome.ota is skipped in BOTH profiles: Welcome sits inside every by-value
+    // ServerMessage, and an inline OtaStatus (4 strings) there grew the host test
+    // stacks past their limit. Nothing Rust-side reads it (wire_test decodes it from
+    // the raw welcome bytes).
+    g.configure(".ledmapper.v1.Welcome.ota", Config::new().skip(true));
     // Sensor core (docs/design/sensor-core.md): the firmware encodes SensorState
     // ZERO-COPY (ffi.rs handle_get_sensors), so its profile drops the vectors and
     // strings from the by-value ServerMessage; the host profile keeps them (xyz /

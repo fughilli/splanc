@@ -36,6 +36,7 @@ import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } f
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
+import { canaryRollout, resolvePackage } from "./firmware";
 import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
@@ -408,6 +409,34 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     },
     ({ level, players: sel }) =>
       guard(async () => ok(await fan(sel, async (s) => ({ brightness: await s.setBrightness(level) })))),
+  );
+  server.registerTool(
+    "update_firmware",
+    {
+      description:
+        "Update players' firmware over Wi-Fi to a signed Splanc release (version: X.Y.Z or \"latest\", the " +
+        "default). Each player checks the signature, installs the image with its updater and must come back " +
+        "healthy, else it rolls itself back. Canary-first: one player updates alone; the rest follow only if it " +
+        "came back healthy. Takes ~1-2 minutes per player and restarts them (lights pause). Ask the user first. " +
+        "allow_downgrade installs an older version. A player on the old flash layout needs a one-time USB update " +
+        "from the Splanc app first.",
+      inputSchema: { version: z.string().optional(), allow_downgrade: z.boolean().optional(), players },
+    },
+    ({ version, allow_downgrade, players: sel }) =>
+      guard(async () => {
+        const local = process.env["SPLANC_OTA_PACKAGE"];
+        const pkg = await resolvePackage(local ? { packagePath: local } : { version: version ?? "latest" });
+        progress(`installing ${pkg.label} (manifest version ${pkg.version})`);
+        const targets = await hub.select(sel);
+        const out = await canaryRollout(targets, async (p) => {
+          const s = await hub.session(p);
+          return s.updateFirmware(pkg.bytes, {
+            allowDowngrade: allow_downgrade ?? false,
+            ...(pkg.keyEpoch ? { keyEpoch: pkg.keyEpoch } : {}),
+          });
+        });
+        return ok({ firmware: pkg.label, ...out });
+      }),
   );
   server.registerTool(
     "list_uniforms",

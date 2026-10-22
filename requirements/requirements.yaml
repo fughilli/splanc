@@ -518,6 +518,31 @@ requirements:
     method: hitl
     modules: [firmware]
 
+  - id: PR-39
+    title: Firmware updates over the air with a recoverable loader
+    description: >-
+      An ESP32-C6 player with the loader + app flash layout shall take a
+      firmware update over Wi-Fi (web app, agent update_firmware, bridge)
+      without USB: a small loader in the factory slot verifies the image
+      against an ECDSA P-256 signed manifest before booting it; a new app must
+      prove healthy before it is marked valid, and an app that crashes, hangs
+      or fails its health check rolls back to the loader, which stays
+      reachable to take another image. A transfer interrupted by a dropped
+      link or a reset resumes. Wi-Fi credentials, the TLS identity and the
+      stored map survive both the one-time USB migration from the legacy
+      layout and every update (docs/design/ota.md).
+    satisfies: [UN-5, UN-7]
+    method: hitl
+    modules: [firmware, web, agent, pi/hitl]
+    verified_by:
+      - '//firmware/ota:ota_test'
+      - '//firmware/ota:wire_test'
+      - '//firmware/ota:sign_test'
+      - '//firmware/loader:layout_test'
+      - '//web:otaUpdate_test'
+      - '//web:partitionTable_test'
+      - '//agent:firmware_test'
+
 # --------------------------------------------------------------------------- #
 # Risks (FUG-88 RISK-1..12)                                                   #
 # --------------------------------------------------------------------------- #

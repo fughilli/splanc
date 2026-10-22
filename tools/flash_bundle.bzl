@@ -18,10 +18,17 @@ def _flash_bundle_impl(ctx):
     args.add("--launcher", launcher)
     args.add("--out", out)
     args.add_all(bins, before_each = "--bin")
+    if ctx.attr.extra_json:
+        args.add("--extra-json", ctx.attr.extra_json)
+    extra_files = []
+    for target, name in ctx.attr.files.items():
+        f = target.files.to_list()[0]
+        extra_files.append(f)
+        args.add("--file", "%s=%s" % (name, f.path))
 
     ctx.actions.run(
         executable = ctx.executable._builder,
-        inputs = depset([launcher], transitive = [flash.default_runfiles.files]),
+        inputs = depset([launcher] + extra_files, transitive = [flash.default_runfiles.files]),
         outputs = [out],
         arguments = [args],
         mnemonic = "FlashBundle",
@@ -36,6 +43,13 @@ flash_bundle = rule(
         "flash": attr.label(
             mandatory = True,
             doc = "An esptool_flash target (e.g. //firmware/player_app:flash_esp32c6_netstack).",
+        ),
+        "extra_json": attr.string(
+            doc = "Extra top-level flash.json keys, as a JSON object string.",
+        ),
+        "files": attr.label_keyed_string_dict(
+            allow_files = True,
+            doc = "Extra files carried in the tar (not flashed): label -> name in the tar.",
         ),
         "_builder": attr.label(
             default = "//tools:mk_flashbundle",

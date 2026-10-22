@@ -42,6 +42,22 @@ export interface FlashManifest {
   flashFreq: string;
   flashSize: string;
   images: FlashImageSpec[];
+  /** The OTA layout's hints (docs/design/ota.md): absent on legacy bundles. */
+  ota?: OtaLayoutSpec;
+}
+
+/** flash.json `ota` block: a loader + app layout, and how to migrate a board that
+ * still has the legacy (single app, littlefs at 0x310000) layout in two phases. */
+export interface OtaLayoutSpec {
+  layout: string;
+  appOffset: number;
+  /** Phase 1 writes every image below this offset; the loader then copies the
+   * legacy littlefs across; phase 2 writes the rest (the app). */
+  phase1Below: number;
+  /** How long to give the loader to migrate between the phases. */
+  waitSeconds: number;
+  /** The signed `.ota` package inside the bundle, if it carries one. */
+  package?: string;
 }
 
 /** One entry in the top-level firmware index. */
@@ -117,7 +133,7 @@ export function parseFlashManifest(json: unknown): FlashManifest {
     const im = raw as Record<string, unknown>;
     return { offset: parseOffset(im["offset"]), file: str(im, "file") };
   });
-  return {
+  const out: FlashManifest = {
     chip: str(o, "chip"),
     // mk_flashbundle emits "keep" here by default; tolerate absence.
     flashMode: str(o, "flash_mode", "keep"),
@@ -125,6 +141,22 @@ export function parseFlashManifest(json: unknown): FlashManifest {
     flashSize: str(o, "flash_size", "keep"),
     images,
   };
+  const ota = o["ota"];
+  if (typeof ota === "object" && ota !== null) {
+    const t = ota as Record<string, unknown>;
+    const rawMig = t["legacy_migration"];
+    const mig = typeof rawMig === "object" && rawMig !== null ? (rawMig as Record<string, unknown>) : null;
+    const appOffset = parseOffset(t["app_offset"]);
+    const pkg = optStr(t, "package");
+    out.ota = {
+      layout: str(t, "layout", "loader-app-v1"),
+      appOffset,
+      phase1Below: mig && mig["phase1_below"] !== undefined ? parseOffset(mig["phase1_below"]) : appOffset,
+      waitSeconds: mig && typeof mig["wait_seconds"] === "number" ? (mig["wait_seconds"] as number) : 30,
+      ...(pkg ? { package: pkg } : {}),
+    };
+  }
+  return out;
 }
 
 const FAMILIES: readonly ChipFamily[] = ["esp", "rp2"];

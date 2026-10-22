@@ -1,0 +1,16 @@
+# Splanc OTA flash layout, 4 MiB (docs/design/ota.md "Flash layout").
+#
+# nvs + otadata keep their offsets (Wi-Fi credentials and the device name survive
+# the move). The loader (factory) installs updates into `app` (ota_0); the prebuilt
+# IDF bootloader's app rollback brings a bad app back to the loader. littlefs
+# ("spiffs", the label the app mounts) MOVED from 0x310000/896K to 0x160000/384K (2048-LED map +
+# topology peak ~245K during an upload):
+# the loader copies the old filesystem across on its first boot (loader_main.cpp fs_prepare) before
+# the app slot - which now covers the old region - is written. The 64K coredump
+# partition is gone (unused on the C6).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xe000,   0x2000
+loader,   app,  factory, 0x10000,  0x150000
+spiffs,   data, spiffs,  0x160000, 0x60000
+app,      app,  ota_0,   0x1C0000, 0x240000

@@ -39,6 +39,9 @@ import { getFlasher, type FlashHooks } from "../../flash/flasher";
 import { isNativePlatform } from "../../net/native";
 import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
+import { appState } from "../app/state";
+import type { LedMapperClient } from "../../net/client";
+import { inLoader, OtaError, updateFirmware, type OtaProgress } from "../../net/otaUpdate";
 
 let openHandle: SheetHandle | null = null;
 
@@ -121,7 +124,11 @@ export async function openFlashSheet(): Promise<void> {
   // §3.1), so first-flash of a blank board can't happen on iPhone/iPad by any
   // path. Rather than open the flasher into a dead end, point the user to the
   // desktop web app, where Web Serial/WebUSB flashing works.
-  if (isNativePlatform()) {
+  usbBlocked = null;
+  if (isNativePlatform() && otaTarget()) {
+    // No USB here, but the connected device can update over Wi-Fi.
+    usbBlocked = "USB flashing isn't available on this device.";
+  } else if (isNativePlatform()) {
     const sheet = Sheet("Set up a new device", { onClose: () => (openHandle = null) });
     openHandle = sheet;
     sheet.body.append(
@@ -149,8 +156,10 @@ export async function openFlashSheet(): Promise<void> {
     return;
   }
 
-  const reason = webSerialUnavailableReason();
-  if (reason) {
+  const reason = usbBlocked ? null : webSerialUnavailableReason();
+  if (reason && otaTarget()) {
+    usbBlocked = reason;
+  } else if (reason) {
     // Unsupported browser (commonly Android/iOS): explain, and show the full
     // capability report so it's clear WHAT is missing, not just that it failed.
     sheet.body.append(note(reason), intro(FLASH_HELP), buildDiagnostics({ open: true }));
@@ -259,14 +268,40 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   if (cachedSet.has(selected.id)) card.append(kv("Offline", "cached — flashes without a network"));
   sheet.body.append(card);
 
-  sheet.body.append(
-    Button({
-      label: "Connect a board & flash",
-      icon: "chip",
-      block: true,
-      onClick: () => void startFlash(sheet, index, selected),
-    }),
-  );
+  // Over the air: the connected device, if it has the OTA loader (welcome feature
+  // "ota") or is sitting in its update loader right now (recovery).
+  const target = otaTarget();
+  if (target) {
+    const w = target.welcome!;
+    const name = w.deviceName || w.mac || "the connected device";
+    if (inLoader(w)) {
+      sheet.body.append(
+        note(`${name} is in its updater (recovery mode): install firmware over Wi-Fi to bring it back.`),
+      );
+    }
+    sheet.body.append(
+      Button({
+        label: `Update ${name} over Wi-Fi`,
+        icon: "chip",
+        variant: "primary",
+        block: true,
+        onClick: () => void startOtaUpdate(sheet, index, selected, target),
+      }),
+    );
+  }
+  if (usbBlocked) {
+    sheet.body.append(note(usbBlocked));
+  } else {
+    sheet.body.append(
+      Button({
+        label: "Connect a board & flash (USB)",
+        icon: "chip",
+        ...(target ? { variant: "quiet" as const } : {}),
+        block: true,
+        onClick: () => void startFlash(sheet, index, selected),
+      }),
+    );
+  }
   // Manage the offline cache — only meaningful for the releases source (versioned,
   // downloadable). The bundled "this build" source has a single non-cacheable image.
   if (currentSource === "release") {
@@ -484,6 +519,92 @@ async function startFlash(
       }),
     );
     toast(errText(err), { error: true });
+  }
+}
+
+// -- over the air -----------------------------------------------------------
+
+let usbBlocked: string | null = null;
+
+/** The connected device, when it can take an update over Wi-Fi. */
+function otaTarget(): LedMapperClient | null {
+  const c = appState.client;
+  const w = c?.welcome;
+  if (!c || !w) return null;
+  return (w.features ?? []).includes("ota") || inLoader(w) ? c : null;
+}
+
+const OTA_PHASE_TEXT: Record<OtaProgress["phase"], string> = {
+  handoff: "Restarting into the updater",
+  transfer: "Sending firmware",
+  resume: "Reconnecting",
+  verify: "Verifying",
+  reboot: "Starting the new firmware",
+  health: "Checking it runs",
+  done: "Done",
+  rolled_back: "Rolled back",
+};
+
+async function startOtaUpdate(
+  sheet: SheetHandle,
+  index: FirmwareIndex,
+  entry: FirmwareEntry,
+  client: LedMapperClient,
+): Promise<void> {
+  sheet.body.innerHTML = "";
+  const status = document.createElement("div");
+  status.className = "flash-status";
+  const bar = document.createElement("div");
+  bar.className = "flash-bar";
+  const fill = document.createElement("div");
+  fill.className = "flash-bar-fill";
+  bar.append(fill);
+  const log = document.createElement("pre");
+  log.className = "flash-log";
+  sheet.body.append(status, bar, log);
+  const appendLog = (line: string): void => {
+    log.textContent += line + "\n";
+    log.scrollTop = log.scrollHeight;
+  };
+  let lastPhase = "";
+  try {
+    status.textContent = "Downloading firmware…";
+    const req = await loadFlashRequest(entry);
+    if (!req.otaPackage) {
+      throw new OtaError(
+        "no_package",
+        "This firmware has no over-the-air package — pick a “Netstack + OTA loader” release.",
+      );
+    }
+    appendLog(`Package: ${fmtKB(req.otaPackage.length)} (${entry.label}).`);
+    const result = await updateFirmware(client, req.otaPackage, {
+      ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}),
+      onProgress: (p) => {
+        const pct = p.total > 0 ? Math.min(100, Math.round((p.sent / p.total) * 100)) : 0;
+        fill.style.width = `${pct}%`;
+        const text = OTA_PHASE_TEXT[p.phase];
+        status.textContent = p.phase === "transfer" ? `${text}… ${pct}% (${fmtKB(p.sent)} / ${fmtKB(p.total)})` : `${text}…`;
+        if (p.phase !== lastPhase) {
+          lastPhase = p.phase;
+          appendLog(p.message ? `${text}: ${p.message}` : `${text}…`);
+        }
+      },
+    });
+    fill.style.width = "100%";
+    fill.classList.add("flash-bar-fill--done");
+    status.textContent = "✓ Updated";
+    status.classList.add("flash-status--ok");
+    appendLog(`Running version ${result.version} (sent in ${(result.transferMs / 1000).toFixed(0)} s, ${result.resumes} resume(s)).`);
+    sheet.body.append(Button({ label: "Done", block: true, onClick: () => sheet.close() }));
+    toast("Firmware updated");
+  } catch (err) {
+    const msg = errText(err);
+    appendLog(`\nError: ${msg}`);
+    status.textContent = "Update failed.";
+    status.classList.add("flash-status--err");
+    fill.classList.add("flash-bar-fill--err");
+    sheet.body.append(Button({ label: "Back", block: true, onClick: () => renderIdle(sheet, index, entry) }));
+    toast(msg, { error: true });
   }
 }
 

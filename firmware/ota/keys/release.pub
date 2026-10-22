@@ -1,0 +1,4 @@
+# Release OTA signing key (key id 0, "release"): the public half of the
+# OTA_SIGNING_KEY repository secret. SEC1 uncompressed P-256, hex.
+# See docs/design/ota.md "Signing" and "Key rotation".
+04f746f3c2e2ddbd47de75ca4affed3f6a896294fa2198e14aee3c828872cce83d9da32103af68e80a19839669e128d950f5accb8fca402814953c4851d31c6d2e

@@ -19,6 +19,7 @@
 #include <esp_event.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
+#include <esp_mac.h>
 #include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
@@ -1427,6 +1428,22 @@ uint32_t netstack_rekey_count() { return g_rekey_serviced; }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
 // init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
+void netstack_prepare_restart() {
+  // Leave the BSS cleanly (an unprotected Deauth, reason 3 "leaving": we never negotiate
+  // PMF) so the AP drops our association before the same (factory) MAC comes back after
+  // a planned restart — the rejoin then needn't clear a stale association first.
+  if (g_ap_latched) {
+    uint8_t f[32];
+    int n = mgmt_hdr(f, 0xc0);
+    f[n++] = 0x03;
+    f[n++] = 0x00;
+    for (int i = 0; i < 2; i++) {
+      ns_mac_send(f, n, 0);
+      delay(20);
+    }
+  }
+}
+
 void netstack_setup() {
   // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
   // fills with no host draining the port, which would wedge loopTask mid-association during

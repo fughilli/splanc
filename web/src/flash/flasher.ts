@@ -23,6 +23,11 @@ export interface FlashRequest {
   manifest: FlashManifest;
   /** Images with resolved byte offsets and bytes, in flash order. */
   images: { offset: number; data: Uint8Array }[];
+  /** The signed over-the-air package (manifest ‖ app) when the bundle carries one:
+   * "Update over Wi-Fi" streams it to a connected device (net/otaUpdate.ts). */
+  otaPackage?: Uint8Array;
+  /** A signed key-epoch record shipped with the release (key-epoch.bin), if any. */
+  keyEpoch?: Uint8Array;
 }
 
 /** Progress + log sink the UI implements; a backend reports through it. */
