@@ -32,6 +32,11 @@ def main():
     ap.add_argument("--launcher", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--bin", action="append", default=[], dest="bins")
+    # Extra top-level flash.json keys (a JSON object), e.g. the OTA layout's
+    # migration hints (docs/design/ota.md "Migration"). Extra files ride along
+    # in the tar without being flashed (`--file name=path`).
+    ap.add_argument("--extra-json", default="")
+    ap.add_argument("--file", action="append", default=[], dest="files")
     a = ap.parse_args()
 
     text = open(a.launcher).read()
@@ -60,6 +65,9 @@ def main():
         "flash_size": fs,
         "images": [{"offset": off, "file": name} for off, name, _ in images],
     }
+    if a.extra_json:
+        manifest.update(json.loads(a.extra_json))
+    extras = [f.split("=", 1) for f in a.files]
 
     # Deterministic tar (sorted addfile order, zeroed mtime/uid) for reproducibility.
     with tarfile.open(a.out, "w") as tar:
@@ -68,6 +76,11 @@ def main():
         info.size = len(blob)
         tar.addfile(info, io.BytesIO(blob))
         for _, name, real in images:
+            data = open(real, "rb").read()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        for name, real in extras:
             data = open(real, "rb").read()
             info = tarfile.TarInfo(name)
             info.size = len(data)

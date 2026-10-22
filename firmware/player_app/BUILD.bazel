@@ -19,6 +19,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_test")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+load("//firmware/loader:ota_flash.bzl", "ota_flash", "ota_package")
 load("//tools:flash_bundle.bzl", "flash_bundle")
 load("//tools:ram_chart.bzl", "ram_chart")
 load("//tools/build_info:build_info.bzl", "build_info_file")
@@ -124,6 +125,7 @@ rust_static_library(
         "//firmware/keypoint",
         "//firmware/mdns",
         "//firmware/osc",
+        "//firmware/ota",
         "//firmware/player:player_fw",
         "//firmware/sensor",
         "//firmware/store",
@@ -161,6 +163,7 @@ rust_library(
         "//firmware/keypoint",
         "//firmware/mdns",
         "//firmware/osc",
+        "//firmware/ota",
         "//firmware/player",
         "//firmware/sensor",
         "//firmware/store",
@@ -213,6 +216,8 @@ rust_test(
     name = "decks_keypoints_test",
     srcs = ["tests/decks_keypoints.rs"],
     edition = "2021",
+    # 96 MiB (main): debug-build frames of the decode/handle path hold several
+    # by-value host-profile envelopes (the OTA arms and the 2048-LED config both grew them).
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
@@ -547,8 +552,29 @@ c_resource_library(
 # 4-way (HW-AES CCMP) -> DHCP -> TCP -> mbedtls TLS 1.2 -> RFC6455 WS ->
 # lm_player_handle. No vendor WiFi/lwIP/esp_https_server on the data path. Passes
 # the full //pi/hitl/harness:e2e_netstack (BLE provisioning included) on silicon.
-cc_binary(
-    name = "player_app_netstack",
+# The shipping image is the "" variant. The others exist only for the HITL OTA gate
+# (//pi/hitl/harness:ota_gate, docs/design/ota.md "Testing"): a second build that
+# reports a different fw_version ("+b", for the A->B upgrade), and two deliberately
+# broken apps the loader must recover from — one crashes at boot, one never becomes
+# healthy (no render task). Same sources; only main.cpp/ota_app.cpp see the defines.
+NETSTACK_VARIANTS = [
+    ("", []),
+    (
+        "_ota_b",
+        ["LM_OTA_TEST_B=1"],
+    ),
+    (
+        "_ota_crash",
+        ["LM_OTA_FAULT=1"],
+    ),
+    (
+        "_ota_unhealthy",
+        ["LM_OTA_FAULT=2"],
+    ),
+]
+
+[cc_binary(
+    name = "player_app_netstack" + sfx,
     # SAME main.cpp as the vendor build, gated by -DLM_NETSTACK: the WiFi/WSS/mDNS/OSC
     # transport is swapped for netstack_transport.cpp (our heapless MAC/WPA2/CCMP/DHCP/
     # TCP/TLS/WS), while the render task, effects+JIT, upload, persistence, perf, hardware
@@ -557,24 +583,14 @@ cc_binary(
         # The heapless BLE Improv backend (drives only the radio controller over native
         # HCI) replaces the Bluedroid improv_ble.cpp — no vendor BLE host stack, so BLE
         # onboarding costs no heap churn and the TLS server survives many reconnects.
-        "improv_ble.h",
-        "improv_ble_netstack.cpp",
-        "ble_address.h",
-        "dhcp_reply.h",
-        "icmp_echo.h",
+        # (The transport itself, BLE Improv included, is :netstack_transport, shared
+        # with the OTA loader.)
         "led_config.h",
         "main.cpp",
-        "netstack_transport.cpp",
-        "netstack_transport.h",
         "player_ffi.h",
         "sensor_bus.cpp",
         "sensor_bus.h",
         "serial_log.h",
-        "tls_region.cpp",
-        "tls_region.h",
-        "join_guard.h",
-        "sta_mac.h",
-        "wifi_creds.h",
         ":agent_bundle_h",
         ":build_info_h",
     ] + WS2812_SRCS,
@@ -592,7 +608,7 @@ cc_binary(
         "LM_NETSTACK",
         # Sensor core (sensor_bus.cpp): I2C IMU probe at boot + sensor task.
         "LM_SENSORS",
-    ] + led_cap_defines() + select({
+    ] + extra + led_cap_defines() + select({
         # Selects the C3 controller HCI ABI (un-prefixed libbt.a symbols) in
         # improv_ble_netstack.cpp; the C6 keeps the ROM r_-prefixed transport.
         "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
@@ -613,12 +629,13 @@ cc_binary(
         ":board_caps_res",
         ":color_correction",
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
+        ":improv_ble_netstack",
         ":improv_codec",
+        ":netstack_transport",
+        ":ota_app",  # OTA handoff + health (docs/design/ota.md)
         ":player_ffi",
         ":ws_codec",
-        "//firmware/blehost:ble_ffi",  # heapless BLE host (GAP/GATT/ATT/Improv), no Bluedroid
         "//firmware/landing:landing_page",
-        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:ble",  # vendor BLE *controller* + native ble_hci_trans only
         "@embedded//libs/vendor:preferences",
@@ -627,6 +644,112 @@ cc_binary(
         ":heap_census_on": [":heap_census"],
         "//conditions:default": [],
     }),
+) for sfx, extra in NETSTACK_VARIANTS]
+
+# The app's half of OTA (ota_app.h, docs/design/ota.md): the OTA arms, the handoff to
+# the loader, the health check that marks a fresh install valid, the crash-loop guard.
+# The decisions are the Rust core (//firmware/ota), whose C ABI rides in :player_ffi.
+cc_library(
+    name = "ota_app",
+    srcs = [
+        "ota_app.cpp",
+        "serial_log.h",
+        ":build_info_h",
+    ],
+    hdrs = ["ota_app.h"],
+    # The SAME mbedtls config the linked from-source mbedtls was built with (as
+    # :device_cert): mbedtls_sha256_context's layout depends on it, and a mismatch
+    # made the app's slot re-hash come out wrong (app_version 0 on hardware).
+    copts = [
+        "-fno-rtti",
+        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
+    ],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//firmware/ota:ota_ffi_hdr",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:preferences",
+    ],
+)
+
+# The heapless WiFi transport (netstack_transport.h): BLE Improv provisioning (the
+# heapless HCI backend) -> heapless MAC -> WPA2 -> DHCP -> TCP -> TLS -> WS, with the
+# app-specific parts behind the lm_* seam the binary provides. Shared by the player
+# (:player_app_netstack) and the OTA loader (//firmware/loader), which provide that
+# seam differently.
+cc_library(
+    name = "netstack_transport",
+    srcs = [
+        "ble_address.h",
+        "dhcp_reply.h",
+        "icmp_echo.h",
+        "join_guard.h",
+        "netstack_transport.cpp",
+        "serial_log.h",
+        "sta_mac.h",
+        "tls_region.cpp",
+        "wifi_creds.h",
+    ],
+    hdrs = [
+        "improv_ble.h",
+        "netstack_transport.h",
+        "tls_region.h",
+    ],
+    copts = ["-fno-rtti"],
+    includes = ["."],
+    local_defines = select({
+        "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":device_cert",
+        ":improv_codec",
+        ":ws_codec",
+        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:wifi",
+    ],
+    alwayslink = True,
+)
+
+# The BLE side of the transport's improv_ble.h seam: Improv provisioning + the BLE player
+# transport on the heapless host (native HCI, no Bluedroid). The player links it; the OTA
+# loader links a no-BLE stub instead (docs/design/ota.md: ~250 KB it can't spare).
+cc_library(
+    name = "improv_ble_netstack",
+    srcs = [
+        "ble_address.h",
+        "improv_ble_netstack.cpp",
+        "serial_log.h",
+    ],
+    hdrs = ["improv_ble.h"],
+    copts = ["-fno-rtti"],
+    includes = ["."],
+    local_defines = select({
+        "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "@embedded//platforms:is_esp32c3": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":improv_codec",
+        "//firmware/blehost:ble_ffi",  # heapless BLE host (GAP/GATT/ATT/Improv), no Bluedroid
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+    ],
+    alwayslink = True,
 )
 
 firmware_binary(
@@ -647,6 +770,111 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+# -- OTA layout (docs/design/ota.md) ------------------------------------------------
+# bootloader 0x0 | table 0x8000 | nvs 0x9000 (kept) | otadata 0xe000 (erased: the
+# loader boots first) | loader 0x10000 (1344K) | littlefs 0x160000 (384K) | app
+# 0x1c0000 (2304K). From the legacy huge_app layout this is a one-time USB migration
+# in two phases (everything below the app first, then the app — the loader copies the
+# old littlefs across in between); flash.json's "ota" block tells a flasher how.
+OTA_BUNDLE_JSON = json.encode({
+    "ota": {
+        "layout": "loader-app-v1",
+        "app_offset": "0x1c0000",
+        "app_slot_size": "0x240000",
+        "legacy_migration": {
+            # A table without a factory "loader" partition is the legacy layout.
+            "detect_table_offset": "0x8000",
+            "phase1_below": "0x1c0000",
+            "wait_serial": "[loader] migrate: done",
+            "wait_seconds": 30,
+        },
+    },
+})
+
+[firmware_binary(
+    name = "esp32c6_netstack" + sfx,
+    binary = ":player_app_netstack" + sfx,
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+) for sfx, _ in NETSTACK_VARIANTS if sfx]
+
+# The shipping OTA-layout bundle (the loader trusts --//firmware/ota:trust, release by
+# default). Release CI publishes it as esp32c6-netstack-<ver>.tar plus the signed
+# esp32c6-netstack-<ver>.ota (tools/ota_release.sh).
+ota_flash(
+    name = "flash_esp32c6_ota",
+    app = ":esp32c6_netstack",
+    loader = "//firmware/loader:esp32c6_loader",
+    otadata = "//firmware/loader:otadata_erased",
+    partitions = "//firmware/loader:partitions_ota_bin",
+    tags = ["manual"],
+    tool_from = ":flash_esp32c6_netstack",
+)
+
+flash_bundle(
+    name = "esp32c6_ota_flashbundle",
+    extra_json = OTA_BUNDLE_JSON,
+    flash = ":flash_esp32c6_ota",
+    tags = ["manual"],
+)
+
+# Test-signed .ota packages (manifest || image, signed with the public TEST key) for
+# the HITL OTA gate and local development, and a bundle whose loader trusts that key.
+OTA_TEST_PACKAGES = [
+    ("", "900001"),
+    ("_ota_b", "900002"),
+    ("_ota_crash", "900003"),
+    ("_ota_unhealthy", "900004"),
+]
+
+[ota_package(
+    name = "esp32c6_netstack%s_testsigned" % sfx,
+    app = ":esp32c6_netstack" + sfx,
+    manifest_key = "//firmware/ota:keys/test.key",
+    tags = ["manual"],
+    version = version,
+) for sfx, version in OTA_TEST_PACKAGES]
+
+# Key rotation in the HITL gate (docs/design/ota.md "Key rotation"): B signed by the
+# TEST backup key (key id 1), and a key-epoch record, signed by that backup key, that
+# revokes the test release key (id 0).
+ota_package(
+    name = "esp32c6_netstack_ota_b_backupsigned",
+    app = ":esp32c6_netstack_ota_b",
+    key_id = 1,
+    manifest_key = "//firmware/ota:keys/test_backup.key",
+    tags = ["manual"],
+    version = "900005",
+)
+
+genrule(
+    name = "ota_test_epoch_revoke_release",
+    srcs = ["//firmware/ota:keys/test_backup.key"],
+    outs = ["ota_test_epoch_revoke_release.bin"],
+    cmd = "$(execpath //firmware/ota:ota_sign) epoch --key-file $< --key-id 1 --epoch 1 --revoke 0 --out $@ >/dev/null",
+    tags = ["manual"],
+    tools = ["//firmware/ota:ota_sign"],
+)
+
+ota_flash(
+    name = "flash_esp32c6_ota_testkey",
+    app = ":esp32c6_netstack",
+    loader = "//firmware/loader:esp32c6_loader_testkey",
+    otadata = "//firmware/loader:otadata_erased",
+    partitions = "//firmware/loader:partitions_ota_bin",
+    tags = ["manual"],
+    tool_from = ":flash_esp32c6_netstack",
+)
+
+flash_bundle(
+    name = "esp32c6_ota_testkey_flashbundle",
+    extra_json = OTA_BUNDLE_JSON,
+    files = {":esp32c6_netstack_testsigned.ota": "esp32c6-netstack.ota"},
+    flash = ":flash_esp32c6_ota_testkey",
     tags = ["manual"],
 )
 
@@ -732,6 +960,7 @@ cc_binary(
         ":color_correction",
         ":improv_codec",
         ":osc_bench_fxb_res",
+        ":ota_app",
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
@@ -807,6 +1036,7 @@ cc_binary(
         ":color_correction",
         ":improv_codec",
         ":jit_bench_fxb_res",
+        ":ota_app",
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",

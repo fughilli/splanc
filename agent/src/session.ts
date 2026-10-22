@@ -33,6 +33,7 @@ import {
   type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
+import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
 import type { Pose } from "./config";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { progress } from "./progress";
@@ -1410,6 +1411,46 @@ export class DeviceSession {
   /** Blink this fixture so a person can say which one it is: brightness dips to
    * 5% and back `times` times, then the previous brightness is restored. Works over
    * any running effect (SetBrightness is runtime-only). */
+  /** Install a signed `.ota` package over the air (docs/design/ota.md): the player
+   * hands over to its updater, takes the image, and must come back healthy — else it
+   * rolls back by itself and this rejects with the reason. */
+  async updateFirmware(
+    pkg: Uint8Array,
+    opts: { allowDowngrade?: boolean; keyEpoch?: Uint8Array } = {},
+  ): Promise<Record<string, unknown>> {
+    const name = this.client.welcome?.deviceName || this.opts.url;
+    const from = this.fwVersion;
+    let lastPhase: OtaPhase | null = null;
+    let lastPct = -1;
+    const t0 = Date.now();
+    try {
+      const r = await this.run(() =>
+        updateFirmware(this.client, pkg, {
+          allowDowngrade: opts.allowDowngrade ?? false,
+          ...(opts.keyEpoch ? { keyEpoch: opts.keyEpoch } : {}),
+          onProgress: (p: OtaProgress) => {
+            const pct = p.total ? Math.floor((p.sent / p.total) * 10) * 10 : 0;
+            if (p.phase === lastPhase && (p.phase !== "transfer" || pct === lastPct)) return;
+            lastPhase = p.phase;
+            lastPct = pct;
+            progress(`${name}: ${p.phase}${p.phase === "transfer" ? ` ${pct}%` : ""}${p.message ? ` (${p.message})` : ""}`);
+          },
+        }),
+      );
+      return {
+        from,
+        to: this.client.welcome?.fwVersion ?? "",
+        version: r.version,
+        outcome: r.outcome,
+        resumes: r.resumes,
+        seconds: Math.round((Date.now() - t0) / 1000),
+      };
+    } catch (e) {
+      if (e instanceof OtaError) throw new ToolError(`${name}: ${e.message} (${e.code})`);
+      throw e;
+    }
+  }
+
   async identify(times = 3, opts: { sleep?: (ms: number) => Promise<void> } = {}): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));

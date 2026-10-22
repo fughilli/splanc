@@ -84,6 +84,7 @@ copy_to_bin(
         "src/net/clocksync.ts",
         "src/net/fxbTextures.ts",
         "src/net/liveProtocol.ts",  # the live (VJ) protocol, shared with the bridge
+        "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)

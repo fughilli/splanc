@@ -64,6 +64,7 @@
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
+#include "firmware/player_app/ota_app.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #if defined(LM_SENSORS)
@@ -1231,6 +1232,9 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
 static int ws_compute_reply(const uint8_t *msg, size_t len) {
+  // Firmware update arms (ota_app.cpp): answered here, never by the player core.
+  int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
+  if (ota != 0) return ota;
   // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
   // and handles the final-decode + persist).
   LmUploadChunk ch;
@@ -1881,9 +1885,13 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
   xTaskNotifyGive(xmit_task_handle);
 }
 
+// Render heartbeat for the OTA health check (ota_app_poll): bumped every frame.
+static volatile uint32_t g_render_ticks = 0;
+
 static void render_task(void *) {
   for (;;) {
     uint32_t delay_ms = render_once();
+    g_render_ticks = g_render_ticks + 1;
 #if defined(LM_NETSTACK)
     // The heapless netstack runs on the LOWER-priority Arduino loopTask. Under a
     // FULL-perf benchmark render_once() returns 0 (run flat out to measure), and a
@@ -2533,6 +2541,14 @@ void setup() {
                                               : "OTHER";
     Log().printf("[boot] reset_reason=%s (%d)\n", n, (int)rr);
   }
+  // OTA (docs/design/ota.md): crash-loop guard + the health deadline of a fresh install.
+  ota_app_boot();
+#if LM_OTA_FAULT == 1
+  // Fault-injection build (HITL OTA gate): crash at boot, every boot.
+  Log().printf("[ota] LM_OTA_FAULT=1: crashing at boot (fault-injection build)\n");
+  delay(200);
+  abort();
+#endif
   // Capture the exact size of any failing allocation — above all the mbedtls TLS
   // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
   // site. Registered before anything allocates so no early failure is missed.
@@ -2653,9 +2669,15 @@ void setup() {
   // Build info stamped in at build time (FUG-126): the full git commit + dirty
   // flag + release version, echoed in every welcome so the app can show + link
   // the device's build.
+#if defined(LM_OTA_TEST_B)
+  // The HITL OTA gate's "B" image: same code, a version string it can tell apart.
+  static const char kFwVersion[] = LM_VERSION "+b";
+#else
+  static const char kFwVersion[] = LM_VERSION;
+#endif
   lm_player_set_build_info(reinterpret_cast<const uint8_t *>(LM_GIT_COMMIT), strlen(LM_GIT_COMMIT),
-                           LM_GIT_DIRTY, reinterpret_cast<const uint8_t *>(LM_VERSION),
-                           strlen(LM_VERSION));
+                           LM_GIT_DIRTY, reinterpret_cast<const uint8_t *>(kFwVersion),
+                           strlen(kFwVersion));
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");
@@ -2727,8 +2749,15 @@ void setup() {
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   static StackType_t render_stack[kRenderTaskStack / sizeof(StackType_t)];
   static StaticTask_t render_tcb;
+#if LM_OTA_FAULT == 2
+  // Fault-injection build (HITL OTA gate): never render, so the health check fails.
+  Log().printf("[ota] LM_OTA_FAULT=2: render task not started (fault-injection build)\n");
+  (void)render_stack;
+  (void)render_tcb;
+#else
   xTaskCreateStatic(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
                     render_stack, &render_tcb);
+#endif
 #if !defined(LM_NETSTACK)
   // Native OSC input: a low-priority UDP listener that drives live uniforms
   // (FUG-121). Independent of the WS/TLS player path; binds now and receives
@@ -2909,6 +2938,21 @@ void loop() {
   }
 #endif
 #endif
+  {
+    // OTA health (a fresh install proves itself before it's marked valid) + handoffs.
+    static uint32_t seen_ticks = 0, seen_at = 0;
+    uint32_t t = g_render_ticks, now_ms = millis();
+    if (t != seen_ticks) {
+      seen_ticks = t;
+      seen_at = now_ms;
+    }
+    bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
+#if defined(LM_NETSTACK)
+    ota_app_poll(render_alive, device_cert_ready(), netstack_leased());
+#else
+    ota_app_poll(render_alive, true, WiFi.status() == WL_CONNECTED);
+#endif
+  }
   if (fs_ok) {
     flush_fx_sel_save();
   }

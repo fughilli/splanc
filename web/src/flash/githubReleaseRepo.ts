@@ -23,8 +23,15 @@ import type { FirmwareEntry, FirmwareIndex } from "./manifest";
 /** Firmware asset names we publish, e.g. `esp32c6-netstack-1.2.0.tar`. The chip +
  * family are fixed for now (only the ESP32-C6 player ships a web-flashable image);
  * the capture group is the variant shown in the picker. */
-const ASSET_RE = /^esp32c6-(vendor|netstack)-.+\.tar$/i;
-const VARIANT_LABEL: Record<string, string> = { vendor: "Vendor Wi-Fi", netstack: "Heapless netstack" };
+// `ota`: the loader + app layout (docs/design/ota.md) — updates over Wi-Fi after a
+// one-time USB migration. Listed first within a release.
+const ASSET_RE = /^esp32c6-(vendor|netstack|ota)-.+\.tar$/i;
+const VARIANT_LABEL: Record<string, string> = {
+  vendor: "Vendor Wi-Fi",
+  netstack: "Heapless netstack (legacy layout)",
+  ota: "Netstack + OTA loader",
+};
+const VARIANT_ORDER: Record<string, number> = { ota: 0, netstack: 1, vendor: 2 };
 
 // GitHub release-asset downloads send no CORS headers, so a browser fetch() of the
 // asset URL is blocked ("Failed to fetch"). Route it through our Cloudflare Pages
@@ -76,7 +83,14 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
     const version = tag.replace(/^[a-z]+-v/i, "");
     const target = typeof r["target_commitish"] === "string" ? r["target_commitish"] : "";
     const commit = /^[0-9a-f]{40}$/i.test(target) ? target : undefined;
-    const assets = Array.isArray(r["assets"]) ? r["assets"] : [];
+    const assets = (Array.isArray(r["assets"]) ? [...r["assets"]] : []).sort((a, b) => {
+      const v = (x: unknown): number => {
+        const n = typeof x === "object" && x !== null ? (x as Record<string, unknown>)["name"] : "";
+        const m = typeof n === "string" ? ASSET_RE.exec(n) : null;
+        return m ? (VARIANT_ORDER[m[1]!.toLowerCase()] ?? 9) : 9;
+      };
+      return v(a) - v(b);
+    });
     for (const a of assets) {
       if (typeof a !== "object" || a === null) continue;
       const asset = a as Record<string, unknown>;

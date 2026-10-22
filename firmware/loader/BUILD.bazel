@@ -1,0 +1,155 @@
+"""The Splanc OTA loader (docs/design/ota.md): the small app in the factory slot
+that installs firmware updates into the app slot and recovers a fixture whose
+app is bad. Same heapless netstack + TLS identity as the player
+(//firmware/player_app:netstack_transport), OTA-only protocol (firmware/ota).
+
+@rr(PR-39): implemented in this package (see requirements/requirements.yaml)
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+load("//tools/build_info:build_info.bzl", "build_info_file")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "ota_kat.h",
+    "partitions_ota.csv",
+])
+
+_ESP = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+build_info_file(
+    name = "build_info_h",
+    out = "build_info.h",
+    template = "build_info.h.tmpl",
+)
+
+rust_static_library(
+    name = "loader_ffi",
+    srcs = ["loader_ffi.rs"],
+    crate_name = "splanc_loader_ffi",
+    edition = "2021",
+    target_compatible_with = _ESP,
+    deps = [
+        "//firmware/mdns",
+        "//firmware/ota",
+    ],
+)
+
+[cc_binary(
+    name = "loader_netstack" + suffix,
+    srcs = [
+        "improv_ble_none.cpp",
+        "loader_main.cpp",
+        "ota_kat.h",
+        ":build_info_h",
+    ],
+    copts = [
+        "-fno-rtti",
+        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
+    ],
+    # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + loader_ffi) each define
+    # the panic handler / compiler-builtins; take the first (as the player does).
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    target_compatible_with = _ESP,
+    deps = [
+        ":loader_ffi",
+        key,
+        "//firmware/ota:ota_ffi_hdr",
+        "//firmware/player_app:device_cert",
+        "//firmware/player_app:improv_codec",
+        "//firmware/player_app:netstack_transport",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:preferences",
+    ],
+) for suffix, key in [
+    ("", "//firmware/ota:ota_key"),
+    ("_testkey", "//firmware/ota:ota_key_test"),
+]]
+
+# The loader that trusts --//firmware/ota:trust (release by default).
+firmware_binary(
+    name = "esp32c6_loader",
+    binary = ":loader_netstack",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# The loader that trusts the checked-in TEST key (HITL / development).
+firmware_binary(
+    name = "esp32c6_loader_testkey",
+    binary = ":loader_netstack_testkey",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# -- the flash layout ----------------------------------------------------------------
+
+py_binary(
+    name = "gen_partitions",
+    srcs = ["gen_partitions.py"],
+)
+
+# The partition table the bootloader reads at 0x8000 (byte-identical to ESP-IDF's
+# gen_esp32part.py output for this CSV) + its offsets as a C header.
+genrule(
+    name = "partitions_ota",
+    srcs = ["partitions_ota.csv"],
+    outs = [
+        "partitions_ota.bin",
+        "partitions_ota.h",
+    ],
+    cmd = "$(execpath :gen_partitions) --csv $< --bin $(location partitions_ota.bin) " +
+          "--header $(location partitions_ota.h)",
+    tools = [":gen_partitions"],
+)
+
+filegroup(
+    name = "partitions_ota_bin",
+    srcs = ["partitions_ota.bin"],
+)
+
+# Erased otadata (8 KiB of 0xFF) for 0xe000: with no OTA selection the bootloader
+# boots the factory LOADER, which migrates littlefs if needed and then selects the
+# app. (boot_app0.bin would boot the app first, before any migration.)
+genrule(
+    name = "otadata_erased",
+    outs = ["otadata_erased.bin"],
+    cmd = "head -c 8192 /dev/zero | tr '\\\\000' '\\\\377' > $@",
+)
+
+py_test(
+    name = "layout_test",
+    srcs = ["layout_test.py"],
+    data = [
+        "partitions_ota.csv",
+        ":esp32c6_loader",
+        ":esp32c6_loader_testkey",
+        ":partitions_ota_bin",
+        "//firmware/player_app:esp32c6_netstack",
+    ],
+    env = {
+        "APP_BIN": "$(rootpath //firmware/player_app:esp32c6_netstack)",
+        "CSV": "$(rootpath partitions_ota.csv)",
+        "LOADER_BIN": "$(rootpath :esp32c6_loader)",
+        "LOADER_TESTKEY_BIN": "$(rootpath :esp32c6_loader_testkey)",
+        "PT_BIN": "$(rootpath :partitions_ota_bin)",
+    },
+    # Builds both firmware images (like //firmware/player_app:stack_bound_test).
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":gen_partitions_lib"],
+)
+
+py_library(
+    name = "gen_partitions_lib",
+    srcs = ["gen_partitions.py"],
+    imports = ["."],
+)

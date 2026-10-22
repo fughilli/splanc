@@ -1445,6 +1445,24 @@ uint32_t netstack_rekey_count() { return g_rekey_serviced; }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
 // init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
+void netstack_prepare_restart() {
+  // OTA-specific (docs/design/ota.md): before a PLANNED restart (the app <-> loader
+  // handoff, booting an installed app) say goodbye now — the same sequence-numbered
+  // disassoc + deauth the join guard (join_guard.h) sends after an unplanned reset — so
+  // the AP has already dropped us when the same MAC comes back, and the next boot's join
+  // doesn't wait on the guard.
+  if (g_ap_latched) {
+    uint8_t f[32];
+    for (int i = 0; i < 2; i++) {
+      int n = build_disassoc(f);
+      ns_mac_send(f, n, 0);
+      n = build_deauth(f);
+      ns_mac_send(f, n, 0);
+      delay(20);
+    }
+  }
+}
+
 void netstack_setup() {
   // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
   // fills with no host draining the port, which would wedge loopTask mid-association during
@@ -2012,6 +2030,7 @@ void netstack_loop() {
     g_authw.on_auth_sent(now_ms);
     t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
   }
+
   // Join watchdog: auth is re-sent every 200ms above, but the Association Request and the
   // 4-way go out ONCE. A single lost Association Request/Response (seen on the Mac Internet
   // Sharing AP: "auth ok -> assoc" then silence) or a stalled 4-way used to park the join in

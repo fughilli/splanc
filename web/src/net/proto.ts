@@ -78,6 +78,12 @@ const CLIENT_ARMS: Record<string, string> = {
   set_sensor_mount: "setSensorMount",
   set_capture_profile: "setCaptureProfile",
   get_capture_profile: "getCaptureProfile",
+  ota_begin: "otaBegin",
+  ota_chunk: "otaChunk",
+  ota_finish: "otaFinish",
+  ota_abort: "otaAbort",
+  get_ota_status: "getOtaStatus",
+  ota_reboot: "otaReboot",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -109,6 +115,7 @@ const SERVER_ARMS: Record<string, string> = {
   i2c_scan_result: "i2cScanResult",
   driver_state: "driverState",
   capture_profile: "captureProfile",
+  ota_status: "otaStatus",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -144,7 +151,7 @@ const BYTES_KEYS = new Set(["fxb", "manifest"]);
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
 // as-is. `payload` is UploadChunk's outbound byte-window (same encode-only need).
-const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data", "payload"]);
+const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data", "payload", "keyEpoch"]);
 
 function bytesToB64(bytes: Uint8Array): string {
   let bin = "";
@@ -632,6 +639,34 @@ export function flatFpsState(m: Partial<FpsStateMessage>): FpsStateMessage {
     aborted: m.aborted ?? false,
     noAbort: m.noAbort ?? false,
   };
+}
+
+/** Firmware update over the air (docs/design/ota.md): the device's update state —
+ * the reply to every OTA arm, and `welcome.ota` from the update loader. Enums arrive
+ * as their proto names (proto3 JSON). */
+export interface OtaStatusFlat {
+  /** "MODE_APP" (the player) | "MODE_LOADER" (the update loader / recovery). */
+  mode: string;
+  /** "STATE_IDLE" | "STATE_REBOOTING" | "STATE_RECEIVING" | "STATE_VERIFYING" |
+   * "STATE_INSTALLED" | "STATE_FAILED". */
+  state: string;
+  version: number;
+  size: number;
+  /** The next byte the loader wants (resume point). */
+  offset: number;
+  /** Refusal code (bad_signature, out_of_order, legacy_layout, …); "" when fine. */
+  error: string;
+  appVersion: number;
+  appFwVersion: string;
+  loaderReason: string;
+  lastResult: string;
+  loaderVersion: number;
+  maxChunk: number;
+  slotSize: number;
+}
+
+export interface OtaStatusMessage extends OtaStatusFlat {
+  type: "ota_status";
 }
 
 /** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */

@@ -41,6 +41,14 @@
 //     already makes the phone's placement decision "solve on phone"
 //     (web/src/solver/placement.ts).
 //
+//   OTA (ESP32 players with the loader layout, docs/design/ota.md):
+//     client: ota_begin, ota_chunk, ota_finish, ota_abort, get_ota_status,
+//             ota_reboot
+//     server: ota_status (and welcome.ota from the update loader)
+//     The image always goes to the LOADER: the app answers ota_begin by
+//     checking the manifest and restarting into the loader (state REBOOTING);
+//     the client reconnects and sends ota_begin again.
+//
 //   Unknown/unsupported arms on a player MUST produce a bounded reply, never
 //   a crash: REQUEST arms (those with a defined reply) get
 //   error{code: "unsupported"}; fire-and-forget arms (detections, imu_batch,
@@ -939,7 +947,123 @@ message ClientMessage {
     SetSensorMount set_sensor_mount = 54;
     SetCaptureProfile set_capture_profile = 55;
     GetCaptureProfile get_capture_profile = 56;
+    // 57-69: left free for in-flight branches (#325's firmware ramps take 60-62).
+    // Firmware update over the air (docs/design/ota.md).
+    OtaBegin ota_begin = 70;
+    OtaChunk ota_chunk = 71;
+    OtaFinish ota_finish = 72;
+    OtaAbort ota_abort = 73;
+    GetOtaStatus get_ota_status = 74;
+    OtaReboot ota_reboot = 75;
   }
+}
+
+// --- Firmware update over the air (docs/design/ota.md) ----------------------
+//
+// Flow: get_ota_status (mode APP) -> ota_begin -> ota_status{REBOOTING}; the
+// device restarts into its loader. Reconnect (welcome.ota.mode == MODE_LOADER),
+// ota_begin again -> ota_status{RECEIVING, offset} -> ota_chunk{offset, data}
+// ... (stop-and-wait: each answered by ota_status with the next offset) ->
+// ota_finish -> ota_status{INSTALLED}; the device restarts into the new app,
+// which must prove healthy or the bootloader rolls it back to the loader
+// (ota_status.last_result says which). A dropped link or power cut resumes:
+// ota_begin with the same manifest answers the offset to continue from.
+
+// Start (or resume) an update.
+message OtaBegin {
+  // The signed manifest, 108 bytes (the swarm loader's format): version u32le,
+  // size u32le, sha256[32] of the image, flags u32le, then ECDSA P-256 r||s over
+  // SHA-256 of those 44 bytes. A release's `.ota` asset is this manifest followed
+  // by the image.
+  bytes manifest = 1;
+  // Install even when manifest.version is older than the installed app. (Never
+  // below the device's security floor: see OtaStatus.security_floor.)
+  bool allow_downgrade = 2;
+  // Optional: the newest signed key-epoch record (80 bytes, docs/design/ota.md "Key
+  // rotation"), applied before the manifest is checked — how a revocation reaches
+  // the fleet. Ignored when not newer than the device's.
+  bytes key_epoch = 3;
+}
+
+// One piece of the image, in order.
+message OtaChunk {
+  // Byte offset into the image: the last ota_status.offset.
+  uint32 offset = 1;
+  // At most ota_status.max_chunk (4096) bytes.
+  bytes data = 2;
+}
+
+// Every byte sent: verify the image against the signed digest and boot it.
+message OtaFinish {}
+
+// End the session (the loader keeps what arrived; a later ota_begin with the same
+// manifest resumes).
+message OtaAbort {}
+
+message GetOtaStatus {}
+
+// Restart into the app or the loader (recovery, without an update).
+message OtaReboot {
+  enum Target {
+    TARGET_APP = 0;
+    TARGET_LOADER = 1;
+  }
+  Target target = 1;
+}
+
+message OtaStatus {
+  enum Mode {
+    MODE_UNKNOWN = 0;
+    // The player app: answers status/begin/reboot; images go to the loader.
+    MODE_APP = 1;
+    // The update loader (recovery).
+    MODE_LOADER = 2;
+  }
+  enum State {
+    STATE_IDLE = 0;
+    // The app accepted ota_begin and is restarting into the loader: reconnect.
+    STATE_REBOOTING = 1;
+    STATE_RECEIVING = 2;
+    STATE_VERIFYING = 3;
+    // Verified and selected: the device restarts into the new app.
+    STATE_INSTALLED = 4;
+    // The request was refused; `error` says why.
+    STATE_FAILED = 5;
+  }
+  Mode mode = 1;
+  State state = 2;
+  // The session's manifest version / image size / next byte wanted (also a
+  // transfer left behind by a power cut, while no session is open).
+  uint32 version = 3;
+  uint32 size = 4;
+  uint32 offset = 5;
+  // Machine code when a request is refused: bad_manifest, bad_signature, too_large,
+  // downgrade, wrong_chip, bad_image, out_of_order (resume at `offset`), bad_chunk,
+  // overflow, incomplete, verify_failed, flash_error, no_session, no_app,
+  // not_in_loader, legacy_layout (the device needs the one-time USB migration),
+  // unknown_key, revoked_key, security_floor, bad_epoch, bad_revocation.
+  string error = 6;
+  // Manifest version of the installed app (0 = unknown, e.g. flashed over USB).
+  uint32 app_version = 7;
+  // The app's build version string (e.g. "1.9.0"), from the app.
+  string app_fw_version = 8;
+  // Why the loader is up: update, requested, incomplete, no_app, rolled_back,
+  // crash_loop. Empty in the app.
+  string loader_reason = 9;
+  // Outcome of the last install: "installed" (booting it), "ok" (it proved
+  // healthy), "rolled_back", "verify_failed".
+  string last_result = 10;
+  // The loader's own version number (manifest-style), 0 = unknown.
+  uint32 loader_version = 11;
+  // Largest ota_chunk.data the device takes.
+  uint32 max_chunk = 12;
+  // Bytes in the app slot (the largest image that fits).
+  uint32 slot_size = 13;
+  // The loader's key state: accepted key epoch, revoked key ids (bit n = id n),
+  // and the security-version floor (the lowest installable manifest security version).
+  uint32 key_epoch = 14;
+  uint32 revoked_keys = 15;
+  uint32 security_floor = 16;
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1116,10 @@ message Welcome {
   // Runtime-only (0.0 / RGB after a reboot); unset on older firmware.
   optional double crossfade = 14;
   optional uint32 crossfade_mode = 15;
+  // Set by the OTA LOADER only (docs/design/ota.md): the device is in its update
+  // loader (ota.mode == MODE_LOADER), not the player — offer recovery/update, not the
+  // player UI. Absent on the player (ask it with get_ota_status).
+  OtaStatus ota = 16;
 }
 
 // One LED output channel's hardware config, carried in hardware_config_state.
@@ -1466,5 +1594,8 @@ message ServerMessage {
     I2cScanResult i2c_scan_result = 28;
     DriverState driver_state = 29;
     CaptureProfile capture_profile = 30;
+    // 31: left free for in-flight branches (#325's ramp_state takes 40).
+    // Reply to every OTA arm (docs/design/ota.md).
+    OtaStatus ota_status = 32;
   }
 }

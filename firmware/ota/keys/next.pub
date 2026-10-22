@@ -1,0 +1,3 @@
+# Planned successor key (key id 2, "next"): commit its public half one loader
+# release BEFORE switching CI signing to it (docs/design/ota.md "Key rotation").
+UNSET

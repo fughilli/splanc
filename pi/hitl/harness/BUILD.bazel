@@ -106,6 +106,7 @@ py_library(
         "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
+        "ota_core.py",
         "provision.py",
         "rejoin_loop_core.py",
         "rig_isolation_core.py",
@@ -607,6 +608,54 @@ py_test(
     deps = [
         ":harness",
         "@rules_python//python/runfiles",
+    ],
+)
+
+# OTA gate (docs/design/ota.md "Testing"): in ONE reservation — the one-time USB
+# migration from the legacy layout keeping Wi-Fi/map/TLS identity, A->B over the air,
+# a crash-at-boot and a never-healthy image each rolled back and recovered over the air,
+# a chip reset half way through a transfer resumed, and a bad signature refused. All
+# images signed with the public TEST key (//firmware/ota:keys/test.key) for a test-key
+# loader. Pure logic + the OTA client: ota_core (tests/test_ota_core.py).
+py_test(
+    name = "ota_gate",
+    timeout = "eternal",
+    srcs = ["hitl_ota.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//firmware/player_app:esp32c6_netstack_ota_b_backupsigned",
+        "//firmware/player_app:esp32c6_netstack_ota_b_testsigned",
+        "//firmware/player_app:esp32c6_netstack_ota_crash_testsigned",
+        "//firmware/player_app:esp32c6_netstack_ota_unhealthy_testsigned",
+        "//firmware/player_app:esp32c6_netstack_testsigned",
+        "//firmware/player_app:esp32c6_ota_testkey_flashbundle",
+        "//firmware/player_app:ota_test_epoch_revoke_release",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_OTA_B_BACKUP_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_b_backupsigned.ota",
+        "HITL_OTA_EPOCH_RUNFILE": "_main/firmware/player_app/ota_test_epoch_revoke_release.bin",
+        "HITL_LEGACY_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_OTA_A_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_testsigned.ota",
+        "HITL_OTA_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_ota_testkey_flashbundle.tar",
+        "HITL_OTA_B_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_b_testsigned.ota",
+        "HITL_OTA_CRASH_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_crash_testsigned.ota",
+        "HITL_OTA_UNHEALTHY_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_unhealthy_testsigned.ota",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_ota.py",
+    # manual: needs a rig, so `bazel test //...` (test / test-macos) skips it; the
+    # HITL lane picks it up by the `hitl` tag.
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
     ],
 )
 

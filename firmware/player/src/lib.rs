@@ -590,7 +590,6 @@ impl Player {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
             // The TLS identity is the firmware's (player_app ffi), not the core's.
-            CMsg::GetTlsInfo(_) => Some(error("unsupported", "tls info is handled by the firmware")),
             // The framerate autoscaler (FUG-82) lives in the fx layer (player_app
             // ffi), which intercepts set_fps before the session core sees it.
             CMsg::SetFps(_) => Some(error("unsupported", "fps is handled by the fx layer")),
@@ -606,6 +605,17 @@ impl Player {
             | CMsg::GetCaptureProfile(_) => {
                 Some(error("unsupported", "sensors are handled by the firmware"))
             }
+            // The TLS identity and firmware updates are the firmware's (player_app ffi /
+            // ota_app.cpp / the loader), intercepted before the core. (One arm: every
+            // extra `Some(error(..))` site costs a ServerMessage-sized slot in debug
+            // builds, and the host test stacks are already near their limit.)
+            CMsg::GetTlsInfo(_)
+            | CMsg::OtaBegin(_)
+            | CMsg::OtaChunk(_)
+            | CMsg::OtaFinish(_)
+            | CMsg::OtaAbort(_)
+            | CMsg::GetOtaStatus(_)
+            | CMsg::OtaReboot(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

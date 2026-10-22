@@ -54,6 +54,7 @@ import {
   type FixturePoseFlat,
   type HardwareConfigStateMessage,
   type MappingBundle,
+  type OtaStatusMessage,
   type PerfMode,
   type PerfReportMessage,
   type SetTextureMessage,
@@ -262,6 +263,8 @@ export class LedMapperClient {
 
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
+  // One-shot listeners for the next handshake's welcome (waitForWelcome).
+  private welcomeListeners = new Set<(w: WelcomeMessage) => void>();
   private pingWaiters = new Map<number, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
 
   // Perf-report subscribers: perf_report arrives both as a reply to
@@ -364,6 +367,7 @@ export class LedMapperClient {
           this.redeliverOwedStop();
           this.flushBatches();
           this.events.onConnected?.(msg);
+          for (const l of [...this.welcomeListeners]) l(msg);
           if (!settled) {
             settled = true;
             resolve(msg);
@@ -844,6 +848,76 @@ export class LedMapperClient {
       certSha256: r.certSha256 ?? "",
       persisted: r.persisted ?? false,
     };
+  }
+
+  /** Resolve on the next connection handshake (a reconnect's welcome) that satisfies
+   * `pred` — e.g. the device coming back up in its update loader after a handoff.
+   * Rejects after `timeoutMs`. Needs the auto-reconnect of a client that was
+   * welcomed at least once. */
+  waitForWelcome(pred: (w: WelcomeMessage) => boolean, timeoutMs: number): Promise<WelcomeMessage> {
+    return new Promise((resolve, reject) => {
+      const done = (w: WelcomeMessage): void => {
+        if (!pred(w)) return;
+        this.welcomeListeners.delete(done);
+        resolve(w);
+      };
+      this.welcomeListeners.add(done);
+      this.schedule(() => {
+        if (!this.welcomeListeners.delete(done)) return;
+        reject(new RequestTimeoutError("welcome", timeoutMs));
+      }, timeoutMs);
+    });
+  }
+
+  // -- firmware update over the air (docs/design/ota.md; driver: net/otaUpdate.ts) --
+
+  private async ota(msg: Record<string, unknown>, timeoutMs = this.requestTimeoutMs): Promise<OtaStatusMessage> {
+    const r = (await this.request(msg as unknown as ClientMessage, "ota_status", timeoutMs)) as unknown as Partial<OtaStatusMessage>;
+    return {
+      type: "ota_status",
+      mode: r.mode ?? "MODE_UNKNOWN",
+      state: r.state ?? "STATE_IDLE",
+      version: r.version ?? 0,
+      size: r.size ?? 0,
+      offset: r.offset ?? 0,
+      error: r.error ?? "",
+      appVersion: r.appVersion ?? 0,
+      appFwVersion: r.appFwVersion ?? "",
+      loaderReason: r.loaderReason ?? "",
+      lastResult: r.lastResult ?? "",
+      loaderVersion: r.loaderVersion ?? 0,
+      maxChunk: r.maxChunk ?? 0,
+      slotSize: r.slotSize ?? 0,
+    };
+  }
+
+  /** The device's update state (needs the "ota" feature). */
+  getOtaStatus(): Promise<OtaStatusMessage> {
+    return this.ota({ type: "get_ota_status" });
+  }
+
+  /** Offer a signed image (its 108-byte manifest). The app answers STATE_REBOOTING
+   * (it restarts into the loader); the loader answers STATE_RECEIVING + the offset. */
+  otaBegin(manifest: Uint8Array, allowDowngrade = false, keyEpoch?: Uint8Array): Promise<OtaStatusMessage> {
+    return this.ota({ type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) });
+  }
+
+  otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {
+    return this.ota({ type: "ota_chunk", offset, data });
+  }
+
+  /** Verify (a SHA-256 read-back of ~2 MB) and select the new app. */
+  otaFinish(): Promise<OtaStatusMessage> {
+    return this.ota({ type: "ota_finish" }, Math.max(this.requestTimeoutMs, 60_000));
+  }
+
+  otaAbort(): Promise<OtaStatusMessage> {
+    return this.ota({ type: "ota_abort" });
+  }
+
+  /** Restart into the app or (recovery) the loader. */
+  otaReboot(target: "TARGET_APP" | "TARGET_LOADER"): Promise<OtaStatusMessage> {
+    return this.ota({ type: "ota_reboot", target });
   }
 
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
