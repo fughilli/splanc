@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 1968,
+    "test_cases": 1973,
     "gaps": 34
   },
   "levels": [
@@ -3567,7 +3567,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_workloads.rs",
-          "line": 225,
+          "line": 227,
           "symbol": "fn a_realistic_scan_topology_is_stored_beside_its_map_and_plays"
         },
         {
@@ -3576,7 +3576,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_workloads.rs",
-          "line": 269,
+          "line": 271,
           "symbol": "fn an_effect_with_per_led_state_renders_every_led_at_the_cap"
         }
       ]
@@ -4345,7 +4345,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/player_app/tests/memory_bounds.rs",
-          "line": 412,
+          "line": 415,
           "symbol": "fn effect_buffers_past_the_fx_arena_are_clamped_never_written_out_of_bounds"
         }
       ]
@@ -6466,7 +6466,7 @@
           ],
           "relation": "verifies",
           "path": "firmware/sysmode/tests/reachability.rs",
-          "line": 90,
+          "line": 91,
           "symbol": "fn ble_and_wss_coexist"
         }
       ]
