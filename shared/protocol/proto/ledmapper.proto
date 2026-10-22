@@ -946,14 +946,14 @@ message ClientMessage {
     SetSensorMount set_sensor_mount = 54;
     SetCaptureProfile set_capture_profile = 55;
     GetCaptureProfile get_capture_profile = 56;
-    // 57-59: left free for in-flight branches.
+    // 57-69: left free for in-flight branches (#325's firmware ramps take 60-62).
     // Firmware update over the air (docs/design/ota.md).
-    OtaBegin ota_begin = 60;
-    OtaChunk ota_chunk = 61;
-    OtaFinish ota_finish = 62;
-    OtaAbort ota_abort = 63;
-    GetOtaStatus get_ota_status = 64;
-    OtaReboot ota_reboot = 65;
+    OtaBegin ota_begin = 70;
+    OtaChunk ota_chunk = 71;
+    OtaFinish ota_finish = 72;
+    OtaAbort ota_abort = 73;
+    GetOtaStatus get_ota_status = 74;
+    OtaReboot ota_reboot = 75;
   }
 }
 
@@ -1577,7 +1577,7 @@ message ServerMessage {
     I2cScanResult i2c_scan_result = 28;
     DriverState driver_state = 29;
     CaptureProfile capture_profile = 30;
-    // 31: left free for in-flight branches.
+    // 31: left free for in-flight branches (#325's ramp_state takes 40).
     // Reply to every OTA arm (docs/design/ota.md).
     OtaStatus ota_status = 32;
   }

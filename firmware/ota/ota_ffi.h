@@ -23,12 +23,12 @@ extern "C" {
 #define OTA_ARM_HELLO 1
 #define OTA_ARM_TIME_SYNC_PING 2
 #define OTA_ARM_GET_TLS_INFO 45
-#define OTA_ARM_BEGIN 60
-#define OTA_ARM_CHUNK 61
-#define OTA_ARM_FINISH 62
-#define OTA_ARM_ABORT 63
-#define OTA_ARM_GET_STATUS 64
-#define OTA_ARM_REBOOT 65
+#define OTA_ARM_BEGIN 70
+#define OTA_ARM_CHUNK 71
+#define OTA_ARM_FINISH 72
+#define OTA_ARM_ABORT 73
+#define OTA_ARM_GET_STATUS 74
+#define OTA_ARM_REBOOT 75
 
 // OtaStatus.Mode / OtaStatus.State.
 #define OTA_MODE_APP 1

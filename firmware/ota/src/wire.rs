@@ -10,12 +10,12 @@
 pub const CM_HELLO: u32 = 1;
 pub const CM_TIME_SYNC_PING: u32 = 2;
 pub const CM_GET_TLS_INFO: u32 = 45;
-pub const CM_OTA_BEGIN: u32 = 60;
-pub const CM_OTA_CHUNK: u32 = 61;
-pub const CM_OTA_FINISH: u32 = 62;
-pub const CM_OTA_ABORT: u32 = 63;
-pub const CM_GET_OTA_STATUS: u32 = 64;
-pub const CM_OTA_REBOOT: u32 = 65;
+pub const CM_OTA_BEGIN: u32 = 70;
+pub const CM_OTA_CHUNK: u32 = 71;
+pub const CM_OTA_FINISH: u32 = 72;
+pub const CM_OTA_ABORT: u32 = 73;
+pub const CM_GET_OTA_STATUS: u32 = 74;
+pub const CM_OTA_REBOOT: u32 = 75;
 
 /// `ServerMessage.msg` field numbers.
 pub const SM_WELCOME: u32 = 1;

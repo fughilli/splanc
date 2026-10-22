@@ -366,15 +366,16 @@ updating the loader over the air isn't safe in this layout:
 
 | ClientMessage | # | | ServerMessage | # |
 |---|---|---|---|---|
-| ota_begin{manifest, allow_downgrade} | 50 | | ota_status | 28 |
-| ota_chunk{offset, data ≤ 4096} | 51 | | | |
-| ota_finish | 52 | | Welcome.ota (loader only) | 16 |
-| ota_abort | 53 | | | |
-| get_ota_status | 54 | | | |
-| ota_reboot{TARGET_APP / TARGET_LOADER} | 55 | | | |
+| ota_begin{manifest, allow_downgrade, key_epoch} | 70 | | ota_status | 32 |
+| ota_chunk{offset, data ≤ 4096} | 71 | | | |
+| ota_finish | 72 | | Welcome.ota (loader only) | 16 |
+| ota_abort | 73 | | | |
+| get_ota_status | 74 | | | |
+| ota_reboot{TARGET_APP / TARGET_LOADER} | 75 | | | |
 
-These numbers skip 46–47 and 25–26 (reserved for FUG-82) and 48–49 and 27 (the
-sensor core, #315).
+The sensor core landed on client 48–56 and server 27–30, and #325's firmware
+ramps take client 60–62 and server 40. These numbers leave client 57–69 and
+server 31 free for other in-flight branches.
 
 **Flow:**
 
