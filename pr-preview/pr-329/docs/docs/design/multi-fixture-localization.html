@@ -384,7 +384,7 @@ the camera is a 9 cm depth error, so relative scale is <strong>solved, not assum
 <td><p>The problem is small: 7·(F−1) fixture parameters after the Schur step. It reuses <code class="docutils literal notranslate"><span class="pre">geom/pnp.ts</span></code> (FUG-112). It runs in the app’s live preview, in node tests and in the agent. Worst synthetic solve ≈ 0.5 s.</p></td>
 </tr>
 <tr class="row-even"><td><p>Capture parameters</p></td>
-<td><p>The per-fixture <strong>capture profile</strong> (sensor stack <code class="docutils literal notranslate"><span class="pre">get_capture_profile</span></code>: diffuse, stride, timing, brightness), else the app’s per-device stride + global diffuse toggle</p></td>
+<td><p>The per-fixture <strong>capture profile</strong> (#320 <code class="docutils literal notranslate"><span class="pre">get_capture_profile</span></code>: diffuse, stride, timing, brightness, detector settings), else the app’s per-device stride + global diffuse toggle</p></td>
 <td><p>One decoder reads every fixture, so <strong>timing is shared</strong>: the most conservative alphabet and the slowest bit period of the group (≥ 100 ms). Diffuse fixtures light ONE coverage phase of their stride schedule, which is plenty to register a known map. Brightness is per fixture.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Reference / world frame</p></td>
@@ -524,6 +524,7 @@ additions to existing messages, not new arms.</p>
   <span class="n">optional</span> <span class="n">int32</span>  <span class="n">code_offset</span> <span class="o">=</span> <span class="mi">8</span><span class="p">;</span>   <span class="o">//</span> <span class="n">LED</span> <span class="n">i</span> <span class="n">transmits</span> <span class="nb">id</span> <span class="n">i</span> <span class="o">+</span> <span class="n">code_offset</span>
   <span class="n">optional</span> <span class="n">int32</span>  <span class="n">code_space</span>  <span class="o">=</span> <span class="mi">9</span><span class="p">;</span>   <span class="o">//</span> <span class="n">shared</span> <span class="n">code</span><span class="o">-</span><span class="n">book</span> <span class="n">size</span> <span class="p">(</span><span class="o">&gt;=</span> <span class="n">offset</span> <span class="o">+</span> <span class="n">led_count</span><span class="p">)</span>
   <span class="n">optional</span> <span class="n">double</span> <span class="n">epoch_ms</span>    <span class="o">=</span> <span class="mi">10</span><span class="p">;</span>  <span class="o">//</span> <span class="n">pattern</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="n">THIS</span> <span class="n">player</span><span class="s1">&#39;s clock</span>
+  <span class="n">optional</span> <span class="n">int32</span>  <span class="n">stop_after_ms</span> <span class="o">=</span> <span class="mi">11</span><span class="p">;</span> <span class="o">//</span> <span class="n">auto</span><span class="o">-</span><span class="n">stop</span> <span class="p">(</span><span class="n">the</span> <span class="n">app</span> <span class="n">arms</span> <span class="k">with</span> <span class="mi">10</span> <span class="nb">min</span><span class="p">)</span>
 <span class="p">}</span>
 <span class="n">CodeParams</span> <span class="p">{</span> <span class="o">...</span><span class="p">;</span> <span class="n">optional</span> <span class="n">int32</span> <span class="n">code_offset</span> <span class="o">=</span> <span class="mi">13</span><span class="p">;</span> <span class="p">}</span>  <span class="o">//</span> <span class="n">echo</span><span class="p">;</span> <span class="n">led_count</span> <span class="o">=</span> <span class="n">code</span> <span class="n">space</span>
 </pre></div>
@@ -540,7 +541,12 @@ loop already clamps a future one.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">configure</span></code> keeps the group layout. <code class="docutils literal notranslate"><span class="pre">code_space</span></code> ≤ 4096 (13 data bits +
 SEC-DED).</p></li>
 <li><p>The pattern keeps running after the client disconnects. That was already
-true; now it’s documented and relied on. <code class="docutils literal notranslate"><span class="pre">stop_mapping</span></code> ends it.</p></li>
+true; now it’s documented and relied on. <code class="docutils literal notranslate"><span class="pre">stop_mapping</span></code> ends it, and so does
+<strong><code class="docutils literal notranslate"><span class="pre">stop_after_ms</span></code></strong>: the frame loop calls <code class="docutils literal notranslate"><span class="pre">lm_pattern_expire(millis())</span></code> each
+pass, so a phone that dies mid-capture can’t leave fixtures flashing. The app
+arms with 10 minutes; a <code class="docutils literal notranslate"><span class="pre">configure</span></code> keeps the original deadline. Expiry on
+“the arming client’s socket dropped” doesn’t fit: the direct path disconnects
+on purpose.</p></li>
 <li><p>Unset fields leave single-fixture capture unchanged (tested).</p></li>
 </ul>
 <p>Bridge (<code class="docutils literal notranslate"><span class="pre">agent/src/bridge/live.ts</span></code>): live query <code class="docutils literal notranslate"><span class="pre">group_capture</span></code>:</p>
@@ -693,14 +699,15 @@ Unverified on hardware:</p>
 </li>
 <li><p>Bridge path: tested against the fake player through the real relay + bridge.
 Not tested with real players.</p></li>
-<li><p>Capture profile: read duck-typed (<code class="docutils literal notranslate"><span class="pre">getCaptureProfile</span></code> + feature
-<code class="docutils literal notranslate"><span class="pre">capture_profile</span></code>), so it lights up when the sensor stack merges. Until then,
-the per-device stride + global diffuse toggle are used.</p></li>
+<li><p>Capture profile (#320): read on both paths (<code class="docutils literal notranslate"><span class="pre">get_capture_profile</span></code>, only
+when it belongs to the device’s current map). It supplies diffuse / stride /
+timing / brightness per fixture, and the detector threshold / downscale /
+local-contrast gain of the diffuse members for the one shared detector.
+Fixtures mapped before profiles existed fall back to the per-device stride +
+global diffuse toggle.</p></li>
 <li><p>The IMU “up” input is plumbed (<code class="docutils literal notranslate"><span class="pre">fixtureModel(…,</span> <span class="pre">imuUp)</span></code>) but nothing fills it
-yet. It needs the sensor stack’s calibrated mount (gravity in the map frame).</p></li>
-<li><p>There is no auto-stop on the device. If the phone dies mid-capture, the
-fixtures keep flashing until something sends <code class="docutils literal notranslate"><span class="pre">stop_mapping</span></code> (or a reboot). A
-firmware <code class="docutils literal notranslate"><span class="pre">stop_after_ms</span></code> would be a small follow-up.</p></li>
+yet. The next step is to fill it from the IMU-to-fixture extrinsic now on
+main (#320/#321): gravity from <code class="docutils literal notranslate"><span class="pre">get_sensors</span></code> rotated into the map frame.</p></li>
 <li><p>A device-side automatic stride-phase rotation would let diffuse fixtures
 cover all their LEDs in one group capture. One phase is enough to localize.</p></li>
 </ul>

@@ -1054,6 +1054,18 @@ hand-written effect takes.</p>
 <p>The web app loads <code class="docutils literal notranslate"><span class="pre">fx_compiler_wasm_pkg.js</span></code> and <code class="docutils literal notranslate"><span class="pre">fx_vm_wasm_pkg.js</span></code> dynamically
 (<code class="docutils literal notranslate"><span class="pre">web/src/fx/preview.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/effects/editor/compile-worker.ts</span></code>).</p>
 </section>
+<section id="sensor-values-and-drivers">
+<h2>Sensor values and drivers<a class="headerlink" href="#sensor-values-and-drivers" title="Link to this heading">¶</a></h2>
+<p>Live sensor values reach effects as <strong>uniforms bound by name</strong> (the uniform
+pool, docs/design/sensor-core.md §6): declare <code class="docutils literal notranslate"><span class="pre">uniform</span> <span class="pre">vec3</span> <span class="pre">imu_gravity</span> <span class="pre">=</span> <span class="pre">0.0,</span> <span class="pre">-1.0,</span> <span class="pre">0.0;</span></code> (or <code class="docutils literal notranslate"><span class="pre">imu_quat</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_euler</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_shake</span></code>, <code class="docutils literal notranslate"><span class="pre">imu_tap</span></code>, …) and the
+firmware writes it every frame while a sensor runs; otherwise it is an ordinary
+knob. Sensor <strong>drivers</strong> (FUG-107) are <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> programs too: <code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code>
+instead of <code class="docutils literal notranslate"><span class="pre">shade()</span></code>, <code class="docutils literal notranslate"><span class="pre">export</span></code> declarations instead of uniforms, the
+<code class="docutils literal notranslate"><span class="pre">i2c_write</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read8</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read16</span></code> / <code class="docutils literal notranslate"><span class="pre">i2c_read16s</span></code> intrinsics, and
+<code class="docutils literal notranslate"><span class="pre">FLAG_DRIVER</span></code> (0x10) in the header with <code class="docutils literal notranslate"><span class="pre">poll()</span></code> in the shade-entry slot and
+the export table as the manifest. Ops <code class="docutils literal notranslate"><span class="pre">I2cWrite</span></code> (106) / <code class="docutils literal notranslate"><span class="pre">I2cRead</span></code> (107, u8
+mode: bytes 1..2, bit 7 signed) are inert outside <code class="docutils literal notranslate"><span class="pre">Vm::run_poll</span></code>.</p>
+</section>
 </section>
 
         </article>
@@ -1130,6 +1142,7 @@ hand-written effect takes.</p>
 <li><a class="reference internal" href="#performance-on-the-esp32-c6">Performance on the ESP32-C6</a></li>
 <li><a class="reference internal" href="#ai-effect-generation">AI effect generation</a></li>
 <li><a class="reference internal" href="#build-targets">Build targets</a></li>
+<li><a class="reference internal" href="#sensor-values-and-drivers">Sensor values and drivers</a></li>
 </ul>
 </li>
 </ul>

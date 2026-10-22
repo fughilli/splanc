@@ -23,6 +23,8 @@ static site at `/user-guide/` on the deployed app.
 - **Maps**
   - [The maps library](#the-maps-library) — Browse, search, organize, import, and export your
     captured fixtures.
+  - [Calibrating a fixture's motion sensor](#calibrating-a-fixtures-motion-sensor) — Tell a fixture
+    with an IMU which way its LED map is up, so tilt effects follow it.
   - [Mapping a fixture with the camera](#mapping-a-fixture-with-the-camera) — Point the camera at a
     running fixture to reconstruct its LEDs in 3D.
   - [The mapping workspace](#the-mapping-workspace) — Inspect the 3D solve, clean up topology, and
@@ -32,6 +34,8 @@ static site at `/user-guide/` on the deployed app.
     that drive your LEDs.
   - [The effect editor](#the-effect-editor) — Write, preview, and push shader effects with the exact
     on-device VM.
+  - [Show Mode & the mixing deck](#show-mode--the-mixing-deck) — Cue effects onto two decks,
+    crossfade live, and browse with a MIDI encoder.
 - **Devices**
   - [Connecting a device](#connecting-a-device) — Link a controller over Bluetooth or by address —
     or start offline.
@@ -97,6 +101,41 @@ installations.
 - The tab's ⋯ menu **imports and exports** the whole library as a bundle, so you can move maps
   between phones or back them up.
 
+#### The map on your connected device
+
+While a device is connected, a card at the top of the tab shows the map stored **on the device**:
+its LED count, how many LEDs were mapped versus interpolated, and when it was mapped (when the
+device knows). A fresh install, or a second phone, starts with an empty library, but the fixture
+still has its map. Use this card to copy it here.
+
+- **Saved on this phone**: the library already has this map (it was captured or saved here).
+  **Open** goes to it.
+- **Not on this phone**: **Save to this phone** copies the map into the library and opens it.
+  **Preview** loads it without saving, so you can look at it in 3D or export it first.
+- **Calibrate IMU** appears when the device's motion sensor is running. It copies the map first if
+  needed, then opens the calibration. It's also in the device's detail sheet (Device tab ▸ ⋯).
+- **No map on this device yet**: map the fixture with **+**, or open a map and **Push** it.
+- Large maps show a short summary first. The whole map is only downloaded when you save or preview
+  it.
+- Through **Live via bridge**, a fixture's stored map can't be copied yet. Connect to the fixture
+  directly to copy it.
+
+### Calibrating a fixture's motion sensor
+
+_Tell a fixture with an IMU which way its LED map is up, so tilt effects follow it._
+
+![Calibrating a fixture's motion sensor — Splanc app screen](user-guide/img/calibrate-imu.png)
+
+A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
+the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
+at least 45° between them. Save when the fit says good.
+
+The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
+and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
+capture settings (it was mapped before they were recorded, or pulled from a device) the panel says
+what it is using instead; what works is saved with the calibration for next time.
+
 ### Mapping a fixture with the camera
 
 _Point the camera at a running fixture to reconstruct its LEDs in 3D._
@@ -143,6 +182,12 @@ refine and use the map.
 - **Edit topology** — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
   handles most fixtures; a Fine-tune disclosure exposes the full extraction options.
 - **Send to / pull from a device** so the fixture and the app agree on the map.
+- **Supplement** re-scans part of the fixture and merges the new scan into the map, to fill gaps or
+  improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
+  captures. A map without that data (copied from a device, imported, or captured before it was kept)
+  still works: the new scan is aligned to the stored positions and averaged with them.
+- **Calibrate IMU** (when the connected device's motion sensor is running) aligns the sensor to this
+  map. A map copied from the device works too.
 - **Jump to Effects** to start animating this fixture.
 - **Export** the LED map for other show software — a CSV for TouchDesigner or a Chromatik (LX
   Studio) fixture file. See below.
@@ -232,6 +277,59 @@ firmware runs — so what you see is what the fixture will do. Edits autosave ba
   for you. With a controller connected it can also measure the effect's real frame time on the
   fixture, not just estimate it.
 
+### Show Mode & the mixing deck
+
+_Cue effects onto two decks, crossfade live, and browse with a MIDI encoder._
+
+![Show Mode & the mixing deck — Splanc app screen](user-guide/img/show-mode.png)
+
+Show Mode (**Effects ▸ ⋯ ▸ Show mode**) is the live mixing deck: cue an effect onto Deck A or Deck B
+and crossfade between them on the device, which runs both at once and blends their output per LED.
+Each deck carries its effect's keypoint pads and morph fader.
+
+The effects list is its own scroll area: it scrolls inside the panel (touch, wheel or keys) without
+moving the rest of the page. Tap it, then use ↑/↓, Page Up/Down and Home/End to move the highlight;
+**Enter** loads the highlighted effect onto the deck that was browsing, **A**/**B** load it onto
+that deck.
+
+#### MIDI: browse with a knob
+
+- **MIDI map** binds every Show Mode control: crossfader, play/pause, blend mode, keypoints, and per
+  deck a **browse** encoder and a **load** button (an encoder's push switch).
+- Turning a deck's browse encoder moves the highlight (tinted in that deck's colour); a faster turn
+  jumps further. Pushing its load button loads the highlighted effect onto that deck.
+- **Encoder push** picks what load does: **Cue** loads the effect onto the deck; **Take** loads it
+  and crossfades to that deck over **Take fade** seconds.
+
+#### Relative (endless) encoders
+
+A knob in absolute mode sends its position (0–127), so it stops at the ends of its travel. An
+endless encoder in a relative mode sends how far it turned, so the list scrolls as far as you like.
+Each mapping stores its mode; when you learn an encoder, turn it slowly a few clicks both ways and
+Splanc detects the mode from the values it sends. You can change it in the mapping row.
+
+- **Relative — binary offset (3F/41)**: 65 = one step right, 63 = one step left, 64±n for bigger
+  steps. The Midi Fighter Twister's “ENC 3FH/41H”.
+- **Relative — two's complement (7F/01)**: 1 = right, 127 = left (1..63 / 127..65).
+- **Relative — signed bit (41/01)**: 1..63 = right, 65..127 = left.
+- **Absolute** (the default): the change between positions moves the list, up to the knob's end
+  stop.
+
+#### Set up a Midi Fighter Twister from Splanc
+
+**MIDI map ▸ Set up Midi Fighter Twister** (also in Settings ▸ MIDI) configures the Twister over
+SysEx: pick the encoders for Deck A and Deck B, choose whether a fast turn accelerates, and whether
+pushing loads. Splanc reads the Twister's current settings, shows exactly what will change, and
+after you confirm writes only those fields (MIDI type → ENC 3FH/41H, sensitivity, push action, and
+CC/channel when an existing mapping needs them). Everything else on the Twister is kept. It then
+reads the encoders back and maps them in Show Mode.
+
+This needs Web MIDI with SysEx: Chrome or Edge on a computer or Android, which ask you to let the
+site control MIDI devices. iOS/iPadOS Safari has no Web MIDI; use DJ TechTools' Midi Fighter Utility
+there (set the encoder's MIDI type to ENC 3FH/41H), then learn it in Show Mode. If an older Twister
+firmware doesn't answer the settings read, Splanc can still write the chosen encoders after an
+explicit overwrite confirmation; replug the Twister afterwards.
+
 ## Devices
 
 ### Connecting a device
@@ -300,7 +398,9 @@ build bundles over Web Serial, with live progress, a log, and a diagnostics pane
 - Works on desktop Chromium (native Web Serial) and Android Chrome (via a WebUSB polyfill).
 - iOS Safari has neither API, so flashing isn't available there — the sheet says so rather than
   failing silently.
-- After flashing, provision the fresh board onto Wi-Fi like any other device.
+- After flashing, provision a fresh board onto Wi-Fi like any other device. Updating a board that
+  was already on Wi-Fi keeps its network (from the firmware release after v1.8.2), so it rejoins by
+  itself.
 
 ### Color correction
 
@@ -347,6 +447,12 @@ Web MIDI, see connected devices, and give physical controls semantic names: wigg
 
 Those names are global, so any effect with a matching uniform can bind to them. The per-effect
 binding itself lives in the effect editor's Uniforms pane.
+
+#### Endless encoders
+
+Show Mode's MIDI map binds encoders to browse the effects list, in absolute or relative mode (see
+Show Mode & the mixing deck). **Set up Midi Fighter Twister** switches a Twister's encoders to
+relative mode from here.
 
 ### Appearance & behavior
 

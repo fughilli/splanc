@@ -21,6 +21,63 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 - Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
   [multi-fixture-localization.md](design/multi-fixture-localization.md).
 
+### Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc
+
+- **The effects list scrolls on its own.** In Show Mode the list is a nested scroll area:
+  swiping, the wheel or the keyboard (↑/↓, Page Up/Down, Home/End, Enter, A/B) moves it without
+  moving the page, and the highlight stays in view.
+- **Browse with an encoder, load with its push.** Each deck gets a MIDI-mappable **browse**
+  encoder and **load** button. Load either **cues** the highlighted effect onto the deck or
+  **takes** it (loads and crossfades to that deck); pick which in the MIDI map.
+- **Relative encoders scroll forever.** Mappings store an encoder mode: absolute (default),
+  binary offset (3F/41, the Twister's "ENC 3FH/41H"), two's complement (7F/01) or signed bit.
+  MIDI learn detects the mode from the values the knob sends. A faster turn moves further.
+- **Set up Midi Fighter Twister** (MIDI map, or Settings ▸ MIDI) switches the encoders you pick
+  to relative mode over SysEx. It reads the Twister's settings, shows what will change, writes only
+  those fields, reads them back to check, and maps the encoders. It needs Chrome or Edge on a
+  computer or Android; iOS has no Web MIDI. Not yet tested on a real Twister.
+- Guide: [Show Mode & the mixing deck](user-guide.md#show-mode--the-mixing-deck).
+
+### Copy a fixture's map onto a new phone
+
+- **The Maps tab shows the map on the connected device.** A card at the top
+  shows its LED count, mapped vs interpolated LEDs, and whether this phone
+  already has it. On a fresh install, **Save to this phone** copies the map
+  into the library, and **Preview** opens it without saving. Only a small
+  header is read on each visit. A large map is downloaded when you save or
+  preview it.
+- **Calibrate IMU without mapping again.** The card and the device's detail
+  sheet offer **Calibrate IMU** when the device's motion sensor is running.
+  If the map isn't on this phone yet, it is copied first.
+- **Supplement works on every map.** A map copied from a device or imported
+  has positions but no raw capture data. A supplemental scan now aligns to
+  those stored positions and averages with them, using a cautious accuracy of
+  ¼ LED pitch for the stored positions. Before, the button was hidden for these
+  maps. Maps that kept their capture data still get the joint re-solve. The
+  debug **Bundle** tile is now greyed out with the reason, not hidden.
+- Not yet through **Live via bridge**: the bridge doesn't forward the stored
+  map, so connect to the fixture directly to copy it.
+
+### The motion sensor knows which way the map is
+
+- **Mapping now calibrates the IMU's tilt for free**: the map is gravity-levelled
+  and the fixture stands still while it's captured, so the sensor's settled
+  "up" is pinned to the map's +Y as soon as the map is stored; effects tilt the
+  right way at once. Heading needs a second, re-oriented pose (the guided
+  "Calibrate IMU" screen is next); the solver and device side are in
+  ([sensor-core.md §7](design/sensor-core.md)).
+- **Fixtures remember how they were mapped**: diffuse mode, LED stride, code
+  timing and brightness are stored on the device with the map, and a later
+  supplemental or calibration capture reuses them instead of re-probing.
+
+### Sensor drivers an agent can write
+
+- **Any I2C sensor, no firmware release.** Agents scan the player's sensor bus
+  (`scan_i2c`), write a small driver in the effect language (`void poll()` +
+  `export`s, `i2c_read*` / `i2c_write`), and load it live (`deploy_driver`); every
+  export drives the effect uniform of the same name. Supersedes PR #96; the
+  native-vs-VM MPU-6050 A/B and when to use which: [sensor-core.md §8](design/sensor-core.md).
+
 ### Fixtures that feel motion: the sensor core
 
 - **Wire an MPU-6050 and the player finds it.** At boot the C6 player probes
@@ -160,6 +217,32 @@ could look right while the final didn't. Analysis and fix:
   autocorrect or capitalize the field, and password managers leave it alone.
 - **The same button** is on the API key fields in AI settings and on the Splanc
   Bridge Flasher's Wi-Fi password (which had a text "Show" button).
+
+### Players keep one address
+
+Netstack players picked a random Wi-Fi MAC (02:0c:6a:…) every boot, so the router
+handed them a new IP after every reboot and the bridge kept dialling the old one.
+They now use the chip's factory MAC, so the lease (and any DHCP reservation) stays
+put, and a re-join first clears any stale association the AP still holds. mDNS
+re-announces on every new lease and after a DHCP renewal; the TXT record carries
+the device id. HITL gate: `//pi/hitl/harness:stable_identity`.
+
+### Players stay on Wi-Fi across updates and power cuts
+
+Netstack players kept their Wi-Fi name and password in RAM only, so every reboot
+(a power cut, a reset, a firmware update over USB) brought the board back
+unprovisioned, and it had to be put back on the network. Now the credentials are
+saved to NVS once the board has actually joined with them (a mistyped password is
+never saved), and the board rejoins on its own at boot. Re-provisioning the
+network a board is already on keeps the link instead of restarting the join. If
+the saved network wasn't visible at boot (the router still starting after a power
+cut), the board restarts to rescan on a capped backoff. Design notes:
+`firmware/player_app/wifi_creds.h`; HITL gate `//pi/hitl/harness:upgrade_keeps_wifi`.
+
+- **One last re-provision.** A board running a release before this fix has no
+  saved credentials to keep, so the update that installs this firmware still needs
+  one provision; every update after that keeps them.
+- **Factory reset** (a full flash erase) still clears them.
 
 ### Every player has its own TLS certificate
 
