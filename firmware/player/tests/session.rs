@@ -822,6 +822,7 @@ fn growing_past_the_boot_capacity_asks_for_a_reboot() {
     expect_error(send(&mut player, hw(0, 1000, true), 4.0), "bad_message");
     assert_eq!((player.led_count(0), player.led_count(1)), (Some(600), Some(1000)));
     assert!(!player.take_reboot_request());
+}
 
 /// Start a group capture: `led_count` physical LEDs at `offset` in a shared
 /// `space`-id code book, epoch pinned in the player's clock.
