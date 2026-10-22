@@ -27,6 +27,9 @@ export interface CaptureProfileFlat {
   downscale: number;
   lcGain: number;
   capturedAtMs: number;
+  /** Camera exposure (0..1 slider units) that worked; 0 = not recorded (the
+   * auto-exposure servo chose). */
+  exposure?: number;
 }
 
 /** The capture knobs a profile can pin. */
@@ -47,6 +50,8 @@ export interface ProfiledRun {
   bitPeriodMs?: number;
   /** LED brightness to start from (the servo still adjusts). */
   brightness?: number;
+  /** Camera exposure to start from (manual control), when recorded. */
+  exposure?: number;
   /** True when the profile supplies the timing: skip "Measuring light…". */
   skipProbe: boolean;
   /** The profile that was applied (null = defaults; e.g. a pre-profile map). */
@@ -75,6 +80,7 @@ export function applyProfile(defaults: CaptureKnobs, p: CaptureProfileFlat | nul
     knobs,
     ...(timing ? { symbols: p.symbols as 2 | 4, bitPeriodMs: p.bitPeriodMs } : {}),
     ...(p.brightness > 0 && p.brightness <= 1 ? { brightness: p.brightness } : {}),
+    ...(p.exposure !== undefined && p.exposure > 0 && p.exposure <= 1 ? { exposure: p.exposure } : {}),
     skipProbe: timing,
     applied: p,
   };
@@ -84,7 +90,7 @@ export function applyProfile(defaults: CaptureKnobs, p: CaptureProfileFlat | nul
 export function buildProfile(
   mapId: string,
   knobs: CaptureKnobs,
-  timing: { symbols?: number; bitPeriodMs: number; brightness?: number },
+  timing: { symbols?: number; bitPeriodMs: number; brightness?: number; exposure?: number },
   nowMs: number,
 ): CaptureProfileFlat {
   return {
@@ -99,7 +105,26 @@ export function buildProfile(
     downscale: knobs.downscale,
     lcGain: knobs.lcGain ?? 0,
     capturedAtMs: nowMs,
+    ...(timing.exposure !== undefined && timing.exposure > 0 ? { exposure: timing.exposure } : {}),
   };
+}
+
+/**
+ * The capture-settings note the calibrate / supplement screens show. A map
+ * with no saved profile (captured before profiles existed, or pulled from a
+ * device) is NOT silently run dense: it uses the same per-device stride and
+ * global diffuse setting a normal capture would, and says so, so the user can
+ * correct it before the LEDs mix colours.
+ */
+export function captureSettingsNote(run: ProfiledRun | null, knobs: CaptureKnobs): string {
+  const what = `${knobs.diffuse ? `diffuse on, stride ${knobs.strideSpacing}` : "diffuse off (every LED lit)"}`;
+  if (run?.applied) {
+    return `Using this map's saved capture settings: ${what}.`;
+  }
+  return (
+    `No saved capture settings for this map — using ${what} from this device's ` +
+    "Hardware Setup and Behavior Settings. Adjust below if adjacent LEDs blur together."
+  );
 }
 
 /** The per-map IMU calibration record kept in the app's map library. */

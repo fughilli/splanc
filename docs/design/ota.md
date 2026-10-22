@@ -544,6 +544,16 @@ manifest and boot decisions.
 `//pi/hitl/harness:ota_gate`, every phase in one reservation on rig-2 / c6-003f08
 (ESP32-C6FH4, 4 MB).
 
+**Run 9, 2026-10-22: verdict PASS** (migrate, upgrade, reset mid-transfer, bad
+signature), on main with #336's join guard and the 12 s fallback removed:
+
+| phase | result | numbers |
+|---|---|---|
+| migrate (USB, two phases) | PASS | 512-LED map, Wi-Fi and TLS identity kept |
+| upgrade A→B | PASS | 96 s total; 2.16 MB in 35 s |
+| reset mid-transfer | PASS | 104 s total. After the reset the loader joined on the factory MAC (auth answered in 5.9 s, same IP 10.42.0.52), resumed at 1,048,576, verified and booted B; the app came back on the same MAC and IP |
+| bad signature | PASS | refused (`bad_signature`), back to the app |
+
 **Run 8, 2026-10-22: verdict PASS.** Layout loader 1344K / littlefs 384K / app
 2304K, rebased on main (#311, #326 factory MAC, the sensor core), 512-LED map.
 
@@ -560,9 +570,11 @@ manifest and boot decisions.
 Run 6 (2026-10-21, previous layout 1600K / 192K / 2240K, BLE in the loader) also
 passed every phase.
 
-**MAC fallback (netstack).** After an *unplanned* reset in the middle of traffic,
-the rig AP kept the stale association for the factory MAC. #326's deauth didn't
-clear it, and authentication went unanswered for minutes. The netstack now falls
-back to a random locally administered MAC after 12 s of unanswered auth. That
-costs one new lease (mDNS re-announces); without it the device would be
-unreachable. Planned restarts deauth first and keep the factory MAC and its IP.
+**Rejoin after a reset (netstack).** After an *unplanned* reset in the middle of
+traffic, the AP can keep a stale association for the factory MAC and ignore
+authentication. Run 8 papered over this with a 12 s random-MAC fallback in this
+branch; that duplicated #336's join guard (a sequence-numbered disassoc + deauth
+goodbye re-sent every second, random MAC only after 60 s) and has been removed.
+OTA adds one thing on top: before a *planned* restart (handoff, install,
+`ota_reboot`) `netstack_prepare_restart()` sends the same goodbye straight away,
+so the next boot's join doesn't have to wait on the guard.

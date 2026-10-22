@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   applyProfile,
   buildProfile,
+  captureSettingsNote,
   postMappingPose,
   profileForMap,
   type CaptureKnobs,
@@ -61,4 +62,39 @@ test("post-mapping pose: the IMU's settled up becomes map +Y (tilt), yaw unresol
   // Not settled / no sensor -> nothing to record.
   assert.equal(postMappingPose({ status: "SENSOR_STATUS_RUNNING", restUpImu: [], restUpSigmaDeg: 0, restSamples: 0, mountQuat: [] }, 1), null);
   assert.equal(postMappingPose({ status: "SENSOR_STATUS_ABSENT", restUpImu: [0, 0, 1], restUpSigmaDeg: 0, restSamples: 99, mountQuat: [] }, 1), null);
+});
+
+test("exposure round-trips and starts manual", () => {
+  const p = buildProfile("m", DEFAULTS, { bitPeriodMs: 50, symbols: 2, exposure: 0.42 }, 0);
+  assert.equal(p.exposure, 0.42);
+  assert.equal(applyProfile(DEFAULTS, p).exposure, 0.42);
+  // Not recorded (the servo chose) -> no manual start.
+  const q = buildProfile("m", DEFAULTS, { bitPeriodMs: 50 }, 0);
+  assert.equal(q.exposure, undefined);
+  assert.equal(applyProfile(DEFAULTS, q).exposure, undefined);
+});
+
+test("no saved profile: the normal-capture defaults (device stride + global diffuse), said out loud", () => {
+  const diffuseDefaults: CaptureKnobs = { ...DEFAULTS, diffuse: true, strideSpacing: 4 };
+  const run = applyProfile(diffuseDefaults, profileForMap(null, "m"));
+  // Never a silent dense / stride-1 fallback.
+  assert.equal(run.knobs.diffuse, true);
+  assert.equal(run.knobs.strideSpacing, 4);
+  const note = captureSettingsNote(run, run.knobs);
+  assert.match(note, /No saved capture settings for this map/);
+  assert.match(note, /diffuse on, stride 4/);
+  const saved = applyProfile(DEFAULTS, buildProfile("m", diffuseDefaults, { bitPeriodMs: 50 }, 0));
+  assert.match(captureSettingsNote(saved, saved.knobs), /Using this map's saved capture settings: diffuse on, stride 4/);
+  assert.match(captureSettingsNote(null, DEFAULTS), /diffuse off/);
+});
+
+test("what a successful calibration records is reused by the next run", () => {
+  // The user fixed diffuse + stride on the calibrate screen and set exposure by hand.
+  const worked: CaptureKnobs = { diffuse: true, strideSpacing: 6, anchorDensity: 6, threshold: 0.3, downscale: 2 };
+  const p = buildProfile("m-dev", worked, { symbols: 4, bitPeriodMs: 66, brightness: 0.5, exposure: 0.35 }, 1);
+  const next = applyProfile(DEFAULTS, profileForMap(p, "m-dev"));
+  assert.deepEqual(next.knobs, worked);
+  assert.equal(next.exposure, 0.35);
+  assert.equal(next.brightness, 0.5);
+  assert.equal(next.skipProbe, true);
 });
