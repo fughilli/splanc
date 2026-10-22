@@ -36,6 +36,23 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   cap. A wide buffer on 2048 LEDs can outgrow the 24 KB effect arena; declare it
   `: fixed8`.
 
+### Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc
+
+- **The effects list scrolls on its own.** In Show Mode the list is a nested scroll area:
+  swiping, the wheel or the keyboard (↑/↓, Page Up/Down, Home/End, Enter, A/B) moves it without
+  moving the page, and the highlight stays in view.
+- **Browse with an encoder, load with its push.** Each deck gets a MIDI-mappable **browse**
+  encoder and **load** button. Load either **cues** the highlighted effect onto the deck or
+  **takes** it (loads and crossfades to that deck); pick which in the MIDI map.
+- **Relative encoders scroll forever.** Mappings store an encoder mode: absolute (default),
+  binary offset (3F/41, the Twister's "ENC 3FH/41H"), two's complement (7F/01) or signed bit.
+  MIDI learn detects the mode from the values the knob sends. A faster turn moves further.
+- **Set up Midi Fighter Twister** (MIDI map, or Settings ▸ MIDI) switches the encoders you pick
+  to relative mode over SysEx. It reads the Twister's settings, shows what will change, writes only
+  those fields, reads them back to check, and maps the encoders. It needs Chrome or Edge on a
+  computer or Android; iOS has no Web MIDI. Not yet tested on a real Twister.
+- Guide: [Show Mode & the mixing deck](user-guide.md#show-mode--the-mixing-deck).
+
 ### Copy a fixture's map onto a new phone
 
 - **The Maps tab shows the map on the connected device.** A card at the top

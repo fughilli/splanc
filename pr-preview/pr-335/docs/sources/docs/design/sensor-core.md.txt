@@ -622,7 +622,13 @@ A successful map capture records the capture parameters that worked:
 - the LED **stride** (`stride_spacing`) and `anchor_density`;
 - the code timing (`symbols`, `bit_period_ms`);
 - LED `brightness` at the end of the servo;
-- the detector `threshold`, `downscale` and `lc_gain`.
+- the detector `threshold`, `downscale` and `lc_gain`;
+- the camera `exposure` (field 12), only when it was set by hand. A recorded
+  exposure starts the next run in manual mode at that value.
+
+The profile records what the run was using **when it succeeded**, not a
+start-of-run snapshot. A diffuse, stride or exposure change made mid-capture is
+included.
 
 They are stored **on the device, next to the map**, as a small `CaptureProfile`
 (new `set_capture_profile` / `get_capture_profile` arms).
@@ -636,9 +642,30 @@ They are stored **on the device, next to the map**, as a small `CaptureProfile`
   supplemental capture, **load it instead of re-asking or re-probing**: diffuse
   and stride come from the profile, and the timing skips the 1.2 s
   "Measuring light…" probe unless the user asks for it.
-- **Fixtures mapped before this existed** have no profile. They fall back to
-  today's sources: the global diffuse pref, the per-device `captureStride`, and
-  the probe.
+- **Fixtures mapped before this existed** (or maps pulled from a device) have
+  no profile. They use the same sources a normal capture does: the global
+  diffuse pref, the per-device `captureStride`, and the probe. This fallback is
+  **never silent**:
+  - the calibrate screen says "No saved capture settings for this map — using
+    …";
+  - a supplemental capture toasts the same note.
+- **The calibrate screen's capture controls.** The Calibrate IMU panel holds
+  the capture controls, visible from the start and live-applied during the
+  poses:
+  - diffuse on/off;
+  - the LED stride, which re-strides the running code;
+  - manual LED brightness and camera exposure, with the same sliders and hooks
+    as the mapping screen's Advanced override.
+
+  The manual controls stay available whatever the auto-exposure / brightness
+  servo is doing. Moving a slider takes manual control. A stride chosen there
+  or taken from a profile is pinned: a later diffuse toggle keeps it instead of
+  re-reading the device default.
+- **Saved on success.** A successful **calibration** writes what it used back
+  as the map's profile, both on the device and in the library, so the next
+  calibration or supplement starts from settings that worked. A fused
+  **supplement** that is pushed to the device does the same, because the upload
+  drops the old profile.
 - The agent reads it via `get_capture_profile` (part of `read_sensors`'
   calibration context).
 

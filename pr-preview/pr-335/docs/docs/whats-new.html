@@ -354,6 +354,25 @@ cap. A wide buffer on 2048 LEDs can outgrow the 24 KB effect arena; declare it
 <code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">fixed8</span></code>.</p></li>
 </ul>
 </section>
+<section id="show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">
+<h3>Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc<a class="headerlink" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The effects list scrolls on its own.</strong> In Show Mode the list is a nested scroll area:
+swiping, the wheel or the keyboard (↑/↓, Page Up/Down, Home/End, Enter, A/B) moves it without
+moving the page, and the highlight stays in view.</p></li>
+<li><p><strong>Browse with an encoder, load with its push.</strong> Each deck gets a MIDI-mappable <strong>browse</strong>
+encoder and <strong>load</strong> button. Load either <strong>cues</strong> the highlighted effect onto the deck or
+<strong>takes</strong> it (loads and crossfades to that deck); pick which in the MIDI map.</p></li>
+<li><p><strong>Relative encoders scroll forever.</strong> Mappings store an encoder mode: absolute (default),
+binary offset (3F/41, the Twister’s “ENC 3FH/41H”), two’s complement (7F/01) or signed bit.
+MIDI learn detects the mode from the values the knob sends. A faster turn moves further.</p></li>
+<li><p><strong>Set up Midi Fighter Twister</strong> (MIDI map, or Settings ▸ MIDI) switches the encoders you pick
+to relative mode over SysEx. It reads the Twister’s settings, shows what will change, writes only
+those fields, reads them back to check, and maps the encoders. It needs Chrome or Edge on a
+computer or Android; iOS has no Web MIDI. Not yet tested on a real Twister.</p></li>
+<li><p>Guide: <a class="reference internal" href="user-guide.html#show-mode-the-mixing-deck"><span class="std std-ref">Show Mode &amp; the mixing deck</span></a>.</p></li>
+</ul>
+</section>
 <section id="copy-a-fixture-s-map-onto-a-new-phone">
 <h3>Copy a fixture’s map onto a new phone<a class="headerlink" href="#copy-a-fixture-s-map-onto-a-new-phone" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -915,6 +934,7 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#leds-on-each-channel">1024 LEDs on each channel</a></li>
+<li><a class="reference internal" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc</a></li>
 <li><a class="reference internal" href="#copy-a-fixture-s-map-onto-a-new-phone">Copy a fixture’s map onto a new phone</a></li>
 <li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
 <li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
