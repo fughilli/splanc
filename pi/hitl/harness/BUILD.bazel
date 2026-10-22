@@ -107,6 +107,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
+        "rejoin_loop_core.py",
         "rig_isolation_core.py",
         "serial_capture.py",
         "serial_discovery.py",
@@ -522,6 +523,34 @@ py_test(
         "//pi/server",
         "@rules_python//python/runfiles",
         requirement("websockets"),
+    ],
+)
+
+# Reboot-loop rejoin: a provisioned DUT is reset N times and must reach a DHCP lease on
+# its own every time (stable factory MAC + persisted credentials), within a window and
+# a p95 bound. Pure logic: rejoin_loop_core.
+py_test(
+    name = "rejoin_loop",
+    timeout = "eternal",
+    srcs = ["hitl_rejoin_loop.py"],
+    args = ["--boots=30"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_rejoin_loop.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
     ],
 )
 
