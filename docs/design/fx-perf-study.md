@@ -286,7 +286,7 @@ and perf-lint rules; `out/summary.md`):
   VM indexes below its stack (an index-out-of-bounds panic), and the player's
   panic handler is `loop {}`, so the render task hangs. 8 of the 9 are
   skill/opus programs. The compiler fix (broadcast scalar bounds, or reject
-  them) is follow-up PR `agent/fx-clamp-broadcast-fix`. The VM should also never
+  them) is follow-up PR #338. The VM should also never
   panic on a malformed stack (recommendation R3).
 - The two prompts **contradict the compiler** in places. The in-app prompt
   says `sqrt log tan pow atan2 hsv2rgb` are float-only, but the compiler has
@@ -522,7 +522,7 @@ What the prototypes are:
   `(clamp01(x) * 255.0) as u8`: it is tested on every f32 bit pattern in
   [0, 1.5] plus specials, and the fx_vm, compiler and optimizer differential
   suites pass. An empty invocation drops from **1,790 to 1,031 cycles**. P2
-  should be a PR of its own; the fx_bench goldens move (empty −54%, sweep256
+  is draft PR #339; the fx_bench goldens move (empty −54%, sweep256
   −45%), so it needs a golden regeneration on a rig.
 - **P3, the interpreter in IRAM** (`#[link_section = ".iram1"]` on the 37 KB
   `run()`) gains **<1%**. The flash I-cache is not the bottleneck.
@@ -622,10 +622,10 @@ The gains below are measured, or estimated from Q1's terms where marked "est.":
 
 | # | change | measured or estimated gain | effort | where |
 | --- | --- | --- | --- | --- |
-| R1 | Fix `clamp(vecN, scalar, scalar)` codegen | 9 of 90 agent programs stop hanging the device | S (done) | PR `agent/fx-clamp-broadcast-fix` |
+| R1 | Fix `clamp(vecN, scalar, scalar)` codegen | 9 of 90 agent programs stop hanging the device | S (done) | #338 |
 | R2 | Land #328 (memo + refit estimator + walker ≥ 70) | estimator median 0.05 → 1.0; −15% median on the library | (exists) | #328 (needs a rebase on main) |
 | R3 | VM never panics on stack underflow (saturate + `Outcome::Budget`); firmware panic handler reboots instead of `loop {}` | robustness | S | fx_vm, ffi.rs |
-| R4 | P2: out-of-line `LoadCtx` + integer RGB epilogue | −760 cyc/LED: −41% solid, −16% rain, −6% library median | S (prototype done) | fx_vm + goldens |
+| R4 | P2: out-of-line `LoadCtx` + integer RGB epilogue | −760 cyc/LED: −41% solid, −16% rain, −6% library median | S (draft #339) | fx_vm + goldens |
 | R5 | Cache Q16 / uv per-LED mirrors at map load | −1.1–1.5 k cyc/LED on fixed-context effects (rain −20%), −330 on uv readers | S | ffi.rs |
 | R6 | Prompt fixes + cost table + fixed-point examples (both paths) | −30% measured on the app path; skill path est. more (it never uses fixed point) | S | system-prompt.ts, agent/skill |
 | R7 | fx_bench applies manifest defaults (and the firmware on load) | a realistic lavalamp golden (5.5× today) | S | fx_bench.py, ffi.rs |
