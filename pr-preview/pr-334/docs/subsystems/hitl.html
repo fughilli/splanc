@@ -343,7 +343,7 @@ to stand up your own rig are documented in <a class="reference internal" href=".
 <section id="memory-auditing-over-jtag-ram-audit">
 <h3>Memory auditing over JTAG (<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>)<a class="headerlink" href="#memory-auditing-over-jtag-ram-audit" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ram_audit</span></code> drives the field worst case: BLE provisioning,
-then the first wss handshake with BLE still up, then a 512-LED map, a texture
+then the first wss handshake with BLE still up, then a 2048-LED map, a texture
 effect and loaded handshakes. Meanwhile <code class="docutils literal notranslate"><span class="pre">ram_watch.tcl</span></code> polls every heap’s
 free bytes over the C6’s system bus, <strong>without halting</strong> the core. At each new
 low it halts just long enough to dump HP + LP SRAM and the registers, so the

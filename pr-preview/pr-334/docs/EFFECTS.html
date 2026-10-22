@@ -976,6 +976,75 @@ they land far below the other transcendentals. A practical consequence of the
 FPU-less C6: hoist per-frame constants out of the per-LED <code class="docutils literal notranslate"><span class="pre">shade()</span></code> into
 <code class="docutils literal notranslate"><span class="pre">update()</span></code>/uniforms, and prefer int/fixed types (<code class="docutils literal notranslate"><span class="pre">fixed8</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>) on hot paths
 so the arithmetic builtins take their native opcodes instead of soft-float.</p>
+<section id="long-strips-what-sets-the-frame-rate">
+<h3>Long strips: what sets the frame rate<a class="headerlink" href="#long-strips-what-sets-the-frame-rate" title="Link to this heading">¶</a></h3>
+<p>The C6 drives up to <strong>1024 LEDs on each of its two channels</strong> (2048 total;
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/led_caps.bzl</span></code>). Two things bound an effect’s frame rate,
+and the autoscaler (<code class="docutils literal notranslate"><span class="pre">firmware/fps</span></code>, FUG-82) runs at whichever is lower:</p>
+<ul>
+<li><p><strong>The wire.</strong> Each bit is three 400 ns samples, so an LED takes 28.8 µs, plus
+a ~300 µs latch. Both channels clock out in parallel, so only the <em>longest</em>
+channel counts. The render of frame N+1 overlaps the transmit of frame N, so
+the wire is a floor under the frame period, not an addition to it. The ladder
+never climbs above the fastest rung whose 95% budget fits one wire frame
+(<code class="docutils literal notranslate"><span class="pre">FpsState.max_fps</span></code> reports it):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>Longest channel</p></th>
+<th class="head text-right"><p>Wire time</p></th>
+<th class="head text-right"><p>Wire-limited fps</p></th>
+<th class="head text-right"><p>Ladder ceiling</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>150</p></td>
+<td class="text-right"><p>4.6 ms</p></td>
+<td class="text-right"><p>216</p></td>
+<td class="text-right"><p>80</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>300</p></td>
+<td class="text-right"><p>8.9 ms</p></td>
+<td class="text-right"><p>112</p></td>
+<td class="text-right"><p>80</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>512</p></td>
+<td class="text-right"><p>15.0 ms</p></td>
+<td class="text-right"><p>66</p></td>
+<td class="text-right"><p>60</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>768</p></td>
+<td class="text-right"><p>22.4 ms</p></td>
+<td class="text-right"><p>45</p></td>
+<td class="text-right"><p>40</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>1024</p></td>
+<td class="text-right"><p>29.8 ms</p></td>
+<td class="text-right"><p>34</p></td>
+<td class="text-right"><p>30</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Measured on the analyzer (rig-2, 1024 + 1024): every frame 29,497 µs on both
+channels, no runts, gaps or bad bits, idle or under a ping flood.</p>
+</li>
+<li><p><strong>The effect.</strong> Shading costs at least ~3.8 k cycles per LED (<code class="docutils literal notranslate"><span class="pre">sweep256</span></code>), so
+2048 LEDs need ≥ 7.8 M cycles (~49 ms) per frame even for a trivial effect:
+at the full cap every effect is CPU-bound near 20 fps (measured: <code class="docutils literal notranslate"><span class="pre">ledTimingRamp</span></code>
+~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
+reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.</p></li>
+</ul>
+<p>The autoscaler’s abort floor scales with the strip, so a long strip runs a heavy
+effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
+rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
+20 fps at 600, 10 fps at 1024, 5 fps at 2048. <code class="docutils literal notranslate"><span class="pre">FpsState.min_fps</span></code> reports it.</p>
+<p>LED-arity <code class="docutils literal notranslate"><span class="pre">buffer</span></code> arrays are sized for the stored map / configured strip (at
+least 512 LEDs), not the 2048 cap, and both decks share the 24 KB <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code>:
+a <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec4</span></code> costs 16 B per LED (32 KB at 2048 — it doesn’t fit); declare it
+<code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">fixed8</span></code> (4 B per LED) for long strips. A deck whose buffers outgrow its slice
+reads 0 past the end rather than faulting.</p>
+</section>
 </section>
 <section id="ai-effect-generation">
 <h2>AI effect generation<a class="headerlink" href="#ai-effect-generation" title="Link to this heading">¶</a></h2>
@@ -1140,7 +1209,10 @@ mode: bytes 1..2, bit 7 signed) are inert outside <code class="docutils literal 
 <li><a class="reference internal" href="#uniform-plumbing">Uniform plumbing</a></li>
 <li><a class="reference internal" href="#textures-and-video-texture-streaming">Textures and video-texture streaming</a></li>
 <li><a class="reference internal" href="#midi">MIDI</a></li>
-<li><a class="reference internal" href="#performance-on-the-esp32-c6">Performance on the ESP32-C6</a></li>
+<li><a class="reference internal" href="#performance-on-the-esp32-c6">Performance on the ESP32-C6</a><ul>
+<li><a class="reference internal" href="#long-strips-what-sets-the-frame-rate">Long strips: what sets the frame rate</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#ai-effect-generation">AI effect generation</a></li>
 <li><a class="reference internal" href="#build-targets">Build targets</a></li>
 <li><a class="reference internal" href="#sensor-values-and-drivers">Sensor values and drivers</a></li>

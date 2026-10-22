@@ -1121,11 +1121,16 @@ about +Y to match the board’s silkscreen arrows;</p></li>
 <li><p>the LED <strong>stride</strong> (<code class="docutils literal notranslate"><span class="pre">stride_spacing</span></code>) and <code class="docutils literal notranslate"><span class="pre">anchor_density</span></code>;</p></li>
 <li><p>the code timing (<code class="docutils literal notranslate"><span class="pre">symbols</span></code>, <code class="docutils literal notranslate"><span class="pre">bit_period_ms</span></code>);</p></li>
 <li><p>LED <code class="docutils literal notranslate"><span class="pre">brightness</span></code> at the end of the servo;</p></li>
-<li><p>the detector <code class="docutils literal notranslate"><span class="pre">threshold</span></code>, <code class="docutils literal notranslate"><span class="pre">downscale</span></code> and <code class="docutils literal notranslate"><span class="pre">lc_gain</span></code>.</p></li>
+<li><p>the detector <code class="docutils literal notranslate"><span class="pre">threshold</span></code>, <code class="docutils literal notranslate"><span class="pre">downscale</span></code> and <code class="docutils literal notranslate"><span class="pre">lc_gain</span></code>;</p></li>
+<li><p>the camera <code class="docutils literal notranslate"><span class="pre">exposure</span></code> (field 12), only when it was set by hand. A recorded
+exposure starts the next run in manual mode at that value.</p></li>
 </ul>
+<p>The profile records what the run was using <strong>when it succeeded</strong>, not a
+start-of-run snapshot. A diffuse, stride or exposure change made mid-capture is
+included.</p>
 <p>They are stored <strong>on the device, next to the map</strong>, as a small <code class="docutils literal notranslate"><span class="pre">CaptureProfile</span></code>
 (new <code class="docutils literal notranslate"><span class="pre">set_capture_profile</span></code> / <code class="docutils literal notranslate"><span class="pre">get_capture_profile</span></code> arms).</p>
-<ul class="simple">
+<ul>
 <li><p>The firmware keeps the encoded message and persists it as an NVS blob, which
 is atomic and survives reboots and OTA updates.</p></li>
 <li><p>It <strong>drops the profile when a new map is uploaded</strong> (<code class="docutils literal notranslate"><span class="pre">handle_map_upload</span></code>). The
@@ -1135,9 +1140,35 @@ to the stored map. The profile carries the map id as well.</p></li>
 supplemental capture, <strong>load it instead of re-asking or re-probing</strong>: diffuse
 and stride come from the profile, and the timing skips the 1.2 s
 “Measuring light…” probe unless the user asks for it.</p></li>
-<li><p><strong>Fixtures mapped before this existed</strong> have no profile. They fall back to
-today’s sources: the global diffuse pref, the per-device <code class="docutils literal notranslate"><span class="pre">captureStride</span></code>, and
-the probe.</p></li>
+<li><p><strong>Fixtures mapped before this existed</strong> (or maps pulled from a device) have
+no profile. They use the same sources a normal capture does: the global
+diffuse pref, the per-device <code class="docutils literal notranslate"><span class="pre">captureStride</span></code>, and the probe. This fallback is
+<strong>never silent</strong>:</p>
+<ul class="simple">
+<li><p>the calibrate screen says “No saved capture settings for this map — using
+…”;</p></li>
+<li><p>a supplemental capture toasts the same note.</p></li>
+</ul>
+</li>
+<li><p><strong>The calibrate screen’s capture controls.</strong> The Calibrate IMU panel holds
+the capture controls, visible from the start and live-applied during the
+poses:</p>
+<ul class="simple">
+<li><p>diffuse on/off;</p></li>
+<li><p>the LED stride, which re-strides the running code;</p></li>
+<li><p>manual LED brightness and camera exposure, with the same sliders and hooks
+as the mapping screen’s Advanced override.</p></li>
+</ul>
+<p>The manual controls stay available whatever the auto-exposure / brightness
+servo is doing. Moving a slider takes manual control. A stride chosen there
+or taken from a profile is pinned: a later diffuse toggle keeps it instead of
+re-reading the device default.</p>
+</li>
+<li><p><strong>Saved on success.</strong> A successful <strong>calibration</strong> writes what it used back
+as the map’s profile, both on the device and in the library, so the next
+calibration or supplement starts from settings that worked. A fused
+<strong>supplement</strong> that is pushed to the device does the same, because the upload
+drops the old profile.</p></li>
 <li><p>The agent reads it via <code class="docutils literal notranslate"><span class="pre">get_capture_profile</span></code> (part of <code class="docutils literal notranslate"><span class="pre">read_sensors</span></code>’
 calibration context).</p></li>
 </ul>

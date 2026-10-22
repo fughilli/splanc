@@ -316,11 +316,16 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="splanc-quickstart">
+          <!-- This guide is mirrored, in the website's style, at https://splanc.io/quickstart
+     (Studio-Fug/splanc.io: src/pages/quickstartContent.tsx). Keep the two in sync:
+     the same sections, steps, labels and facts. Only this file has "Go deeper". -->
+<section id="splanc-quickstart">
 <h1>Splanc quickstart<a class="headerlink" href="#splanc-quickstart" title="Link to this heading">¶</a></h1>
 <p>From a bare ESP32-C6 board and an LED strip to mapped, animated lights, using
 only a browser. No toolchain and no command line are needed until you add an AI
-agent. Each step below links to the full docs.</p>
+agent. Each step below links to the full docs, and <a class="reference internal" href="#go-deeper">Go deeper</a> at
+the end points into the technical documentation. The same guide is on the
+website at <a class="reference external" href="https://splanc.io/quickstart">https://splanc.io/quickstart</a>.</p>
 <p>Current releases: firmware <code class="docutils literal notranslate"><span class="pre">firmware-v1.10.0</span></code>, app <code class="docutils literal notranslate"><span class="pre">app-v1.10.0</span></code>, Pi bridge
 <code class="docutils literal notranslate"><span class="pre">pi-bridge-v1.0.1</span></code> (<a class="reference external" href="https://github.com/fughilli/splanc/releases">releases</a>).</p>
 <section id="what-you-need">
@@ -334,10 +339,10 @@ agent. Each step below links to the full docs.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>An <strong>ESP32-C6</strong> board</p></td>
-<td><p>The firmware’s pin choices are made for the <strong>ESP32-C6 SuperMini</strong>. The released image is a 4 MB-flash ESP32-C6 build, so other common C6 dev boards should work too, as long as GPIO20 is broken out.</p></td>
+<td><p>Any ESP32-C6 board should work. The reference board is the <strong>ESP32-C6 SuperMini</strong>; the firmware’s default pins are chosen for it.</p></td>
 </tr>
 <tr class="row-odd"><td><p>A <strong>WS2812-family</strong> strip</p></td>
-<td><p>WS281x / NeoPixel-style, one data wire. Up to 512 LEDs per board.</p></td>
+<td><p>WS281x / NeoPixel-style, one data wire. Up to 1024 LEDs per channel, on two channels. The frame rate drops as the LED count grows (the strip’s signalling rate and each effect’s per-frame budget); the firmware scales it automatically.</p></td>
 </tr>
 <tr class="row-even"><td><p>A <strong>5 V power supply</strong></p></td>
 <td><p>Sized for your strip.</p></td>
@@ -345,15 +350,20 @@ agent. Each step below links to the full docs.</p>
 <tr class="row-odd"><td><p>A <strong>USB-C data cable</strong></p></td>
 <td><p>Data-capable, not charge-only. You flash the board with it.</p></td>
 </tr>
-<tr class="row-even"><td><p>A <strong>computer or phone</strong></p></td>
-<td><p>To flash: <strong>desktop Chrome or Edge</strong> (Web Serial), or <strong>Chrome on Android</strong> (WebUSB). iPhone and iPad can’t flash. To set up Wi-Fi over Bluetooth: Chrome on desktop or Android. To map and play: any modern phone browser, iPhone (Safari) included.</p></td>
+<tr class="row-even"><td><p>A <strong>computer with Chrome or Edge</strong></p></td>
+<td><p>A Mac, Windows or Linux laptop or desktop, for flashing and first setup. Chrome on an Android phone can do both too.</p></td>
 </tr>
-<tr class="row-odd"><td><p>A Raspberry Pi (optional)</p></td>
+<tr class="row-odd"><td><p>A <strong>phone</strong></p></td>
+<td><p>For mapping and control, once the board is set up: Android (Chrome) or iPhone. <strong>The iPhone app can’t set up new hardware</strong>, so iPhone users flash and set up the board on a computer first.</p></td>
+</tr>
+<tr class="row-even"><td><p>A Raspberry Pi (optional)</p></td>
 <td><p>Only for the <a class="reference internal" href="#bring-your-ai-agent">cloud bridge</a> (Pi 5 or 4 recommended; Pi 3 and Zero 2 W work).</p></td>
 </tr>
 </tbody>
 </table>
 </div>
+<p>Splanc’s own first-party controllers are the hardware we’d pick, naturally. But
+the firmware is open source, so use anything you want.</p>
 </section>
 <section id="wire-it">
 <h2>2. Wire it<a class="headerlink" href="#wire-it" title="Link to this heading">¶</a></h2>
@@ -369,17 +379,18 @@ ESP32-C6 GND     ──────┬───────   strip GND
 <strong>GPIO14</strong>; the two channels clock out in parallel.</p></li>
 <li><p><strong>Common ground</strong>: the board, the strip and the supply share GND.</p></li>
 <li><p><strong>Power the strip from the supply</strong>, not from the board.</p></li>
-<li><p>Pins are configurable later in the app (the device’s ⋮ menu ▸ <strong>Hardware</strong>). Avoid the
-C6’s strapping pins (4/5/8/9/15), USB-JTAG (12/13) and, on the SuperMini,
-18/19 (its internal flash).</p></li>
+<li><p>Pins are configurable later in the app (the device’s ⋮ menu ▸
+<strong>Hardware</strong>). Avoid the C6’s strapping pins (4/5/8/9/15), USB-JTAG (12/13)
+and, on the SuperMini, 18/19 (its internal flash).</p></li>
 </ul>
 <p>Source: <a class="reference internal" href="#../firmware/player_app/led_config.h"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">firmware/player_app/led_config.h</span></code></span></a>.</p>
 </section>
 <section id="flash-the-firmware">
 <h2>3. Flash the firmware<a class="headerlink" href="#flash-the-firmware" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p>Plug the board in over USB and open <strong><a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong> in desktop
-Chrome/Edge (or Chrome on Android).</p></li>
+<li><p>Plug the board in over USB and open <strong><a class="reference external" href="https://splanc.io/app">https://splanc.io/app</a></strong> in Chrome or
+Edge on a computer (Mac, Windows or Linux), or in Chrome on Android. iPhone
+and iPad can’t flash, and the iPhone app can’t set up new hardware.</p></li>
 <li><p>On the <strong>Set up your device</strong> screen tap the chip icon, <strong>Flash new device
 (USB)</strong>. Later, it’s in the device sheet as <strong>Flash firmware (USB)</strong>.</p></li>
 <li><p>Leave <strong>Firmware source</strong> on <strong>GitHub releases</strong>. The newest release is
@@ -403,9 +414,10 @@ once.</p></li>
 <p>From firmware 1.10.0 the board <strong>saves its Wi-Fi</strong> once it has joined, so it
 rejoins by itself after a power cut, a reset or a firmware update. A board on an
 older release needs one last provision after updating.</p>
-<p>No Bluetooth in your browser (iPhone Safari)? Set up the board once from Chrome
-on a desktop or Android phone, then use <strong>Enter address manually</strong> on the
-iPhone. More: <a class="reference internal" href="user-guide.html#connecting-a-device"><span class="std std-ref">Connecting a device</span></a>.</p>
+<p>Do this step on the same computer (or Android phone) you flashed from: the
+iPhone app can’t set up new hardware. Once the board is on your Wi-Fi, an
+iPhone maps and controls it like any other phone: add it with <strong>Enter address
+manually</strong>. More: <a class="reference internal" href="user-guide.html#connecting-a-device"><span class="std std-ref">Connecting a device</span></a>.</p>
 </section>
 <section id="map-it">
 <h2>5. Map it<a class="headerlink" href="#map-it" title="Link to this heading">¶</a></h2>
@@ -445,8 +457,11 @@ Studio, llama.cpp), or a model that runs in the browser.</p></li>
 </section>
 <section id="bring-your-ai-agent">
 <h2>7. Bring your AI agent<a class="headerlink" href="#bring-your-ai-agent" title="Link to this heading">¶</a></h2>
-<p><strong>On your own computer</strong> (Claude Code, Codex, Cursor, …: anything with a shell
-and Node.js 20 or later on the same LAN as the lights). Add the Splanc MCP server
+<p>Splanc works with <strong>Claude</strong> (Claude Code, or claude.ai through a custom
+connector), <strong>ChatGPT</strong> (a custom MCP server, or Codex), and any other model or
+client that supports MCP.</p>
+<p><strong>On your own computer</strong> (Claude Code, Codex, or anything with a shell and
+Node.js 20 or later on the same LAN as the lights). Add the Splanc MCP server
 (stdio):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>splanc<span class="w"> </span>--<span class="w"> </span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz
 </pre></div>
@@ -463,9 +478,9 @@ LAN authentication, so anyone on your network can drive the lights. More:
 Flasher</strong> (from the <code class="docutils literal notranslate"><span class="pre">pi-bridge-v…</span></code> release), boot the Pi, and it shows
 <strong>Ready to pair</strong> with a code like <code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>.
 (<a class="reference internal" href="pi-bridge.html"><span class="std std-doc">Pi bridge guide</span></a>)</p></li>
-<li><p>Add the custom connector <strong><code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code></strong> in your agent.
-In Claude, go to Settings → Connectors → Add custom connector. When it asks
-you to sign in, type the pairing code.
+<li><p>Add <strong><code class="docutils literal notranslate"><span class="pre">https://splanc.pages.dev/mcp</span></code></strong> to your agent. In Claude, go to
+Settings → Connectors → Add custom connector; in ChatGPT, add it as a custom
+MCP server with OAuth. When it asks you to sign in, type the pairing code.
 (<a class="reference internal" href="guides/cloud-agent.html"><span class="std std-doc">Cloud agent guide</span></a>, or
 <a class="reference internal" href="guides/relay-tailscale.html"><span class="std std-doc">run your own relay with Tailscale</span></a>)</p></li>
 </ol>
@@ -491,14 +506,15 @@ them all from the app.</p></li>
 <li><p><strong>Flashing finds no board</strong>: use a data-capable USB cable, tap <strong>Try without
 vendor filter</strong>, and use desktop Chrome/Edge or Android Chrome (iOS can’t
 flash).</p></li>
-<li><p><strong>No Bluetooth option</strong>: your browser has no Web Bluetooth (iPhone, Firefox).
-Provision from Chrome on desktop or Android, then connect by address.</p></li>
+<li><p><strong>No Bluetooth option</strong>: your browser has no Web Bluetooth (iPhone, Firefox),
+and the iPhone app can’t set up new hardware. Provision from Chrome or Edge
+on a computer, or Chrome on Android, then connect by address.</p></li>
 <li><p><strong>The app can’t reach the device after Wi-Fi setup</strong>: accept the device’s
 certificate when the browser asks (once per device). A certificate-changed
 warning is expected only after a factory reset: tap <strong>I reset it — trust the
 new certificate</strong>.</p></li>
-<li><p><strong>Colours are wrong</strong>: the device’s ⋮ menu ▸ <strong>Hardware</strong> ▸ <strong>Check color order</strong>, then tap
-the swatch that matches what the strip shows.</p></li>
+<li><p><strong>Colours are wrong</strong>: the device’s ⋮ menu ▸ <strong>Hardware</strong> ▸ <strong>Check color
+order</strong>, then tap the swatch that matches what the strip shows.</p></li>
 <li><p><strong>A map comes out wrong or empty</strong>: walk slower and cover more angles, and
 try <strong>Diffuse capture</strong> for diffused fixtures. Turn on <strong>Settings ▸ Behavior
 ▸ Developer ▸ Enable Debug Settings</strong> to save a capture bundle you can attach
@@ -512,6 +528,44 @@ to a bug report.</p></li>
 <a class="reference external" href="https://discord.gg/wqY9pHavnD">Splanc Discord</a>. The full walkthrough of every
 screen is the <a class="reference internal" href="user-guide.html"><span class="std std-doc">user guide</span></a>; recent changes are in
 <a class="reference internal" href="whats-new.html"><span class="std std-doc">What’s new</span></a>.</p>
+</section>
+<section id="go-deeper">
+<h2>Go deeper<a class="headerlink" href="#go-deeper" title="Link to this heading">¶</a></h2>
+<p>The technical documentation behind each step:</p>
+<ul class="simple">
+<li><p><strong>Using the app</strong>: the <a class="reference internal" href="user-guide.html"><span class="std std-doc">user guide</span></a>, every screen in order.
+Jump to <a class="reference internal" href="user-guide.html#flashing-firmware"><span class="std std-ref">flashing</span></a>,
+<a class="reference internal" href="user-guide.html#connecting-a-device"><span class="std std-ref">connecting a device</span></a>,
+<a class="reference internal" href="user-guide.html#mapping-a-fixture-with-the-camera"><span class="std std-ref">mapping</span></a>,
+<a class="reference internal" href="user-guide.html#the-mapping-workspace"><span class="std std-ref">the mapping workspace</span></a>,
+<a class="reference internal" href="user-guide.html#the-effect-editor"><span class="std std-ref">the effect editor</span></a> and
+<a class="reference internal" href="user-guide.html#midi-controllers"><span class="std std-ref">MIDI</span></a>.</p></li>
+<li><p><strong>How mapping works</strong>: <a class="reference internal" href="../led-mapper-design.html"><span class="std std-doc">the design spec</span></a>, and
+<a class="reference internal" href="design/mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a> on the live-preview and
+final solves.</p></li>
+<li><p><strong>Effects</strong>: <a class="reference internal" href="../EFFECTS.html"><span class="std std-doc">EFFECTS.md</span></a> covers the effects language, the
+bytecode VM, uniforms, textures and MIDI. See also
+<a class="reference internal" href="design/effects-runtime.html"><span class="std std-doc">effects-runtime.md</span></a>,
+<a class="reference internal" href="design/effects-compiler.html"><span class="std std-doc">effects-compiler.md</span></a>,
+<a class="reference internal" href="design/uniform-keypoints.html"><span class="std std-doc">uniform keypoints</span></a> and the
+<a class="reference internal" href="fx-vm-performance.html"><span class="std std-doc">FX VM performance tables</span></a>.</p></li>
+<li><p><strong>The protocol</strong> between the app, agents and players:
+<a class="reference internal" href="#../shared/protocol/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">shared/protocol/README.md</span></code></span></a>.</p></li>
+<li><p><strong>Firmware</strong>: <a class="reference internal" href="design/per-device-cert.html"><span class="std std-doc">per-device certificates</span></a>, the
+<a class="reference internal" href="design/ram-budget.html"><span class="std std-doc">RAM budget</span></a> and <a class="reference internal" href="design/memory-regions.html"><span class="std std-doc">memory regions</span></a>,
+and <a class="reference internal" href="manifesto.html"><span class="std std-doc">the manifesto</span></a> on why it’s built this way.</p></li>
+<li><p><strong>Sensors</strong>: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md</span></a>, with the IMU pins, fusion,
+calibration and sensor drivers written in the effects language.</p></li>
+<li><p><strong>Agents, rooms and the cloud</strong>: <a class="reference internal" href="#../agent/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">agent/README.md</span></code></span></a>, the
+<a class="reference internal" href="#../agent/skill/SKILL.md"><span class="xref myst">agent skill</span></a>,
+<a class="reference internal" href="design/agent-multi-fixture.html"><span class="std std-doc">multi-fixture rooms</span></a>, the
+<a class="reference internal" href="design/cloud-relay.html"><span class="std std-doc">cloud relay design</span></a> and
+<a class="reference internal" href="design/live-vj-relay.html"><span class="std std-doc">live VJ through the relay</span></a>.</p></li>
+<li><p><strong>iPhone</strong>: <a class="reference internal" href="design/ios-support.html"><span class="std std-doc">ios-support.md</span></a> lists what works in Safari
+and what doesn’t.</p></li>
+<li><p><strong>Building from source and contributing</strong>: <a class="reference internal" href="../DEVELOPERS.html"><span class="std std-doc">DEVELOPERS.md</span></a>,
+plus the <a class="reference internal" href="#../pi/hitl/README.md"><span class="xref myst">hardware-in-the-loop test rig</span></a>.</p></li>
+</ul>
 </section>
 </section>
 
@@ -580,6 +634,7 @@ screen is the <a class="reference internal" href="user-guide.html"><span class="
 <li><a class="reference internal" href="#bring-your-ai-agent">7. Bring your AI agent</a></li>
 <li><a class="reference internal" href="#optional-extras">8. Optional extras</a></li>
 <li><a class="reference internal" href="#troubleshooting">9. Troubleshooting</a></li>
+<li><a class="reference internal" href="#go-deeper">Go deeper</a></li>
 </ul>
 </li>
 </ul>

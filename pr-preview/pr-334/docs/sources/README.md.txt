@@ -49,12 +49,12 @@ camera path and the LED positions together.
 board to mapped, animated lights in a browser. The app is a PWA, nothing to
 install: **<https://splanc.io/app>**.
 
-1. **Wire it.** An ESP32-C6 (the firmware targets the C6 SuperMini), a
+1. **Wire it.** Any ESP32-C6 board (the C6 SuperMini is the reference), a
    WS2812/NeoPixel strip with its data on **GPIO20** (a second strip on
    GPIO14), and a 5 V supply for the strip with a common ground.
-2. **Flash it.** Open the app in desktop Chrome/Edge (or Chrome on Android),
-   tap **Flash new device (USB)**, then **Connect a board & flash**. No
-   toolchain needed.
+2. **Flash it.** Open the app in Chrome or Edge on a computer (or Chrome on
+   Android; the iPhone app can't set up new hardware), tap **Flash new device
+   (USB)**, then **Connect a board & flash**. No toolchain needed.
 3. **Put it on Wi-Fi.** **Add device (Bluetooth)**: enter your Wi-Fi, pick the
    board, and accept its certificate once. From firmware 1.10.0 it remembers
    the network across reboots and updates.
