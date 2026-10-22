@@ -38,6 +38,27 @@ export function proxiedAssetUrl(url: string): string {
   return `${ASSET_PROXY}?url=${encodeURIComponent(url)}`;
 }
 
+/** Compare dotted versions numerically, newest first ("1.10.0" before "1.9.0").
+ * A pre-release suffix ("1.10.0-rc1") sorts just below its release; anything
+ * unparseable sorts last, by plain string order. */
+export function compareVersionsDesc(a: string, b: string): number {
+  const parse = (v: string): { nums: number[]; pre: string } | null => {
+    const m = /^(\d+(?:\.\d+)*)(?:-(.+))?$/.exec(v);
+    return m ? { nums: m[1]!.split(".").map(Number), pre: m[2] ?? "" } : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return pa ? -1 : pb ? 1 : a.localeCompare(b);
+  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i++) {
+    const d = (pb.nums[i] ?? 0) - (pa.nums[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  if (pa.pre === pb.pre) return 0;
+  if (!pa.pre) return -1; // a release beats its own pre-release
+  if (!pb.pre) return 1;
+  return pb.pre.localeCompare(pa.pre, undefined, { numeric: true });
+}
+
 /** Build a firmware index from the GitHub `releases` API payload. Pure — no fetch.
  * Returns null (never throws) when nothing flashable is found or the shape is off. */
 export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
@@ -77,7 +98,10 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
     }
   }
   if (entries.length === 0) return null;
-  // Releases come newest-first from the API; preserve that so the latest is first.
+  // Newest version first. The API orders releases by creation date, not version,
+  // so it can't be trusted for this (1.10.0 must sort above 1.9.0). The sort is
+  // stable, so variants within one release keep their asset order.
+  entries.sort((x, y) => compareVersionsDesc(x.version ?? "", y.version ?? ""));
   return { revision: null, builtAt: null, entries };
 }
 
