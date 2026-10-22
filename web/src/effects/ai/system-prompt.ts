@@ -144,6 +144,14 @@ TOPOLOGY SOURCES: \`led.dist\` is the geodesic distance (0..1) from a source, de
 
 TEXTURES: \`texture vec3 img(64, 64);\` declares a hidden WxH 2D texture (numeric scalar/vec element). Sample it with \`sample(img, uv)\` (BILINEAR, edge-clamped, uv a vec2 in 0..1) and write with \`paint(img, uv, color);\` (nearest texel; a void statement) or flat \`img[i]\`. Use \`led.uv\` (each LED's XY position normalized to 0..1 over the map — a top-down projection) as the sample coordinate for texture-mapped/pixel-space effects: \`return sample(img, led.uv);\`. Textures persist across frames too, so you can render into one in update()/shade() and read it back later (feedback / reaction-diffusion).
 
+SENSORS (motion-reactive effects): a fixture with an IMU writes these uniforms every frame when you declare them BY EXACT NAME; without a sensor they are ordinary knobs at their defaults, so the effect still previews. Only declare the ones you use. Map frame, +Y up:
+- \`uniform vec3 imu_gravity = 0.0, -1.0, 0.0;\` — unit DOWN vector; \`dot(led.pos, imu_gravity)\` grows toward the floor (keep a "liquid" level as the fixture tips).
+- \`uniform vec4 imu_quat = 1.0, 0.0, 0.0, 0.0;\` — orientation (w,x,y,z). \`uniform vec3 imu_euler = 0.0, 0.0, 0.0;\` — roll, pitch, yaw in radians (yaw drifts).
+- \`uniform vec3 imu_accel = 0.0, 1.0, 0.0;\` (g, 1.0 up at rest); \`imu_lin_accel\` (gravity removed) and \`imu_gyro\` (rad/s) are vec3s declared the same way.
+- \`uniform float imu_shake : 0.0 .. 1.0 = 0.0;\` — 0..1 shake energy, smooth.
+- \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` and \`imu_shake_count\` — COUNTERS: keep a \`state float\` copy and fire an event in update() when the uniform exceeds it (e.g. a flash on each tap).
+Use them only when the user asks for motion/tilt/shake/tap reactions.
+
 ${EXAMPLES}
 
 REPAIR: If you are given a previous script and compiler diagnostics, return a corrected script that fixes every error; change as little else as possible.`;
@@ -185,6 +193,8 @@ STATE & DATA:
 - \`struct Name { float a; vec3 b; };\` + fixed arrays \`T name[N];\` (index \`a[i]\`, fields \`.field\`). An array of structs in \`state\` = agents/particles (seed once behind a \`state bool\`, advance in a \`for\` loop).
 - \`buffer vec3 trail;\` — a per-LED persistent buffer; index \`trail[led.idx]\`; MAY be written from shade() (feedback/trails). Always index it.
 - \`texture vec3 img(64,64);\` — read \`sample(img, led.uv)\` (bilinear, uv in 0..1), write \`paint(img, uv, color);\`.
+
+SENSORS: for motion reactions declare by exact name (a knob when no IMU): \`uniform vec3 imu_gravity = 0.0, -1.0, 0.0;\` (unit down, map frame), \`uniform float imu_shake : 0.0 .. 1.0 = 0.0;\`, \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` (a counter: compare with a state copy), also imu_quat (vec4 w,x,y,z), imu_euler, imu_accel, imu_gyro.
 
 PERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in \`int\`/\`fixed\`/\`fixed16\`/\`fixed8\` (native, no soft-float); \`sin\`/\`cos\`/\`exp\` on a \`fixed\` arg are LUT-based (angle in TURNS, 1.0 = full circle). Hoist anything not per-LED into update(). Narrow buffer/texture storage with \`: fixed8\`/\`: fixed16\` to save RAM.
 
