@@ -31,6 +31,7 @@ py_test(
         "test_catalog_multidut_isolation.py",
         "test_catalog_stable_identity.py",
         "test_ci_orchestration.py",
+        "test_ctrl_budget.py",
         "test_device_cert_core.py",
         "test_e2e_phases.py",
         "test_fx_bench.py",

@@ -29,6 +29,7 @@
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>  // esp_ptr_executable — validate scanned stack words are code
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -346,6 +347,133 @@ static struct {
 static uint8_t (&tx)[2048] = g_tx.data;
 #if defined(LM_NETSTACK)
 static_assert(sizeof g_tx.ws_headroom >= kWsSendHeadroom, "tx needs WS header headroom");
+#endif
+
+// -- Live-control latency trace (LM_CTRL_TRACE builds only) -----------------------------
+// docs/design/live-control.md "Measuring the budget". A measurement build that stamps every
+// stage a control value passes through, in esp_timer microseconds (32-bit):
+//   per received WS message / OSC /probe datagram: the last empty RX-ring poll before its
+//   frame was reaped, the reap, the TLS record decode, dispatch entry, player_mutex
+//   acquired, handled, reply sent;
+//   per effect frame: start (uniforms read: OSC drain + update()), shade end, LED transmit
+//   start and wire done.
+// The rig-side probe (pi/hitl/harness/ctrl_budget_probe.py) arms, stops and pages the rings
+// out over the live WS with three in-band messages that start with 0xFF (never a valid
+// protobuf key, so they cannot collide with the protocol): "\xFFCTR" + 'R' (reset + arm),
+// 'S' (stop), 'D' + u32le offset (one page of the dump). Not in the shipping image.
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+struct TrRx {
+  uint32_t idx;  // WS: messages dispatched since the reset (1-based); OSC: the /probe value
+  uint8_t kind;  // 1 = WS message, 2 = OSC /probe datagram
+  uint8_t flags;  // bit0 live control, bit1 reply sent, bit2 reply dropped
+  uint16_t len;
+  uint32_t empty_us, reap_us, decoded_us, enter_us, locked_us, handled_us, reply_us;
+};
+struct TrFrame {
+  uint32_t seq, fs_us, fe_us, xs_us, wd_us;
+};
+static constexpr uint32_t kTrRx = 256, kTrFrames = 512;  // powers of two (ring masks)
+static TrRx g_tr_rx[kTrRx];
+static TrFrame g_tr_fr[kTrFrames];
+static volatile uint32_t g_tr_rx_n = 0, g_tr_fr_n = 0;  // entries recorded (rings wrap)
+static volatile bool g_tr_on = false;
+static uint32_t g_tr_idx = 0;
+static TrRx *g_tr_cur = nullptr;  // the WS message being dispatched (loopTask only)
+static volatile uint32_t g_tr_staged_seq = 0;  // frame seq handed to the transmit task
+static portMUX_TYPE g_tr_mux = portMUX_INITIALIZER_UNLOCKED;
+static inline uint32_t tr_now() { return (uint32_t)esp_timer_get_time(); }
+
+static TrRx *tr_rx_new(uint8_t kind) {
+  if (!g_tr_on) return nullptr;
+  TrRx *e = &g_tr_rx[g_tr_rx_n & (kTrRx - 1)];
+  g_tr_rx_n = g_tr_rx_n + 1;
+  memset(e, 0, sizeof *e);
+  e->kind = kind;
+  return e;
+}
+
+static void tr_reply_hook(int outcome) {
+  if (g_tr_cur == nullptr) return;
+  if (outcome == 1) g_tr_cur->flags |= 2;
+  if (outcome == 2) g_tr_cur->flags |= 4;
+  g_tr_cur->reply_us = tr_now();
+  g_tr_cur = nullptr;
+}
+
+static void tr_frame_start(uint32_t seq) {
+  if (!g_tr_on) return;
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  taskENTER_CRITICAL(&g_tr_mux);
+  f->seq = seq;
+  f->fs_us = tr_now();
+  f->fe_us = f->xs_us = f->wd_us = 0;
+  g_tr_fr_n = g_tr_fr_n + 1;
+  taskEXIT_CRITICAL(&g_tr_mux);
+}
+
+static void tr_frame_end(uint32_t seq) {
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  if (g_tr_on && f->seq == seq) f->fe_us = tr_now();
+}
+
+static void tr_xmit(uint32_t seq, bool done) {
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  if (!g_tr_on || f->seq != seq) return;
+  if (done) f->wd_us = tr_now();
+  else f->xs_us = tr_now();
+}
+
+// An in-band trace command (see above); fills tx and returns the reply length, or -1 when
+// `in` isn't one. Dump layout: header "CTR1", u32 now_us, u32 rx_n, u32 fr_n, u32 kTrRx,
+// u32 kTrFrames, u32 sizeof(TrRx), u32 sizeof(TrFrame), then the two rings verbatim; each
+// 'D' page returns u32 total_len, u32 offset, then up to 1536 bytes of that image.
+static int tr_command(const uint8_t *in, size_t len) {
+  if (len < 5 || in[0] != 0xFF || in[1] != 'C' || in[2] != 'T' || in[3] != 'R') return -1;
+  const char op = (char)in[4];
+  if (op == 'R') {
+    g_tr_on = false;
+    g_tr_rx_n = g_tr_fr_n = 0;
+    g_tr_idx = 0;
+    g_tr_cur = nullptr;
+    g_ns_reply_hook = tr_reply_hook;
+    g_tr_on = true;
+  } else if (op == 'S') {
+    g_tr_on = false;
+  } else if (op == 'D' && len >= 9) {
+    g_tr_on = false;
+    uint32_t off;
+    memcpy(&off, in + 5, 4);
+    static uint8_t hdr[32];
+    uint32_t h[8] = {0x31525443u /* "CTR1" */, tr_now(), g_tr_rx_n, g_tr_fr_n, kTrRx,
+                     kTrFrames, (uint32_t)sizeof(TrRx), (uint32_t)sizeof(TrFrame)};
+    memcpy(hdr, h, sizeof hdr);
+    const uint32_t total = sizeof hdr + sizeof g_tr_rx + sizeof g_tr_fr;
+    uint32_t n = 0;
+    memcpy(tx, &total, 4);
+    memcpy(tx + 4, &off, 4);
+    while (off < total && n < 1536) {
+      const uint8_t *src;
+      uint32_t avail;
+      if (off < sizeof hdr) {
+        src = hdr + off;
+        avail = sizeof hdr - off;
+      } else if (off < sizeof hdr + sizeof g_tr_rx) {
+        src = reinterpret_cast<const uint8_t *>(g_tr_rx) + (off - sizeof hdr);
+        avail = sizeof hdr + sizeof g_tr_rx - off;
+      } else {
+        src = reinterpret_cast<const uint8_t *>(g_tr_fr) + (off - sizeof hdr - sizeof g_tr_rx);
+        avail = total - off;
+      }
+      uint32_t k = avail < 1536 - n ? avail : 1536 - n;
+      memcpy(tx + 8 + n, src, k);
+      n += k;
+      off += k;
+    }
+    return (int)(8 + n);
+  }
+  memcpy(tx, "CTRok", 5);
+  return 5;
+}
 #endif
 
 // Sharded upload (proto UploadChunk): each window's payload is appended to this
@@ -1132,8 +1260,17 @@ static void poll_after_message() {
 static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+  if (g_tr_cur) g_tr_cur->locked_us = tr_now();
+#endif
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+  if (g_tr_cur) {
+    g_tr_cur->handled_us = tr_now();
+    if (lm_last_was_live_control()) g_tr_cur->flags |= 1;
+  }
+#endif
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
   g_reply_droppable = false;
@@ -1299,8 +1436,47 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // The netstack transport's WS pump calls this: dispatch the received message IN PLACE in
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
+static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
+
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   g_reply_droppable = false;
+#if defined(LM_CTRL_TRACE)
+  {
+    int t = tr_command(in, len);
+    if (t >= 0) {
+      *reply = tx;
+      return t;
+    }
+    g_tr_idx++;
+    g_tr_cur = tr_rx_new(1);
+    if (g_tr_cur) {
+      g_tr_cur->idx = g_tr_idx;
+      g_tr_cur->len = (uint16_t)(len > 0xffff ? 0xffff : len);
+      g_tr_cur->empty_us = g_ns_rx_stamps.data_empty_us;
+      g_tr_cur->reap_us = g_ns_rx_stamps.data_reap_us;
+      g_tr_cur->decoded_us = g_ns_rx_stamps.decoded_us;
+      g_tr_cur->enter_us = tr_now();
+    }
+  }
+#endif
+  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
+  // now — never wait behind a render frame for the player mutex (lm_live_post).
+  if (live_post(in, len)) {
+    fx_live_at = millis();
+    int a = lm_take_control_ack(tx, sizeof tx);
+#if defined(LM_CTRL_TRACE)
+    if (g_tr_cur) {
+      g_tr_cur->handled_us = tr_now();
+      g_tr_cur->flags |= 1;
+    }
+#endif
+    if (a > 0) {
+      g_reply_droppable = true;
+      *reply = tx;
+      return a;
+    }
+    return 0;
+  }
   int n = ws_compute_reply(in, len);
   *reply = tx;
   return n;
@@ -1673,6 +1849,9 @@ static uint32_t render_once() {
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
     uint32_t c_update_start = c_frame_start;
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    tr_frame_start(this_seq);
+#endif
 #if defined(LM_NETSTACK)
     osc_drain_frame();  // OSC that arrived since the last frame, newest value per address
 #endif
@@ -1718,6 +1897,10 @@ static uint32_t render_once() {
     }
     {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+      tr_frame_end(this_seq);
+      g_tr_staged_seq = this_seq;
+#endif
       // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
       // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
       perf_seq = this_seq;
@@ -1871,16 +2054,42 @@ static uint32_t g_osc_datagrams = 0;
 
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (len == 0 || len > kOscRxCap) return;
+#if defined(LM_CTRL_TRACE)
+  // The budget probe's counter: "/probe\0\0" ",f\0\0" <float32 BE>, one message per datagram.
+  TrRx *e = nullptr;
+  if (len == 16 && memcmp(data, "/probe\0\0,f\0\0", 12) == 0 && (e = tr_rx_new(2)) != nullptr) {
+    uint32_t b = (uint32_t)data[12] << 24 | (uint32_t)data[13] << 16 | (uint32_t)data[14] << 8 |
+                 data[15];
+    float v;
+    memcpy(&v, &b, 4);
+    e->idx = (uint32_t)v;
+    e->len = (uint16_t)len;
+    e->empty_us = g_ns_rx_stamps.l3_empty_us;
+    e->reap_us = g_ns_rx_stamps.l3_reap_us;
+    e->enter_us = tr_now();
+  }
+#endif
   taskENTER_CRITICAL(&g_osc_mux);
   lm_osc_post(data, len);
   taskEXIT_CRITICAL(&g_osc_mux);
+#if defined(LM_CTRL_TRACE)
+  if (e) e->handled_us = tr_now();
+#endif
   if (g_osc_datagrams++ == 0) Log().printf("[osc] first datagram on udp/%u\n", kOscPort);
 }
 
 static void osc_drain_frame() {
   taskENTER_CRITICAL(&g_osc_mux);
   lm_osc_drain();
+  lm_live_drain();  // the WS live channel's moves (lm_live_post), same boundary
   taskEXIT_CRITICAL(&g_osc_mux);
+}
+
+static bool live_post(const uint8_t *in, size_t len) {
+  taskENTER_CRITICAL(&g_osc_mux);
+  uint32_t seq = lm_live_post(in, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+  return seq != 0;
 }
 #endif
 
@@ -1908,8 +2117,15 @@ static void xmit_task(void *) {
       }
     }
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    const uint32_t tr_seq = g_tr_staged_seq;
+    if (g_show_timed) tr_xmit(tr_seq, false);
+#endif
     ws2812_send();
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    if (g_show_timed) tr_xmit(tr_seq, true);
+#endif
     xSemaphoreGive(xmit_done);
   }
 }
@@ -1976,10 +2192,12 @@ static void render_task(void *) {
 // wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
 // on-device and, if wss push is wanted, stash the httpd req/fd for async send.
 static void emit_perf_report_if_due() {
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  // Plain word reads (written by the loop task's own set_perf dispatch): no lock. This
+  // runs every loop pass, and a blocking take here parked loopTask for the rest of every
+  // render frame — the RX ring went unpolled for a whole frame (docs/design/live-control.md
+  // "Measuring the budget": ~50 ms of every control message's latency under a heavy effect).
   uint32_t mode = lm_perf_mode();
   uint32_t interval = lm_perf_interval_ms();
-  xSemaphoreGive(player_mutex);
   if (mode == 0 || interval == 0) return;  // OFF or poll-only
 #if defined(LM_NETSTACK)
   if (!netstack_ws_open()) return;  // push over the active TLS/WS
@@ -1990,9 +2208,10 @@ static void emit_perf_report_if_due() {
   static uint32_t last_push = 0;
   uint32_t nowm = millis();
   if (nowm - last_push < interval) return;
+  // Try-lock, never a wait: a render frame in progress just defers the push to a later
+  // loop pass (the interval clock only restarts once it went out).
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
   last_push = nowm;
-
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_perf_build_report(tx, sizeof tx);
   xSemaphoreGive(player_mutex);
 #if defined(LM_NETSTACK)
@@ -2009,7 +2228,9 @@ static void emit_perf_report_if_due() {
 // report (netstack: the TLS/WS session; vendor: the plain ws:81 socket). A client
 // that misses it sees the effect inactive in the next playback_state.
 static void emit_fps_abort_if_pending() {
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  // Every loop pass: try-lock, never a wait (see emit_perf_report_if_due). The notify is
+  // latched, so a busy render frame just defers it to a later pass.
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
   bool pending = lm_fps_take_abort_notify();
   uint32_t fps = pending ? lm_fps_current_fps() : 0;
   int32_t n = pending ? lm_fps_build_state(tx, sizeof tx, /*aborted=*/true) : 0;
@@ -3018,9 +3239,8 @@ void loop() {
   emit_fps_abort_if_pending();
 
   static uint32_t last_report = 0;
-  if (millis() - last_report > 5000) {
+  if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
     last_report = millis();
-    xSemaphoreTake(player_mutex, portMAX_DELAY);
     unsigned long map_leds = (unsigned long)lm_map_len();
     xSemaphoreGive(player_mutex);
 #if !defined(LM_NETSTACK)
