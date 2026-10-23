@@ -379,9 +379,27 @@ gate (`bazel run //web:gen_fx_vm_perf_doc` to regenerate).
 These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`):
 sin/cos are now compile-time LUTs and `hash` is an integer bit-mix, which is why
 they land far below the other transcendentals. A practical consequence of the
-FPU-less C6: hoist per-frame constants out of the per-LED `shade()` into
-`update()`/uniforms, and prefer int/fixed types (`fixed8`/`fixed16`) on hot paths
-so the arithmetic builtins take their native opcodes instead of soft-float.
+FPU-less C6: prefer int/fixed types (`fixed8`/`fixed16`) on hot paths so the
+arithmetic builtins take their native opcodes instead of soft-float. (Beware of
+float literals in fixed arithmetic: `x * 0.6` promotes a fixed `x` to soft-float;
+write `x * fixed(0.6)`.)
+
+The compiler now does the classic hoisting for you
+([`docs/design/fx-memoization.md`](./docs/design/fx-memoization.md)):
+
+- **Per-frame values** in `shade()` (`sin(time * speed)`, uniform math, `state`
+  reads) are computed **once per frame** in a prepare entry the VM runs before
+  the first LED.
+- **Per-LED-invariant values** (`atan2(led.pos.x, led.pos.z)`,
+  `length(led.pos.xz)`, `hash(float(led.idx))`, anything built only from
+  `led.pos/uv/idx/seg/s/branch`) are computed **once per LED per map** and then
+  read from a per-LED cache in the spare fx arena. A cached value is
+  bit-identical to recomputing it.
+
+So write the natural expression in `shade()`, and keep a value in a single
+`let`-style local (assigned once) so the pass can see that it is invariant.
+`fx_compile --disasm` lists what was hoisted and cached; `--no-memo` turns the
+pass off.
 
 ### Long strips: what sets the frame rate
 
