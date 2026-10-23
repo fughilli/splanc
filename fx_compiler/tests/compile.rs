@@ -1282,3 +1282,28 @@ fn ctxfix_flag_gates_per_led_fixed_build() {
     let float = compile("vec3 shade(Led led){ return vec3(led.pos.x, 0.0, 0.0); }").unwrap();
     assert_eq!(float.fxb[5] & 0x02, 0, "all-float program must NOT set FLAG_USES_CTXFIX");
 }
+
+/// clamp(vecN, float, float) — the GLSL idiom agents write — must broadcast its
+/// scalar bounds (it used to emit CLAMP 3 over 5 stack slots and panic the VM).
+#[test]
+fn clamp_vec_with_scalar_bounds() {
+    let led = Led { pos: [-0.5, 0.25, 1.75], ..Default::default() };
+    let frame = Frame::default();
+    let want = run_shade(
+        "vec3 shade(Led led) { return clamp(led.pos, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)); }",
+        &[],
+        led,
+        frame,
+    );
+    assert_eq!(want, (0, 63, 255));
+    for src in [
+        "vec3 shade(Led led) { return clamp(led.pos, 0.0, 1.0); }",
+        "vec3 shade(Led led) { return clamp(led.pos, vec3(0.0, 0.0, 0.0), 1.0); }",
+        "vec3 shade(Led led) { return clamp(led.pos, 0.0, vec3(1.0, 1.0, 1.0)); }",
+        "uniform float hi : 0.0 .. 1.0 = 1.0; vec3 shade(Led led) { return clamp(led.pos * 1.0, 0.0, hi); }",
+    ] {
+        assert_eq!(run_shade(src, &[], led, frame), want, "{src}");
+    }
+    let bad = compile("vec3 shade(Led led) { float x = clamp(0.5, vec2(0.0, 0.0), 1.0); return vec3(x, x, x); }");
+    assert!(bad.is_err());
+}

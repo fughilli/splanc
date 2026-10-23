@@ -1,0 +1,39 @@
+{
+  "name": "skill__sonnet__p05",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Heartbeat pulse: a lub-dub waveform fires from the vertical midpoint of the\n// cylinder and propagates upward and downward along the helix simultaneously.\n// The primary beat (lub) is bright and warm; the softer secondary (dub) follows\n// ~200 ms later. Both decay to a deep resting colour.\n\nuniform float bpm         : 20.0 .. 140.0 = 70.0;\nuniform float propagation : 0.5 ..   8.0  = 3.0;    // fixture heights / second\nuniform vec3  lub_col     : color = 1.0, 0.35, 0.05; // primary beat\nuniform vec3  dub_col     : color = 0.65, 0.07, 0.02;// secondary beat\nuniform vec3  rest_col    : color = 0.02, 0.0,  0.0; // resting glow\nuniform float brightness  : 0.0 ..   1.0  = 1.0;\n\nstate float beat_t;   // 0..1 phase within the current period\nstate float period_s; // seconds per beat, hoisted so shade() doesn't recompute\n\nvoid update() {\n  period_s = 60.0 / bpm;\n  beat_t   = fract(time / period_s);\n}\n\nvec3 shade(Led led) {\n  // Normalised distance from the vertical midpoint: 0 = centre, 1 = top/bottom edge.\n  float dist = abs(led.uv.y - 0.5) * 2.0;\n\n  // Retard the phase by the travel time to this LED, then convert back to seconds.\n  float delay = dist / (propagation * period_s); // in phase units\n  float t     = fract(beat_t - delay) * period_s;// seconds since wave arrived\n\n  // Lub: sharp attack 0..50 ms, decays to 0 by 140 ms.\n  float l = smoothstep(0.0, 0.05, t) * smoothstep(0.14, 0.06, t);\n\n  // Dub: softer onset 180..250 ms, decays to 0 by 360 ms, ~55 % amplitude.\n  float d = smoothstep(0.18, 0.25, t) * smoothstep(0.36, 0.26, t) * 0.55;\n\n  // Layer dub under lub so the brighter primary always wins.\n  vec3 col = mix(rest_col, dub_col, d);\n  col       = mix(col,     lub_col, l);\n\n  return col * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "1c287be1-dbd3-4ca5-a435-1ed03c5389f4",
+      "wall_s": 147.4,
+      "duration_api_ms": 118704,
+      "cost_usd": 0.13114079999999997,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 8362,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 507
+      },
+      "thinking_tokens": 7694,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1012
+    }
+  ],
+  "started": "2026-10-22T20:02:25",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1311,
+  "total_wall_s": 147.4,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p05.fx"
+}

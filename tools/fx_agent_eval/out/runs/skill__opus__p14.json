@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p14",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Scanner beam: a vertical plane of light sweeps left to right across the\n// cylinder (led.uv.x is the normalized X over the lamp's footprint), with a\n// hot white core, a soft coloured edge and a fading trail behind it.\n// \"sweep\" restarts from the left each pass; \"bounce\" rides back and forth.\nuniform float speed      : 0.05 .. 3.0 = 0.5;    // passes per second\nuniform float width      : 0.02 .. 0.5 = 0.12;   // beam half-width (fraction of lamp width)\nuniform float trail      : 0.0 .. 1.0 = 0.35;    // length of the afterglow behind the beam\nuniform float glow       : 0.0 .. 1.0 = 0.6;     // brightness of the afterglow\nuniform vec3  beam       : color = 1.0, 0.08, 0.03;\nuniform vec3  core       : color = 1.0, 0.75, 0.55;\nuniform vec3  background : color = 0.012, 0.0, 0.0;\nuniform int   motion     : {\"sweep\", \"bounce\"} = 0;\n\nstate float phase;\nstate float x;     // beam centre in uv.x units\nstate float dir;   // +1 moving right, -1 moving left\nstate float inv_w;\nstate float inv_t;\n\nvoid update() {\n  phase = fract(phase + dt * speed);\n  float p = phase;\n  dir = 1.0;\n  if (motion == 1) {\n    p = phase * 2.0;\n    if (p > 1.0) {\n      p = 2.0 - p;\n      dir = -1.0;\n    }\n    p = 0.5 - 0.5 * cos(p * 3.14159265);   // ease at the ends\n  }\n  // Start and end fully off the lamp so the beam enters and leaves cleanly.\n  x = -width + p * (1.0 + 2.0 * width);\n  inv_w = 1.0 / width;\n  inv_t = 1.0 / max(trail, 0.001);\n}\n\nvec3 shade(Led led) {\n  float d = (led.uv.x - x) * dir;          // >0 ahead of the beam, <0 behind\n  float a = abs(d) * inv_w;\n\n  float edge = max(1.0 - a, 0.0);\n  edge = edge * edge;\n  float hot = max(1.0 - a * 3.0, 0.0);\n  hot = hot * hot;\n\n  float tr = 0.0;\n  if (d < 0.0 && trail > 0.0) {\n    float t = max(1.0 + d * inv_t, 0.0);\n    tr = t * t * glow;\n  }\n\n  vec3 col = background + beam * min(edge + tr, 1.0) + core * hot;\n  return clamp(col, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "bb949512-a71b-4676-b1db-923972e2e2e9",
+      "wall_s": 48.1,
+      "duration_api_ms": 19553,
+      "cost_usd": 0.0463324,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1957,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 615
+      },
+      "thinking_tokens": 1025,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1496
+    }
+  ],
+  "started": "2026-10-22T20:00:15",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0463,
+  "total_wall_s": 48.1,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p14.fx"
+}

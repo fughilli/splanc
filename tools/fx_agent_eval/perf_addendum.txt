@@ -1,0 +1,25 @@
+MEASURED DEVICE COSTS (ESP32-C6, 160 MHz, no FPU) — these override any cheaper-sounding claim above.
+Budget: 500 LEDs at 30 fps = ~10,000 cycles per LED per frame, ~2,300 of which the firmware already spends. Every opcode costs >= 70 cycles of dispatch, EVEN an integer add.
+int/fixed op (+ - _min max clamp fract mix, fixed sin/cos LUT) 70-150 | float + -_ 100-200
+float sin/cos 570 · sqrt 680 · atan2 1040 · exp/log 500+ · pow 1800 · length/normalize/distance/smoothstep/hsv2rgb 700-1600
+So: ~8 float transcendentals per LED already blow the frame. Write shade() as a few dozen cheap ops.
+RULES:
+
+1. Hoist: anything that depends only on time/dt/frame/uniforms (sin(time\*k), colour mixes of uniforms, fixed(speed)) goes in update() and is stored in `state`.
+2. Cache LED-invariant geometry ONCE: atan2/length/distance of led.pos, hash(float(led.idx)) never change. Compute them into a `buffer` on the first frame (a `state bool ready` that update() sets after frame 0) and read the buffer afterwards.
+3. Phases and waves in `fixed`: sin/cos of a `fixed` argument is an integer LUT in TURNS (1.0 = full circle, not 2\*pi). Keep phases as `state fixed` advanced in update().
+4. No pow/exp per LED: pow(x,2.0) -> x*x; exp(-k*d) -> a clamp/mix ramp or a fixed polynomial. Compare dot(d,d) with r\*r instead of length(d) < r. Divide by a constant -> multiply by its reciprocal.
+5. Float literals promote fixed math to float: `fixed x; x * 0.6` is soft-float — write `x * fixed(0.6)`.
+6. No per-LED loops over many items; no multi-octave noise per LED (precompute into a buffer/texture in update or at frame 0).
+   FAST EXAMPLE (rotating rainbow wobble — atan2 once per LED ever, everything per-frame in update, per-LED path all integer):
+   uniform float speed : 0.0 .. 4.0 = 1.0;
+   uniform float waves : 0.5 .. 8.0 = 3.0;
+   state fixed ph1; state fixed ph2; state fixed k; state bool started; state bool ready;
+   buffer float ang : fixed16;
+   void update() { ready = started; started = true;
+   ph1 = fract(ph1 + fixed(dt _speed_ 0.25)); ph2 = fract(ph2 + fixed(dt _speed_ 0.17)); k = fixed(waves); }
+   vec3 shade(Led led) {
+   if (!ready) { ang[led.idx] = atan2(led.pos.z, led.pos.x) _0.15915 + 0.5; }
+   fixed w = sin(fixed(led.uv.y)_ k + ph2) \* fixed(0.125);
+   return hsv2rgb(fract(fixed(ang[led.idx]) + ph1 + w), fixed(0.9), fixed(1.0));
+   }

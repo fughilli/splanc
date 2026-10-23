@@ -1,0 +1,50 @@
+{
+  "name": "app_lint__opus__p04",
+  "variant": "app_lint",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Slow rainbow rotating around a cylindrical lamp.\n// Per-LED angle and height are computed once and cached in fixed16 buffers.\n// Per-frame shading is fixed-point only: native cos in turns, with all\n// frame-invariant terms (phase offsets, saturation/brightness gains) hoisted to update().\n\nuniform float speed : 0.0 .. 1.0 = 0.06;       // rotations per second\nuniform bool reverse = false;                  // spin the other way\nuniform float bands : 1.0 .. 4.0 = 1.0;        // rainbow repeats around the circumference\nuniform float twist : 0.0 .. 8.0 = 0.0;        // hue shift per metre of height (spiral look)\nuniform float saturation : 0.0 .. 1.0 = 1.0;\nuniform float brightness : 0.0 .. 1.0 = 0.8;\n\nbuffer float angTurns : fixed16;   // angle around the axis, 0..1 turns\nbuffer float height : fixed16;     // led.pos.y in metres\n\nstate float phase;\nstate fixed phF;     // hue phase for red channel\nstate fixed phG;     // phase + 1/3 turn (green)\nstate fixed phB;     // phase + 2/3 turn (blue)\nstate fixed nbF;\nstate fixed twF;\nstate fixed kF;      // 0.5 * sat * bri  (cosine amplitude)\nstate fixed baseF;   // 0.5 * sat * bri + (1 - sat) * bri  (offset)\n\nvoid update() {\n  float dir = 1.0;\n  if (reverse) { dir = 0.0 - 1.0; }\n  phase = fract(phase + dir * speed * dt);\n  phF = fixed(phase);\n  phG = fixed(phase + 0.33333);\n  phB = fixed(phase + 0.66667);\n  nbF = fixed(floor(bands + 0.5));\n  twF = fixed(twist);\n  float k = 0.5 * saturation * brightness;\n  kF = fixed(k);\n  baseF = fixed(k + (1.0 - saturation) * brightness);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  // One-time (first few frames) cache of the cylindrical angle. Float atan2 runs only here.\n  if (frame < 3) {\n    vec2 c = led.uv - vec2(0.5, 0.5);\n    angTurns[i] = atan2(c.y, c.x) * 0.15915494 + 0.5;\n    height[i] = led.pos.y;\n  }\n\n  fixed a = angTurns[i];\n  fixed hy = height[i];\n  fixed h = a * nbF + hy * twF;\n\n  // Smooth cosine rainbow, three phase-shifted channels (turns, native fixed cos LUT).\n  // Desaturation and brightness are folded into kF / baseF.\n  fixed r = baseF + kF * cos(fract(h - phF));\n  fixed g = baseF + kF * cos(fract(h - phG));\n  fixed b = baseF + kF * cos(fract(h - phB));\n\n  return vec3(float(r), float(g), float(b));\n}\n```",
+      "is_error": false,
+      "session_id": "ff836022-38bc-4735-99ed-99aadb52fe29",
+      "wall_s": 22.6,
+      "duration_api_ms": 13380,
+      "cost_usd": 0.04646260000000001,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1471,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 1990
+      },
+      "thinking_tokens": 404,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1245
+    }
+  ],
+  "started": "2026-10-22T20:22:35",
+  "base_program": "firmware/fx_perf_bench/agent/app__opus__p04.fx",
+  "lint_warnings": [
+    "line 48 (`fixed g = 0.5 + 0.5 * cos(h - 0.33333);`): float cos() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 49 (`fixed b = 0.5 + 0.5 * cos(h - 0.66667);`): float cos() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "4 cheap per-LED ops depend only on time/uniforms/consts (e.g. time*speed): precompute them in update()",
+    "line 48 (`fixed g = 0.5 + 0.5 * cos(h - 0.33333);`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 49 (`fixed b = 0.5 + 0.5 * cos(h - 0.66667);`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 52 (`fixed w = 1.0 - satF;`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "(estimate: ~10240 cycles per LED in shade vs a budget of ~7700; 2 float transcendentals per LED; 9.8% of shade ops are frame-invariant)"
+  ],
+  "lint_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0465,
+  "total_wall_s": 22.6,
+  "program": "firmware/fx_perf_bench/agent/app_lint__opus__p04.fx"
+}

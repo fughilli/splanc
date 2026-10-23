@@ -1,0 +1,93 @@
+{
+  "name": "skill__sonnet__p08",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Lava lamp: four metaball blobs of hot wax rise and sink in amber oil.\n// Blobs dwell at top (cooling, about to sink) and bottom (reheating, about to\n// rise) \u2014 the asymmetric pause of a real lava lamp \u2014 with lazy horizontal\n// drift inside the cylinder.  Blobs merge smoothly when they meet.\n// All geometry uses led.uv.y for height so the effect is independent of the\n// mapping origin.\n\nuniform vec3  blob_color  : color = 1.0, 0.28, 0.02;   // wax: orange-red\nuniform vec3  fluid_color : color = 0.45, 0.10, 0.0;   // oil: dark amber\nuniform float blob_size   : 0.03 .. 0.12 = 0.065;      // blob radius (m)\nuniform float speed       : 0.1 .. 2.0 = 0.4;          // rise/fall speed\nuniform float crispness   : 0.5 .. 4.0 = 1.2;          // edge sharpness vs. merge\n\n// Four blob centres (metres in lamp frame, Y relative to base)\nstate vec4 bx;\nstate vec4 by;\nstate vec4 bz;\n\nvoid update() {\n  float t = time * speed;\n  float r = 0.048;   // horizontal drift radius \u2014 keeps blobs inside 0.08 m cylinder\n\n  float p0 = t * 0.43 + 0.00;\n  float p1 = t * 0.37 + 2.09;\n  float p2 = t * 0.31 + 4.19;\n  float p3 = t * 0.52 + 1.05;\n\n  // smoothstep( normalised sine ) gives cubic ease-in/out at 0 and 1:\n  // derivative is zero when sin == \u00b11, so blobs genuinely pause at top\n  // (freshly risen, cooling) and bottom (reheated, about to ascend).\n  by.x = smoothstep(0.0, 1.0, (sin(p0) + 1.0) * 0.5) * 0.26 + 0.02;\n  by.y = smoothstep(0.0, 1.0, (sin(p1) + 1.0) * 0.5) * 0.26 + 0.02;\n  by.z = smoothstep(0.0, 1.0, (sin(p2) + 1.0) * 0.5) * 0.26 + 0.02;\n  by.w = smoothstep(0.0, 1.0, (sin(p3) + 1.0) * 0.5) * 0.26 + 0.02;\n\n  // Slow lateral wobble \u2014 incommensurable multipliers so it never repeats\n  bx.x = sin(p0 * 1.31 + 0.00) * r;   bz.x = cos(p0 * 1.13 + 0.00) * r;\n  bx.y = sin(p1 * 1.31 + 1.57) * r;   bz.y = cos(p1 * 1.13 + 2.09) * r;\n  bx.z = sin(p2 * 1.31 + 3.14) * r;   bz.z = cos(p2 * 1.13 + 4.19) * r;\n  bx.w = sin(p3 * 1.31 + 4.71) * r;   bz.w = cos(p3 * 1.13 + 0.52) * r;\n}\n\nvec3 shade(Led led) {\n  float sz2 = blob_size * blob_size;\n\n  // Use led.uv.y * lamp_height for Y so the maths is in metres but\n  // origin-independent (works whatever Y the mapping chose for the base).\n  float px = led.pos.x;\n  float py = led.uv.y * 0.30;\n  float pz = led.pos.z;\n\n  // Metaball potential: field > 1 \u2192 inside at least one blob-radius sphere.\n  // Epsilon 0.0002 prevents division-by-zero when a LED is exactly on centre.\n  float dx0 = px - bx.x;  float dy0 = py - by.x;  float dz0 = pz - bz.x;\n  float dx1 = px - bx.y;  float dy1 = py - by.y;  float dz1 = pz - bz.y;\n  float dx2 = px - bx.z;  float dy2 = py - by.z;  float dz2 = pz - bz.z;\n  float dx3 = px - bx.w;  float dy3 = py - by.w;  float dz3 = pz - bz.w;\n\n  float f0 = sz2 / (dx0*dx0 + dy0*dy0 + dz0*dz0 + 0.0002);\n  float f1 = sz2 / (dx1*dx1 + dy1*dy1 + dz1*dz1 + 0.0002);\n  float f2 = sz2 / (dx2*dx2 + dy2*dy2 + dz2*dz2 + 0.0002);\n  float f3 = sz2 / (dx3*dx3 + dy3*dy3 + dz3*dz3 + 0.0002);\n  float field = f0 + f1 + f2 + f3;\n\n  // Soft isosurface at field == 1.  crispness widens/narrows the transition:\n  // low crispness \u2192 blobs bleed into each other; high \u2192 hard candy-like edges.\n  float hw     = 0.5 / crispness;   // hw in [0.125, 1.0] for range [0.5, 4.0]\n  float inside = smoothstep(1.0 - hw, 1.0 + hw, field);\n\n  // Blob temperature follows height: yellow-hot near the top where wax just\n  // arrived, deep red near the bottom where it has cooled and sunk.\n  float ht         = led.uv.y;\n  vec3 blob_top    = vec3(1.0, 0.82, 0.10);\n  vec3 blob_bottom = vec3(0.65, 0.03, 0.01);\n  vec3 bclr = mix(blob_bottom, mix(blob_color, blob_top, ht), ht);\n\n  // Fluid is almost dark, but warms to amber near active blobs (heat conduction\n  // through the glass) and brightens very slightly toward the top (rising heat).\n  float heat = clamp(field * 0.20, 0.0, 1.0);\n  vec3 fclr  = fluid_color * (0.12 + 0.22 * ht + heat);\n\n  return mix(fclr, bclr, inside);\n}\n```",
+      "is_error": false,
+      "session_id": "4a10944c-308b-4459-bf5e-c046277b2a4a",
+      "wall_s": 235.2,
+      "duration_api_ms": 226771,
+      "cost_usd": 0.26350979999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 17189,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 501
+      },
+      "thinking_tokens": 15373,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 31,
+          "col": 5,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The identifier `by` is a reserved keyword in the effect language (used in `for` step syntax). Renaming `by` \u2192 `bhy` (blob heights) everywhere fixes it \u2014 nothing else changes.\n\n```glsl\n// Lava lamp: four metaball blobs of hot wax rise and sink in amber oil.\n// Blobs dwell at top (cooling, about to sink) and bottom (reheating, about to\n// rise) \u2014 the asymmetric pause of a real lava lamp \u2014 with lazy horizontal\n// drift inside the cylinder.  Blobs merge smoothly when they meet.\n// All geometry uses led.uv.y for height so the effect is independent of the\n// mapping origin.\n\nuniform vec3  blob_color  : color = 1.0, 0.28, 0.02;   // wax: orange-red\nuniform vec3  fluid_color : color = 0.45, 0.10, 0.0;   // oil: dark amber\nuniform float blob_size   : 0.03 .. 0.12 = 0.065;      // blob radius (m)\nuniform float speed       : 0.1 .. 2.0 = 0.4;          // rise/fall speed\nuniform float crispness   : 0.5 .. 4.0 = 1.2;          // edge sharpness vs. merge\n\n// Four blob centres (metres in lamp frame, Y relative to base)\nstate vec4 bx;\nstate vec4 bhy;\nstate vec4 bz;\n\nvoid update() {\n  float t = time * speed;\n  float r = 0.048;   // horizontal drift radius \u2014 keeps blobs inside 0.08 m cylinder\n\n  float p0 = t * 0.43 + 0.00;\n  float p1 = t * 0.37 + 2.09;\n  float p2 = t * 0.31 + 4.19;\n  float p3 = t * 0.52 + 1.05;\n\n  // smoothstep( normalised sine ) gives cubic ease-in/out at 0 and 1:\n  // derivative is zero when sin == \u00b11, so blobs genuinely pause at top\n  // (freshly risen, cooling) and bottom (reheated, about to ascend).\n  bhy.x = smoothstep(0.0, 1.0, (sin(p0) + 1.0) * 0.5) * 0.26 + 0.02;\n  bhy.y = smoothstep(0.0, 1.0, (sin(p1) + 1.0) * 0.5) * 0.26 + 0.02;\n  bhy.z = smoothstep(0.0, 1.0, (sin(p2) + 1.0) * 0.5) * 0.26 + 0.02;\n  bhy.w = smoothstep(0.0, 1.0, (sin(p3) + 1.0) * 0.5) * 0.26 + 0.02;\n\n  // Slow lateral wobble \u2014 incommensurable multipliers so it never repeats\n  bx.x = sin(p0 * 1.31 + 0.00) * r;   bz.x = cos(p0 * 1.13 + 0.00) * r;\n  bx.y = sin(p1 * 1.31 + 1.57) * r;   bz.y = cos(p1 * 1.13 + 2.09) * r;\n  bx.z = sin(p2 * 1.31 + 3.14) * r;   bz.z = cos(p2 * 1.13 + 4.19) * r;\n  bx.w = sin(p3 * 1.31 + 4.71) * r;   bz.w = cos(p3 * 1.13 + 0.52) * r;\n}\n\nvec3 shade(Led led) {\n  float sz2 = blob_size * blob_size;\n\n  // Use led.uv.y * lamp_height for Y so the maths is in metres but\n  // origin-independent (works whatever Y the mapping chose for the base).\n  float px = led.pos.x;\n  float py = led.uv.y * 0.30;\n  float pz = led.pos.z;\n\n  // Metaball potential: field > 1 \u2192 inside at least one blob-radius sphere.\n  // Epsilon 0.0002 prevents division-by-zero when a LED is exactly on centre.\n  float dx0 = px - bx.x;  float dy0 = py - bhy.x;  float dz0 = pz - bz.x;\n  float dx1 = px - bx.y;  float dy1 = py - bhy.y;  float dz1 = pz - bz.y;\n  float dx2 = px - bx.z;  float dy2 = py - bhy.z;  float dz2 = pz - bz.z;\n  float dx3 = px - bx.w;  float dy3 = py - bhy.w;  float dz3 = pz - bz.w;\n\n  float f0 = sz2 / (dx0*dx0 + dy0*dy0 + dz0*dz0 + 0.0002);\n  float f1 = sz2 / (dx1*dx1 + dy1*dy1 + dz1*dz1 + 0.0002);\n  float f2 = sz2 / (dx2*dx2 + dy2*dy2 + dz2*dz2 + 0.0002);\n  float f3 = sz2 / (dx3*dx3 + dy3*dy3 + dz3*dz3 + 0.0002);\n  float field = f0 + f1 + f2 + f3;\n\n  // Soft isosurface at field == 1.  crispness widens/narrows the transition:\n  // low crispness \u2192 blobs bleed into each other; high \u2192 hard candy-like edges.\n  float hw     = 0.5 / crispness;   // hw in [0.125, 1.0] for range [0.5, 4.0]\n  float inside = smoothstep(1.0 - hw, 1.0 + hw, field);\n\n  // Blob temperature follows height: yellow-hot near the top where wax just\n  // arrived, deep red near the bottom where it has cooled and sunk.\n  float ht         = led.uv.y;\n  vec3 blob_top    = vec3(1.0, 0.82, 0.10);\n  vec3 blob_bottom = vec3(0.65, 0.03, 0.01);\n  vec3 bclr = mix(blob_bottom, mix(blob_color, blob_top, ht), ht);\n\n  // Fluid is almost dark, but warms to amber near active blobs (heat conduction\n  // through the glass) and brightens very slightly toward the top (rising heat).\n  float heat = clamp(field * 0.20, 0.0, 1.0);\n  vec3 fclr  = fluid_color * (0.12 + 0.22 * ht + heat);\n\n  return mix(fclr, bclr, inside);\n}\n```",
+      "is_error": false,
+      "session_id": "4a10944c-308b-4459-bf5e-c046277b2a4a",
+      "wall_s": 37.3,
+      "duration_api_ms": 255696,
+      "cost_usd": 0.42611489999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3026,
+        "cache_read_input_tokens": 9367,
+        "cache_creation_input_tokens": 19066
+      },
+      "thinking_tokens": 1155,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 31,
+          "col": 6,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The error is at the `.` of `bhy.x = \u2026` \u2014 the compiler parses a state-variable assignment as `identifier = expr` and chokes on the swizzle write. The fix is to assign each state `vec4` all at once with a constructor; reads via `.x/.y/.z/.w` in `shade()` are unaffected.\n\n```glsl\n// Lava lamp: four metaball blobs of hot wax rise and sink in amber oil.\n// Blobs dwell at top (cooling, about to sink) and bottom (reheating, about to\n// rise) \u2014 the asymmetric pause of a real lava lamp \u2014 with lazy horizontal\n// drift inside the cylinder.  Blobs merge smoothly when they meet.\n// All geometry uses led.uv.y for height so the effect is independent of the\n// mapping origin.\n\nuniform vec3  blob_color  : color = 1.0, 0.28, 0.02;   // wax: orange-red\nuniform vec3  fluid_color : color = 0.45, 0.10, 0.0;   // oil: dark amber\nuniform float blob_size   : 0.03 .. 0.12 = 0.065;      // blob radius (m)\nuniform float speed       : 0.1 .. 2.0 = 0.4;          // rise/fall speed\nuniform float crispness   : 0.5 .. 4.0 = 1.2;          // edge sharpness vs. merge\n\n// Four blob centres (metres in lamp frame, Y relative to base)\nstate vec4 bx;\nstate vec4 bhy;\nstate vec4 bz;\n\nvoid update() {\n  float t = time * speed;\n  float r = 0.048;   // horizontal drift radius \u2014 keeps blobs inside 0.08 m cylinder\n\n  float p0 = t * 0.43 + 0.00;\n  float p1 = t * 0.37 + 2.09;\n  float p2 = t * 0.31 + 4.19;\n  float p3 = t * 0.52 + 1.05;\n\n  // smoothstep( normalised sine ) gives cubic ease-in/out at 0 and 1:\n  // derivative is zero when sin == \u00b11, so blobs genuinely pause at top\n  // (freshly risen, cooling) and bottom (reheated, about to ascend).\n  bhy = vec4(\n    smoothstep(0.0, 1.0, (sin(p0) + 1.0) * 0.5) * 0.26 + 0.02,\n    smoothstep(0.0, 1.0, (sin(p1) + 1.0) * 0.5) * 0.26 + 0.02,\n    smoothstep(0.0, 1.0, (sin(p2) + 1.0) * 0.5) * 0.26 + 0.02,\n    smoothstep(0.0, 1.0, (sin(p3) + 1.0) * 0.5) * 0.26 + 0.02\n  );\n\n  // Slow lateral wobble \u2014 incommensurable multipliers so it never repeats\n  bx = vec4(\n    sin(p0 * 1.31 + 0.00) * r,\n    sin(p1 * 1.31 + 1.57) * r,\n    sin(p2 * 1.31 + 3.14) * r,\n    sin(p3 * 1.31 + 4.71) * r\n  );\n\n  bz = vec4(\n    cos(p0 * 1.13 + 0.00) * r,\n    cos(p1 * 1.13 + 2.09) * r,\n    cos(p2 * 1.13 + 4.19) * r,\n    cos(p3 * 1.13 + 0.52) * r\n  );\n}\n\nvec3 shade(Led led) {\n  float sz2 = blob_size * blob_size;\n\n  // Use led.uv.y * lamp_height for Y so the maths is in metres but\n  // origin-independent (works whatever Y the mapping chose for the base).\n  float px = led.pos.x;\n  float py = led.uv.y * 0.30;\n  float pz = led.pos.z;\n\n  // Metaball potential: field > 1 \u2192 inside at least one blob-radius sphere.\n  // Epsilon 0.0002 prevents division-by-zero when a LED is exactly on centre.\n  float dx0 = px - bx.x;  float dy0 = py - bhy.x;  float dz0 = pz - bz.x;\n  float dx1 = px - bx.y;  float dy1 = py - bhy.y;  float dz1 = pz - bz.y;\n  float dx2 = px - bx.z;  float dy2 = py - bhy.z;  float dz2 = pz - bz.z;\n  float dx3 = px - bx.w;  float dy3 = py - bhy.w;  float dz3 = pz - bz.w;\n\n  float f0 = sz2 / (dx0*dx0 + dy0*dy0 + dz0*dz0 + 0.0002);\n  float f1 = sz2 / (dx1*dx1 + dy1*dy1 + dz1*dz1 + 0.0002);\n  float f2 = sz2 / (dx2*dx2 + dy2*dy2 + dz2*dz2 + 0.0002);\n  float f3 = sz2 / (dx3*dx3 + dy3*dy3 + dz3*dz3 + 0.0002);\n  float field = f0 + f1 + f2 + f3;\n\n  // Soft isosurface at field == 1.  crispness widens/narrows the transition:\n  // low crispness \u2192 blobs bleed into each other; high \u2192 hard candy-like edges.\n  float hw     = 0.5 / crispness;   // hw in [0.125, 1.0] for range [0.5, 4.0]\n  float inside = smoothstep(1.0 - hw, 1.0 + hw, field);\n\n  // Blob temperature follows height: yellow-hot near the top where wax just\n  // arrived, deep red near the bottom where it has cooled and sunk.\n  float ht         = led.uv.y;\n  vec3 blob_top    = vec3(1.0, 0.82, 0.10);\n  vec3 blob_bottom = vec3(0.65, 0.03, 0.01);\n  vec3 bclr = mix(blob_bottom, mix(blob_color, blob_top, ht), ht);\n\n  // Fluid is almost dark, but warms to amber near active blobs (heat conduction\n  // through the glass) and brightens very slightly toward the top (rising heat).\n  float heat = clamp(field * 0.20, 0.0, 1.0);\n  vec3 fclr  = fluid_color * (0.12 + 0.22 * ht + heat);\n\n  return mix(fclr, bclr, inside);\n}\n```",
+      "is_error": false,
+      "session_id": "4a10944c-308b-4459-bf5e-c046277b2a4a",
+      "wall_s": 67.5,
+      "duration_api_ms": 310928,
+      "cost_usd": 0.5361108,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4799,
+        "cache_read_input_tokens": 28433,
+        "cache_creation_input_tokens": 4912
+      },
+      "thinking_tokens": 2919,
+      "round": 2,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1802
+    }
+  ],
+  "started": "2026-10-22T20:04:56",
+  "status": "ok",
+  "n_calls": 3,
+  "total_cost_usd": 1.2257,
+  "total_wall_s": 340.0,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p08.fx"
+}

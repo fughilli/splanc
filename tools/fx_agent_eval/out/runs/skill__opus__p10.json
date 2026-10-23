@@ -1,0 +1,66 @@
+{
+  "name": "skill__opus__p10",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Matrix rain on a cylindrical helix lamp.\n// Each LED's angle around the cylinder axis picks a \"column\". Columns rain\n// glyph trails downward, each at its own speed and phase, with a bright head\n// and a fading green tail. Glyph cells flicker as they fall.\n// Height comes from the room-frame box, so it fits this fixture without\n// assuming where the map origin is.\n\nuniform float columns : 4.0 .. 40.0 = 18.0;     // rain columns around the lamp\nuniform float speed   : 0.05 .. 2.0 = 0.45;     // fall speed (fixture heights / s)\nuniform float tail    : 0.05 .. 1.0 = 0.45;     // trail length (fraction of height)\nuniform float density : 0.0 .. 1.0 = 0.75;      // chance a column is raining\nuniform float flicker : 0.0 .. 1.0 = 0.5;       // glyph shimmer in the trails\nuniform float cells   : 4.0 .. 40.0 = 16.0;     // glyph rows along the height\nuniform vec3  rain    : color = 0.05, 1.0, 0.2; // trail colour\nuniform vec3  head    : color = 0.75, 1.0, 0.8; // leading glyph colour\nuniform float glow    : 0.0 .. 0.2 = 0.015;     // faint background green\n\nstate float tick;\n\nvoid update() {\n  tick = floor(time * 8.0);\n}\n\nvec3 shade(Led led) {\n  // Cylinder frame: centre axis and normalized height from the box.\n  vec3 c = (room.min + room.max) * 0.5;\n  float hgt = max(room.max.y - room.min.y, 0.01);\n  float h = (led.room.y - room.min.y) / hgt;   // 0 bottom .. 1 top\n\n  // Column from the angle around the axis.\n  float a = atan2(led.room.z - c.z, led.room.x - c.x) * 0.15915494 + 0.5;\n  float col = floor(fract(a) * columns);\n\n  // Glyph flicker for this cell.\n  float cell = floor(h * cells);\n  float g = hash(col * 31.7 + cell * 3.71 + floor(tick * (0.3 + hash(cell + col * 5.3))) * 0.137);\n  float shimmer = 1.0 - flicker + flicker * (0.35 + 0.65 * g);\n\n  float trail = 0.0;\n  float hd = 0.0;\n  for (int k = 0; k < 2; k++) {\n    float kk = float(k);\n    float seed = col + kk * 57.3;\n    float t = time * speed * (0.6 + 0.8 * hash(seed)) / (1.0 + tail) + hash(seed + 17.3);\n    float cyc = floor(t);\n    float u = fract(t);\n    if (hash(seed * 7.1 + cyc * 13.7) < density) {\n      float hp = 1.0 - u * (1.0 + tail);   // head height, falling\n      float d = h - hp;                    // trail lies above the head\n      if (d >= 0.0 && d < tail) {\n        float b = 1.0 - d / tail;\n        trail = max(trail, b * b);\n        hd = max(hd, max(0.0, 1.0 - d / 0.04));\n      }\n    }\n  }\n\n  vec3 outc = rain * (glow + trail * shimmer);\n  return min(outc + head * hd, vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "c91e0803-35c3-4c79-adde-15ae8f8d297a",
+      "wall_s": 45.8,
+      "duration_api_ms": 30701,
+      "cost_usd": 0.0636364,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2823,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 1640,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 41,
+          "col": 27,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Matrix rain on a cylindrical helix lamp.\n// Each LED's angle around the cylinder axis picks a \"column\". Columns rain\n// glyph trails downward, each at its own speed and phase, with a bright head\n// and a fading green tail. Glyph cells flicker as they fall.\n// Height comes from the room-frame box, so it fits this fixture without\n// assuming where the map origin is.\n\nuniform float columns : 4.0 .. 40.0 = 18.0;     // rain columns around the lamp\nuniform float speed   : 0.05 .. 2.0 = 0.45;     // fall speed (fixture heights / s)\nuniform float tail    : 0.05 .. 1.0 = 0.45;     // trail length (fraction of height)\nuniform float density : 0.0 .. 1.0 = 0.75;      // chance a column is raining\nuniform float flicker : 0.0 .. 1.0 = 0.5;       // glyph shimmer in the trails\nuniform float cells   : 4.0 .. 40.0 = 16.0;     // glyph rows along the height\nuniform vec3  rain    : color = 0.05, 1.0, 0.2; // trail colour\nuniform vec3  head    : color = 0.75, 1.0, 0.8; // leading glyph colour\nuniform float glow    : 0.0 .. 0.2 = 0.015;     // faint background green\n\nstate float tick;\n\nvoid update() {\n  tick = floor(time * 8.0);\n}\n\nvec3 shade(Led led) {\n  // Cylinder frame: centre axis and normalized height from the box.\n  vec3 c = (room.min + room.max) * 0.5;\n  float hgt = max(room.max.y - room.min.y, 0.01);\n  float h = (led.room.y - room.min.y) / hgt;   // 0 bottom .. 1 top\n\n  // Column from the angle around the axis.\n  float a = atan2(led.room.z - c.z, led.room.x - c.x) * 0.15915494 + 0.5;\n  float col = floor(fract(a) * columns);\n\n  // Glyph flicker for this cell.\n  float cell = floor(h * cells);\n  float g = hash(col * 31.7 + cell * 3.71 + floor(tick * (0.3 + hash(cell + col * 5.3))) * 0.137);\n  float shimmer = 1.0 - flicker + flicker * (0.35 + 0.65 * g);\n\n  float trail = 0.0;\n  float hd = 0.0;\n  for (int k = 0; k < 2; k = k + 1) {\n    float kk = float(k);\n    float seed = col + kk * 57.3;\n    float t = time * speed * (0.6 + 0.8 * hash(seed)) / (1.0 + tail) + hash(seed + 17.3);\n    float cyc = floor(t);\n    float u = fract(t);\n    if (hash(seed * 7.1 + cyc * 13.7) < density) {\n      float hp = 1.0 - u * (1.0 + tail);   // head height, falling\n      float d = h - hp;                    // trail lies above the head\n      if (d >= 0.0 && d < tail) {\n        float b = 1.0 - d / tail;\n        trail = max(trail, b * b);\n        hd = max(hd, max(0.0, 1.0 - d / 0.04));\n      }\n    }\n  }\n\n  vec3 outc = rain * (glow + trail * shimmer);\n  return min(outc + head * hd, vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "c91e0803-35c3-4c79-adde-15ae8f8d297a",
+      "wall_s": 36.2,
+      "duration_api_ms": 41439,
+      "cost_usd": 0.12458739999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1297,
+        "cache_read_input_tokens": 11935,
+        "cache_creation_input_tokens": 4077
+      },
+      "thinking_tokens": 110,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2029
+    }
+  ],
+  "started": "2026-10-22T19:58:53",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1882,
+  "total_wall_s": 82.0,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p10.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p01",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Calm ocean swell rolling up a helical cylinder lamp.\n// Per-LED math stays in fixed-point; trig uses the native fixed sin (angle in turns).\n\nuniform float speed : 0.0 .. 2.0 = 0.22;\nuniform float swells : 0.5 .. 6.0 = 1.8;\nuniform float swirl : 0.0 .. 2.0 = 0.6;\nuniform float foam : 0.0 .. 1.0 = 0.45;\nuniform float brightness : 0.1 .. 1.0 = 0.8;\nuniform vec3 deep : color = 0.0, 0.04, 0.18;\nuniform vec3 shallow : color = 0.0, 0.32, 0.48;\nuniform vec3 crest : color = 0.55, 0.85, 1.0;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed k1;\nstate fixed k2;\nstate fixed kx;\nstate fixed kz;\nstate fixed fFoam;\nstate vec3 cDeep;\nstate vec3 cShal;\nstate vec3 cCrest;\n\nvoid update() {\n  // Phases in turns, wrapped to keep fixed precision.\n  p1 = fixed(fract(time * speed));\n  p2 = fixed(fract(time * speed * 0.63 + 0.3));\n  // Height 0..0.30 m -> number of swells along the lamp.\n  k1 = fixed(swells / 0.3);\n  k2 = fixed(swells * 1.7 / 0.3);\n  // Radius 0.08 m -> gentle angular tilt of the wavefronts.\n  kx = fixed(swirl * 0.15 / 0.08);\n  kz = fixed(swirl * 0.10 / 0.08);\n  fFoam = fixed(foam);\n  cDeep = deep * brightness;\n  cShal = shallow * brightness;\n  cCrest = crest * brightness;\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y);\n  fixed x = fixed(led.pos.x);\n  fixed z = fixed(led.pos.z);\n\n  // Two slow swells rolling upward, slightly skewed around the cylinder.\n  fixed w1 = sin(y * k1 - p1 + x * kx);\n  fixed w2 = sin(y * k2 - p2 + z * kz);\n  fixed w = w1 * fixed(0.65) + w2 * fixed(0.35);\n\n  fixed t = w * fixed(0.5) + fixed(0.5);\n  fixed t2 = t * t;\n  fixed cr = t2 * t2 * fFoam;\n\n  return mix(cDeep, cShal, float(t)) + cCrest * float(cr);\n}\n```",
+      "is_error": false,
+      "session_id": "afd6db15-ce9e-42bd-8c7b-6cd26fb87f3f",
+      "wall_s": 24.7,
+      "duration_api_ms": 19439,
+      "cost_usd": 0.045208399999999996,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2069,
+        "cache_read_input_tokens": 5862,
+        "cache_creation_input_tokens": 331
+      },
+      "thinking_tokens": 1145,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1280
+    }
+  ],
+  "started": "2026-10-22T19:39:05",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0452,
+  "total_wall_s": 24.7,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p01.fx"
+}

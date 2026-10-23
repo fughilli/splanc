@@ -1,0 +1,66 @@
+{
+  "name": "skill__opus__p08",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Lava lamp: soft wax blobs (metaballs) rise and sink slowly inside the\n// cylinder, merging and splitting, over a warm liquid glowing from the base.\n// Positions use the room-frame box (the map itself if unposed), so it fits\n// the cylinder whatever the map origin is.\n\nuniform vec3  wax    : color = 1.0, 0.22, 0.02;   // blob colour\nuniform vec3  core   : color = 1.0, 0.7, 0.12;    // hot centre of thick wax\nuniform vec3  liquid : color = 0.3, 0.0, 0.1;     // the surrounding liquid\nuniform float speed  : 0.0 .. 2.0 = 0.4;          // how fast blobs drift\nuniform float size   : 0.3 .. 2.0 = 1.0;          // blob size\nuniform float goo    : 0.0 .. 1.0 = 0.5;          // edge softness\nuniform float heat   : 0.0 .. 1.0 = 0.6;          // glow from the base\n\nstate vec3 b0;\nstate vec3 b1;\nstate vec3 b2;\nstate vec3 b3;\nstate float r0;\nstate float r1;\nstate float r2;\nstate float r3;\nstate float ylo;\nstate float yinv;\nstate float lo;\nstate float span;\n\nvoid update() {\n  vec3 c = (room.min + room.max) * 0.5;\n  float H = max(room.max.y - room.min.y, 0.01);\n  float R = max((room.max.x - room.min.x) * 0.5, 0.01);\n  float t = time * speed;\n  ylo = room.min.y;\n  yinv = 1.0 / H;\n\n  float a0 = 0.3 + t * 0.21;\n  float a1 = 2.1 - t * 0.17;\n  float a2 = 3.9 + t * 0.13;\n  float a3 = 5.2 - t * 0.11;\n\n  b0 = vec3(c.x + R * cos(a0), room.min.y + H * (0.5 + 0.48 * sin(t * 0.50 + 0.0)), c.z + R * sin(a0));\n  b1 = vec3(c.x + R * cos(a1), room.min.y + H * (0.5 + 0.48 * sin(t * 0.37 + 2.0)), c.z + R * sin(a1));\n  b2 = vec3(c.x + R * cos(a2), room.min.y + H * (0.5 + 0.48 * sin(t * 0.43 + 4.1)), c.z + R * sin(a2));\n  b3 = vec3(c.x + R * cos(a3), room.min.y + H * (0.5 + 0.48 * sin(t * 0.29 + 5.3)), c.z + R * sin(a3));\n\n  float base = size * H * 0.13;\n  float s0 = base * (1.0 + 0.3 * sin(t * 0.9));\n  float s1 = base * (0.8 + 0.3 * sin(t * 0.7 + 1.0));\n  float s2 = base * (1.1 + 0.3 * sin(t * 0.8 + 2.5));\n  float s3 = base * (0.7 + 0.3 * sin(t * 1.1 + 4.0));\n  r0 = s0 * s0;\n  r1 = s1 * s1;\n  r2 = s2 * s2;\n  r3 = s3 * s3;\n\n  span = goo * 0.8 + 0.05;\n  lo = 1.0 - span * 0.5;\n}\n\nvec3 shade(Led led) {\n  vec3 p = led.room;\n  vec3 k = vec3(1.0, 0.6, 1.0);   // vertically stretched blobs\n  vec3 d;\n  float f = 0.0;\n  d = (p - b0) * k; f = f + r0 / (dot(d, d) + 0.00001);\n  d = (p - b1) * k; f = f + r1 / (dot(d, d) + 0.00001);\n  d = (p - b2) * k; f = f + r2 / (dot(d, d) + 0.00001);\n  d = (p - b3) * k; f = f + r3 / (dot(d, d) + 0.00001);\n\n  float h = clamp((p.y - ylo) * yinv, 0.0, 1.0);\n  float glow = 0.35 + heat * (1.0 - h) * (1.0 - h);\n  vec3 bg = liquid * glow;\n\n  float edge = clamp((f - lo) / span, 0.0, 1.0);\n  edge = edge * edge * (3.0 - 2.0 * edge);\n  float hot = clamp((f - 1.6) * 0.5, 0.0, 1.0);\n\n  vec3 blob = mix(wax, core, hot * 0.6) * (0.75 + 0.25 * glow);\n  return mix(bg, blob, edge);\n}\n```",
+      "is_error": false,
+      "session_id": "bbb2c62f-64f4-4a07-be41-53aab2fa90f6",
+      "wall_s": 42.0,
+      "duration_api_ms": 29813,
+      "cost_usd": 0.06684040000000001,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2984,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 1363,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 62,
+          "col": 9,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Lava lamp: soft wax blobs (metaballs) rise and sink slowly inside the\n// cylinder, merging and splitting, over a warm liquid glowing from the base.\n// Positions use the room-frame box (the map itself if unposed), so it fits\n// the cylinder whatever the map origin is.\n\nuniform vec3  wax    : color = 1.0, 0.22, 0.02;   // blob colour\nuniform vec3  core   : color = 1.0, 0.7, 0.12;    // hot centre of thick wax\nuniform vec3  liquid : color = 0.3, 0.0, 0.1;     // the surrounding liquid\nuniform float speed  : 0.0 .. 2.0 = 0.4;          // how fast blobs drift\nuniform float size   : 0.3 .. 2.0 = 1.0;          // blob size\nuniform float goo    : 0.0 .. 1.0 = 0.5;          // edge softness\nuniform float heat   : 0.0 .. 1.0 = 0.6;          // glow from the base\n\nstate vec3 b0;\nstate vec3 b1;\nstate vec3 b2;\nstate vec3 b3;\nstate float r0;\nstate float r1;\nstate float r2;\nstate float r3;\nstate float ylo;\nstate float yinv;\nstate float lo;\nstate float span;\n\nvoid update() {\n  vec3 c = (room.min + room.max) * 0.5;\n  float H = max(room.max.y - room.min.y, 0.01);\n  float R = max((room.max.x - room.min.x) * 0.5, 0.01);\n  float t = time * speed;\n  ylo = room.min.y;\n  yinv = 1.0 / H;\n\n  float a0 = 0.3 + t * 0.21;\n  float a1 = 2.1 - t * 0.17;\n  float a2 = 3.9 + t * 0.13;\n  float a3 = 5.2 - t * 0.11;\n\n  b0 = vec3(c.x + R * cos(a0), room.min.y + H * (0.5 + 0.48 * sin(t * 0.50 + 0.0)), c.z + R * sin(a0));\n  b1 = vec3(c.x + R * cos(a1), room.min.y + H * (0.5 + 0.48 * sin(t * 0.37 + 2.0)), c.z + R * sin(a1));\n  b2 = vec3(c.x + R * cos(a2), room.min.y + H * (0.5 + 0.48 * sin(t * 0.43 + 4.1)), c.z + R * sin(a2));\n  b3 = vec3(c.x + R * cos(a3), room.min.y + H * (0.5 + 0.48 * sin(t * 0.29 + 5.3)), c.z + R * sin(a3));\n\n  float base = size * H * 0.13;\n  float s0 = base * (1.0 + 0.3 * sin(t * 0.9));\n  float s1 = base * (0.8 + 0.3 * sin(t * 0.7 + 1.0));\n  float s2 = base * (1.1 + 0.3 * sin(t * 0.8 + 2.5));\n  float s3 = base * (0.7 + 0.3 * sin(t * 1.1 + 4.0));\n  r0 = s0 * s0;\n  r1 = s1 * s1;\n  r2 = s2 * s2;\n  r3 = s3 * s3;\n\n  span = goo * 0.8 + 0.05;\n  lo = 1.0 - span * 0.5;\n}\n\nvec3 shade(Led led) {\n  vec3 p = led.room;\n  vec3 k = vec3(1.0, 0.6, 1.0);   // vertically stretched blobs\n  vec3 d = vec3(0.0, 0.0, 0.0);\n  float f = 0.0;\n  d = (p - b0) * k; f = f + r0 / (dot(d, d) + 0.00001);\n  d = (p - b1) * k; f = f + r1 / (dot(d, d) + 0.00001);\n  d = (p - b2) * k; f = f + r2 / (dot(d, d) + 0.00001);\n  d = (p - b3) * k; f = f + r3 / (dot(d, d) + 0.00001);\n\n  float h = clamp((p.y - ylo) * yinv, 0.0, 1.0);\n  float glow = 0.35 + heat * (1.0 - h) * (1.0 - h);\n  vec3 bg = liquid * glow;\n\n  float edge = clamp((f - lo) / span, 0.0, 1.0);\n  edge = edge * edge * (3.0 - 2.0 * edge);\n  float hot = clamp((f - 1.6) * 0.5, 0.0, 1.0);\n\n  vec3 blob = mix(wax, core, hot * 0.6) * (0.75 + 0.25 * glow);\n  return mix(bg, blob, edge);\n}\n```",
+      "is_error": false,
+      "session_id": "bbb2c62f-64f4-4a07-be41-53aab2fa90f6",
+      "wall_s": 45.4,
+      "duration_api_ms": 43756,
+      "cost_usd": 0.14104300000000003,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1720,
+        "cache_read_input_tokens": 11933,
+        "cache_creation_input_tokens": 4676
+      },
+      "thinking_tokens": 81,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2215
+    }
+  ],
+  "started": "2026-10-22T19:58:30",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.2079,
+  "total_wall_s": 87.4,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p08.fx"
+}

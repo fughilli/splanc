@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p15",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Water caustics shimmer \u2014 cylindrical helix lamp\n// Two layers of interfering wave fronts form thin bright caustic filaments.\n// Built from 3D pos (x,z wrap seamlessly around the cylinder); hot math in fixed.\n\nuniform float speed : 0.0 .. 3.0 = 0.6;\nuniform float scale : 4.0 .. 40.0 = 14.0;\nuniform float sharp : 1.0 .. 8.0 = 3.0;\nuniform float glow : 0.0 .. 2.0 = 1.1;\nuniform float fine : 0.0 .. 1.0 = 0.6;\nuniform vec3 deep : color = 0.0, 0.07, 0.16;\nuniform vec3 light : color = 0.55, 0.95, 1.0;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed p5;\nstate fixed p6;\nstate fixed fs;\nstate fixed sh;\nstate fixed fw;\nstate fixed gl;\n\nvoid update() {\n  float t = time * speed;\n  p1 = fixed(fract(t * 0.31));\n  p2 = fixed(fract(t * -0.27));\n  p3 = fixed(fract(t * 0.23));\n  p4 = fixed(fract(t * -0.43));\n  p5 = fixed(fract(t * 0.38));\n  p6 = fixed(fract(t * -0.35));\n  fs = fixed(scale);\n  sh = fixed(sharp);\n  fw = fixed(fine);\n  gl = fixed(glow);\n}\n\nvec3 shade(Led led) {\n  fixed x = fixed(led.pos.x) * fs;\n  fixed y = fixed(led.pos.y) * fs;\n  fixed z = fixed(led.pos.z) * fs;\n\n  // Layer 1: broad caustic net\n  fixed s1 = sin(x * 0.8 + y * 0.6 + p1)\n           + sin(z * 0.9 - y * 0.5 + p2)\n           + sin((x - z) * 0.7 + y * 0.3 + p3);\n  fixed l1 = clamp(1.0 - abs(s1) * sh, 0.0, 1.0);\n\n  // Layer 2: finer, faster shimmer\n  fixed x2 = x * 1.7;\n  fixed y2 = y * 1.7;\n  fixed z2 = z * 1.7;\n  fixed s2 = sin(x2 * 0.6 - y2 * 0.7 + p4)\n           + sin(z2 * 0.8 + y2 * 0.4 + p5)\n           + sin((x2 + z2) * 0.65 - y2 * 0.35 + p6);\n  fixed l2 = clamp(1.0 - abs(s2) * sh, 0.0, 1.0);\n\n  fixed a = l1 * l1;\n  fixed b = l2 * l2;\n  // filaments plus brighter crossings where both layers meet\n  fixed c = (a + b * fw + a * b) * gl;\n\n  return deep + light * float(c);\n}\n```",
+      "is_error": false,
+      "session_id": "10423867-1bd1-450b-a82a-89dbecb0c5ec",
+      "wall_s": 26.1,
+      "duration_api_ms": 24414,
+      "cost_usd": 0.0538826,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2394,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 610
+      },
+      "thinking_tokens": 1349,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1493
+    }
+  ],
+  "started": "2026-10-22T19:40:39",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0539,
+  "total_wall_s": 26.1,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p15.fx"
+}

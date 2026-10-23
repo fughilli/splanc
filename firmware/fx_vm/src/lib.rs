@@ -3502,7 +3502,7 @@ fn bin_arith(mode: u8, a: f32, b: f32) -> f32 {
 // --- soft-float helpers (no libm dependency; small polynomial approximations
 // good enough for LED effects, deterministic on host + wasm + device) ---------
 
-fn sqrtf(x: f32) -> f32 {
+pub fn sqrtf(x: f32) -> f32 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -3667,7 +3667,7 @@ pub fn expf(x: f32) -> f32 {
     let bits = (f2i(i).wrapping_add(127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
-fn logf(x: f32) -> f32 {
+pub fn logf(x: f32) -> f32 {
     if x <= 0.0 {
         return -87.0;
     }
@@ -3677,13 +3677,13 @@ fn logf(x: f32) -> f32 {
     let p = -1.7417939 + m * (2.8212026 + m * (-1.4699568 + m * (0.4471623 - m * 0.0821854)));
     (e as f32) * core::f32::consts::LN_2 + p
 }
-fn powf(a: f32, b: f32) -> f32 {
+pub fn powf(a: f32, b: f32) -> f32 {
     if a <= 0.0 {
         return 0.0;
     }
     expf(b * logf(a))
 }
-fn tanf(x: f32) -> f32 {
+pub fn tanf(x: f32) -> f32 {
     let c = cosf(x);
     if c.abs() < 1e-6 {
         0.0
@@ -3745,7 +3745,7 @@ fn bin_math(f: u8, a: f32, b: f32) -> f32 {
         _ => a,
     }
 }
-fn atan2f(y: f32, x: f32) -> f32 {
+pub fn atan2f(y: f32, x: f32) -> f32 {
     // crude atan2 adequate for effects (angles for radial patterns).
     if x == 0.0 && y == 0.0 {
         return 0.0;
@@ -3772,7 +3772,7 @@ fn atan2f(y: f32, x: f32) -> f32 {
 /// two mults are cheap — replacing the old `fract(sin(x)*k)` GLSL hash, which
 /// dragged the soft-float `sin` into every `hash()` on the FPU-less C6.
 #[inline]
-fn mix32(mut h: u32) -> u32 {
+pub fn mix32(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
     h ^= h >> 15;
@@ -3783,7 +3783,7 @@ fn mix32(mut h: u32) -> u32 {
 
 /// Map a mixed 32-bit hash to a float in [0, 1) (top 24 bits → an exact f32).
 #[inline]
-fn unit_from_hash(h: u32) -> f32 {
+pub fn unit_from_hash(h: u32) -> f32 {
     (h >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
@@ -3890,7 +3890,7 @@ static EXP_LUT: [i32; 256] = [
 /// `sin(turns)` in Q1.`frac` fixed-point. `raw` is the angle in TURNS (1.0 =
 /// 2π) as Q1.`frac`; the result is Q1.`frac` in [-1, 1]. Frac ≤ 15. No range
 /// reduction — the phase wraps by masking the fractional turn (power-of-two).
-fn sin_fix(raw: i32, frac: u32) -> i32 {
+pub fn sin_fix(raw: i32, frac: u32) -> i32 {
     let one = 1i64 << frac; // 1.0 turn
     let phase = (raw as i64) & (one - 1); // fractional turn, 0..one
     let n = SIN_LUT.len() as i64; // 256
@@ -3907,7 +3907,7 @@ fn sin_fix(raw: i32, frac: u32) -> i32 {
 /// `e^x` in Q1.`frac`. `raw` is Q1.`frac` in [-2, 2); the result is Q1.`frac`
 /// SATURATED to [-2, 2) (so exp pins at +2 once x ≳ 0.69 — meant for decay).
 /// Frac ≤ 14.
-fn exp_fix(raw: i32, frac: u32) -> i32 {
+pub fn exp_fix(raw: i32, frac: u32) -> i32 {
     let one = 1i64 << frac;
     let span = 4 * one; // domain width [-2, 2) in Q1.frac
     let shifted = ((raw as i64) + 2 * one).clamp(0, span - 1); // (x+2), 0..span
@@ -3929,7 +3929,7 @@ fn exp_fix(raw: i32, frac: u32) -> i32 {
 
 /// `cos(turns)` in Q1.`frac`: sin shifted a quarter turn (matches the CosFix op).
 #[inline]
-fn cos_fix(raw: i32, frac: u32) -> i32 {
+pub fn cos_fix(raw: i32, frac: u32) -> i32 {
     sin_fix(raw.wrapping_add(1 << (frac.saturating_sub(2))), frac)
 }
 
@@ -3966,7 +3966,7 @@ fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
 }
 
 /// `sqrt(x)` in Q1.`frac` for a scalar slot word.
-fn sqrt_fix(raw: i32, frac: u32) -> i32 {
+pub fn sqrt_fix(raw: i32, frac: u32) -> i32 {
     sqrt_fix_i64(raw as i64, frac) as i32
 }
 
@@ -3983,7 +3983,7 @@ fn tan_fix(raw: i32, frac: u32) -> i32 {
 /// `atan2(y, x)` as a fraction of a TURN in Q1.`frac`, range [-0.5, 0.5). Uses
 /// the same minimax atan poly as the float path, evaluated in Q30 fixed then
 /// rescaled and converted radians→turns (·1/2π) — all integer.
-fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
+pub fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
     if x == 0 && y == 0 {
         return 0;
     }

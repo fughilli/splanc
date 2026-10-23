@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p06",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\nuniform float storm_speed : 0.0 .. 3.0 = 1.0;\nuniform float flash_freq  : 0.1 .. 2.0 = 0.4;\nuniform vec3  cloud_color : color = 0.02, 0.03, 0.09;\nuniform vec3  bolt_color  : color = 0.70, 0.86, 1.0;\nuniform float bolt_spread : 0.05 .. 0.5 = 0.22;\n\n// Precomputed per-frame constants (hoisted out of shade)\nstate float cloud_drift;   // slow angular drift, 0..1\nstate float flash_bright;  // current flash intensity, decays fast\nstate float bolt_s;        // helix-arc position of strike, 0..1\nstate float bolt_y_norm;   // normalised height of strike, 0..1\nstate float next_flash;    // countdown to next flash (seconds)\nstate bool  flash2_arm;    // double-flash pending?\nstate float flash2_t;      // time until second flash\nstate float spread2;       // bolt_spread^2, avoids per-LED multiply\nstate float drift_b;       // -cloud_drift*0.6, for vertical wave\nstate vec3  cloud_base;    // cloud_color * rumble, avoids per-LED vec scale\nstate vec3  bolt_ambient;  // bolt_color * flash*0.3, global fill light\n\nvoid update() {\n    cloud_drift = fract(cloud_drift + dt * storm_speed * 0.015);\n    drift_b     = -cloud_drift * 0.6;\n\n    // Rumble: two slow sinusoids multiplied \u2192 irregular thunder rhythm\n    float rumble = 0.65 + 0.35 * sin(time * 1.7) * sin(time * 0.9);\n    cloud_base   = cloud_color * rumble;\n    spread2      = bolt_spread * bolt_spread;\n\n    // Fast exponential flash decay (~3 frames at 30 fps)\n    flash_bright = flash_bright * max(0.0, 1.0 - dt * 25.0);\n\n    // Double-flash: a quick second strike after the first\n    if (flash2_arm) {\n        flash2_t = flash2_t - dt;\n        if (flash2_t <= 0.0) {\n            flash_bright = 0.5 + hash(time * 2.1) * 0.4;\n            flash2_arm   = false;\n        }\n    }\n\n    // Main flash trigger\n    next_flash = next_flash - dt;\n    if (next_flash <= 0.0) {\n        flash_bright = 0.8 + hash(time) * 0.2;\n        bolt_s       = hash(time * 1.7);\n        bolt_y_norm  = 0.1 + hash(time * 3.3) * 0.8;   // 10%..90% height\n\n        // 45 % chance of a double-flash 50\u2013120 ms later\n        if (hash(time * 5.3) < 0.45) {\n            flash2_arm = true;\n            flash2_t   = 0.05 + hash(time * 7.9) * 0.07;\n        } else {\n            flash2_arm = false;\n        }\n\n        // Randomised interval around 1/flash_freq seconds\n        next_flash = (1.0 / flash_freq) * (0.4 + hash(time * 9.1) * 1.2);\n    }\n\n    // Global fill light precomputed once per frame\n    bolt_ambient = bolt_color * (flash_bright * 0.3);\n}\n\nvec3 shade(Led led) {\n    // Normalise Y to 0..1 (cylinder is 0.30 m tall)\n    float h      = led.pos.y * 3.333;\n\n    // Two cloud waves \u2014 use fixed16 sin (native LUT, no soft-float)\n    float phase1 = fract(led.s * 4.0 + cloud_drift);   // angular banding\n    float phase2 = fract(h   * 2.5 + drift_b);         // vertical layers\n    float wave1  = float(sin(fixed16(phase1)));\n    float wave2  = float(sin(fixed16(phase2)));\n    float cv     = 0.55 + 0.25 * wave1 + 0.20 * wave2; // 0.1 .. 1.0\n\n    vec3 base    = cloud_base * cv;\n\n    // Lightning glow: spatial falloff from bolt position in (s, h) space\n    float ds     = abs(led.s - bolt_s);\n    ds           = min(ds, 1.0 - ds);          // wrap around helix\n    float dh     = h - bolt_y_norm;\n    float dist2  = ds * ds + dh * dh;\n    float glow   = flash_bright * smoothstep(spread2, 0.0, dist2);\n\n    // base cloud + focused bolt glow + global ambient fill\n    return base + bolt_color * glow + bolt_ambient;\n}\n```\n\n**How it works:**\n\n| Layer | Technique |\n|---|---|\n| **Cloud texture** | Two sine waves (angular \u00d7 vertical) using `fixed16` sin \u2014 native LUT, no soft-float per LED |\n| **Rumble** | Product of two slow sinusoids in `update()` \u2192 irregular dim/brighten rhythm like distant thunder |\n| **Flash** | State machine: instant-on, ~3-frame decay (\u00d70.167/frame); 45% chance of a quick double-flash |\n| **Bolt glow** | Smoothstep falloff from `(bolt_s, bolt_y_norm)` in normalised helix-arc \u00d7 height space |\n| **Ambient fill** | 30% of flash brightness diffuses to all LEDs (precomputed `bolt_ambient` vec3 in `update()`) |\n\n**Performance choices:** `cloud_base`, `spread2`, `drift_b`, and `bolt_ambient` are all hoisted to `update()` so `shade()` avoids those per-LED float multiplications. The two dominant sine calls use `fixed16` (integer LUT) instead of soft-float `sin`.",
+      "is_error": false,
+      "session_id": "f495c0c0-0701-46d1-bd92-54f3f90ac73c",
+      "wall_s": 385.1,
+      "duration_api_ms": 383028,
+      "cost_usd": 0.44984369999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 29698,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 511
+      },
+      "thinking_tokens": 28131,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1311
+    }
+  ],
+  "started": "2026-10-22T19:41:53",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.4498,
+  "total_wall_s": 385.1,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p06.fx"
+}

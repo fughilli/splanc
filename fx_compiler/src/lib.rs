@@ -2441,6 +2441,27 @@ impl Compiler {
                 }
                 // Mixed / float: convert any int/fixed arg to float, never reinterpret.
                 self.floaten_args(args)?;
+                // GLSL's clamp(vecN, float, float) / clamp(vecN, vecN, float): CLAMP n
+                // pops n slots for EACH of x, lo, hi, so a scalar bound must be
+                // broadcast first. Without this the VM popped past the operand stack
+                // (index-out-of-bounds panic = a hung player on the device).
+                let (lw, hw) = (args[1].width(), args[2].width());
+                if lw != w || hw != w {
+                    if w == 1 || !(lw == 1 || lw == w) || !(hw == 1 || hw == w) {
+                        return self.err("clamp(x, lo, hi): lo and hi must be scalars or match x's width");
+                    }
+                    if hw == 1 {
+                        self.broadcast_top(w); // [x, lo(lw), hi(w)]
+                    }
+                    if lw == 1 {
+                        // [x, lo, hi(w)] -> [x, hi(w), lo] -> [x, hi(w), lo(w)] -> [x, lo(w), hi(w)]
+                        self.emit2(SWAP, 1);
+                        self.emit(w);
+                        self.broadcast_top(w);
+                        self.emit2(SWAP, w);
+                        self.emit(w);
+                    }
+                }
                 self.emit(CLAMP);
                 self.emit(w);
                 Ok(Ty::vec_of(w))
