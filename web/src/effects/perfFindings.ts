@@ -26,6 +26,7 @@ import {
   costFor,
   decodeOp,
   DISPATCH_FEATURE,
+  fusedFeatures,
   mathFeature,
   parseFxb,
   type CostTable,
@@ -65,7 +66,10 @@ const joinAll = (xs: V[], init: V = C): V => xs.reduce<V>((r, x) => join(r, x), 
 // Context ids (fx_compiler fx_ctx / the disassembler's ctx_name).
 const CTX_WIDTH: Record<number, number> = { 3: 3, 9: 3, 10: 3, 12: 2, 13: 3, 14: 3, 15: 3 };
 const CTX_FRAME = new Set([0, 1, 2, 5, 9, 10, 14, 15]); // time dt frame led.count imu.* room.*
-const CTX_DYNAMIC = new Set([11]); // led.dist: flood_from() re-roots it per frame
+// Fixed per map (memo.rs ctx_variance): pos idx seg s branch uv. Everything
+// else is dynamic — led.dist (flood_from() re-roots it per frame), led.room
+// (follows the fixture pose, not a map upload) and any id added later.
+const CTX_LED = new Set([3, 4, 6, 7, 8, 12]);
 const UN = ["sin", "cos", "abs", "floor", "ceil", "fract", "sqrt", "exp", "log", "sign", "tan"];
 const BIN = ["min", "max", "pow", "mod", "step", "atan2"];
 
@@ -94,7 +98,20 @@ function heavyName(o: DecodedOp): string | null {
   )[o.name] ?? null;
 }
 
-const FLOAT_ARITH = new Set(["Add", "Sub", "Mul", "Div", "Scale", "Mix", "Clamp", "Dot"]);
+const FLOAT_ARITH = new Set(["Add", "Sub", "Mul", "Div", "Scale", "Mix", "Clamp", "Dot", "MulAdd"]);
+
+// R8 operand-fused ops (fx_compiler opt.rs `fuse_operands`): `BinTop mode a`
+// is `X a ; OP` and `BinPair mode a b` is `X a ; Y b ; OP`, where the mode's
+// bits 2-3 / 4-5 say what X / Y load (const, local, state, uniform), bits 0-1
+// the op (add/sub/mul/div) and bit 6 the integer form (AddI/SubI/MulI/MulFix).
+// The loaded operand is NOT on the stack, so its variance must come from the
+// mode — reading only the stack would call `led.uv.x * 9.0 + state0`
+// (= led.uv.x * 9.0 + time * speed after hoisting) LED-invariant.
+const fusedSrc = (mode: number, slot: 0 | 1): number => (mode >> (slot === 0 ? 2 : 4)) & 3;
+const fusedFloatOp = (o: DecodedOp): string | null =>
+  (o.name === "BinTop" || o.name === "BinPair") && (o.operand(0) & 0x40) === 0
+    ? (["Add", "Sub", "Mul", "Div"][o.operand(0) & 3] ?? null)
+    : null;
 const TO_FLOAT = new Set(["I2F", "Fix2F", "FixToF"]);
 const FROM_FLOAT = new Set(["F2I", "F2Fix", "FixFromF"]);
 
@@ -105,6 +122,7 @@ interface Prog {
   entries: number[];
   bufWidth: (id: number) => number;
   consts: Uint32Array;
+  code: Uint8Array;
 }
 
 function decodeProgram(fxb: Uint8Array): Prog | null {
@@ -140,7 +158,8 @@ function decodeProgram(fxb: Uint8Array): Prog | null {
   const entries = [...new Set([h.updateEntry, h.shadeEntry, h.prepEntry, ...calls].filter((e) => e !== 0xffff))].sort(
     (a, b) => a - b,
   );
-  return { ops, byPc, shade: h.shadeEntry, entries, bufWidth: (id) => widths[id] ?? 1, consts: h.consts };
+  const bufWidth = (id: number): number => widths[id] ?? 1;
+  return { ops, byPc, shade: h.shadeEntry, entries, bufWidth, consts: h.consts, code: h.code };
 }
 
 /** (pops, pushes) in stack slots. */
@@ -170,6 +189,16 @@ function effect(o: DecodedOp, p: Prog): [number, number] {
       return [0, CTX_WIDTH[a(0)] ?? 1];
     case "LoadCtxFix":
       return [0, 1];
+    case "LoadCtxLanes": // id, src, k, m
+      return [0, a(3)];
+    case "PushConsts":
+      return [0, a(0)];
+    case "BinTop":
+      return [1, 1];
+    case "BinPair":
+      return [0, 1];
+    case "MulAdd":
+      return [3 * n, n];
     case "Add":
     case "Sub":
     case "Mul":
@@ -322,8 +351,21 @@ class Variance {
       const a = o.operand;
       switch (o.name) {
         case "PushConst":
-          out = [C];
+        case "PushConsts":
+          out = new Array<V>(pushes).fill(C);
           break;
+        case "BinTop":
+        case "BinPair": {
+          // The fused operand(s): const / local / state / uniform.
+          const src = (slot: 0 | 1): V => {
+            const kind = fusedSrc(a(0), slot);
+            const idx = a(1 + 2 * slot) | (a(2 + 2 * slot) << 8);
+            return kind === 0 ? C : kind === 1 ? (lc.get(idx) ?? C) : F;
+          };
+          const fused = o.name === "BinTop" ? src(0) : join(src(0), src(1));
+          out = [joinAll(args, fused)];
+          break;
+        }
         case "LoadUniform":
         case "LoadState":
           out = new Array<V>(pushes).fill(F);
@@ -358,9 +400,10 @@ class Variance {
           out = new Array<V>(pushes).fill(join(F, joinAll(args)));
           break;
         case "LoadCtx":
-        case "LoadCtxFix": {
+        case "LoadCtxFix":
+        case "LoadCtxLanes": {
           const id = a(0);
-          const c: V = CTX_FRAME.has(id) ? F : CTX_DYNAMIC.has(id) ? D : L;
+          const c: V = CTX_FRAME.has(id) ? F : CTX_LED.has(id) ? L : D;
           out = new Array<V>(pushes).fill(c);
           break;
         }
@@ -621,9 +664,12 @@ function perLedLines(src: string | undefined, re: RegExp): number[] {
 
 // -- rules ------------------------------------------------------------------------
 
-/** Cycles of one execution of `o` under the table (dispatch + lanes × compute). */
-function opCycles(o: DecodedOp, t: CostTable): number {
+/** Cycles of one execution of `o` under the table (dispatch + lanes × compute;
+ * a fused op is priced as the plain ops it stands for, like the estimator). */
+function opCycles(o: DecodedOp, t: CostTable, code: Uint8Array): number {
   const disp = t.costs[DISPATCH_FEATURE] ?? 0;
+  const fused = fusedFeatures(o.name, code, o.pc);
+  if (fused) return disp + fused.reduce((s, [f, w]) => s + w * costFor(t.costs, f, t.fallbackCost), 0);
   return disp + o.lanes * costFor(t.costs, mathFeature(o.name, o.operand(0)), t.fallbackCost);
 }
 
@@ -657,7 +703,7 @@ export function perfFindings(fxb: Uint8Array, opts: FindingsOptions): PerfFindin
     const key = `${name}/${cls === C ? F : cls}`;
     const h = heavy.get(key) ?? { name, cls: cls === C ? F : cls, n: 0, cycles: 0, lanes: o.lanes };
     h.n += m;
-    h.cycles += m * opCycles(o, t);
+    h.cycles += m * opCycles(o, t, p.code);
     heavy.set(key, h);
   }
   const fixedCost: Record<string, string> = {
@@ -800,7 +846,7 @@ export function perfFindings(fxb: Uint8Array, opts: FindingsOptions): PerfFindin
     if (heavyName(o) || rec.get(pc)?.res !== F) continue;
     const [, pushes] = effect(o, p);
     if (pushes === 0 || /^(Load|Push|Swizzle|Swap)/.test(o.name)) continue;
-    frameCheap += m * opCycles(o, t);
+    frameCheap += m * opCycles(o, t, p.code);
     frameCheapN += m;
   }
   if (frameCheapN >= 3)
@@ -849,10 +895,10 @@ export function perfFindings(fxb: Uint8Array, opts: FindingsOptions): PerfFindin
   let fArithN = 0;
   for (const [pc, m] of counts) {
     const o = p.ops[p.byPc.get(pc)!]!;
-    if (!FLOAT_ARITH.has(o.name)) continue;
+    if (!FLOAT_ARITH.has(o.name) && !fusedFloatOp(o)) continue;
     const c = rec.get(pc)?.res ?? D;
     if (c === F || c === C) continue;
-    fArith += m * opCycles(o, t);
+    fArith += m * opCycles(o, t, p.code);
     fArithN += m * o.lanes;
   }
   if (fArithN >= 12)
@@ -867,6 +913,11 @@ export function perfFindings(fxb: Uint8Array, opts: FindingsOptions): PerfFindin
   let divC = 0;
   for (const [pc, m] of counts) {
     const o = p.ops[p.byPc.get(pc)!]!;
+    if (fusedFloatOp(o) === "Div") {
+      // `x / c` fused as BinTop (divisor = the fused operand) or BinPair (its second).
+      if (fusedSrc(o.operand(0), o.name === "BinTop" ? 0 : 1) === 0) divC += m;
+      continue;
+    }
     if (o.name !== "Div") continue;
     const r = rec.get(pc);
     if (r && r.args.length && joinAll(r.args.slice(r.args.length - o.lanes)) === C) divC += m * o.lanes;
@@ -885,7 +936,8 @@ export function perfFindings(fxb: Uint8Array, opts: FindingsOptions): PerfFindin
     const n = l.trips * l.mult;
     if (n < 2) return;
     let body = 0;
-    for (const o of p.ops) if (o.pc >= l.head && o.pc <= l.back) body += (counts.get(o.pc) ?? 0) * opCycles(o, t);
+    for (const o of p.ops)
+      if (o.pc >= l.head && o.pc <= l.back) body += (counts.get(o.pc) ?? 0) * opCycles(o, t, p.code);
     add(
       "loop_per_led",
       body * 0.5,
