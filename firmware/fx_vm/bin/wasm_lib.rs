@@ -326,11 +326,22 @@ impl FxReplay {
         self.shade_inner(rec, idx, false).0
     }
 
-    /// Like `shade`, on zeroed scratch (the device's debug_fx_led run), then
-    /// returns [r, g, b, outcome, has_ctx, instrs (u32 LE), stack_max (u16 LE)];
-    /// read the locals with `locals()`.
+    /// Like `shade`, but LED `idx`'s per-LED buffer elements are restored after
+    /// the run (the device's debugger re-runs: no side effect on the state).
+    pub fn shade_isolated(&mut self, rec: &[u8], idx: u32) -> Vec<u8> {
+        let saved = self.save_led(idx);
+        let out = self.shade_inner(rec, idx, false).0;
+        self.restore_led(idx, &saved);
+        out
+    }
+
+    /// The device's debug_fx_led run: isolated (as `shade_isolated`) on zeroed
+    /// scratch. Returns [r, g, b, outcome, has_ctx, instrs (u32 LE), stack_max
+    /// (u16 LE)]; read the locals with `locals()`.
     pub fn shade_debug(&mut self, rec: &[u8], idx: u32) -> Vec<u8> {
+        let saved = self.save_led(idx);
         let (mut out, instrs, stack) = self.shade_inner(rec, idx, true);
+        self.restore_led(idx, &saved);
         out.extend(instrs.to_le_bytes());
         out.extend(stack.to_le_bytes());
         out
@@ -343,6 +354,25 @@ impl FxReplay {
 }
 
 impl FxReplay {
+    /// (offset, bytes) of LED `idx`'s per-LED buffer elements.
+    fn save_led(&self, idx: u32) -> Vec<(usize, Vec<u8>)> {
+        let mut out = Vec::new();
+        if let Ok(prog) = Program::parse(&self.bytes) {
+            dbg::led_elem_ranges(&prog, self.frame.led_count as usize, idx as usize, |o, l| {
+                if let Some(b) = self.arena.get(o..o + l) {
+                    out.push((o, b.to_vec()));
+                }
+            });
+        }
+        out
+    }
+
+    fn restore_led(&mut self, _idx: u32, saved: &[(usize, Vec<u8>)]) {
+        for (o, b) in saved {
+            self.arena[*o..*o + b.len()].copy_from_slice(b);
+        }
+    }
+
     fn shade_inner(&mut self, rec: &[u8], idx: u32, debug: bool) -> (Vec<u8>, u32, u16) {
         let Ok(prog) = Program::parse(&self.bytes) else { return (vec![0, 0, 0, 1, 0], 0, 0) };
         let Some(led) = dbg::led_from_record(rec, idx) else { return (vec![0, 0, 0, 0, 0], 0, 0) };

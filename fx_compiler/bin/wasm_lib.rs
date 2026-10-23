@@ -5,7 +5,7 @@
 
 use ledmapper_fx_compiler::{
     compile, compile_with, disassemble, exports_manifest_json, manifest_json, CompileOptions, Compiled,
-    Diagnostic,
+    Diagnostic, symbols_json,
 };
 use wasm_bindgen::prelude::*;
 
@@ -16,6 +16,8 @@ pub struct CompileResult {
     manifest: String,
     /// Driver export table JSON (FUG-107); "[]" for an effect.
     exports: String,
+    /// The FX debugger's symbol table JSON: [{name, kind, func, slot, width}].
+    symbols: String,
     diagnostics: String,
     /// Non-fatal lints (JSON, same shape as diagnostics; "[]" when none).
     warnings: String,
@@ -38,6 +40,10 @@ impl CompileResult {
     #[wasm_bindgen(getter)]
     pub fn exports(&self) -> String {
         self.exports.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn symbols(&self) -> String {
+        self.symbols.clone()
     }
     #[wasm_bindgen(getter)]
     pub fn diagnostics(&self) -> String {
@@ -69,6 +75,7 @@ fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
             bytecode: c.fxb,
             manifest: manifest_json(&c.uniforms),
             exports: exports_manifest_json(&c.exports),
+            symbols: symbols_json(&c.symbols),
             diagnostics: "[]".into(),
             warnings: diags_json(&c.warnings),
         },
@@ -77,6 +84,7 @@ fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
             bytecode: vec![],
             manifest: "[]".into(),
             exports: "[]".into(),
+            symbols: "[]".into(),
             diagnostics: diags_json(&ds),
             warnings: "[]".into(),
         },

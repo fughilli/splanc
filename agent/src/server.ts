@@ -38,6 +38,7 @@ import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixt
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
 import { canaryRollout, resolvePackage } from "./firmware";
+import { registerFxDebugTools } from "./fxdebug";
 import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
@@ -1042,6 +1043,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         ),
       ),
   );
+
+  // -- FX debugger (pause / step / snapshot / compare with the preview) ------------------
+  registerFxDebugTools(server, fan, knownSources);
 
   // -- fixture review -------------------------------------------------------------------
   server.registerTool(

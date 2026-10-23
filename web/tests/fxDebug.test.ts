@@ -168,6 +168,9 @@ class StubReplay implements FxReplayWasm {
     this.loc[2] = v;
     return Uint8Array.from([v, idx & 255, (l.seg + 1) & 255, 0, 1]);
   }
+  shade_isolated(rec: Uint8Array, idx: number): Uint8Array {
+    return this.shade(rec, idx);
+  }
   shade_debug(rec: Uint8Array, idx: number): Uint8Array {
     this.loc.fill(0);
     const o = this.shade(rec, idx);

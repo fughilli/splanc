@@ -34,7 +34,7 @@ import {
   type GetFxSnapshotMessage,
   type MappingBundle,
 } from "../net/proto";
-import { deriveLedTopology } from "./preview";
+import { deriveLedTopology, type FxSymbol } from "./preview";
 
 // -- the link -----------------------------------------------------------------
 
@@ -221,6 +221,114 @@ export function outputStage(rgb: ArrayLike<number>, lut: Uint8Array | null, brig
   });
   if (brightness < 255) for (let k = 0; k < 3; k++) c[k] = (c[k]! * brightness) >> 8;
   return [c[0]!, c[1]!, c[2]!];
+}
+
+// -- the .fxb (header, manifest, buffer table) -----------------------------------
+
+export interface FxbBuffer {
+  /** 0 = per-LED buffer, 1 = 2D texture. */
+  kind: number;
+  /** Components per element. */
+  elem: number;
+  /** Component storage (fx_vm `comp`: 0 f32, 1 fixed16, 2 fixed8, 3 i16, 4 i8,
+   * 5 fixed16->float, 6 fixed8->float, 7 i32). */
+  comp: number;
+  w: number;
+  h: number;
+}
+
+export interface FxbLayout {
+  version: number;
+  flags: number;
+  nState: number;
+  nUniformSlots: number;
+  manifest: { name: string; slot: number; width: number }[];
+  buffers: FxbBuffer[];
+}
+
+/** Parse a .fxb's header, uniform manifest and buffer table (fx_vm Program::parse). */
+export function parseFxbLayout(fxb: Uint8Array): FxbLayout | null {
+  if (fxb.length < 18 || String.fromCharCode(...fxb.subarray(0, 4)) !== "FXB1") return null;
+  const dv = new DataView(fxb.buffer, fxb.byteOffset, fxb.byteLength);
+  const flags = fxb[5]!;
+  const mlen = dv.getUint16(8, true);
+  const nConsts = dv.getUint16(10, true);
+  const codeLen = dv.getUint16(12, true);
+  let manifest: FxbLayout["manifest"] = [];
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(fxb.subarray(18, 18 + mlen))) as unknown;
+    if (Array.isArray(parsed)) manifest = parsed as FxbLayout["manifest"];
+  } catch {
+    manifest = [];
+  }
+  let o = 18 + mlen + nConsts * 4 + codeLen;
+  const buffers: FxbBuffer[] = [];
+  if (flags & 0x01 && o < fxb.length) {
+    const nb = fxb[o]!;
+    o++;
+    for (let i = 0; i < nb && o + 7 <= fxb.length; i++, o += 7) {
+      buffers.push({ kind: fxb[o]!, elem: fxb[o + 1]!, comp: fxb[o + 2]!, w: dv.getUint16(o + 3, true), h: dv.getUint16(o + 5, true) });
+    }
+  }
+  return { version: fxb[4]!, flags, nState: fxb[6]!, nUniformSlots: fxb[7]!, manifest, buffers };
+}
+
+const COMP_BYTES = [4, 2, 1, 2, 1, 2, 1, 4];
+
+/** Element `i` of buffer `b` from a deck's arena, as numbers (fx_vm
+ * comp_load_num: fixed/int dequantized). `ledCount` sizes per-LED buffers. */
+export function bufferElement(layout: FxbLayout, arena: Uint8Array, b: number, i: number, ledCount: number): number[] | null {
+  let base = 0;
+  for (let k = 0; k < b; k++) {
+    const d = layout.buffers[k];
+    if (!d) return null;
+    base += d.elem * (COMP_BYTES[d.comp] ?? 4) * (d.kind === 0 ? ledCount : d.w * d.h);
+  }
+  const d = layout.buffers[b];
+  if (!d) return null;
+  const cb = COMP_BYTES[d.comp] ?? 4;
+  const at = base + i * d.elem * cb;
+  if (at + d.elem * cb > arena.length) return null;
+  const dv = new DataView(arena.buffer, arena.byteOffset, arena.byteLength);
+  const out: number[] = [];
+  for (let c = 0; c < d.elem; c++) {
+    const p = at + c * cb;
+    switch (d.comp) {
+      case 0:
+        out.push(dv.getFloat32(p, true));
+        break;
+      case 7:
+        out.push(dv.getInt32(p, true));
+        break;
+      case 3:
+        out.push(dv.getInt16(p, true));
+        break;
+      case 4:
+        out.push(dv.getInt8(p));
+        break;
+      case 1:
+      case 5:
+        out.push(dv.getInt16(p, true) / (1 << 14));
+        break;
+      case 2:
+      case 6:
+        out.push(dv.getInt8(p) / (1 << 6));
+        break;
+      default:
+        out.push(0);
+    }
+  }
+  return out;
+}
+
+/** FNV-1a of a .fxb (the device's fxb_hash), to match a compiled effect to a deck. */
+export function fxbHash(b: Uint8Array): number {
+  let h = 0x811c9dc5;
+  for (const x of b) {
+    h ^= x;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
 }
 
 // -- the protocol driver ----------------------------------------------------------
@@ -451,6 +559,9 @@ export interface FxReplayWasm {
   set_frame(ctx: Uint8Array): boolean;
   update(): number;
   shade(rec: Uint8Array, idx: number): Uint8Array;
+  /** shade() with LED idx's per-LED buffer elements restored afterwards. */
+  shade_isolated(rec: Uint8Array, idx: number): Uint8Array;
+  /** The device's debug_fx_led run: isolated, zeroed scratch; + instrs/stack. */
   shade_debug(rec: Uint8Array, idx: number): Uint8Array;
   locals(): Float32Array;
   free(): void;
@@ -721,9 +832,9 @@ export interface LocalsDiff {
   deviceRgbJit: number[] | null;
   hostRgb: number[];
   /** Locals that differ, by slot (f32). */
-  differing: { slot: number; device: number; host: number }[];
+  differing: { slot: number; device: number; host: number; name?: string }[];
   /** The preview-input re-run's locals that differ from the device-input run. */
-  inputDriven?: { slot: number; deviceInputs: number; previewInputs: number }[];
+  inputDriven?: { slot: number; deviceInputs: number; previewInputs: number; name?: string }[];
   deviceInstructions: number;
   hostInstructions: number;
 }
@@ -739,7 +850,7 @@ export interface CompareReport {
   /** Device output != host replay with the device's own inputs. */
   engine: { mismatched: number; firstDivergent: number | null; maxDelta: number; leds: LedMismatch[] };
   /** Post-frame state slots / buffer bytes that diverged. */
-  state: Record<number, { slot: number; device: number; host: number }[]>;
+  state: Record<number, { slot: number; device: number; host: number; name?: string }[]>;
   arena: Record<number, { bytes: number; firstOffset: number } | null>;
   /** The preview's inputs differ from the device's (and change the colour). */
   inputs: { differing: number; colourChanging: number; leds: (InputDifference & { previewRgb?: number[]; deviceRgb?: number[] })[] } | null;
@@ -752,6 +863,36 @@ export interface CompareReport {
 }
 
 const ORDER_NAMES = ["R", "G", "B"];
+
+/**
+ * Name a VM slot from the compiler's symbol table: `phase`, `c.y` / `acc[4]`
+ * for a component of a wider variable, `shade:h` for a local. Undefined when
+ * the table doesn't cover it (e.g. a compiler temporary).
+ */
+export function slotName(symbols: FxSymbol[] | undefined, kind: "state" | "local", slot: number): string | undefined {
+  if (!symbols) return undefined;
+  const s = symbols.find(
+    (x) =>
+      (kind === "state" ? x.kind === "state" : x.kind === "local" || x.kind === "param") &&
+      slot >= x.slot &&
+      slot < x.slot + x.width,
+  );
+  if (!s) return undefined;
+  const k = slot - s.slot;
+  const comp = s.width === 1 ? "" : s.width <= 4 ? `.${"xyzw"[k]}` : `[${k}]`;
+  return `${s.func ? `${s.func}:` : ""}${s.name}${comp}`;
+}
+
+/** Attach slot names to a report's state / locals diffs (in place). */
+export function nameSlots(r: CompareReport, symbols: FxSymbol[] | undefined): CompareReport {
+  if (!symbols) return r;
+  for (const v of Object.values(r.state)) for (const d of v) d.name = slotName(symbols, "state", d.slot) ?? "";
+  for (const l of r.locals) {
+    for (const d of l.differing) d.name = slotName(symbols, "local", d.slot) ?? "";
+    for (const d of l.inputDriven ?? []) d.name = slotName(symbols, "local", d.slot) ?? "";
+  }
+  return r;
+}
 
 /**
  * Pause (if needed), snapshot, step ONE frame, snapshot again, replay it on the
@@ -771,6 +912,8 @@ export async function compareWithPreview(
     /** Divergent LEDs to pull device + host VM locals for (default 3). */
     debugLeds?: number;
     resume?: boolean;
+    /** The compiler's symbol table for the running effect (names the slots). */
+    symbols?: FxSymbol[];
   } = {},
 ): Promise<CompareReport> {
   let st = await dbg.status(opts.holdMs);
@@ -790,7 +933,7 @@ export async function compareWithPreview(
   }
   const rep = replayFrame(vm, before, after);
   try {
-    return await explain(dbg, vm, before, after, rep, opts);
+    return nameSlots(await explain(dbg, vm, before, after, rep, opts), opts.symbols);
   } finally {
     disposeReplay(rep);
     if (opts.resume) await dbg.resume();
@@ -803,8 +946,12 @@ async function explain(
   before: FxSnapshot,
   after: FxSnapshot,
   rep: ReplayResult,
-  opts: { bundle?: MappingBundle | null; debugLeds?: number },
+  opts: { bundle?: MappingBundle | null; debugLeds?: number; symbols?: FxSymbol[] },
 ): Promise<CompareReport> {
+  const nm = (kind: "state" | "local", slot: number): string => {
+    const n = slotName(opts.symbols, kind, slot);
+    return n ? `${n} (slot ${slot})` : `slot ${slot}`;
+  };
   const st = after.state;
   const findings: string[] = [];
   const notes = [...rep.notes];
@@ -827,16 +974,15 @@ async function explain(
     );
   }
   for (const [d, v] of stateBad) {
-    findings.push(`ENGINE: deck ${d} update() left ${v.length} state slot(s) different (first slot ${v[0]!.slot}: device ${v[0]!.device} vs host ${v[0]!.host}).`);
+    findings.push(`ENGINE: deck ${d} update() left ${v.length} state slot(s) different (first ${nm("state", v[0]!.slot)}: device ${v[0]!.device} vs host ${v[0]!.host}).`);
   }
   for (const [d, v] of arenaBad) {
     findings.push(`ENGINE: deck ${d} buffers differ after the frame (${v!.bytes} bytes, first at offset ${v!.firstOffset}).`);
   }
 
   // 2) Locals for the first divergent LEDs: the device's interpreted re-run vs
-  // the host's identical re-run (both: the normal shade, then a zeroed-scratch
-  // one), in the same order on both sides so buffer-writing effects stay in step.
-  // Done BEFORE the input probes below, which shade the host VM with other inputs.
+  // the host's identical re-run (zeroed scratch; both sides restore the LED's
+  // per-LED buffer elements around every re-run, so neither perturbs the state).
   const locals: LocalsDiff[] = [];
   const want = opts.debugLeds ?? 3;
   for (const m of rep.mismatches.slice(0, want)) {
@@ -846,7 +992,6 @@ async function explain(
       try {
         const dev = await dbg.debugLed(m.led, d.deck);
         const rec = d.ledContext.subarray((m.led - rep.first) * LED_CTX_BYTES, (m.led - rep.first + 1) * LED_CTX_BYTES);
-        r.shade(rec, m.led);
         const h = r.shade_debug(rec, m.led);
         const hl = r.locals();
         const differing: LocalsDiff["differing"] = [];
@@ -869,7 +1014,7 @@ async function explain(
         if (differing.length > 0) {
           findings.push(
             `ENGINE: LED ${m.led} deck ${d.deck}: ${differing.length} VM local(s) differ between the device's interpreter and the host's ` +
-              `(first slot ${differing[0]!.slot}: device ${differing[0]!.device} vs host ${differing[0]!.host}).`,
+              `(first ${nm("local", differing[0]!.slot)}: device ${differing[0]!.device} vs host ${differing[0]!.host}).`,
           );
         }
       } catch (e) {
@@ -893,14 +1038,15 @@ async function explain(
       const diffs = diffLedInputs(dev, rep.first, pv, usesUv);
       let changing = 0;
       let probed = 0;
+      let probeFinding: string | null = null;
       const leds: (InputDifference & { previewRgb?: number[]; deviceRgb?: number[] })[] = [];
       for (const df of diffs) {
         const e: InputDifference & { previewRgb?: number[]; deviceRgb?: number[] } = { ...df };
         if (r && df.preview) {
           const prec = encodeLedRecord(df.preview);
           const drec = d0.ledContext.subarray((df.led - rep.first) * LED_CTX_BYTES, (df.led - rep.first + 1) * LED_CTX_BYTES);
-          const pc = Array.from(r.shade(prec, df.led).subarray(0, 3));
-          const dc = Array.from(r.shade(drec, df.led).subarray(0, 3));
+          const pc = Array.from(r.shade_isolated(prec, df.led).subarray(0, 3));
+          const dc = Array.from(r.shade_isolated(drec, df.led).subarray(0, 3));
           e.previewRgb = pc;
           e.deviceRgb = dc;
           const changes = pc.some((v, k) => v !== dc[k]);
@@ -914,6 +1060,13 @@ async function explain(
             const inputDriven: NonNullable<LocalsDiff["inputDriven"]> = [];
             for (let k = 0; k < Math.min(pl.length, dl.length); k++) {
               if (!sameF32(pl[k]!, dl[k]!)) inputDriven.push({ slot: k, deviceInputs: dl[k]!, previewInputs: pl[k]! });
+            }
+            if (probed === 1 && inputDriven.length > 0) {
+              const list = inputDriven
+                .slice(0, 4)
+                .map((x) => `${nm("local", x.slot)} ${x.deviceInputs} on the device vs ${x.previewInputs} in the preview`)
+                .join("; ");
+              probeFinding = `INPUTS: LED ${df.led} (${df.fields.join(", ")}): the input difference moves ${inputDriven.length} local(s): ${list}.`;
             }
             locals.push({
               led: df.led,
@@ -947,6 +1100,7 @@ async function explain(
           findings.push("INPUTS: position deltas are tiny — the device stores positions as 24-bit floats (F24); effects that hash/floor/step on positions can flip on them.");
         if (kinds.has("no_device_map_entry"))
           findings.push("INPUTS: some LEDs have no map entry on the device (they render black) but do in the preview — the device's map is shorter or different.");
+        if (probeFinding) findings.push(probeFinding);
       }
     }
   } else {

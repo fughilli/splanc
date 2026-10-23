@@ -16,7 +16,9 @@ import {
   FxPreview,
   installFxModules,
   type FxCompiled,
+  type FxSymbol,
 } from "../../web/src/fx/preview";
+import type { ReplayVm } from "../../web/src/fx/fxDebug";
 import { parseFxbTextures, type FxbTexture } from "../../web/src/net/fxbTextures";
 import type { MappingBundle } from "../../web/src/net/proto";
 import { encodePng } from "./png";
@@ -113,6 +115,8 @@ export interface CompileOutcome {
   bytecodeBytes: number;
   textures: FxbTexture[];
   fxb: Uint8Array;
+  /** The FX debugger's symbol table (absent from older compilers). */
+  symbols?: FxSymbol[];
 }
 
 /** Compile effect source with the host compiler matching this bundle's firmware. */
@@ -126,6 +130,7 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
     bytecodeBytes: r.bytecode.length,
     textures: r.ok ? parseFxbTextures(r.bytecode) : [],
     fxb: r.bytecode,
+    ...(r.symbols ? { symbols: r.symbols } : {}),
   };
 }
 
@@ -133,6 +138,14 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
  * source-level, so they apply whatever firmware compiles it). */
 export async function lintWarnings(source: string): Promise<{ line: number; col: number; msg: string }[]> {
   return (await compile(source)).warnings ?? [];
+}
+
+/** The FX debugger's host replay from a toolchain's VM (the player's
+ * version-matched one when given), or null when that VM build predates it. */
+export async function replayVm(tc?: Toolchain): Promise<ReplayVm | null> {
+  const chosen = tc ?? (await hostToolchain());
+  const vm = chosen.vm as Partial<ReplayVm>;
+  return vm.FxReplay && vm.fx_blend_rgb8 ? { FxReplay: vm.FxReplay, fx_blend_rgb8: vm.fx_blend_rgb8 } : null;
 }
 
 export interface PreviewFrame {
