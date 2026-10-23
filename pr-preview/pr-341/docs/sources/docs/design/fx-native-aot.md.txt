@@ -170,7 +170,7 @@ entries before reusing the memory, and re-programs them for the new image.
 | option | RAM | flash | notes |
 |---|---|---|---|
 | **arena sub-region (chosen)** | within the deck's existing arena share, 0 extra | 0 | never touches general heap; VM fallback if it doesn't fit |
-| bench image: static 32 KB region | 32 KB | 0 | stages 1–2 measurement only (no radios); RWX is fine there |
+| bench image: static 8 KB region | 8 KB | 0 | stages 1–2 measurement only (no radios); RWX is fine there |
 | ~~netstack heap block~~ | ~~image size~~ | 0 | rejected by the owner: must not take general heap |
 | ~~dedicated flash partition~~ | 0 | ~~64 KB~~ | rejected: no new partition; nothing executes from flash |
 
@@ -351,9 +351,34 @@ first-party images. Don't build (c).**
 
 **Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):**
 
-<!-- AOT_RESULTS -->
-_On-C6 AOT cycle numbers are captured by `firmware/fx_perf_bench` (`fxpb aot …`
-lines) and filled in here from a rig run; see the PR body for the latest table._
+Rig-2 C6 (`c6-*`, 2026-10-23), `firmware/fx_perf_bench` `fxpb aot` vs `fxpb vm`
+lines. Cycles/LED and ms/frame include update() and the per-LED framing
+(`fill_led`), same as the VM rows. **Every lowered effect matched the VM on
+every LED (`maxdiff=0`, `off2=0`) at both 500 and 2048 LEDs.**
+
+| effect | VM cyc/LED | AOT cyc/LED | speedup | VM ms @500 | AOT ms @500 | VM ms @2048 | AOT ms @2048 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| solid | 2,303 | 1,283 | 1.80x | 7.2 | 4.0 | 28.9 | 16.4 |
+| sweep | 5,373 | 4,026 | 1.33x | 16.8 | 12.6 | 68.2 | 51.3 |
+| gradient | 7,409 | 5,692 | 1.30x | 23.2 | 17.8 | 94.3 | 72.9 |
+| pulses | 8,528 | 6,759 | 1.26x | 26.7 | 21.1 | 108.5 | 86.5 |
+| sparkle | 8,042 | 6,037 | 1.33x | 25.1 | 18.9 | 102.4 | 77.1 |
+| cylinder | 10,253 | 7,750 | 1.32x | 32.0 | 24.2 | 131.0 | 98.8 |
+| plasma | 15,400 | 11,374 | 1.35x | 48.1 | 35.5 | 196.4 | 145.6 |
+| noise | 21,558 | 13,425 | 1.61x | 67.4 | 42.0 | 275.3 | 171.9 |
+| particles | 26,882 | 16,383 | 1.64x | 84.0 | 51.2 | 342.1 | 209.1 |
+
+Not lowered (VM fallback): flood (graph/flood), rain and texture (buffers),
+rain_naive (image > the bench's 8 KB region).
+
+**Reading it.** 1.26–1.80x over the VM, below the study's 2–5x for hand-written
+f32 twins. Every float op is one call to a single generic helper (window spill,
+indirect call, operand decode, reload), so float-heavy shaders are still
+helper-bound; the integer/control part is inline. The biggest remaining levers:
+per-op specialised helpers (or inline soft-float calls straight to `__addsf3`
+etc. with the slot registers as arguments, no window), inlining the cheap float
+ops (neg/abs/compare/select), and lowering user functions and buffers so more
+effects qualify.
 
 **Not verified / out of scope here:**
 

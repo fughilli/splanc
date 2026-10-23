@@ -535,8 +535,8 @@ entries before reusing the memory, and re-programs them for the new image.</p>
 <td><p>0</p></td>
 <td><p>never touches general heap; VM fallback if it doesn’t fit</p></td>
 </tr>
-<tr class="row-odd"><td><p>bench image: static 32 KB region</p></td>
-<td><p>32 KB</p></td>
+<tr class="row-odd"><td><p>bench image: static 8 KB region</p></td>
+<td><p>8 KB</p></td>
 <td><p>0</p></td>
 <td><p>stages 1–2 measurement only (no radios); RWX is fine there</p></td>
 </tr>
@@ -763,9 +763,118 @@ on-C6 <code class="docutils literal notranslate"><span class="pre">aot</span></c
 <li><p>The <strong>arena W^X scheme is hardware-confirmed</strong> (the PMA probe above).</p></li>
 </ul>
 <p><strong>Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):</strong></p>
-<!-- AOT_RESULTS -->
-<p><em>On-C6 AOT cycle numbers are captured by <code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench</span></code> (<code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">aot</span> <span class="pre">…</span></code>
-lines) and filled in here from a rig run; see the PR body for the latest table.</em></p>
+<p>Rig-2 C6 (<code class="docutils literal notranslate"><span class="pre">c6-*</span></code>, 2026-10-23), <code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench</span></code> <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">aot</span></code> vs <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">vm</span></code>
+lines. Cycles/LED and ms/frame include update() and the per-LED framing
+(<code class="docutils literal notranslate"><span class="pre">fill_led</span></code>), same as the VM rows. <strong>Every lowered effect matched the VM on
+every LED (<code class="docutils literal notranslate"><span class="pre">maxdiff=0</span></code>, <code class="docutils literal notranslate"><span class="pre">off2=0</span></code>) at both 500 and 2048 LEDs.</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>VM cyc/LED</p></th>
+<th class="head text-right"><p>AOT cyc/LED</p></th>
+<th class="head text-right"><p>speedup</p></th>
+<th class="head text-right"><p>VM ms &#64;500</p></th>
+<th class="head text-right"><p>AOT ms &#64;500</p></th>
+<th class="head text-right"><p>VM ms &#64;2048</p></th>
+<th class="head text-right"><p>AOT ms &#64;2048</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid</p></td>
+<td class="text-right"><p>2,303</p></td>
+<td class="text-right"><p>1,283</p></td>
+<td class="text-right"><p>1.80x</p></td>
+<td class="text-right"><p>7.2</p></td>
+<td class="text-right"><p>4.0</p></td>
+<td class="text-right"><p>28.9</p></td>
+<td class="text-right"><p>16.4</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>5,373</p></td>
+<td class="text-right"><p>4,026</p></td>
+<td class="text-right"><p>1.33x</p></td>
+<td class="text-right"><p>16.8</p></td>
+<td class="text-right"><p>12.6</p></td>
+<td class="text-right"><p>68.2</p></td>
+<td class="text-right"><p>51.3</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>7,409</p></td>
+<td class="text-right"><p>5,692</p></td>
+<td class="text-right"><p>1.30x</p></td>
+<td class="text-right"><p>23.2</p></td>
+<td class="text-right"><p>17.8</p></td>
+<td class="text-right"><p>94.3</p></td>
+<td class="text-right"><p>72.9</p></td>
+</tr>
+<tr class="row-odd"><td><p>pulses</p></td>
+<td class="text-right"><p>8,528</p></td>
+<td class="text-right"><p>6,759</p></td>
+<td class="text-right"><p>1.26x</p></td>
+<td class="text-right"><p>26.7</p></td>
+<td class="text-right"><p>21.1</p></td>
+<td class="text-right"><p>108.5</p></td>
+<td class="text-right"><p>86.5</p></td>
+</tr>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>8,042</p></td>
+<td class="text-right"><p>6,037</p></td>
+<td class="text-right"><p>1.33x</p></td>
+<td class="text-right"><p>25.1</p></td>
+<td class="text-right"><p>18.9</p></td>
+<td class="text-right"><p>102.4</p></td>
+<td class="text-right"><p>77.1</p></td>
+</tr>
+<tr class="row-odd"><td><p>cylinder</p></td>
+<td class="text-right"><p>10,253</p></td>
+<td class="text-right"><p>7,750</p></td>
+<td class="text-right"><p>1.32x</p></td>
+<td class="text-right"><p>32.0</p></td>
+<td class="text-right"><p>24.2</p></td>
+<td class="text-right"><p>131.0</p></td>
+<td class="text-right"><p>98.8</p></td>
+</tr>
+<tr class="row-even"><td><p>plasma</p></td>
+<td class="text-right"><p>15,400</p></td>
+<td class="text-right"><p>11,374</p></td>
+<td class="text-right"><p>1.35x</p></td>
+<td class="text-right"><p>48.1</p></td>
+<td class="text-right"><p>35.5</p></td>
+<td class="text-right"><p>196.4</p></td>
+<td class="text-right"><p>145.6</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise</p></td>
+<td class="text-right"><p>21,558</p></td>
+<td class="text-right"><p>13,425</p></td>
+<td class="text-right"><p>1.61x</p></td>
+<td class="text-right"><p>67.4</p></td>
+<td class="text-right"><p>42.0</p></td>
+<td class="text-right"><p>275.3</p></td>
+<td class="text-right"><p>171.9</p></td>
+</tr>
+<tr class="row-even"><td><p>particles</p></td>
+<td class="text-right"><p>26,882</p></td>
+<td class="text-right"><p>16,383</p></td>
+<td class="text-right"><p>1.64x</p></td>
+<td class="text-right"><p>84.0</p></td>
+<td class="text-right"><p>51.2</p></td>
+<td class="text-right"><p>342.1</p></td>
+<td class="text-right"><p>209.1</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Not lowered (VM fallback): flood (graph/flood), rain and texture (buffers),
+rain_naive (image &gt; the bench’s 8 KB region).</p>
+<p><strong>Reading it.</strong> 1.26–1.80x over the VM, below the study’s 2–5x for hand-written
+f32 twins. Every float op is one call to a single generic helper (window spill,
+indirect call, operand decode, reload), so float-heavy shaders are still
+helper-bound; the integer/control part is inline. The biggest remaining levers:
+per-op specialised helpers (or inline soft-float calls straight to <code class="docutils literal notranslate"><span class="pre">__addsf3</span></code>
+etc. with the slot registers as arguments, no window), inlining the cheap float
+ops (neg/abs/compare/select), and lowering user functions and buffers so more
+effects qualify.</p>
 <p><strong>Not verified / out of scope here:</strong></p>
 <ul class="simple">
 <li><p>No on-device lowering or signing yet (stage 3): the bench embeds <strong>host</strong>-lowered
