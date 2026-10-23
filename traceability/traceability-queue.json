@@ -66,6 +66,14 @@
     },
     {
       "kind": "under-verified",
+      "entity": "PR-13",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
       "entity": "PR-14",
       "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
@@ -105,6 +113,14 @@
     },
     {
       "kind": "under-verified",
+      "entity": "PR-21",
+      "message": "demands hil, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hil",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
       "entity": "PR-23",
       "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
@@ -114,6 +130,14 @@
     {
       "kind": "under-verified",
       "entity": "PR-24",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-26",
       "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
@@ -133,6 +157,14 @@
       "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hil",
+      "provided_level": "simulation"
+    },
+    {
+      "kind": "under-verified",
+      "entity": "PR-29",
+      "message": "demands hitl, best passing evidence is simulation",
+      "route": "human-gate",
+      "demanded_level": "hitl",
       "provided_level": "simulation"
     },
     {
@@ -159,12 +191,11 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "pyramid",
+      "kind": "unverified",
       "entity": "PR-35",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "message": "no test evidence",
+      "route": "human-gate",
+      "demanded_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -198,15 +229,21 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
+      "entity": "//pi/hitl/harness:e2e_netstack",
+      "message": "//pi/hitl/harness:e2e_netstack hitl_e2e::rig error and traces to no requirement",
       "route": "autonomous"
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:rejoin_loop",
-      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
+      "entity": "//pi/hitl/harness:loaded_tls_netstack",
+      "message": "//pi/hitl/harness:loaded_tls_netstack pi/hitl/harness/loaded_tls_netstack error and traces to no requirement",
       "route": "autonomous"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-1",
+      "message": "high risk; mitigation is PARTIAL",
+      "route": "human-gate"
     },
     {
       "kind": "high-risk-open",
@@ -217,6 +254,12 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
+      "message": "high risk; mitigation is PARTIAL",
+      "route": "human-gate"
+    },
+    {
+      "kind": "high-risk-open",
+      "entity": "RISK-4",
       "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
