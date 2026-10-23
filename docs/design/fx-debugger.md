@@ -97,7 +97,7 @@ writes through its encoders and the host replays decode through the same module.
 | --- | --- | --- |
 | Static RAM | — | ~60 B of debugger state + 48 B to keep the JIT-patched bytes (`FX_JIT_ORIG`) |
 | Heap | — | 0 (no new allocations) |
-| loopTask stack bound (`//firmware/player_app:stack_bound_test`) | 9136 B | 9344 B, against a 14336 B reservation; the largest new frame is the 128 B per-LED buffer save |
+| loopTask stack bound (`//firmware/player_app:stack_bound_test`) | not re-measured on main | 9344 B, against a 14336 B reservation; the largest new frame is the 128 B per-LED buffer save |
 | Flash | — | ~13 KB of code |
 
 ## Re-running a LED without side effects
