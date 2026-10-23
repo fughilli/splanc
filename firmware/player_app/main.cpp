@@ -2164,10 +2164,12 @@ static void render_task(void *) {
 // wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
 // on-device and, if wss push is wanted, stash the httpd req/fd for async send.
 static void emit_perf_report_if_due() {
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  // Plain word reads (written by the loop task's own set_perf dispatch): no lock. This
+  // runs every loop pass, and a blocking take here parked loopTask for the rest of every
+  // render frame — the RX ring went unpolled for a whole frame (docs/design/live-control.md
+  // "Measuring the budget": ~50 ms of every control message's latency under a heavy effect).
   uint32_t mode = lm_perf_mode();
   uint32_t interval = lm_perf_interval_ms();
-  xSemaphoreGive(player_mutex);
   if (mode == 0 || interval == 0) return;  // OFF or poll-only
 #if defined(LM_NETSTACK)
   if (!netstack_ws_open()) return;  // push over the active TLS/WS
@@ -2178,9 +2180,10 @@ static void emit_perf_report_if_due() {
   static uint32_t last_push = 0;
   uint32_t nowm = millis();
   if (nowm - last_push < interval) return;
+  // Try-lock, never a wait: a render frame in progress just defers the push to a later
+  // loop pass (the interval clock only restarts once it went out).
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
   last_push = nowm;
-
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_perf_build_report(tx, sizeof tx);
   xSemaphoreGive(player_mutex);
 #if defined(LM_NETSTACK)
@@ -2197,7 +2200,9 @@ static void emit_perf_report_if_due() {
 // report (netstack: the TLS/WS session; vendor: the plain ws:81 socket). A client
 // that misses it sees the effect inactive in the next playback_state.
 static void emit_fps_abort_if_pending() {
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  // Every loop pass: try-lock, never a wait (see emit_perf_report_if_due). The notify is
+  // latched, so a busy render frame just defers it to a later pass.
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
   bool pending = lm_fps_take_abort_notify();
   uint32_t fps = pending ? lm_fps_current_fps() : 0;
   int32_t n = pending ? lm_fps_build_state(tx, sizeof tx, /*aborted=*/true) : 0;
@@ -3206,9 +3211,8 @@ void loop() {
   emit_fps_abort_if_pending();
 
   static uint32_t last_report = 0;
-  if (millis() - last_report > 5000) {
+  if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
     last_report = millis();
-    xSemaphoreTake(player_mutex, portMAX_DELAY);
     unsigned long map_leds = (unsigned long)lm_map_len();
     xSemaphoreGive(player_mutex);
 #if !defined(LM_NETSTACK)
