@@ -539,6 +539,35 @@ fn fx_debugger() {
     assert_eq!(state, after.state, "host replay == device state");
     assert_eq!(arena, after.arena, "host replay == device buffers");
 
+    // The fx_replay CLI (what the HITL gate runs) reproduces the same frame.
+    {
+        let dir = std::env::temp_dir().join(format!("fx_replay_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, bytes) in [
+            ("program.fxb", &a.program),
+            ("state.bin", &a.state),
+            ("arena.bin", &a.arena),
+            ("uniforms.bin", &after.uniforms),
+            ("graph.bin", &after.graph),
+            ("led_context.bin", &after.ledctx),
+            ("frame_ctx.bin", &after.frame_ctx),
+        ] {
+            std::fs::write(dir.join(name), bytes).unwrap();
+        }
+        let bin = std::env::var("FX_REPLAY").expect("FX_REPLAY");
+        let st = std::process::Command::new(bin)
+            .args(["--dir", dir.to_str().unwrap(), "--led", "7"])
+            .status()
+            .expect("fx_replay runs");
+        assert!(st.success());
+        let read = |n: &str| std::fs::read(dir.join(n)).unwrap();
+        assert_eq!(read("output.bin"), after.output, "fx_replay output == device");
+        assert_eq!(read("state_out.bin"), after.state, "fx_replay state == device");
+        assert_eq!(read("arena_out.bin"), after.arena, "fx_replay buffers == device");
+        assert_eq!(read("led7.bin").len(), 3 + 4 * MAX_LOCALS);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // RAW recomputes the effect colour at the paused frame (pre-LUT); this effect
     // feeds back through a buffer, so RAW is a SECOND blend step — compare the
     // structural part only (it is LED-count long and black where unmapped).
