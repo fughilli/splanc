@@ -26,7 +26,11 @@ rust_binary(
     name = "gen_effects",
     srcs = ["gen_effects.rs"],
     edition = "2021",
-    deps = ["//fx_compiler"],
+    deps = [
+        "//firmware/fx_aot",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
 )
 
 STUDY = glob(["effects/*.fx"])
@@ -109,6 +113,7 @@ rust_static_library(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
     ],
@@ -126,6 +131,7 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2021",
     deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
     ],
@@ -139,6 +145,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
         "//firmware/fx_vm",
     ],
@@ -175,6 +182,41 @@ firmware_binary(
     binary = ":fx_perf_bench",
     board = "esp32c6",
     opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# PMA write-protection probe (docs/design/fx-native-aot.md): does an unlocked
+# Espressif PMA entry deny a machine-mode store while an unlocked PMP entry
+# grants execute? Flash + capture `fxpb pma ...` over HITL. No Rust, no radios.
+cc_binary(
+    name = "pma_probe",
+    srcs = ["pma_probe_main.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+)
+
+firmware_binary(
+    name = "pma_probe_esp32c6",
+    binary = ":pma_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "pma_probe_flash",
+    app = ":pma_probe_esp32c6",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "pma_probe_flashbundle",
+    flash = ":pma_probe_flash",
     tags = ["manual"],
 )
 

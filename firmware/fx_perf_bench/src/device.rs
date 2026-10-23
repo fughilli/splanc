@@ -14,6 +14,9 @@ use crate::fixture::{self, Kind};
 use crate::native::{native_frame, NATIVES};
 use crate::{EffectDesc, EFFECTS, GROUP_AGENT, GROUP_STUDY, GROUP_USER, GROUP_VALID};
 
+use ledmapper_fx_aot_nostd as aot;
+use ledmapper_fx_vm::{Led, Program};
+
 extern "C" {
     fn fxpb_cycles() -> u32;
     fn fxpb_write(p: *const u8, n: usize);
@@ -22,7 +25,19 @@ extern "C" {
     fn lm_jit_region_words() -> usize;
     fn lm_jit_arm();
     fn lm_jit_sync_icache();
+    fn lm_aot_region_ptr() -> *mut u32;
+    fn lm_aot_region_words() -> usize;
+    fn lm_aot_arm();
+    fn lm_aot_sync_icache();
 }
+
+// Native-effect (AOT) execution scratch (docs/design/fx-native-aot.md). The
+// emitted image bases `s1` on this frame (locals[128] + deep operand slots +
+// window) and `s11` on this state array.
+static mut AOT_FRAME: [i32; aot::FRAME_WORDS] = [0; aot::FRAME_WORDS];
+static mut AOT_STATE: [i32; ledmapper_fx_vm::MAX_STATE] = [0; ledmapper_fx_vm::MAX_STATE];
+
+type AotFn = unsafe extern "C" fn(*mut aot::NativeCtx, *mut i32, *mut i32);
 
 fn cyc() -> u32 {
     unsafe { fxpb_cycles() }
@@ -262,6 +277,99 @@ unsafe fn natives_for(d: &EffectDesc, n: usize, kind: Kind) {
     }
 }
 
+/// Build a NativeCtx for the AOT image over the given program/frame/led.
+unsafe fn aot_ctx(
+    p: &Program,
+    uniforms: *const f32,
+    fr: *const ledmapper_fx_vm::Frame,
+    led: *const Led,
+) -> aot::NativeCtx {
+    aot::NativeCtx::new(
+        aot::aot_win_helper,
+        p.code().as_ptr(),
+        p.code().len(),
+        uniforms,
+        (*addr_of_mut!(AOT_STATE)).as_mut_ptr() as *mut f32,
+        (*addr_of_mut!(AOT_FRAME)).as_mut_ptr() as *mut f32,
+        fr,
+        led,
+        engine::vm() as *mut _,
+    )
+}
+
+/// Run the host-lowered native image for a study effect, measure cycles/frame,
+/// and cross-check every LED against the VM's last frame (left in OUT_VM by
+/// `vm_and_jit`). Writes a `fxpb aot ...` line.
+unsafe fn aot_run(d: &EffectDesc, n: usize, kind: Kind) {
+    let fx = fixture_name(kind);
+    if !d.aot_ok {
+        log_line(format_args!("aot {} {fx} n={n} ok=0 reason=vm_fallback", d.name));
+        return;
+    }
+    let region = core::slice::from_raw_parts_mut(lm_aot_region_ptr(), lm_aot_region_words());
+    if d.aot_code.len() > region.len() {
+        log_line(format_args!("aot {} {fx} n={n} ok=0 reason=image_too_large", d.name));
+        return;
+    }
+    region[..d.aot_code.len()].copy_from_slice(d.aot_code);
+    lm_aot_arm();
+    lm_aot_sync_icache();
+
+    // Fresh load: sets the VM's uniforms/arena/graph (we read uniforms) and lets
+    // fill_led know uses_uv/uses_ctxfix. Zero the native state once; update()
+    // evolves it across frames, matching the VM.
+    let Ok(l) = engine::load(d, n) else {
+        log_line(format_args!("aot {} {fx} n={n} ok=0 reason=load", d.name));
+        return;
+    };
+    let p = engine::prog();
+    for x in (*addr_of_mut!(AOT_STATE)).iter_mut() {
+        *x = 0;
+    }
+    let uni = engine::vm().uniforms.as_ptr();
+    let base = lm_aot_region_ptr();
+    let f_upd: Option<AotFn> =
+        if d.aot_update >= 0 { Some(core::mem::transmute(base.add(d.aot_update as usize))) } else { None };
+    let f_shade: AotFn = core::mem::transmute(base.add(d.aot_shade as usize));
+    let out = &mut *addr_of_mut!(crate::engine::OUT_NAT);
+    let mut led = Led::default();
+    let fm = (*addr_of_mut!(AOT_FRAME)).as_mut_ptr();
+    let sm = (*addr_of_mut!(AOT_STATE)).as_mut_ptr();
+    let mut best = (u32::MAX, u32::MAX);
+    for fi in 0..FRAMES {
+        let fr = engine::frame(fi, n);
+        let mut ctx = aot_ctx(&p, uni, &fr, &led);
+        let t0 = cyc();
+        if let Some(f) = f_upd {
+            f(&mut ctx, fm, sm);
+        }
+        let t1 = cyc();
+        for i in 0..n {
+            engine::fill_led(&mut led, i, &l);
+            ctx.led = &led;
+            f_shade(&mut ctx, fm, sm);
+            out[i] = ctx.finish_rgb();
+        }
+        let t2 = cyc();
+        let (u, s) = (t1.wrapping_sub(t0), t2.wrapping_sub(t1));
+        if u.wrapping_add(s) < best.0.wrapping_add(best.1) {
+            best = (u, s);
+        }
+        fxpb_yield();
+    }
+    // Compare OUT_NAT_AOT to OUT_VM (the VM's last frame).
+    let (mx, sum, off) = engine::compare(n);
+    log_line(format_args!(
+        "aot {} {fx} n={n} ok=1 words={} upd={} shade={} frame={} maxdiff={mx} meandiff_x1000={} off2={off}",
+        d.name,
+        d.aot_code.len(),
+        best.0,
+        best.1,
+        best.0 + best.1,
+        sum * 1000 / (n as u64).max(1)
+    ));
+}
+
 /// The whole bench. Called once from setup().
 #[no_mangle]
 pub unsafe extern "C" fn fxpb_run() {
@@ -281,6 +389,7 @@ pub unsafe extern "C" fn fxpb_run() {
         for d in EFFECTS.iter().filter(|d| d.group == GROUP_STUDY) {
             if vm_and_jit(d, n, Kind::Helix, true).is_some() {
                 natives_for(d, n, Kind::Helix);
+                aot_run(d, n, Kind::Helix);
             }
         }
     }

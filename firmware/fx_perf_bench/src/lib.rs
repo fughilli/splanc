@@ -47,6 +47,15 @@ pub struct EffectDesc {
     pub uniforms: &'static [(u8, &'static [f32])],
     /// Compile diagnostics (empty fxb) — reported, never run.
     pub err: &'static str,
+    /// Whether the AOT lowering (firmware/fx_aot) produced a native image for
+    /// this effect (false ⇒ it falls back to the VM).
+    pub aot_ok: bool,
+    /// The host-lowered RV32IM image (PIC words), copied into the bench's static
+    /// exec region and run. Empty when `!aot_ok`.
+    pub aot_code: &'static [u32],
+    /// Word offset of the native `update()` entry (-1 if none), and `shade()`.
+    pub aot_update: i32,
+    pub aot_shade: u32,
 }
 
 pub const GROUP_STUDY: u8 = 0;

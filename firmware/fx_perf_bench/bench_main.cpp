@@ -46,6 +46,38 @@ void lm_jit_arm(void) {
 void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 }
 
+// The AOT native-effect exec region (docs/design/fx-native-aot.md, stages 1-2):
+// a larger static region for a whole shade()/update() image. The bench has no
+// radios, so it stays RWX via PMP entry 4 (NAPOT) — the W^X PMA scheme (the PMA
+// write-protection probe confirmed it works) is the netstack port's job and is
+// exercised only there. 8 KB covers every study/agent image (largest ~1.9 KB).
+namespace {
+constexpr uint32_t kAotRegionSize = 8192;  // power of two (NAPOT); 2048 RV32 words
+alignas(kAotRegionSize) uint8_t g_aot_region[kAotRegionSize];
+bool g_aot_armed = false;
+void aot_arm_exec_region() {
+  uintptr_t base = (uintptr_t)g_aot_region;
+  uintptr_t pmpaddr = (base >> 2) | ((kAotRegionSize >> 3) - 1);
+  asm volatile("csrw 0x3b4, %0" ::"r"(pmpaddr));  // pmpaddr4
+  // pmpcfg1 byte 0 = entry 4 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked).
+  uint32_t cfg1;
+  asm volatile("csrr %0, 0x3a1" : "=r"(cfg1));
+  cfg1 = (cfg1 & 0xffffff00u) | 0x1fu;
+  asm volatile("csrw 0x3a1, %0" ::"r"(cfg1));
+  asm volatile("fence.i" ::: "memory");
+  g_aot_armed = true;
+}
+}  // namespace
+
+extern "C" {
+uint32_t *lm_aot_region_ptr(void) { return reinterpret_cast<uint32_t *>(g_aot_region); }
+size_t lm_aot_region_words(void) { return kAotRegionSize / 4; }
+void lm_aot_arm(void) {
+  if (!g_aot_armed) aot_arm_exec_region();
+}
+void lm_aot_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1500);  // let the HITL serial reader attach

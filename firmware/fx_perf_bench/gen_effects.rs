@@ -58,9 +58,26 @@ fn main() {
         for b in &fxb {
             let _ = write!(bytes, "{b},");
         }
+        // AOT: lower the verified .fxb to RV32IM on the host and embed the image
+        // (words + entry offsets) so the C6 bench can copy it into its static
+        // exec region and run it. Unsupported programs embed an empty image.
+        let (aot_ok, aot_words, aot_update, aot_shade) = match ledmapper_fx_vm::Program::parse(&fxb)
+        {
+            Ok(prog) => match ledmapper_fx_aot::lower(&prog) {
+                Some(img) => {
+                    let mut ws = String::with_capacity(img.code.len() * 12);
+                    for w in &img.code {
+                        let _ = write!(ws, "{w},");
+                    }
+                    (true, ws, img.update_off.map(|o| o as i32).unwrap_or(-1), img.shade_off)
+                }
+                None => (false, String::new(), -1, 0),
+            },
+            Err(_) => (false, String::new(), -1, 0),
+        };
         let _ = writeln!(
             out,
-            "    EffectDesc {{ name: {name:?}, group: {group_id}, leds: {leds}, opt: {}, fxb: &[{bytes}], uniforms: &[{u}], err: {err:?} }},",
+            "    EffectDesc {{ name: {name:?}, group: {group_id}, leds: {leds}, opt: {}, fxb: &[{bytes}], uniforms: &[{u}], err: {err:?}, aot_ok: {aot_ok}, aot_code: &[{aot_words}], aot_update: {aot_update}, aot_shade: {aot_shade} }},",
             opt == "opt"
         );
     }
