@@ -103,6 +103,17 @@ export class MapView {
   // effects-simulator workspace pushes a fresh frame here each animation tick.
   private ledColors: Uint8Array | null = null;
 
+  // FX debugger overlay (effect workspace): a ring per marked LED (map.leds
+  // index -> CSS colour) and the selected LED, drawn over the scatter.
+  private ledMarks: Map<number, string> | null = null;
+  private selectedLed: number | null = null;
+  /** Called with the map.leds index of a TAPPED LED (a click without a drag,
+   * within ~14 px). Null = picking off (the default). */
+  onLedPick: ((index: number) => void) | null = null;
+  // Last drawn screen positions (CSS px) for picking.
+  private lastPts: { idx: number; sx: number; sy: number }[] = [];
+  private downAt: { x: number; y: number } | null = null;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
@@ -156,6 +167,17 @@ export class MapView {
    * map.leds order). Non-null switches the scatter into "light" rendering. */
   setLedColors(colors: Uint8Array | null): void {
     this.ledColors = colors;
+  }
+
+  /** Mark LEDs with a coloured ring (map.leds index -> CSS colour), e.g. the
+   * FX debugger's device-vs-preview mismatches. Null clears. */
+  setLedMarks(marks: Map<number, string> | null): void {
+    this.ledMarks = marks;
+  }
+
+  /** Highlight one LED (map.leds index) as selected; null clears. */
+  setSelectedLed(index: number | null): void {
+    this.selectedLed = index;
   }
 
   /** Set (or clear) the topology-diagnostics overlay + which layers to draw.
@@ -261,6 +283,7 @@ export class MapView {
       (e) => {
         c.setPointerCapture(e.pointerId);
         this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        this.downAt = this.pointers.size === 1 ? { x: e.clientX, y: e.clientY } : null;
         this.autoOrbit = false;
         e.preventDefault();
       },
@@ -308,6 +331,29 @@ export class MapView {
     );
 
     const drop = (e: PointerEvent) => this.pointers.delete(e.pointerId);
+    // A tap (no drag) picks the nearest drawn LED for onLedPick.
+    c.addEventListener(
+      "pointerup",
+      (e) => {
+        const d = this.downAt;
+        this.downAt = null;
+        if (!this.onLedPick || !d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+        const r = c.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        let best = -1;
+        let bestD = 14;
+        for (const p of this.lastPts) {
+          const dd = Math.hypot(p.sx - x, p.sy - y);
+          if (dd < bestD) {
+            bestD = dd;
+            best = p.idx;
+          }
+        }
+        if (best >= 0) this.onLedPick(best);
+      },
+      opts,
+    );
     c.addEventListener("pointerup", drop, opts);
     c.addEventListener("pointercancel", drop, opts);
 
@@ -505,6 +551,7 @@ export class MapView {
 
     const pts = leds.map((l, i) => ({ ...proj(l.xyz), led: l, idx: i }));
     pts.sort((a, b) => a.depth - b.depth);
+    this.lastPts = pts.map((p) => ({ idx: p.idx, sx: p.sx, sy: p.sy }));
 
     // -- ground truth: aligned points, delta vectors, magnitudes -----------
     this.ensureFit();
@@ -619,6 +666,20 @@ export class MapView {
         const hue = Math.round(c * 120);
         ctx.fillStyle = `hsl(${hue} 90% 50%)`;
         ctx.fill();
+      }
+    }
+
+    // FX debugger marks: a ring per marked LED, a heavier one for the selection.
+    if (this.ledMarks !== null || this.selectedLed !== null) {
+      for (const p of pts) {
+        const mark = this.ledMarks?.get(p.idx);
+        const sel = this.selectedLed === p.idx;
+        if (!mark && !sel) continue;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, (sel ? 7 : 5) * ledScale, 0, Math.PI * 2);
+        ctx.strokeStyle = sel ? "#fff" : mark!;
+        ctx.lineWidth = sel ? 2.5 : 1.75;
+        ctx.stroke();
       }
     }
 
