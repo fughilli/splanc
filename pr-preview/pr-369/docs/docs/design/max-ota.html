@@ -696,7 +696,7 @@ itself therefore lives outside the system closure:</p>
 </tr>
 <tr class="row-odd"><td><p>hostname</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">/var/lib/sbc/hostname</span></code> (sbc-deploy writes it once)</p></td>
-<td><p>applied at boot by <code class="docutils literal notranslate"><span class="pre">splanc-identity</span></code> before avahi/NetworkManager; the image’s baked <code class="docutils literal notranslate"><span class="pre">ledmapper</span></code> is only the default</p></td>
+<td><p>the image bakes <strong>no</strong> hostname (<code class="docutils literal notranslate"><span class="pre">networking.hostName</span> <span class="pre">=</span> <span class="pre">&quot;&quot;</span></code>), so NixOS doesn’t own <code class="docutils literal notranslate"><span class="pre">/etc/hostname</span></code> or avahi’s <code class="docutils literal notranslate"><span class="pre">host-name</span></code>; activation writes <code class="docutils literal notranslate"><span class="pre">/etc/hostname</span></code> from the committed name, and avahi advertises <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.local</span></code> (a fresh unit takes the commissioning <code class="docutils literal notranslate"><span class="pre">--hostname</span></code>, else <code class="docutils literal notranslate"><span class="pre">ledmapper</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p>SSH host keys</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">/etc/ssh/ssh_host_*</span></code></p></td>
@@ -948,7 +948,71 @@ as <code class="docutils literal notranslate"><span class="pre">import_failed</s
 </section>
 <section id="hitl-results">
 <h2>HITL results<a class="headerlink" href="#hitl-results" title="Link to this heading">¶</a></h2>
-<p>(filled in by the gate runs below)</p>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code> on rig-1 / <strong>pi-ledmapper-1</strong> (splanc-max-2: Pi 3
+Model B+ Rev 1.4 with its Tang Nano 9K), in one reservation, 2026-10-23. The images
+are <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span></code> deltas of 66 KB (A↔B) and 3.4 MB (U), all TEST-signed.</p>
+<p><strong>Verdict: PASS.</strong> Every check passed, across two runs in the same reservation:</p>
+<ul class="simple">
+<li><p><strong>run 5:</strong> setup, upgrade, badsig, unhealthy, trialcut;</p></li>
+<li><p><strong>run 6:</strong> powercut, re-run alone with the download throttled, because the
+66 KB delta had finished before the gate could cut it.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>phase</p></th>
+<th class="head"><p>result</p></th>
+<th class="head"><p>numbers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>setup</p></td>
+<td><p>PASS</p></td>
+<td><p>deploy over SSH 80 s. The first OTA-capable system and the trial U-Boot boot on real hardware. Hostname, Wi-Fi profiles, SSH host key and /var/lib/ledmapper kept; the deploy key was persisted</p></td>
+</tr>
+<tr class="row-odd"><td><p>upgrade A→B</p></td>
+<td><p>PASS</p></td>
+<td><p><strong>77 s total</strong>: download 4 s, then the trial boot (U-Boot one-shot), healthy and committed 29 s after the trial came up. Runs B; all state kept</p></td>
+</tr>
+<tr class="row-even"><td><p>bad signature</p></td>
+<td><p>PASS</p></td>
+<td><p>refused (<code class="docutils literal notranslate"><span class="pre">bad_signature</span></code>) before anything was fetched (dl/ empty); still on B</p></td>
+</tr>
+<tr class="row-odd"><td><p>unhealthy (U)</p></td>
+<td><p>PASS</p></td>
+<td><p>U booted once; no health file; rolled back at the 300 s deadline; <strong>back on B by itself</strong> (<code class="docutils literal notranslate"><span class="pre">unhealthy:</span> <span class="pre">no</span> <span class="pre">health</span> <span class="pre">file</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>power cut mid-download</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> at 28,672 / 66,362 B. The Pi came back on A; <code class="docutils literal notranslate"><span class="pre">splanc-ota-apply</span></code> resumed at 28,672 (HTTP Range); installed, healthy, committed: <strong>runs B</strong> (126 s)</p></td>
+</tr>
+<tr class="row-odd"><td><p>power cut in the trial</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> while the trial was up and not yet proven. U-Boot booted the old default: <strong>back on A</strong>, <code class="docutils literal notranslate"><span class="pre">rolled_back</span></code> (<code class="docutils literal notranslate"><span class="pre">trial_reset</span></code>), 84 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The device ends on B, a working system.</p>
+<p><strong>What the first runs found, all fixed in this PR:</strong></p>
+<ul class="simple">
+<li><p><strong>The player SEGV’d at start.</strong> On <code class="docutils literal notranslate"><span class="pre">main</span></code> the host-profile <code class="docutils literal notranslate"><span class="pre">Player::handle</span></code> needs
+<strong>8.2 MiB of stack</strong> (<code class="docutils literal notranslate"><span class="pre">sub</span> <span class="pre">sp,</span> <span class="pre">#0x82b000</span></code>), more than the 8 MiB main thread and the
+8 MiB tokio workers. Both <code class="docutils literal notranslate"><span class="pre">--start</span> <span class="pre">N</span></code> and every client frame crashed the static-musl
+player in a loop. It now runs on 32 MiB stacks.</p></li>
+<li><p><strong>spidev’s 4 KiB buffer.</strong> It made every 6.6 KB FPGA frame (4 × 550 LEDs) fail with
+EMSGSIZE, silently, so the Tang got nothing. The image now sets
+<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code>, and the player logs the first write error. The health check,
+which counts frames that reached SPI, caught this.</p></li>
+<li><p><strong>The baked hostname.</strong> It made avahi advertise <code class="docutils literal notranslate"><span class="pre">ledmapper.local</span></code>, which would have
+broken the rig’s <code class="docutils literal notranslate"><span class="pre">splanc-max-2.local</span></code> addressing. Now the hostname comes from
+/var/lib/sbc (see “Device state”).</p></li>
+<li><p><strong>The health service lost its first sample</strong> across ticks; now the caller carries
+it.</p></li>
+</ul>
+<p><strong>U-Boot under QEMU.</strong> Before deploying the trial U-Boot to hardware, it was run under
+QEMU <code class="docutils literal notranslate"><span class="pre">raspi3b</span></code> against a two-partition SD image. The flag <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">abcd</span></code> became <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">abcd</span></code>;
+<code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">…</span></code> and an absent flag were left alone.</p>
 </section>
 </section>
 
