@@ -288,8 +288,11 @@ async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) ->
         while not stop.is_set():
             t_q = time.monotonic()
             try:
-                r = await c.rpc(
-                    {"type": "get_effect_uniforms"}, "effect_uniforms", timeout=args.probe_timeout
+                # The timeout covers the SEND too: behind a backlog the probe can't
+                # even get onto the socket (websockets waits for the buffer to drain).
+                r = await asyncio.wait_for(
+                    c.rpc({"type": "get_effect_uniforms"}, "effect_uniforms", timeout=1e9),
+                    args.probe_timeout,
                 )
             except asyncio.TimeoutError:
                 t_r = time.monotonic()
@@ -336,7 +339,8 @@ async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) ->
     first = tracker.window(t_start + args.warmup_s, t_start + args.warmup_s + win)
     last = tracker.window(t_last - win, t_last + 1)
     allv = [s.lag_ms for s in tracker.samples if s.t >= t_start + args.warmup_s]
-    status, reasons = core.verdict(True, first, last, allv, base_rtt)
+    timeouts = sum(1 for s in tracker.samples if s.applied < 0)
+    status, reasons = core.verdict(True, first, last, allv, base_rtt, timeouts)
     if dropped is not None and status == core.PASS:
         status, reasons = core.FAIL, [f"socket dropped mid-stream: {dropped!r}"]
     fs, ls, os_ = core.Stats.of(first), core.Stats.of(last), core.Stats.of(allv)
@@ -448,7 +452,7 @@ def main() -> int:
     # shards larger maps). The shader is heavy per LED instead.
     ap.add_argument("--leds", type=int, default=150)
     ap.add_argument("--probe-s", type=float, default=0.25, help="echo period")
-    ap.add_argument("--probe-timeout", type=float, default=60.0)
+    ap.add_argument("--probe-timeout", type=float, default=15.0)
     ap.add_argument("--warmup-s", type=float, default=5.0)
     ap.add_argument("--settle", type=float, default=hitl_ws.CONNECT_SETTLE)
     ap.add_argument(
