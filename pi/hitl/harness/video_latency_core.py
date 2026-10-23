@@ -246,7 +246,7 @@ def analyze(
     t_apply: List[Tuple[int, float, Frame]] = []
     for f in applied:
         th = clock.to_host(f.t1_dev)  # type: ignore[arg-type]
-        lat.append(th - f.t_enq)
+        lat.append(th - f.t_sched)  # from capture time: a held frame's wait counts
         t_apply.append((f.seq, th, f))
     t_apply.sort()
     intervals: List[float] = []
@@ -320,7 +320,7 @@ def run_status(stats: Optional[Stats], policy: Policy = Policy()) -> Tuple[str, 
         return "SKIP", "no frames sent"
     if stats.end and stats.end != "done":
         return "FAIL", f"stream ended early: {stats.end}"
-    ratio = stats.frames_applied / max(1, stats.frames_sent - stats.frames_skipped)
+    ratio = stats.frames_applied / max(1, stats.frames_sent)
     if ratio < policy.min_applied_ratio:
         return "FAIL", f"applied {ratio:.2%} of frames (< {policy.min_applied_ratio:.0%})"
     p99 = stats.lat(99)
