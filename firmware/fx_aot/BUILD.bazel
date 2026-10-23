@@ -1,0 +1,65 @@
+"""Ahead-of-time (AOT) lowering of verified .fxb effect bytecode to RV32IM
+(docs/design/fx-native-aot.md). no_std (+ alloc) so it can later run on the
+device; the RV32 encoder subset is reused read-only from //firmware/fx_jit, and
+correctness is proven on the host by a differential test against the real
+fx_vm via this crate's own RV32IM emulator (emu) with a helper-call trap.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_aot",
+    srcs = [
+        "src/ctx.rs",
+        "src/emu.rs",
+        "src/helper.rs",
+        "src/lib.rs",
+        "src/lowerer.rs",
+        "src/verify.rs",
+    ],
+    crate_features = ["alloc"],
+    crate_name = "ledmapper_fx_aot",
+    edition = "2021",
+    deps = [
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+    ],
+)
+
+# The no-alloc firmware library (device wiring target): same code without the
+# alloc-only lowering/emulator, so it builds for the C6 triple.
+rust_library(
+    name = "fx_aot_nostd",
+    srcs = [
+        "src/ctx.rs",
+        "src/helper.rs",
+        "src/lib.rs",
+        "src/verify.rs",
+    ],
+    crate_name = "ledmapper_fx_aot_nostd",
+    edition = "2021",
+    tags = ["manual"],
+    deps = [
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Host differential test: native (lowered + emulated) output == fx_vm output,
+# bit-exact, over the compiler corpus + embedded study effects, many LEDs/frames,
+# plus the instruction-stream verifier on every lowered image.
+rust_test(
+    name = "fx_aot_diff_test",
+    srcs = ["tests/diff.rs"],
+    compile_data = glob([
+        "testdata/*.fx",
+    ]),
+    edition = "2021",
+    deps = [
+        ":fx_aot",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
+)
