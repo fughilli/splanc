@@ -4,8 +4,8 @@
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
 use ledmapper_fx_compiler::{
-    compile, compile_with, disassemble, exports_manifest_json, manifest_json, CompileOptions, Compiled,
-    Diagnostic, symbols_json,
+    compile, compile_with, disassemble, exports_manifest_json, manifest_json, symbols_json, CompileOptions,
+    Compiled, Diagnostic,
 };
 use wasm_bindgen::prelude::*;
 

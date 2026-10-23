@@ -1325,21 +1325,41 @@ vec3 shade(Led led) {
 }
 "#;
     let c = ledmapper_fx_compiler::compile(src).expect("compiles");
-    let find = |n: &str| c.symbols.iter().find(|s| s.name == n).unwrap_or_else(|| panic!("no symbol {n}"));
-    assert_eq!((find("phase").kind, find("phase").slot, find("phase").width), ("state", 0, 1));
-    assert_eq!((find("acc").kind, find("acc").slot, find("acc").width), ("state", 1, 6));
+    let find = |n: &str| {
+        c.symbols
+            .iter()
+            .find(|s| s.name == n)
+            .unwrap_or_else(|| panic!("no symbol {n}"))
+    };
+    assert_eq!(
+        (find("phase").kind, find("phase").slot, find("phase").width),
+        ("state", 0, 1)
+    );
+    assert_eq!(
+        (find("acc").kind, find("acc").slot, find("acc").width),
+        ("state", 1, 6)
+    );
     assert_eq!((find("x").kind, find("x").func.as_str()), ("param", "tri"));
-    assert_eq!((find("h").kind, find("h").func.as_str(), find("h").width), ("local", "shade", 1));
+    assert_eq!(
+        (find("h").kind, find("h").func.as_str(), find("h").width),
+        ("local", "shade", 1)
+    );
     assert_eq!(find("c").width, 3);
     let json = ledmapper_fx_compiler::symbols_json(&c.symbols);
-    assert!(json.contains("\"name\":\"h\",\"kind\":\"local\",\"func\":\"shade\""), "{json}");
+    assert!(
+        json.contains("\"name\":\"h\",\"kind\":\"local\",\"func\":\"shade\""),
+        "{json}"
+    );
 
     // Run shade() for one LED: the named locals hold what the source computes.
     let prog = ledmapper_fx_vm::Program::parse(&c.fxb).unwrap();
     let mut vm = ledmapper_fx_vm::Vm::new();
     vm.state[0] = 0.25;
     vm.clear_scratch();
-    let led = ledmapper_fx_vm::Led { pos: [0.5, 0.0, 0.0], ..Default::default() };
+    let led = ledmapper_fx_vm::Led {
+        pos: [0.5, 0.0, 0.0],
+        ..Default::default()
+    };
     let f = ledmapper_fx_vm::Frame::default();
     vm.run_shade(&prog, &f, &led);
     let h = vm.locals()[find("h").slot as usize];

@@ -358,7 +358,17 @@ def run(args) -> int:
         )
     )
     res = Reservation(server=args.server, owner=args.owner)
-    res.acquire()
+    try:
+        res.acquire()
+    except BaseException:
+        # Interrupted (or failed) while QUEUED: release the queued reservation too,
+        # so a killed run never leaks a slot in the rig's FIFO.
+        if res.id:
+            try:
+                res.release()
+            except Exception:  # noqa: BLE001
+                pass
+        raise
     status = core.SKIP
     try:
         creds = res.wifi()

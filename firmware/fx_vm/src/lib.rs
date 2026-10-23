@@ -4238,7 +4238,12 @@ pub mod dbg {
     /// The debugger saves + restores them around a re-run, so re-running a LED
     /// (to read its locals, or to compare the JIT with the interpreter) neither
     /// perturbs the paused state nor sees its own previous write.
-    pub fn led_elem_ranges(prog: &Program, led_count: usize, idx: usize, mut f: impl FnMut(usize, usize)) {
+    pub fn led_elem_ranges(
+        prog: &Program,
+        led_count: usize,
+        idx: usize,
+        mut f: impl FnMut(usize, usize),
+    ) {
         for i in 0..prog.n_buffers as usize {
             let Some(d) = prog.buf_desc(i) else { continue };
             if d.kind != 0 || idx >= led_count {
@@ -4283,7 +4288,9 @@ pub mod dbg {
         if ctx.len() < FRAME_CTX_BYTES {
             return None;
         }
-        let w = |k: usize| u32::from_le_bytes([ctx[4 * k], ctx[4 * k + 1], ctx[4 * k + 2], ctx[4 * k + 3]]);
+        let w = |k: usize| {
+            u32::from_le_bytes([ctx[4 * k], ctx[4 * k + 1], ctx[4 * k + 2], ctx[4 * k + 3]])
+        };
         let f = |k: usize| f32::from_bits(w(k));
         let i = |k: usize| w(k) as i32;
         Some(Frame {
@@ -4315,7 +4322,10 @@ pub mod dbg {
             rec[40..42].copy_from_slice(&(-1i16).to_le_bytes());
             return;
         };
-        let f = [l.pos[0], l.pos[1], l.pos[2], l.s, l.dist, l.uv[0], l.uv[1], l.room[0], l.room[1], l.room[2]];
+        let f = [
+            l.pos[0], l.pos[1], l.pos[2], l.s, l.dist, l.uv[0], l.uv[1], l.room[0], l.room[1],
+            l.room[2],
+        ];
         for (k, v) in f.iter().enumerate() {
             rec[k * 4..k * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
@@ -4331,9 +4341,17 @@ pub mod dbg {
         if rec.len() < LED_CTX_BYTES || rec[43] & 1 == 0 {
             return None;
         }
-        let v = |k: usize| f32::from_le_bytes([rec[4 * k], rec[4 * k + 1], rec[4 * k + 2], rec[4 * k + 3]]);
+        let v = |k: usize| {
+            f32::from_le_bytes([rec[4 * k], rec[4 * k + 1], rec[4 * k + 2], rec[4 * k + 3]])
+        };
         let q = |x: f32| (x * 65536.0) as i32;
-        let (pos, s, dist, uv, room) = ([v(0), v(1), v(2)], v(3), v(4), [v(5), v(6)], [v(7), v(8), v(9)]);
+        let (pos, s, dist, uv, room) = (
+            [v(0), v(1), v(2)],
+            v(3),
+            v(4),
+            [v(5), v(6)],
+            [v(7), v(8), v(9)],
+        );
         Some(Led {
             pos,
             idx,

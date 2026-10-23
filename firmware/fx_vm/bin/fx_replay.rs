@@ -35,7 +35,9 @@ fn read(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
 }
 
 fn words(b: &[u8]) -> Vec<u32> {
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 /// main.cpp cc_apply: the LUT, then nscale8 unless 255.
@@ -64,7 +66,9 @@ fn run() -> Result<(), String> {
         let mut val = || args.next().ok_or(format!("{a} needs a value"));
         match a.as_str() {
             "--dir" => dir = Some(PathBuf::from(val()?)),
-            "--brightness" => brightness = val()?.parse().map_err(|e| format!("--brightness: {e}"))?,
+            "--brightness" => {
+                brightness = val()?.parse().map_err(|e| format!("--brightness: {e}"))?
+            }
             "--budget" => budget = val()?.parse().map_err(|e| format!("--budget: {e}"))?,
             "--led" => leds.push(val()?.parse().map_err(|e| format!("--led: {e}"))?),
             _ => return Err(format!("unknown argument {a}")),
@@ -73,13 +77,18 @@ fn run() -> Result<(), String> {
     let dir = dir.ok_or("--dir is required")?;
     let fxb = read(&dir, "program.fxb")?;
     let prog = Program::parse(&fxb).map_err(|e| format!("program.fxb: {e:?}"))?;
-    let frame = dbg::frame_from_ctx(&read(&dir, "frame_ctx.bin")?).ok_or("frame_ctx.bin: too short")?;
+    let frame =
+        dbg::frame_from_ctx(&read(&dir, "frame_ctx.bin")?).ok_or("frame_ctx.bin: too short")?;
     let ctx = read(&dir, "led_context.bin")?;
     let lut = read(&dir, "lut.bin").unwrap_or_default();
     let budget = Budget::instructions(if budget == 0 { DEFAULT_BUDGET } else { budget });
 
     let mut vm = Vm::new();
-    for (dst, w) in vm.uniforms.iter_mut().zip(words(&read(&dir, "uniforms.bin")?)) {
+    for (dst, w) in vm
+        .uniforms
+        .iter_mut()
+        .zip(words(&read(&dir, "uniforms.bin")?))
+    {
         *dst = f32::from_bits(w);
     }
     let st = words(&read(&dir, "state.bin")?);
@@ -103,9 +112,15 @@ fn run() -> Result<(), String> {
     let mut out = vec![0u8; n * 3];
     for i in 0..n {
         let rec = &ctx[i * dbg::LED_CTX_BYTES..(i + 1) * dbg::LED_CTX_BYTES];
-        let Some(led) = dbg::led_from_record(rec, i as u32) else { continue };
+        let Some(led) = dbg::led_from_record(rec, i as u32) else {
+            continue;
+        };
         let ((r, gg, bb), oc, _) = vm.run_shade_counted(&prog, &frame, &led, &budget);
-        let c = if oc.timed_out() { [0, 0, 0] } else { [r, gg, bb] };
+        let c = if oc.timed_out() {
+            [0, 0, 0]
+        } else {
+            [r, gg, bb]
+        };
         raw[i * 3..i * 3 + 3].copy_from_slice(&c);
         out[i * 3..i * 3 + 3].copy_from_slice(&output_stage(c, &lut, brightness));
     }
@@ -125,7 +140,9 @@ fn run() -> Result<(), String> {
     // debug_fx_led re-runs, as the device does them: from the LED's post-frame
     // buffer elements (restored after), on zeroed scratch.
     for i in leds {
-        let rec = ctx.get(i * dbg::LED_CTX_BYTES..(i + 1) * dbg::LED_CTX_BYTES).ok_or(format!("--led {i}: no such LED"))?;
+        let rec = ctx
+            .get(i * dbg::LED_CTX_BYTES..(i + 1) * dbg::LED_CTX_BYTES)
+            .ok_or(format!("--led {i}: no such LED"))?;
         let led = dbg::led_from_record(rec, i as u32).ok_or(format!("--led {i}: no map entry"))?;
         let mut saved = Vec::new();
         dbg::led_elem_ranges(&prog, frame.led_count as usize, i, |o, l| {
