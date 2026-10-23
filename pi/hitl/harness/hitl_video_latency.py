@@ -95,7 +95,8 @@ def run_probe(res, host: str, port: int, mode: str, fps: float, seconds: float, 
     cmd = (
         f"python3 /tmp/wss_video_latency.py --host {host} --port {port} "
         f"--tex-index {args.tex_index} --width {args.width} --height {args.height} "
-        f"--fps {fps:g} --seconds {seconds:g} --mode {mode} --calib {args.calib}"
+        f"--fps {fps:g} --seconds {seconds:g} --mode {mode} --calib {args.calib} "
+        f"--noise-pps {args.noise_pps:g}"
     )
     _log(f"[probe] {cmd}")
     proc = res.ssh(cmd, capture=True, timeout=seconds + 4 * args.calib + 120)
@@ -205,6 +206,12 @@ def main() -> None:
     ap.add_argument("--led-count", type=int, default=256)
     ap.add_argument("--calib", type=int, default=40, help="idle clock-sync pings before/after")
     ap.add_argument("--stall-ms", type=float, default=100.0)
+    ap.add_argument(
+        "--noise-pps",
+        type=float,
+        default=0.0,
+        help="stress: background UDP datagrams/s at the DUT during the stream (RX-ring load)",
+    )
     ap.add_argument("--min-applied-ratio", type=float, default=0.9)
     ap.add_argument("--max-p99-ms", type=float, default=2000.0)
     ap.add_argument("--max-stalls-per-min", type=float, default=1e9)
