@@ -157,7 +157,7 @@ def current_values(reply: dict) -> dict[int, list[float]]:
     return {int(c.get("slot", 0)): list(c.get("value", [])) for c in reply.get("current", [])}
 
 
-async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
+async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) -> dict[str, Any]:
     from hitl_led_capture import _connect_ws
 
     ctx = None
@@ -170,7 +170,7 @@ async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
     out: dict[str, Any] = {
         "status": core.SKIP,
         "reasons": ["driver did not reach the stream"],
-        "result_line": core.result_line(core.SKIP, args.sender, empty, empty, empty, "no baseline"),
+        "result_line": core.result_line(core.SKIP, sender_kind, empty, empty, empty, "no baseline"),
     }
     try:
         sock = await _connect_ws(url, ctx, settle_s=args.settle)
@@ -237,7 +237,7 @@ async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
     pend: list[dict] = []
 
     def on_msg(msg: dict) -> None:
-        if args.sender == "live":
+        if sender_kind == "live":
             pend.extend(sender.on_reply(time.monotonic(), msg))
             wake.set()
 
@@ -260,7 +260,7 @@ async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
                 tracker.generated(counter, due)
             else:
                 value = [((k * 37) % 101) / 100.0]
-            if args.sender == "naive":
+            if sender_kind == "naive":
                 msg: dict = {"type": "set_uniforms", "values": [{"slot": slot, "value": value}]}
                 await put([msg])
             else:
@@ -344,7 +344,7 @@ async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
         f"base_rtt={base_rtt:.0f}ms fps={fps} events={args.controls}x{args.hz:g}Hz "
         f"minutes={args.minutes:g} frames_sent={sent_frames} sender_stats={json.dumps(sender.stats)}"
     )
-    line = core.result_line(status, args.sender, fs, ls, os_, extra)
+    line = core.result_line(status, sender_kind, fs, ls, os_, extra)
     _log(f"[live] reasons: {reasons}")
     return {
         "status": status,
@@ -357,9 +357,24 @@ async def drive(url: str, insecure: bool, args, fxb: bytes) -> dict[str, Any]:
 def run_on_hardware(args) -> int:
     fxb = compile_fx_src(args.fx_compile, HEAVY_FX)
     _log(f"[fx] heavy probe effect: {len(fxb)} B .fxb")
+    kinds = [k.strip() for k in args.sender.split(",") if k.strip()]
+    if not kinds or any(k not in ("live", "naive") for k in kinds):
+        raise SystemExit(f"--sender: live and/or naive, got {args.sender!r}")
+
+    def run_all(url: str) -> dict[str, Any]:
+        """Each sender on a fresh session (same flash). The gate is the `live`
+        run when there is one; the others are reported, not gated (the A/B)."""
+        results = {}
+        for k in kinds:
+            results[k] = asyncio.run(drive(url, True, args, fxb, k))
+            _log(results[k]["result_line"])
+        gated = results.get("live") or results[kinds[0]]
+        if len(results) > 1:
+            gated = {**gated, "result_line": " | ".join(r["result_line"] for r in results.values())}
+        return gated
+
     if args.device_ws:
-        res = asyncio.run(drive(args.device_ws, True, args, fxb))
-        _log(res["result_line"])
+        res = run_all(args.device_ws)
         return 1 if res["status"] == core.FAIL else 0
 
     from hitl_client import Reservation
@@ -397,7 +412,7 @@ def run_on_hardware(args) -> int:
                 return 0
         host, port = dut_target(redirect, "wss")
         with r.forward(host, port) as local_port:
-            result = asyncio.run(drive(f"wss://localhost:{local_port}/ws", True, args, fxb))
+            result = run_all(f"wss://localhost:{local_port}/ws")
     finally:
         r.release()
         _log(result.get("result_line", ""))
@@ -420,7 +435,12 @@ def main() -> int:
     )
     ap.add_argument("--no-bundle", dest="bundle", action="store_const", const=None)
     ap.add_argument("--fx-compile", default=_rlocation(_FXC_RUNFILE) or "fx_compile")
-    ap.add_argument("--sender", choices=("live", "naive"), default="live")
+    ap.add_argument(
+        "--sender",
+        default="live",
+        help="live (the app's live-control channel; gated), naive (the pre-fix app: one "
+        "set_uniforms per event; reported), or both comma-separated for the A/B",
+    )
     ap.add_argument("--minutes", type=float, default=4.0)
     ap.add_argument("--controls", type=int, default=4)
     ap.add_argument("--hz", type=float, default=100.0, help="per-control CC rate")
