@@ -65,18 +65,29 @@ def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def parse_plan(plan: str, inflight: int = 1) -> list[tuple[str, str, float, int]]:
-    """'heavy:wss:0,heavy:osc:400,light:wss:0:3' -> [(effect, transport, noise_pps,
-    inflight), ...]; the 4th field (wss only) overrides --inflight for that run."""
+def parse_plan(
+    plan: str, inflight: int = 1, ack_ms: float = 400.0
+) -> list[tuple[str, str, float, int, float]]:
+    """'heavy:wss:0,heavy:osc:400,light:wss:0:2:0' -> [(effect, transport, noise_pps,
+    inflight, ack_timeout_ms), ...]; the 4th/5th fields (wss only) override --inflight /
+    --ack-timeout-ms for that run (inflight 0 = as the app; ack 0 = adaptive)."""
     out = []
     for item in plan.split(","):
         item = item.strip()
         if not item:
             continue
-        eff, tr, noise, infl = (item.split(":") + ["", "", ""])[:4]
+        eff, tr, noise, infl, ack = (item.split(":") + ["", "", "", ""])[:5]
         if eff not in EFFECTS or tr not in ("wss", "osc"):
             raise SystemExit(f"--plan: bad item {item!r} (effect heavy|light, transport wss|osc)")
-        out.append((eff, tr, float(noise or 0), int(infl or inflight)))
+        out.append(
+            (
+                eff,
+                tr,
+                float(noise or 0),
+                int(infl) if infl else inflight,
+                float(ack) if ack else ack_ms,
+            )
+        )
     if not out:
         raise SystemExit("--plan is empty")
     return out
@@ -121,13 +132,20 @@ async def setup_effect(url: str, args, fxb: bytes, target_fps: int) -> float:
 
 
 def run_probe(
-    res, host: str, transport: str, noise: float, min_iv_ms: float, inflight: int, args
+    res,
+    host: str,
+    transport: str,
+    noise: float,
+    min_iv_ms: float,
+    inflight: int,
+    ack_ms: float,
+    args,
 ) -> str:
     cmd = (
         f"python3 /tmp/ctrl_budget_probe.py --host {host} --transport {transport} "
         f"--windows {args.windows} --window-s {args.window_s:g} --noise-pps {noise:g} "
         f"--min-interval-ms {min_iv_ms:.1f} --inflight {inflight} "
-        f"--ack-timeout-ms {args.ack_timeout_ms:g}" + (" --no-nodelay" if args.no_nodelay else "")
+        f"--ack-timeout-ms {ack_ms:g}" + (" --no-nodelay" if args.no_nodelay else "")
     )
     _log(f"[probe] {cmd}")
     budget_s = args.windows * (args.window_s + 8) + 60
@@ -151,7 +169,7 @@ def run_on_hardware(args) -> int:
     from hitl_client import Reservation
     from provision import HarnessError, dut_target, provision_dut, wire_provision_dut
 
-    plan = parse_plan(args.plan, args.inflight)
+    plan = parse_plan(args.plan, args.inflight, args.ack_timeout_ms)
     out_dir = _out_dir(args)
     fxbs = {e: compile_fx_src(args.fx_compile, EFFECTS[e][0]) for e in {p[0] for p in plan}}
     probe = os.path.join(_HERE, "ctrl_budget_probe.py")
@@ -191,7 +209,7 @@ def run_on_hardware(args) -> int:
             host, port = dut_target(redirect, "wss")
             loaded = None
             fps = 0.0
-            for eff, transport, noise, inflight in plan:
+            for eff, transport, noise, inflight, ack_ms in plan:
                 if eff != loaded:
                     with res.forward(host, port) as lp:
                         fps = asyncio.run(
@@ -205,11 +223,16 @@ def run_on_hardware(args) -> int:
                 label = (
                     (f"{b_label} " if b_label else "")
                     + f"{eff} {transport}"
-                    + (f" x{inflight}" if transport == "wss" and inflight != 1 else "")
+                    + (f" x{inflight or 'app'}" if transport == "wss" and inflight != 1 else "")
+                    + (
+                        (" ack-adaptive" if ack_ms <= 0 else f" ack{ack_ms:g}")
+                        if transport == "wss" and ack_ms != 400
+                        else ""
+                    )
                     + (f" +{noise:g}pps" if noise else "")
                 )
                 with res.ap_lock(f"ctrl budget {label} -> {host}"):
-                    text = run_probe(res, host, transport, noise, min_iv, inflight, args)
+                    text = run_probe(res, host, transport, noise, min_iv, inflight, ack_ms, args)
                 tag = label.replace(" ", "_").replace("+", "")
                 with open(
                     os.path.join(out_dir, f"ctrl_budget_{tag}.txt"), "w", encoding="utf-8"
