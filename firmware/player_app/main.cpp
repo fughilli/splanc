@@ -1118,9 +1118,23 @@ static void poll_after_message() {
 // persist it if it's a state-changing upload (map/topology/effect/selection), and run the
 // post-message hw pollers. Shared by ws_compute_reply and the EFFECT-upload final step (a
 // reassembled submit_effect frame is a normal message). Returns the reply length, 0, or -1.
+// Take the player mutex for a network-side dispatch. The render task holds it across a
+// whole update+shade (~10 ms+); on the heapless netstack, loopTask services the WiFi RX
+// ring every few ms while it waits, so inbound frames aren't lost to a full ring. It
+// waits in 4 ms BLOCKING slices (a registered waiter, so render's give hands the mutex
+// straight over): a 1-tick poll lost the handoff to render's next frame and doubled
+// the waits on the bench.
+static void take_player_mutex_for_network() {
+#if defined(LM_NETSTACK)
+  while (xSemaphoreTake(player_mutex, pdMS_TO_TICKS(4)) != pdTRUE) netstack_service_link(16);
+#else
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+#endif
+}
+
 static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  take_player_mutex_for_network();
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
