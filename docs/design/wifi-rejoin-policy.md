@@ -38,17 +38,55 @@ effect time step). Phases: `steady` (baseline), `scan` (one 13-channel sweep), `
 random-MAC stable-address fallback). Effects: a light one at the wire ceiling
 (plasmaHueFixed, 250 LEDs, ~77 fps) and a heavy one (slowLag, ~5.4 fps, lagging).
 
-See the PR for the before/after tables (hitl-rig-2, c6-003f08, analyzer on D6).
+Results (hitl-rig-2, c6-003f08, analyzer on the strip; wire frame-interval deviation from
+the steady median, ms):
+
+| Effect / phase | before: max | before: p99.9 | after: max | after: p99.9 |
+|---|---|---|---|---|
+| light steady (13.0 / 12.0 ms) | 6.14* | 6.14* | 0.43 | 0.42 |
+| light scan | 1.44 | 1.44 | 0.67 | 0.67 |
+| light dhcp | 1.53 | 1.53 | 0.43 | 0.43 |
+| light wrongpsk | 5.12 | 4.62 | 0.52 | 0.50 |
+| light missing | 4.42 | 4.39 | 0.50 | 0.49 |
+| light rejoin | 4.50 | 4.49 | 0.51 | 0.51 |
+| light giveup | 1.80 | 1.61 | 0.45 | 0.44 |
+| heavy steady (183.6 / 180.7 ms) | 1.43 | 1.43 | 1.80 | 1.80 |
+| heavy scan | 1.40 | 1.40 | 1.75 | 1.75 |
+| heavy dhcp | 1.69 | 1.69 | 1.85 | 1.85 |
+| heavy wrongpsk | 12.75 | 12.75 | 1.99 | 1.99 |
+| heavy missing | 13.8† | 13.8† | 1.88 | 1.88 |
+| heavy rejoin | 13.09 | 13.09 | 1.78 | 1.78 |
+| heavy giveup | 1.6† | 1.6† | 1.67 | 1.67 |
+
+\* the console attach (below), not Wi-Fi. † excluding capture-start artifacts (below).
+After the fixes no phase had a wire excursion, a damaged frame, a stalled transmit, or an
+effect time step larger than its frame interval.
+
+Two artifacts of the measurement itself, not of Wi-Fi: attaching a reader to the C6's USB
+console makes it flush its buffered log, and for ~0.5 s frames ran 2-3 ms late (the
+before "steady" row); and the analyzer decoded ~16-40 glitch bits after each frame for
+the first ~1 s of a capture, in every phase including steady. The harness now attaches
+the console 2.5 s before the analyzer arms. A field unit has no console host attached.
 
 ### Findings and fixes
 
-- **PBKDF2 was the starvation source.** The PMK (PBKDF2-SHA1, 4096 iterations, ~1.8 s of
+- **The netstack loop ran at render's priority.** Any CPU work it did while a frame was
+  due was time-sliced 1:1 with rendering. It now runs one priority below render; render
+  always leaves it time (every frame sleeps to the next frame start, an overrunning one
+  sleeps at least max(4 ms, 25 % of its cost)). Control latency under a 5 fps effect:
+  median 56 ms, max 213 ms (was 74 / 97 ms) — bounded by one heavy frame.
+- **PBKDF2 was the largest CPU burst.** The PMK (PBKDF2-SHA1, 4096 iterations, ~1.8 s of
   CPU) is derived once per credential change and cached across join attempts (the auth /
   assoc / 4-way retries and the stall watchdog reuse it). Its 64-iteration (~14 ms) chunks
   ran at render priority, so for ~2 s per new provision or wrong-PSK retry rendering got
-  half the CPU: heavy frames stretched 184 → 196 ms, light ones 13 → 16 ms. Each chunk
-  now runs one priority below render (`vTaskPrioritySet` around `ns_pmk_step`), so render
-  preempts it the moment a frame is due.
+  half the CPU: heavy frames stretched 184 → 196 ms, light ones 13 → 16 ms. With the
+  loop below render (and each chunk one level lower still) render preempts it the moment
+  a frame is due. There is no SAE (WPA3) path; the netstack is WPA2-PSK/CCMP only.
+- **Pacing used CPU-cycle spans.** The transmit span was timed with the cycle counter,
+  which stops while the core idles in WFI during the DMA transmit, so it read short when
+  idle and true when busy: under PBKDF2 a 77 fps effect ran at 125 fps. Frames are now
+  paced on wall time to the next frame start (`esp_timer`), and the transmit span is
+  wall time.
 - **Background sweeps** (13 channel switches in the WiFi task, a probe per channel, the
   beacon parsing in the loop) showed no render disturbance beyond steady-state jitter.
 - **Vendor log bursts.** After the MAC hijack the vendor driver's event loop is gone, so

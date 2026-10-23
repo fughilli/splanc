@@ -2962,14 +2962,16 @@ void setup() {
 #endif
 #if defined(LM_NETSTACK)
   // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
-  // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
-  // render task under a heavy FULL-perf sweep — the network can't service RX/ACK/
-  // retransmit and the control connection resets mid-measurement. Run it at render's
-  // priority so the two round-robin and the network keeps a fair share; observed as
-  // the most reliable (fewest mid-sweep drops) of the options tried. (The remaining
-  // unmeasurable effect, sweep256, fails on its ~4.6KB fixture-map record — the
-  // netstack's large-record limit — not on scheduling.)
-  vTaskPrioritySet(nullptr, kRenderTaskPrio);
+  // uses IDF net tasks. It runs ONE priority below render: whatever the netstack does
+  // (PBKDF2, the join, EAPOL, TLS, sweeps) can never delay a frame, and render always
+  // leaves it time — every frame sleeps to the next frame start, and a frame that
+  // overran its period sleeps >= max(4 ms, 25% of its cost) (firmware/fps). It used to
+  // run AT render's priority (when a FULL-perf sweep rendered back-to-back with a
+  // 1-tick yield and a priority-1 loop was starved); time-sliced 1:1 with render, its
+  // CPU work stretched frames whenever both were runnable (wifi_cadence on hitl-rig-2:
+  // a heavy effect's frames 184 -> 196 ms during PBKDF2, a light one's 12 -> 15 ms
+  // around 4-way retries). Sensors (5) stay below both.
+  vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
 #endif
   // Boot is done: from here on every heap allocation is attributed to its call site
   // (heap_census.cpp; read over JTAG, never reported by the DUT).
