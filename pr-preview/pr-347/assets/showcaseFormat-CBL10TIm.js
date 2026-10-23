@@ -1,1 +1,0 @@
-function e(e){return{...e,map:{...e.map,leds:e.map.leds.map((e,t)=>({id:t,xyz:e,confidence:1,nViews:8,rmsReprojPx:0,parallaxDeg:35}))}}}export{e as unpackSample};
