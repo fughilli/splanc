@@ -56,6 +56,9 @@ mod uniform_pool;
 // The driver VM host (FUG-107): one `.fxb` I2C driver, exports into the pool.
 mod driver_ffi;
 pub use driver_ffi::*;
+// The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
+mod fxdbg;
+pub use fxdbg::*;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -259,6 +262,9 @@ static mut FX_JIT_PLANS: [PlanOut; MAX_JIT_BLOCKS] = [PlanOut {
     code_len: 0,
 }; MAX_JIT_BLOCKS];
 static mut FX_JIT_TARGETS: [bool; JIT_MAX_CODE + 1] = [false; JIT_MAX_CODE + 1];
+/// Per installed block: its offset in DECK_A.bytes + the 3 bytes the JitCall
+/// patch replaced (fxdbg.rs restores them; 24 B).
+static mut FX_JIT_ORIG: [(u16, [u8; 3]); MAX_JIT_BLOCKS] = [(0, [0; 3]); MAX_JIT_BLOCKS];
 
 /// Placeholder segment for the never-called table slots (a real segment always
 /// overwrites the slots we install). Must be a valid function, not null.
@@ -363,6 +369,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(region_ptr.add(p.code_off as usize));
         blocks[installed] = JitBlock { func, end: p.end, net_delta: p.net_delta };
         let at = code_off + p.start as usize;
+        // Keep the bytes the patch overwrites: the FX debugger un-patches them to
+        // serve the .fxb as uploaded and to run the deck on the interpreter.
+        (*addr_of_mut!(FX_JIT_ORIG))[installed] = (at as u16, [fxb[at], fxb[at + 1], fxb[at + 2]]);
         fxb[at] = ledmapper_fx_vm::Op::JitCall as u8;
         fxb[at + 1] = (installed & 0xff) as u8;
         fxb[at + 2] = ((installed >> 8) & 0xff) as u8;
@@ -1610,6 +1619,10 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_SENSOR_MOUNT) => return sensor_ffi::handle_set_sensor_mount(frame, out, out_cap),
         Some(ARM_SET_CAPTURE_PROFILE) => return sensor_ffi::handle_set_capture_profile(frame, out, out_cap),
         Some(ARM_GET_CAPTURE_PROFILE) => return sensor_ffi::handle_get_capture_profile(out, out_cap),
+        // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
+        Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
+        Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
+        Some(fxdbg::ARM_DEBUG_FX_LED) => return fxdbg::handle_debug_led(frame, recv_ms, out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -2116,6 +2129,7 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "fx_debug",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2619,6 +2633,13 @@ impl PbOut<'_> {
     }
     fn key(&mut self, field: u32, wire: u8) {
         self.varint(((field as u64) << 3) | wire as u64);
+    }
+    /// A 32-bit fixed field (wire type 5): a `float` as its bits, or fixed32.
+    fn fixed32(&mut self, field: u32, v: u32) {
+        self.key(field, 5);
+        for b in v.to_le_bytes() {
+            self.byte(b);
+        }
     }
     fn uint(&mut self, field: u32, v: u64) {
         self.key(field, 0);

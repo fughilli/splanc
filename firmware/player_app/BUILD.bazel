@@ -102,6 +102,7 @@ rust_static_library(
     srcs = [
         "driver_ffi.rs",
         "ffi.rs",
+        "fxdbg.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
@@ -144,6 +145,7 @@ rust_library(
     srcs = [
         "driver_ffi.rs",
         "ffi.rs",
+        "fxdbg.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
     ],
@@ -221,6 +223,23 @@ rust_test(
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
+# a host replay of a paused frame that must match the device bit-exactly
+# (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
+rust_test(
+    name = "fx_debug_test",
+    srcs = ["tests/fx_debug.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
         "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",

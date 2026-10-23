@@ -440,6 +440,20 @@ void lm_drv_set_host(const LmDrvHost *host);
 // Run the loaded driver's poll() if due (loop task, player mutex held).
 void lm_drv_poll(uint64_t now_us);
 
+// -- FX debugger (fxdbg.rs, docs/design/fx-debugger.md) --------------------------
+// Boot: the output stage snapshots read back (the `leds` frame buffer of `cap`
+// RGB triples, &g_lut, &g_brightness).
+void lm_fxdbg_bind_output(const uint8_t *leds, uint32_t cap, const uint8_t *const *lut,
+                          const uint8_t *brightness);
+// Render task, before the effect branch: true = paused, render nothing.
+bool lm_fxdbg_hold(uint32_t now_ms);
+// Effect branch, after the frame clock: a pending step overrides time/dt; true =
+// this frame is a debugger step (skip the autoscaler).
+bool lm_fxdbg_step(float *time_s, float *dt_s);
+bool lm_fxdbg_paused(void);
+// Loop task: lapse a pause whose client went away (no session open).
+void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
