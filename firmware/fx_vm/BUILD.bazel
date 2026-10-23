@@ -54,6 +54,8 @@ rust_shared_library(
     edition = "2021",
     deps = [
         ":fx_vm",
+        # fx_blend_rgb8: the FX debugger replays the device's crossfade blend.
+        "//firmware/keypoint",
         "@crates//:wasm-bindgen",
     ],
 )

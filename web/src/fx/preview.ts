@@ -11,6 +11,7 @@
  */
 
 import { assetUrl } from "../assetBase";
+import type { ReplayVm } from "./fxDebug";
 
 export type FxUiKind =
   | { kind: "slider"; min: number; max: number; step: number }
@@ -69,6 +70,9 @@ interface FxPreviewWasm {
 interface VmModule {
   default(wasm: string): Promise<unknown>;
   FxPreview: new (fxb: Uint8Array) => FxPreviewWasm;
+  // The FX debugger's host replay (fxDebug.ts ReplayVm).
+  FxReplay?: ReplayVm["FxReplay"];
+  fx_blend_rgb8?: ReplayVm["fx_blend_rgb8"];
 }
 
 let compilerMod: Promise<CompilerModule> | null = null;
@@ -78,7 +82,7 @@ let vmMod: Promise<VmModule> | null = null;
  * {@link FxPreview} call into). */
 export interface FxModules {
   compiler?: Pick<CompilerModule, "fx_compile">;
-  vm?: Pick<VmModule, "FxPreview">;
+  vm?: Pick<VmModule, "FxPreview" | "FxReplay" | "fx_blend_rgb8">;
 }
 
 /**
@@ -113,6 +117,14 @@ function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
     })();
   }
   return vmMod;
+}
+
+/** The VM wasm's FX-debugger replay surface (fxDebug.ts), from the same module
+ * as the preview. Throws on a VM build that predates it. */
+export async function loadReplayVm(): Promise<ReplayVm> {
+  const mod = await loadVm();
+  if (!mod.FxReplay || !mod.fx_blend_rgb8) throw new Error("this VM build has no FX debugger replay");
+  return { FxReplay: mod.FxReplay, fx_blend_rgb8: mod.fx_blend_rgb8 };
 }
 
 /** Compile GLSL-ish effect source to `.fxb` bytecode + a uniform manifest. */
