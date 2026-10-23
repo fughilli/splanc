@@ -320,8 +320,9 @@
 <h1>Live control: bounded latency for knobs, faders and MIDI<a class="headerlink" href="#live-control-bounded-latency-for-knobs-faders-and-midi" title="Link to this heading">¶</a></h1>
 <p>Status: implemented. Code: <code class="docutils literal notranslate"><span class="pre">web/src/net/liveSender.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/net/liveControl.ts</span></code>,
 <code class="docutils literal notranslate"><span class="pre">LedMapperClient.live</span></code>; firmware <code class="docutils literal notranslate"><span class="pre">ControlAck</span></code> (<code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>,
-<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code> <code class="docutils literal notranslate"><span class="pre">dispatch_plain</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>); HITL gate
-<code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:live_latency_netstack</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code> <code class="docutils literal notranslate"><span class="pre">dispatch_plain</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code>), the live mailbox
+(<code class="docutils literal notranslate"><span class="pre">lm_live_post</span></code> / <code class="docutils literal notranslate"><span class="pre">lm_live_drain</span></code>); HITL gate <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:live_latency_netstack</span></code>;
+on-LAN budget bench <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ctrl_budget_netstack</span></code>.</p>
 <section id="the-problem">
 <h2>The problem<a class="headerlink" href="#the-problem" title="Link to this heading">¶</a></h2>
 <p>A performer turning MIDI knobs on a netstack C6 saw input lag that grew the longer
@@ -348,13 +349,24 @@ seconds of stale knob positions after the performer stopped.</p>
 control: the effect editor’s sliders, acid mode, Show Mode’s crossfader and keypoint
 strip, the MIDI router, colour-correction test controls, the agent’s live mux and its
 ramps.</p>
-<ul class="simple">
+<ul>
 <li><p><strong>Latest value wins.</strong> Moves are merged per (deck, slot); the crossfade and a
 keypoint blend per deck.</p></li>
 <li><p><strong>One batch in flight.</strong> A batch is at most one <code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> per deck, one
 <code class="docutils literal notranslate"><span class="pre">set_crossfade</span></code> and one <code class="docutils literal notranslate"><span class="pre">blend_keypoints</span></code> per deck. Nothing else goes out until the
-device has acknowledged it (or 400 ms passed: a dropped ack, a silent firmware).
-The backlog is bounded at one batch, whatever the input rate.</p></li>
+device has acknowledged it, or until the <strong>adaptive ack timeout</strong> passes: 3x the
+median round trip of recently answered batches, 25–400 ms (400 until there are five
+samples). A lost ack — a device→client segment the device only resends on its</p>
+<blockquote>
+<div><p>= 120 ms RTO, or an ack dropped on a full send window — then costs ~one LAN round
+trip, not a fixed 400 ms (light effect, LAN: p99 224 -&gt; 40 ms). The backlog stays
+bounded: one batch per timeout at most, and never faster than the rate cap.
+<code class="docutils literal notranslate"><span class="pre">maxInFlight</span></code> (LiveControlOptions) allows more unacknowledged seq’d batches; it is
+1 by default because a second batch didn’t reliably help on the bench, and on
+pre-mailbox firmware it queued moves behind the render mutex (p99 x1.6, seconds of
+backlog under load). Legacy reply pacing always keeps one.</p>
+</div></blockquote>
+</li>
 <li><p><strong>Never faster than the device renders.</strong> Consecutive batches are at least one
 render period apart (the device’s <code class="docutils literal notranslate"><span class="pre">currentFps</span></code>, 8–100 ms).</p></li>
 <li><p><strong>Transport gate.</strong> A batch waits while the socket still has more than 1 KB queued
@@ -388,6 +400,21 @@ reply’s persistence is decided (<code class="docutils literal notranslate"><sp
 or a legacy <code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>’ <code class="docutils literal notranslate"><span class="pre">playback_state</span></code>, which no client awaits) is dropped
 when the TCP send window can’t take it, like an unsolicited PerfReport, instead of
 blocking every frame behind it in <code class="docutils literal notranslate"><span class="pre">tls_write_all</span></code>.</p></li>
+<li><p><strong>The live mailbox (feature <code class="docutils literal notranslate"><span class="pre">live_mailbox</span></code>).</strong> A seq’d, <code class="docutils literal notranslate"><span class="pre">commit:</span> <span class="pre">false</span></code>
+<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> — a live move — is not handled under the player mutex: the network
+task stashes it (latest value per deck+slot, 16 keys, all-or-nothing; overflow falls
+back to the locked path) and acks at once; the render task applies what waits right
+before the next frame’s <code class="docutils literal notranslate"><span class="pre">update()</span></code> — the same frame boundary the locked path reached,
+but the ack (the client’s pacing signal) no longer waits behind a render frame. A
+locked <code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> applies the waiting moves first, so it still wins; an effect
+load clears the mailbox.</p></li>
+<li><p><strong>loopTask never parks on the render mutex.</strong> The per-pass polls (perf push, fps
+notify, the 5 s status line) read lock-free or try-lock: a blocking take there held
+loopTask off the RX ring for the rest of every render frame (a message waited ~a
+whole frame before it was even reaped; 400 OSC datagrams/s overflowed the ring
+until the session died). The cost: loopTask now really runs during a frame (same
+priority, round-robin), so a heavy frame takes longer — see the budget below. The
+render duty-cycle split is the fps controller’s call.</p></li>
 <li><p><strong>Persist off the gesture.</strong> The coalesced effect-selection save waits until the
 live controls (committed or not) have also been quiet for 1.5 s, so a littlefs
 write never lands mid-turn.</p></li>
@@ -403,6 +430,83 @@ performer behind the relay keeps the same bound; the web bridge client
 than 8 KB queued. <code class="docutils literal notranslate"><span class="pre">ramp_uniforms</span></code> steps go through the same channel.</p>
 </section>
 </section>
+<section id="measuring-the-budget">
+<h2>Measuring the budget<a class="headerlink" href="#measuring-the-budget" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ctrl_budget_netstack</span></code> measures on the rig LAN, not through the
+tailnet tunnel (whose 110–160 ms RTT hid everything below): it flashes an
+<code class="docutils literal notranslate"><span class="pre">LM_CTRL_TRACE</span></code> image (<code class="docutils literal notranslate"><span class="pre">esp32c6_netstack_ctrltrace_flashbundle</span></code>) that stamps every
+control message (RX-ring reap, TLS decode, dispatch, mutex, handled, reply) and every
+frame (start, shade end, transmit, wire done) in esp_timer µs, runs a stdlib probe
+inside the reservation (4 knobs x 100 Hz over wss or OSC, optional +N pps background
+UDP), and attributes each counter value’s latency to its stages on a min-delay clock
+fit. <code class="docutils literal notranslate"><span class="pre">--ab-bundle</span></code> A/Bs firmwares on one DUT.</p>
+<p>Input -&gt; applied (the value is in a frame) / -&gt; photon (that frame is on the LEDs),
+p50 / p99 ms, 150 LEDs, rig-2 LAN; heavy = the gate’s shader at its 25 fps floor,
+light = trivial shade pinned at 60 fps:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>config</p></th>
+<th class="head"><p>frame</p></th>
+<th class="head"><p>before (#354) applied</p></th>
+<th class="head"><p>now applied</p></th>
+<th class="head"><p>now photon</p></th>
+<th class="head"><p>target (1 frame + 10 / 2 frames + 20)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>heavy wss</p></td>
+<td><p>54 -&gt; 65</p></td>
+<td><p>158 / 330</p></td>
+<td><p>58 / 103</p></td>
+<td><p>123 / 170</p></td>
+<td><p>75 / 150</p></td>
+</tr>
+<tr class="row-odd"><td><p>heavy wss +400 pps</p></td>
+<td><p>67 -&gt; 89</p></td>
+<td><p>328 / 907</p></td>
+<td><p>69 / 126</p></td>
+<td><p>157 / 215</p></td>
+<td><p>99 / 198</p></td>
+</tr>
+<tr class="row-even"><td><p>heavy OSC</p></td>
+<td><p>56 -&gt; 69</p></td>
+<td><p>session dies</p></td>
+<td><p>43 / 97</p></td>
+<td><p>106 / 167</p></td>
+<td><p>79 / 158</p></td>
+</tr>
+<tr class="row-odd"><td><p>light wss</p></td>
+<td><p>17</p></td>
+<td><p>23 / 224</p></td>
+<td><p>19 / 40</p></td>
+<td><p>27 / 49</p></td>
+<td><p>27 / 54</p></td>
+</tr>
+<tr class="row-even"><td><p>light wss +400 pps</p></td>
+<td><p>17</p></td>
+<td><p>26 / 246</p></td>
+<td><p>19 / 39</p></td>
+<td><p>29 / 49</p></td>
+<td><p>27 / 54</p></td>
+</tr>
+<tr class="row-odd"><td><p>light OSC</p></td>
+<td><p>17</p></td>
+<td><p>12 / 31</p></td>
+<td><p>10 / 18</p></td>
+<td><p>19 / 28</p></td>
+<td><p>27 / 54</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Where the heavy-effect time went before: ~55 ms client pacing, ~51 ms in the RX ring
+(loopTask parked on the mutex), ~3 ms decode, ~50 ms on the mutex at dispatch (the
+one-in-flight sender phase-locks to the frame), ~4 ms to the frame start, 50 ms render,
+5 ms wire. The Wi-Fi one-way floor is ~1 ms. What remains is the physical floor: a move
+waits for the next frame boundary (U[0, frame]) and then a whole render; applying
+mid-frame would only shorten the wait for the next boundary, at the cost of tearing.</p>
+</section>
 <section id="verification">
 <h2>Verification<a class="headerlink" href="#verification" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -413,10 +517,17 @@ under 100 ms with no growth).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/tests/test_live_latency.py</span></code>: the HITL gate’s pure core (a Python port of
 the channel, the lag arithmetic, the verdict).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:live_latency_netstack</span></code>: on hardware, a heavy effect + 4 knobs ×
-100 Hz for 4 minutes; a <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code> echo of a counter knob measures
-input-to-applied lag. Gates p50 ≤ base RTT + 150 ms, p99 ≤ 2 × base RTT + 600 ms,
-and the last minute’s p50 within max(60 ms, 50 %) of the first minute’s.
-<code class="docutils literal notranslate"><span class="pre">--sender</span> <span class="pre">naive</span></code> replays the pre-fix app for the A/B.</p></li>
+100 Hz for 4 minutes, then 30 s of OSC; the stream runs INSIDE the reservation, on
+the rig AP (<code class="docutils literal notranslate"><span class="pre">ctrl_budget_probe.py</span> <span class="pre">--gate</span></code>, the app’s live-channel policy), and a
+<code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code> echo of the counter knob every 250 ms measures how long the
+oldest unapplied value had waited. Gates p50 &lt;= 1 frame + 50 ms, p99 &lt;= 3 frames +
+120 ms (frame = the effect’s measured period; measured 71–75 / 150 ms at a 60 ms
+frame on rig-1/rig-2, ~151 / 320 ms on #354 firmware), no growth between the first
+and last minute, no probe timeout, no dropped session; too few samples with nothing
+over budget is SKIP. <code class="docutils literal notranslate"><span class="pre">--path</span> <span class="pre">tunnel</span></code> keeps the original harness-host path and its
+RTT-relative budgets; <code class="docutils literal notranslate"><span class="pre">--sender</span> <span class="pre">naive</span></code> replays the pre-fix app.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:ctrl_budget_netstack</span></code> (manual): the per-stage budget above.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pi/hitl/tests/test_ctrl_budget.py</span></code>: the bench’s attribution on a synthetic trace.</p></li>
 </ul>
 </section>
 </section>
@@ -466,6 +577,7 @@ and the last minute’s p50 within max(60 ms, 50 %) of the first minute’s.
 <li><a class="reference internal" href="#agent-and-bridge">Agent and bridge</a></li>
 </ul>
 </li>
+<li><a class="reference internal" href="#measuring-the-budget">Measuring the budget</a></li>
 <li><a class="reference internal" href="#verification">Verification</a></li>
 </ul>
 </li>
