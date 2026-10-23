@@ -1991,11 +1991,9 @@ fn run(
     let mut budget: u32 = guard.instructions; // instructions per invocation
     // Tier-1 counters (perf-monitoring.md): opcodes retired + stack high-water.
     // Cheap-by-construction — one add + one max next to the budget decrement.
-    let mut instrs: u32 = 0;
+    // `instrs` (opcodes retired) is derived from the budget at exit: the loop
+    // decrements `budget` once per opcode, so one counter serves both.
     let mut sp_max: usize = 0;
-    // Poll the wall-time flag every N ops (an atomic load per op would dominate
-    // the tiny opcodes); the instruction budget bounds the slop between polls.
-    const DEADLINE_POLL_MASK: u32 = 0x3FF;
     let mut csp: usize = 0;
     let mut outcome = Outcome::Ok;
 
@@ -2032,6 +2030,24 @@ fn run(
                     fault!();
                 }
                 f
+            }};
+        }
+        // Secondary wall-time guard: a hardware timer raises this flag at a
+        // frame-relative deadline. Polled on every taken backward branch and
+        // call (where a long-running invocation must loop or recurse) instead of
+        // every 1024th opcode, which kept two instructions on every dispatch;
+        // straight-line code is bounded by the code length and the budget.
+        macro_rules! poll_deadline {
+            () => {{
+                if let Some(flag) = guard.deadline {
+                    // SAFETY: `flag` points at a live AtomicBool owned by the
+                    // caller for the duration of this call (the C++ FFI holds it
+                    // in a static). Atomic load is sound through a shared ref.
+                    if unsafe { (*flag).load(Ordering::Relaxed) } {
+                        outcome = Outcome::Timeout;
+                        break 'exec;
+                    }
+                }
             }};
         }
         macro_rules! cb {
@@ -2080,29 +2096,20 @@ fn run(
             break;
         }
         budget -= 1;
-        instrs += 1;
         // Stack high-water: the sp before this op ran (post-op depth is folded
         // in via the NEXT iteration's read, and the terminal Ret is small).
         if sp > sp_max {
             sp_max = sp;
         }
-        // Secondary wall-time guard: a hardware timer raises this flag at a
-        // frame-relative deadline; polled sparsely so the load isn't hot.
-        if budget & DEADLINE_POLL_MASK == 0 {
-            if let Some(flag) = guard.deadline {
-                // SAFETY: `flag` points at a live AtomicBool owned by the
-                // caller for the duration of this call (the C++ FFI holds it
-                // in a static). Atomic load is sound through a shared ref.
-                if unsafe { (*flag).load(Ordering::Relaxed) } {
-                    outcome = Outcome::Timeout;
-                    break;
-                }
-            }
+        // One compare for the common opcodes, then the jump table
+        // (`Op::from_u8` compiled to a clamp plus a second compare here).
+        let b = code[pc];
+        if b > LAST_LOW_OP && !(Op::BinTop as u8..=LAST_OP).contains(&b) {
+            fault!();
         }
-        let op = match Op::from_u8(code[pc]) {
-            Some(o) => o,
-            None => fault!(),
-        };
+        // SAFETY: `Op` is `repr(u8)` and contiguous over 0..=LAST_LOW_OP and
+        // BinTop..=LAST_OP; the gap between was rejected above.
+        let op = unsafe { core::mem::transmute::<u8, Op>(b) };
         pc += 1;
         #[cfg(feature = "profile")]
         {
@@ -2478,12 +2485,18 @@ fn run(
                 pc += 2;
                 let c = pop!();
                 if c == 0.0 {
+                    if rel < 0 {
+                        poll_deadline!();
+                    }
                     pc = (pc as isize + rel as isize) as usize;
                 }
             }
             Op::Jmp => {
                 let rel = rd16!(pc) as i16;
                 pc += 2;
+                if rel < 0 {
+                    poll_deadline!();
+                }
                 pc = (pc as isize + rel as isize) as usize;
             }
             Op::Hash1 => {
@@ -2531,7 +2544,7 @@ fn run(
                 if sp > sp_max {
                     sp_max = sp;
                 }
-                return (out, None, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
+                return (out, None, Outcome::Ok, Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 });
             }
             Op::Swap => {
                 let an = cb!(pc) as usize;
@@ -2638,6 +2651,7 @@ fn run(
             Op::Call => {
                 let target = rd16!(pc) as usize;
                 pc += 2;
+                poll_deadline!();
                 if csp < call_stack.len() {
                     call_stack[csp] = pc;
                     csp += 1;
@@ -3240,7 +3254,7 @@ fn run(
                     [0.0; 3],
                     Some((r, g, b)),
                     Outcome::Ok,
-                    Counters { instrs, stack_max: sp_max as u16 },
+                    Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 },
                 );
             }
             Op::RetRgbFix => {
@@ -3260,7 +3274,7 @@ fn run(
                     [0.0; 3],
                     Some((r, g, b)),
                     Outcome::Ok,
-                    Counters { instrs, stack_max: sp_max as u16 },
+                    Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 },
                 );
             }
             Op::LoadCtxFix => {
@@ -3350,6 +3364,9 @@ fn run(
                     _ => a != b,
                 };
                 if !t {
+                    if rel < 0 {
+                        poll_deadline!();
+                    }
                     pc = (pc as isize + rel as isize) as usize;
                 }
             }
@@ -3438,7 +3455,7 @@ fn run(
             }
         }
     }
-    ([0.0, 0.0, 0.0], None, outcome, Counters { instrs, stack_max: sp_max as u16 })
+    ([0.0, 0.0, 0.0], None, outcome, Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 })
 }
 
 /// Operand source of a `BinTop`/`BinPair` (mode bits): the same reads as
