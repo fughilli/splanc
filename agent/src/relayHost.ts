@@ -173,6 +173,9 @@ export interface RelayHostOptions {
   dataFile?: string;
   /** Take the client IP from X-Forwarded-For (behind a trusted proxy). */
   trustProxy?: boolean;
+  /** Direct bug filing (POST /bugs): the Worker secret + overrides
+   * (`splanc-agent relay` reads GITHUB_ISSUES_TOKEN from its environment). */
+  bugs?: Pick<Env, "GITHUB_ISSUES_TOKEN" | "GITHUB_ISSUES_REPO" | "GITHUB_API_URL">;
   /** Clock override (tests). */
   now?: () => number;
   log?: (...a: unknown[]) => void;
@@ -200,6 +203,7 @@ export class RelayHost {
       DIRECTORY: this.namespace("directory"),
       HOST: hooks,
       ...(opts.publicUrl ? { PUBLIC_URL: opts.publicUrl.replace(/\/+$/, "") } : {}),
+      ...(opts.bugs ?? {}),
     };
     this.load();
     this.server = http.createServer((req, res) => void this.onRequest(req, res));

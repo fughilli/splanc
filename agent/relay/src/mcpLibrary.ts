@@ -22,6 +22,12 @@
  */
 
 import { DEPLOY_LIBRARY_KEYS, DEPLOY_LIBRARY_PROPS, LIBRARY_INSTRUCTIONS, LIBRARY_TOOLS, type LibraryToolDef } from "./library";
+import {
+  BUG_TOOL_NAME,
+  FILE_BUG_ANNOTATIONS,
+  FILE_BUG_DESCRIPTION,
+  FILE_BUG_INPUT_SCHEMA,
+} from "../../../web/src/bugs/bugReport";
 
 export const RELAY_SESSION_PREFIX = "relay-";
 
@@ -141,15 +147,33 @@ export function patchDeployTool(tool: Record<string, unknown>): Record<string, u
   };
 }
 
+/** file_bug as a tools/list entry (relay/src/bugs.ts serves it when the bridge
+ * doesn't: the bridge is offline, or older than file_bug). */
+export function fileBugToolEntry(): Record<string, unknown> {
+  return {
+    name: BUG_TOOL_NAME,
+    title: FILE_BUG_ANNOTATIONS.title,
+    description: FILE_BUG_DESCRIPTION,
+    inputSchema: FILE_BUG_INPUT_SCHEMA,
+    annotations: FILE_BUG_ANNOTATIONS,
+  };
+}
+
+/** Whether a bridge's tools/list offers its own file_bug (it then collects device
+ * diagnostics itself; otherwise the relay serves the tool). */
+export function bridgeHasFileBug(bridgeTools: unknown): boolean {
+  return Array.isArray(bridgeTools) && (bridgeTools as Record<string, unknown>[]).some((t) => t?.["name"] === BUG_TOOL_NAME);
+}
+
 /** The bridge's tools + the library's (a bridge tool of the same name is replaced:
- * the relay's library is the one in use). */
+ * the relay's library is the one in use) + file_bug when the bridge has none. */
 export function mergeTools(bridgeTools: unknown): Record<string, unknown>[] {
   const lib = libraryToolEntries();
   const names = new Set(lib.map((t) => t["name"]));
   const own = (Array.isArray(bridgeTools) ? (bridgeTools as Record<string, unknown>[]) : [])
     .filter((t) => !names.has(t["name"]))
     .map((t) => (t["name"] === "deploy_effect" ? patchDeployTool(t) : t));
-  return [...own, ...lib];
+  return [...own, ...lib, ...(bridgeHasFileBug(own) ? [] : [fileBugToolEntry()])];
 }
 
 export function withLibraryInstructions(instructions: unknown): string {

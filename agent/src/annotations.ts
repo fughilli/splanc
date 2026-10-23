@@ -15,12 +15,13 @@
  *   it overwrites whatever was cued on the idle deck (the user's Show Mode cue).
  * - idempotentHint: calling it again with the same arguments changes nothing
  *   further.
- * - openWorldHint: false throughout — every tool talks only to the user's own
- *   players on their own network, never to the outside world.
+ * - openWorldHint: false for every tool that talks only to the user's own players
+ *   on their own network; true for file_bug, which reaches GitHub.
  */
 
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
+import { FILE_BUG_ANNOTATIONS } from "../../web/src/bugs/bugReport";
 import { LIBRARY_TOOLS } from "../relay/src/library";
 
 const read = (title: string): ToolAnnotations => ({
@@ -93,6 +94,8 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   // the effects library (relay/src/library.ts defines them, annotations included:
   // search/get read-only; save idempotent by source hash; update/delete destructive)
   ...Object.fromEntries(LIBRARY_TOOLS.map((t) => [t.name, t.annotations])),
+  // bug reports (web/src/bugs/bugReport.ts): reaches GitHub; not idempotent
+  file_bug: { ...FILE_BUG_ANNOTATIONS },
 };
 
 /**
@@ -111,4 +114,6 @@ export const SERVER_INSTRUCTIONS =
   "are rather than guessing poses. Use commit=true sparingly (flash wear). If a player is unreachable, " +
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
   "Splanc app. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +
-  "players; rollback_effect fades back). plot_fixture draws a fixture or a room in 3D (PNG) to check a map or poses.";
+  "players; rollback_effect fades back). plot_fixture draws a fixture or a room in 3D (PNG) to check a map or poses. " +
+  "When something is reproducibly broken (a crash, a tool failing, the preview and the fixture disagreeing), " +
+  "offer to report it with file_bug; it returns a GitHub link by default, and files directly only after the user agrees.";

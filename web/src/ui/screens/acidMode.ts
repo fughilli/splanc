@@ -47,7 +47,8 @@ import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { StatusPill, icon, toast, type PillState } from "../kit";
+import { StatusPill, confirmDialog, icon, toast, type PillState } from "../kit";
+import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { installAcidStyles } from "./acidMode.css";
 import { narrateTool } from "../acid/narrate";
 import { createVoice, voiceSupported, type VoiceSession } from "../acid/voice";
@@ -308,6 +309,13 @@ export function AcidModeScreen(router: Router): Screen {
           ...(canMeasure(perfDeviceFromClient(appState.client))
             ? { onMeasureOnDevice: async (args: MeasureOnDeviceCall) => measureOnFixture(args) }
             : {}),
+          onFileBug: appFileBugHook({
+            surface: "web-acid",
+            source: () => currentSource,
+            client: () => appState.client,
+            ai: aiSummary,
+            confirm: (issue) => confirmDialog({ ...confirmFilingText(issue), trippy: true }),
+          }),
         },
         deviceCosts,
         ACID_SYSTEM,

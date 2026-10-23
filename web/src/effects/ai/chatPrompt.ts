@@ -11,6 +11,7 @@
  * don't transfer.
  */
 
+import { BUG_TOOL_NAME, FILE_BUG_DESCRIPTION, FILE_BUG_INPUT_SCHEMA } from "../../bugs/bugReport";
 import { SYSTEM_PROMPT, SYSTEM_PROMPT_COMPACT } from "./system-prompt";
 import type { ToolDef } from "./provider";
 
@@ -162,6 +163,21 @@ export const MIDI_TOOLS = [
   },
 ] as const;
 
+/** Bug reports (docs/design/agent-bug-reports.md), added only when the screen
+ * supplies the hook — the same file_bug every Splanc agent has. */
+export const BUG_TOOLS = [
+  { name: BUG_TOOL_NAME, description: FILE_BUG_DESCRIPTION, input_schema: FILE_BUG_INPUT_SCHEMA },
+] as const;
+
+/** Prompt guidance that rides with BUG_TOOLS. */
+export const BUG_REPORT_GUIDE =
+  "Bug reports: if something in Splanc itself is reproducibly broken (the app or compiler errors on valid " +
+  "input, a crash, the preview and the fixture disagreeing), offer to report it with file_bug. Write the " +
+  "report from what you saw (steps, expected vs actual). Attach the effect source only if the user agrees. " +
+  "By default it returns a GitHub link for the user to submit; file directly (submit=\"direct\", " +
+  "user_confirmed=true) only after the user read the report and said yes. If it finds possible duplicates, " +
+  "show them first.";
+
 export const CHAT_SYSTEM = `${SYSTEM_PROMPT}
 
 You are now in an interactive chat with the user inside the effect editor. You can:
@@ -207,7 +223,7 @@ export function baseChatSystem(providerId: string): string {
  * app's tool-use loop and the eval harness both use. */
 export function selectTools(
   caps: { tools: boolean; vision: boolean },
-  opts: { perf: boolean; midi: boolean; devicePerf?: boolean },
+  opts: { perf: boolean; midi: boolean; devicePerf?: boolean; bugs?: boolean },
 ): ToolDef[] {
   if (!caps.tools) return [];
   const base = caps.vision ? TOOLS : TOOLS.filter((t) => t.name !== "capture_preview");
@@ -216,5 +232,6 @@ export function selectTools(
     ...(opts.perf ? PERF_TOOLS : []),
     ...(opts.devicePerf ? DEVICE_PERF_TOOLS : []),
     ...(opts.midi ? MIDI_TOOLS : []),
+    ...(opts.bugs ? (BUG_TOOLS as unknown as ToolDef[]) : []),
   ];
 }

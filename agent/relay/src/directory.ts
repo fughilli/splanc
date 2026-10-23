@@ -32,6 +32,11 @@ export const LIMITS = {
   codesPerBridge: [30, 3600],
   /** Dynamic client registrations per IP. */
   dcrIp: [30, 3600],
+  /** Bug reports filed directly (POST /bugs): per bridge (a relay token or a
+   * bridge signature), per client IP when anonymous, and everyone together. */
+  bugBridge: [5, 3600],
+  bugIp: [3, 3600],
+  bugGlobal: [60, 86400],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;

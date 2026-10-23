@@ -24,6 +24,8 @@ export function narrateTool(name: string): string {
       return "🎛️ Seeing what knobs you've got…";
     case "set_midi_mapping":
       return "🎛️ Wiring your knobs to the effect…";
+    case "file_bug":
+      return "🐞 Writing up a bug report…";
     default:
       return "🌀 Working on it…";
   }

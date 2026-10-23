@@ -73,7 +73,8 @@ import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
-import { Button, IconButton, icon, toast, type IconName } from "../kit";
+import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
+import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
 import { FxLayout } from "../../effects/editor/layout";
@@ -1480,6 +1481,19 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
                 setChatStatus("Measuring on the fixture…");
                 return measureCurrentOnDevice(args);
               },
+            }
+          : {}),
+        // file_bug (docs/design/agent-bug-reports.md): a GitHub link by default;
+        // direct filing asks the user here first.
+        ...(!screenOpts.demo
+          ? {
+              onFileBug: appFileBugHook({
+                surface: "web-editor",
+                source: () => codeEl.value,
+                client: () => appState.client,
+                ai: aiSummary,
+                confirm: (issue) => confirmDialog(confirmFilingText(issue)),
+              }),
             }
           : {}),
         onToolUse: () => undefined,

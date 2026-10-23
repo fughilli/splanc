@@ -35,6 +35,12 @@ export const connectMessage = (bridgeId: string, ts: number) => `splanc-bridge-c
 /** The message the bridge signs to register its key (proof of possession). */
 export const registerMessage = (publicKey: string, ts: number) => `splanc-bridge-register\n${publicKey}\n${ts}`;
 
+/** Header carrying a bridge's signed bug report (POST /bugs, docs/design/agent-bug-reports.md):
+ * `<bridge id>.<unix seconds>.<b64url sig>` over bugReportMessage. */
+export const BUG_AUTH_HEADER = "x-splanc-bridge-bug";
+/** The message a bridge signs to file a bug as itself (per-bridge rate limits). */
+export const bugReportMessage = (bridgeId: string, ts: number, bodySha256: string) =>
+  `splanc-bug-report\n${bridgeId}\n${ts}\n${bodySha256}`;
 /** How far a signed timestamp may be from the relay's clock. */
 export const SIGNATURE_WINDOW_S = 300;
 

@@ -10,6 +10,12 @@
 # Account Settings > Read), plus CLOUDFLARE_ACCOUNT_ID. A Pages-only token is
 # refused ("No access to the specified resource"). The account needs a workers.dev
 # subdomain (the Workers & Pages dashboard assigns one on first visit).
+#
+# Direct bug filing (POST /bugs) needs one Worker secret, set once and never in the
+# repo: a fine-grained GitHub PAT with Issues: write on fughilli/splanc only —
+#   pnpm dlx wrangler@4 secret put GITHUB_ISSUES_TOKEN --config wrangler.toml
+# Without it /bugs answers 503 not_configured and agents hand out issue links
+# (docs/design/agent-bug-reports.md).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

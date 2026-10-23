@@ -68,6 +68,9 @@ copy_to_bin(
     name = "agent_reuse_srcs",
     srcs = [
         "src/assetBase.ts",
+        # file_bug's shared core (docs/design/agent-bug-reports.md): the hub's tool,
+        # the relay's POST /bugs and its offline file_bug.
+        "src/bugs/bugReport.ts",
         # Capture profile + IMU extrinsic solve (types used by net/client.ts).
         "src/capture/captureProfile.ts",
         "src/geom/imuExtrinsic.ts",
