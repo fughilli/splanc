@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p12",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing meditation glow.\n// A slow inhale/exhale cycle shifts brightness AND hue \u2014 cool blue on inhale,\n// soft violet on exhale \u2014 while the light subtly \"rises\" up the cylinder as\n// you breathe in and \"falls\" as you breathe out.\n\nuniform float rate    : 0.05 .. 0.40 = 0.12;   // breath cycles / sec  (~8 s per breath)\nuniform float hue_in  : 0.00 .. 1.00 = 0.60;   // inhale hue  (0.60 = sky blue)\nuniform float hue_out : 0.00 .. 1.00 = 0.88;   // exhale hue  (0.88 = soft violet)\nuniform float sat     : 0.00 .. 1.00 = 0.65;   // colour saturation\nuniform float bright  : 0.20 .. 1.00 = 0.85;   // peak brightness\n\nstate fixed breath;      // breath phase in TURNS, advanced each frame\nstate fixed glow;        // 0.1..0.9  \u2014 breath envelope\nstate fixed hue;         // blended hue for this frame\nstate fixed sat_f;       // fixed copy of sat uniform\nstate fixed bright_f;    // fixed copy of bright uniform\n\nvoid update() {\n  // Advance phase once per frame \u2014 integer fixed-point fract, no float in shade()\n  breath   = fract(breath + fixed(dt * rate));\n\n  // sin() of a fixed arg uses the integer LUT (turns, not radians)\n  fixed sb = sin(breath);                       // \u22121 .. 1\n  glow     = fixed(0.5) + sb * fixed(0.4);     //  0.1 .. 0.9  (never fully dark or fully blown)\n\n  // Lerp hue: warm violet at exhale (glow\u22480.1), cool blue at inhale (glow\u22480.9)\n  fixed hi = fixed(hue_in);\n  fixed ho = fixed(hue_out);\n  hue      = fract(ho + (hi - ho) * glow);\n\n  sat_f    = fixed(sat);\n  bright_f = fixed(bright);\n}\n\nvec3 shade(Led led) {\n  // Normalise LED height: led.pos.y is 0..0.30 m, multiply by 1/0.30 \u2248 3.333\n  fixed yn   = fixed(led.pos.y) * fixed(3.333);            // 0..1 up the cylinder\n\n  // Height wave: top brightens during inhale, bottom brightens during exhale \u2014\n  // the breath visually \"rises\" and \"falls\" through the lamp.\n  fixed wave = (yn - fixed(0.5)) * (glow - fixed(0.5)) * fixed(0.25);\n\n  fixed v    = clamp(glow * bright_f + wave, fixed(0.0), fixed(1.0));\n\n  // All three args are fixed \u2192 integer hsv2rgb path (~370 cycles, no soft-float)\n  return hsv2rgb(hue, sat_f, v);\n}\n```\n\n**How it works**\n\n| Element | Detail |\n|---|---|\n| **Breath shape** | `sin(breath)` in TURNS \u2014 smooth, symmetric 4 s in / 4 s out at the default rate of 0.12 cycles/s |\n| **Envelope** | `0.5 + sin \u00d7 0.4` \u2192 never drops below ~10 % brightness so LEDs stay gently lit even at full exhale |\n| **Hue shift** | Linearly blends from `hue_out` (soft violet, exhale low) to `hue_in` (sky blue, inhale peak), giving a living, temperature-shifting quality |\n| **Height wave** | `(yn \u2212 0.5) \u00d7 (glow \u2212 0.5) \u00d7 0.25` makes the glow visually ascend on inhale and descend on exhale \u2014 subtle (\u00b15 % brightness) but perceptible |\n| **Performance** | `shade()` is ~3 fixed mults + 1 clamp + 1 `hsv2rgb` \u2248 **~2 200 cycles / LED** \u2014 well inside the ~8 000 cycle budget |",
+      "is_error": false,
+      "session_id": "b4ff740c-b4b3-4ceb-a4ff-f8fc717cef74",
+      "wall_s": 137.9,
+      "duration_api_ms": 133701,
+      "cost_usd": 0.1600122,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 10364,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 9300,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1036
+    }
+  ],
+  "started": "2026-10-23T00:15:24",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.16,
+  "total_wall_s": 137.9,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p12.fx"
+}

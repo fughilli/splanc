@@ -1334,9 +1334,10 @@ def summarize(recs, runs_dir):
     L_ = []
     L_.append("# FX agent authoring — static perf summary\n")
     L_.append(
-        f"Per-LED = shade + called functions, loops walked, all branch arms counted (upper bound). "
+        "Per-LED = shade + called functions, loops walked, all branch arms counted (upper bound).\n"
         f"Cycle estimate is rough (analyze.py COST), budget ~{FRAME_CYCLES_PER_LED - FIRMWARE_FRAMING} "
-        f"cycles/LED for 500 LEDs at 30 fps after ~{FIRMWARE_FRAMING} framing.\n"
+        "cycles/LED for 500 LEDs at 30 fps\n"
+        f"after ~{FIRMWARE_FRAMING} framing.\n"
     )
     hdr = (
         "| variant | model | n | compiled | 1st-try ok | mean calls | uses fixed | mean float transc./LED "

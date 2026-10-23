@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p04",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Rotating rainbow around a cylindrical lamp.\n// Hue is driven by the angle around the Y axis (atan2 of fixed args \u2192 integer\n// LUT, ~350 cycles) so the rainbow wraps cleanly around the helix. A small\n// height component tilts the band into a diagonal stripe. All per-LED maths\n// in fixed point; hsv2rgb on fixed args uses the integer path (~370 cycles).\n// Estimated cost: ~1,400 cycles/LED \u2192 ~4.5 ms at 500 LEDs, well under 33 ms.\n\nuniform float speed  : 0.0 .. 4.0 = 0.5;    // rotation speed (turns/s \u00d7 0.1)\nuniform float tilt   : 0.0 .. 1.0 = 0.25;   // height contribution to hue (0 = flat ring, 1 = full diagonal stripe)\nuniform float sat    : 0.0 .. 1.0 = 0.90;   // saturation\nuniform float val    : 0.0 .. 1.0 = 1.00;   // brightness\n\nstate fixed ph;   // global hue offset in turns\nstate fixed t;    // tilt scale (fixed)\nstate fixed s;    // saturation (fixed)\nstate fixed v;    // value/brightness (fixed)\n\nvoid update() {\n  // Advance the phase: at speed=1 the rainbow completes one revolution in ~10 s.\n  ph = fract(ph + fixed(dt * speed * 0.1));\n  t  = fixed(tilt);\n  s  = fixed(sat);\n  v  = fixed(val);\n}\n\nvec3 shade(Led led) {\n  // Angle around the vertical axis in turns (0..1).\n  // atan2 of two fixed arguments uses the integer LUT (turns, not radians).\n  // The compiler caches this per-LED-invariant expression automatically.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  // Mix in a fraction of height (led.uv.y 0..1) so the rainbow spirals\n  // gently up the helix rather than stacking identical rings.\n  fixed h = fract(ang + ph + fixed(led.uv.y) * t);\n\n  return hsv2rgb(h, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "ec1865da-c706-44b2-a15b-49e8091bd022",
+      "wall_s": 45.9,
+      "duration_api_ms": 44683,
+      "cost_usd": 0.0402051,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2249,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 511
+      },
+      "thinking_tokens": 1656,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 753
+    }
+  ],
+  "started": "2026-10-23T00:25:13",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0402,
+  "total_wall_s": 45.9,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p04.fx"
+}

@@ -1,0 +1,66 @@
+{
+  "name": "skill2__opus__p09",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise: a warm glow climbs the lamp from the bottom. Deep ember red at the\n// leading edge, turning gold and paler where the light has been longest, with a\n// faint dawn sky above that brightens as the sun rises. The horizon line ripples\n// gently around the cylinder. Fixed point throughout for the C6.\nuniform float duration : 10.0 .. 600.0 = 90.0;  // seconds for a full sunrise\nuniform bool  repeat = true;                     // loop, or hold at full daylight\nuniform float softness : 0.05 .. 0.8 = 0.3;      // width of the glowing edge\nuniform float golden : 0.0 .. 0.2 = 0.11;        // how far the hue climbs (red -> gold)\nuniform float ripple : 0.0 .. 0.15 = 0.04;       // waviness of the horizon line\nuniform float ripple_speed : 0.0 .. 1.0 = 0.15;\nuniform vec3  sky : color = 0.05, 0.03, 0.18;    // pre-dawn sky above the glow\nuniform float sky_glow : 0.0 .. 1.0 = 0.6;\n\nstate fixed prog;    // 0..1 sunrise progress\nstate fixed level;   // horizon height, 0..1 over the lamp\nstate fixed ph;      // ripple phase, turns\nstate fixed ybase;\nstate fixed yinv;\nstate fixed k;\nstate fixed hspan;\nstate fixed wob;\nstate fixed skyw;\n\nvoid update() {\n  fixed step = fixed(dt / duration);\n  if (repeat) {\n    prog = fract(prog + step);\n  } else {\n    prog = min(prog + step, fixed(1.0));\n  }\n  // Start just below the bottom, end past the top so everything is lit.\n  level = prog * fixed(1.5) - fixed(0.2);\n  ph = fract(ph + fixed(dt * ripple_speed));\n  ybase = fixed(room.min.y);\n  yinv = fixed(1.0 / max(room.max.y - room.min.y, 0.01));\n  k = fixed(1.0 / softness);\n  hspan = fixed(golden);\n  wob = fixed(ripple);\n  skyw = prog * fixed(sky_glow) + fixed(0.15);\n}\n\nvec3 shade(Led led) {\n  fixed t = (fixed(led.pos.y) - ybase) * yinv;              // 0 bottom .. 1 top\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));    // turns, cached per LED\n  fixed edge = level + sin(ang + ph) * wob;\n  fixed u = (edge - t) * k;                                 // > 0: below the horizon\n  fixed g = clamp(u, fixed(0.0), fixed(1.0));\n  fixed d = clamp(u * fixed(0.35), fixed(0.0), fixed(1.0)); // depth into the light\n  fixed hue = d * hspan;\n  fixed sat = fixed(1.0) - d * fixed(0.35);\n  vec3 c = hsv2rgb(hue, sat, g * g);\n  return c + sky * float(skyw * (fixed(1.0) - g));\n}\n```",
+      "is_error": false,
+      "session_id": "11918c5a-fe5c-492e-9ef3-1d92d8913407",
+      "wall_s": 28.3,
+      "duration_api_ms": 26863,
+      "cost_usd": 0.061267999999999996,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2669,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 621
+      },
+      "thinking_tokens": 1567,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 51,
+          "col": 36,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Sunrise: a warm glow climbs the lamp from the bottom. Deep ember red at the\n// leading edge, turning gold and paler where the light has been longest, with a\n// faint dawn sky above that brightens as the sun rises. The horizon line ripples\n// gently around the cylinder. Fixed point throughout for the C6.\nuniform float duration : 10.0 .. 600.0 = 90.0;  // seconds for a full sunrise\nuniform bool  repeat = true;                     // loop, or hold at full daylight\nuniform float softness : 0.05 .. 0.8 = 0.3;      // width of the glowing edge\nuniform float golden : 0.0 .. 0.2 = 0.11;        // how far the hue climbs (red -> gold)\nuniform float ripple : 0.0 .. 0.15 = 0.04;       // waviness of the horizon line\nuniform float ripple_speed : 0.0 .. 1.0 = 0.15;\nuniform vec3  sky : color = 0.05, 0.03, 0.18;    // pre-dawn sky above the glow\nuniform float sky_glow : 0.0 .. 1.0 = 0.6;\n\nstate fixed prog;    // 0..1 sunrise progress\nstate fixed level;   // horizon height, 0..1 over the lamp\nstate fixed ph;      // ripple phase, turns\nstate fixed ybase;\nstate fixed yinv;\nstate fixed k;\nstate fixed hspan;\nstate fixed wob;\nstate fixed skyw;\n\nvoid update() {\n  fixed step = fixed(dt / duration);\n  if (repeat) {\n    prog = fract(prog + step);\n  } else {\n    prog = min(prog + step, fixed(1.0));\n  }\n  // Start just below the bottom, end past the top so everything is lit.\n  level = prog * fixed(1.5) - fixed(0.2);\n  ph = fract(ph + fixed(dt * ripple_speed));\n  ybase = fixed(room.min.y);\n  yinv = fixed(1.0 / max(room.max.y - room.min.y, 0.01));\n  k = fixed(1.0 / softness);\n  hspan = fixed(golden);\n  wob = fixed(ripple);\n  skyw = prog * fixed(sky_glow) + fixed(0.15);\n}\n\nvec3 shade(Led led) {\n  fixed t = (fixed(led.pos.y) - ybase) * yinv;              // 0 bottom .. 1 top\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));    // turns, cached per LED\n  fixed edge = level + sin(ang + ph) * wob;\n  fixed u = (edge - t) * k;                                 // > 0: below the horizon\n  fixed g = clamp(u, fixed(0.0), fixed(1.0));\n  fixed d = clamp(u * fixed(0.35), fixed(0.0), fixed(1.0)); // depth into the light\n  fixed hue = d * hspan;\n  fixed sat = fixed(1.0) - d * fixed(0.35);\n  vec3 c = hsv2rgb(float(hue), float(sat), float(g * g));\n  return c + sky * float(skyw * (fixed(1.0) - g));\n}\n```",
+      "is_error": false,
+      "session_id": "11918c5a-fe5c-492e-9ef3-1d92d8913407",
+      "wall_s": 10.7,
+      "duration_api_ms": 36109,
+      "cost_usd": 0.12045619999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1254,
+        "cache_read_input_tokens": 15181,
+        "cache_creation_input_tokens": 3883
+      },
+      "thinking_tokens": 146,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1563
+    }
+  ],
+  "started": "2026-10-23T00:21:36",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1817,
+  "total_wall_s": 39.0,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p09.fx"
+}

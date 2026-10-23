@@ -1,0 +1,48 @@
+{
+  "name": "app2_est__sonnet__p07",
+  "variant": "app2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "The fix is straightforward: the 16-agent loop running per-LED is the bottleneck. Each iteration costs ~2,429 cycles, so 16 \u00d7 2,429 = ~38,864 cycles/LED. Reducing to 6 agents brings that to ~14,574 cycles/LED \u2014 an estimated ~33 ms frame, just under budget. The seeding hashes are spread across different constants so the 6 flies still start at varied positions and blink out of phase.\n\n```\n// Fireflies \u2014 6 independent agents blinking with naturalistic sin^4 pulses,\n// drifting slowly along the helix arc.\n// Reduced from 16 to 6 agents to stay within the per-frame cycle budget.\n\nuniform float speed     : 0.1 .. 4.0  = 1.0;\nuniform float glow_size : 0.01 .. 0.12 = 0.05;\nuniform vec3  tint      : color        = 0.9, 1.0, 0.08;\n\n// \u2500\u2500 agent state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nstruct Firefly {\n  fixed pos;        // position on led.s (0..1)\n  fixed phase;      // blink phase in turns\n  fixed blink_spd;  // turns per second\n  fixed drift;      // slow wander velocity\n  fixed brt;        // pre-baked brightness for this frame\n};\n\nstate Firefly flies[6];\nstate fixed   gz;        // = fixed(glow_size), avoids per-LED float\u2192fixed\nstate fixed   inv_gz;    // reciprocal, avoids division in shade()\nstate bool    inited;\n\nvoid update() {\n  // \u2500\u2500 seed on first frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  if (!inited) {\n    for (int i = 0; i < 6; i = i + 1) {\n      flies[i].pos       = fixed(hash(float(i) * 1.6180));\n      flies[i].phase     = fixed(hash(float(i) * 2.7182));\n      // blink period 1.5 \u2013 6 s so they're rarely all on together\n      flies[i].blink_spd = fixed(0.15 + hash(float(i) * 4.3219) * 0.5);\n      // slow random drift \u00b10.5 % of arc per second\n      flies[i].drift     = fixed((hash(float(i) * 9.8765) - 0.5) * 0.01);\n    }\n    inited = true;\n  }\n\n  // \u2500\u2500 per-frame: update glow constants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  gz     = fixed(glow_size);\n  inv_gz = fixed(1.0) / gz;\n\n  fixed spd_dt = fixed(speed * dt);\n  fixed dt_f   = fixed(dt);\n\n  // \u2500\u2500 advance agents, bake brightness \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  for (int i = 0; i < 6; i = i + 1) {\n    flies[i].phase = fract(flies[i].phase + flies[i].blink_spd * spd_dt);\n    flies[i].pos   = fract(flies[i].pos   + flies[i].drift      * dt_f);\n\n    // sin^4 of the phase: positive half only \u2192 brief warm flash,\n    // mostly dark.  All integer fixed arithmetic.\n    fixed sp      = max(fixed(0.0), sin(flies[i].phase));\n    fixed b       = sp * sp;\n    flies[i].brt  = b * b;\n  }\n}\n\n// \u2500\u2500 per-LED shade \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nvec3 shade(Led led) {\n  fixed s     = fixed(led.s);          // 1 200-cycle load covers all led.*\n  fixed total = fixed(0.0);\n\n  for (int i = 0; i < 6; i = i + 1) {\n    fixed d = abs(s - flies[i].pos);\n    if (d < gz) {\n      // linear cone falloff: bright at centre, zero at gz\n      total = total + flies[i].brt * (fixed(1.0) - d * inv_gz);\n    }\n  }\n\n  // clamp then single float conversion for the final vec3 multiply\n  return tint * float(clamp(total, fixed(0.0), fixed(1.0)));\n}\n```",
+      "is_error": false,
+      "session_id": "9e10c2e9-2824-4fd8-a492-7aff6fbeb8c7",
+      "wall_s": 329.2,
+      "duration_api_ms": 325189,
+      "cost_usd": 0.3397662,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 21912,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 1593
+      },
+      "thinking_tokens": 20791,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 847
+    }
+  ],
+  "started": "2026-10-23T00:44:04",
+  "base_program": "firmware/fx_perf_bench/agent/app2__sonnet__p07.fx",
+  "base_estimate": [
+    108.88,
+    [
+      "a loop runs 16 times per LED (~38,864 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 61) \u2014 saves up to ~19,432 cycles/LED (~60.7 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3398,
+  "total_wall_s": 329.2,
+  "program": "firmware/fx_perf_bench/agent/app2_est__sonnet__p07.fx"
+}

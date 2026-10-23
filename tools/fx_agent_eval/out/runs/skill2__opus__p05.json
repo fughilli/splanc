@@ -1,0 +1,39 @@
+{
+  "name": "skill2__opus__p05",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Heartbeat: a \"lub-dub\" double pulse that swells from the centre of the lamp\n// and rolls outward as two expanding shells of light. On the helix cylinder the\n// rings show up as bands spreading up and down from mid-height and around.\n// Fixed point per LED: one sqrt, a few muls and clamps.\nuniform float bpm     : 40.0 .. 140.0 = 62.0;  // beats per minute\nuniform float travel  : 0.2 .. 2.0 = 0.7;      // seconds for a pulse to reach the edge\nuniform float width   : 0.05 .. 0.6 = 0.22;    // thickness of the pulse ring\nuniform float dub     : 0.0 .. 1.0 = 0.7;      // strength of the second beat\nuniform float gap     : 0.1 .. 0.5 = 0.24;     // seconds between lub and dub\nuniform float glow    : 0.0 .. 0.3 = 0.04;     // resting glow\nuniform vec3  tint    : color = 1.0, 0.06, 0.08;\nuniform vec3  core    : color = 1.0, 0.55, 0.45;\n\nstate fixed beat;\nstate fixed p1;\nstate fixed p2;\nstate fixed g1;\nstate fixed g2;\nstate fixed iw;\nstate fixed ir;\nstate fixed cx;\nstate fixed cy;\nstate fixed cz;\nstate fixed base;\n\nvoid update() {\n  beat = fract(beat + fixed(dt * bpm / 60.0));\n  float t = float(beat) * 60.0 / bpm;           // seconds since this beat\n  float a1 = t / travel;\n  float a2 = (t - gap) / travel;\n  p1 = fixed(a1);\n  p2 = fixed(a2);\n  g1 = fixed(max(1.0 - a1 * 0.8, 0.0));\n  g2 = fixed(0.0);\n  if (a2 > 0.0) {\n    g2 = fixed(dub * max(1.0 - a2 * 0.8, 0.0));\n  }\n  iw = fixed(1.0 / width);\n  vec3 c = (room.min + room.max) * 0.5;\n  cx = fixed(c.x);\n  cy = fixed(c.y);\n  cz = fixed(c.z);\n  ir = fixed(1.0 / max(length(room.max - room.min) * 0.5, 0.01));\n  base = fixed(glow);\n}\n\nvec3 shade(Led led) {\n  fixed dx = fixed(led.pos.x) - cx;\n  fixed dy = fixed(led.pos.y) - cy;\n  fixed dz = fixed(led.pos.z) - cz;\n  fixed dn = sqrt(dx * dx + dy * dy + dz * dz) * ir;   // 0 centre .. 1 edge\n  fixed r1 = clamp(fixed(1.0) - abs(dn - p1) * iw, fixed(0.0), fixed(1.0));\n  fixed r2 = clamp(fixed(1.0) - abs(dn - p2) * iw, fixed(0.0), fixed(1.0));\n  fixed v = r1 * r1 * g1 + r2 * r2 * g2;\n  fixed hot = clamp(v - fixed(0.6), fixed(0.0), fixed(0.4)) * fixed(2.5);\n  v = clamp(v + base, fixed(0.0), fixed(1.0));\n  return mix(tint, core, float(hot)) * float(v);\n}\n```",
+      "is_error": false,
+      "session_id": "2d6ceaf2-eb52-41b2-9364-05bceda8f2b8",
+      "wall_s": 27.3,
+      "duration_api_ms": 26156,
+      "cost_usd": 0.058908,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2553,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 616
+      },
+      "thinking_tokens": 1365,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1657
+    }
+  ],
+  "started": "2026-10-23T00:20:51",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0589,
+  "total_wall_s": 27.3,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p05.fx"
+}

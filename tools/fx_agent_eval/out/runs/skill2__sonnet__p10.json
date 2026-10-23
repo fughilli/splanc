@@ -1,0 +1,66 @@
+{
+  "name": "skill2__sonnet__p10",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Matrix rain \u2014 bright green columns cascade down the helix cylinder.\n// Each of `density` angular columns carries a falling streak:\n// white-tipped head, quadratically fading green tail, black background.\n// Per-column phase offsets are seeded once into a state array so shade()\n// pays only a cheap array lookup instead of a per-LED hash each frame.\n\nuniform float speed    : 0.2 .. 4.0 = 1.5;\nuniform float density  : 2.0 .. 10.0 = 6.0;\nuniform float tail_len : 0.05 .. 0.6 = 0.35;\nuniform float glow     : 0.0 .. 0.3 = 0.05;\n\nstate fixed col_phases[12];\nstate bool  seeded;\nstate fixed dens;\nstate int   max_ci;\nstate fixed f_tail;\nstate fixed tlk;\nstate fixed phase_t;\nstate float glow_flt;\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 12; i = i + 1) {\n      col_phases[i] = fixed(hash(float(i) * 2.399963));\n    }\n    seeded = true;\n  }\n  dens     = fixed(density);\n  max_ci   = int(dens) - 1;\n  if (max_ci < 0)  max_ci = 0;\n  if (max_ci > 11) max_ci = 11;\n  f_tail   = fixed(tail_len);\n  tlk      = fixed(1.0 / max(tail_len, 0.01));\n  phase_t  = fract(phase_t + fixed(dt * speed * 0.5));\n  glow_flt = glow;\n}\n\nvec3 shade(Led led) {\n  // Angle around the Y axis \u2192 which column.\n  // atan2(fixed, fixed) returns turns; the compiler caches it per LED\n  // because it depends only on led.pos.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  int   ci  = int(ang * dens);\n  if (ci < 0)      ci = 0;\n  if (ci > max_ci) ci = max_ci;\n\n  // Head descends from y=1 to y=0, looping continuously.\n  fixed head = fract(col_phases[ci] - phase_t);\n\n  // d = how far ABOVE the head this LED sits (0 at head, upward into tail).\n  // fixed(led.uv.y): the first fixed(led.*) costs ~1200 cycles to load all\n  // LED properties; every subsequent one is a cheap cached read.\n  fixed h = fixed(led.uv.y);\n  fixed d = fract(h - head + fixed(1.0));\n\n  // Brightness: quadratic decay over tail length, hard white at head tip.\n  fixed bright = fixed(0.0);\n  if (d < f_tail) {\n    fixed t = fixed(1.0) - d * tlk;\n    bright = t * t;\n  }\n  if (d < fixed(0.04)) {\n    bright = fixed(1.0);\n  }\n\n  // White at head tip (w=1) blends to Matrix green through the body (w=0).\n  fixed w = max(fixed(0.0), fixed(1.0) - d * tlk * fixed(5.0));\n\n  // All colour arithmetic in fixed; two conversions at the return.\n  fixed gc = bright * (fixed(0.75) + fixed(0.25) * w);\n  fixed rc = bright * w * fixed(0.65);\n\n  float g = float(gc);\n  float r = float(rc);\n\n  // Static per-LED ambient flicker; hash(float(led.idx)) is compiler-cached.\n  float bg = glow_flt * hash(float(led.idx));\n\n  return vec3(r, g + bg, r * 0.15);\n}\n```",
+      "is_error": false,
+      "session_id": "b3243620-d2fd-4757-9c46-8c8520f0d36e",
+      "wall_s": 343.5,
+      "duration_api_ms": 337032,
+      "cost_usd": 0.37209509999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 24377,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 23357,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 30,
+          "col": 20,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The language requires `{` braces on every `if` body \u2014 single-statement bare `if` is not supported. All four brace-less `if` statements need fixing.\n\n```glsl\n// Matrix rain \u2014 bright green columns cascade down the helix cylinder.\n// Each of `density` angular columns carries a falling streak:\n// white-tipped head, quadratically fading green tail, black background.\n// Per-column phase offsets are seeded once into a state array so shade()\n// pays only a cheap array lookup instead of a per-LED hash each frame.\n\nuniform float speed    : 0.2 .. 4.0 = 1.5;\nuniform float density  : 2.0 .. 10.0 = 6.0;\nuniform float tail_len : 0.05 .. 0.6 = 0.35;\nuniform float glow     : 0.0 .. 0.3 = 0.05;\n\nstate fixed col_phases[12];\nstate bool  seeded;\nstate fixed dens;\nstate int   max_ci;\nstate fixed f_tail;\nstate fixed tlk;\nstate fixed phase_t;\nstate float glow_flt;\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 12; i = i + 1) {\n      col_phases[i] = fixed(hash(float(i) * 2.399963));\n    }\n    seeded = true;\n  }\n  dens     = fixed(density);\n  max_ci   = int(dens) - 1;\n  if (max_ci < 0)  { max_ci = 0; }\n  if (max_ci > 11) { max_ci = 11; }\n  f_tail   = fixed(tail_len);\n  tlk      = fixed(1.0 / max(tail_len, 0.01));\n  phase_t  = fract(phase_t + fixed(dt * speed * 0.5));\n  glow_flt = glow;\n}\n\nvec3 shade(Led led) {\n  // Angle around the Y axis \u2192 which column.\n  // atan2(fixed, fixed) returns turns; the compiler caches it per LED\n  // because it depends only on led.pos.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  int   ci  = int(ang * dens);\n  if (ci < 0)      { ci = 0; }\n  if (ci > max_ci) { ci = max_ci; }\n\n  // Head descends from y=1 to y=0, looping continuously.\n  fixed head = fract(col_phases[ci] - phase_t);\n\n  // d = how far ABOVE the head this LED sits (0 at head, upward into tail).\n  // fixed(led.uv.y): the first fixed(led.*) costs ~1200 cycles to load all\n  // LED properties; every subsequent one is a cheap cached read.\n  fixed h = fixed(led.uv.y);\n  fixed d = fract(h - head + fixed(1.0));\n\n  // Brightness: quadratic decay over tail length, hard white at head tip.\n  fixed bright = fixed(0.0);\n  if (d < f_tail) {\n    fixed t = fixed(1.0) - d * tlk;\n    bright = t * t;\n  }\n  if (d < fixed(0.04)) {\n    bright = fixed(1.0);\n  }\n\n  // White at head tip (w=1) blends to Matrix green through the body (w=0).\n  fixed w = max(fixed(0.0), fixed(1.0) - d * tlk * fixed(5.0));\n\n  // All colour arithmetic in fixed; two conversions at the return.\n  fixed gc = bright * (fixed(0.75) + fixed(0.25) * w);\n  fixed rc = bright * w * fixed(0.65);\n\n  float g = float(gc);\n  float r = float(rc);\n\n  // Static per-LED ambient flicker; hash(float(led.idx)) is compiler-cached.\n  float bg = glow_flt * hash(float(led.idx));\n\n  return vec3(r, g + bg, r * 0.15);\n}\n```",
+      "is_error": false,
+      "session_id": "b3243620-d2fd-4757-9c46-8c8520f0d36e",
+      "wall_s": 31.7,
+      "duration_api_ms": 367350,
+      "cost_usd": 0.559089,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2046,
+        "cache_read_input_tokens": 11823,
+        "cache_creation_input_tokens": 25458
+      },
+      "thinking_tokens": 978,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1021
+    }
+  ],
+  "started": "2026-10-23T00:31:44",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.9312,
+  "total_wall_s": 375.2,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p10.fx"
+}

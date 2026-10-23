@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p15",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Water caustics shimmer: moving bright lines on a cylinder, built from warped interference waves.\n// Per-LED maths is all in fixed point. Angles are in TURNS.\n\nuniform float speed     : 0.0 .. 3.0  = 0.8;\nuniform float density   : 2.0 .. 30.0 = 10.0;   // wave turns per metre of height\nuniform float sharpness : 0.5 .. 6.0  = 2.2;    // thinner, crisper caustic lines\nuniform float warp      : 0.0 .. 0.4  = 0.18;   // ripple distortion of the lines\nuniform float hue       : 0.0 .. 1.0  = 0.53;   // water colour\nuniform float depth     : 0.0 .. 0.6  = 0.18;   // ambient brightness of the water\nuniform float glow      : 0.0 .. 1.0  = 0.85;   // brightness of the caustic highlights\nuniform float sat       : 0.0 .. 1.0  = 0.85;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed p5;\nstate fixed kh;\nstate fixed kw;\nstate fixed ks;\nstate fixed fh;\nstate fixed fs;\nstate fixed fb;\nstate fixed fg;\n\nvoid update() {\n  float t = dt * speed;\n  p1 = fract(p1 + fixed(t * 0.23));\n  p2 = fract(p2 + fixed(t * 0.31));\n  p3 = fract(p3 + fixed(t * 0.41));\n  p4 = fract(p4 + fixed(t * 0.37));\n  p5 = fract(p5 + fixed(t * 0.29));\n  kh = fixed(density);\n  kw = fixed(warp);\n  ks = fixed(sharpness);\n  fh = fixed(hue);\n  fs = fixed(sat);\n  fb = fixed(depth);\n  fg = fixed(glow);\n}\n\nvec3 shade(Led led) {\n  // Angle around the lamp axis in turns. It depends only on the LED, so the compiler caches it.\n  fixed a = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed h = fixed(led.pos.y) * kh;\n\n  // Slow warp fields. Integer angular frequencies keep the pattern seamless around the cylinder.\n  fixed w1 = sin(a * fixed(3.0) + h + p1) * kw;\n  fixed w2 = sin(a * fixed(2.0) - h * fixed(1.3) + p2) * kw;\n\n  // Three interfering waves. The bright caustic lines sit near where their sum crosses zero.\n  fixed s1 = sin(a * fixed(5.0) + h * fixed(0.7) + w1 + p3);\n  fixed s2 = sin(a * fixed(-4.0) + h * fixed(1.1) + w2 + p4);\n  fixed s3 = sin(a + h * fixed(1.9) + w1 - w2 + p5);\n\n  fixed c = abs(s1 + s2 + s3);\n  fixed l = clamp(fixed(1.0) - c * ks, fixed(0.0), fixed(1.0));\n  l = l * l;\n\n  fixed v = clamp(fb + l * fg, fixed(0.0), fixed(1.0));\n  fixed hh = fract(fh - l * fixed(0.04));\n  fixed ss = fs * (fixed(1.0) - l * fixed(0.6));   // highlights wash toward white\n  return hsv2rgb(hh, ss, v);\n}\n```",
+      "is_error": false,
+      "session_id": "d363da74-ee88-4c7e-8517-702617958110",
+      "wall_s": 29.7,
+      "duration_api_ms": 22178,
+      "cost_usd": 0.052747,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2327,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 1106,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1790
+    }
+  ],
+  "started": "2026-10-23T00:06:25",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0527,
+  "total_wall_s": 29.7,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p15.fx"
+}

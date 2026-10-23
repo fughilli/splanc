@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p01",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Calm ocean swell rolling up a cylindrical lamp: long, slow waves travel up the helix,\n// with a gentle sideways lean around the cylinder and soft foam on the crests.\nuniform float speed  : 0.0 .. 2.0 = 0.35;\nuniform float waves  : 0.5 .. 4.0 = 1.6;\nuniform float hue    : 0.45 .. 0.70 = 0.57;\nuniform float foam   : 0.0 .. 1.0 = 0.5;\nuniform float bright : 0.1 .. 1.0 = 0.8;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed ph3;\nstate fixed k1;\nstate fixed k2;\nstate fixed hb;\nstate fixed fm;\nstate fixed br;\n\nvoid update() {\n  ph1 = fract(ph1 + fixed(dt * speed * 0.30));   // main swell, turns\n  ph2 = fract(ph2 + fixed(dt * speed * 0.17));   // cross swell\n  ph3 = fract(ph3 + fixed(dt * speed * 0.05));   // slow lean drift\n  k1 = fixed(waves);\n  k2 = fixed(waves * 1.7);\n  hb = fixed(hue);\n  fm = fixed(foam);\n  br = fixed(bright);\n}\n\nvec3 shade(Led led) {\n  // height normalised to ~0..1 over the 0.30 m lamp\n  fixed y = fixed(led.pos.y) * fixed(3.333);\n  // angle around the cylinder in turns (cached per LED)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n\n  // main swell rolling upward, gently leaning around the lamp\n  fixed lean = sin(ang + ph3) * fixed(0.08);\n  fixed w1 = sin(y * k1 - ph1 + lean);\n  // smaller cross swell spiralling the other way\n  fixed w2 = sin(y * k2 + ang * fixed(2.0) - ph2);\n\n  fixed h = w1 * fixed(0.68) + w2 * fixed(0.32);   // -1..1\n  fixed t = h * fixed(0.5) + fixed(0.5);           // 0..1\n\n  // soft foam on the crests\n  fixed crest = clamp((t - fixed(0.82)) * fixed(5.5), fixed(0.0), fixed(1.0)) * fm;\n\n  // deep troughs slightly bluer, crests drift toward teal\n  fixed hh = fract(hb + fixed(0.04) - t * fixed(0.07));\n  fixed s = fixed(0.9) - crest * fixed(0.75);\n  fixed v = (fixed(0.18) + fixed(0.82) * t * t) * br;\n  v = max(v, crest * br);\n\n  return hsv2rgb(hh, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "a04a82fc-92ea-4453-8afc-435720e49bb2",
+      "wall_s": 18.4,
+      "duration_api_ms": 16061,
+      "cost_usd": 0.040250999999999995,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1699,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 619
+      },
+      "thinking_tokens": 715,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1244
+    }
+  ],
+  "started": "2026-10-23T00:04:33",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0403,
+  "total_wall_s": 18.4,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p01.fx"
+}

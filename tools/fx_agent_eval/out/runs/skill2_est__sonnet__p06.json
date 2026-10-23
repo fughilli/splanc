@@ -1,0 +1,48 @@
+{
+  "name": "skill2_est__sonnet__p06",
+  "variant": "skill2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Thunderstorm: dark rolling clouds with lightning flashes on a helix cylinder.\n//\n// Optimised from the original 65.9 ms estimate:\n//   \u2022 Bolt count reduced 3 \u2192 2 (cheaper worst-case).\n//   \u2022 Bolt loop unrolled in shade(); two early-exit guards per bolt \u2014\n//       1. inactive bolt (b_decay == 0): skip everything.\n//       2. LED outside angular cone (da >= flash_width): skip falloff maths.\n//     At flash_rate 1.2 and flash_width 0.3 the combined guards cut bolt work\n//     by ~85% on average (most LEDs are outside both cones most of the time).\n//   \u2022 fw_fixed = fixed(flash_width) precomputed once per frame for the spatial\n//     guard (avoids a float\u2192fixed conversion per LED per bolt).\n//   \u2022 Cloud ambient blended as a scalar offset to the noise blend factor\n//     (same visual: mix(A,B,t)+B\u00b7g = mix(A,B,t+g)) \u2014 removes one vec3\n//     multiply-accumulate per LED (~1 050 cycles saved).\n//   \u2022 amb_glow = amb * rumble precomputed after the trigger code so it\n//     reflects a fresh flash on its first frame (matching the original).\n\nuniform float cloud_speed : 0.0 .. 2.0 = 0.4;\nuniform float flash_rate  : 0.0 .. 4.0 = 1.2;\nuniform float flash_width : 0.05 .. 0.5 = 0.3;\nuniform vec3  cloud_dark  : color = 0.0, 0.01, 0.05;\nuniform vec3  cloud_mid   : color = 0.04, 0.07, 0.18;\nuniform vec3  flash_col   : color = 0.88, 0.94, 1.0;\nuniform float rumble      : 0.0 .. 1.0 = 0.25;\n\n// 8\u00d78 cloud lattice stored 9\u00d79 (right/top neighbours need no wrap)\nstate fixed lat[81];\nstate bool  seeded;\nstate fixed lox;\nstate fixed loy;\n\n// 2 simultaneous lightning bolts\nstate fixed b_ang[2];\nstate float b_int[2];\nstate float b_tim[2];\nstate fixed b_decay[2];   // precomputed exp-decay this frame; 0 when idle\nstate float next_bolt;\nstate float amb;\nstate fixed inv_fw;        // 1/flash_width, for falloff slope\nstate fixed fw_fixed;      // fixed(flash_width), for spatial early-exit\nstate float amb_glow;      // amb * rumble, precomputed after trigger\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 81; i = i + 1) {\n      int c = (i % 9) % 8;\n      int r = (i / 9) % 8;\n      lat[i] = fixed(hash(float(r * 8 + c) * 1.93 + 3.14));\n    }\n    b_tim[0]   = -1.0;       b_tim[1]   = -1.0;\n    b_decay[0] = fixed(0.0); b_decay[1] = fixed(0.0);\n    amb        = 0.0;\n    next_bolt  = 0.5;\n    seeded     = true;\n  }\n\n  lox = mod(lox + fixed(dt * cloud_speed * 0.25), fixed(8.0));\n  loy = mod(loy + fixed(dt * cloud_speed * 0.11), fixed(8.0));\n\n  inv_fw   = fixed(1.0 / max(flash_width, 0.05));\n  fw_fixed = fixed(flash_width);\n\n  // Decay ambient glow (same order as original so trigger frame is unaffected)\n  amb = max(amb - dt * 1.5, 0.0);\n\n  // Advance each active bolt and precompute its decayed intensity\n  for (int i = 0; i < 2; i = i + 1) {\n    if (b_tim[i] >= 0.0) {\n      b_decay[i] = fixed(exp(-b_tim[i] * 7.0) * b_int[i]);\n      b_tim[i]   = b_tim[i] + dt;\n      if (b_tim[i] > 1.0) {\n        b_tim[i]   = -1.0;\n        b_decay[i] = fixed(0.0);\n      }\n    } else {\n      b_decay[i] = fixed(0.0);\n    }\n  }\n\n  // Trigger a new bolt on schedule\n  next_bolt = next_bolt - dt;\n  if (next_bolt < 0.0) {\n    bool triggered = false;\n    for (int i = 0; i < 2; i = i + 1) {\n      if (b_tim[i] < 0.0 && !triggered) {\n        b_ang[i]   = fixed(hash(float(frame) * 0.113 + float(i) * 1.618));\n        b_int[i]   = 0.6 + hash(float(frame) * 0.271 + float(i) * 2.73) * 0.4;\n        b_tim[i]   = 0.0;\n        b_decay[i] = fixed(b_int[i]);\n        amb        = 0.35 + hash(float(frame) * 0.839) * 0.35;\n        if (flash_rate > 0.05) {\n          next_bolt = (0.5 + hash(float(frame) * 0.531) * 1.0) / flash_rate;\n        } else {\n          next_bolt = 9999.0;\n        }\n        triggered = true;\n      }\n    }\n    if (!triggered) {\n      next_bolt = 0.2;\n    }\n  }\n\n  // Precompute after trigger so a fresh flash is already reflected this frame\n  amb_glow = amb * rumble;\n}\n\nvec3 shade(Led led) {\n  // Bilinear cloud sample from the 8\u00d78 fixed-point lattice\n  fixed cx  = mod(fixed(led.uv.x) * fixed(4.0) + lox, fixed(8.0));\n  fixed cy  = mod(fixed(led.uv.y) * fixed(3.0) + loy, fixed(8.0));\n  int   ci  = int(cx) + int(cy) * 9;\n  fixed fcx = fract(cx);\n  fixed fcy = fract(cy);\n  fixed na  = mix(lat[ci],     lat[ci + 1],  fcx);\n  fixed nb  = mix(lat[ci + 9], lat[ci + 10], fcx);\n  fixed noise = mix(na, nb, fcy);\n\n  // Angle around the cylinder (vertical) axis in turns 0..1.\n  // atan2 of two fixed led.pos.* args is computed once per LED and cached.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  // Flash accumulation \u2014 unrolled; inactive bolts and LEDs outside the\n  // angular cone both skip the falloff maths entirely.\n  fixed flash = fixed(0.0);\n\n  if (b_decay[0] > fixed(0.0)) {\n    fixed da = abs(fract(ang - b_ang[0] + fixed(0.5)) - fixed(0.5));\n    if (da < fw_fixed) {\n      fixed af = clamp(fixed(1.0) - da * inv_fw, fixed(0.0), fixed(1.0));\n      flash = af * b_decay[0];\n    }\n  }\n\n  if (b_decay[1] > fixed(0.0)) {\n    fixed da = abs(fract(ang - b_ang[1] + fixed(0.5)) - fixed(0.5));\n    if (da < fw_fixed) {\n      fixed af = clamp(fixed(1.0) - da * inv_fw, fixed(0.0), fixed(1.0));\n      flash = min(flash + af * b_decay[1], fixed(1.0));\n    }\n  }\n\n  // Cloud base: noise drives the dark\u2192mid blend; ambient post-flash glow is\n  // folded in as a scalar offset (mix(A,B,t)+B\u00b7g \u2261 mix(A,B,t+g) for t+g\u22641),\n  // saving one vec3 multiply-accumulate vs the original.\n  float n = min(float(noise) + amb_glow, 1.0);\n  return mix(mix(cloud_dark, cloud_mid, n), flash_col, float(flash));\n}\n```",
+      "is_error": false,
+      "session_id": "ddd4bd98-af2a-4d13-9f26-c9db55e85c09",
+      "wall_s": 307.0,
+      "duration_api_ms": 304525,
+      "cost_usd": 0.35140409999999994,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 22184,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 2540
+      },
+      "thinking_tokens": 19931,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2012
+    }
+  ],
+  "started": "2026-10-23T00:53:47",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__sonnet__p06.fx",
+  "base_estimate": [
+    65.9,
+    [
+      "a loop runs 3 times per LED (~9,180 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 119) \u2014 saves up to ~4,590 cycles/LED (~14.3 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3514,
+  "total_wall_s": 307.0,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__sonnet__p06.fx"
+}

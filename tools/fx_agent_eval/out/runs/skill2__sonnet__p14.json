@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p14",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Scanner beam: a sharp bright stripe sweeps left-to-right around the\n// cylinder, leaving a decaying phosphor glow in its wake. Azimuthal angle is\n// computed from led.pos in the XZ plane (+Y up). All per-LED maths are\n// fixed-point or simple float \u2014 no float transcendentals per LED.\n\nuniform float speed  : 0.5 .. 8.0  = 2.0;    // sweeps per second\nuniform float width  : 0.01 .. 0.25 = 0.04;  // beam width (fraction of circumference)\nuniform float tail   : 0.0  .. 0.7  = 0.28;  // trailing glow length\nuniform vec3  beam   : color = 0.25, 0.85, 1.0;\nuniform vec3  glow   : color = 0.0,  0.18, 0.4;\nuniform float bg     : 0.0  .. 0.12 = 0.004; // ambient floor\n\nstate fixed pos;       // beam-front azimuth, turns [0..1)\nstate fixed kw;        // beam width as fixed\nstate fixed kt;        // tail length as fixed\nstate float inv_tail;  // 1 / tail \u2014 avoid per-LED division\n\nvoid update() {\n  pos      = fract(pos + fixed(dt * speed));\n  kw       = fixed(width);\n  kt       = fixed(tail);\n  inv_tail = 1.0 / max(tail, 0.001);\n}\n\nvec3 shade(Led led) {\n  // Azimuthal angle in turns [0..1) from the XZ position.\n  // atan2(fixed, fixed) uses the integer LUT (~350 cycles, cached per LED).\n  fixed ang = fract(atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5));\n\n  // Angular distance behind the beam front [0..1):\n  //   0 = at the leading edge, grows as the beam sweeps past.\n  // Adding fixed(1.0) before fract keeps the argument positive.\n  float b  = float(fract(ang - pos + fixed(1.0)));\n  float fw = float(kw);\n  float ft = float(kt);\n\n  // Beam core: 1 when b < fw (sharp leading edge + width).\n  float in_beam = 1.0 - step(fw, b);\n\n  // Trailing glow: linear falloff from beam rear to tail end.\n  float in_tail = step(fw, b) * (1.0 - step(fw + ft, b));\n  float tail_v  = in_tail * (1.0 - (b - fw) * inv_tail);\n\n  // Cheap height vignette: full brightness at mid-height, 70 % at tips.\n  // Uses only multiply + add \u2014 no transcendentals.\n  float hy   = led.uv.y * 2.0 - 1.0;          // \u22121..1, 0 at centre\n  float vign = 0.7 + 0.3 * (1.0 - hy * hy);   // parabola: 1.0 mid, 0.7 ends\n\n  return (beam * in_beam + glow * tail_v) * vign + vec3(bg, bg, bg);\n}\n```",
+      "is_error": false,
+      "session_id": "43df26d0-85f8-4dde-8600-c5a4d96b1886",
+      "wall_s": 111.1,
+      "duration_api_ms": 109586,
+      "cost_usd": 0.14103510000000002,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 8973,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 8131,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1221
+    }
+  ],
+  "started": "2026-10-23T00:36:26",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.141,
+  "total_wall_s": 111.1,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p14.fx"
+}

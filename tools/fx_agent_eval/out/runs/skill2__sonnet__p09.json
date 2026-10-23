@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p09",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise: a warm amber glow climbs from the bottom of the helix lamp.\n// The band starts below the fixture and rises; below it glows ember-red,\n// at it burns orange-gold, above it the night sky stays cool blue.\n// sun_pos drives manual or sequenced control (ramp 0 \u2192 1.5 for a full\n// sunrise); speed auto-advances it so the effect plays standalone.\n\nuniform float speed      : 0.0 .. 0.5 = 0.05;   // auto-rise; full height ~20 s at 0.05\nuniform float sun_pos    : 0.0 .. 2.0 = 0.0;    // manual band position (0 = below lamp)\nuniform float glow_width : 0.1 .. 0.8 = 0.38;   // vertical reach of the warm halo\nuniform float brightness : 0.2 .. 1.0 = 1.0;\nuniform vec3  sky_color  : color = 0.01, 0.01, 0.07;  // pre-dawn sky\n\nstate float sun;\nstate float inv_gw;\nstate float t;\n\nvoid update() {\n  t      = min(t + dt * speed, 2.0);\n  sun    = sun_pos + t;\n  inv_gw = 1.0 / max(glow_width, 0.01);\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y;       // 0 = lowest LED, 1 = highest\n  float d = h - sun;        // positive above band, negative below\n\n  // Glow intensity: peaks at the band, quadratic falloff both ways\n  float g = clamp(1.0 - abs(d) * inv_gw, 0.0, 1.0);\n  g = g * g;\n\n  // How much the column below this LED has been warmed by the rising sun\n  float lit = clamp(1.0 - d * inv_gw, 0.0, 1.0);\n  lit = lit * lit;\n\n  // Colour palette (linear sRGB)\n  vec3 night  = sky_color;                    // dark pre-dawn blue\n  vec3 ember  = vec3(0.48, 0.06, 0.0);        // deep red-ember below band\n  vec3 orange = vec3(1.0,  0.38, 0.01);       // hot orange at the band\n  vec3 pale   = vec3(1.0,  0.88, 0.52);       // warm gold just above\n\n  // Base: sky warms ember-red below the advancing band\n  vec3 base = mix(night, ember, lit);\n\n  // Bright band: orange at centre, paling to gold above\n  float above_frac = clamp(d * inv_gw * 2.0, 0.0, 1.0);\n  vec3  band = mix(orange, pale, above_frac * 0.7);\n\n  return mix(base, band, g) * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "972d2fdf-ffe1-4a28-a542-486a10e7789b",
+      "wall_s": 674.9,
+      "duration_api_ms": 673548,
+      "cost_usd": 0.5918922,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 38582,
+        "cache_read_input_tokens": 22634,
+        "cache_creation_input_tokens": 1059
+      },
+      "thinking_tokens": 37813,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1083
+    }
+  ],
+  "started": "2026-10-23T00:30:37",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.5919,
+  "total_wall_s": 674.9,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p09.fx"
+}
