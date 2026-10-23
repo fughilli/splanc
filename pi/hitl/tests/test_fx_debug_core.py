@@ -64,6 +64,10 @@ def test_to_f32_matches_the_device_arithmetic():
     assert to_f32(0.1) != 0.1
     assert to_f32(to_f32(0.1)) == to_f32(0.1)
     assert to_f32(1.0 + 0.5) == 1.5
+    # The JSON wire prints an f32 as its shortest decimal; rounding it back to
+    # f32 gives the exact value (what the gate's exact-step check relies on).
+    t = to_f32(2.0440003871917725)
+    assert float("2.0440004") != t and to_f32(float("2.0440004")) == t
 
 
 def test_verdict_taxonomy():
