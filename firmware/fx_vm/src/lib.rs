@@ -1413,6 +1413,82 @@ impl Vm {
         self.memo_words
     }
 
+    // -- FX debugger seams (docs/design/fx-debugger.md) ------------------------
+    // Cold accessors for the device debugger and the host replay. They read or
+    // write the Vm's persistent/resident fields between runs and never touch
+    // `run` itself (an extra argument there costs every program, see #328).
+
+    /// The resident locals as the LAST run left them (the debugger reads them
+    /// right after one shade() run; see [`Vm::clear_scratch`]).
+    pub fn locals(&self) -> &[f32; MAX_LOCALS] {
+        &self.locals
+    }
+
+    /// Zero the resident scratch (operand stack + locals), so a following run's
+    /// locals read 0 wherever it didn't write — what makes a device run's
+    /// locals comparable slot-for-slot with a host replay's.
+    pub fn clear_scratch(&mut self) {
+        self.stack = [0.0; MAX_STACK];
+        self.locals = [0.0; MAX_LOCALS];
+    }
+
+    /// The installed JIT table as raw parts (blocks, len, consts), to restore it
+    /// with [`Vm::set_jit_raw`] after an interpreted debug run.
+    pub fn jit_raw(&self) -> (*const JitBlock, usize, *const i32) {
+        (self.jit_blocks, self.jit_len, self.jit_consts)
+    }
+
+    /// Re-install a JIT table saved by [`Vm::jit_raw`].
+    ///
+    /// # Safety
+    /// As [`Vm::set_jit`]: the parts must still be valid for the program.
+    pub unsafe fn set_jit_raw(&mut self, parts: (*const JitBlock, usize, *const i32)) {
+        self.jit_blocks = parts.0;
+        self.jit_len = parts.1;
+        self.jit_consts = parts.2;
+    }
+
+    /// Words of the `flood_from` field [`Vm::flood_word`] serializes.
+    pub const FLOOD_WORDS: usize = MAX_NODE + 2;
+
+    /// Word `i` of the persistent `flood_from` field, as raw bits: d[0..MAX_NODE]
+    /// (f32), then max (f32), then set (0/1). Part of the state a host replay
+    /// must restore (update()/shade() may call flood_from).
+    pub fn flood_word(&self, i: usize) -> u32 {
+        match i {
+            _ if i < MAX_NODE => self.dist_src.d[i].to_bits(),
+            _ if i == MAX_NODE => self.dist_src.max.to_bits(),
+            _ if i == MAX_NODE + 1 => self.dist_src.set as u32,
+            _ => 0,
+        }
+    }
+
+    /// Restore the `flood_from` field from [`Vm::flood_word`]s (missing words
+    /// keep the reset value).
+    pub fn set_flood_words(&mut self, w: &[u32]) {
+        let mut d = DistSrc::default();
+        for (i, &v) in w.iter().enumerate().take(Self::FLOOD_WORDS) {
+            match i {
+                _ if i < MAX_NODE => d.d[i] = f32::from_bits(v),
+                _ if i == MAX_NODE => d.max = f32::from_bits(v),
+                _ => d.set = v != 0,
+            }
+        }
+        self.dist_src = d;
+    }
+
+    /// Segments in the topology graph [`Vm::set_graph`] installed.
+    pub fn graph_len(&self) -> usize {
+        self.n_seg as usize
+    }
+
+    /// Segment `i` of the installed graph: (arclength, node a, node b) — the
+    /// inputs to replay [`Vm::set_graph`] on a host.
+    pub fn graph_seg(&self, i: usize) -> Option<(f32, i32, i32)> {
+        (i < self.n_seg as usize)
+            .then(|| (self.seg_len[i], self.seg_node[i][0], self.seg_node[i][1]))
+    }
+
     /// Clear the JIT table (back to pure interpretation).
     pub fn clear_jit(&mut self) {
         self.jit_blocks = core::ptr::null();
