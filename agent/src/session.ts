@@ -856,13 +856,29 @@ export class DeviceSession {
     return wire;
   }
 
-  /** Live uniform push (the live mux; slider drags): fire-and-forget, in order
-   * with this session's other traffic, on `deck` (default: the live deck).
-   * `commit` persists them where the firmware understands it (false while
-   * dragging, true on release). */
+  /** Live uniform push (the live mux, ramps; slider drags) on `deck` (default:
+   * the live deck), in order with this session's other traffic. Rides the
+   * client's live-control channel (docs/design/live-control.md): it resolves once
+   * the player has acknowledged the values (or the channel's ack deadline passed),
+   * so a caller that awaits it never has more than one update queued on the
+   * device — a C6 fed fire-and-forget sets falls seconds behind under a heavy
+   * effect. `commit` persists them where the firmware understands it (false while
+   * dragging, true on release; the channel also commits on its own once idle). */
   async sendLiveUniforms(values: UniformValueFlat[], commit: boolean, deck?: Deck): Promise<void> {
     this.assertUnlocked();
-    await this.run(async () => this.sendUniforms(values, commit, deck ?? this.liveDeck()));
+    await this.run(async () => {
+      const d = deck ?? this.liveDeck();
+      if (!this.client.isConnected) throw new ToolError("the player connection is down");
+      this.client.live.setUniforms(values, { deck: d, commit });
+      this.noteSent(values, d);
+      await this.client.live.settled();
+    });
+  }
+
+  /** Track values sent to `deck` on whichever deployed effect is there. */
+  private noteSent(values: UniformValueFlat[], deck: Deck): void {
+    const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
+    if (target) for (const v of values) target.values.set(v.slot, v.value);
   }
 
   /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
@@ -878,8 +894,8 @@ export class DeviceSession {
     if (deck !== 0) msg["deck"] = deck;
     const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
     if (!ok) throw new ToolError("the player connection is down");
-    const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
-    if (target) for (const v of values) target.values.set(v.slot, v.value);
+    this.client.live.noteValues(values, deck);
+    this.noteSent(values, deck);
   }
 
   /** The firmware VM starts every uniform at 0 (it ignores the manifest's
@@ -922,7 +938,8 @@ export class DeviceSession {
         slot: byName.get(n)!.slot,
         value: lerpValues(byName.get(n)!, from[k]!, final[k]!.value, t),
       }));
-      await this.run(async () => this.sendUniforms(vals, false));
+      // Paced on the player's ack (live channel), so a slow player is never flooded.
+      await this.sendLiveUniforms(vals, false);
       await sleep(1000 / hz);
     }
     await this.run(async () => this.sendUniforms(final, true));
@@ -1244,7 +1261,16 @@ export class DeviceSession {
     this.assertUnlocked();
     if (!this.decksUsable()) return false;
     const before = this.liveDeck();
-    await this.snapCrossfade(position, mode);
+    // The live-control channel: the newest position wins, paced on the player's
+    // ack (a tiny ControlAck instead of a full welcome on firmware with it).
+    const m = mode ?? this.crossfadeMode();
+    await this.run(async () => {
+      if (!this.client.isConnected) throw new ToolError("the player connection is down");
+      this.client.live.setCrossfade(position, m);
+      await this.client.live.settled();
+    });
+    this.xf = Math.min(1, Math.max(0, position));
+    this.xfMode = m;
     const now: Deck = this.crossfadePosition() >= 0.5 ? 1 : 0;
     this.live = now;
     if (now !== before) this.swapIfParked(now);
