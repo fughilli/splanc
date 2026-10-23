@@ -7,7 +7,7 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_player_handle, lm_player_init,
-    lm_tex_present, FEATURES,
+    lm_tex_ingest, lm_tex_present, FEATURES,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -118,4 +118,43 @@ fn present_at_holds_frames_until_due_and_shows_the_newest() {
     let a = ack(handle_at(frame(80 ^ 70, true, 8, 500), 10_700));
     assert_eq!((a.r#shown_seq, a.r#shown_late_ms), (8, 200));
     assert_eq!(shown(), 80);
+}
+
+#[test]
+fn lock_free_ingest_queues_every_frame_for_the_next_frame_boundary() {
+    lm_player_init(64);
+    let fxb = ledmapper_fx_compiler::compile(
+        "texture vec3 v(2, 2);\nvoid update() {}\nvec3 shade(Led led) { return sample(v, led.uv); }\n",
+    )
+    .expect("compiles")
+    .fxb;
+    assert!(unsafe { lm_fx_load(fxb.as_ptr(), fxb.len()) });
+    unsafe { lm_fx_set_active(true) };
+    let ingest = |msg: CMsg, now: i64| -> i32 {
+        let f = encode(msg);
+        let mut out = vec![0u8; 512];
+        unsafe { lm_tex_ingest(f.as_ptr(), f.len(), now, out.as_mut_ptr(), out.len()) }
+    };
+    // Not a set_texture: refused, for the normal dispatch.
+    assert_eq!(ingest(CMsg::GetEffectUniforms(Default::default()), 5), -2);
+    // No present time, no seq: queued (not shown yet), no reply.
+    assert_eq!(ingest(frame(10, false, 0, 0), 100), 0);
+    assert_eq!(shown(), 0, "the arena is only written at a frame boundary");
+    unsafe { lm_tex_present(101) };
+    assert_eq!(shown(), 10);
+    // Two frames between renders: the newer one wins at the boundary.
+    assert!(ingest(frame(20 ^ 10, true, 1, 0), 110) > 0, "seq -> ack");
+    assert!(ingest(frame(30 ^ 20, true, 2, 0), 115) > 0);
+    unsafe { lm_tex_present(120) };
+    assert_eq!(shown(), 30);
+    // INDEXED8 (per-frame palette) can't be queued: back to the locked path.
+    let idx = CMsg::SetTexture(pb::SetTexture {
+        r#tex_index: 0,
+        r#format: 4,
+        r#width: 2,
+        r#height: 2,
+        r#data: micropb::heapless::Vec::from_slice(&[0; 4]).unwrap(),
+        ..Default::default()
+    });
+    assert_eq!(ingest(idx, 130), -3);
 }

@@ -74,6 +74,11 @@ bool lm_time_base(int64_t *epoch_ms);
 // (SetTexture.present_at_ms on the shared time base) has come. Once per effect
 // frame, under the player mutex, before lm_fx_update. `now_ms` = millis().
 void lm_tex_present(uint32_t now_ms);
+// Lock-free video ingest (network task, under the texture-queue lock only): decode +
+// queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
+// (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).
+int32_t lm_tex_ingest(const uint8_t *data, size_t len, int64_t now_ms, uint8_t *out,
+                      size_t out_cap);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);

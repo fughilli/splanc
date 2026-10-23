@@ -249,7 +249,11 @@ rust_test(
     name = "video_present_test",
     srcs = ["tests/video_present.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "100663296"},
+    # Process-global FFI state: run the cases one after another.
+    env = {
+        "RUST_MIN_STACK": "100663296",
+        "RUST_TEST_THREADS": "1",
+    },
     deps = [
         ":player_ffi_host",
         "//fx_compiler",

@@ -302,6 +302,11 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // handler take it in turn. Priority sits above the Arduino loopTask (1) but
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
+// Guards only the video jitter queue (lm_tex_ingest on the network task vs
+// lm_tex_present on the render task), so a streamed set_texture never waits for
+// the player mutex the render task holds across a whole update+shade. Never
+// taken while waiting for player_mutex (render takes it INSIDE player_mutex).
+static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 // render: static bound ~3.3 KB (stack_bound_test; render_once -> lm_fx_update -> fx_rebuild_topo's
 // ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
@@ -1126,6 +1131,16 @@ static uint32_t g_handle_max_us = 0;
 
 static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
+  // Video frames (ClientMessage field 28 = set_texture: tag bytes E2 01) take the
+  // lock-free ingest path: decoded + queued for the render task's next frame
+  // boundary without waiting for player_mutex. -2/-3: not one / can't queue it ->
+  // the normal locked dispatch below.
+  if (tex_mutex != nullptr && len >= 2 && msg[0] == 0xE2 && msg[1] == 0x01) {
+    xSemaphoreTake(tex_mutex, portMAX_DELAY);
+    int32_t n = lm_tex_ingest(msg, len, now, tx, sizeof tx);
+    xSemaphoreGive(tex_mutex);
+    if (n >= 0) return (int)n;
+  }
   uint32_t t0 = (uint32_t)micros();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   uint32_t t1 = (uint32_t)micros();
@@ -1645,7 +1660,9 @@ static uint32_t render_once() {
     uint32_t this_seq = fx_frame++;
     // Video frames scheduled for a present time (SetTexture.present_at_ms) land
     // in the texture now, at a frame boundary, before update()/shade() read it.
+    if (tex_mutex != nullptr) xSemaphoreTake(tex_mutex, portMAX_DELAY);
     lm_tex_present(now);
+    if (tex_mutex != nullptr) xSemaphoreGive(tex_mutex);
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
@@ -2606,6 +2623,7 @@ void setup() {
   // Guards every call into the single-threaded Rust core; must exist before
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
+  tex_mutex = xSemaphoreCreateMutex();
   lm_player_init(g_led_cap);
   lm_set_led_limits(g_led_cap, g_led_max_heap);
   // Install this board's static capability descriptor (GPIO safety catalog + LED

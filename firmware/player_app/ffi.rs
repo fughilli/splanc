@@ -1743,7 +1743,7 @@ pub unsafe extern "C" fn lm_player_handle(
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
         Some(ARM_SET_TEXTURE) => {
-            let ack = handle_set_texture(frame, recv_ms);
+            let ack = handle_set_texture(frame, recv_ms, false).unwrap_or(None);
             LAST_TEXTURE_MS = Some(recv_ms);
             match ack {
                 Some(reply) => reply,
@@ -2402,9 +2402,18 @@ fn dequant_at(prev: &[u8], t: usize, format: u64, palette: &[u32]) -> (f32, f32,
 /// (palette TODO). The payload is applied as an XOR delta into the kept previous
 /// frame (a keyframe zeroes it first), optionally RLE'd (zero-run scheme), then
 /// dequantized into the texture's arena slots. Silently drops on any mismatch.
-unsafe fn handle_set_texture(frame: &[u8], now_ms: i64) -> Option<pb::ServerMessage> {
+/// `queue_all`: the lock-free ingest path (lm_tex_ingest) — never touch the arena,
+/// queue every frame (due now when it has no present time) for the render task to
+/// show at its next frame boundary. Err(()) when a frame can't be queued (indexed8,
+/// or too big for a slot beside the delta buffer): the caller retries under the
+/// player mutex with `queue_all` false (shown on arrival, as before).
+unsafe fn handle_set_texture(
+    frame: &[u8],
+    now_ms: i64,
+    queue_all: bool,
+) -> Result<Option<pb::ServerMessage>, ()> {
     let Some(CArm::SetTexture(t)) = client_arm(frame) else {
-        return None;
+        return Ok(None);
     };
     let (seq, present_at) = (t.seq(), t.present_at_ms());
     let ack = |queued: u32| (seq != 0).then(|| texture_ack(seq, queued));
@@ -2423,23 +2432,23 @@ unsafe fn handle_set_texture(frame: &[u8], now_ms: i64) -> Option<pb::ServerMess
     // Resolve the target texture in deck A's program (video drives deck A).
     let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
     let Ok(prog) = Program::parse(bytes) else {
-        return ack(TEX_Q.len as u32);
+        return Ok(ack(TEX_Q.len as u32));
     };
     let Some(d) = prog.buf_desc(tex_index as usize) else {
-        return ack(TEX_Q.len as u32);
+        return Ok(ack(TEX_Q.len as u32));
     };
     if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
-        return ack(TEX_Q.len as u32); // not a texture, or dimensions don't match
+        return Ok(ack(TEX_Q.len as u32)); // not a texture, or dimensions don't match
     }
     let n_texels = (width * height) as usize;
     let total = tex_packed_len(format, n_texels);
     if total == 0 || total > FX_TEX_PREV_MAX {
-        return ack(TEX_Q.len as u32);
+        return Ok(ack(TEX_Q.len as u32));
     }
     // The delta buffer shares the aux region with deck B: dropped while deck B
     // is loaded (the mutex is explicit — see FxAux).
     let Some(prev) = tex_prev() else {
-        return ack(TEX_Q.len as u32);
+        return Ok(ack(TEX_Q.len as u32));
     };
     let prev = &mut prev[..total];
     if flags & 0x01 == 0 {
@@ -2476,28 +2485,67 @@ unsafe fn handle_set_texture(frame: &[u8], now_ms: i64) -> Option<pb::ServerMess
         (p, Some(epoch)) if p != 0 => Some(epoch + p as i64),
         _ => None,
     };
-    let fmt_ok = format != TEX_INDEXED8;
-    match due {
-        Some(due) if fmt_ok && due > now_ms => {
-            tex_queue_push(prev, total, seq, due, tex_index, format, width, height);
-        }
-        _ => {
-            let late = due.map_or(0, |d| now_ms - d);
-            if late > TEX_LATE_DROP_MS && now_ms - TEX_STATS.shown_at_dev < TEX_STALE_SHOW_MS {
-                // Too late to be in step with the other fixtures; decoded (the
-                // delta chain holds) but not shown. Anything older queued is
-                // stale too.
-                TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1 + TEX_Q.len as u32);
-                TEX_Q.len = 0;
-            } else {
-                TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
-                TEX_Q.len = 0;
-                tex_store(tex_index, format, width, height, &prev[..total], &palette);
-                tex_note_shown(seq, late, now_ms);
+    let queueable = format != TEX_INDEXED8 && tex_q_cap(total) > 0;
+    if queue_all && !queueable {
+        return Err(());
+    }
+    let late = due.map_or(0, |d| now_ms - d);
+    if late > TEX_LATE_DROP_MS && now_ms - TEX_STATS.shown_at_dev < TEX_STALE_SHOW_MS {
+        // Too late to be in step with the other fixtures; decoded (the delta chain
+        // holds) but not shown. Anything older still queued is stale too.
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1 + TEX_Q.len as u32);
+        TEX_Q.len = 0;
+    } else if queueable && (queue_all || late < 0) {
+        // Shown by the render task at a frame boundary (lm_tex_present): at its
+        // present time, or at the next frame when it has none / is already due.
+        tex_queue_push(prev, total, seq, due.unwrap_or(now_ms), tex_index, format, width, height);
+    } else {
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
+        TEX_Q.len = 0;
+        tex_store(tex_index, format, width, height, &prev[..total], &palette);
+        tex_note_shown(seq, late, now_ms);
+    }
+    Ok(ack(TEX_Q.len as u32))
+}
+
+/// Lock-free video ingest (the netstack loop task, WITHOUT the player mutex): decode
+/// a set_texture frame into the delta buffer and queue it for the render task,
+/// which shows it at its next frame boundary (or at its present time). Waiting
+/// for the player mutex, which render holds across update+shade, used to stall
+/// the network loop 10+ ms per frame (and leave the RX ring undrained).
+/// Returns the TextureAck length written to `out` (0 = no reply), -2 when the
+/// frame is not a set_texture, or -3 when it can't be queued: the caller then
+/// dispatches it the normal way under the player mutex.
+///
+/// # Safety
+/// Loop task only, holding the texture-queue lock that `lm_tex_present`'s caller
+/// also holds. Reads deck A's program, which only this task writes (set_effect /
+/// submit_effect run on it, under the player mutex the render task honours).
+#[no_mangle]
+pub unsafe extern "C" fn lm_tex_ingest(
+    data: *const u8,
+    len: usize,
+    now_ms: i64,
+    out: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if data.is_null() || out.is_null() || len == 0 {
+        return -2;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    if !matches!(client_arm(frame), Some(CArm::SetTexture(_))) {
+        return -2;
+    }
+    match handle_set_texture(frame, now_ms, true) {
+        Err(()) => -3,
+        Ok(r) => {
+            LAST_TEXTURE_MS = Some(now_ms);
+            match r {
+                Some(reply) => encode_reply(&reply, out, out_cap),
+                None => 0,
             }
         }
     }
-    ack(TEX_Q.len as u32)
 }
 
 /// Dequantize one packed frame (`prev`, the XOR-applied quantized texels) into
@@ -4118,6 +4166,10 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     // A sensor driver (FUG-107) is not an effect: its "shade" slot is poll().
     if prog.flags & ledmapper_fx_vm::FLAG_DRIVER != 0 {
         return Err(FxLoadError::Bad);
+    }
+    if d == DECK_A_IDX {
+        // Video queued for the previous effect's texture is stale now.
+        tex_queue_reset();
     }
     let need = arena_need(&prog);
     let b_reserve = match deck(DECK_B_IDX) {
