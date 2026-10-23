@@ -1107,6 +1107,9 @@ message GetFxSnapshot {
     // brightness, recomputed by re-running shade() at the paused frame.
     // Paused only.
     SECTION_RAW = 8;
+    // The deck's topology graph: u32 n_seg, then per segment f32 length, i32
+    // node a, i32 node b (what the VM's graph intrinsics read).
+    SECTION_GRAPH = 9;
   }
   Section section = 1;
   uint32 deck = 2;
