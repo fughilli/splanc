@@ -2009,12 +2009,12 @@ void netstack_loop() {
   }
   // (Only with the radio up: offline mode has no use for it until it joins.)
   //
-  // Measured on hitl-rig-2 (wifi_cadence, logic analyzer on the strip): the netstack loop
-  // runs at the render task's priority, so these ~14 ms PBKDF2 chunks were time-sliced
-  // 1:1 against rendering for the ~2 s a derivation takes — a heavy effect's frames
+  // Measured on hitl-rig-2 (wifi_cadence, logic analyzer on the strip): when the loop ran
+  // at the render task's priority these ~14 ms PBKDF2 chunks were time-sliced 1:1
+  // against rendering for the ~2 s a derivation takes — a heavy effect's frames
   // stretched 184 -> 196 ms, a light one's 13 -> 16 ms, on every new provision /
-  // wrong-PSK retry. The derivation is pure CPU with no deadline, so run each chunk one
-  // priority BELOW render: render preempts it the moment a frame is due.
+  // wrong-PSK retry. The player now runs the whole loop below render (main.cpp); the
+  // derivation additionally drops one more level, so it is the first thing to yield.
   if (g_radio_up && g_creds_ready && !ns_pmk_ready()) {
     UBaseType_t prio = uxTaskPriorityGet(nullptr);
     if (prio > tskIDLE_PRIORITY + 1) vTaskPrioritySet(nullptr, prio - 1);
