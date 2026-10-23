@@ -12,6 +12,25 @@ fn zero() -> u32 {
     0
 }
 
+/// Every embedded AOT image (what the C6 bench copies into its exec region)
+/// passes the sandbox verifier with the buffer sizes the bench allocates.
+#[test]
+fn aot_images_verify() {
+    use ledmapper_fx_aot_nostd as aot;
+    let mut n = 0;
+    for d in EFFECTS.iter().filter(|d| d.aot_ok) {
+        let mut entries = vec![d.aot_shade as usize];
+        if d.aot_update >= 0 {
+            entries.push(d.aot_update as usize);
+        }
+        let r = aot::verify(d.aot_code, &entries, &aot::VerifyLimits::DEFAULT);
+        assert_eq!(r, None, "{}: verifier rejected the embedded image", d.name);
+        n += 1;
+    }
+    assert!(n > 0, "no AOT images embedded");
+    println!("aot_images_verify: {n} embedded images verified");
+}
+
 #[test]
 fn natives_match_vm() {
     let mut failures = Vec::new();

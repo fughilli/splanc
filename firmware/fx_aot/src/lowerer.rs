@@ -11,10 +11,8 @@ use ledmapper_fx_vm::{self as fxv, Op};
 use crate::ctx::{HELPER_OFF, OUT_OFF, RET_FRAC_OFF, RET_KIND_OFF, RET_RET, RET_RGB8, RET_RGBFIX};
 use crate::enc::*;
 use crate::reg::*;
+use crate::verify;
 use crate::{deep_off, effect, Kind, DEFAULT_BUDGET, WIN_OFF, WIN_WORDS};
-
-/// Stack frame bytes to reserve for saved registers (ra + s0..s11 = 13 words).
-const SAVE_WORDS: usize = 16;
 
 /// Load the raw 32-bit bits of const-pool entry `idx` (little-endian).
 fn const_bits(prog: &fxv::Program, idx: usize) -> i32 {
@@ -125,6 +123,10 @@ pub(crate) fn lower_body(prog: &fxv::Program, entry: usize, out: &mut Vec<u32>) 
             block_ops.insert(h, count);
         }
     }
+    // One canonical check per block: its decrement must fit the `addi` immediate.
+    if block_ops.values().any(|&n| n > verify::MAX_BUDGET_STEP) {
+        return None;
+    }
 
     // --- 2. Emission ---------------------------------------------------------
     let mut e = Emit {
@@ -193,35 +195,24 @@ impl Emit<'_> {
         self.push(addi(rd, rd, lo));
     }
 
+    /// The verifier's exact prologue (save ra/s0..s11, s0/s1/s11 from a0..a2,
+    /// s10 = budget).
     fn prologue(&mut self) {
-        // addi sp, sp, -(SAVE_WORDS*4)
-        self.push(addi(SP, SP, -((SAVE_WORDS * 4) as i32)));
-        // save ra, s0..s11
-        let saves = [RA, S0, S1, 18, 19, 20, 21, 22, 23, 24, 25, S10, S11];
-        for (i, &r) in saves.iter().enumerate() {
-            self.push(sw(r, SP, (i * 4) as i32));
-        }
-        self.push(addi(S0, A0, 0)); // s0 = ctx
-        self.push(addi(S1, A1, 0)); // s1 = frame base
-        self.push(addi(S11, A2, 0)); // s11 = state base
-        self.li(S10, DEFAULT_BUDGET);
+        self.out
+            .extend_from_slice(&verify::prologue_words(DEFAULT_BUDGET));
     }
 
+    /// The verifier's exact epilogue (restore, release, `ret`).
     fn epilogue(&mut self) {
-        let saves = [RA, S0, S1, 18, 19, 20, 21, 22, 23, 24, 25, S10, S11];
-        for (i, &r) in saves.iter().enumerate() {
-            self.push(lw(r, SP, (i * 4) as i32));
-        }
-        self.push(addi(SP, SP, (SAVE_WORDS * 4) as i32));
-        self.push(jalr(ZERO, RA, 0)); // ret
+        self.out.extend_from_slice(&verify::epilogue_words());
     }
 
     /// Per-block budget: `s10 -= n; if s10 >= 0 skip; jal budget_exit`. The
     /// skip-branch is a fixed +2 words (always in range); the far jump to the
     /// shared exit uses `jal` (±1 MiB).
     fn budget_block(&mut self, n: i32) {
-        self.push(addi(S10, S10, -n));
-        self.push(branch(F3_BGE, S10, ZERO, 8)); // skip the jal when s10 >= 0
+        // addi s10,s10,-n; bge s10,x0,+8 (skip the jal when s10 >= 0)
+        self.out.extend_from_slice(&verify::budget_check_head(n));
         let word = self.out.len();
         self.push(jal(ZERO, 0)); // patched to budget_exit
         self.fixups.push(Fixup {
@@ -233,14 +224,10 @@ impl Emit<'_> {
         });
     }
 
+    /// out = [0,0,0]; ret_kind = RET_RET; falls into the epilogue emitted
+    /// right after (the verifier requires exactly this stub + epilogue).
     fn emit_budget_exit(&mut self) {
-        // out = [0,0,0]; ret_kind = RET_RET; fall into epilogue.
-        for k in 0..3 {
-            self.push(sw(ZERO, S0, OUT_OFF + (k * 4)));
-        }
-        self.li(T0, RET_RET as i32);
-        self.push(sw(T0, S0, RET_KIND_OFF));
-        // fallthrough into epilogue (emitted right after)
+        self.out.extend_from_slice(&verify::exit_stub_words());
     }
 
     /// Read operand slot `i` (depth-relative) into a register usable as a source.
@@ -653,12 +640,12 @@ impl Emit<'_> {
                 let bb = self.slot_src(base + 1, T1);
                 // Branch when the comparison is FALSE (mirrors the VM fusion).
                 let (f3, swap) = match kind {
-                    0 => (F3_BGE, false),       // !(a<b)  -> a>=b
-                    1 => (F3_BLT, true), // !(a<=b) -> a>b  -> b<a
-                    2 => (F3_BGE, true), // !(a>b)  -> a<=b -> b>=a
-                    3 => (F3_BLT, false),       // !(a>=b) -> a<b
-                    4 => (F3_BNE, false),       // !(a==b) -> a!=b
-                    _ => (F3_BEQ, false),       // !(a!=b) -> a==b
+                    0 => (F3_BGE, false), // !(a<b)  -> a>=b
+                    1 => (F3_BLT, true),  // !(a<=b) -> a>b  -> b<a
+                    2 => (F3_BGE, true),  // !(a>b)  -> a<=b -> b>=a
+                    3 => (F3_BLT, false), // !(a>=b) -> a<b
+                    4 => (F3_BNE, false), // !(a==b) -> a!=b
+                    _ => (F3_BEQ, false), // !(a!=b) -> a==b
                 };
                 let (r1, r2) = if swap { (bb, a) } else { (a, bb) };
                 let word = self.out.len();

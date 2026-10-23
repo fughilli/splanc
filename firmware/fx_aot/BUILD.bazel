@@ -20,6 +20,7 @@ rust_library(
         "src/lib.rs",
         "src/lowerer.rs",
         "src/verify.rs",
+        "src/verify_tests.rs",
     ],
     crate_features = ["alloc"],
     crate_name = "ledmapper_fx_aot",

@@ -6,7 +6,7 @@
 mod raw_cases;
 use raw_cases::raw_program;
 
-use ledmapper_fx_aot::{emu, lower, verify, NativeCtx, FRAME_WORDS};
+use ledmapper_fx_aot::{emu, lower, NativeCtx, FRAME_WORDS};
 use ledmapper_fx_vm::{self as fxv, Frame, Led, Program, Vm};
 
 fn q16(x: f32) -> i32 {
@@ -67,7 +67,7 @@ fn differential(name: &str, fxb: &[u8], uniforms: &[(u8, Vec<f32>)]) -> Result<b
     let Some(img) = lower(&prog) else {
         return Ok(false); // refused — VM fallback, nothing to compare
     };
-    if let Some(e) = verify(&img.code) {
+    if let Some(e) = img.verify() {
         return Err(format!("{name}: verifier rejected a lowered image: {e:?}"));
     }
 
@@ -413,7 +413,7 @@ fn direct_helpers_match_raw_vm_words() {
             let bytes = raw_program(op, *pop, *push, prefix);
             let prog = Program::parse(&bytes).unwrap();
             let img = lower(&prog).expect("raw operation must lower");
-            assert_eq!(verify(&img.code), None);
+            assert_eq!(img.verify(), None);
             let mut vm = Vm::new();
             let mut nvm = Vm::new();
             let mut u = [0.0; fxv::MAX_UNIFORM_SLOTS];

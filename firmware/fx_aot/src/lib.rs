@@ -46,7 +46,7 @@ mod verify;
 
 pub use ctx::{HelperFn, NativeCtx, RET_RET, RET_RGB8, RET_RGBFIX};
 pub use helper::aot_win_helper;
-pub use verify::{verify, VerifyErr};
+pub use verify::{verify, VerifyErr, VerifyLimits};
 
 #[cfg(feature = "alloc")]
 pub mod emu;
@@ -277,6 +277,24 @@ pub struct Image {
     pub update_off: Option<usize>,
     /// Word offset of the `shade()` entry.
     pub shade_off: usize,
+}
+
+#[cfg(feature = "alloc")]
+impl Image {
+    /// The callable entry offsets (`update` if present, then `shade`). These
+    /// are the only offsets a caller may jump to and what [`verify`] checks.
+    pub fn entries(&self) -> Vec<usize> {
+        self.update_off
+            .into_iter()
+            .chain([self.shade_off])
+            .collect()
+    }
+
+    /// [`verify`] this image against the in-tree buffer sizes
+    /// ([`VerifyLimits::DEFAULT`]).
+    pub fn verify(&self) -> Option<VerifyErr> {
+        verify(&self.code, &self.entries(), &VerifyLimits::DEFAULT)
+    }
 }
 
 /// Lower a verified `.fxb` program to a position-independent RV32IM image, or

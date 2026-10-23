@@ -65,6 +65,10 @@ fn main() {
         {
             Ok(prog) => match ledmapper_fx_aot::lower(&prog) {
                 Some(img) => {
+                    // Never embed an image the sandbox verifier rejects.
+                    if let Some(e) = img.verify() {
+                        panic!("{name}: verifier rejected the lowered image: {e:?}");
+                    }
                     let mut ws = String::with_capacity(img.code.len() * 12);
                     for w in &img.code {
                         let _ = write!(ws, "{w},");
