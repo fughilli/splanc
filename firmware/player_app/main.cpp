@@ -1643,6 +1643,9 @@ static uint32_t render_once() {
     if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
+    // Video frames scheduled for a present time (SetTexture.present_at_ms) land
+    // in the texture now, at a frame boundary, before update()/shade() read it.
+    lm_tex_present(now);
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();

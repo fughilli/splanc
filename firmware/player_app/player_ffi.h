@@ -70,6 +70,10 @@ bool lm_fixture_pose_commit(void);
 // Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
 // set. The render loop derives effect time = (now - epoch) / 1000.
 bool lm_time_base(int64_t *epoch_ms);
+// Video jitter buffer: show the newest queued set_texture frame whose present time
+// (SetTexture.present_at_ms on the shared time base) has come. Once per effect
+// frame, under the player mutex, before lm_fx_update. `now_ms` = millis().
+void lm_tex_present(uint32_t now_ms);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);

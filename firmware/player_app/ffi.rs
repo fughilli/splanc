@@ -433,8 +433,165 @@ unsafe fn deck_b_claim() -> *mut DeckState {
         addr_of_mut!((*p).shade_led).write(None);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
+        tex_queue_reset();
     }
     p
+}
+
+/// Video jitter buffer (SetTexture.present_at_ms): decoded frames waiting for
+/// their present time, stored as packed snapshots in the aux region right after
+/// the delta buffer (`FX_AUX.video[total * (1 + i)..]`), so it costs no RAM beyond
+/// the 8 KB the delta buffer already owns. Slot count = what fits, up to 4.
+const TEX_Q_MAX: usize = 4;
+/// A frame that arrives more than this past its present time is dropped
+/// (~2 frames at 30 fps): showing it would put this fixture out of step.
+const TEX_LATE_DROP_MS: i64 = 66;
+/// ...unless nothing has been shown for this long (a stream that is late
+/// everywhere, e.g. a sender with a wrong offset, still plays, just late).
+const TEX_STALE_SHOW_MS: i64 = 250;
+
+#[derive(Clone, Copy)]
+struct TexSlot {
+    seq: u32,
+    due: i64,
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+}
+
+struct TexQueue {
+    slots: [TexSlot; TEX_Q_MAX],
+    head: usize,
+    len: usize,
+    total: usize, // packed frame size the slots were laid out for
+}
+
+static mut TEX_Q: TexQueue = TexQueue {
+    slots: [TexSlot { seq: 0, due: 0, tex_index: 0, format: 0, width: 0, height: 0 }; TEX_Q_MAX],
+    head: 0,
+    len: 0,
+    total: 0,
+};
+
+/// Presentation telemetry for TextureAck.
+struct TexStats {
+    shown_seq: u32,
+    shown_late_ms: i32,
+    shown_at_dev: i64, // device ms (millis) of the last show
+    dropped: u32,
+}
+static mut TEX_STATS: TexStats =
+    TexStats { shown_seq: 0, shown_late_ms: 0, shown_at_dev: i64::MIN / 2, dropped: 0 };
+
+/// Slots that fit beside a `total`-byte delta buffer.
+fn tex_q_cap(total: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        (FX_TEX_PREV_MAX / total).saturating_sub(1).min(TEX_Q_MAX)
+    }
+}
+
+/// Forget queued frames + telemetry (a new effect / the aux region changed hands).
+unsafe fn tex_queue_reset() {
+    TEX_Q.len = 0;
+    TEX_Q.head = 0;
+    TEX_STATS = TexStats { shown_seq: 0, shown_late_ms: 0, shown_at_dev: i64::MIN / 2, dropped: 0 };
+}
+
+/// Queue a copy of the just-decoded frame (`prev[..total]`) until `due`. A full
+/// queue drops its oldest frame (counted).
+#[allow(clippy::too_many_arguments)]
+unsafe fn tex_queue_push(
+    prev: &[u8],
+    total: usize,
+    seq: u32,
+    due: i64,
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+) {
+    let cap = tex_q_cap(total);
+    if TEX_Q.total != total {
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
+        TEX_Q.len = 0;
+        TEX_Q.head = 0;
+        TEX_Q.total = total;
+    }
+    if cap == 0 {
+        return;
+    }
+    if TEX_Q.len == cap {
+        TEX_Q.head = (TEX_Q.head + 1) % cap;
+        TEX_Q.len -= 1;
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1);
+    }
+    let i = (TEX_Q.head + TEX_Q.len) % cap;
+    let base = addr_of_mut!(FX_AUX.video) as *mut u8;
+    core::ptr::copy_nonoverlapping(prev.as_ptr(), base.add(total * (1 + i)), total);
+    TEX_Q.slots[i] = TexSlot { seq, due, tex_index, format, width, height };
+    TEX_Q.len += 1;
+}
+
+unsafe fn tex_note_shown(seq: u32, late_ms: i64, now_ms: i64) {
+    TEX_STATS.shown_seq = seq;
+    TEX_STATS.shown_late_ms = late_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    TEX_STATS.shown_at_dev = now_ms;
+}
+
+fn texture_ack(seq: u32, queued: u32) -> pb::ServerMessage {
+    // SAFETY: single firmware thread under the player mutex (the arm handlers).
+    let (shown_seq, shown_late_ms, dropped, shown_at) = unsafe {
+        let shown_at = player()
+            .time_base_ms()
+            .map_or(TEX_STATS.shown_at_dev, |e| TEX_STATS.shown_at_dev - e);
+        (TEX_STATS.shown_seq, TEX_STATS.shown_late_ms, TEX_STATS.dropped, shown_at)
+    };
+    let m = pb::TextureAck {
+        r#seq: seq,
+        r#shown_seq: shown_seq,
+        r#shown_late_ms: shown_late_ms,
+        r#dropped: dropped,
+        r#queued: queued,
+        r#shown_at_ms: shown_at.max(0) as u32,
+    };
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::TextureAck(m)) }
+}
+
+/// Render hook (once per effect frame, under the player mutex, before update):
+/// show the newest queued video frame whose present time has come; older due
+/// frames are superseded (dropped). `now_ms` is the device clock (millis).
+///
+/// # Safety
+/// Single firmware thread under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_tex_present(now_ms: u32) {
+    if TEX_Q.len == 0 || FX_AUX_OWNER != AuxOwner::Video {
+        return;
+    }
+    // millis() is a u32 that wraps at ~49.7 days; the queued due times were taken
+    // from the same clock widened to i64, so compare in that domain.
+    let now = now_ms as i64;
+    let cap = tex_q_cap(TEX_Q.total);
+    let mut newest: Option<usize> = None;
+    while TEX_Q.len > 0 && TEX_Q.slots[TEX_Q.head].due <= now {
+        if newest.is_some() {
+            TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1);
+        }
+        newest = Some(TEX_Q.head);
+        TEX_Q.head = (TEX_Q.head + 1) % cap;
+        TEX_Q.len -= 1;
+    }
+    if let Some(i) = newest {
+        let s = TEX_Q.slots[i];
+        let total = TEX_Q.total;
+        let base = addr_of!(FX_AUX.video) as *const u8;
+        let frame = core::slice::from_raw_parts(base.add(total * (1 + i)), total);
+        tex_store(s.tex_index, s.format, s.width, s.height, frame, &[0u32; TEX_PAL_MAX]);
+        tex_note_shown(s.seq, now - s.due, now);
+    }
 }
 
 /// The video delta buffer, claimed from the aux region; None while deck B owns
@@ -445,6 +602,7 @@ unsafe fn tex_prev() -> Option<&'static mut [u8; FX_TEX_PREV_MAX]> {
         AuxOwner::Free => {
             FX_AUX.video = [0; FX_TEX_PREV_MAX];
             FX_AUX_OWNER = AuxOwner::Video;
+            tex_queue_reset();
             Some(&mut *addr_of_mut!(FX_AUX.video))
         }
         AuxOwner::Video => Some(&mut *addr_of_mut!(FX_AUX.video)),
@@ -1585,9 +1743,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
         Some(ARM_SET_TEXTURE) => {
-            handle_set_texture(frame);
+            let ack = handle_set_texture(frame, recv_ms);
             LAST_TEXTURE_MS = Some(recv_ms);
-            return 0;
+            match ack {
+                Some(reply) => reply,
+                None => return 0,
+            }
         }
         // Everything else is read IN PLACE from the frame (pbview): no
         // by-value ClientMessage on this stack, and no capacity truncation.
@@ -2069,6 +2230,7 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "texture_ack",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2240,10 +2402,12 @@ fn dequant_at(prev: &[u8], t: usize, format: u64, palette: &[u32]) -> (f32, f32,
 /// (palette TODO). The payload is applied as an XOR delta into the kept previous
 /// frame (a keyframe zeroes it first), optionally RLE'd (zero-run scheme), then
 /// dequantized into the texture's arena slots. Silently drops on any mismatch.
-unsafe fn handle_set_texture(frame: &[u8]) {
+unsafe fn handle_set_texture(frame: &[u8], now_ms: i64) -> Option<pb::ServerMessage> {
     let Some(CArm::SetTexture(t)) = client_arm(frame) else {
-        return;
+        return None;
     };
+    let (seq, present_at) = (t.seq(), t.present_at_ms());
+    let ack = |queued: u32| (seq != 0).then(|| texture_ack(seq, queued));
     let (tex_index, format, width, height, flags) = (
         u64::from(t.tex_index()),
         u64::from(t.format()),
@@ -2259,23 +2423,23 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     // Resolve the target texture in deck A's program (video drives deck A).
     let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
     let Ok(prog) = Program::parse(bytes) else {
-        return;
+        return ack(TEX_Q.len as u32);
     };
     let Some(d) = prog.buf_desc(tex_index as usize) else {
-        return;
+        return ack(TEX_Q.len as u32);
     };
     if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
-        return; // not a texture, or dimensions don't match the declared texture
+        return ack(TEX_Q.len as u32); // not a texture, or dimensions don't match
     }
     let n_texels = (width * height) as usize;
     let total = tex_packed_len(format, n_texels);
     if total == 0 || total > FX_TEX_PREV_MAX {
-        return;
+        return ack(TEX_Q.len as u32);
     }
     // The delta buffer shares the aux region with deck B: dropped while deck B
     // is loaded (the mutex is explicit — see FxAux).
     let Some(prev) = tex_prev() else {
-        return;
+        return ack(TEX_Q.len as u32);
     };
     let prev = &mut prev[..total];
     if flags & 0x01 == 0 {
@@ -2306,6 +2470,60 @@ unsafe fn handle_set_texture(frame: &[u8]) {
         for j in 0..data.len().min(total) {
             prev[j] ^= data[j];
         }
+    }
+    // Show now, or hold for the frame's present time (TEX_Q).
+    let due = match (present_at, player().time_base_ms()) {
+        (p, Some(epoch)) if p != 0 => Some(epoch + p as i64),
+        _ => None,
+    };
+    let fmt_ok = format != TEX_INDEXED8;
+    match due {
+        Some(due) if fmt_ok && due > now_ms => {
+            tex_queue_push(prev, total, seq, due, tex_index, format, width, height);
+        }
+        _ => {
+            let late = due.map_or(0, |d| now_ms - d);
+            if late > TEX_LATE_DROP_MS && now_ms - TEX_STATS.shown_at_dev < TEX_STALE_SHOW_MS {
+                // Too late to be in step with the other fixtures; decoded (the
+                // delta chain holds) but not shown. Anything older queued is
+                // stale too.
+                TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1 + TEX_Q.len as u32);
+                TEX_Q.len = 0;
+            } else {
+                TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
+                TEX_Q.len = 0;
+                tex_store(tex_index, format, width, height, &prev[..total], &palette);
+                tex_note_shown(seq, late, now_ms);
+            }
+        }
+    }
+    ack(TEX_Q.len as u32)
+}
+
+/// Dequantize one packed frame (`prev`, the XOR-applied quantized texels) into
+/// the texture's arena region of deck A's program.
+unsafe fn tex_store(
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+    prev: &[u8],
+    palette: &[u32; TEX_PAL_MAX],
+) {
+    let palette = *palette;
+    let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
+    let Ok(prog) = Program::parse(bytes) else {
+        return;
+    };
+    let Some(d) = prog.buf_desc(tex_index as usize) else {
+        return;
+    };
+    if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
+        return;
+    }
+    let n_texels = (width * height) as usize;
+    if prev.len() < tex_packed_len(format, n_texels) {
+        return;
     }
     // Dequantize prev -> the texture's arena region, PACKED at the texture's
     // declared component precision (FUG-10) so a narrow texture compresses the

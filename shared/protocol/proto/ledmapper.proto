@@ -1152,7 +1152,8 @@ message GetColorCorrection {}
 // buffer first), then run-length coded (flags bit1 = RLE, a zero-run scheme:
 // repeated [varint zero_run][varint literal_run][literal bytes...]). `tex_index`
 // selects which declared texture (buffer id, kind=1) in the active effect; the
-// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates).
+// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates)
+// unless `seq` is set (firmware feature "texture_ack").
 message SetTexture {
   uint32 tex_index = 1;
   uint32 format = 2; // 0 RGB888, 1 RGB565, 2 RGB332, 3 GRAY8, 4 INDEXED8
@@ -1161,6 +1162,37 @@ message SetTexture {
   uint32 flags = 5; // bit0 DELTA (XOR vs previous frame), bit1 RLE
   bytes data = 6;
   repeated uint32 palette = 7 [packed = true]; // INDEXED8 only: 0x00RRGGBB entries
+  // Frame sequence number (feature "texture_ack"). Non-zero: the device answers
+  // with a TextureAck{seq} once it has decoded the frame, so a sender can keep a
+  // bounded number of frames in flight (latest-wins) instead of queueing.
+  uint32 seq = 8;
+  // When to show the frame, in ms on the shared effect time base (the
+  // set_time_base epoch: effect time = now - epoch). Fixtures given the same
+  // epoch and the same present_at show the frame at the same instant. The
+  // device holds early frames in a small jitter buffer (as many as fit beside
+  // the delta buffer, up to 4) and shows the newest due frame at each render;
+  // a frame that arrives more than a frame or two late is dropped (still
+  // decoded, so the delta chain holds). 0, or no time base set: show at the
+  // next render, as before.
+  uint32 present_at_ms = 9;
+}
+
+// Reply to a SetTexture with a seq (feature "texture_ack"): the frame with that
+// seq is decoded (and shown or queued). Also carries the presentation telemetry
+// a sender (or a HITL test) needs to see how on-time the stream is.
+message TextureAck {
+  uint32 seq = 1;
+  // The last frame actually shown, and how late it was against its present_at
+  // (ms; negative = early never happens, 0 when it had no present_at).
+  uint32 shown_seq = 2;
+  int32 shown_late_ms = 3;
+  // Frames decoded but never shown: arrived too late, or superseded by a newer
+  // due frame / a full jitter buffer. Cumulative for the effect.
+  uint32 dropped = 4;
+  // Frames waiting in the jitter buffer right now.
+  uint32 queued = 5;
+  // Device effect time (ms, same base as present_at_ms) when shown_seq was shown.
+  uint32 shown_at_ms = 6;
 }
 
 // Set the player's display name; it becomes the Bluetooth-advertised name too
@@ -1597,5 +1629,9 @@ message ServerMessage {
     // 31: left free for in-flight branches (#325's ramp_state takes 40).
     // Reply to every OTA arm (docs/design/ota.md).
     OtaStatus ota_status = 32;
+    // 33-41: left free for in-flight branches (#325's ramp_state takes 40, the
+    // live-control ControlAck 41).
+    // Reply to a SetTexture carrying a seq.
+    TextureAck texture_ack = 42;
   }
 }
