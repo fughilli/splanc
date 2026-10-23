@@ -130,3 +130,21 @@ def test_parse_ignores_garbage_and_counts_unmatched_pongs():
     run = parse("noise\nF x y\nP 1.000 2.0 3.0\nE 1.0 device-error b'x'\nEND done\n")
     assert run.unmatched_pongs == 1
     assert run.errors and run.end == "done"
+
+
+def test_present_at_runs_report_shown_frame_latency_and_lateness():
+    # --present-delay-ms 100: each frame is shown ~100 ms after capture, 1 ms late.
+    rows = _stream(60)
+    epoch = int(1_000_400.0 - OFF)
+    rows.insert(0, f"TB {epoch} {-OFF:.3f} 100.0")
+    for i in range(60):
+        t = 1_000_500.0 + i * PERIOD
+        shown_at = int(round(t + 101.0 - OFF - epoch))
+        rows.append(f"A {i + 1} {t + 5:.3f} {i + 1} 1 {shown_at} 2 1")
+    stats = analyze(parse(_text(rows)), FPS)
+    assert stats.shown == 60
+    assert stats.dev_dropped == 2
+    assert percentile(stats.disp_lat_ms, 50) == pytest.approx(101.0, abs=1.0)
+    assert percentile(stats.shown_late_ms, 99) == pytest.approx(1.0)
+    assert percentile(stats.disp_intervals_ms, 50) == pytest.approx(PERIOD, abs=1.0)
+    assert "shown=60" in result_line(stats, run_status(stats))
