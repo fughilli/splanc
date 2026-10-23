@@ -2767,8 +2767,8 @@ unsafe fn handle_set_fps(frame: &[u8]) -> pb::ServerMessage {
     let c = &mut *addr_of_mut!(FPS);
     // set_target snaps onto the ladder (held to the strip's floor and wire
     // ceiling); cap first so a wild value can't overflow the snap arithmetic.
+    // (A mode change that clears the lag is pushed by the next lag-notify check.)
     c.set_target(target.min(MAX_FPS));
-    FPS_LAG_REPORTED = false;
     build_fps_state()
 }
 

@@ -674,6 +674,10 @@ fn full_device_flow_through_the_c_abi() {
     }
     assert!(unsafe { lm_fps_take_lag_notify(&mut lag) } && lag, "lag change reported");
     assert!(!unsafe { lm_fps_take_lag_notify(&mut lag) }, "reported once");
+    // A client re-sending the same pin (or polling with it) neither restarts the
+    // measurement nor re-pushes the advisory.
+    assert!(set_fps(60, false, 8040.0).r#lagging, "still lagging after a same-mode set_fps");
+    assert!(!unsafe { lm_fps_take_lag_notify(&mut lag) }, "no duplicate lag push");
     let mut fbuf = vec![0u8; 512];
     let n = unsafe { lm_fps_build_state(fbuf.as_mut_ptr(), fbuf.len()) };
     assert!(n > 0, "fps_state encodes");

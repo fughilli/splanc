@@ -111,6 +111,13 @@ async def _slow_phase(ws_url: str, fxb: bytes, args, out: dict) -> list[float | 
         end = time.monotonic() + args.slow_seconds - 3.0
         last: dict = {}
         while time.monotonic() < end:
+            # Drop anything already buffered (an unsolicited lag-change fps_state), so
+            # the round trip below times THIS command's reply, not a queued push.
+            while True:
+                try:
+                    await asyncio.wait_for(sock.recv(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    break
             t0 = time.monotonic()
             try:
                 last = await _rpc(
