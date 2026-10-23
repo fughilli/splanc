@@ -19,7 +19,7 @@
  * hardware collection lives in the Python harness.
  */
 
-import { parseFxb, walkEntry, histWithDispatch, type OpHistogram } from "./costModel";
+import { parseFxb, walkEntry, histWithDispatch, manifestDefaults, type OpHistogram } from "./costModel";
 import { fitCosts, presentFeatures, type BenchSample } from "./calibrationFit";
 import { FITTED_OPCODES } from "./calibrationBenchmarks";
 import {
@@ -157,9 +157,10 @@ export function buildDeviceProfile(
     bytecode: s.fxb,
     ledCount: s.ledCount,
     measuredMs: ((s.measuredFrameCycles + s.measuredShowCycles) / cpuHz) * 1000,
-    // fx_bench submits each program without set_uniforms, and the firmware
-    // doesn't seed manifest defaults: every uniform runs at 0.
-    uniforms: [],
+    // fx_bench submits each program without set_uniforms; the firmware seeds
+    // every uniform with its manifest default on load (R7), so the walker
+    // sees the same values.
+    uniforms: manifestDefaults(s.fxb),
   }));
   const validation = validateCostModel(table, heldoutSamples, tolerance);
 

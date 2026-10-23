@@ -464,6 +464,32 @@ function rdI16(b: Uint8Array, o: number): number {
   return v >= 0x8000 ? v - 0x10000 : v;
 }
 
+/**
+ * The uniform values a freshly loaded effect runs with on the device: the
+ * manifest's `default` lanes by slot (the firmware seeds them on load since
+ * R7), 0 elsewhere. Unparseable manifests give [] (all uniforms 0).
+ */
+export function manifestDefaults(buf: Uint8Array): number[] {
+  if (buf.length < 18) return [];
+  const manifestLen = rdU16(buf, 8);
+  try {
+    const json = JSON.parse(new TextDecoder().decode(buf.subarray(18, 18 + manifestLen))) as Array<{
+      slot?: number;
+      default?: number[];
+    }>;
+    const out: number[] = [];
+    for (const u of Array.isArray(json) ? json : []) {
+      if (typeof u.slot !== "number" || !Array.isArray(u.default)) continue;
+      u.default.forEach((v, k) => {
+        out[u.slot! + k] = Number(v) || 0;
+      });
+    }
+    return Array.from(out, (v) => v ?? 0);
+  } catch {
+    return [];
+  }
+}
+
 /** Parse the `.fxb` header and slice out the code segment. Throws on a bad or
  * truncated buffer. Layout: magic(4) ver(1) flags(1) n_state(1) n_uniform(1)
  * manifest_len(2) n_consts(2) code_len(2) update_entry(2) shade_entry(2). */
