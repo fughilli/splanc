@@ -578,11 +578,168 @@ scaling/dither). <strong>SMI</strong> (<code class="docutils literal notranslate
 CPU-visible buffer, so it doesn’t avoid readback. The prior-art baseline (§7)
 used plain SPI at 15.6 MHz and never needed this.</p></li>
 </ul>
-<p><strong>Frame budget (Splanc MAX, 2048 LEDs, 30 fps = 33 ms):</strong> render (Pi4/5 compute)
-≪ 1 ms; readback+drain ~1–3 ms (to measure); SPI at the prior-art 15.6 MHz
-≈ 1.4 ms/900 LEDs → ≈ 3.2 ms/2048; FPGA WS2812 refresh ≈ 11 ms per 300-LED strip
-in parallel. Comfortable at 30 fps and likely 60 fps, versus the VM today which
-fits only a solid fill at 2048.</p>
+<section id="end-to-end-scaling-model-500-leds-20-1024-max-target">
+<h3>End-to-end scaling model, 500 LEDs → 20 × 1024 (MAX target)<a class="headerlink" href="#end-to-end-scaling-model-500-leds-20-1024-max-target" title="Link to this heading">¶</a></h3>
+<p>Per frame the stages are: render (GPU or VM) → readback → SPI to the FPGA → FPGA
+streaming → WS wire. SPI, FPGA and wire run concurrently with each other: the
+core streams while SPI is still arriving. They’re decoupled from render by the
+player’s render thread. The frame rate is set by the slowest stage:
+<code class="docutils literal notranslate"><span class="pre">fps</span> <span class="pre">≈</span> <span class="pre">1</span> <span class="pre">/</span> <span class="pre">max(render</span> <span class="pre">+</span> <span class="pre">readback,</span> <span class="pre">SPI,</span> <span class="pre">wire)</span></code>.</p>
+<p><strong>Wire (hard ceiling).</strong> Per channel, <code class="docutils literal notranslate"><span class="pre">L</span></code> LEDs × 3 bytes × 9.963 µs (the core’s
+54 MHz bit period of 1.2407 µs, plus 2 clocks per byte) + 80 µs latch. All
+channels run in parallel, so this depends only on LEDs per channel.</p>
+<p><strong>FPGA FIFO</strong> (#370): with SPI at <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">×</span></code> the drain rate, each port’s FIFO peaks at
+about <code class="docutils literal notranslate"><span class="pre">3L·(1</span> <span class="pre">−</span> <span class="pre">1/r)</span> <span class="pre">+</span> <span class="pre">PREFILL</span></code> bytes. The in-tree core has 1,659 B/port (553
+LEDs); #370’s 20-port variant has 2,048 B/port.</p>
+<p><strong>SPI.</strong> One frame is <code class="docutils literal notranslate"><span class="pre">3N</span> <span class="pre">+</span> <span class="pre">1</span></code> bytes in a single spidev write (CS low for the whole
+frame; CS-high latches). It must sustain ≥ the drain rate
+<code class="docutils literal notranslate"><span class="pre">channels</span> <span class="pre">×</span> <span class="pre">0.803</span> <span class="pre">Mbit/s</span></code> and finish within the wire time. The player asks for
+<code class="docutils literal notranslate"><span class="pre">min(2</span> <span class="pre">×</span> <span class="pre">channels</span> <span class="pre">×</span> <span class="pre">0.8</span> <span class="pre">MHz,</span> <span class="pre">24</span> <span class="pre">MHz)</span></code>.</p>
+<ul class="simple">
+<li><p>The Pi 3’s SPI clock is <code class="docutils literal notranslate"><span class="pre">core_clk</span> <span class="pre">/</span> <span class="pre">even</span> <span class="pre">divisor</span></code>. At 400 MHz the 24 MHz request
+rounds to ~22.2 MHz (<code class="docutils literal notranslate"><span class="pre">/18</span></code>; <em>to confirm on the capture</em>).</p></li>
+<li><p>So 20 channels run at r ≈ 1.38 over the 16.06 Mbit/s drain. The FPGA sim
+(#370) passes 16.7–27 MHz with peak FIFO fill ≈ <code class="docutils literal notranslate"><span class="pre">L·(1−1/r)</span></code>.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>layout</p></th>
+<th class="head text-right"><p>N</p></th>
+<th class="head text-right"><p>wire ms (fps ceiling)</p></th>
+<th class="head text-right"><p>min SPI Mbit/s</p></th>
+<th class="head text-right"><p>SPI ms &#64; 22.2 MHz</p></th>
+<th class="head text-right"><p>frame bytes</p></th>
+<th class="head text-center"><p>fits spidev 4096?</p></th>
+<th class="head"><p>FPGA (in-tree 8-port / #370 20-port)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1×500</p></td>
+<td class="text-right"><p>500</p></td>
+<td class="text-right"><p>15.0 (66)</p></td>
+<td class="text-right"><p>0.8</p></td>
+<td class="text-right"><p>0.54</p></td>
+<td class="text-right"><p>1,501</p></td>
+<td class="text-center"><p>yes</p></td>
+<td><p>ok / ok</p></td>
+</tr>
+<tr class="row-odd"><td><p>1×2048</p></td>
+<td class="text-right"><p>2,048</p></td>
+<td class="text-right"><p>61.3 (16)</p></td>
+<td class="text-right"><p>0.8</p></td>
+<td class="text-right"><p>2.2</p></td>
+<td class="text-right"><p>6,145</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p><strong>overflows</strong>: 2048 LEDs on one 1,659 B FIFO, peak ≈ 3,074 B at the player’s r = 2 / ok</p></td>
+</tr>
+<tr class="row-even"><td><p>4×550</p></td>
+<td class="text-right"><p>2,200</p></td>
+<td class="text-right"><p>16.5 (60)</p></td>
+<td class="text-right"><p>3.2</p></td>
+<td class="text-right"><p>2.4</p></td>
+<td class="text-right"><p>6,601</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p>ok / ok</p></td>
+</tr>
+<tr class="row-odd"><td><p>4×1024</p></td>
+<td class="text-right"><p>4,096</p></td>
+<td class="text-right"><p>30.7 (32.6)</p></td>
+<td class="text-right"><p>3.2</p></td>
+<td class="text-right"><p>4.4</p></td>
+<td class="text-right"><p>12,289</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p>peak ≈ 1,538 of 1,659 B at r = 2 (7% margin; overflows at r &gt; 2.17) / ok</p></td>
+</tr>
+<tr class="row-even"><td><p>8×1024</p></td>
+<td class="text-right"><p>8,192</p></td>
+<td class="text-right"><p>30.7 (32.6)</p></td>
+<td class="text-right"><p>6.4</p></td>
+<td class="text-right"><p>8.9</p></td>
+<td class="text-right"><p>24,577</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p>as 4×1024 / ok</p></td>
+</tr>
+<tr class="row-odd"><td><p>16×1024</p></td>
+<td class="text-right"><p>16,384</p></td>
+<td class="text-right"><p>30.7 (32.6)</p></td>
+<td class="text-right"><p>12.9</p></td>
+<td class="text-right"><p>17.7</p></td>
+<td class="text-right"><p>49,153</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p>needs 16 ports / ok</p></td>
+</tr>
+<tr class="row-even"><td><p>20×1024</p></td>
+<td class="text-right"><p>20,480</p></td>
+<td class="text-right"><p>30.7 (32.6)</p></td>
+<td class="text-right"><p>16.1</p></td>
+<td class="text-right"><p>22.1</p></td>
+<td class="text-right"><p>61,441</p></td>
+<td class="text-center"><p><strong>no</strong></p></td>
+<td><p>needs 20 ports / ok (20/26 BSRAM, 83 MHz)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The table is <em>computed</em> from the core and protocol constants. The wire timing is
+validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
+16- and 20-channel rows are <strong>extrapolation</strong> until a 20-pin bitstream exists.</p>
+<p><strong>Render + readback</strong> (the GPU vs VM question) are the Pi 3 measurement,
+pending. The payload is <code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code> and the results go in §5. For the GPU,
+render + readback is at most a few ms at 20k LEDs if vc4 behaves like its
+llvmpipe self-test, so the <strong>wire ceiling (32.6 fps at 1024/channel) is the
+bottleneck at every MAX scale</strong>. The VM’s cost grows linearly with N on one A53
+core, so it is the bottleneck wherever <code class="docutils literal notranslate"><span class="pre">VM</span> <span class="pre">ms</span> <span class="pre">&gt;</span> <span class="pre">30.7</span></code>; the measurement locates
+that crossover per effect.</p>
+<p><strong>Where the bottleneck sits</strong> (render column pending the Pi 3 numbers):</p>
+<ul class="simple">
+<li><p>≤ 4×550: the wire (16.5 ms) or the VM for heavy effects.</p></li>
+<li><p>4×1024 – 20×1024: the <strong>wire, at 32.6 fps</strong>, if render + readback &lt; 30 ms.
+With the GPU that holds for every lowered effect. With the VM it holds only
+for cheap effects at the low end.</p></li>
+<li><p>SPI is never the limit once it runs at ≥ 16.7 MHz at 20 channels. It is a
+<em>hard failure</em> below the drain rate (underrun, see #370) or if a frame doesn’t
+fit spidev’s buffer.</p></li>
+</ul>
+</section>
+<section id="max-image-changes-this-needs-proposals">
+<h3>MAX image changes this needs (proposals)<a class="headerlink" href="#max-image-changes-this-needs-proposals" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p><strong>Raise <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code>.</strong> spidev rejects any single write larger than
+<code class="docutils literal notranslate"><span class="pre">bufsiz</span></code> (default <strong>4,096 bytes</strong>). The player writes each STREAM frame in one
+<code class="docutils literal notranslate"><span class="pre">write_all</span></code>, which must stay one transfer because CS-high latches. So any
+frame over <strong>1,365 LEDs fails</strong>, including today’s 4×550 (6,601 bytes) unless
+the running image already overrides it. The payload’s <code class="docutils literal notranslate"><span class="pre">env</span></code> line reads the
+live value. Proposal for <code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code>:
+<code class="docutils literal notranslate"><span class="pre">boot.kernelParams</span> <span class="pre">=</span> <span class="pre">[</span> <span class="pre">&quot;spidev.bufsiz=65536&quot;</span> <span class="pre">];</span></code> if spidev is built in, or
+<code class="docutils literal notranslate"><span class="pre">boot.extraModprobeConfig</span> <span class="pre">=</span> <span class="pre">&quot;options</span> <span class="pre">spidev</span> <span class="pre">bufsiz=65536&quot;;</span></code> if it’s a module.
+65,536 bytes covers 20×1024 (61,441). The bcm2835 SPI DMA handles a single
+transfer that size (<em>to verify on the rig</em>). Above 21,845 LEDs the codec would
+need to split frames with CS held, which the current <code class="docutils literal notranslate"><span class="pre">write_all</span></code> can’t do.</p></li>
+<li><p><strong>Pin the VideoCore core clock on the Pi 3.</strong> The Pi 3’s SPI clock divides
+<code class="docutils literal notranslate"><span class="pre">core_clk</span></code>, which drops with frequency scaling (400 → 250 MHz). That would take
+a 22.2 MHz SCK down to ~13.9 MHz, <em>below</em> the 20-channel drain. Set
+<code class="docutils literal notranslate"><span class="pre">core_freq=400</span></code> + <code class="docutils literal notranslate"><span class="pre">core_freq_min=400</span></code> (or a fixed 250 with the divider retuned)
+in <code class="docutils literal notranslate"><span class="pre">config.txt</span></code>. This matters only from ~16 channels up, but it silently
+breaks frames when it does.</p></li>
+<li><p><strong>20 channels on the FPGA:</strong> the in-tree Tang Nano bitstream drives <strong>8</strong>
+outputs (<code class="docutils literal notranslate"><span class="pre">NUM_WS</span> <span class="pre">=</span> <span class="pre">8</span></code>, <code class="docutils literal notranslate"><span class="pre">ws[0..7]</span></code> on pins 70–77) with <strong>553 LEDs/port</strong> FIFOs.
+20 × 1024 needs <code class="docutils literal notranslate"><span class="pre">MAX_PORTS</span> <span class="pre">=</span> <span class="pre">NUM_WS</span> <span class="pre">=</span> <span class="pre">20</span></code>, 12 more <code class="docutils literal notranslate"><span class="pre">.cst</span></code> pins (Tang Nano 9K
+header I/O to be chosen), <code class="docutils literal notranslate"><span class="pre">FIFO_DEPTH</span> <span class="pre">=</span> <span class="pre">2048</span></code> (one BSRAM/port; full-frame FIFOs
+need 40 of the 26 BSRAMs), and SPI ≥ 16.7 MHz. Draft <strong>#370</strong> adds that variant
+internal-only (no pin map) and verifies it in place-and-route (2145 LUT4, 1415
+DFF, 20/26 BSRAM, 83 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
+the core README’s stale “~2 bytes of buffer per port” claim; the core has had
+per-port BSRAM FIFOs since the double-buffer was replaced.</p></li>
+<li><p><strong>Start-of-frame gap guard.</strong> The FIFOs absorb mid-frame SPI pauses of
+hundreds of µs. Right after a frame starts, though, the only slack is
+<code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">×</span> <span class="pre">10</span> <span class="pre">µs</span></code> (20 µs by default), and a longer Pi-side pause latches the
+strip mid-frame. <code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">=</span> <span class="pre">64</span></code> absorbs 600 µs at zero resource cost (sim,
+#370). It needs the one-LUT “start on CS-end” fix for frames under 64
+bytes/port. The SPI-tap capture on rig-1 will show whether the Pi 3 actually
+pauses there.</p></li>
+</ol>
+</section>
 </section>
 <section id="expected-speedups">
 <h2>5. Expected speedups<a class="headerlink" href="#expected-speedups" title="Link to this heading">¶</a></h2>
@@ -717,11 +874,14 @@ beat: ~1.39 ms SPI/900 LEDs and ~90 Hz WS2812 refresh/300-LED strip.</p>
 <code class="docutils literal notranslate"><span class="pre">-Dllvm=disabled</span></code> (plus rusticl/vdpau/va/xa/teflon off). This is what keeps the
 <strong>507 MB LLVM</strong> out of the image (td-deploy’s whale). <strong>Reproduced on this
 host in this PR:</strong> a lean Mesa 26.2.4 with vc4+v3d+broadcom and <strong>zero LLVM in
-the closure</strong> (mesa ≈ 118 MB; the shippable lib subset ≈ 40–45 MB on top of a
-splanc image that has no Mesa today). Mesa 26 needs two extra knobs vs
-td-deploy’s pin (<code class="docutils literal notranslate"><span class="pre">-Dtools=</span></code>, <code class="docutils literal notranslate"><span class="pre">-Dvideo-codecs=</span></code>, <code class="docutils literal notranslate"><span class="pre">install-mesa-clc</span></code>/<code class="docutils literal notranslate"><span class="pre">intel-rt</span></code>
-off, and dropping the rusticl <code class="docutils literal notranslate"><span class="pre">postFixup</span></code>); captured in
-<code class="docutils literal notranslate"><span class="pre">/workspace/.claude/fxgpu/dev/nix/mesa-lean.nix</span></code>.</p></li>
+the closure</strong>. Mesa itself is <strong>35 MB</strong> on disk (an earlier draft said 118 MB,
+a misread of the closure size). The whole relocatable runtime set (Mesa +
+libglvnd + libdrm + X/wayland client libs + glibc) is ~125 MB, ~37 MB
+compressed. In an image that already ships glibc, Mesa adds ~40–60 MB. Mesa 26
+needs extra knobs vs td-deploy’s pin (<code class="docutils literal notranslate"><span class="pre">-Dtools=</span></code>, <code class="docutils literal notranslate"><span class="pre">-Dvideo-codecs=</span></code>,
+<code class="docutils literal notranslate"><span class="pre">-Dvulkan-layers=</span></code>, <code class="docutils literal notranslate"><span class="pre">install-mesa-clc</span></code>/<code class="docutils literal notranslate"><span class="pre">install-precomp-compiler</span></code>/<code class="docutils literal notranslate"><span class="pre">intel-rt</span></code>
+off, no <code class="docutils literal notranslate"><span class="pre">gallium-vdpau</span></code>/<code class="docutils literal notranslate"><span class="pre">xa</span></code> options, and dropping the rusticl <code class="docutils literal notranslate"><span class="pre">postFixup</span></code>);
+captured in <code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench/mesa-lean.nix</span></code>.</p></li>
 <li><p><strong>Surfaceless EGL context</strong> (<code class="docutils literal notranslate"><span class="pre">runtime_rs/src/main.rs</span> <span class="pre">make_gl</span></code>):
 <code class="docutils literal notranslate"><span class="pre">eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA)</span></code>, dlopen libEGL via
 <code class="docutils literal notranslate"><span class="pre">khronos-egl</span></code>’s <code class="docutils literal notranslate"><span class="pre">dynamic</span></code> feature, no display; target chosen per board
@@ -902,30 +1062,61 @@ hsv/palette, hash, if/else) lowered + compared to <code class="docutils literal 
 plus refusal checks (loops and integer-on-GLES2 must fall back).</p></li>
 <li><p><strong>Run the corpus sweep:</strong>
 <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//fx_gpu:fxgpu_conform</span> <span class="pre">--</span> <span class="pre">--profile</span> <span class="pre">exact</span> <span class="pre">--emit</span> <span class="pre">/tmp/shaders</span> <span class="pre">$(find</span> <span class="pre">…</span> <span class="pre">-name</span> <span class="pre">'*.fx')</span></code>.</p></li>
+<li><p><strong>GLES2 for vc4 = kernel in the vertex shader</strong> (<code class="docutils literal notranslate"><span class="pre">Target::Es100Vertex</span></code>). One
+<code class="docutils literal notranslate"><span class="pre">GL_POINTS</span></code> vertex per LED into a <em>LEDs-per-channel × channels</em> RGBA8 target
+(row = channel = one FPGA output’s address range), so 20×1024 is 1024×20 and
+needs no tiling under vc4’s 2048 limit. The vertex stage guarantees highp, and
+per-LED inputs ride as float attributes (vc4 has no float textures). Output is
+quantized like the VM epilogue (<code class="docutils literal notranslate"><span class="pre">floor(clamp01(x)·255)</span></code>) and written as <code class="docutils literal notranslate"><span class="pre">q/255</span></code>,
+so the RGBA8 store yields exactly <code class="docutils literal notranslate"><span class="pre">q</span></code>. (An early draft wrote <code class="docutils literal notranslate"><span class="pre">(q+0.5)/255</span></code>,
+which sits on the rounding tie, off by one.)</p></li>
+<li><p><strong>hsv2rgb on GLES2:</strong> the sextant pick uses float <code class="docutils literal notranslate"><span class="pre">floor</span></code> compares instead of
+<code class="docutils literal notranslate"><span class="pre">f2i</span></code>. That is exact for <code class="docutils literal notranslate"><span class="pre">h6</span> <span class="pre">∈</span> <span class="pre">[0,6]</span></code> (NaN → 0 as in the VM), and it moved
+hsv-based effects (e.g. <code class="docutils literal notranslate"><span class="pre">cylinder</span></code>) onto the GLES2 tier.</p></li>
+<li><p><strong>Host GLES2 run (llvmpipe, harness check only):</strong> the relocated payload
+renders under <code class="docutils literal notranslate"><span class="pre">env</span> <span class="pre">-i</span></code>. <code class="docutils literal notranslate"><span class="pre">solid_fill</span></code>/<code class="docutils literal notranslate"><span class="pre">imu_tilt</span></code> match the VM goldens
+<strong>exactly</strong>; <code class="docutils literal notranslate"><span class="pre">plasma</span></code>/<code class="docutils literal notranslate"><span class="pre">cylinder</span></code> (native <code class="docutils literal notranslate"><span class="pre">sin</span></code> vs the VM’s LUT sine) are within
+<strong>1/255 on 1–14% of LEDs</strong>. The VM bench reproduces its goldens with 0 errors.</p></li>
 </ul>
-<p><strong>Not done: on-Pi measurement.</strong> Reaching the reservable <code class="docutils literal notranslate"><span class="pre">pi-ledmapper</span></code> Pi 3B+
-DUTs requires copying the Pi root deploy key into the shared HITL reservation
-container, which was not done without owner approval. So there are <strong>no measured
-VC4 ms/frame</strong> here; the host prototype establishes correctness + coverage, and
-the first staged step is the GLES2 offscreen-render + readback microbenchmark on
-<code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code> (or the user’s own Pi).</p>
+<section id="pi-3-measurement-step-2-payload-ready-run-pending">
+<h3>Pi 3 measurement (step 2): payload ready, run pending<a class="headerlink" href="#pi-3-measurement-step-2-payload-ready-run-pending" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench/</span></code> builds a self-contained aarch64 payload, 37 MB; see its
+README. It contains:</p>
+<ul class="simple">
+<li><p>an LLVM-free lean Mesa (vc4+v3d), relocated with RUNPATHs stripped, plus the
+glibc loader;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gles2bench</span></code>: surfaceless EGL, render and readback timed separately, readback
+formats compared (RGBA8, the driver’s preferred format, RGB565), a pipelined
+loop, and a byte-exact check against VM goldens;</p></li>
+<li><p>a static <code class="docutils literal notranslate"><span class="pre">fxvm_bench</span></code> VM baseline;</p></li>
+<li><p>8 kernels × 7 layouts, from 1×500 to 20×1024.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">run.sh</span></code> reports whether vc4 and a render node are present, and the live
+<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code>. It unpacks into a temp dir that a trap removes. The operator
+runs it on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code>/<code class="docutils literal notranslate"><span class="pre">-1</span></code> through an atomic HITL reservation (the agent
+does not handle the Pi key). <strong>Results: pending; they fill §5 and the
+render/readback column of the §4 scaling model.</strong></p>
+</section>
 </section>
 <section id="staged-plan">
 <h2>11. Staged plan<a class="headerlink" href="#staged-plan" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
 <li><p><strong>(this PR)</strong> Host IR + lowering + legalize + GLSL/SPIR-V emit + conformance
 harness. Design + numerics policy + P4 survey + prior art.</p></li>
-<li><p><strong>Pi 3 GLES2 microbenchmark (HITL/Pi):</strong> glslang → <code class="docutils literal notranslate"><span class="pre">spirv-cross</span> <span class="pre">--es</span> <span class="pre">100</span></code>,
-surfaceless EGL, render a float-only effect to a 1×N FBO, <code class="docutils literal notranslate"><span class="pre">glReadPixels</span></code>,
-compare to VM, report ms/frame + readback cost. <strong>Decides whether Pi 3 GLES2
-is worth shipping.</strong></p></li>
+<li><p><strong>Pi 3 GLES2 microbenchmark (HITL/Pi):</strong> payload built and host-validated
+(<code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code>; vertex-shader kernel, 1×500 … 20×1024, VM goldens). Run on
+<code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code> pending. <strong>Decides whether Pi 3 GLES2 is worth shipping.</strong></p></li>
 <li><p><strong>Pi 4/5 compute path:</strong> <code class="docutils literal notranslate"><span class="pre">naga</span></code> SPIR-V, V3D compute over an SSBO, highp,
 class-1 exact; golden tolerance tests per tier.</p></li>
 <li><p><strong>Player integration:</strong> glibc GPU helper process (musl player stays), a
 load-time per-effect probe (lower → tolerance-check → cache the verdict),
 readback → <code class="docutils literal notranslate"><span class="pre">FpgaCodec</span></code> → SPI; keep the VM fallback.</p></li>
 <li><p><strong>Image:</strong> lean Mesa overlay (§8) into <code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code>, add Pi 4 / Zero 2 W
-board targets; measure closure growth.</p></li>
+board targets; measure closure growth. Also <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> and a
+pinned Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code> (§4 proposals).
+5b. <strong>20-channel FPGA:</strong> #370’s internal-only variant → pin map → a flashable
+20-port target; <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> + “start on CS-end”; logic-analyzer validation on 4
+channels.</p></li>
 <li><p><strong>GPU-native textures/decks</strong> (<code class="docutils literal notranslate"><span class="pre">SampleTex</span></code>/blending) and <strong>shader-emulated
 LUT sine</strong> for class-3 exactness, if measured need.</p></li>
 <li><p><strong>(parallel track)</strong> P4: PIE SIMD tier (shortlist #1) via the AOT path;
@@ -950,6 +1141,12 @@ readback cost</strong> — if VC4 readback is a few ms, Pi 3 GLES2 is worth it; 
 DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.</p></li>
 <li><p><strong>P4 priority</strong> (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
 first, built on the AOT path, with PARLIO+BitScrambler output second?</p></li>
+<li><p><strong>MAX image</strong> (§4): add <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> (needed for any frame over 1,365
+LEDs, including today’s 4×550) and pin the Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code>? Both are small
+<code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code> changes, best as their own PR.</p></li>
+<li><p><strong>20-channel pin map</strong> (#370): pick the 12 extra Tang Nano 9K header pins. And
+should <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> go to 64, with the one-LUT “start on CS-end” fix, to tolerate
+600 µs Pi-side pauses at frame start?</p></li>
 </ol>
 </section>
 </section>
@@ -996,7 +1193,11 @@ first, built on the AOT path, with PARLIO+BitScrambler output second?</p></li>
 <li><a class="reference internal" href="#partitioning-what-maps-to-the-gpu-what-stays-on-the-cpu">1. Partitioning: what maps to the GPU, what stays on the CPU</a></li>
 <li><a class="reference internal" href="#ir-spir-v-glsl-codegen">2. IR → SPIR-V / GLSL codegen</a></li>
 <li><a class="reference internal" href="#numerics-policy-owner-decision">3. Numerics policy (owner decision)</a></li>
-<li><a class="reference internal" href="#readback-and-the-fpga-spi-path-frame-budget">4. Readback and the FPGA/SPI path; frame budget</a></li>
+<li><a class="reference internal" href="#readback-and-the-fpga-spi-path-frame-budget">4. Readback and the FPGA/SPI path; frame budget</a><ul>
+<li><a class="reference internal" href="#end-to-end-scaling-model-500-leds-20-1024-max-target">End-to-end scaling model, 500 LEDs → 20 × 1024 (MAX target)</a></li>
+<li><a class="reference internal" href="#max-image-changes-this-needs-proposals">MAX image changes this needs (proposals)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#expected-speedups">5. Expected speedups</a></li>
 <li><a class="reference internal" href="#multi-generation-tiering-and-fallback">6. Multi-generation tiering and fallback</a></li>
 <li><a class="reference internal" href="#prior-art-ledsuitdisplaydriver-ledsuit-fpga-20192020">7. Prior art: ledsuitdisplaydriver + ledsuit-fpga (2019–2020)</a></li>
@@ -1005,7 +1206,10 @@ first, built on the AOT path, with PARLIO+BitScrambler output second?</p></li>
 <li><a class="reference internal" href="#p4-shortlist-ranked">P4 shortlist (ranked)</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#prototype-fx-gpu-this-pr">10. Prototype (<code class="docutils literal notranslate"><span class="pre">//fx_gpu</span></code>, this PR)</a></li>
+<li><a class="reference internal" href="#prototype-fx-gpu-this-pr">10. Prototype (<code class="docutils literal notranslate"><span class="pre">//fx_gpu</span></code>, this PR)</a><ul>
+<li><a class="reference internal" href="#pi-3-measurement-step-2-payload-ready-run-pending">Pi 3 measurement (step 2): payload ready, run pending</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#staged-plan">11. Staged plan</a></li>
 <li><a class="reference internal" href="#decisions-the-user-needs-to-make">12. Decisions the user needs to make</a></li>
 </ul>
