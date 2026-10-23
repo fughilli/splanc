@@ -327,7 +327,7 @@ export class LedMapperClient {
         sendFlat: (m) => this.send(m as unknown as ClientMessage),
         features: () => this.welcome_?.features ?? [],
         renderFps: () => this.renderFps_,
-        bufferedAmount: () => this.sock?.bufferedAmount ?? 0,
+        bufferedAmount: () => this.bufferedAmount,
       },
       { now: this.now, schedule: this.schedule },
     );
@@ -335,6 +335,13 @@ export class LedMapperClient {
 
   get welcome(): WelcomeMessage | null {
     return this.welcome_;
+  }
+
+  /** Bytes the socket hasn't put on the wire yet (0 when closed or unknown): the
+   * per-connection backpressure signal the live-control channel gates on — reuse
+   * it (with LatestWinsSender) for other paced streams. */
+  get bufferedAmount(): number {
+    return this.sock?.bufferedAmount ?? 0;
   }
 
   get isConnected(): boolean {
