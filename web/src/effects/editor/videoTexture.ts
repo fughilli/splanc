@@ -9,9 +9,10 @@
  * Frames are sized to the TARGET texture's width×height (discovered from the
  * compiled .fxb via parseFxbTextures — never hardcoded; a mismatched frame is
  * dropped), drawn object-fit:cover into an offscreen canvas, and read back as
- * RGBA. The preview VM takes those raw pixels directly; the device path encodes
- * them with a single per-session TextureStreamer (XOR-delta + RLE across
- * frames). Both sends are fire-and-forget.
+ * RGBA. The preview VM takes those raw pixels directly; the device path goes
+ * through a VideoSender (XOR-delta + RLE across frames, latest-wins with at most
+ * two frames unconfirmed, periodic keyframes), so a slow patch on the device or
+ * the air drops stale frames instead of queueing them into a laggy burst.
  *
  * It's opt-in and off the hot path: no camera/rAF runs unless streaming. The
  * editor keeps the panel's `node` stable (re-parented by FxLayout, never
@@ -20,14 +21,17 @@
  */
 
 import { parseFxbTextures, type FxbTexture } from "../../net/fxbTextures";
-import { TextureStreamer, type TextureFormat } from "../../net/textureCodec";
+import type { TextureFormat } from "../../net/textureCodec";
 import type { SetTextureMessage } from "../../net/proto";
+import { VideoSender, type VideoTransport } from "../../net/videoSender";
 import { Button } from "../../ui/kit";
 
-/** The subset of LedMapperClient the panel consumes (fire-and-forget send). */
+/** The subset of LedMapperClient the panel consumes: a set_texture send plus
+ * (optionally) the in-order ping the VideoSender paces on. */
 export interface TextureSink {
   readonly isConnected: boolean;
   setTexture(msg: SetTextureMessage): boolean;
+  ping?(timeoutMs: number): Promise<number>;
 }
 
 /** The offline preview VM consumer: takes a full-resolution RGBA frame straight
@@ -75,13 +79,17 @@ export class VideoTexturePanel {
   private mediaStream: MediaStream | null = null;
   private sourceKind: "none" | "file-video" | "file-image" | "camera" = "none";
 
-  // Streaming state.
-  private streamer: TextureStreamer | null = null;
+  // Streaming state. The sender reaches whatever sink is current through an
+  // adapter (rebuildStreamer), so a reconnect (setSink) needn't rebuild it.
+  private sender: VideoSender | null = null;
   private canvas = document.createElement("canvas");
   private ctx: CanvasRenderingContext2D | null = null;
   private raf = 0;
   private lastSend = 0;
   private running = false;
+  // createImageBitmap crop+resize capture (sendFrame); cleared if it ever fails.
+  private bitmapCapture = true;
+  private grabbing = false;
   private disposed = false;
 
   // Stats.
@@ -140,7 +148,7 @@ export class VideoTexturePanel {
     this.texSelect.className = "fxedit-mappick";
     this.texSelect.addEventListener("change", () => {
       this.texIndex = Number(this.texSelect.value);
-      this.streamer?.reset();
+      this.rebuildStreamer(); // a different texture index needs its own sender
       this.resetStats();
     });
     this.texRow.append(texCap, this.texSelect);
@@ -229,7 +237,6 @@ export class VideoTexturePanel {
     if (changed) {
       this.populateTextures();
       // Dims may have changed → the current stream is invalid.
-      this.streamer?.reset();
       this.rebuildStreamer();
     }
     this.refresh();
@@ -237,6 +244,7 @@ export class VideoTexturePanel {
 
   /** Feed the live device client (or null when disconnected). */
   setSink(sink: TextureSink | null): void {
+    if (sink !== this.sink) this.sender?.reset(); // a new connection starts from a keyframe
     this.sink = sink;
     if (!this.hasConsumer() && this.running) this.stop();
     this.refresh();
@@ -375,7 +383,23 @@ export class VideoTexturePanel {
   // -- streaming ------------------------------------------------------------
   private rebuildStreamer(): void {
     const tex = this.target();
-    this.streamer = tex ? new TextureStreamer(this.texIndex, this.format, true) : null;
+    const sinkOf = (): TextureSink | null => this.sink;
+    const transport: VideoTransport = {
+      get isConnected(): boolean {
+        return sinkOf()?.isConnected ?? false;
+      },
+      setTexture: (m) => sinkOf()?.setTexture(m) ?? false,
+    };
+    // Pace on the device's in-order ping when the sink has one (LedMapperClient).
+    if (this.sink?.ping) {
+      transport.ping = (ms) => {
+        const s = sinkOf();
+        return s?.ping ? s.ping(ms) : Promise.reject(new Error("no device"));
+      };
+    }
+    this.sender = tex
+      ? new VideoSender(transport, { texIndex: this.texIndex, format: this.format, rle: true })
+      : null;
   }
 
   private toggle(): void {
@@ -385,8 +409,8 @@ export class VideoTexturePanel {
 
   private start(): void {
     if (!this.ready() || this.sourceKind === "none") return;
-    if (!this.streamer) this.rebuildStreamer();
-    this.streamer?.reset();
+    // Fresh sender per run: it captures whether the current sink can be paced on.
+    this.rebuildStreamer();
     this.resetStats();
     this.running = true;
     this.startBtn.replaceChildren(document.createTextNode("Stop"));
@@ -408,9 +432,14 @@ export class VideoTexturePanel {
   private loop(t: number): void {
     if (!this.running || this.disposed) return;
     this.raf = requestAnimationFrame((n) => this.loop(n));
+    // Phase-locked cadence: advance the send clock by exactly one interval and
+    // accept a tick up to 4 ms early. `t - lastSend < interval` with lastSend = t
+    // made 30 fps on a 60 Hz display flip between 2- and 3-vsync gaps (33/50 ms)
+    // on sub-millisecond rAF timestamp noise — visible judder before any network.
     const interval = 1000 / this.fps;
-    if (this.lastSend !== 0 && t - this.lastSend < interval) return;
-    this.lastSend = t;
+    if (this.lastSend !== 0 && t - this.lastSend < interval - 4) return;
+    this.lastSend =
+      this.lastSend !== 0 && t - this.lastSend < 2 * interval ? this.lastSend + interval : t;
     this.sendFrame();
   }
 
@@ -444,11 +473,53 @@ export class VideoTexturePanel {
     const dh = sh * scale;
     const dx = (tex.width - dw) / 2;
     const dy = (tex.height - dh) / 2;
+    // Video sources: let the browser crop + downscale the frame (GPU side, off
+    // the main thread) with createImageBitmap, then read back only w×h texels.
+    // Drawing a full-resolution video into this willReadFrequently (CPU-backed)
+    // canvas made every frame a full-frame GPU->CPU readback on the main thread:
+    // several ms per frame on a phone, i.e. rAF stalls and uneven send cadence.
+    if (this.bitmapCapture && src.el === this.video && typeof createImageBitmap === "function") {
+      if (this.grabbing) return; // the previous grab is still in flight: skip this tick
+      this.grabbing = true;
+      const [w, h] = [tex.width, tex.height];
+      createImageBitmap(this.video, Math.max(0, -dx / scale), Math.max(0, -dy / scale), w / scale, h / scale, {
+        resizeWidth: w,
+        resizeHeight: h,
+        resizeQuality: "low",
+      }).then(
+        (bmp) => {
+          this.grabbing = false;
+          if (!this.running || this.ctx !== ctx || this.canvas.width !== w) {
+            bmp.close();
+            return;
+          }
+          ctx.drawImage(bmp, 0, 0);
+          bmp.close();
+          this.deliver(ctx, tex, deviceOn, previewOn);
+        },
+        () => {
+          // Not supported for this source/browser: fall back to drawImage.
+          this.grabbing = false;
+          this.bitmapCapture = false;
+        },
+      );
+      return;
+    }
     try {
       ctx.drawImage(src.el, dx, dy, dw, dh);
     } catch {
       return; // source not yet decodable (e.g. video with no data)
     }
+    this.deliver(ctx, tex, deviceOn, previewOn);
+  }
+
+  /** Read the w×h texels back and hand them to the preview VM and the device. */
+  private deliver(
+    ctx: CanvasRenderingContext2D,
+    tex: FxbTexture,
+    deviceOn: boolean,
+    previewOn: boolean,
+  ): void {
     const img = ctx.getImageData(0, 0, tex.width, tex.height);
 
     // Offline preview: hand the VM raw RGBA straight into the texture (no
@@ -458,14 +529,13 @@ export class VideoTexturePanel {
       this.previewSink.setTexture(tex.index, tex.width, tex.height, rgba);
     }
 
-    // Device: quantize + XOR-delta + RLE over the wss control plane.
+    // Device: quantize + XOR-delta + RLE over the wss control plane, latest-wins.
     let bytes = 0;
     if (deviceOn && this.sink) {
-      if (!this.streamer) this.rebuildStreamer();
-      if (this.streamer) {
-        const msg = this.streamer.frame(tex.width, tex.height, img.data);
-        this.sink.setTexture(msg);
-        bytes = msg.data.length;
+      if (!this.sender) this.rebuildStreamer();
+      if (this.sender) {
+        this.sender.submit(tex.width, tex.height, img.data);
+        bytes = this.sender.stats().lastBytes;
       }
     }
 
@@ -505,14 +575,17 @@ export class VideoTexturePanel {
     const deviceOn = this.sink?.isConnected ?? false;
     const target = deviceOn ? (this.previewSink ? "preview + device" : "device") : "preview";
     const bytes = deviceOn ? ` · ${this.lastBytes} B/frame` : "";
-    this.stats.textContent = `${fps} fps · ${target}${bytes}`;
+    const st = deviceOn ? this.sender?.stats() : undefined;
+    const lat = st && st.acked > 0 ? ` · ${Math.round(st.latencyP50Ms)} ms` : "";
+    const drop = st && st.dropped > 0 ? ` · ${st.dropped} dropped` : "";
+    this.stats.textContent = `${fps} fps · ${target}${bytes}${lat}${drop}`;
   }
 
   dispose(): void {
     this.disposed = true;
     this.stop();
     this.clearSource();
-    this.streamer = null;
+    this.sender = null;
   }
 }
 
