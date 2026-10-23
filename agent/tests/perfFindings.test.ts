@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { before, test } from "node:test";
 
 import { SYSTEM_PROMPT, SYSTEM_PROMPT_COMPACT } from "../../web/src/effects/ai/system-prompt";
-import { estimateFrameTime } from "../../web/src/effects/costModel";
+import { costFor, DISPATCH_FEATURE, estimateFrameTime } from "../../web/src/effects/costModel";
 import { findingsToLines, perfFindings } from "../../web/src/effects/perfFindings";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
 import { compile, loadFxHost } from "../src/fxhost";
@@ -33,6 +33,10 @@ async function findings(src: string) {
   return { c, f: perfFindings(c.fxb, { table, source: src, warnings: c.warnings, max: 10 }) };
 }
 
+/** One execution of `feature` under the shipped table (dispatch + compute). */
+const cyc = (feature: string): number =>
+  (table.costs[DISPATCH_FEATURE] ?? 0) + costFor(table.costs, feature, table.fallbackCost);
+
 const frameMs = (fxb: Uint8Array): number => {
   const e = estimateFrameTime({ bytecode: fxb, ledCount: LEDS, table });
   return e.phaseSplit.updateMs + e.phaseSplit.shadeMs;
@@ -49,13 +53,23 @@ test("float trig per LED: the top finding is the fixed-phase rewrite, with its l
     "}",
   ].join("\n");
   const { f } = await findings(src);
+  // Every trig call here depends on time (a also on the uniform, c on a): none
+  // of them is LED-invariant, so caching one in a buffer would freeze the effect.
+  assert.ok(!f.some((x) => x.rule === "led_invariant_heavy"), JSON.stringify(f));
   const trig = f.find((x) => x.rule === "float_trig_in_shade");
   assert.ok(trig, JSON.stringify(f));
+  assert.equal(f[0], trig, JSON.stringify(f));
+  assert.match(trig.message, /^float sin\(\) ×2 per LED/);
   assert.match(trig.message, /TURNS/);
   assert.deepEqual(trig.lines, [3, 4]);
-  // The saving follows the shipped table (#350 cut float trig to ~270 cycles/LED here),
-  // so pin the ranking, not a magnitude.
-  assert.equal(f[0]!.rule, "float_trig_in_shade", JSON.stringify(f));
+  // The saving is both float sin() calls minus their fixed form, priced with
+  // the shipped table (so a re-fitted table moves the number, not the verdict).
+  const sin = cyc("UnMath:sin");
+  const want = 2 * (sin - cyc("SinFix") - 0.5 * cyc("F2Fix"));
+  assert.ok(want > 0.3 * 2 * sin, `the fixed form saves ${want} of ${2 * sin}`);
+  assert.ok(Math.abs(trig.cyclesPerLed - want) <= 1, `${trig.cyclesPerLed} != ${want}`);
+  const cos = f.find((x) => x.rule === "float_trig_in_shade" && /^float cos\(\) per LED/.test(x.message));
+  assert.ok(cos, JSON.stringify(f));
   // Ranked: most cycles saved first.
   for (let i = 1; i < f.length; i++) assert.ok(f[i - 1]!.cyclesPerLed >= f[i]!.cyclesPerLed);
   const lines = findingsToLines(f.slice(0, 1), LEDS, table.cpuHz);
@@ -110,6 +124,57 @@ test("per-LED-invariant work: cached by the compiler in shade(), flagged inside 
   assert.match(inv.message, /atan2\(\) per LED depends only on led\.\*/);
   assert.deepEqual(inv.lines, [1]);
 });
+
+test("led_invariant_heavy: led.*-only maths in a helper is flagged (fused const operands stay LED-only)", async () => {
+  const src = [
+    "float wave(vec2 p) { return sin(p.x * 9.0) * cos(p.y * 7.0); }",
+    "vec3 shade(Led led) {",
+    "  float w = wave(led.uv);",
+    "  return vec3(fract(w + time), 0.0, 0.0);",
+    "}",
+  ].join("\n");
+  const { f } = await findings(src);
+  const inv = f.filter((x) => x.rule === "led_invariant_heavy");
+  assert.ok(inv.some((x) => /^sin\(\) per LED depends only on led\.\*/.test(x.message)), JSON.stringify(f));
+  assert.ok(inv.some((x) => /^cos\(\) per LED depends only on led\.\*/.test(x.message)), JSON.stringify(f));
+  for (const x of inv) assert.deepEqual(x.lines, [1]);
+});
+
+// Each per-frame input reaches the trig through a different path: a fused
+// operand (BinTop/BinPair on a uniform, state or hoisted state), a LoadCtx, a
+// helper argument. None of these calls may be called LED-invariant.
+const frameSources: [string, string, string][] = [
+  ["time", "", "time"],
+  ["dt", "", "dt"],
+  ["frame", "", "float(frame)"],
+  ["a uniform", "uniform float speed : 0.0 .. 4.0 = 1.0;", "speed"],
+  ["time * a uniform", "uniform float speed : 0.0 .. 4.0 = 1.0;", "time * speed"],
+  ["a state", "state float ph;\nvoid update() { ph = fract(ph + dt); }", "ph"],
+];
+for (const [what, decl, expr] of frameSources) {
+  test(`led_invariant_heavy: a sin() that also depends on ${what} is not LED-invariant`, async () => {
+    const direct = [
+      decl,
+      "vec3 shade(Led led) {",
+      `  float a = sin(led.uv.x * 9.0 + ${expr});`,
+      "  return vec3(a, a, a);",
+      "}",
+    ];
+    const helper = [
+      decl,
+      "float wave(vec2 p, float t) { return sin(p.x * 9.0 + t) * cos(p.y * 7.0 - t); }",
+      "vec3 shade(Led led) {",
+      `  float a = wave(led.uv, ${expr});`,
+      "  return vec3(a, a, a);",
+      "}",
+    ];
+    for (const src of [direct, helper]) {
+      const { f } = await findings(src.join("\n"));
+      assert.ok(!f.some((x) => x.rule === "led_invariant_heavy"), `${src.join("\n")}\n${JSON.stringify(f)}`);
+      assert.ok(f.some((x) => x.rule === "float_trig_in_shade"), `${src.join("\n")}\n${JSON.stringify(f)}`);
+    }
+  });
+}
 
 test("the first-frame buffer fill doesn't count as per-LED work", async () => {
   const src = [
