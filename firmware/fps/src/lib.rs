@@ -373,6 +373,17 @@ impl FpsController {
     /// autoscale. Clears the window + lag state so the new mode starts fresh;
     /// an autoscale hand-back keeps the current rung as its starting point.
     pub fn set_target(&mut self, fps: u32) {
+        // Re-asserting the mode already in force (a client re-sending set_fps, or
+        // polling with it) is a no-op: it must not restart the window, or a slow
+        // effect whose 30-frame window outlasts the poll period never gets measured.
+        let same = if fps == 0 {
+            !self.is_pinned()
+        } else {
+            self.is_pinned() && fps_at(idx_for_fps(fps)) == self.pinned_fps
+        };
+        if same {
+            return;
+        }
         if fps == 0 {
             self.pinned_fps = 0;
         } else {
@@ -689,6 +700,28 @@ mod tests {
         assert!(c.current_fps() < 75 && c.current_fps() > 0);
         // A new pin starts clean.
         c.set_target(30);
+        assert!(!c.lagging());
+    }
+
+    #[test]
+    fn re_sending_the_same_mode_keeps_the_window_and_the_lag() {
+        let mut c = FpsController::new();
+        // A ~5 fps effect: a 30-frame window takes ~6 s. A client polling set_fps(0)
+        // every 3 s must not keep restarting it (the lag would never be reported).
+        for i in 0..(LADDER_LEN * WINDOW_N) {
+            c.on_frame(160_000);
+            if i % 15 == 0 {
+                c.set_target(0);
+            }
+        }
+        assert!(c.lagging());
+        c.set_target(40);
+        for _ in 0..(WINDOW_N * 2) {
+            c.on_frame(160_000);
+            c.set_target(41); // snaps to the same 40-fps pin
+        }
+        assert!(c.lagging() && c.rung_fps() == 40);
+        c.set_target(0); // a real mode change still starts fresh
         assert!(!c.lagging());
     }
 

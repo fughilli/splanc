@@ -51,6 +51,9 @@ LAG_RE = re.compile(r"\[fps\] effect lagging: running at (\d+) fps")
 MIN_FRAME_RATE = 1.0  # frames/s the slow effect must still average (it runs ~5-15 fps)
 CONTROL_P50_S = 3.0  # median control round trip under the slow effect (tunnel included)
 CONTROL_MAX_S = 15.0  # no single control round trip may take longer
+# Background-scan log lines (a start + a result per sweep) in a ~100 s outage: sweeps
+# at ~5, 15, 37 and 78 s on the 5 s -> 60 s backoff, so >= 2 sweeps = 4 lines.
+MIN_SCAN_LINES = 4
 
 
 def fx_samples(log: str) -> list[tuple[float, int, str, int, int]]:
@@ -99,9 +102,12 @@ def grade_slow(
     min_frame_rate: float = MIN_FRAME_RATE,
     p50_s: float = CONTROL_P50_S,
     max_s: float = CONTROL_MAX_S,
+    fps_state: dict | None = None,
 ) -> dict:
     """Grade the slow-effect window: `log` is its serial, `rtts` the control round
-    trips (None = no reply)."""
+    trips (None = no reply), `fps_state` the player's last report (camelCase). An
+    effect measured well below the floor must be reported lagging, with the rate it
+    achieves — that is the advisory that replaced parking."""
     problems: list[str] = []
     s = fx_samples(log)
     ok, why = frames_advance(s)
@@ -134,6 +140,17 @@ def grade_slow(
     if worst is not None and worst > max_s:
         problems.append(f"control max {worst:.2f} s > {max_s} s")
     lag = LAG_RE.search(log or "")
+    st = fps_state or {}
+    floor = float(st.get("minFps") or 25)
+    if fps_state is not None and 0 < rate < 0.8 * floor:
+        if not st.get("lagging"):
+            problems.append(
+                f"effect runs at {rate:.1f} fps < {floor:g} but fps_state isn't lagging"
+            )
+        elif not st.get("achievedFps"):
+            problems.append("fps_state is lagging but reports no achieved_fps")
+    if st.get("aborted"):
+        problems.append("fps_state reports aborted (parked)")
     return {
         "fx_samples": len(s),
         "span_s": round(span, 1),
@@ -165,7 +182,7 @@ def grade_nonet(log: str, seconds: float) -> dict:
     if PARKED in (log or ""):
         problems.append("effect was PARKED during the outage")
     scans = len(BG_SCAN_RE.findall(log or ""))
-    if scans < 2:
+    if scans < MIN_SCAN_LINES:
         problems.append(f"only {scans} background-scan log line(s) (expected the rescan to run)")
     return {
         "fx_samples": len(s),

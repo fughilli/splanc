@@ -259,8 +259,8 @@ void wifi_scan_cache() {
 }
 
 // Once g_ssid is known, find its cached AP and latch the real BSSID + channel + reprogram
-// the hardware. Keeps the baked default if the SSID wasn't seen in the scan (e.g. rig-3
-// fallback where they already match). Returns whether a scan match was applied.
+// the hardware. Without a match nothing is latched and the join waits for the background
+// rescan (below) to find the AP. Returns whether a scan match was applied.
 bool scan_latch_ap() {
   for (uint8_t i = 0; i < g_scan_n; i++) {
     if (strncmp(g_scan[i].ssid, g_ssid, 32) == 0) {
@@ -274,7 +274,8 @@ bool scan_latch_ap() {
       return true;
     }
   }
-  Serial.printf("[scan] no scan match for \"%s\" — keeping baked bssid ch=%u\n", g_ssid, g_chan);
+  Serial.printf("[scan] no scan match for \"%s\" — not joining until the background rescan "
+                "finds it\n", g_ssid);
   g_scan_matched = false;
   return false;
 }
@@ -2075,8 +2076,13 @@ void netstack_loop() {
   // the PMK is derived). Gating on ns_pmk_ready() sequences the ~1.8s PBKDF2 (pure CPU, radio
   // yielded to BLE by coex_update) BEFORE the WiFi-active join, so the join is short + the 4-way's
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
-  // (Not while a background sweep has the radio on another channel.)
-  if (st == AUTH && g_creds_ready && ns_pmk_ready() && !g_hop.active() && millis() - t > 200) {
+  // Only toward an AP a scan actually saw (g_scan_matched): with no match g_bssid is
+  // whatever the previous network left there — auth to that AP got answered, the assoc for
+  // the new SSID then stalled, and the AUTH<->ASSOC churn kept the background rescan from
+  // ever coming due. The rescan finds the AP and sets the match. Not while a sweep has the
+  // radio on another channel either.
+  if (st == AUTH && g_creds_ready && ns_pmk_ready() && g_scan_matched && !g_hop.active() &&
+      millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
     uint32_t now_ms = (uint32_t)millis();
     bool stable = !lm_sta_mac::random_mac_is_build_default() && !g_mac_fallback;

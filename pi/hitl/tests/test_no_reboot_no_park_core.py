@@ -40,6 +40,7 @@ NONET_OK = (
     + "(BLE Improv stays up to re-provision)\n"
     + fx(95.0, 740, 50)
     + '[t=106700] [wifi] "hitl-no-such-ap-1a2b3c" not in the last scan — background scan 2 (effect keeps running)\n'
+    + '[t=108300] [wifi] background scan: "hitl-no-such-ap-1a2b3c" not found; next in 20 s\n'
     + fx(145.0, 1140, 45)
 )
 
@@ -80,6 +81,19 @@ def test_slow_phase_fails_on_the_field_behaviour():
     assert "PARKED" in text
     assert "reset" in text
     assert "span only" in text
+
+
+def test_slow_phase_requires_the_lag_advisory():
+    lagging = {"minFps": 25, "lagging": True, "achievedFps": 8, "aborted": False}
+    assert core.grade_slow(LAGGING, 75.0, [0.5], fps_state=lagging)["problems"] == []
+    # The first on-rig run: probes reset the window, so the 5 fps effect never read lagging.
+    stale = {"minFps": 25, "lagging": False, "achievedFps": 0, "currentFps": 30}
+    g = core.grade_slow(LAGGING, 75.0, [0.5], fps_state=stale)
+    assert any("isn't lagging" in p for p in g["problems"])
+    g = core.grade_slow(LAGGING, 75.0, [0.5], fps_state={**lagging, "achievedFps": 0})
+    assert any("achieved_fps" in p for p in g["problems"])
+    g = core.grade_slow(LAGGING, 75.0, [0.5], fps_state={**lagging, "aborted": True})
+    assert any("aborted" in p for p in g["problems"])
 
 
 def test_slow_phase_fails_on_an_unresponsive_device():

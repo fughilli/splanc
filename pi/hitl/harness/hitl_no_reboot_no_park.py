@@ -197,7 +197,9 @@ def run(args) -> int:
                 th.join(timeout=args.slow_seconds + 90)
                 if state["started"]:
                     logs["slow"] = cap.get("log", "")
-                    slow = core.grade_slow(logs["slow"], args.slow_seconds, rtts)
+                    slow = core.grade_slow(
+                        logs["slow"], args.slow_seconds, rtts, fps_state=state.get("fps_state")
+                    )
                     extra["fps_state"] = state.get("fps_state")
                     _log(f"  {json.dumps(slow)}")
 
