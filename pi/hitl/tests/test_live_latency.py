@@ -156,3 +156,62 @@ def test_model_naive_grows_live_stays_flat():
     assert st == core.PASS, why
     assert core.pct(l_last, 99) < 100
     assert core.pct(n_last, 50) > 10_000
+
+
+def test_live_sender_pipelines_and_adapts_its_ack_timeout():
+    s = core.LiveSender(acks=True, min_interval_s=0.0, ack_timeout_s=None, max_inflight=2)
+    a = s.push(0.0, 0, [1.0])
+    b = s.push(0.001, 0, [2.0])
+    assert [m["seq"] for m in a + b] == [1, 2], "two batches in flight"
+    assert s.push(0.002, 0, [3.0]) == [], "never a third"
+    # The second ack releases its own slot while the first is still out.
+    out = s.on_reply(0.004, {"type": "control_ack", "seq": 2})
+    assert [m["seq"] for m in out] == [3]
+    # Adaptive: 400 ms until five answered batches, then 3x their median (floored at 25 ms).
+    assert s.ack_timeout_s == 0.4
+    for q in (1, 3):
+        s.on_reply(0.005, {"type": "control_ack", "seq": q})
+    t = 0.01
+    for _ in range(3):
+        (m,) = s.push(t, 0, [t])
+        s.on_reply(t + 0.004, {"type": "control_ack", "seq": m["seq"]})
+        t += 0.01
+    assert abs(s.ack_timeout_s - 0.025) < 1e-9
+    # A lost ack now costs ~25 ms, not 400.
+    (m,) = s.push(t, 0, [9.0])
+    s.push(t + 0.001, 0, [10.0])  # 2nd slot
+    assert s.push(t + 0.002, 0, [11.0]) == []
+    out = s.poll(t + 0.03)
+    assert out and out[0]["values"] == [{"slot": 0, "value": [11.0]}]
+    assert s.stats["timeouts"] >= 1
+
+
+def test_live_sender_legacy_keeps_one_in_flight():
+    s = core.LiveSender(acks=False, min_interval_s=0.0, max_inflight=3)
+    assert len(s.push(0.0, 0, [1.0])) == 1
+    assert s.push(0.001, 0, [2.0]) == []
+
+
+def test_gate_rows_and_lan_verdict():
+    rows = ["F effects,control_ack,live_mailbox"]
+    # 100 Hz counter for 30 s; every echo sees the value from 20 ms before its midpoint.
+    for v in range(1, 3001):
+        rows.append(f"G {v} {v * 10_000}")
+    for k in range(1, 120):
+        tq = k * 250_000
+        tr = tq + 6_000
+        applied = (tq + 3_000 - 20_000) // 10_000
+        rows.append(f"P {tq} {tr} {applied}")
+    rows.append("P 30000000 30001000 -2")
+    rows.append("END done")
+    tr, info = core.parse_gate_rows("\n".join(rows))
+    assert info["features"][-1] == "live_mailbox" and info["probe_timeouts"] == 1
+    lags = [x.lag_ms for x in tr.samples if x.applied >= 0]
+    assert max(lags) < 31 and min(lags) > 10  # oldest unapplied waited ~13-23 ms
+    first, last = lags[:40], lags[-40:]
+    status, why = core.verdict_lan(first, last, lags, frame_ms=60.0)
+    assert status == core.PASS, why
+    status, why = core.verdict_lan(first, last, [x + 200 for x in lags], frame_ms=10.0)
+    assert status == core.FAIL and any("p50" in w for w in why)
+    status, _ = core.verdict_lan(first[:3], last, lags, frame_ms=60.0)
+    assert status == core.SKIP, "too few samples, nothing over budget: the bench, not the firmware"

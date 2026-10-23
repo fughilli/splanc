@@ -393,6 +393,13 @@ def budget(run: Run, label: str = "", min_pairs: int = MIN_FIT) -> Budget:
         if w.dump.frame_overrun:
             notes.append(f"window {w.k}: frame trace ring wrapped")
         notes += [e for e in w.events if "ack-timeout" in e][:3]
+    # A trace page / stop / reset that got no reply: the device went silent mid-dump
+    # (seen with #360 + #358 together, never on this firmware alone). Surfaced, not hidden.
+    stalls = [e for w in run.windows for e in w.events if "wait-timeout" in e]
+    if stalls or "wait-timeout" in run.end or "no_reply" in run.end:
+        notes.insert(
+            0, f"DEVICE SILENT: {len(stalls) or 1} trace request(s) unanswered ({run.end})"
+        )
     stages = {}
     for st in STAGES:
         xs = [s.stages[st] / 1000.0 for s in samples if s.stages.get(st) is not None]

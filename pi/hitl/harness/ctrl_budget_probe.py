@@ -108,6 +108,46 @@ def _read_varint(b, i):
         shift += 7
 
 
+def parse_all(b):
+    """[(field, value), ...] for one protobuf message, repeated fields kept."""
+    out = []
+    i = 0
+    while i < len(b):
+        key, i = _read_varint(b, i)
+        fn, wt = key >> 3, key & 7
+        if wt == 0:
+            v, i = _read_varint(b, i)
+        elif wt == 1:
+            v = struct.unpack_from("<d", b, i)[0]
+            i += 8
+        elif wt == 2:
+            ln, i = _read_varint(b, i)
+            v = bytes(b[i : i + ln])
+            i += ln
+        elif wt == 5:
+            v = struct.unpack_from("<f", b, i)[0]
+            i += 4
+        else:
+            raise ValueError("wire type %d" % wt)
+        out.append((fn, v))
+    return out
+
+
+def client_get_effect_uniforms():
+    return f_bytes(24, b"")  # ClientMessage.get_effect_uniforms = 24 (active effect)
+
+
+def effect_uniform_slot0(eu):
+    """EffectUniforms.current (3) -> slot 0's first value (None if absent)."""
+    for fn, v in parse_all(eu):
+        if fn != 3:
+            continue
+        uv = parse_fields(v)
+        if uv.get(1, 0) == 0 and isinstance(uv.get(2), bytes) and len(uv[2]) >= 4:
+            return struct.unpack_from("<f", uv[2], 0)[0]
+    return None
+
+
 def parse_fields(b):
     """{field: value} for one protobuf message (last wins; nested left as bytes)."""
     out = {}
@@ -201,6 +241,8 @@ class Probe:
         self.s = None
         self.idx = 0  # WS messages sent since the window's trace reset
         self.ping_idx = {}  # ping t0 -> idx
+        self.features = []
+        self.probe_q = None  # gate mode: the outstanding get_effect_uniforms (sent at)
 
     def emit(self, line):
         self.out.write(line + "\n")
@@ -233,7 +275,11 @@ class Probe:
             raise ConnectionError("upgrade refused")
         self.s = s
         self.send_raw(client_hello())
-        self.wait_for(lambda op, p: op == 2 and 1 in parse_fields(p), 10.0)
+        w = self.wait_for(lambda op, p: op == 2 and 1 in parse_fields(p), 10.0)
+        self.features = [
+            v.decode(errors="replace") for fn, v in parse_all(parse_fields(w)[1]) if fn == 10
+        ]
+        self.emit("F " + ",".join(self.features))
 
     def send_raw(self, payload):
         self.s.setblocking(True)
@@ -261,25 +307,30 @@ class Probe:
         s.setblocking(True)
         return msgs
 
-    def wait_for(self, pred, timeout):
+    def wait_for(self, pred, timeout, what="reply"):
         end = time.monotonic() + timeout
+        seen = []
         while time.monotonic() < end:
             for op, p in self.recv_some(end - time.monotonic()):
                 if op == 8:
                     raise ConnectionError("ws close")
                 if pred(op, p):
                     return p
-        raise TimeoutError("no reply")
+                if len(seen) < 6:
+                    seen.append("%d:%s" % (op, p[:6].hex()))
+        # what did come back meanwhile (late acks? nothing at all?) -> the E row
+        self.emit("E %d wait-timeout %s seen=%s" % (now_us(), what, ",".join(seen) or "-"))
+        raise TimeoutError("no reply (%s)" % what)
 
     def tr_reset(self):
         self.send_raw(b"\xffCTRR")
-        self.wait_for(lambda o, p: o == 2 and p == b"CTRok", 5.0)
+        self.wait_for(lambda o, p: o == 2 and p == b"CTRok", 5.0, "trace-reset")
         self.idx = 0
         self.ping_idx = {}
 
     def tr_dump(self):
         self.send_raw(b"\xffCTRS")
-        self.wait_for(lambda o, p: o == 2 and p == b"CTRok", 5.0)
+        self.wait_for(lambda o, p: o == 2 and p == b"CTRok", 5.0, "trace-stop")
         img = bytearray()
         total = None
         t_first = None
@@ -290,6 +341,7 @@ class Probe:
                 and len(p) >= 8
                 and struct.unpack_from("<I", p, 4)[0] == len(img),
                 5.0,
+                "trace-page@%d" % len(img),
             )
             if t_first is None:
                 t_first = now_us()  # the header's now_us was stamped just before this
@@ -330,14 +382,22 @@ class Probe:
             elif 2 in m:
                 t0 = parse_fields(m[2]).get(1, 0.0)
                 self.emit("R %d p %d" % (t, self.ping_idx.pop(t0, -1)))
+            elif 16 in m and self.probe_q is not None:
+                v = effect_uniform_slot0(m[16])
+                self.emit("P %d %d %d" % (self.probe_q, t, -1 if v is None else int(round(v))))
+                self.probe_q = None
             elif 9 in m:
                 self.emit("E %d device-error %r" % (t, m[9][:80]))
 
     # -- one measurement window ------------------------------------------------
     def window(self, k):
         a = self.a
-        self.tr_reset()
+        if not a.gate:
+            self.tr_reset()
         t0 = now_us() + 20000
+        # 0 = what the app does (web/src/net/liveControl.ts): one batch in flight
+        max_inflight = a.inflight or 1
+        next_probe = t0 + a.probe_ms * 1000 if a.probe_ms > 0 else None
         self.emit("W %d %d" % (k, t0))
         period_us = 1e6 / (a.hz * a.controls)
         n_events = int(a.window_s * a.hz * a.controls)
@@ -409,36 +469,47 @@ class Probe:
                 for sq in [q for q, ts in inflight.items() if t - ts > ack_to]:
                     del inflight[sq]
                     self.emit("E %d ack-timeout %d" % (t, sq))
-                if pending and len(inflight) < a.inflight and t - last_send >= min_iv:
+                if pending and len(inflight) < max_inflight and t - last_send >= min_iv:
                     seq += 1
                     vals = [(sl, [v]) for sl, (v, _c) in sorted(pending.items())]
                     ctr = pending[0][1] if 0 in pending else -1
                     pending = {}
                     last_send = self.send_msg(client_set_uniforms(vals, seq), "u", seq, ctr)
                     inflight[seq] = last_send
-            elif t >= next_ping:
+            elif t >= next_ping and not a.gate:
                 self.ping()
                 next_ping = t + a.ping_ms * 1000
+            # gate mode: one get_effect_uniforms echo at a time, every --probe-ms
+            if next_probe is not None:
+                if self.probe_q is not None and t - self.probe_q > a.probe_timeout_s * 1e6:
+                    self.emit("P %d %d -2" % (self.probe_q, t))  # timed out (backlog)
+                    self.probe_q = None
+                if self.probe_q is None and t >= next_probe and t < end:
+                    self.probe_q = self.send_msg(client_get_effect_uniforms(), "q")
+                    next_probe = t + a.probe_ms * 1000
             # wait for the next thing to do
             nxt = [end + 300000]
             if ev < n_events:
                 nxt.append(t0 + ev * period_us)
             if noise is not None and t < end:
                 nxt.append(noise_next)
-            if osc is None and pending and len(inflight) < a.inflight:
+            if osc is None and pending and len(inflight) < max_inflight:
                 nxt.append(last_send + min_iv)
             if osc is None and inflight:
                 nxt.append(min(inflight.values()) + ack_to)
-            if osc is not None:
+            if osc is not None and not a.gate:
                 nxt.append(next_ping)
+            if next_probe is not None:
+                nxt.append(next_probe if self.probe_q is None else t + 20000)
             wait = max(0.0, (min(nxt) - now_us()) / 1e6)
             self.handle_replies(self.recv_some(min(wait, 0.05)), on_ack)
         if noise is not None:
             noise.close()
         if osc is not None:
             osc.close()
-        img, t_d = self.tr_dump()
-        self.emit("D %d %d %s" % (k, t_d, base64.b64encode(img).decode()))
+        if not a.gate:
+            img, t_d = self.tr_dump()
+            self.emit("D %d %d %s" % (k, t_d, base64.b64encode(img).decode()))
         self.out.flush()
 
 
@@ -451,7 +522,9 @@ def main():
     ap.add_argument("--window-s", type=float, default=8.0)
     ap.add_argument("--controls", type=int, default=4)
     ap.add_argument("--hz", type=float, default=100.0, help="per-control move rate")
-    ap.add_argument("--inflight", type=int, default=1, help="wss: unacknowledged batches")
+    ap.add_argument(
+        "--inflight", type=int, default=1, help="wss: unacknowledged batches (0 = as the app)"
+    )
     ap.add_argument("--min-interval-ms", type=float, default=40.0, help="wss: batch spacing")
     ap.add_argument(
         "--ack-timeout-ms", type=float, default=400.0, help="0 = adaptive (3x median RTT)"
@@ -460,6 +533,14 @@ def main():
     ap.add_argument("--noise-pps", type=float, default=0.0)
     ap.add_argument("--no-nodelay", action="store_true", help="leave Nagle on (browser-like?)")
     ap.add_argument("--label", default="")
+    ap.add_argument(
+        "--gate",
+        action="store_true",
+        help="shipping firmware (no LM_CTRL_TRACE): no trace commands; measure with "
+        "get_effect_uniforms echoes (P rows) every --probe-ms instead",
+    )
+    ap.add_argument("--probe-ms", type=float, default=0.0, help="echo period (gate mode)")
+    ap.add_argument("--probe-timeout-s", type=float, default=15.0)
     a = ap.parse_args()
     p = Probe(a, sys.stdout)
     p.emit("META " + json.dumps(vars(a), sort_keys=True))

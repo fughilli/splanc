@@ -436,6 +436,137 @@ async def drive(
     }
 
 
+async def setup_lan(url: str, args, fxb: bytes) -> dict[str, Any]:
+    """The on-LAN gate's setup, over the tunnelled control socket: map + LED count +
+    the heavy effect (autoscaled, no_abort), then its settled render rate. The socket
+    closes before the rig-side probe connects (the netstack serves one client)."""
+    from hitl_led_capture import _connect_ws
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    sock = await _connect_ws(url, ctx, settle_s=args.settle)
+    c = Conn(sock)
+    try:
+        welcome = await c.rpc(
+            {"type": "hello", "client": "live_latency", "app_version": "1"}, "welcome"
+        )
+        await c.rpc(linear_map(args.leds), "result_ready")
+        await c.rpc({"type": "set_led_count", "led_count": args.leds}, "led_count_state")
+        await c.rpc({"type": "set_fps", "target_fps": 0, "no_abort": True}, "fps_state")
+        b64 = base64.b64encode(fxb).decode("ascii")
+        await c.rpc(
+            {"type": "submit_effect", "effect_id": "__livelat", "fxb": b64, "activate": True},
+            "result_ready",
+        )
+        await asyncio.sleep(args.settle_fx)
+        await c.rpc({"type": "set_perf", "mode": "BASIC", "interval_ms": 0}, "perf_report")
+        await asyncio.sleep(2.0)
+        perf = await c.rpc({"type": "get_perf_report"}, "perf_report")
+        await c.send({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
+        fps = float(perf.get("currentFps") or 0)
+        work_ms = float(perf.get("frameCyclesMean") or 0) / 160e3
+        # The frame PERIOD: the target's, or the work plus the yield after an overrun.
+        frame_ms = max(1000.0 / fps if fps else 0.0, work_ms * 1.1)
+        return {
+            "fw": welcome.get("fwVersion") or welcome.get("fw_version"),
+            "features": welcome.get("features") or [],
+            "fps": fps,
+            "frame_ms": frame_ms,
+        }
+    finally:
+        try:
+            await asyncio.wait_for(sock.close(), 10)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def judge_lan(text: str, args, frame_ms: float, label: str) -> dict[str, Any]:
+    """Parse one rig-side probe run and apply the on-LAN budgets."""
+    tr, info = core.parse_gate_rows(text, args.probe_timeout)
+    gens = sorted(tr.gen_at.values())
+    empty = core.Stats.of([])
+    if not gens or not tr.samples:
+        line = core.result_line(core.SKIP, label, empty, empty, empty, f"probe end={info['end']}")
+        return {
+            "status": core.SKIP,
+            "reasons": [f"probe produced no samples ({info['end']})"],
+            "result_line": line,
+        }
+    t_start, t_last = gens[0], gens[-1]
+    span = t_last - t_start
+    win = min(60.0, span / 3)
+    first = tr.window(t_start + args.warmup_s, t_start + args.warmup_s + win)
+    last = tr.window(t_last - win, t_last + 1)
+    allv = [x.lag_ms for x in tr.samples if x.t >= t_start + args.warmup_s]
+    status, reasons = core.verdict_lan(first, last, allv, frame_ms, info["probe_timeouts"])
+    if status == core.PASS and info["end"] != "done":
+        status, reasons = core.FAIL, [f"the live session dropped: {info['end']}"]
+    fs, ls, os_ = core.Stats.of(first), core.Stats.of(last), core.Stats.of(allv)
+    extra = (
+        f"path=lan frame={frame_ms:.0f}ms budget_p50={core.LAN_P50_FRAMES * frame_ms + core.LAN_P50_MS:.0f}ms "
+        f"budget_p99={core.LAN_P99_FRAMES * frame_ms + core.LAN_P99_MS:.0f}ms "
+        f"features_live_mailbox={'live_mailbox' in info['features']} end={info['end']}"
+    )
+    return {
+        "status": status,
+        "reasons": reasons,
+        "result_line": core.result_line(status, label, fs, ls, os_, extra),
+    }
+
+
+def run_lan(r, host: str, port: int, args, fxb: bytes) -> dict[str, Any]:
+    """The default gate: the stream + echoes run INSIDE the reservation, on the rig AP."""
+    with r.forward(host, port) as lp:
+        st = asyncio.run(setup_lan(f"wss://localhost:{lp}/ws", args, fxb))
+    _log(f"[live] fw={st['fw']} render {st['fps']:g} fps, frame period {st['frame_ms']:.1f} ms")
+    probe = _rlocation("_main/pi/hitl/harness/ctrl_budget_probe.py") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "ctrl_budget_probe.py"
+    )
+    r.scp_to([probe], "/tmp/")
+    time.sleep(1.5)  # the single-slot server re-listens after the setup socket
+    min_iv = max(8.0, min(100.0, 1000.0 / st["fps"])) if st["fps"] else 40.0
+    runs = [("live", "wss", args.minutes * 60.0)]
+    if args.osc_messages > 0:
+        runs.append(("osc", "osc", args.osc_seconds))
+    out: dict[str, Any] = {}
+    out_dir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
+    for label, transport, secs in runs:
+        cmd = (
+            f"python3 /tmp/ctrl_budget_probe.py --host {host} --gate --transport {transport} "
+            f"--windows 1 --window-s {secs:g} --controls {args.controls} --hz {args.hz:g} "
+            f"--probe-ms {args.probe_s * 1000:g} --probe-timeout-s {args.probe_timeout:g} "
+            f"--inflight 0 --ack-timeout-ms 0 --min-interval-ms {min_iv:.1f}"
+        )
+        _log(f"[live] rig probe: {cmd}")
+        with r.ap_lock(f"live_latency {label} -> {host}"):
+            p = r.ssh(cmd, capture=True, timeout=secs + 180)
+        text = p.stdout or ""
+        if out_dir:
+            with open(
+                os.path.join(out_dir, f"live_latency_{label}.txt"), "w", encoding="utf-8"
+            ) as f:
+                f.write(text)
+        if p.stderr:
+            _log(p.stderr[-2000:])
+        out[label] = judge_lan(text, args, st["frame_ms"], label)
+        _log(out[label]["result_line"])
+        time.sleep(1.0)
+    gated = out["live"]
+    if "osc" in out:
+        o = out["osc"]
+        status = gated["status"]
+        if o["status"] == core.FAIL and status != core.SKIP:
+            status = core.FAIL
+        gated = {
+            "status": status,
+            "reasons": gated["reasons"] + o["reasons"],
+            "result_line": gated["result_line"] + " | " + o["result_line"],
+        }
+    _log(f"[live] reasons: {gated['reasons']}")
+    return gated
+
+
 def run_on_hardware(args) -> int:
     fxb = compile_fx_src(args.fx_compile, HEAVY_FX)
     _log(f"[fx] heavy probe effect: {len(fxb)} B .fxb")
@@ -500,6 +631,9 @@ def run_on_hardware(args) -> int:
                 _log(f"[live] provisioning failed ({e2}) — SKIP (bench)")
                 return 0
         host, port = dut_target(redirect, "wss")
+        if args.path == "lan":
+            result = run_lan(r, host, port, args, fxb)
+            return 1 if result.get("status") == core.FAIL else 0
         with r.forward(host, port) as local_port:
 
             def rig_burst(n: int, hz: float, base: int) -> None:
@@ -537,6 +671,15 @@ def main() -> int:
         help="live (the app's live-control channel; gated), naive (the pre-fix app: one "
         "set_uniforms per event; reported), or both comma-separated for the A/B",
     )
+    ap.add_argument(
+        "--path",
+        choices=["lan", "tunnel"],
+        default=os.environ.get("HITL_LIVE_PATH", "lan"),
+        help="lan (default): the stream runs inside the reservation, on the rig AP, with "
+        "frame-relative budgets; tunnel: from this host through the reservation's ssh "
+        "tunnel, budgets over the measured base RTT (the original #353 gate)",
+    )
+    ap.add_argument("--osc-seconds", type=float, default=30.0, help="lan path: OSC stream")
     ap.add_argument("--minutes", type=float, default=4.0)
     ap.add_argument("--controls", type=int, default=4)
     ap.add_argument("--hz", type=float, default=100.0, help="per-control CC rate")
