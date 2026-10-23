@@ -65,17 +65,19 @@ def _probe_path() -> str | None:
     return here if os.path.exists(here) else None
 
 
-def parse_plan(plan: str) -> list[tuple[str, float, float]]:
-    """'fifo:30:120,latest:30:60' -> [(mode, fps, seconds), ...]."""
+def parse_plan(plan: str) -> list[tuple[str, float, float, float]]:
+    """'fifo:30:120,latest:30:60:100' -> [(mode, fps, seconds, present_delay_ms), ...].
+    A 4th field > 0 stamps frames with present_at = capture + that many ms (needs the
+    firmware feature texture_ack) and reports when frames were actually shown."""
     out = []
     for item in plan.split(","):
         item = item.strip()
         if not item:
             continue
-        mode, fps, secs = (item.split(":") + ["", ""])[:3]
+        mode, fps, secs, delay = (item.split(":") + ["", "", ""])[:4]
         if mode not in ("fifo", "latest"):
             raise SystemExit(f"--plan: unknown sender mode {mode!r} (fifo|latest)")
-        out.append((mode, float(fps or 30), float(secs or 120)))
+        out.append((mode, float(fps or 30), float(secs or 120), float(delay or 0)))
     if not out:
         raise SystemExit("--plan is empty")
     return out
@@ -91,12 +93,14 @@ def _out_dir(args) -> str:
     return d
 
 
-def run_probe(res, host: str, port: int, mode: str, fps: float, seconds: float, args) -> str:
+def run_probe(
+    res, host: str, port: int, mode: str, fps: float, seconds: float, delay: float, args
+) -> str:
     cmd = (
         f"python3 /tmp/wss_video_latency.py --host {host} --port {port} "
         f"--tex-index {args.tex_index} --width {args.width} --height {args.height} "
         f"--fps {fps:g} --seconds {seconds:g} --mode {mode} --calib {args.calib} "
-        f"--noise-pps {args.noise_pps:g}"
+        f"--noise-pps {args.noise_pps:g} --present-delay-ms {delay:g}"
     )
     _log(f"[probe] {cmd}")
     proc = res.ssh(cmd, capture=True, timeout=seconds + 4 * args.calib + 120)
@@ -172,15 +176,16 @@ def run_on_hardware(args) -> int:
             res.scp_to([probe], "/tmp/")
             # The setup socket closed; give the single-slot server a moment to re-listen.
             time.sleep(1.0)
-            for k, (mode, fps, seconds) in enumerate(plan):
+            for k, (mode, fps, seconds, delay) in enumerate(plan):
                 with res.ap_lock(f"video latency {mode} {fps:g}fps {seconds:g}s -> {host}"):
-                    text = run_probe(res, host, port, mode, fps, seconds, args)
-                raw_path = os.path.join(out_dir, f"{prefix}video_latency_{k}_{mode}_{fps:g}fps.txt")
+                    text = run_probe(res, host, port, mode, fps, seconds, delay, args)
+                tag = f"{mode}_{fps:g}fps" + (f"_at{delay:g}ms" if delay else "")
+                raw_path = os.path.join(out_dir, f"{prefix}video_latency_{k}_{tag}.txt")
                 with open(raw_path, "w", encoding="utf-8") as f:
                     f.write(text)
                 verdict, line = judge(text, fps, args)
                 verdicts.append(verdict)
-                print(f"[video-latency] {prefix}run {k} mode={mode} -> {raw_path}", flush=True)
+                print(f"[video-latency] {prefix}run {k} {tag} -> {raw_path}", flush=True)
                 print(line, flush=True)
                 time.sleep(2.0)
     finally:

@@ -23,6 +23,8 @@ It prints raw rows (parsed + judged on the harness host by video_latency_core):
   P <t0_ms> <t1_dev_ms> <t3_ms>
   T <t_ms> <total_retrans> <lost> <unacked> <rtt_us> <rttvar_us> <cwnd> <rwnd_limited_us>
     <snd_wnd> <bytes_retrans> <rto_us>
+  TB <epoch_dev_ms> <host_to_dev_offset_ms> <present_delay_ms>   (--present-delay-ms only)
+  A <seq> <t3_ms> <shown_seq> <shown_late_ms> <shown_at_effect_ms> <dropped> <queued>
   E <t_ms> <text>
   END <reason>
 
@@ -90,7 +92,7 @@ def client_ping(t0):
     return f_bytes(2, f_double(1, t0))  # ClientMessage.time_sync_ping = 2
 
 
-def client_set_texture(idx, w, h, data):
+def client_set_texture(idx, w, h, data, seq=0, present_at=0):
     inner = (
         f_varint(1, idx)
         + f_varint(2, 1)  # RGB565
@@ -99,7 +101,15 @@ def client_set_texture(idx, w, h, data):
         + f_varint(5, 0)  # raw keyframe (no DELTA/RLE)
         + f_bytes(6, data)
     )
+    if seq:
+        inner += f_varint(8, seq)  # texture_ack: device answers TextureAck{seq}
+    if present_at:
+        inner += f_varint(9, present_at)  # show at this effect time (ms)
     return f_bytes(28, inner)  # ClientMessage.set_texture = 28
+
+
+def client_set_time_base(epoch_ms):
+    return f_bytes(38, f_varint(1, epoch_ms))  # ClientMessage.set_time_base = 38
 
 
 def _read_varint(b, i):
@@ -269,6 +279,14 @@ def main():
         "during the stream — extra frames the device must pull through its 16-slot RX ring, "
         "a stand-in for a busy channel",
     )
+    ap.add_argument(
+        "--present-delay-ms",
+        type=float,
+        default=0.0,
+        help="> 0 (firmware feature texture_ack): set a time base and stamp every frame with "
+        "present_at = capture time + this, on the device clock; the device's TextureAck rows "
+        "(A ...) then report when each frame was actually SHOWN",
+    )
     ap.add_argument("--calib", type=int, default=40, help="idle pings before + after")
     ap.add_argument("--drain", type=float, default=8.0, help="seconds to wait for late pongs")
     a = ap.parse_args()
@@ -328,6 +346,8 @@ def main():
         emit("END no-welcome")
         return 3
 
+    cal_rows = []
+
     def calibrate(phase):
         for _ in range(a.calib):
             t0 = now_ms()
@@ -342,11 +362,22 @@ def main():
                         f = parse_fields(pong)
                         if abs(f.get(1, -1) - t0) < 1e-6:
                             emit("CAL %s %.3f %.3f %.3f" % (phase, t0, f.get(2, 0.0), t3))
+                            cal_rows.append((t0, f.get(2, 0.0), t3))
                             got = True
             time.sleep(0.02)
 
     calibrate("pre")
     out.flush()
+    epoch = 0
+    off = 0.0
+    if a.present_delay_ms > 0:
+        # Map host time -> device ms with the best (min-RTT) pre-calibration ping, then
+        # pin the device's effect time base at "now" so present_at = host time + off - epoch.
+        best = min(cal_rows, key=lambda r: r[2] - r[0])
+        off = best[1] - (best[0] + best[2]) / 2.0
+        epoch = int(now_ms() + off)
+        s.sendall(ws_frame(client_set_time_base(epoch)))
+        emit("TB %d %.3f %.1f" % (epoch, off, a.present_delay_ms))
 
     # --- streaming phase (non-blocking, single thread) -------------------------
     s.setblocking(False)
@@ -390,6 +421,23 @@ def main():
                     if inflight.pop(t0, None) is not None:
                         rtts.append(t3 - t0)
                         del rtts[:-90]
+                elif 42 in m:
+                    f = parse_fields(m[42])
+                    shown_late = f.get(3, 0)
+                    if shown_late >= 1 << 63:
+                        shown_late -= 1 << 64  # int32 negative, varint-encoded as 64-bit
+                    emit(
+                        "A %d %.3f %d %d %d %d %d"
+                        % (
+                            f.get(1, 0),
+                            t3,
+                            f.get(2, 0),
+                            shown_late,
+                            f.get(6, 0),
+                            f.get(4, 0),
+                            f.get(5, 0),
+                        )
+                    )
                 elif 9 in m:
                     emit("E %.3f device-error %r" % (t3, m[9][:80]))
 
@@ -416,7 +464,19 @@ def main():
         nonlocal pending_pongs, skipped
         t = now_ms()
         px = frame_pixels(fseq, a.width, a.height)
-        msg = ws_frame(client_set_texture(a.tex_index, a.width, a.height, px))
+        present_at = 0
+        if a.present_delay_ms > 0:
+            present_at = max(1, int(t_sched + a.present_delay_ms + off - epoch))
+        msg = ws_frame(
+            client_set_texture(
+                a.tex_index,
+                a.width,
+                a.height,
+                px,
+                seq=fseq + 1 if a.present_delay_ms > 0 else 0,
+                present_at=present_at,
+            )
+        )
         msg += ws_frame(client_ping(t))
         app_q.extend(msg)
         pending_pongs += 1

@@ -63,6 +63,10 @@ class Run:
     errors: List[str] = field(default_factory=list)
     end: Optional[str] = None
     unmatched_pongs: int = 0
+    # --present-delay-ms runs: (epoch_dev_ms, host->dev offset, delay) and the device's
+    # TextureAck rows (seq, t3, shown_seq, shown_late_ms, shown_at_ms, dropped, queued).
+    time_base: Optional[Tuple[int, float, float]] = None
+    acks: List[Tuple[int, float, int, int, int, int, int]] = field(default_factory=list)
 
 
 def parse(text: str) -> Run:
@@ -86,6 +90,12 @@ def parse(text: str) -> Run:
                 pongs.append((p[1], float(p[2]), float(p[3])))
             elif p[0] == "T" and len(p) == 12:
                 run.tcp.append(Tcp(float(p[1]), *(int(x) for x in p[2:])))
+            elif p[0] == "TB" and len(p) == 4:
+                run.time_base = (int(p[1]), float(p[2]), float(p[3]))
+            elif p[0] == "A" and len(p) == 8:
+                run.acks.append(
+                    (int(p[1]), float(p[2]), int(p[3]), int(p[4]), int(p[5]), int(p[6]), int(p[7]))
+                )
             elif p[0] == "E":
                 run.errors.append(" ".join(p[1:]))
             elif p[0] == "END":
@@ -188,6 +198,13 @@ class Stats:
     drift_ppm: float
     end: Optional[str]
     errors: int
+    # Present-at runs (device TextureAck telemetry): per shown frame, capture->shown
+    # latency on the host clock and the device's own lateness vs present_at.
+    shown: int = 0
+    disp_lat_ms: List[float] = field(default_factory=list)
+    shown_late_ms: List[float] = field(default_factory=list)
+    disp_intervals_ms: List[float] = field(default_factory=list)
+    dev_dropped: int = 0
 
     @property
     def fps_applied(self) -> float:
@@ -271,6 +288,7 @@ def analyze(
                 cause = "device_busy"
             stalls.append(Stall(t_apply[i][0], gap, catch, rt, rw, kq, cause))
         i += 1
+    shown, disp_lat, late, disp_ivl, dev_dropped = _display(run, clock)
     sent = len(run.frames)
     if sent:
         seconds = (run.frames[-1].t_sched - run.frames[0].t_sched) / 1000.0 + 1.0 / fps
@@ -297,7 +315,39 @@ def analyze(
         drift_ppm=clock.drift * 1e6,
         end=run.end,
         errors=len(run.errors),
+        shown=shown,
+        disp_lat_ms=disp_lat,
+        shown_late_ms=late,
+        disp_intervals_ms=disp_ivl,
+        dev_dropped=dev_dropped,
     )
+
+
+def _display(run: Run, clock: ClockFit):
+    """Shown-frame timing from TextureAck rows: each ack names the last frame the
+    device SHOWED and when (effect ms on the time base the probe set)."""
+    if run.time_base is None or not run.acks:
+        return 0, [], [], [], 0
+    epoch = run.time_base[0]
+    by_seq = {f.seq: f for f in run.frames}
+    first: Dict[int, Tuple[float, int]] = {}
+    for _seq, _t3, shown_seq, late_ms, shown_at, _drop, _q in run.acks:
+        if shown_seq == 0 or shown_seq in first:
+            continue
+        first[shown_seq] = (clock.to_host(epoch + shown_at), late_ms)
+    disp_lat: List[float] = []
+    late: List[float] = []
+    times: List[float] = []
+    for sseq in sorted(first):
+        th, l_ms = first[sseq]
+        f = by_seq.get(sseq - 1)
+        if f is None:
+            continue
+        disp_lat.append(th - f.t_sched)
+        late.append(float(l_ms))
+        times.append(th)
+    ivl = [b - a for a, b in zip(times, times[1:])]
+    return len(first), disp_lat, late, ivl, run.acks[-1][5]
 
 
 @dataclass
@@ -353,5 +403,19 @@ def result_line(stats: Optional[Stats], status: Tuple[str, str]) -> str:
         f"retrans={stats.retrans} bytes_retrans={stats.bytes_retrans} "
         f"rwnd_limited_ms={stats.rwnd_limited_ms:.0f} max_kern_q={stats.max_kern_q} "
         f"max_app_q={stats.max_app_q} clock_rtt_ms={stats.clock_rtt_ms:.1f} "
-        f"drift_ppm={stats.drift_ppm:.1f} end={stats.end} reason={reason.replace(' ', '_')}"
+        f"drift_ppm={stats.drift_ppm:.1f}{_display_fields(stats)} end={stats.end} "
+        f"reason={reason.replace(' ', '_')}"
+    )
+
+
+def _display_fields(stats: Stats) -> str:
+    if not stats.shown:
+        return ""
+    return (
+        f" shown={stats.shown} dev_dropped={stats.dev_dropped} "
+        f"disp_lat_p50_ms={percentile(stats.disp_lat_ms, 50):.1f} "
+        f"disp_lat_p99_ms={percentile(stats.disp_lat_ms, 99):.1f} "
+        f"shown_late_p50_ms={percentile(stats.shown_late_ms, 50):.1f} "
+        f"shown_late_p99_ms={percentile(stats.shown_late_ms, 99):.1f} "
+        f"disp_ivl_p99_ms={percentile(stats.disp_intervals_ms, 99):.1f}"
     )
