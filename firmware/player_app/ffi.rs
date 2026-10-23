@@ -261,7 +261,7 @@ static mut FX_JIT_TARGETS: [bool; JIT_MAX_CODE + 1] = [false; JIT_MAX_CODE + 1];
 
 /// Placeholder segment for the never-called table slots (a real segment always
 /// overwrites the slots we install). Must be a valid function, not null.
-unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32) {}
+unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32, _state: *mut i32) {}
 
 // Executable-memory primitives, provided by the C++ firmware: a fixed 2 KB
 // static region the Rust side compiles segments straight into, made RWX by a

@@ -18,7 +18,7 @@ pub type Rgb = (u8, u8, u8);
 /// block's first bytes at load) dispatches to `func`. The VM never allocates or
 /// executes anything itself — it just calls a function pointer the firmware set
 /// up, so it stays `no_std`/no-alloc.
-pub type JitFn = unsafe extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32);
+pub type JitFn = unsafe extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32, state: *mut i32);
 
 /// One JIT block: its native entry, the pc to resume interpreting at, and the net
 /// operand-stack depth change to apply after the call (see `firmware/fx_jit`).
@@ -3390,6 +3390,7 @@ fn run(
                             stack.as_mut_ptr().add(sp) as *mut i32,
                             locals.as_mut_ptr() as *mut i32,
                             jit_consts,
+                            state.as_mut_ptr() as *mut i32,
                         );
                     }
                     let nsp = sp as isize + blk.net_delta as isize;

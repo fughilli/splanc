@@ -60,6 +60,16 @@ pub enum Ir {
     MulFix(u8),
     /// Drop the top `n` slots.
     Pop(u8),
+    /// Push `state[slot]` (scalar; `a3` = the state base).
+    LoadState(u8),
+    /// Pop into `state[slot]` (scalar).
+    StoreState(u8),
+    /// The VM's integer `AbsI` (wrapping), `MinI`, `MaxI` and `ClampI`
+    /// (`x < lo ? lo : x > hi ? hi : x`), branch-free.
+    AbsI,
+    MinI,
+    MaxI,
+    ClampI,
 }
 
 // -- RV32IM instruction encoder ----------------------------------------------
@@ -76,6 +86,7 @@ pub mod rv32 {
     pub const A0: u32 = 10; // operand-stack base
     pub const A1: u32 = 11; // locals base
     pub const A2: u32 = 12; // const-pool base
+    pub const A3: u32 = 13; // state base
 
     fn r(funct7: u32, rs2: u32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> u32 {
         (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
@@ -105,6 +116,15 @@ pub mod rv32 {
     }
     pub fn or(rd: u32, rs1: u32, rs2: u32) -> u32 {
         r(0x00, rs2, rs1, 0x6, rd, 0x33)
+    }
+    pub fn slt(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x2, rd, 0x33)
+    }
+    pub fn xor(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x4, rd, 0x33)
+    }
+    pub fn and(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x7, rd, 0x33)
     }
     pub fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
         i(imm, rs1, 0x0, rd, 0x13)
@@ -220,8 +240,8 @@ struct BlockMeta {
 }
 
 /// Scratch registers the register-cached codegen may hold stack values in: the
-/// caller-saved temporaries plus a3-a7 (a0-a2 are the ABI bases).
-const POOL: [u32; 12] = [5, 6, 7, 28, 29, 30, 31, 13, 14, 15, 16, 17];
+/// caller-saved temporaries plus a4-a7 (a0-a3 are the ABI bases).
+const POOL: [u32; 11] = [5, 6, 7, 28, 29, 30, 31, 14, 15, 16, 17];
 /// Model depths a block can reach: [`MAX_BLOCK_IR`] ops each move it by at most
 /// one slot, except `Pop(n)`, which only lowers it (bounded by the access check).
 const DEPTH_SPAN: i32 = 4 * MAX_BLOCK_IR as i32;
@@ -336,9 +356,10 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
         // pushes touch `depth`; a scalar consumer touches `depth-1`; a binary op
         // reaches `depth-2`. Recorded so the VM can gate on the live `sp`.
         let access = match *op {
-            Ir::PushConst(_) | Ir::LoadLocal(_) => depth,
-            Ir::StoreLocal(_) | Ir::NegI | Ir::TeeLocal(_) => depth - 1,
-            Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => depth - 2,
+            Ir::PushConst(_) | Ir::LoadLocal(_) | Ir::LoadState(_) => depth,
+            Ir::StoreLocal(_) | Ir::NegI | Ir::TeeLocal(_) | Ir::StoreState(_) | Ir::AbsI => depth - 1,
+            Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) | Ir::MinI | Ir::MaxI => depth - 2,
+            Ir::ClampI => depth - 3,
             Ir::Pop(_) => depth, // touches nothing
         };
         min_depth = min_depth.min(access);
@@ -417,6 +438,71 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
                 free!(lo);
                 free!(b);
                 push_reg!(a);
+            }
+            Ir::LoadState(sslot) => {
+                let off = sslot as i32 * 4;
+                if !fits(off) || !fits(stack_off(depth)) {
+                    return None;
+                }
+                let r = alloc!();
+                emit!(lw(r, A3, off));
+                push_reg!(r);
+            }
+            Ir::StoreState(sslot) => {
+                let off = sslot as i32 * 4;
+                if !fits(off) {
+                    return None;
+                }
+                let r = pop_reg!();
+                emit!(sw(r, A3, off));
+                free!(r);
+            }
+            Ir::AbsI => {
+                // m = a >> 31; (a ^ m) - m  (wrapping: i32::MIN stays MIN)
+                let a = pop_reg!();
+                let m = alloc!();
+                emit!(srai(m, a, 31));
+                emit!(xor(a, a, m));
+                emit!(sub(a, a, m));
+                free!(m);
+                push_reg!(a);
+            }
+            Ir::MinI | Ir::MaxI => {
+                // pick = MinI: a < b, MaxI: b < a; r = b ^ ((a ^ b) & -pick)
+                let b = pop_reg!();
+                let a = pop_reg!();
+                let t = alloc!();
+                emit!(if *op == Ir::MinI { slt(t, a, b) } else { slt(t, b, a) });
+                emit!(sub(t, ZERO, t));
+                emit!(xor(a, a, b));
+                emit!(and(a, a, t));
+                emit!(xor(a, a, b));
+                free!(t);
+                free!(b);
+                push_reg!(a);
+            }
+            Ir::ClampI => {
+                // r1 = x > hi ? hi : x ; x = x < lo ? lo : r1
+                let hi = pop_reg!();
+                let lo = pop_reg!();
+                let x = pop_reg!();
+                let t = alloc!();
+                let r1 = alloc!();
+                emit!(slt(t, hi, x));
+                emit!(sub(t, ZERO, t));
+                emit!(xor(r1, hi, x));
+                emit!(and(r1, r1, t));
+                emit!(xor(r1, r1, x));
+                emit!(slt(t, x, lo));
+                emit!(sub(t, ZERO, t));
+                emit!(xor(x, lo, r1));
+                emit!(and(x, x, t));
+                emit!(xor(x, x, r1));
+                free!(t);
+                free!(r1);
+                free!(lo);
+                free!(hi);
+                push_reg!(x);
             }
             Ir::Pop(n) => {
                 for _ in 0..n {
@@ -512,6 +598,12 @@ fn op_to_ir(code: &[u8], pc: usize) -> Option<(Ir, usize)> {
         Op::MulFix => (Ir::MulFix(16), 1),
         Op::MulFixN => (Ir::MulFix(b(0)), 2),
         Op::Pop => (Ir::Pop(b(0)), 2),
+        Op::LoadState if b(1) == 1 => (Ir::LoadState(b(0)), 3),
+        Op::StoreState if b(1) == 1 => (Ir::StoreState(b(0)), 3),
+        Op::AbsI => (Ir::AbsI, 1),
+        Op::MinI => (Ir::MinI, 1),
+        Op::MaxI => (Ir::MaxI, 1),
+        Op::ClampI => (Ir::ClampI, 1),
         _ => return None,
     })
 }
@@ -542,6 +634,7 @@ fn op_to_irs(code: &[u8], pc: usize, out: &mut [Ir]) -> Option<(usize, usize)> {
         let src = |s: u8, i: u16| match s & 3 {
             0 => Some(Ir::PushConst(i)),
             1 if i <= u8::MAX as u16 => Some(Ir::LoadLocal(i as u8)),
+            2 if i <= u8::MAX as u16 => Some(Ir::LoadState(i as u8)),
             _ => None,
         };
         let arith = match mode & 3 {
@@ -725,8 +818,45 @@ pub fn plan_blocks_into_consts(
 /// and a cross-check proves this matches the real `fx_vm`.
 #[cfg(feature = "alloc")]
 pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts: &[i32]) {
+    reference_state(block, stack, locals, consts, &mut [])
+}
+
+/// [`reference`] with a `state` array for `LoadState`/`StoreState`.
+#[cfg(feature = "alloc")]
+pub fn reference_state(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts: &[i32], state: &mut [i32]) {
     for op in block {
         match *op {
+            Ir::LoadState(s) => stack.push(state[s as usize]),
+            Ir::StoreState(s) => {
+                let v = stack.pop().unwrap();
+                state[s as usize] = v;
+            }
+            Ir::AbsI => {
+                let a = stack.pop().unwrap();
+                stack.push(a.wrapping_abs());
+            }
+            Ir::MinI => {
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                stack.push(if a < b { a } else { b });
+            }
+            Ir::MaxI => {
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                stack.push(if a > b { a } else { b });
+            }
+            Ir::ClampI => {
+                let hi = stack.pop().unwrap();
+                let lo = stack.pop().unwrap();
+                let x = stack.pop().unwrap();
+                stack.push(if x < lo {
+                    lo
+                } else if x > hi {
+                    hi
+                } else {
+                    x
+                });
+            }
             Ir::PushConst(idx) => stack.push(consts[idx as usize]),
             Ir::LoadLocal(s) => stack.push(locals[s as usize]),
             Ir::StoreLocal(s) => {
@@ -778,10 +908,16 @@ pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts:
 pub mod emu {
     /// `mem` is little-endian byte memory; `a0/a1/a2` are byte addresses into it.
     pub fn run(code: &[u32], a0: u32, a1: u32, a2: u32, mem: &mut [u8]) {
+        run_state(code, a0, a1, a2, 0, mem)
+    }
+
+    /// [`run`] with `a3` = the state base.
+    pub fn run_state(code: &[u32], a0: u32, a1: u32, a2: u32, a3: u32, mem: &mut [u8]) {
         let mut x = [0i32; 32];
         x[10] = a0 as i32;
         x[11] = a1 as i32;
         x[12] = a2 as i32;
+        x[13] = a3 as i32;
         let mut pc = 0usize;
         let lw = |mem: &[u8], addr: i32| -> i32 {
             let a = addr as usize;
@@ -811,6 +947,9 @@ pub mod emu {
                         (0x01, 0x0) => a.wrapping_mul(b),
                         (0x01, 0x1) => ((a as i64 * b as i64) >> 32) as i32, // mulh
                         (0x00, 0x6) => a | b,
+                        (0x00, 0x2) => (a < b) as i32, // slt
+                        (0x00, 0x4) => a ^ b,
+                        (0x00, 0x7) => a & b,
                         _ => panic!("emu: unknown R-type f7={f7:#x} f3={f3}"),
                     };
                     if rd != 0 {
@@ -901,18 +1040,38 @@ mod tests {
             let a = consts_base as usize + i * 4;
             mem[a..a + 4].copy_from_slice(&v.to_le_bytes());
         }
-        emu::run(&seg.code, stack_base + (sp0 as u32) * 4, locals_base, consts_base, &mut mem);
+        // The state array sits in the upper half of the locals region.
+        let state_base = locals_base + 128 * 4;
+        for (i, &v) in STATE_IN.iter().enumerate() {
+            let a = state_base as usize + i * 4;
+            mem[a..a + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        emu::run_state(&seg.code, stack_base + (sp0 as u32) * 4, locals_base, consts_base, state_base, &mut mem);
         let final_len = (sp0 as i32 + seg.net_delta) as usize;
         let stack_out: Vec<i32> = (0..final_len)
             .map(|i| i32::from_le_bytes([mem[i * 4], mem[i * 4 + 1], mem[i * 4 + 2], mem[i * 4 + 3]]))
             .collect();
+        // Locals then the state array (so one comparison covers both).
         let locals_out: Vec<i32> = (0..locals_in.len())
-            .map(|i| {
-                let a = locals_base as usize + i * 4;
-                i32::from_le_bytes([mem[a], mem[a + 1], mem[a + 2], mem[a + 3]])
-            })
+            .map(|i| locals_base as usize + i * 4)
+            .chain((0..STATE_IN.len()).map(|i| state_base as usize + i * 4))
+            .map(|a| i32::from_le_bytes([mem[a], mem[a + 1], mem[a + 2], mem[a + 3]]))
             .collect();
         (stack_out, locals_out)
+    }
+
+    /// The state array every emulated block starts from.
+    const STATE_IN: [i32; 4] = [7, -70_000, i32::MIN, 123_456];
+
+    /// The reference run, with its locals and state concatenated like
+    /// [`run_jit`]'s.
+    fn run_ref(block: &[Ir], stack_in: &[i32], locals_in: &[i32], consts: &[i32]) -> (Vec<i32>, Vec<i32>) {
+        let mut st = stack_in.to_vec();
+        let mut lo = locals_in.to_vec();
+        let mut state = STATE_IN.to_vec();
+        reference_state(block, &mut st, &mut lo, consts, &mut state);
+        lo.extend(state);
+        (st, lo)
     }
 
     /// A cheap deterministic PRNG (no external deps; varies by index).
@@ -935,8 +1094,14 @@ mod tests {
             // register pool running out (spills) as well as short ones.
             let steps = 1 + lcg(&mut rng) % if lcg(&mut rng) % 4 == 0 { MAX_BLOCK_IR as u32 } else { 12 };
             for _ in 0..steps {
-                let choice = lcg(&mut rng) % 10;
+                let choice = lcg(&mut rng) % 16;
                 let ir = match choice {
+                    10 => Ir::LoadState((lcg(&mut rng) % 4) as u8),
+                    11 if depth >= 1 => Ir::StoreState((lcg(&mut rng) % 4) as u8),
+                    12 if depth >= 1 => Ir::AbsI,
+                    13 if depth >= 2 => Ir::MinI,
+                    14 if depth >= 2 => Ir::MaxI,
+                    15 if depth >= 3 => Ir::ClampI,
                     0 => Ir::PushConst((lcg(&mut rng) % consts.len() as u32) as u16),
                     1 => Ir::LoadLocal((lcg(&mut rng) % 4) as u8),
                     2 if depth >= 1 => Ir::StoreLocal((lcg(&mut rng) % 4) as u8),
@@ -951,9 +1116,11 @@ mod tests {
                 };
                 // Update the model depth exactly as compile()/reference() will.
                 depth += match ir {
-                    Ir::PushConst(_) | Ir::LoadLocal(_) => 1,
+                    Ir::PushConst(_) | Ir::LoadLocal(_) | Ir::LoadState(_) => 1,
                     Ir::StoreLocal(_) | Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => -1,
-                    Ir::NegI | Ir::TeeLocal(_) => 0,
+                    Ir::StoreState(_) | Ir::MinI | Ir::MaxI => -1,
+                    Ir::ClampI => -2,
+                    Ir::NegI | Ir::TeeLocal(_) | Ir::AbsI => 0,
                     Ir::Pop(n) => -(n as i32),
                 };
                 block.push(ir);
@@ -963,9 +1130,7 @@ mod tests {
             let locals_in: Vec<i32> = (0..4).map(|_| lcg(&mut rng) as i32).collect();
 
             // Reference.
-            let mut rstack = stack_in.clone();
-            let mut rlocals = locals_in.clone();
-            reference(&block, &mut rstack, &mut rlocals, &consts);
+            let (rstack, rlocals) = run_ref(&block, &stack_in, &locals_in, &consts);
 
             // JIT via emulator.
             let (jstack, jlocals) = run_jit(&block, &stack_in, &locals_in, &consts);
@@ -1007,9 +1172,7 @@ mod tests {
             }
             let stack_in: Vec<i32> = (0..start_depth).map(|_| lcg(&mut rng) as i32).collect();
             let locals_in: Vec<i32> = (0..4).map(|_| lcg(&mut rng) as i32).collect();
-            let mut rstack = stack_in.clone();
-            let mut rlocals = locals_in.clone();
-            reference(&block, &mut rstack, &mut rlocals, &consts);
+            let (rstack, rlocals) = run_ref(&block, &stack_in, &locals_in, &consts);
             let (jstack, jlocals) = run_jit(&block, &stack_in, &locals_in, &consts);
             assert_eq!(rstack, jstack, "stack mismatch for block {block:?}");
             assert_eq!(rlocals, jlocals, "locals mismatch for block {block:?}");

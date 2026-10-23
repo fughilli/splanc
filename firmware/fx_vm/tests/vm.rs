@@ -981,7 +981,7 @@ fn fill_local_zeros_locals_each_invocation() {
 /// so this Rust `extern "C"` fn exercises the interpreter's JitCall dispatch +
 /// sp/pc bookkeeping with the SAME ABI the generated segment uses. (`fx_jit`'s
 /// own tests separately prove the emitted machine code matches these semantics.)
-unsafe extern "C" fn seg_add_consts(stack: *mut i32, _locals: *mut i32, consts: *const i32) {
+unsafe extern "C" fn seg_add_consts(stack: *mut i32, _locals: *mut i32, consts: *const i32, _state: *mut i32) {
     *stack = (*consts).wrapping_add(*consts.add(1));
 }
 
