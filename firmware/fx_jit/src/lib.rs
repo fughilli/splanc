@@ -219,8 +219,23 @@ struct BlockMeta {
     min_depth: i32,
 }
 
+/// Scratch registers the register-cached codegen may hold stack values in: the
+/// caller-saved temporaries plus a3-a7 (a0-a2 are the ABI bases).
+const POOL: [u32; 12] = [5, 6, 7, 28, 29, 30, 31, 13, 14, 15, 16, 17];
+/// Model depths a block can reach: [`MAX_BLOCK_IR`] ops each move it by at most
+/// one slot, except `Pop(n)`, which only lowers it (bounded by the access check).
+const DEPTH_SPAN: i32 = 4 * MAX_BLOCK_IR as i32;
+
 /// The shared codegen: lower `block` into `sink`. Semantics are identical to the
 /// documented `compile`; only the output destination differs.
+///
+/// Stack slots are cached in registers: a value pushed in the block lives in a
+/// scratch register until it is consumed (or spilled when the 12-register pool
+/// runs out, deepest first), and the values still live at the end are written
+/// back to their stack slots before `ret`. Entry operands (below the entry top
+/// of stack) are read from memory when first consumed. The interpreter sees the
+/// same stack and locals as with the old one-load-one-store-per-op code; slots
+/// above the final depth are dead to it either way.
 fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
     use rv32::*;
     let mut depth: i32 = 0; // slots relative to the entry top-of-stack
@@ -230,12 +245,90 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
     let stack_off = |k: i32| k * 4;
     let fits = |off: i32| (IMM12_MIN..=IMM12_MAX).contains(&off);
 
+    // `slot[k + DEPTH_SPAN]`: the register caching model-depth k, or 0 (= in
+    // memory). `busy[i]` marks POOL[i] in use.
+    let mut slot = [0u32; (2 * DEPTH_SPAN + 1) as usize];
+    let mut busy = [false; POOL.len()];
+    let idx = |k: i32| -> Option<usize> {
+        let i = k + DEPTH_SPAN;
+        (0..=2 * DEPTH_SPAN).contains(&i).then_some(i as usize)
+    };
+
     macro_rules! emit {
         ($w:expr) => {
             if !sink.emit($w) {
                 return None;
             }
         };
+    }
+    macro_rules! free {
+        ($r:expr) => {{
+            let r: u32 = $r;
+            if let Some(i) = POOL.iter().position(|&p| p == r) {
+                busy[i] = false;
+            }
+        }};
+    }
+    // A free scratch register; spills the deepest cached slot when none is.
+    macro_rules! alloc {
+        () => {{
+            let r = match busy.iter().position(|b| !b) {
+                Some(i) => {
+                    busy[i] = true;
+                    POOL[i]
+                }
+                None => {
+                    let mut k = min_depth.min(0) - 1;
+                    let mut found = None;
+                    while k < depth {
+                        k += 1;
+                        if let Some(i) = idx(k) {
+                            if slot[i] != 0 {
+                                found = Some((k, i));
+                                break;
+                            }
+                        }
+                    }
+                    let (k, i) = found?;
+                    let r = slot[i];
+                    let off = stack_off(k);
+                    if !fits(off) {
+                        return None;
+                    }
+                    emit!(sw(r, A0, off));
+                    slot[i] = 0;
+                    r // stays busy: handed to the caller
+                }
+            };
+            r
+        }};
+    }
+    // Pop the top slot into a register the caller owns (load it if in memory).
+    macro_rules! pop_reg {
+        () => {{
+            depth -= 1;
+            let i = idx(depth)?;
+            if slot[i] != 0 {
+                let r = slot[i];
+                slot[i] = 0;
+                r
+            } else {
+                let off = stack_off(depth);
+                if !fits(off) {
+                    return None;
+                }
+                let r = alloc!();
+                emit!(lw(r, A0, off));
+                r
+            }
+        }};
+    }
+    macro_rules! push_reg {
+        ($r:expr) => {{
+            let i = idx(depth)?;
+            slot[i] = $r;
+            depth += 1;
+        }};
     }
 
     for op in block {
@@ -249,96 +342,106 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
             Ir::Pop(_) => depth, // touches nothing
         };
         min_depth = min_depth.min(access);
+        if !fits(stack_off(access)) || idx(access).is_none() {
+            return None;
+        }
 
         match *op {
-            Ir::PushConst(idx) => {
-                let coff = idx as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(coff) || !fits(soff) {
+            Ir::PushConst(cidx) => {
+                let coff = cidx as i32 * 4;
+                if !fits(coff) || !fits(stack_off(depth)) {
                     return None;
                 }
-                emit!(lw(T0, A2, coff));
-                emit!(sw(T0, A0, soff));
-                depth += 1;
+                let r = alloc!();
+                emit!(lw(r, A2, coff));
+                push_reg!(r);
             }
-            Ir::LoadLocal(slot) => {
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(loff) || !fits(soff) {
+            Ir::LoadLocal(lslot) => {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) || !fits(stack_off(depth)) {
                     return None;
                 }
-                emit!(lw(T0, A1, loff));
-                emit!(sw(T0, A0, soff));
-                depth += 1;
+                let r = alloc!();
+                emit!(lw(r, A1, loff));
+                push_reg!(r);
             }
-            Ir::StoreLocal(slot) => {
-                depth -= 1;
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(loff) || !fits(soff) {
+            Ir::StoreLocal(lslot) => {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) {
                     return None;
                 }
-                emit!(lw(T0, A0, soff));
-                emit!(sw(T0, A1, loff));
+                let r = pop_reg!();
+                emit!(sw(r, A1, loff));
+                free!(r);
             }
-            Ir::TeeLocal(slot) => {
+            Ir::TeeLocal(lslot) => {
                 // Copy the top of stack to local[slot], leaving it on the stack.
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth - 1);
-                if !fits(loff) || !fits(soff) {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) {
                     return None;
                 }
-                emit!(lw(T0, A0, soff));
-                emit!(sw(T0, A1, loff));
+                let r = pop_reg!();
+                emit!(sw(r, A1, loff));
+                push_reg!(r);
             }
             Ir::AddI | Ir::SubI | Ir::MulI => {
-                let a = stack_off(depth - 2);
-                let b = stack_off(depth - 1);
-                if !fits(a) || !fits(b) {
-                    return None;
-                }
-                emit!(lw(T0, A0, a));
-                emit!(lw(T1, A0, b));
+                let b = pop_reg!();
+                let a = pop_reg!();
                 emit!(match *op {
-                    Ir::AddI => add(T0, T0, T1),
-                    Ir::SubI => sub(T0, T0, T1),
-                    _ => mul(T0, T0, T1),
+                    Ir::AddI => add(a, a, b),
+                    Ir::SubI => sub(a, a, b),
+                    _ => mul(a, a, b),
                 });
-                emit!(sw(T0, A0, a));
-                depth -= 1;
+                free!(b);
+                push_reg!(a);
             }
             Ir::NegI => {
-                let a = stack_off(depth - 1);
-                if !fits(a) {
-                    return None;
-                }
-                emit!(lw(T0, A0, a));
-                emit!(sub(T0, ZERO, T0));
-                emit!(sw(T0, A0, a));
+                let a = pop_reg!();
+                emit!(sub(a, ZERO, a));
+                push_reg!(a);
             }
             Ir::MulFix(frac) => {
                 if !(1..=31).contains(&frac) {
                     return None;
                 }
-                let a = stack_off(depth - 2);
-                let b = stack_off(depth - 1);
-                if !fits(a) || !fits(b) {
-                    return None;
-                }
                 // (a*b) >> frac, low 32 bits of the 64-bit signed product:
                 //   (low >>u frac) | (high <<u (32-frac)).
-                emit!(lw(T0, A0, a));
-                emit!(lw(T1, A0, b));
-                emit!(mul(T2, T0, T1)); // low 32
-                emit!(mulh(T0, T0, T1)); // high 32 (signed)
-                emit!(srli(T2, T2, frac as u32));
-                emit!(slli(T0, T0, 32 - frac as u32));
-                emit!(or(T0, T2, T0));
-                emit!(sw(T0, A0, a));
-                depth -= 1;
+                let b = pop_reg!();
+                let a = pop_reg!();
+                let lo = alloc!();
+                emit!(mul(lo, a, b)); // low 32
+                emit!(mulh(a, a, b)); // high 32 (signed)
+                emit!(srli(lo, lo, frac as u32));
+                emit!(slli(a, a, 32 - frac as u32));
+                emit!(or(a, lo, a));
+                free!(lo);
+                free!(b);
+                push_reg!(a);
             }
-            Ir::Pop(n) => depth -= n as i32,
+            Ir::Pop(n) => {
+                for _ in 0..n {
+                    depth -= 1;
+                    let i = idx(depth)?;
+                    if slot[i] != 0 {
+                        free!(slot[i]);
+                        slot[i] = 0;
+                    }
+                }
+            }
         }
+    }
+    // Write back every value still cached in a register below the final depth.
+    let mut k = min_depth.min(0);
+    while k < depth {
+        let i = idx(k)?;
+        if slot[i] != 0 {
+            let off = stack_off(k);
+            if !fits(off) {
+                return None;
+            }
+            emit!(sw(slot[i], A0, off));
+        }
+        k += 1;
     }
     emit!(ret());
     Some(BlockMeta { net_delta: depth, min_depth })
@@ -577,10 +680,27 @@ pub fn plan_blocks_into(
     plans: &mut [PlanOut],
     seg_code: &mut [u32],
 ) -> usize {
+    plan_blocks_into_consts(code, is_target, plans, seg_code, usize::MAX)
+}
+
+/// [`plan_blocks_into`], skipping any block that reads a const-pool index at or
+/// above `n_consts` (the firmware mirrors only the first `n_consts` words for
+/// the segments, so a large pool no longer disables the JIT for the whole
+/// program).
+pub fn plan_blocks_into_consts(
+    code: &[u8],
+    is_target: &mut [bool],
+    plans: &mut [PlanOut],
+    seg_code: &mut [u32],
+    n_consts: usize,
+) -> usize {
     let mut count = 0usize;
     let mut cursor = 0usize;
     scan_blocks(code, is_target, |start, end, irs| {
         if count >= plans.len() {
+            return;
+        }
+        if irs.iter().any(|ir| matches!(*ir, Ir::PushConst(i) if i as usize >= n_consts)) {
             return;
         }
         if let Some(meta) = compile_into(irs, &mut seg_code[cursor..]) {
@@ -805,13 +925,15 @@ mod tests {
     fn jit_matches_reference_over_random_blocks() {
         let mut rng = 0x1234_5678_9abc_def0u64;
         let consts: Vec<i32> = (0..8).map(|i| (i - 3) * 37).collect();
-        for _ in 0..4000 {
+        for _ in 0..20000 {
             // Build a random VALID straight-line block (tracks depth so ops never
             // underflow), starting from a small random stack.
             let start_depth = (lcg(&mut rng) % 3) as i32;
             let mut depth = start_depth;
             let mut block: Vec<Ir> = Vec::new();
-            let steps = 1 + lcg(&mut rng) % 12;
+            // Up to the planner's block cap, so long blocks exercise the 12-
+            // register pool running out (spills) as well as short ones.
+            let steps = 1 + lcg(&mut rng) % if lcg(&mut rng) % 4 == 0 { MAX_BLOCK_IR as u32 } else { 12 };
             for _ in 0..steps {
                 let choice = lcg(&mut rng) % 10;
                 let ir = match choice {
@@ -851,6 +973,55 @@ mod tests {
             assert_eq!(rstack, jstack, "stack mismatch for block {block:?}");
             assert_eq!(rlocals, jlocals, "locals mismatch for block {block:?}");
         }
+    }
+
+    #[test]
+    fn deep_blocks_spill_and_match_the_reference() {
+        // Push past the 12-register pool, then fold it back down: every push
+        // beyond 12 spills the deepest cached slot; the result must still match.
+        let mut rng = 0x0bad_cafe_u64;
+        let consts: Vec<i32> = (0..8).map(|i| 1000 * i - 3500).collect();
+        for _ in 0..2000 {
+            let start_depth = (lcg(&mut rng) % 4) as i32;
+            let pushes = 13 + lcg(&mut rng) % 18;
+            let mut block = Vec::new();
+            for _ in 0..pushes {
+                block.push(if lcg(&mut rng) % 2 == 0 {
+                    Ir::PushConst((lcg(&mut rng) % 8) as u16)
+                } else {
+                    Ir::LoadLocal((lcg(&mut rng) % 4) as u8)
+                });
+            }
+            let mut depth = start_depth + pushes as i32;
+            while block.len() < MAX_BLOCK_IR && depth >= 2 {
+                block.push(match lcg(&mut rng) % 4 {
+                    0 => Ir::AddI,
+                    1 => Ir::SubI,
+                    2 => Ir::MulI,
+                    _ => Ir::MulFix(1 + (lcg(&mut rng) % 31) as u8),
+                });
+                depth -= 1;
+                if lcg(&mut rng) % 5 == 0 {
+                    block.push(Ir::TeeLocal((lcg(&mut rng) % 4) as u8));
+                }
+            }
+            let stack_in: Vec<i32> = (0..start_depth).map(|_| lcg(&mut rng) as i32).collect();
+            let locals_in: Vec<i32> = (0..4).map(|_| lcg(&mut rng) as i32).collect();
+            let mut rstack = stack_in.clone();
+            let mut rlocals = locals_in.clone();
+            reference(&block, &mut rstack, &mut rlocals, &consts);
+            let (jstack, jlocals) = run_jit(&block, &stack_in, &locals_in, &consts);
+            assert_eq!(rstack, jstack, "stack mismatch for block {block:?}");
+            assert_eq!(rlocals, jlocals, "locals mismatch for block {block:?}");
+        }
+    }
+
+    #[test]
+    fn register_caching_shrinks_the_code() {
+        // a*b + c over locals: the old codegen did a load+store per op (5 ops,
+        // ~14 words); cached, it is 3 loads, 2 ALU ops, 1 write-back and ret.
+        let s = compile(&[Ir::LoadLocal(0), Ir::LoadLocal(1), Ir::MulI, Ir::LoadLocal(2), Ir::AddI]).unwrap();
+        assert_eq!(s.code.len(), 7, "{:08x?}", s.code);
     }
 
     #[test]

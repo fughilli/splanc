@@ -28,7 +28,7 @@ use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
 use ledmapper_fps::{FpsController, MAX_FPS};
-use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
+use ledmapper_fx_jit::{plan_blocks_into_consts, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
     Program, Rgb as Rgb8, Vm as FxVm,
@@ -314,10 +314,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 
     // Aligned i32 mirror of the const pool (the segments' `a2` base).
     let craw = prog.consts_raw();
-    let n_consts = craw.len() / 4;
-    if n_consts > MAX_JIT_CONSTS {
-        return;
-    }
+    // Mirror at most MAX_JIT_CONSTS words; blocks that read past them are
+    // skipped by the planner instead of the whole program going uncompiled.
+    let n_consts = (craw.len() / 4).min(MAX_JIT_CONSTS);
     let consts = &mut *addr_of_mut!(FX_JIT_CONSTS);
     for i in 0..n_consts {
         consts[i] = i32::from_le_bytes([craw[i * 4], craw[i * 4 + 1], craw[i * 4 + 2], craw[i * 4 + 3]]);
@@ -338,7 +337,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         for t in targets.iter_mut() {
             *t = false;
         }
-        plan_blocks_into(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region)
+        plan_blocks_into_consts(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region, n_consts)
     };
     FX_JIT_DIAG_PLANS = n as u32;
     if n == 0 {
