@@ -1207,3 +1207,45 @@ fn unit_u8_matches_float_epilogue() {
     }
     assert_eq!(bad, 0);
 }
+
+/// The integer float<->fixed conversions are bit-exact with the float forms
+/// they replace (`(x * 2^frac) as i32`, `a as f32 / 2^frac`) for every frac the
+/// VM can see. Strided over all f32 bit patterns plus every exponent edge.
+#[test]
+fn fix_conversions_match_float_forms() {
+    let check = |b: u32| {
+        let x = f32::from_bits(b);
+        for frac in [0u32, 6, 14, 16, 24, 30, 31] {
+            let want = (x * (1u32 << frac) as f32) as i32;
+            assert_eq!(f32_to_fix(x, frac), want, "f32_to_fix({x:e} = {b:#x}, {frac})");
+        }
+    };
+    let mut b: u32 = 0;
+    loop {
+        check(b);
+        match b.checked_add(4099) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+    for e in 0u32..256 {
+        for m in [0u32, 1, 2, 0x3f_ffff, 0x40_0000, 0x7f_fffe, 0x7f_ffff] {
+            check((e << 23) | m);
+            check(0x8000_0000 | (e << 23) | m);
+        }
+    }
+    let mut a: i32 = i32::MIN;
+    loop {
+        for frac in [0u32, 6, 14, 16, 24, 30, 31] {
+            let want = a as f32 / (1u32 << frac) as f32;
+            assert_eq!(fix_to_f32(a, frac).to_bits(), want.to_bits(), "fix_to_f32({a}, {frac})");
+        }
+        match a.checked_add(65_521) {
+            Some(n) => a = n,
+            None => break,
+        }
+    }
+    for a in [-1, 0, 1, i32::MAX, i32::MIN + 1, 1 << 24, (1 << 24) + 1, -(1 << 24) - 1] {
+        assert_eq!(fix_to_f32(a, 16).to_bits(), (a as f32 / 65536.0).to_bits());
+    }
+}

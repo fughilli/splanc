@@ -115,12 +115,17 @@ const N_DECKS: usize = 2;
 const DECK_A_IDX: usize = 0;
 const DECK_B_IDX: usize = 1;
 
-/// One deck's loaded effect: the `.fxb` (the parsed Program borrows it fresh each
-/// call), its VM, which context mirrors it reads, its identity and its keypoint
+/// One deck's loaded effect: the `.fxb` and its parsed Program (cached at load),
+/// its VM, which context mirrors it reads, its identity and its keypoint
 /// blend state.
 struct DeckState {
     bytes: [u8; FX_MAX_BYTES],
     len: usize,
+    /// `bytes[..len]` parsed once at load (after the JIT patch), so the per-LED
+    /// shade and per-frame update don't re-parse the header on every call. It
+    /// borrows `bytes` (static storage): fx_load clears it before rewriting the
+    /// bytes and fx_clear drops it.
+    prog: Option<Program<'static>>,
     vm: Option<FxVm>,
     /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
     /// the effect (loaded, validated) without taking over rendering.
@@ -155,6 +160,7 @@ impl DeckState {
     const EMPTY: DeckState = DeckState {
         bytes: [0; FX_MAX_BYTES],
         len: 0,
+        prog: None,
         vm: None,
         active: false,
         uses_ctxfix: false,
@@ -444,6 +450,7 @@ unsafe fn deck_b_claim() -> *mut DeckState {
     if FX_AUX_OWNER != AuxOwner::DeckB {
         core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
         addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).prog).write(None);
         addr_of_mut!((*p).shade_led).write(None);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
@@ -612,7 +619,9 @@ fn mm_sat(m: f32) -> i16 {
 /// when the loaded effect reads them), so this never grows the resident cache.
 #[inline]
 fn q16_16(x: f32) -> i32 {
-    (x * 65536.0) as i32
+    // Bit-exact with `(x * 65536.0) as i32`, in integer ops (~15 cycles instead
+    // of a soft mul + f32->i32, ~165): the per-LED fixed mirrors take seven.
+    ledmapper_fx_vm::f32_to_fix(x, 16)
 }
 
 // -- the per-LED store: sized at boot for the CONFIGURED strip -----------------
@@ -4026,6 +4035,7 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     uniform_pool::bind(d, prog.manifest);
     (*p).shade_led = None;
     *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).prog = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
     (*p).vm = Some(FxVm::new());
@@ -4075,6 +4085,9 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
             fx_push_graph(vm);
         }
     }
+    // Parse the resident copy once, after the JIT patch (the bytes don't change
+    // again until the next load or clear).
+    (*p).prog = Program::parse(core::slice::from_raw_parts((*p).bytes.as_ptr(), (*p).len)).ok();
     FX_ROOM_READY = false;
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
     fps_invalidate();
@@ -4099,6 +4112,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 unsafe fn fx_clear(d: usize) {
     fps_invalidate();
     if d == DECK_A_IDX {
+        DECK_A.prog = None;
         DECK_A.len = 0;
         DECK_A.active = false;
         *addr_of_mut!(DECK_A.vm) = None;
@@ -4113,6 +4127,7 @@ unsafe fn fx_clear(d: usize) {
         perf_reset_ring();
     } else if let Some(p) = deck(DECK_B_IDX) {
         (*p).vm = None;
+        (*p).prog = None;
         (*p).len = 0;
         FX_AUX_OWNER = AuxOwner::Free;
         DECK_A.arena_off = 0;
@@ -4431,8 +4446,7 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     if !(*p).renders() {
         return None;
     }
-    let bytes = &(*p).bytes[..(*p).len];
-    let prog = Program::parse(bytes).ok()?;
+    let prog = (*p).prog.as_ref()?;
     let vm = (*p).vm.as_mut()?;
     // A keypoint morph moves the uniforms first, so this frame's update and
     // shade see the same in-between position (out of line: rarely running).
@@ -4441,13 +4455,13 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     }
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (oc, c) = vm.run_update_counted(&prog, f, &fx_budget());
+        let (oc, c) = vm.run_update_counted(prog, f, &fx_budget());
         FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
         FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
         oc
     } else {
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
-        vm.run_update_bounded(&prog, f, &fx_budget())
+        vm.run_update_bounded(prog, f, &fx_budget())
     })
 }
 
@@ -4466,11 +4480,11 @@ unsafe fn fx_advance_morph(p: *mut DeckState, dt_s: f32) {
 // second hot code block per LED cost several percent through the flash cache).
 #[inline(always)]
 unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> Option<Rgb8> {
-    let bytes = &(*p).bytes[..(*p).len];
     // &mut: run_shade writes the VM's resident scratch (stack/locals) in place
     // instead of allocating per LED (FUG-122 framing hill-climb).
     let vm = (*p).vm.as_mut()?;
-    let prog = Program::parse(bytes).ok()?;
+    // Parsed once at load (DeckState::prog), not per LED.
+    let prog = (*p).prog.as_ref()?;
     // Borrow the frame context lm_fx_update built for this frame (shared by both
     // decks), so `time`/`dt`/`frame` are the same as update() and nothing
     // frame-wide is rebuilt per LED. Before the first update() of a fresh
@@ -4528,14 +4542,14 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
-        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(&prog, f, led, &fx_budget());
+        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(prog, f, led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(k.instrs);
         if k.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = k.stack_max;
         }
         (c, outcome)
     } else {
-        vm.run_shade_bounded(&prog, f, led, &fx_budget())
+        vm.run_shade_bounded(prog, f, led, &fx_budget())
     };
     (outcome == Outcome::Ok).then_some(c)
 }

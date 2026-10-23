@@ -352,6 +352,56 @@ pub mod gq {
 
 pub const FIX_ONE: i32 = 1 << 16;
 
+/// `(x * 2^frac) as i32` — truncating toward zero, saturating, NaN to 0 — with
+/// integer ops only, bit-exact with the float expression for `frac <= 31`.
+/// The C6 has no FPU: the float form is a soft `__mulsf3` plus `__fixsfsi`
+/// (~165 cycles); this is ~15. Used for the Q16.16 context mirrors and the
+/// float-to-fixed opcodes. Public so the firmware and native code paths share it.
+#[inline]
+pub fn f32_to_fix(x: f32, frac: u32) -> i32 {
+    let b = x.to_bits();
+    let neg = (b as i32) < 0;
+    let e = ((b >> 23) & 0xff) as i32;
+    if e == 0 {
+        return 0; // zero or subnormal: |x * 2^frac| < 1
+    }
+    if e == 0xff {
+        if b & 0x7f_ffff != 0 {
+            return 0; // NaN
+        }
+        return if neg { i32::MIN } else { i32::MAX };
+    }
+    let m = (b & 0x7f_ffff) | 0x80_0000;
+    // |x * 2^frac| = m * 2^sh, and m >= 2^23.
+    let sh = e - 150 + frac as i32;
+    let mag = if sh >= 8 {
+        return if neg { i32::MIN } else { i32::MAX }; // >= 2^31
+    } else if sh >= 0 {
+        m << sh
+    } else if sh > -32 {
+        m >> -sh
+    } else {
+        0
+    };
+    if neg {
+        (mag as i32).wrapping_neg()
+    } else {
+        mag as i32
+    }
+}
+
+/// `a as f32 / 2^frac`, bit-exact, without the soft-float divide: the int to
+/// float conversion rounds once, and dividing by a power of two only lowers the
+/// exponent (the result stays normal for `frac <= 31`).
+#[inline]
+pub fn fix_to_f32(a: i32, frac: u32) -> f32 {
+    let f = a as f32;
+    if a == 0 {
+        return f;
+    }
+    f32::from_bits(f.to_bits() - (frac << 23))
+}
+
 /// Fraction bits for the narrow fixed formats (FUG-10). `fixed8` is Q1.6
 /// (s1.1.6) and `fixed16` is Q1.14 (s1.1.14); both range [-2, 2). These are the
 /// `frac` operand the `*FixN` / transcendental opcodes carry.
@@ -2486,11 +2536,11 @@ fn run(
             }
             Op::Fix2F => {
                 let a = popi!();
-                push!(a as f32 / FIX_ONE as f32);
+                push!(fix_to_f32(a, 16));
             }
             Op::F2Fix => {
                 let a = pop!();
-                pushi!((a * FIX_ONE as f32) as i32);
+                pushi!(f32_to_fix(a, 16));
             }
             Op::I2Fix => {
                 let a = popi!();
@@ -2767,13 +2817,13 @@ fn run(
                 let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
-                push!(a as f32 / (1u32 << frac) as f32);
+                push!(fix_to_f32(a, frac & 31));
             }
             Op::FixFromF => {
                 let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = pop!();
-                pushi!((a * (1u32 << frac) as f32) as i32);
+                pushi!(f32_to_fix(a, frac & 31));
             }
             Op::SinFix => {
                 let frac = frac!(cb!(pc));
