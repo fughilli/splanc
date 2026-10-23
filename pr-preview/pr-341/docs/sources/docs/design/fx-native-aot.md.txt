@@ -105,10 +105,10 @@ lowering or after signature checks) re-checks it independently:
   and exits with `Outcome::Budget` when it goes negative. That is the VM's
   deterministic instruction budget, counted per block. Loop headers also poll
   the wall-time deadline flag. The existing watchdog stays the backstop.
-- **Execution region:** the image is copied into its region while the region
-  is plain data memory. A spare PMP entry (TOR, entries 3–4, the ones the JIT
-  found free) then maps it **R+X without W**. Unlike the JIT's 2 KB region,
-  which is RWX, the native region keeps W^X.
+- **Execution region (W^X):** the image is copied into its region while the
+  region is plain data memory, then it is made **R+X without W** for the run and
+  restored to writable when the effect is swapped out. See "Where native code
+  lives" for how that is enforced in machine mode.
 
 The sandbox doesn't depend on who produced the code. That matters for the
 trust options below: option (a) relies on it entirely, and options (b) and (c)
@@ -116,14 +116,80 @@ use it as defence in depth.
 
 ## Where native code lives
 
+**Owner decision (2026-10-23): native code is allocated from the FX arena — the
+same memory budget the decks' programs and buffers already use — never from the
+general heap, so it can never starve TLS or anything else. littlefs only stores
+a (future, stage 3) prebuilt image; nothing ever executes from flash, and there
+is no new flash partition.** If a translated image doesn't fit the deck's arena
+share, that effect stays on the VM (never heap).
+
+The FX arena is the 24 KB `FX_ARENA` split per deck (deck A from the front, deck
+B from the back; `firmware/player_app/ffi.rs`). A native effect carves a code
+sub-region at the **top** of its deck's share; the effect's buffers grow from
+the bottom. `fx_aot::arena::plan_region` does the placement and refuses (→ VM)
+when the code plus the buffers don't fit.
+
+### Making arena memory executable and non-writable (W^X), in machine mode
+
+This firmware runs entirely in machine mode, where a RISC-V PMP entry that
+matches grants permission but a **locked** entry is needed to *deny* a
+permission — and a locked entry can't be changed until reset, so it can't be
+re-protected on an effect swap. An **unlocked** PMP entry therefore can grant
+execute (as the JIT's region already does) but cannot take write away.
+
+The ESP32-C6 also has Espressif's **PMA** checker (CSRs `0xBC0+n`/`0xBD0+n`, 16
+entries; IDF uses 0–12 locked and leaves 13–15 free). A hardware probe
+(`firmware/fx_perf_bench:pma_probe`, run on rig-3 `c6-117d10`, 2026-10-23)
+confirmed that an **unlocked PMA entry (TOR, R+X, no W) denies a machine-mode
+store** to a RAM window while an unlocked PMP entry grants execute on it:
+
+```
+fxpb-pma boot ... win=0x4080e000
+fxpb pma exec=42 about_to_store      # executed from the window: OK
+Guru Meditation Error: ... (Store access fault)  MCAUSE=0x7 MTVAL=0x4080e800
+```
+
+So an arena code region gets **execute from a PMP entry + no-write from a PMA
+entry**, both unlocked so they are cleared on swap/park to restore write for the
+allocator:
+
+| region        | PMP entry (execute) | PMA entry (R+X, no W) |
+|---------------|---------------------|-----------------------|
+| deck A code   | 3 (NAPOT)           | 13 (NAPOT)            |
+| deck B code   | 4 (NAPOT)           | 14 (NAPOT)            |
+
+Two NAPOT regions (not one TOR pair) so **both decks can be protected at once
+during a crossfade**. NAPOT needs a power-of-two size and a size-aligned base,
+so `FX_ARENA` is aligned to the max code region and `plan_region` rounds the
+image up to a power-of-two sub-region (4-byte PMP/PMA granularity otherwise). On
+an effect swap or when a deck parks, the firmware clears that deck's PMP+PMA
+entries before reusing the memory, and re-programs them for the new image.
+
+### Placement options considered
+
 | option | RAM | flash | notes |
 |---|---|---|---|
-| bench image: static 32 KB region | 32 KB | 0 | stages 1–2 only (no radios) |
-| netstack: heap block sized to the image, PMP TOR | image size (est. 2–12 KB), only while a native effect is loaded | 0 | competes with the TLS heap. Min free heap is ~29 KB at 1024 LEDs/channel (#335), so the device must refuse native (VM fallback) below a free-heap floor. The limit is advertised in `board_caps` |
-| netstack: dedicated flash partition, mapped through the I-cache | 0 | 64 KB | needs a partition-table change, which is another USB migration (docs/design/ota.md "One-time migration"). The study's P3 measurement shows flash execution isn't the bottleneck. **Needs owner sign-off** |
+| **arena sub-region (chosen)** | within the deck's existing arena share, 0 extra | 0 | never touches general heap; VM fallback if it doesn't fit |
+| bench image: static 32 KB region | 32 KB | 0 | stages 1–2 measurement only (no radios); RWX is fine there |
+| ~~netstack heap block~~ | ~~image size~~ | 0 | rejected by the owner: must not take general heap |
+| ~~dedicated flash partition~~ | 0 | ~~64 KB~~ | rejected: no new partition; nothing executes from flash |
 
-Recommendation: the heap-TOR region first, gated on free heap, with no layout
-change. Do the flash partition only alongside the next planned USB migration.
+### Netstack wiring (stage 3 is a wiring job)
+
+The allocation math and the W^X mechanism exist now; the netstack port wires
+them into `fx_load`/`fx_clear`/park in `ffi.rs`:
+
+1. on load, after the device lowers (option a) or verifies a signed image
+   (option b), call `fx_aot::arena::plan_region(deck_off, deck_len,
+   arena_need(prog), image_bytes)`; `None` ⇒ keep the VM;
+2. copy the image words into the arena at `code_off`, `fence.i`;
+3. program this deck's PMP entry (3 or 4) R+X and PMA entry (13 or 14) no-W over
+   `[base, base+code_size)` using `arena::pmp_napot_addr` (the same CSR writes
+   as `pma_probe`/the JIT arming);
+4. on swap/park (`fx_clear`, deck re-point), clear that deck's PMP+PMA entries
+   first so the bump allocator can reuse the bytes writably;
+5. the buffers of that deck live below `buffers_avail`, so `arena_need` must
+   leave room — `plan_region` enforces it.
 
 ## Trust: who may produce native code the device runs?
 
@@ -235,8 +301,8 @@ first-party images. Don't build (c).**
 2. **If (b):** generate the `native` key (`ota_sign keygen`) and add the
    `FX_NATIVE_SIGNING_KEY` CI secret. Keep it separate from
    `OTA_SIGNING_KEY`. Agree that it is never valid for images or epochs.
-3. **Code placement:** the heap-TOR region gated on free heap (recommended, no
-   layout change), or a 64 KB flash partition (needs a USB migration).
+3. **Code placement:** DECIDED (2026-10-23) — the FX arena, never general heap;
+   no flash partition; littlefs stores only. See "Where native code lives".
 
 ## Plan
 
@@ -257,11 +323,43 @@ first-party images. Don't build (c).**
    - Small additive change: some private `fx_vm` maths helpers become `pub`,
      so helpers call the interpreter's exact functions.
 3. **Stage 3 (after the decision):**
-   - for (a), on-device lowering in `player_app` behind a capability bit and a
-     free-heap floor;
+   - for (a), on-device lowering in `player_app`, carving the arena sub-region
+     and programming PMP+PMA per "Netstack wiring" (the allocation math and the
+     W^X mechanism already exist);
    - for (b), the `.fxn` container, a signer, the app-side keyring and verify,
      and the test-key variant (mirrors OTA's `_testkey`/`--trust=test`).
 4. **Stage 4:** a Thumb-2 backend for future boards.
 
-Status, measured numbers and what is not verified are kept at the end of this
-doc as the stages land.
+## Status, measured numbers, and what is not verified
+
+**Stages 1–2 landed (this PR).** What exists and is verified:
+
+- `firmware/fx_aot` lowers verified `.fxb` to position-independent RV32IM: static
+  CFG depth analysis, slots 0–7 in `s2..s9` and deeper slots in a frame, inline
+  integer/fixed/control codegen, one generic helper for the float / transcendental
+  / colour / vector / convert / context / uniform / indexed ops (reusing `fx_vm`'s
+  own now-`pub` maths), a per-block budget decrement, and a VM fallback for any
+  unsupported opcode. Buffers, textures, graph queries, flood, I2C, the JIT op and
+  **user functions** are not yet lowered (they fall back to the VM); user-function
+  cloning per entry depth is the main stage-2 follow-up.
+- The instruction-stream **verifier** re-checks every emitted image.
+- A **differential test** (`fx_aot_diff_test`) proves native output equals the VM
+  **bit-for-bit** over the compiler corpus + embedded study/agent effects, 64 LED
+  positions × 3 frames. 24 effects lower and match; 5 fall back. The bench's
+  on-C6 `aot` pass cross-checks every LED against the VM on the real helix.
+- The **arena W^X scheme is hardware-confirmed** (the PMA probe above).
+
+**Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):**
+
+<!-- AOT_RESULTS -->
+_On-C6 AOT cycle numbers are captured by `firmware/fx_perf_bench` (`fxpb aot …`
+lines) and filled in here from a rig run; see the PR body for the latest table._
+
+**Not verified / out of scope here:**
+
+- No on-device lowering or signing yet (stage 3): the bench embeds **host**-lowered
+  images and runs them unsigned from a static RWX region. The netstack arena +
+  PMP/PMA path is implemented as allocation math + a hardware-proven mechanism but
+  not yet wired into `ffi.rs`.
+- User functions, buffers/textures, graph/flood and I2C drivers stay on the VM.
+- The bench region is RWX (no radios); W^X applies to the netstack arena path.

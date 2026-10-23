@@ -320,7 +320,7 @@
 <h1>Native (AOT) effect execution on the ESP32-C6<a class="headerlink" href="#native-aot-effect-execution-on-the-esp32-c6" title="Link to this heading">¶</a></h1>
 <p>Status: <strong>design + stages 1–2 in progress</strong> (this PR). Stage 3 (signing and an
 on-device loader) waits on the trust decision below. Background numbers:
-<a class="reference internal" href="#fx-perf-study.md"><span class="xref myst">fx-perf-study.md</span></a>, “Q1 — the native ceiling” and “A native
+<a class="reference internal" href="fx-perf-study.html"><span class="std std-doc">fx-perf-study.md</span></a>, “Q1 — the native ceiling” and “A native
 AOT path: feasibility”.</p>
 <section id="why">
 <h2>Why<a class="headerlink" href="#why" title="Link to this heading">¶</a></h2>
@@ -449,10 +449,10 @@ outside the fixed prologue and epilogue.</p></li>
 and exits with <code class="docutils literal notranslate"><span class="pre">Outcome::Budget</span></code> when it goes negative. That is the VM’s
 deterministic instruction budget, counted per block. Loop headers also poll
 the wall-time deadline flag. The existing watchdog stays the backstop.</p></li>
-<li><p><strong>Execution region:</strong> the image is copied into its region while the region
-is plain data memory. A spare PMP entry (TOR, entries 3–4, the ones the JIT
-found free) then maps it <strong>R+X without W</strong>. Unlike the JIT’s 2 KB region,
-which is RWX, the native region keeps W^X.</p></li>
+<li><p><strong>Execution region (W^X):</strong> the image is copied into its region while the
+region is plain data memory, then it is made <strong>R+X without W</strong> for the run and
+restored to writable when the effect is swapped out. See “Where native code
+lives” for how that is enforced in machine mode.</p></li>
 </ul>
 <p>The sandbox doesn’t depend on who produced the code. That matters for the
 trust options below: option (a) relies on it entirely, and options (b) and (c)
@@ -460,6 +460,66 @@ use it as defence in depth.</p>
 </section>
 <section id="where-native-code-lives">
 <h2>Where native code lives<a class="headerlink" href="#where-native-code-lives" title="Link to this heading">¶</a></h2>
+<p><strong>Owner decision (2026-10-23): native code is allocated from the FX arena — the
+same memory budget the decks’ programs and buffers already use — never from the
+general heap, so it can never starve TLS or anything else. littlefs only stores
+a (future, stage 3) prebuilt image; nothing ever executes from flash, and there
+is no new flash partition.</strong> If a translated image doesn’t fit the deck’s arena
+share, that effect stays on the VM (never heap).</p>
+<p>The FX arena is the 24 KB <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> split per deck (deck A from the front, deck
+B from the back; <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>). A native effect carves a code
+sub-region at the <strong>top</strong> of its deck’s share; the effect’s buffers grow from
+the bottom. <code class="docutils literal notranslate"><span class="pre">fx_aot::arena::plan_region</span></code> does the placement and refuses (→ VM)
+when the code plus the buffers don’t fit.</p>
+<section id="making-arena-memory-executable-and-non-writable-w-x-in-machine-mode">
+<h3>Making arena memory executable and non-writable (W^X), in machine mode<a class="headerlink" href="#making-arena-memory-executable-and-non-writable-w-x-in-machine-mode" title="Link to this heading">¶</a></h3>
+<p>This firmware runs entirely in machine mode, where a RISC-V PMP entry that
+matches grants permission but a <strong>locked</strong> entry is needed to <em>deny</em> a
+permission — and a locked entry can’t be changed until reset, so it can’t be
+re-protected on an effect swap. An <strong>unlocked</strong> PMP entry therefore can grant
+execute (as the JIT’s region already does) but cannot take write away.</p>
+<p>The ESP32-C6 also has Espressif’s <strong>PMA</strong> checker (CSRs <code class="docutils literal notranslate"><span class="pre">0xBC0+n</span></code>/<code class="docutils literal notranslate"><span class="pre">0xBD0+n</span></code>, 16
+entries; IDF uses 0–12 locked and leaves 13–15 free). A hardware probe
+(<code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench:pma_probe</span></code>, run on rig-3 <code class="docutils literal notranslate"><span class="pre">c6-117d10</span></code>, 2026-10-23)
+confirmed that an <strong>unlocked PMA entry (TOR, R+X, no W) denies a machine-mode
+store</strong> to a RAM window while an unlocked PMP entry grants execute on it:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">fxpb</span><span class="o">-</span><span class="n">pma</span> <span class="n">boot</span> <span class="o">...</span> <span class="n">win</span><span class="o">=</span><span class="mh">0x4080e000</span>
+<span class="n">fxpb</span> <span class="n">pma</span> <span class="n">exec</span><span class="o">=</span><span class="mi">42</span> <span class="n">about_to_store</span>      <span class="c1"># executed from the window: OK</span>
+<span class="n">Guru</span> <span class="n">Meditation</span> <span class="n">Error</span><span class="p">:</span> <span class="o">...</span> <span class="p">(</span><span class="n">Store</span> <span class="n">access</span> <span class="n">fault</span><span class="p">)</span>  <span class="n">MCAUSE</span><span class="o">=</span><span class="mh">0x7</span> <span class="n">MTVAL</span><span class="o">=</span><span class="mh">0x4080e800</span>
+</pre></div>
+</div>
+<p>So an arena code region gets <strong>execute from a PMP entry + no-write from a PMA
+entry</strong>, both unlocked so they are cleared on swap/park to restore write for the
+allocator:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>region</p></th>
+<th class="head"><p>PMP entry (execute)</p></th>
+<th class="head"><p>PMA entry (R+X, no W)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>deck A code</p></td>
+<td><p>3 (NAPOT)</p></td>
+<td><p>13 (NAPOT)</p></td>
+</tr>
+<tr class="row-odd"><td><p>deck B code</p></td>
+<td><p>4 (NAPOT)</p></td>
+<td><p>14 (NAPOT)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Two NAPOT regions (not one TOR pair) so <strong>both decks can be protected at once
+during a crossfade</strong>. NAPOT needs a power-of-two size and a size-aligned base,
+so <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> is aligned to the max code region and <code class="docutils literal notranslate"><span class="pre">plan_region</span></code> rounds the
+image up to a power-of-two sub-region (4-byte PMP/PMA granularity otherwise). On
+an effect swap or when a deck parks, the firmware clears that deck’s PMP+PMA
+entries before reusing the memory, and re-programs them for the new image.</p>
+</section>
+<section id="placement-options-considered">
+<h3>Placement options considered<a class="headerlink" href="#placement-options-considered" title="Link to this heading">¶</a></h3>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -470,26 +530,47 @@ use it as defence in depth.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>bench image: static 32 KB region</p></td>
+<tr class="row-even"><td><p><strong>arena sub-region (chosen)</strong></p></td>
+<td><p>within the deck’s existing arena share, 0 extra</p></td>
+<td><p>0</p></td>
+<td><p>never touches general heap; VM fallback if it doesn’t fit</p></td>
+</tr>
+<tr class="row-odd"><td><p>bench image: static 32 KB region</p></td>
 <td><p>32 KB</p></td>
 <td><p>0</p></td>
-<td><p>stages 1–2 only (no radios)</p></td>
+<td><p>stages 1–2 measurement only (no radios); RWX is fine there</p></td>
 </tr>
-<tr class="row-odd"><td><p>netstack: heap block sized to the image, PMP TOR</p></td>
-<td><p>image size (est. 2–12 KB), only while a native effect is loaded</p></td>
+<tr class="row-even"><td><p>~~netstack heap block~~</p></td>
+<td><p>~~image size~~</p></td>
 <td><p>0</p></td>
-<td><p>competes with the TLS heap. Min free heap is ~29 KB at 1024 LEDs/channel (#335), so the device must refuse native (VM fallback) below a free-heap floor. The limit is advertised in <code class="docutils literal notranslate"><span class="pre">board_caps</span></code></p></td>
+<td><p>rejected by the owner: must not take general heap</p></td>
 </tr>
-<tr class="row-even"><td><p>netstack: dedicated flash partition, mapped through the I-cache</p></td>
+<tr class="row-odd"><td><p>~~dedicated flash partition~~</p></td>
 <td><p>0</p></td>
-<td><p>64 KB</p></td>
-<td><p>needs a partition-table change, which is another USB migration (docs/design/ota.md “One-time migration”). The study’s P3 measurement shows flash execution isn’t the bottleneck. <strong>Needs owner sign-off</strong></p></td>
+<td><p>~~64 KB~~</p></td>
+<td><p>rejected: no new partition; nothing executes from flash</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Recommendation: the heap-TOR region first, gated on free heap, with no layout
-change. Do the flash partition only alongside the next planned USB migration.</p>
+</section>
+<section id="netstack-wiring-stage-3-is-a-wiring-job">
+<h3>Netstack wiring (stage 3 is a wiring job)<a class="headerlink" href="#netstack-wiring-stage-3-is-a-wiring-job" title="Link to this heading">¶</a></h3>
+<p>The allocation math and the W^X mechanism exist now; the netstack port wires
+them into <code class="docutils literal notranslate"><span class="pre">fx_load</span></code>/<code class="docutils literal notranslate"><span class="pre">fx_clear</span></code>/park in <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>:</p>
+<ol class="arabic simple">
+<li><p>on load, after the device lowers (option a) or verifies a signed image
+(option b), call <code class="docutils literal notranslate"><span class="pre">fx_aot::arena::plan_region(deck_off,</span> <span class="pre">deck_len,</span> <span class="pre">arena_need(prog),</span> <span class="pre">image_bytes)</span></code>; <code class="docutils literal notranslate"><span class="pre">None</span></code> ⇒ keep the VM;</p></li>
+<li><p>copy the image words into the arena at <code class="docutils literal notranslate"><span class="pre">code_off</span></code>, <code class="docutils literal notranslate"><span class="pre">fence.i</span></code>;</p></li>
+<li><p>program this deck’s PMP entry (3 or 4) R+X and PMA entry (13 or 14) no-W over
+<code class="docutils literal notranslate"><span class="pre">[base,</span> <span class="pre">base+code_size)</span></code> using <code class="docutils literal notranslate"><span class="pre">arena::pmp_napot_addr</span></code> (the same CSR writes
+as <code class="docutils literal notranslate"><span class="pre">pma_probe</span></code>/the JIT arming);</p></li>
+<li><p>on swap/park (<code class="docutils literal notranslate"><span class="pre">fx_clear</span></code>, deck re-point), clear that deck’s PMP+PMA entries
+first so the bump allocator can reuse the bytes writably;</p></li>
+<li><p>the buffers of that deck live below <code class="docutils literal notranslate"><span class="pre">buffers_avail</span></code>, so <code class="docutils literal notranslate"><span class="pre">arena_need</span></code> must
+leave room — <code class="docutils literal notranslate"><span class="pre">plan_region</span></code> enforces it.</p></li>
+</ol>
+</section>
 </section>
 <section id="trust-who-may-produce-native-code-the-device-runs">
 <h2>Trust: who may produce native code the device runs?<a class="headerlink" href="#trust-who-may-produce-native-code-the-device-runs" title="Link to this heading">¶</a></h2>
@@ -621,8 +702,8 @@ decided.</p></li>
 <li><p><strong>If (b):</strong> generate the <code class="docutils literal notranslate"><span class="pre">native</span></code> key (<code class="docutils literal notranslate"><span class="pre">ota_sign</span> <span class="pre">keygen</span></code>) and add the
 <code class="docutils literal notranslate"><span class="pre">FX_NATIVE_SIGNING_KEY</span></code> CI secret. Keep it separate from
 <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code>. Agree that it is never valid for images or epochs.</p></li>
-<li><p><strong>Code placement:</strong> the heap-TOR region gated on free heap (recommended, no
-layout change), or a 64 KB flash partition (needs a USB migration).</p></li>
+<li><p><strong>Code placement:</strong> DECIDED (2026-10-23) — the FX arena, never general heap;
+no flash partition; littlefs stores only. See “Where native code lives”.</p></li>
 </ol>
 </section>
 <section id="plan">
@@ -652,16 +733,48 @@ so helpers call the interpreter’s exact functions.</p></li>
 </li>
 <li><p><strong>Stage 3 (after the decision):</strong></p>
 <ul class="simple">
-<li><p>for (a), on-device lowering in <code class="docutils literal notranslate"><span class="pre">player_app</span></code> behind a capability bit and a
-free-heap floor;</p></li>
+<li><p>for (a), on-device lowering in <code class="docutils literal notranslate"><span class="pre">player_app</span></code>, carving the arena sub-region
+and programming PMP+PMA per “Netstack wiring” (the allocation math and the
+W^X mechanism already exist);</p></li>
 <li><p>for (b), the <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> container, a signer, the app-side keyring and verify,
 and the test-key variant (mirrors OTA’s <code class="docutils literal notranslate"><span class="pre">_testkey</span></code>/<code class="docutils literal notranslate"><span class="pre">--trust=test</span></code>).</p></li>
 </ul>
 </li>
 <li><p><strong>Stage 4:</strong> a Thumb-2 backend for future boards.</p></li>
 </ol>
-<p>Status, measured numbers and what is not verified are kept at the end of this
-doc as the stages land.</p>
+</section>
+<section id="status-measured-numbers-and-what-is-not-verified">
+<h2>Status, measured numbers, and what is not verified<a class="headerlink" href="#status-measured-numbers-and-what-is-not-verified" title="Link to this heading">¶</a></h2>
+<p><strong>Stages 1–2 landed (this PR).</strong> What exists and is verified:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">firmware/fx_aot</span></code> lowers verified <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> to position-independent RV32IM: static
+CFG depth analysis, slots 0–7 in <code class="docutils literal notranslate"><span class="pre">s2..s9</span></code> and deeper slots in a frame, inline
+integer/fixed/control codegen, one generic helper for the float / transcendental
+/ colour / vector / convert / context / uniform / indexed ops (reusing <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>’s
+own now-<code class="docutils literal notranslate"><span class="pre">pub</span></code> maths), a per-block budget decrement, and a VM fallback for any
+unsupported opcode. Buffers, textures, graph queries, flood, I2C, the JIT op and
+<strong>user functions</strong> are not yet lowered (they fall back to the VM); user-function
+cloning per entry depth is the main stage-2 follow-up.</p></li>
+<li><p>The instruction-stream <strong>verifier</strong> re-checks every emitted image.</p></li>
+<li><p>A <strong>differential test</strong> (<code class="docutils literal notranslate"><span class="pre">fx_aot_diff_test</span></code>) proves native output equals the VM
+<strong>bit-for-bit</strong> over the compiler corpus + embedded study/agent effects, 64 LED
+positions × 3 frames. 24 effects lower and match; 5 fall back. The bench’s
+on-C6 <code class="docutils literal notranslate"><span class="pre">aot</span></code> pass cross-checks every LED against the VM on the real helix.</p></li>
+<li><p>The <strong>arena W^X scheme is hardware-confirmed</strong> (the PMA probe above).</p></li>
+</ul>
+<p><strong>Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):</strong></p>
+<!-- AOT_RESULTS -->
+<p><em>On-C6 AOT cycle numbers are captured by <code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench</span></code> (<code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">aot</span> <span class="pre">…</span></code>
+lines) and filled in here from a rig run; see the PR body for the latest table.</em></p>
+<p><strong>Not verified / out of scope here:</strong></p>
+<ul class="simple">
+<li><p>No on-device lowering or signing yet (stage 3): the bench embeds <strong>host</strong>-lowered
+images and runs them unsigned from a static RWX region. The netstack arena +
+PMP/PMA path is implemented as allocation math + a hardware-proven mechanism but
+not yet wired into <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>.</p></li>
+<li><p>User functions, buffers/textures, graph/flood and I2C drivers stay on the VM.</p></li>
+<li><p>The bench region is RWX (no radios); W^X applies to the netstack arena path.</p></li>
+</ul>
 </section>
 </section>
 
@@ -706,7 +819,12 @@ doc as the stages land.</p>
 <li><a class="reference internal" href="#why">Why</a></li>
 <li><a class="reference internal" href="#what-gets-lowered">What gets lowered</a></li>
 <li><a class="reference internal" href="#sandbox-applies-to-every-native-image-signed-or-not">Sandbox (applies to every native image, signed or not)</a></li>
-<li><a class="reference internal" href="#where-native-code-lives">Where native code lives</a></li>
+<li><a class="reference internal" href="#where-native-code-lives">Where native code lives</a><ul>
+<li><a class="reference internal" href="#making-arena-memory-executable-and-non-writable-w-x-in-machine-mode">Making arena memory executable and non-writable (W^X), in machine mode</a></li>
+<li><a class="reference internal" href="#placement-options-considered">Placement options considered</a></li>
+<li><a class="reference internal" href="#netstack-wiring-stage-3-is-a-wiring-job">Netstack wiring (stage 3 is a wiring job)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#trust-who-may-produce-native-code-the-device-runs">Trust: who may produce native code the device runs?</a><ul>
 <li><a class="reference internal" href="#a-device-side-lowering-no-signature-for-user-agent-effects">(a) Device-side lowering: no signature for user/agent effects</a></li>
 <li><a class="reference internal" href="#b-dedicated-native-key-id-prebuilt-first-party-code">(b) Dedicated native key id: prebuilt first-party code</a></li>
@@ -717,6 +835,7 @@ doc as the stages land.</p>
 </li>
 <li><a class="reference internal" href="#decisions-needed-from-the-owner-before-production">Decisions needed from the owner before production</a></li>
 <li><a class="reference internal" href="#plan">Plan</a></li>
+<li><a class="reference internal" href="#status-measured-numbers-and-what-is-not-verified">Status, measured numbers, and what is not verified</a></li>
 </ul>
 </li>
 </ul>
