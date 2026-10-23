@@ -419,6 +419,16 @@ static size_t pending_fx_sel_len = 0;
 static bool fx_sel_dirty = false;
 static uint32_t fx_sel_dirty_at = 0;
 static const uint32_t kFxSelSaveQuietMs = 1500;
+// When the last live-control update (set_uniforms / set_crossfade / blend, committed
+// or not) arrived. The coalesced save is held off until the controls have ALSO been
+// quiet for kFxSelSaveQuietMs: a littlefs write blocks this (network) task for tens of
+// ms, so it must never land in the middle of a knob turn — only once the performer
+// lets go (docs/design/live-control.md).
+static uint32_t fx_live_at = 0;
+// Whether the reply dispatch_plain just produced is a best-effort live-control reply
+// (lm_ws_reply_droppable): the transport may drop it instead of blocking on a full
+// send window.
+static bool g_reply_droppable = false;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -859,6 +869,7 @@ static void queue_fx_sel_save(const uint8_t *data, size_t len) {
 // Called from loop(); one flash write per settled edit, not per slider tick.
 static void flush_fx_sel_save() {
   if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kFxSelSaveQuietMs) return;
+  if (millis() - fx_live_at < kFxSelSaveQuietMs) return;  // controls still moving
   fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
   fx_sel_dirty = false;
 }
@@ -1125,6 +1136,25 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
   xSemaphoreGive(player_mutex);
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
+  g_reply_droppable = false;
+  if (lm_last_was_live_control()) {
+    fx_live_at = millis();
+    // A seq'd live update (the live-control channel): answer with the tiny ControlAck
+    // instead of the legacy playback_state / welcome (persistence above already keyed
+    // on the legacy reply). The ack — and a legacy set_uniforms' playback_state, which
+    // no client awaits — may be dropped by the transport when its send window is full
+    // rather than stall the receive path behind a blocking write.
+    const bool legacy_uniforms = lm_envelope_arm(msg, len) == kArmSetUniforms;
+    if (n > 0) {
+      int32_t a = lm_take_control_ack(tx, sizeof tx);
+      if (a > 0) {
+        n = a;
+        g_reply_droppable = true;
+      } else {
+        g_reply_droppable = legacy_uniforms;
+      }
+    }
+  }
   return (int)n;
 }
 
@@ -1270,10 +1300,13 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
+  g_reply_droppable = false;
   int n = ws_compute_reply(in, len);
   *reply = tx;
   return n;
 }
+
+bool lm_ws_reply_droppable() { return g_reply_droppable; }
 
 // Player-protocol BLE transport bridge (improv_ble_netstack.cpp's player_ble_poll
 // calls this): identical contract to lm_ws_dispatch — one received frame in, the

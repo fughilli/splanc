@@ -56,6 +56,11 @@ uint32_t netstack_rekey_count(void);
 // length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 
+// Whether the reply lm_ws_dispatch just returned is a best-effort live-control reply
+// (a ControlAck, or a legacy set_uniforms' playback_state) that the transport may drop
+// when its send window can't take it, instead of blocking RX behind a full window.
+bool lm_ws_reply_droppable(void);
+
 // PROVIDED BY main.cpp. Persist the active WiFi credentials (NVS "ssid"/"pass", the keys
 // the vendor build uses) — called once a freshly provisioned network has leased. Returns
 // whether both writes succeeded.

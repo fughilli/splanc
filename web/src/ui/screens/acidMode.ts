@@ -106,7 +106,7 @@ export function AcidModeScreen(router: Router): Screen {
   const midiRouter = new MidiRouter((u) => {
     preview?.setUniform(u.slot, u.value);
     const c = appState.client;
-    if (c?.isConnected) c.setUniforms([{ slot: u.slot, value: u.value }]);
+    if (c?.isConnected) c.live.setUniform(u.slot, u.value);
   });
   midiRouter.setEffect(ACID_EFFECT_ID);
 

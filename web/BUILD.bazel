@@ -83,7 +83,9 @@ copy_to_bin(
         "src/net/client.ts",
         "src/net/clocksync.ts",
         "src/net/fxbTextures.ts",
-        "src/net/liveProtocol.ts",  # the live (VJ) protocol, shared with the bridge
+        "src/net/liveControl.ts",  # the client's real-time control channel
+        "src/net/liveProtocol.ts",
+        "src/net/liveSender.ts",  # the live (VJ) protocol, shared with the bridge
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",

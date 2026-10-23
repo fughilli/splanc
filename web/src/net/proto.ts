@@ -116,6 +116,7 @@ const SERVER_ARMS: Record<string, string> = {
   driver_state: "driverState",
   capture_profile: "captureProfile",
   ota_status: "otaStatus",
+  control_ack: "controlAck",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -820,6 +821,13 @@ export interface UploadChunkMessage {
 export interface ChunkAckMessage {
   type: "chunk_ack";
   uploadId: number;
+  seq: number;
+}
+
+/** Reply to a live-control update that carried a `seq` (proto ControlAck,
+ * firmware feature "control_ack"): that update — and all before it — is applied. */
+export interface ControlAckMessage {
+  type: "control_ack";
   seq: number;
 }
 

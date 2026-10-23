@@ -16,7 +16,6 @@ import { Button, toast } from "../kit";
 import type { LedMapperClient } from "../../net/client";
 import type { KeypointInfoFlat } from "../../net/proto";
 import {
-  Throttle,
   defaultKeypointName,
   morphWeights,
   stepKeypoint,
@@ -63,11 +62,15 @@ export function KeypointStrip(opts: KeypointStripOpts): KeypointStrip {
     return c?.isConnected && supportsKeypoints(c.welcome) ? c : null;
   };
 
-  const blendOut = new Throttle<number>((pos) => {
-    const c = live();
-    if (!c || !fromKp || !toKp) return;
-    c.blendKeypoints(morphWeights(pos, fromKp, toKp), { deck });
-  });
+  // A morph-fader move: blendKeypoints rides the client's live-control channel
+  // (the last blend per deck wins, paced on the device), so no throttle here.
+  const blendOut = {
+    push(pos: number): void {
+      const c = live();
+      if (!c || !fromKp || !toKp) return;
+      c.blendKeypoints(morphWeights(pos, fromKp, toKp), { deck });
+    },
+  };
 
   function recall(name: string): void {
     const c = live();

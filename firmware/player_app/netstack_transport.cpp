@@ -1371,6 +1371,16 @@ static bool ws_pump() {
         // connection down (return false) so the poll loop re-listens and frees the slot,
         // rather than silently dropping the reply and holding a dead ESTABLISHED slot.
         // (The reply is the app's writable tx buffer, with headroom — see lm_ws_dispatch.)
+        //
+        // Except a best-effort live-control reply (a ControlAck, or a legacy set_uniforms'
+        // playback_state no client awaits): when the send window can't take it right now,
+        // DROP it, like an unsolicited PerfReport. Blocking in tls_write_all would leave
+        // every frame behind it unread for up to seconds — exactly the input backlog a
+        // knob stream builds (docs/design/live-control.md). A seq'd client whose ack is
+        // dropped times out and sends its next update anyway.
+        if (tn > 0 && reply && lm_ws_reply_droppable() &&
+            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96)
+          tn = 0;
         if (tn > 0 && reply &&
             !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
           return false;
