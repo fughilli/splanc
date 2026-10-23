@@ -74,6 +74,8 @@ export class LiveControl {
   private readonly known = new Map<number, Map<number, number[]>>();
   /** Decks with uncommitted live changes, and when each last changed. */
   private readonly dirtyAt = new Map<number, number>();
+  /** Decks with an idle-commit timer armed. */
+  private readonly commitArmed = new Set<number>();
 
   constructor(
     private readonly host: LiveHost,
@@ -209,12 +211,23 @@ export class LiveControl {
 
   private markDirty(deck: number): void {
     if (!this.persists(deck)) return;
-    const at = this.now();
-    this.dirtyAt.set(deck, at);
+    this.dirtyAt.set(deck, this.now());
+    if (this.commitArmed.has(deck)) return;
+    this.armCommit(deck, this.commitIdleMs);
+  }
+
+  /** One idle timer per deck (not one per move): when it fires early — the deck
+   * moved since — it re-arms for the remainder. */
+  private armCommit(deck: number, ms: number): void {
+    this.commitArmed.add(deck);
     this.schedule(() => {
-      // Only the timer armed by the deck's LAST change commits it.
-      if (this.dirtyAt.get(deck) === at) this.commit(deck);
-    }, this.commitIdleMs);
+      this.commitArmed.delete(deck);
+      const at = this.dirtyAt.get(deck);
+      if (at === undefined) return; // committed (or reset) meanwhile
+      const idle = this.now() - at;
+      if (idle >= this.commitIdleMs) this.commit(deck);
+      else this.armCommit(deck, this.commitIdleMs - idle);
+    }, ms);
   }
 
   private finishFlight(): void {
