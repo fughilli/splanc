@@ -1254,3 +1254,31 @@ fn fix_conversions_match_float_forms() {
         assert_eq!(fix_to_f32(a, 16).to_bits(), (a as f32 / 65536.0).to_bits());
     }
 }
+
+/// The bit-level floorf is bit-exact with the float form it replaced
+/// (`t = x as i32 as f32; if t > x { t - 1.0 } else { t }`), saturation and
+/// NaN included. Strided here; checked exhaustively over all 2^32 inputs when
+/// it was written (as were sinf, fractf, expf and hsv2rgb against the old VM).
+#[test]
+fn floorf_matches_float_form() {
+    let old = |x: f32| {
+        let t = x as i32 as f32;
+        if t > x {
+            t - 1.0
+        } else {
+            t
+        }
+    };
+    let mut b: u32 = 0;
+    loop {
+        let x = f32::from_bits(b);
+        assert_eq!(floorf(x).to_bits(), old(x).to_bits(), "floorf({x:e} = {b:#x})");
+        match b.checked_add(997) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+    for x in [-0.0f32, 0.0, -0.5, 0.5, -1.0, 1.0, -1.5, 2147483520.0, 2147483648.0, -2147483648.0, -2147483904.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        assert_eq!(floorf(x).to_bits(), old(x).to_bits(), "floorf({x:e})");
+    }
+}

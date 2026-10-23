@@ -2617,7 +2617,7 @@ fn run(
             }
             Op::F2I => {
                 let a = pop!();
-                pushi!(a as i32);
+                pushi!(f2i(a));
             }
             Op::Fix2F => {
                 let a = popi!();
@@ -3495,15 +3495,42 @@ fn sqrtf(x: f32) -> f32 {
     x * y // x * rsqrt(x) = sqrt(x)
 }
 
-fn floorf(x: f32) -> f32 {
-    let t = x as i32 as f32;
-    if t > x {
+/// `x as i32` (truncate toward zero, saturating, NaN to 0) in integer ops,
+/// instead of the soft `__fixsfsi` (~110 cycles on the C6).
+#[inline]
+fn f2i(x: f32) -> i32 {
+    f32_to_fix(x, 0)
+}
+
+/// Floor, bit-exact with the original `t = x as i32 as f32; if t > x { t - 1 }`
+/// (including its saturation at ±2^31 and NaN -> 0), but the truncation is a
+/// mantissa mask instead of two soft conversions and a soft compare. Only a
+/// negative non-integer still pays the soft `t - 1.0`.
+pub fn floorf(x: f32) -> f32 {
+    let b = x.to_bits();
+    let e = ((b >> 23) & 0xff) as i32 - 127;
+    let neg = (b as i32) < 0;
+    if e >= 31 {
+        if b & 0x7fff_ffff > 0x7f80_0000 {
+            return 0.0; // NaN
+        }
+        return if neg { -2_147_483_648.0 } else { 2_147_483_648.0 };
+    }
+    let (t, frac) = if e < 0 {
+        (0.0f32, b & 0x7fff_ffff != 0) // |x| < 1 truncates to +0.0
+    } else if e >= 23 {
+        (x, false)
+    } else {
+        let m = 0x007f_ffffu32 >> e;
+        (f32::from_bits(b & !m), b & m != 0)
+    };
+    if neg && frac {
         t - 1.0
     } else {
         t
     }
 }
-fn fractf(x: f32) -> f32 {
+pub fn fractf(x: f32) -> f32 {
     x - floorf(x)
 }
 
@@ -3558,24 +3585,68 @@ const SIN_PHASE_SCALE: f32 = 4_294_967_296.0 / TAU;
 /// ~1e-4 (≪ 1/255, invisible on 8-bit LEDs); device + wasm preview share this
 /// code so they can't drift.
 pub fn sinf(x: f32) -> f32 {
-    let phase = (x * SIN_PHASE_SCALE) as i64 as u32;
+    let phase = f32_wrap_u32(x * SIN_PHASE_SCALE);
     let idx = (phase >> 24) as usize; // 0..=255
-    let frac = (phase & 0x00ff_ffff) as f32 * (1.0 / 16_777_216.0);
+    let frac = u24_unit(phase & 0x00ff_ffff);
     let a = SINF_LUT[idx];
     let b = SINF_LUT[idx + 1]; // idx+1 ≤ 256; the wrap entry avoids a branch
     a + (b - a) * frac
 }
 
+/// `v as i64 as u32` (truncate, saturate to i64, keep the low 32 bits) in
+/// integer ops; the soft `__fixsfdi` it replaces costs more than the sine.
+#[inline]
+fn f32_wrap_u32(v: f32) -> u32 {
+    let b = v.to_bits();
+    let neg = (b as i32) < 0;
+    let e = ((b >> 23) & 0xff) as i32 - 127;
+    if e >= 63 {
+        if b & 0x7fff_ffff > 0x7f80_0000 {
+            return 0; // NaN
+        }
+        return if neg { 0 } else { u32::MAX }; // i64::MIN / i64::MAX, low word
+    }
+    if e < 0 {
+        return 0;
+    }
+    let m = (b & 0x007f_ffff) | 0x0080_0000;
+    let sh = e - 23;
+    let mag = if sh >= 32 {
+        0
+    } else if sh >= 0 {
+        m << sh
+    } else {
+        m >> -sh
+    };
+    if neg {
+        mag.wrapping_neg()
+    } else {
+        mag
+    }
+}
+
+/// `f as f32 * 2^-24` for a 24-bit `f`, exact, built from the bits instead of
+/// a soft int-to-float conversion and a soft multiply.
+#[inline]
+fn u24_unit(f: u32) -> f32 {
+    if f == 0 {
+        return 0.0;
+    }
+    let lz = f.leading_zeros(); // 8..=31
+    let p = 31 - lz; // the leading bit
+    f32::from_bits(((p + 103) << 23) | ((f << (23 - p)) & 0x007f_ffff))
+}
+
 pub fn cosf(x: f32) -> f32 {
     sinf(x + PI * 0.5)
 }
-fn expf(x: f32) -> f32 {
+pub fn expf(x: f32) -> f32 {
     // 2^(x/ln2) via bit manipulation + poly (adequate for decay curves).
     let xln = x * core::f32::consts::LOG2_E; // x / ln2
     let i = floorf(xln);
     let f = xln - i;
     let poly = 1.0 + f * (core::f32::consts::LN_2 + f * (0.2402265 + f * 0.0555041));
-    let bits = ((i as i32).wrapping_add(127) as u32) << 23;
+    let bits = (f2i(i).wrapping_add(127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
 fn logf(x: f32) -> f32 {
@@ -3713,12 +3784,12 @@ pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
     unit_from_hash(h)
 }
 
-fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+pub fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h6 = fractf(h) * 6.0;
     let c = v * s;
     let x = c * (1.0 - (fractf(h6 * 0.5) * 2.0 - 1.0).abs());
     let m = v - c;
-    let (r, g, b) = match h6 as i32 {
+    let (r, g, b) = match f2i(h6) {
         0 => (c, x, 0.0),
         1 => (x, c, 0.0),
         2 => (0.0, c, x),
