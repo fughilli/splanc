@@ -203,3 +203,67 @@ test("confidenceOf colorizes by fit likelihood", () => {
 });
 
 void ({} as CostTable);
+
+// -- R12 (docs/design/fx-perf-study.md, Q3): user functions, guards, branch odds,
+// texture + fixed-context costs ------------------------------------------------
+
+const rel = (v: number): [number, number] => [v & 0xff, (v >> 8) & 0xff];
+
+test("a user-function call is priced at its call site (the callee's body runs per LED)", () => {
+  // 0: Call -> 8 ; 3: Ret 1 ... 8: UnMath sin ×3 ; RetFn
+  const callee = [CODE["UnMath"]!, 0, 1, CODE["UnMath"]!, 0, 1, CODE["UnMath"]!, 0, 1, CODE["RetFn"]!];
+  const code = [CODE["PushConst"]!, 0, 0, CODE["Call"]!, ...rel(8), CODE["Ret"]!, 1, ...callee];
+  const w = walkEntry(parseFxb(fxb(code, 0xffff, 0)).code, 0);
+  assert.equal(w.max["UnMath:sin"], 3, "the callee's three sines count");
+  assert.equal(w.opsMax, 3 + callee.length - 6, "and their dispatch (PushConst, Call, Ret + 4 callee ops)");
+});
+
+test("an early-return guard (`if (led.seg < 0) return black`) prices the continuation", () => {
+  // LoadCtx seg ; BrFalse -> body (skips the arm) ; arm: 3× PushConst + Ret 3 ; body: sin(led.pos) ; Ret
+  const arm = [CODE["PushConst"]!, 0, 0, CODE["PushConst"]!, 0, 0, CODE["PushConst"]!, 0, 0, CODE["Ret"]!, 3];
+  const body = [CODE["LoadCtx"]!, 3, CODE["UnMath"]!, 0, 3, CODE["Ret"]!, 3];
+  const code = [CODE["LoadCtx"]!, 6, CODE["BrFalse"]!, ...rel(arm.length), ...arm, ...body];
+  const e = estimateFrameTime({ bytecode: fxb(code, 0xffff, 0), ledCount: 100, table: defaultCostTable() });
+  const plain = estimateFrameTime({
+    bytecode: fxb([CODE["LoadCtx"]!, 6, CODE["Pop"]!, 1, ...body], 0xffff, 0),
+    ledCount: 100,
+    table: defaultCostTable(),
+  });
+  // The guarded effect costs what the full effect costs (± the compare), not half.
+  assert.ok(Math.abs(e.phaseSplit.shadeMs / plain.phaseSplit.shadeMs - 1) < 0.05, `${e.phaseSplit.shadeMs} vs ${plain.phaseSplit.shadeMs}`);
+});
+
+test("an equality-guarded arm (`if (i % 16 == slot)`) is weighted as rare in the point estimate", () => {
+  // LoadCtx idx ; PushConst ; CmpI eq ; BrFalse -> skip an expensive arm (pow ×4)
+  const powArm = Array.from({ length: 4 }, () => [CODE["LoadCtx"]!, 7, CODE["LoadCtx"]!, 7, CODE["BinMath"]!, 2, 1, CODE["Pop"]!, 1]).flat();
+  const mk = (kind: number): Uint8Array =>
+    fxb(
+      [CODE["LoadCtx"]!, 4, CODE["PushConst"]!, 0, 0, CODE["CmpI"]!, kind, CODE["BrFalse"]!, ...rel(powArm.length), ...powArm, CODE["PushConst"]!, 0, 0, CODE["Ret"]!, 1],
+      0xffff,
+      0,
+    );
+  const t = defaultCostTable();
+  const eq = estimateFrameTime({ bytecode: mk(4), ledCount: 100, table: t });
+  const lt = estimateFrameTime({ bytecode: mk(0), ledCount: 100, table: t });
+  // Same band (min/max are probability-free), different point estimates.
+  assert.equal(eq.errorBand.highMs, lt.errorBand.highMs);
+  assert.ok(eq.totalMs < lt.totalMs, `${eq.totalMs} < ${lt.totalMs}`);
+  // `<` keeps the 50/50 midpoint of the band (before the residual widening:
+  // 15% + 5% for control flow).
+  const mid = (lt.errorBand.lowMs / (1 - 0.2) + lt.errorBand.highMs / (1 + 0.2)) / 2;
+  assert.ok(Math.abs(lt.totalMs / mid - 1) < 0.01, `${lt.totalMs} vs ${mid}`);
+});
+
+test("texture samples and fixed-context reads carry their measured costs", () => {
+  const t = defaultCostTable();
+  assert.ok(costFor(t.costs, "SampleTex", 0) >= 3000, "a bilinear float sample is ~4k cycles, not a cheap op");
+  // FLAG_USES_CTXFIX (0x02): the per-LED Q16 mirrors.
+  const code = [CODE["LoadCtxFix"]!, 7, 0, 16, CODE["Ret"]!, 1];
+  const a = fxb(code, 0xffff, 0);
+  const b = fxb(code, 0xffff, 0);
+  b[5] = 0x02;
+  const ea = estimateFrameTime({ bytecode: a, ledCount: 100, table: t });
+  const eb = estimateFrameTime({ bytecode: b, ledCount: 100, table: t });
+  const perLed = ((eb.phaseSplit.shadeMs - ea.phaseSplit.shadeMs) / 1000) * t.cpuHz / 100;
+  assert.ok(Math.abs(perLed - costFor(t.costs, "@ctxfix", 0)) < 1, String(perLed));
+});

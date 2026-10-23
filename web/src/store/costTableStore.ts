@@ -98,6 +98,10 @@ export const BUDGET_MS = 1000 / 30; // 33.3ms, one 30fps frame
 export const DEFAULT_COSTS: CostMap = {
   // per-op interpreter dispatch (counted once per executed op, not per lane)
   "@dispatch": 69,
+  // per-LED Q16.16 context mirrors the firmware builds when an effect reads
+  // fixed(led.*) (FLAG_USES_CTXFIX) — 7 soft-float converts per LED; fitted
+  // on the fx-perf-study bench set (fixed effects with mostly-skipped branches)
+  "@ctxfix": 700,
   // loads / stores / stack: dispatch + a per-word slot move
   PushConst: 0,
   LoadUniform: 18,
@@ -232,7 +236,10 @@ export const DEFAULT_COSTS: CostMap = {
   GraphQuery: 30,
   LoadBuf: 60,
   StoreBuf: 60,
-  SampleTex: 400,
+  // Bilinear, edge-clamped, dequantized float sample: ~9 soft-float ops of
+  // setup + ~5 per element. MEASURED on the bench (fx-perf study texture.fx,
+  // vec3 f32 16x16: the 400 seed under-read it 2.5x); scalar textures cost less.
+  SampleTex: 4300,
   PaintTex: 80,
   FloodFrom: 2000,
 };
