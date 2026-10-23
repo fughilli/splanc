@@ -2098,10 +2098,26 @@ fn run(
                 // LLVM hoists this arm's loop-invariant soft-float (1.0 - led.s,
                 // int->f32 of idx/seg/frame, ...) into run()'s prologue, so EVERY
                 // invocation paid it whether or not the program reads them.
-                let mut v = [0.0f32; 3];
-                let k = load_ctx(id, frame, led, graph, dist, &mut v);
-                for x in v.iter().take(k) {
-                    push!(*x);
+                // The hottest ids are plain f32 copies (no conversion LLVM could
+                // hoist), so they stay inline and skip the call.
+                match id {
+                    C_LED_POS => {
+                        push!(led.pos[0]);
+                        push!(led.pos[1]);
+                        push!(led.pos[2]);
+                    }
+                    C_LED_UV => {
+                        push!(led.uv[0]);
+                        push!(led.uv[1]);
+                    }
+                    C_TIME => push!(frame.time),
+                    _ => {
+                        let mut v = [0.0f32; 3];
+                        let k = load_ctx(id, frame, led, graph, dist, &mut v);
+                        for x in v.iter().take(k) {
+                            push!(*x);
+                        }
+                    }
                 }
             }
             Op::Add | Op::Sub | Op::Mul | Op::Div => {
