@@ -34,6 +34,7 @@ py_test(
         "test_device_cert_core.py",
         "test_e2e_phases.py",
         "test_fx_bench.py",
+        "test_fx_debug_core.py",
         "test_hardware_config_pattern.py",
         "test_heap_census.py",
         "test_improv.py",

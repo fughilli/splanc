@@ -235,8 +235,13 @@ rust_test(
 rust_test(
     name = "fx_debug_test",
     srcs = ["tests/fx_debug.rs"],
+    # The host replay CLI the HITL gate runs, checked here against the same snapshot.
+    data = ["//firmware/fx_vm:fx_replay"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "100663296"},
+    env = {
+        "FX_REPLAY": "$(rootpath //firmware/fx_vm:fx_replay)",
+        "RUST_MIN_STACK": "100663296",
+    },
     deps = [
         ":player_ffi_host",
         "//firmware/fx_vm",

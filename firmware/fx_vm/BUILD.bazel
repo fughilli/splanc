@@ -7,7 +7,7 @@ render identically. Host-tested with hand-assembled bytecode.
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
 load("//tools/transitions:opt.bzl", "opt_files")
 
@@ -43,6 +43,17 @@ rust_test(
 rust_test(
     name = "fx_vm_no_panic_test",
     srcs = ["tests/no_panic.rs"],
+    edition = "2021",
+    deps = [":fx_vm"],
+)
+
+# The FX debugger's host replay as a CLI (docs/design/fx-debugger.md): restore a
+# device snapshot on this VM, replay one frame, write the output / state / buffers
+# (+ one LED's locals) for a byte-exact diff. Used by the HITL gate
+# //pi/hitl/harness:fx_debug_netstack (no browser / node on the lane).
+rust_binary(
+    name = "fx_replay",
+    srcs = ["bin/fx_replay.rs"],
     edition = "2021",
     deps = [":fx_vm"],
 )

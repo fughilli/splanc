@@ -192,6 +192,36 @@ effect:
 `rollback_effect` restores whatever ran before your last deploy;
 `set_effect {effect_id: "off"}` blacks out the effect.
 
+## When the fixture doesn't look like the preview — the FX debugger
+
+Firmware with the `fx_debug` feature lets you pause and inspect the effect engine
+on the device (design: docs/design/fx-debugger.md):
+
+1. `compare_with_preview` — pauses the engine, steps ONE frame and replays it on
+   the host with the same VM, program, uniforms, state, buffers and per-LED
+   inputs, then diffs every LED. Read `verdict` + `findings`:
+   - `engine`: the device computed something else from the same inputs (a
+     VM / JIT / firmware bug) — `locals` shows the first divergent LEDs' VM
+     locals, device vs host, and a `JIT:` finding when the device's JIT and
+     interpreter disagree. Report it as a firmware bug with that evidence.
+   - `inputs`: the preview feeds shade() different LED positions / topology /
+     uv / LED order than the device (e.g. 24-bit stored positions, a sparse map
+     indexed differently). The input-driven `locals` name what the difference
+     moves — fix the effect to be robust to it (avoid floor/step/hash on raw
+     positions) or the map.
+   - `output_stage`: brightness / the colour LUT change the strip's colours;
+     the wire colour order is always listed (swapped hues = the strip's real
+     order differs).
+   - `match`: the engine is faithful — look at the physical side.
+2. Test a hypothesis on the paused frame: `snapshot_fx {led: N}` re-runs one LED
+   and returns its VM locals (named, since you deployed the source this
+   session; else pass `source`), `include: ["inputs", "buffers"]` adds per-LED
+   inputs and buffer values; `step_fx {to_time: T}` renders exactly the frame
+   at effect time T (or `{frames, dt}`) so you can line it up with
+   `preview_effect {times: [T]}`.
+3. `resume_fx` when done. A paused fixture also resumes on its own after
+   `hold_seconds` (default 120) or a few seconds after you disconnect.
+
 ## Changing effect without a hard cut — crossfade
 
 When the user is watching (a mood change, a show), switch effects with
