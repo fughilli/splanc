@@ -356,6 +356,16 @@ export const BUCKETED_OPCODES: Record<string, string> = {
   // lookup; the miss/record path runs once per LED per map.
   LoadLedCache: "per-LED memo load (cache hit = dispatch + lookup); seeded",
   StoreLedCache: "per-LED memo record (once per LED per map); seeded",
+  // fx-perf-study R8 operand fusion (fx_compiler opt.rs). The calibration
+  // programs compile --no-opt, so these never reach the fit: the walker prices
+  // each as the plain ops it replaced (costModel.ts fusedFeatures) plus ONE
+  // dispatch, which is exactly the saving.
+  BinTop: "R8 fusion: const/local/state/uniform operand + arith; priced as its parts, one dispatch",
+  BinPair: "R8 fusion: two operand loads + arith; priced as its parts, one dispatch",
+  PushConsts: "R8 fusion: a run of 2-4 PushConst; priced as n PushConst, one dispatch",
+  LoadCtxLanes: "R8 fusion: LoadCtx + component Swizzle; priced as both, one dispatch",
+  MulAdd: "R8 fusion: Mul n + Add n; priced as both, one dispatch",
+  Scale: "vec x scalar: the R8 optimizer rewrites Swizzle-broadcast + Mul to Scale; priced by its key/fallback",
 };
 
 /**
@@ -363,11 +373,20 @@ export const BUCKETED_OPCODES: Record<string, string> = {
  * they can't appear in a user effect's histogram. Documented for completeness.
  */
 export const EXCLUDED_OPCODES: Record<string, string> = {
-  Scale: "unreachable: the compiler lowers vec×scalar to Swizzle-broadcast + Mul, never Scale",
   Pop: "unreachable: `_POP` in fx_compiler — the compiler never emits an explicit stack pop",
   JitCall: "never in compiled bytecode: the firmware JIT patches it over a hot block at load",
   I2cWrite: "sensor-driver I2C write (FUG-107): only in driver poll(), never in an effect",
   I2cRead: "sensor-driver I2C read (FUG-107): only in driver poll(), never in an effect",
+  _reserved110: "reserved opcode byte (110..=119), never emitted",
+  _reserved111: "reserved opcode byte (110..=119), never emitted",
+  _reserved112: "reserved opcode byte (110..=119), never emitted",
+  _reserved113: "reserved opcode byte (110..=119), never emitted",
+  _reserved114: "reserved opcode byte (110..=119), never emitted",
+  _reserved115: "reserved opcode byte (110..=119), never emitted",
+  _reserved116: "reserved opcode byte (110..=119), never emitted",
+  _reserved117: "reserved opcode byte (110..=119), never emitted",
+  _reserved118: "reserved opcode byte (110..=119), never emitted",
+  _reserved119: "reserved opcode byte (110..=119), never emitted",
 };
 
 /**

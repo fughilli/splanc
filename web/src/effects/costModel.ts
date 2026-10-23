@@ -156,6 +156,24 @@ export const OPCODE_NAMES = [
   // per-LED memo bracket (fx_compiler memo.rs)
   "LoadLedCache", // 108
   "StoreLedCache", // 109
+  // 110..=119 reserved (never emitted): the walker stops on them like any
+  // unknown byte.
+  "_reserved110",
+  "_reserved111",
+  "_reserved112",
+  "_reserved113",
+  "_reserved114",
+  "_reserved115",
+  "_reserved116",
+  "_reserved117",
+  "_reserved118",
+  "_reserved119",
+  // fx-perf-study R8 operand-fused superinstructions (fx_compiler opt.rs)
+  "BinTop", // 120
+  "BinPair",
+  "PushConsts",
+  "LoadCtxLanes",
+  "MulAdd", // 124
 ] as const;
 
 export type OpcodeName = (typeof OPCODE_NAMES)[number];
@@ -227,6 +245,8 @@ interface OpMeta {
   call?: boolean;
   /** True for Ret/RetFn — ends a linear run. */
   ret?: boolean;
+  /** True for PushConsts: 2 * n bytes of const indices follow the n byte. */
+  constTail?: boolean;
   /** Operand offset of the i16 branch rel when it isn't 0 (BrCmpI's kind byte
    * precedes it; LoadLedCache's slot,n). */
   relAt?: number;
@@ -348,7 +368,55 @@ const OP_META: Record<string, OpMeta> = {
   I2cRead: { operandBytes: 1, lanesAt: -1 },
   LoadLedCache: { operandBytes: 4, lanesAt: 1, branch: true, relAt: 2, memoSkip: true },
   StoreLedCache: { operandBytes: 2, lanesAt: 1 },
+  // R8 fused ops: priced as the plain ops they replace minus their dispatches
+  // (see `fusedFeatures`), so fitted tables need no new keys.
+  BinTop: { operandBytes: 3, lanesAt: -1 }, // mode, u16
+  BinPair: { operandBytes: 5, lanesAt: -1 }, // mode, u16, u16
+  PushConsts: { operandBytes: 1, lanesAt: -1, constTail: true }, // n, n x u16
+  LoadCtxLanes: { operandBytes: 4, lanesAt: -1 }, // id, src, k, m
+  MulAdd: { operandBytes: 1, lanesAt: 0 },
 };
+
+const FUSED_SRC = ["PushConst", "LoadLocal", "LoadState", "LoadUniform"] as const;
+const FUSED_ARITH = ["Add", "Sub", "Mul", "Div"] as const;
+const FUSED_ARITH_INT = ["AddI", "SubI", "MulI", "MulFix"] as const;
+
+/**
+ * The cost features of an R8 operand-fused opcode at `at`: the plain ops it
+ * stands for (each still priced by its own key), WITHOUT their dispatches —
+ * the caller adds one `@dispatch` for the fused op. Undefined for other ops.
+ */
+export function fusedFeatures(name: string, code: Uint8Array, at: number): Array<[string, number]> | undefined {
+  const b = (k: number) => code[at + 1 + k] ?? 0;
+  const arith = (mode: number) => ((mode & 0x40) !== 0 ? FUSED_ARITH_INT : FUSED_ARITH)[mode & 3]!;
+  switch (name) {
+    case "BinTop":
+      return [
+        [FUSED_SRC[(b(0) >> 2) & 3]!, 1],
+        [arith(b(0)), 1],
+      ];
+    case "BinPair":
+      return [
+        [FUSED_SRC[(b(0) >> 2) & 3]!, 1],
+        [FUSED_SRC[(b(0) >> 4) & 3]!, 1],
+        [arith(b(0)), 1],
+      ];
+    case "PushConsts":
+      return [["PushConst", Math.max(1, b(0))]];
+    case "LoadCtxLanes":
+      return [
+        ["LoadCtx", 1],
+        ["Swizzle", 1],
+      ];
+    case "MulAdd":
+      return [
+        ["Mul", Math.max(1, b(0))],
+        ["Add", Math.max(1, b(0))],
+      ];
+    default:
+      return undefined;
+  }
+}
 
 /** Histogram key for the interpreter's per-opcode dispatch (fetch/decode/
  * budget/jump) — counted once per executed op, NOT lane-weighted. Priced by
@@ -522,7 +590,7 @@ export function walkEntry(
 
       const opCode = code[p]!;
       const name = OPCODE_NAMES[opCode];
-      if (name === undefined) break; // unknown byte — stop this run
+      if (name === undefined || name.startsWith("_")) break; // unknown byte — stop this run
       const meta = OP_META[name]!;
       const operandStart = p + 1;
       // vector lane weight from the size operand (scalar cost × lane count).
@@ -537,8 +605,11 @@ export function walkEntry(
       // the cost map can price each builtin individually. `costFor` falls the
       // sub-key back to the family base for tables that only price the family.
       const histName = mathFeature(name, code[operandStart]);
-      addOp(min, histName, weight);
-      addOp(max, histName, weight);
+      const fused = fusedFeatures(name, code, p);
+      for (const [feat, w] of fused ?? [[histName, weight] as [string, number]]) {
+        addOp(min, feat, w);
+        addOp(max, feat, w);
+      }
       addOp(min, DISPATCH_FEATURE, 1);
       addOp(max, DISPATCH_FEATURE, 1);
 
@@ -548,6 +619,7 @@ export function walkEntry(
         const dstN = code[operandStart + 1] ?? 0;
         next += dstN;
       }
+      if (meta.constTail) next += 2 * (code[operandStart] ?? 0);
 
       if (meta.ret) break; // Ret / RetFn ends this run
 

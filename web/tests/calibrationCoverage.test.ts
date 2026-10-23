@@ -83,8 +83,9 @@ test("excluded opcodes are real, unreachable, and documented", () => {
     assert.ok(all.has(op), `${op} not an opcode`);
     assert.ok(why.length > 10, `${op} needs a real rationale`);
   }
-  // Scale + Pop are the known compiler-unreachable opcodes.
-  assert.ok("Scale" in EXCLUDED_OPCODES && "Pop" in EXCLUDED_OPCODES);
+  // Pop is the known compiler-unreachable opcode. (Scale left this list when
+  // the optimizer started rewriting Swizzle-broadcast + Mul to it.)
+  assert.ok("Pop" in EXCLUDED_OPCODES && "Scale" in BUCKETED_OPCODES);
 });
 
 test("bucketed opcodes each carry a documented rationale", () => {
