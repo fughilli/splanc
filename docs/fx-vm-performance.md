@@ -57,12 +57,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1535.69 | 9598.06  | yes    |
 | UnMath:tan    | 967.83  | 6048.93  | yes    |
 | BinMath:atan2 | 953.87  | 5961.72  | yes    |
 | Hsv2Rgb       | 848.99  | 5306.17  | yes    |
 | UnMath:log    | 778.30  | 4864.36  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.79  | 3848.69  | yes    |
@@ -77,7 +79,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 438.86  | 2742.86  | yes    |
 | Palette       | 415.90  | 2599.40  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.68  | 2297.99  | yes    |
 | Distance      | 363.99  | 2274.97  | yes    |
 | BinMath:mod   | 363.29  | 2270.53  | yes    |
@@ -334,12 +335,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1536.12 | 9600.72  | yes    |
 | UnMath:tan    | 967.55  | 6047.19  | yes    |
 | BinMath:atan2 | 953.57  | 5959.82  | yes    |
 | Hsv2Rgb       | 848.70  | 5304.35  | yes    |
 | UnMath:log    | 777.50  | 4859.41  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.51  | 3846.95  | yes    |
@@ -354,7 +357,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 438.35  | 2739.67  | yes    |
 | Palette       | 415.86  | 2599.12  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.64  | 2297.77  | yes    |
 | Distance      | 363.83  | 2273.96  | yes    |
 | BinMath:mod   | 363.49  | 2271.82  | yes    |
