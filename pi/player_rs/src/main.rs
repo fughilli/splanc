@@ -18,6 +18,7 @@ mod sink;
 use ledmapper_player::Player;
 use ledmapper_player_rs::render::{render_fpga, tick_fpga, RecordingSink, Sink};
 use ledmapper_player_rs::server::{self, SharedPlayer};
+use ledmapper_player_rs::{health, ota};
 use ledmapper_player_rs::session;
 use ledmapper_player_rs::wire::{matched_speed_hz, FpgaCodec, GRB};
 use sink::SpidevSink;
@@ -63,6 +64,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "pi-player-0001",
         std::cmp::max(start_leds as u32, 1),
     )));
+    // Over-the-air updates (docs/design/max-ota.md): this player answers the OTA arms
+    // from the MAX updater's state and pulls its image; the welcome says so. The
+    // .fxb format stays 0 (unchanged: the Pi's VM path predates the field).
+    player.lock().unwrap().set_features(&["ota", "ota_pull"], 0);
+    let _ = server::OTA.set(ota::Ota::on_this_pi());
+    // The health file the updater's trial check reads (--health-file "" disables it).
+    let health_file = get("--health-file", "/run/ledmapper/health");
+    if !health_file.is_empty() && !dry {
+        health::spawn_writer(health_file.into(), epoch);
+    }
     if start_leds > 0 {
         session::start_mapping(
             &mut player.lock().unwrap(),
@@ -116,7 +127,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         (f.config, f.stream)
                     };
                     let _ = sink.write(&config);
-                    let _ = sink.write(&stream);
+                    if sink.write(&stream).is_ok() {
+                        health::TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     std::thread::sleep(period);
                 }
             })?;

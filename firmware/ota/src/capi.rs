@@ -188,7 +188,7 @@ pub unsafe extern "C" fn ota_parse_client(frame: *const u8, len: usize, out: *mu
                 m.t0 = t0;
             }
             ClientArm::GetTlsInfo => m.arm = wire::CM_GET_TLS_INFO,
-            ClientArm::OtaBegin { manifest, allow_downgrade, key_epoch } => {
+            ClientArm::OtaBegin { manifest, allow_downgrade, key_epoch, .. } => {
                 m.arm = wire::CM_OTA_BEGIN;
                 m.epoch_off = if key_epoch.is_empty() { 0 } else { off(key_epoch) };
                 m.epoch_len = key_epoch.len() as u32;
@@ -257,6 +257,7 @@ unsafe fn status<'a>(s: &'a OtaStatusC) -> Status<'a> {
         key_epoch: s.key_epoch,
         revoked_keys: s.revoked_keys,
         security_floor: s.security_floor,
+        board: "",
     }
 }
 

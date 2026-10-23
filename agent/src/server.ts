@@ -37,7 +37,7 @@ import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } f
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
-import { canaryRollout, resolvePackage } from "./firmware";
+import { canaryRollout, resolvePackage, type ResolvedPackage } from "./firmware";
 import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
@@ -424,23 +424,43 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "healthy, else it rolls itself back. Canary-first: one player updates alone; the rest follow only if it " +
         "came back healthy. Takes ~1-2 minutes per player and restarts them (lights pause). Ask the user first. " +
         "allow_downgrade installs an older version. A player on the old flash layout needs a one-time USB update " +
-        "from the Splanc app first.",
+        "from the Splanc app first. A Splanc MAX (Raspberry Pi) downloads its own system image from the release " +
+        "(it needs internet), boots it once and keeps it only if healthy: allow ~5-15 minutes.",
       inputSchema: { version: z.string().optional(), allow_downgrade: z.boolean().optional(), players },
     },
     ({ version, allow_downgrade, players: sel }) =>
       guard(async () => {
-        const local = process.env["SPLANC_OTA_PACKAGE"];
-        const pkg = await resolvePackage(local ? { packagePath: local } : { version: version ?? "latest" });
-        progress(`installing ${pkg.label} (manifest version ${pkg.version})`);
+        // One package per kind of player: the C6 `.ota`, or a Splanc MAX board's
+        // signed manifest (the Pi downloads its own image; docs/design/max-ota.md).
+        // Dev overrides: SPLANC_OTA_PACKAGE (a C6 .ota), SPLANC_MAX_OTA_MANIFEST (a MAX
+        // .manifest) + SPLANC_MAX_OTA_SOURCE_URL (where that Pi fetches the image).
+        const packages = new Map<string, Promise<ResolvedPackage>>();
+        const packageFor = (board: string): Promise<ResolvedPackage> => {
+          let p = packages.get(board);
+          if (!p) {
+            const localC6 = process.env["SPLANC_OTA_PACKAGE"];
+            const localMax = process.env["SPLANC_MAX_OTA_MANIFEST"];
+            p = board
+              ? resolvePackage(localMax ? { board, packagePath: localMax } : { board, version: version ?? "latest" })
+              : resolvePackage(localC6 ? { packagePath: localC6 } : { version: version ?? "latest" });
+            p.then((pkg) => progress(`installing ${pkg.label} (manifest version ${pkg.version})`)).catch(() => undefined);
+            packages.set(board, p);
+          }
+          return p;
+        };
         const targets = await hub.select(sel);
+        const labels = new Set<string>();
         const out = await canaryRollout(targets, async (p) => {
           const s = await hub.session(p);
+          const pkg = await packageFor(await s.otaBoard());
+          labels.add(pkg.label);
           return s.updateFirmware(pkg.bytes, {
             allowDowngrade: allow_downgrade ?? false,
             ...(pkg.keyEpoch ? { keyEpoch: pkg.keyEpoch } : {}),
+            ...(process.env["SPLANC_MAX_OTA_SOURCE_URL"] ? { sourceUrl: process.env["SPLANC_MAX_OTA_SOURCE_URL"] } : {}),
           });
         });
-        return ok({ firmware: pkg.label, ...out });
+        return ok({ firmware: [...labels].join(", "), ...out });
       }),
   );
   server.registerTool(

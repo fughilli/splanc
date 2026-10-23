@@ -17,6 +17,13 @@
  * against the `OtaDevice` seam (LedMapperClient implements it), unit-tested with a
  * simulated device in web/tests/otaUpdate.test.ts; the Python HITL client
  * (pi/hitl/harness/ota_core.py) is the same state machine.
+ *
+ * A Splanc MAX (Raspberry Pi, docs/design/max-ota.md; welcome feature "ota_pull")
+ * PULLS its image: the client sends only the manifest (`max-<board>-<ver>.manifest`,
+ * 108 bytes — a full package works too, its image is ignored) and follows the
+ * device's own download, verify, reboot into the new system once, and health check
+ * by polling get_ota_status (pullUpdate below). `updateFirmware` dispatches on the
+ * device, so every caller (Flash screen, agent, bridge) handles both.
  */
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
@@ -28,7 +35,7 @@ export const MANIFEST_LEN = 108;
 export interface OtaDevice {
   readonly welcome: WelcomeMessage | null;
   getOtaStatus(): Promise<OtaStatusFlat>;
-  otaBegin(manifest: Uint8Array, allowDowngrade?: boolean, keyEpoch?: Uint8Array): Promise<OtaStatusFlat>;
+  otaBegin(manifest: Uint8Array, allowDowngrade?: boolean, keyEpoch?: Uint8Array, sourceUrl?: string): Promise<OtaStatusFlat>;
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat>;
   otaFinish(): Promise<OtaStatusFlat>;
   waitForWelcome(pred: (w: WelcomeMessage) => boolean, timeoutMs: number): Promise<WelcomeMessage>;
@@ -60,6 +67,7 @@ export class OtaError extends Error {
 export type OtaPhase =
   | "handoff" // the app is restarting into the loader
   | "transfer" // streaming the image
+  | "download" // a pull device (Splanc MAX) is fetching the image itself
   | "resume" // the link dropped; resuming
   | "verify" // the loader is checking the image
   | "reboot" // booting the new app
@@ -90,6 +98,10 @@ export interface OtaOptions {
   keyEpoch?: Uint8Array;
   /** Return once the outcome is known instead of throwing on a rollback. */
   expectHealthy?: boolean;
+  /** Pull devices: fetch the image from this URL instead of the release (dev / LAN). */
+  sourceUrl?: string;
+  /** Pull devices: the whole update — download, import, reboot, health (default 30 min). */
+  pullMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -142,8 +154,24 @@ function failed(st: OtaStatusFlat): boolean {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Install `pkg` on `dev`. Throws OtaError with the device's refusal code. */
+/** A device that downloads its own image (Splanc MAX: welcome feature "ota_pull"). */
+export function pullsImage(w: WelcomeMessage | null): boolean {
+  return ((w?.features as string[] | undefined) ?? []).includes("ota_pull");
+}
+
+/** The release asset holding a pull device's manifest (`board` from ota_status.board). */
+export function maxManifestAsset(board: string, version: string): string {
+  const v = version.replace(/^v/, "");
+  return `max-${board}-${v}.manifest`;
+}
+
+/** Install `pkg` on `dev`. Throws OtaError with the device's refusal code. A pull
+ * device takes just the manifest (the first 108 bytes of `pkg`). */
 export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaOptions = {}): Promise<OtaResult> {
+  if (pullsImage(dev.welcome)) {
+    if (pkg.length < MANIFEST_LEN) throw new OtaError("bad_package", "package too short");
+    return pullUpdate(dev, pkg.slice(0, MANIFEST_LEN), opts);
+  }
   const { manifest, image, info } = splitPackage(pkg);
   const sleep = opts.sleep ?? defaultSleep;
   const reconnectMs = opts.reconnectMs ?? 120_000;
@@ -235,6 +263,90 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
       outcome,
       outcome === "rolled_back"
         ? "The new firmware didn't start correctly; the device rolled back to its updater. Try another version."
+        : "The device didn't confirm the new firmware in time.",
+    );
+  }
+  return { version: info.version, outcome, resumes, final, transferMs };
+}
+
+/**
+ * A pull device (Splanc MAX): offer the manifest, then follow the device's own
+ * download -> import -> reboot into the new system ONCE -> health check, by polling
+ * get_ota_status. The link may drop at any time (the Pi reboots; a phone sleeps):
+ * the device carries on by itself, and this just reconnects and keeps reading.
+ * Outcome "ok" = the new system proved healthy and is now the default;
+ * "rolled_back" = it didn't, and the Pi is back on its old system.
+ */
+export async function pullUpdate(dev: OtaDevice, manifest: Uint8Array, opts: OtaOptions = {}): Promise<OtaResult> {
+  const info = parseManifest(manifest);
+  const sleep = opts.sleep ?? defaultSleep;
+  const reconnectMs = opts.reconnectMs ?? 180_000;
+  const total = info.size;
+  const report = (phase: OtaPhase, sent: number, message?: string): void =>
+    opts.onProgress?.({ phase, sent, total, version: info.version, ...(message ? { message } : {}) });
+
+  const t0 = Date.now();
+  const begun = await dev.otaBegin(manifest, opts.allowDowngrade ?? false, opts.keyEpoch, opts.sourceUrl);
+  if (failed(begun)) throw new OtaError(begun.error, `The device refused the update: ${begun.error}`);
+  report("download", begun.offset, "The device is downloading the firmware…");
+
+  const deadline = t0 + (opts.pullMs ?? 30 * 60_000);
+  let installed = false;
+  let transferMs = 0;
+  let resumes = 0;
+  let final: OtaStatusFlat | null = begun;
+  let outcome: OtaResult["outcome"] = "timeout";
+  let st: OtaStatusFlat | null = begun;
+  for (;;) {
+    if (st) {
+      final = st;
+      const mine = st.version === info.version;
+      if (st.state === "STATE_FAILED" && !installed) {
+        throw new OtaError(st.error || "failed", `The update failed on the device: ${st.error}`);
+      } else if (st.state === "STATE_DOWNLOADING") {
+        report("download", st.offset);
+      } else if (st.state === "STATE_VERIFYING") {
+        transferMs ||= Date.now() - t0;
+        report("verify", total, "Verifying and installing…");
+      } else if (st.state === "STATE_INSTALLED") {
+        transferMs ||= Date.now() - t0;
+        if (!installed) report("reboot", total, "Starting the new firmware…");
+        installed = true;
+      } else if (st.state === "STATE_IDLE") {
+        if (st.lastResult === "ok" && st.appVersion === info.version) {
+          outcome = "ok";
+          break;
+        }
+        if (st.lastResult === "rolled_back" && (installed || mine)) {
+          outcome = "rolled_back";
+          break;
+        }
+        if (st.lastResult === "installed") {
+          if (!installed) report("reboot", total);
+          installed = true;
+          report("health", total, "Checking the new firmware is healthy…");
+        } else if (st.lastResult === "aborted") {
+          throw new OtaError("aborted", "The update was cancelled on the device.");
+        }
+      }
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(2000);
+    try {
+      if (!dev.welcome) await dev.waitForWelcome(() => true, Math.max(1000, Math.min(reconnectMs, deadline - Date.now())));
+      st = await dev.getOtaStatus();
+    } catch {
+      // rebooting (into the new system, or back to the old one) — keep reading
+      resumes++;
+      st = null;
+    }
+  }
+  report(outcome === "ok" ? "done" : "rolled_back", total, outcome);
+  if ((opts.expectHealthy ?? true) && outcome !== "ok") {
+    throw new OtaError(
+      outcome,
+      outcome === "rolled_back"
+        ? `The new firmware didn't start correctly; the device went back to its previous version${final?.error ? ` (${final.error})` : ""}.`
         : "The device didn't confirm the new firmware in time.",
     );
   }

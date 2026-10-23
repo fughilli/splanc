@@ -33,7 +33,7 @@ import {
   type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
-import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
+import { OtaError, pullsImage, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
 import type { Pose } from "./config";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { progress } from "./progress";
@@ -1414,9 +1414,18 @@ export class DeviceSession {
   /** Install a signed `.ota` package over the air (docs/design/ota.md): the player
    * hands over to its updater, takes the image, and must come back healthy — else it
    * rolls back by itself and this rejects with the reason. */
+  /** "" for a C6 (it takes the `.ota`), or a Splanc MAX's board ("pi3", …): it
+   * pulls its own image and takes only that board's manifest (docs/design/max-ota.md). */
+  async otaBoard(): Promise<string> {
+    if (!pullsImage(this.client.welcome)) return "";
+    const st = await this.run(() => this.client.getOtaStatus());
+    if (!st.board) throw new ToolError(`${this.client.welcome?.deviceName || this.opts.url}: a pull device that reports no board`);
+    return st.board;
+  }
+
   async updateFirmware(
     pkg: Uint8Array,
-    opts: { allowDowngrade?: boolean; keyEpoch?: Uint8Array } = {},
+    opts: { allowDowngrade?: boolean; keyEpoch?: Uint8Array; sourceUrl?: string } = {},
   ): Promise<Record<string, unknown>> {
     const name = this.client.welcome?.deviceName || this.opts.url;
     const from = this.fwVersion;
@@ -1428,12 +1437,14 @@ export class DeviceSession {
         updateFirmware(this.client, pkg, {
           allowDowngrade: opts.allowDowngrade ?? false,
           ...(opts.keyEpoch ? { keyEpoch: opts.keyEpoch } : {}),
+          ...(opts.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
           onProgress: (p: OtaProgress) => {
             const pct = p.total ? Math.floor((p.sent / p.total) * 10) * 10 : 0;
-            if (p.phase === lastPhase && (p.phase !== "transfer" || pct === lastPct)) return;
+            const counted = p.phase === "transfer" || p.phase === "download";
+            if (p.phase === lastPhase && (!counted || pct === lastPct)) return;
             lastPhase = p.phase;
             lastPct = pct;
-            progress(`${name}: ${p.phase}${p.phase === "transfer" ? ` ${pct}%` : ""}${p.message ? ` (${p.message})` : ""}`);
+            progress(`${name}: ${p.phase}${counted ? ` ${pct}%` : ""}${p.message ? ` (${p.message})` : ""}`);
           },
         }),
       );

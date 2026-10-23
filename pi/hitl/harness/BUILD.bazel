@@ -659,6 +659,31 @@ py_test(
     ],
 )
 
+# Splanc MAX over-the-air updates (docs/design/max-ota.md) on a led-mapper-pi network
+# DUT (rig-1): setup over SSH, A->B, bad signature, an unhealthy system rolled back,
+# a power cut mid-download (resume) and one during the trial boot (old system back).
+# A py_binary, not a test: its images are Nix-built systems
+# (pi/hitl/max_ota_images.sh OUT), passed with --images OUT.
+py_binary(
+    name = "max_ota_gate",
+    srcs = [
+        "hitl_max_ota.py",
+        "hitl_ota.py",
+    ],
+    imports = ["."],
+    main = "hitl_max_ota.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Per-device TLS identity on hardware (docs/design/per-device-cert.md): erase-fs flash ->
 # first-boot keygen time from the boot log -> a connect storm at :443 from the instant the
 # DUT leases (every completed handshake must present the same, non-legacy cert) ->

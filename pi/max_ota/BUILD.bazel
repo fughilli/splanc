@@ -1,0 +1,115 @@
+"""Splanc MAX over-the-air updates (docs/design/max-ota.md).
+
+The library is shared by the player (pi/player_rs: the OTA arms, a quick
+signature check before it hands a request to the updater) and the root updater
+`splanc-max-ota` (src/main.rs), which pi/provisioning/nix/ota.nix runs as systemd
+units. Both are std Rust on the Pi; the updater ships static-musl like the player.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("//firmware/ota:ring.bzl", "MAX_RELEASE_RING", "MAX_TEST_RING", "ring_cmd")
+load("//pi/player_rs/musl:transition.bzl", "static_musl_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The trusted keyring as a Rust const: the MAX key (id 3) only. --//firmware/ota:
+# trust=test swaps in the checked-in TEST key (HITL / development images).
+genrule(
+    name = "ring_rs",
+    srcs = select({
+        "//firmware/ota:trust_test": MAX_TEST_RING.values(),
+        "//conditions:default": MAX_RELEASE_RING.values(),
+    }),
+    outs = ["max_ring.rs"],
+    cmd = select({
+        "//firmware/ota:trust_test": ring_cmd(MAX_TEST_RING, "rust", "//firmware/ota:gen_key_header"),
+        "//conditions:default": ring_cmd(MAX_RELEASE_RING, "rust", "//firmware/ota:gen_key_header"),
+    }),
+    tools = ["//firmware/ota:gen_key_header"],
+)
+
+# The TEST ring regardless of --trust, for the host tests.
+genrule(
+    name = "ring_rs_test",
+    srcs = MAX_TEST_RING.values(),
+    outs = ["test/max_ring.rs"],
+    cmd = ring_cmd(MAX_TEST_RING, "rust", "//firmware/ota:gen_key_header"),
+    tools = ["//firmware/ota:gen_key_header"],
+)
+
+SRCS = glob(
+    ["src/*.rs"],
+    exclude = ["src/main.rs"],
+)
+
+DEPS = [
+    "//firmware/ota",
+    "@player_crates//:p256",
+]
+
+rust_library(
+    name = "max_ota",
+    srcs = SRCS,
+    compile_data = [":ring_rs"],
+    crate_name = "splanc_max_ota",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env = {"MAX_RING_RS": "$(execpath :ring_rs)"},
+    deps = DEPS,
+)
+
+# The same library against the TEST ring (tests sign with keys/test_max.key).
+rust_library(
+    name = "max_ota_testring",
+    srcs = SRCS,
+    compile_data = [":ring_rs_test"],
+    crate_name = "splanc_max_ota",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env = {"MAX_RING_RS": "$(execpath :ring_rs_test)"},
+    visibility = ["//visibility:private"],
+    deps = DEPS,
+)
+
+rust_test(
+    name = "max_ota_unit_test",
+    crate = ":max_ota_testring",
+    edition = "2021",
+)
+
+# The updater against a simulated Pi: every phase, every cut point, the U-Boot
+# one-shot model, refusals.
+rust_test(
+    name = "updater_test",
+    srcs = ["tests/updater.rs"],
+    data = ["//firmware/ota:keys/test_max.key"],
+    edition = "2021",
+    env = {"MAX_TEST_KEY": "$(rootpath //firmware/ota:keys/test_max.key)"},
+    deps = [
+        ":max_ota_testring",
+        "//firmware/ota",
+        "@player_crates//:p256",
+    ],
+)
+
+rust_binary(
+    name = "updater",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    rustc_flags = select({
+        "//pi/player_rs/musl:is_musl": [
+            "-Ctarget-feature=+crt-static",
+            "-Clink-self-contained=yes",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [":max_ota"],
+)
+
+# Static aarch64-musl, shipped into the image as build_data (keyed "splanc-max-ota").
+static_musl_binary(
+    name = "splanc_max_ota_musl",
+    src = ":updater",
+    out = "splanc-max-ota",
+    target_platform = "//pi/player_rs/musl:aarch64_linux_musl",
+)
