@@ -1198,7 +1198,9 @@ size_t g_ws_rxlen = 0;
 // the TLS write spin so the peer's ACK is processed and the stop-and-wait TCP frees its
 // in-flight segment — otherwise a write that spans >1 segment (or follows an unacked one)
 // deadlocks: bio_send returns WANT_WRITE forever because no RX drain runs to clear tx_data.
-static void pump_link_once() {
+// Also from netstack_service_link (a dispatch waiting on the render task's player mutex).
+// Returns whether a frame was taken off the RX ring.
+static bool pump_link_once() {
   static uint8_t rxb[1600];
   uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
   if (n > 0 && (rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
@@ -1207,6 +1209,15 @@ static void pump_link_once() {
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
       if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
     if (pl) { note_rx_sa(rxb); handle_l3(pt, pl); }
+  } else if (n > 32 && (rxb[0] & 0x0c) == 0x08 && !(rxb[1] & 0x40) && g_hwkey &&
+             memcmp(rxb + 4, OUR_MAC, 6) == 0 &&
+             (memcmp(rxb + 10, g_bssid, 6) == 0 || memcmp(rxb + 16, g_bssid, 6) == 0)) {
+    // HW-decrypted unicast data from our AP (Protected clear, CCMP stripped) — the normal
+    // post-link RX path, exactly as netstack_loop's drain handles it. This branch was
+    // missing: every data segment that landed during a TLS write stall was taken off the
+    // ring and DROPPED, which the peer only recovered by retransmission.
+    note_rx_sa(rxb);
+    handle_l3(rxb + 24, n - 24);
   }
   // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
   // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
@@ -1214,6 +1225,7 @@ static void pump_link_once() {
   uint32_t tn;
   while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tx_ip_slot(), kTxIpCap)) > 0)
     send_ip(tx_ip_slot(), tn);
+  return n > 0;
 }
 
 // Write all `len` bytes through TLS. On WANT_WRITE the send window is full — pump the link
@@ -1405,6 +1417,18 @@ bool netstack_ws_is_open() { return g_tls_hs && g_ws_up; }
 } // namespace
 
 bool netstack_ws_send(uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
+
+// Drain up to `max_frames` link frames into the TCP layer (and stream out the send window)
+// without running the TLS/WS layers: what loopTask can do while it waits for the render
+// task's player mutex. Inbound segments land in the TCP receive buffer (ACKed, window
+// accounted) and are read by ws_pump as usual afterwards. Without it the 16-slot RX ring
+// went undrained for the whole wait (up to a render frame, ~10+ ms per message) and
+// overflowed on a busy channel — frames the MAC had already ACKed, lost.
+void netstack_service_link(int max_frames) {
+  if (!g_leased) return;
+  for (int i = 0; i < max_frames; i++)
+    if (!pump_link_once()) break;
+}
 bool netstack_ws_open() { return netstack_ws_is_open(); }
 // Mode-tracking facts (main.cpp's lm_mode_observe snapshot): credentials committed (Improv
 // or the wired console) and a DHCP lease held.

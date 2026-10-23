@@ -49,6 +49,11 @@ void netstack_restore_credentials(const char *ssid, const char *pass);
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);
 
+// Drain up to `max_frames` received link frames into the TCP layer without touching
+// TLS/WS (safe while a WS message is being dispatched): for loopTask to call while it
+// waits on the render task's player mutex, so the RX ring never sits undrained.
+void netstack_service_link(int max_frames);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and
