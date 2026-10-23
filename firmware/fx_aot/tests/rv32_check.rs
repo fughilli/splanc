@@ -13,6 +13,7 @@ struct Case {
     op: &'static [u8],
     bytes: &'static [u8],
     image: &'static [u32],
+    entries: &'static [usize],
     shade: usize,
     inputs: usize,
     outputs: usize,
@@ -54,7 +55,10 @@ extern "C" fn main() -> ! {
     assert!((code as usize) < 0xfffff000);
     for case in CASES {
         let prog = fxv::Program::parse(case.bytes).unwrap();
-        assert_eq!(aot::verify(case.image), None);
+        assert_eq!(
+            aot::verify(case.image, case.entries, &aot::VerifyLimits::DEFAULT),
+            None
+        );
         unsafe {
             core::ptr::copy_nonoverlapping(case.image.as_ptr(), code, case.image.len());
             asm!("fence.i");

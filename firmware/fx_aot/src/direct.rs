@@ -65,6 +65,12 @@ pub(crate) enum Id {
 }
 pub(crate) const COUNT: usize = Id::Count as usize;
 pub(crate) const STRIDE: i32 = 8;
+
+/// Direct entries whose fourth argument (a3) is a pointer the helper writes
+/// (the blue output word). The verifier pins that argument to the frame window.
+pub(crate) fn takes_blue_ptr(id: usize) -> bool {
+    id == Id::Hsv2Rgb as usize || id == Id::Palette as usize
+}
 const _: () = assert!(core::mem::size_of::<Entry>() == STRIDE as usize);
 
 #[allow(unused_variables)]
@@ -514,7 +520,7 @@ pub(crate) const TABLE: [Entry; COUNT] = {
 #[cfg(feature = "alloc")]
 pub(crate) unsafe fn invoke(id: usize, args: [u32; 4], blue: *mut u32) -> u64 {
     let address = TABLE[id].address;
-    if id == Id::Hsv2Rgb as usize || id == Id::Palette as usize {
+    if takes_blue_ptr(id) {
         let f: unsafe extern "C" fn(u32, u32, u32, *mut u32) -> u64 = core::mem::transmute(address);
         f(args[0], args[1], args[2], blue)
     } else if id < Id::I2F as usize {

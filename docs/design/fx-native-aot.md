@@ -82,29 +82,110 @@ Stage 2 measures it on a real C6.
 ## Sandbox (applies to every native image, signed or not)
 
 The lowering emits a deliberately narrow instruction grammar. A separate
-**instruction-stream verifier** (also in `fx_aot`, run on the device after
-lowering or after signature checks) re-checks it independently:
+**instruction-stream verifier** (`fx_aot::verify`, run on the device after
+lowering or after signature checks) re-checks it independently. It decides
+from three inputs only: the words, the declared entry offsets, and a
+`VerifyLimits { frame_bytes, state_bytes, budget }`. The lowerer/arena that
+allocates the buffers supplies the limits; nothing is inferred from the image.
+`Image::verify()` uses `VerifyLimits::DEFAULT`: a `FRAME_WORDS` frame,
+`MAX_STATE` state words, and the VM's default budget. A rejected image stays on
+the VM.
 
-- **Memory:**
-  - Loads and stores use only `s0`, `s1`, `s11` or `sp` as the base, with an
-    immediate offset inside that region's size.
-  - A region pointer loaded from `NativeCtx` into the reserved `t6` may be used
-    only by the very next instruction, with an offset inside that region. That
-    instruction must not be a branch target.
-  - There is no computed address in native code. Every dynamic index (arrays,
-    buffers, textures) goes through a Rust helper that clamps it, exactly like
-    the VM.
-- **Control flow:**
-  - Branch and `jal` targets must be inside the image and on an instruction
-    boundary.
-  - The only `jalr` forms allowed are `ret` and `jalr ra, 0(t0)` immediately
-    after `lw t0, H(s0)` with `H` inside the helper table.
-  - No `ecall`, `ebreak`, CSR, `fence.i`, or writes to `s0`/`s1`/`s11`/`sp`
-    outside the fixed prologue and epilogue.
-- **Time:** every basic block subtracts its VM op count from `s10` on entry
-  and exits with `Outcome::Budget` when it goes negative. That is the VM's
-  deterministic instruction budget, counted per block. Loop headers also poll
-  the wall-time deadline flag. The existing watchdog stays the backstop.
+### Verifier rules
+
+An image is a sequence of *fixed sequences* and *body* words. The fixed
+sequences are byte-exact copies of `prologue_words(budget)`,
+`epilogue_words()` and `exit_stub_words()` in `verify.rs`. The lowerer emits
+those same functions, so the two can't drift.
+
+- **R1 Entries and fallthrough.** Each declared entry holds the exact prologue:
+  `addi sp,sp,-64`, save `ra,s0..s11` to `0..48(sp)`, then `s0=a0`, `s1=a1`,
+  `s11=a2`, and `li s10, budget`. Each entry is word 0 or follows an
+  unconditional transfer (`ret` / `jal x0`). A prologue anywhere else is
+  rejected. The image's last word must be unconditional, so nothing falls off
+  the end. The caller calls only declared entries, with `a0` = its
+  `NativeCtx`, `a1` = a `frame_bytes` frame, and `a2` = a `state_bytes` state
+  array.
+- **R2 Reserved registers.** A body instruction may write only `x0`,
+  `t0..t6`, `a0..a7` and `s2..s9`. `ra`, `sp`, `gp`, `tp`, `s0`, `s1`, `s10`
+  and `s11` are written only by the fixed sequences. There are two
+  exceptions: the helper call (`jalr ra, 0(t0)`) writes `ra`, and the
+  canonical budget decrement (R7) writes `s10`. This also covers loads: a
+  `lw` into any of those registers is rejected outside the epilogue.
+- **R3 Return.** `ret` (`jalr x0, 0(ra)`) is legal only as the last word of an
+  exact epilogue. The epilogue reloads `ra,s0..s11` from the prologue's save
+  slots, then runs `addi sp,sp,64` and `ret`. The body can't address `sp`
+  (R4), `sp` is never written outside the fixed sequences, and no branch may
+  enter an epilogue past its first word (R6). So every `ret` returns to the
+  caller's own `ra` with the caller's callee-saved registers restored. `ra`
+  values written by helper calls are dead.
+- **R4 Memory.** Only `lw`/`sw`, word-aligned, with these bases:
+  - `s1`: offset in `[0, frame_bytes)`.
+  - `s11`: offset in `[0, state_bytes)`.
+  - `s0` stores: only the `NativeCtx` output words (`out[0..3]`, `ret_kind`,
+    `ret_frac`, offsets 0..=16). The helper pointer and table are never
+    writable.
+  - `s0` loads: only `lw t0, E(s0)` for an exact, aligned helper-table entry
+    `E` (the generic helper at 24, or a direct entry at `32 + 8·i`,
+    `i < COUNT`).
+
+  No other base is allowed, `sp` included (it appears only in the fixed
+  sequences), and there are no computed addresses. Every dynamic index goes
+  through a Rust helper that clamps it, exactly like the VM. Region pointers
+  in `t6` are planned for buffers but not allowed yet.
+- **R5 Helper calls.** The only `jalr` in a body is `jalr ra, 0(t0)`, with
+  funct3 = 0 and offset = 0. It must directly follow an R4 table load.
+  Pointer arguments are pinned by fixed instructions right before the call:
+  - Generic helper: `addi a0,s0,0; addi a1,s1,WIN; lui/addi a2; lui/addi a3;
+    lw t0,24(s0); jalr`. So `ctx` is the real context and the window is the
+    frame's helper window. The verifier also requires
+    `frame_bytes >= (WIN_OFF+WIN_WORDS)·4`.
+  - HSV/palette: `addi a3,s1,WIN; lw t0,E(s0); jalr`. `a3` is the blue output
+    pointer.
+  - Scalar direct helpers take only scalar words.
+- **R6 Control flow.** `jal` must have `rd = x0`. Branch funct3 must be one of
+  the six real branches. Every branch and `jal` target must be word-aligned,
+  inside the image, and outside these places:
+  - any prologue;
+  - an epilogue past its first word;
+  - a helper call's protected window. For the generic helper that is the
+    words after its `a1` pin through the call. For a colour helper it is the
+    table load and the call. For a scalar helper it is the call.
+- **R7 Budget.** Any branch or `jal` whose target is at or before its own pc
+  (every back edge and loop header) must land on a canonical budget check:
+  `addi s10,s10,-n` (with `1 ≤ n ≤ 2048`), `bge s10,x0,+8`, `jal x0,STUB`.
+  `STUB` is the exact exit stub (`out = 0`, `ret_kind = RET_RET`), and the
+  exact epilogue follows it directly. `s10` is callee-saved across helpers and
+  written nowhere else (R2). Every other transfer moves strictly forward, and
+  helpers return to pc+4, so every cycle passes through a decrement of at
+  least 1. Once `s10 < 0`, the next back edge takes the straight-line
+  stub → epilogue → `ret`. A cycle can't skip the decrement by entering the
+  middle of a check, because that target isn't a check, and helper-call return
+  points are not checks either. The lowerer puts a check at the head of every
+  basic block (each branch target is a block header). It refuses a block with
+  more than 2048 ops, which would leave the native budget and the VM's out of
+  step.
+- **R8 Nothing else.** `lui`, OP-IMM and OP (base and M; reserved
+  funct7/shift encodings rejected) are allowed. `auipc`,
+  `ecall`/`ebreak`/CSR, `fence`/`fence.i`, AMOs, and all other opcodes are
+  rejected.
+
+Not covered by the verifier, and not an escape: the generic helper's `a2`
+(opcode) and `a3` (operand offset) are image-chosen. The helper reads operands
+through `ctx.code.get()` and a `WIN_WORDS` slice. A crafted pair can make it
+panic, which is a crash and not a write outside its slices. Images lowered on
+the device always pass the real pair. Wall-time deadline polling at loop
+headers is still planned. The instruction budget above is the deterministic
+bound, and the watchdog stays the backstop.
+
+`firmware/fx_aot/src/verify_tests.rs` pins each rule with negative tests. That
+includes the four sandbox escapes the #351 review found (`ra`, reserved
+bases, unbounded base offsets, unbudgeted loops), each as the original PoC
+plus variants, and unpinned helper pointer arguments. The positive side has
+three parts: `fx_aot_diff_test` verifies every image it lowers before the
+bit-exact comparison, `native_vs_vm_test` verifies every image embedded in the
+C6 bench, and the bench generator refuses to embed an image that fails.
+
 - **Execution region (W^X):** the image is copied into its region while the
   region is plain data memory, then it is made **R+X without W** for the run and
   restored to writable when the effect is swapped out. See "Where native code
@@ -351,7 +432,7 @@ first-party images. Don't build (c).**
   on-C6 `aot` pass cross-checks every LED against the VM on the real helix.
 - The **arena W^X scheme is hardware-confirmed** (the PMA probe above).
 
-### Dedicated helper follow-up (host and RV32 emulator only)
+### Dedicated helper follow-up (#351)
 
 Compared with `agent/fx-aot` at `f6caeca9b618038204e5f2fa3f06825c1fc5e773`:
 
@@ -373,7 +454,7 @@ Compared with `agent/fx-aot` at `f6caeca9b618038204e5f2fa3f06825c1fc5e773`:
   cross/normalize, fixed-point complex operations, context/uniform/indexed
   operations also retain it. Buffer/texture/graph/flood/user-function support
   remains follow-up work; I2C and JIT calls still fall back to the VM.
-- Verifier additions: calls must follow an exact aligned table-entry word
+- Verifier additions (since tightened into the "Verifier rules" above): calls must follow an exact aligned table-entry word
   load; no branch/jump may enter a helper call after its load; branch/jump
   offsets must be word-aligned; `jalr` must have funct3/offset zero; context
   stores may address only the five output words, never the helper table.
@@ -395,17 +476,39 @@ Compared with `agent/fx-aot` at `f6caeca9b618038204e5f2fa3f06825c1fc5e773`:
   `qemu-riscv32`; it downloads nothing and accesses no rig. This verifies the
   integer register ABI and target soft-float, not C6 timings or peripherals.
 
-Both AOT Bazel tests, `native_vs_vm_test`, and the host `fx_aot_nostd` build
-pass (host invocations used an external bazelrc omitting the firmware-only
-linker override before Nix was available). The RV32 no_std crate links and
-executes in the QEMU test. Nix now builds locally in an isolated container,
-but the full `fx_perf_bench_flashbundle` build stops while realizing the
-Arduino toolchain: the workspace proxy rejects `cache.nixos.org` with HTTP
-403, and the source-build fallback fails fetching GNU Bash. No bench-image
-compilation or C6 execution is claimed. The C6 build remains pending download
-access; the owner's team supplies noise/particles timings after publication.
-PR #350 was still open when this follow-up was prepared; rebasing/integrating
-its new opcodes remains required before landing this stack.
+Both AOT Bazel tests, `native_vs_vm_test`, the host `fx_aot_nostd` build and
+`bazel build -c opt //firmware/fx_perf_bench:fx_perf_bench_flashbundle` pass.
+The RV32 no_std crate links and executes in the QEMU test.
+
+**#351 on a real C6** (rig-2, helix, `fxpb aot` vs `fxpb vm`, ms/frame at 500
+LEDs; the full table is in the #351 verification comment). Every lowered effect matched the VM
+on every LED (`maxdiff=0`, `off2=0`) at 500 and 2048 LEDs:
+
+| effect | VM ms | AOT ms | speedup (#351) | speedup before (#341) |
+|---|---:|---:|---:|---:|
+| solid | 7.3 | 3.5 | 2.09x | 1.80x |
+| sweep | 16.7 | 9.7 | 1.72x | 1.33x |
+| gradient | 23.2 | 13.2 | 1.76x | 1.30x |
+| pulses | 26.7 | 17.1 | 1.56x | 1.26x |
+| sparkle | 25.2 | 13.7 | 1.84x | 1.33x |
+| cylinder | 32.0 | 18.9 | 1.69x | 1.32x |
+| plasma | 48.3 | 23.1 | 2.09x | 1.35x |
+| noise | 67.2 | 30.7 | 2.19x | 1.61x |
+| particles | 84.3 | 37.6 | 2.24x | 1.64x |
+| rain_naive | 111.8 | 39.6 | 2.82x | n/a (too big) |
+
+flood, rain and texture still fall back to the VM.
+
+**Verifier hardening (follow-up to #351).** The rules above replaced a
+verifier that checked reserved registers only in the prologue, accepted any
+`sp`/`s1`/`s11` offset, and required only one budget check somewhere. It
+leaves the emitted code unchanged: the C6 bench firmware built from it is
+byte-identical to #351's apart from the build timestamp and image hashes. The
+diff tests, 78 embedded bench images and 521,920 QEMU RV32 comparisons all
+pass. No new hardware run was needed.
+
+PR #350 is not yet integrated into this branch. Its new opcodes still need
+rebasing/integrating before this stack lands.
 
 Same compiler, default uniforms, 64 LEDs × 3 frames, update plus shade,
 original/current code-generation counts (not timings):
@@ -483,7 +586,7 @@ effects qualify.
 **Not verified / out of scope here:**
 
 - No on-device lowering or signing yet (stage 3): the bench embeds **host**-lowered
-  images and runs them unsigned from a static RWX region. The netstack arena +
+  (and host-verified) images and runs them unsigned from a static RWX region. The netstack arena +
   PMP/PMA path is implemented as allocation math + a hardware-proven mechanism but
   not yet wired into `ffi.rs`.
 - User functions, buffers/textures, graph/flood and I2C drivers stay on the VM.
