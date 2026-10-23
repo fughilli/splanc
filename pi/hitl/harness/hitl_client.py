@@ -26,6 +26,7 @@ import base64
 import json
 import os
 import random
+import re
 import shlex
 import shutil
 import signal
@@ -147,6 +148,10 @@ def _pool() -> list[str]:
     return urls
 
 
+# How many times a queued reservation re-queues after the daemon forgets it (404).
+_MAX_REQUEUES = 3
+
+
 def _get(url: str, timeout: float = 10.0) -> dict:
     with urllib.request.urlopen(url, timeout=timeout) as r:  # noqa: S310 (trusted tailnet)
         return json.load(r)
@@ -222,6 +227,7 @@ class Reservation:
         self.user: str | None = None
         self.endpoint: str | None = None
         self._unit: str | None = None
+        self._reserve_body: dict | None = None  # kept so a lost queued slot can re-queue
         self._hb_stop: threading.Event | None = None
         self._hb_thread: threading.Thread | None = None
         self._keydir: str | None = None
@@ -245,6 +251,7 @@ class Reservation:
             body["unit_type"] = self.sku
         if self.require_caps:
             body["require_caps"] = self.require_caps
+        self._reserve_body = body
         res = _post(base + "/reserve", body)
         self.server = base
         self.id = res.get("id")
@@ -270,6 +277,10 @@ class Reservation:
             )
         free: list[tuple[str, int]] = []  # (host, free-matching-unit count)
         queueable, inventories, errs = [], [], []
+        # A cordoned (maintenance/drain) host activates nothing until it's released, and
+        # its idle units would otherwise read as FREE and attract every new reservation
+        # — the opposite of draining it. Use one only if no other host can serve us.
+        cordoned: list[str] = []
         for base in pool:
             try:
                 st = _get(base + "/status")
@@ -285,6 +296,10 @@ class Reservation:
                 )
             )
             n = sum(1 for u in units if self._unit_matches(u) and u.get("active") is None)
+            if st.get("cordoned"):
+                if any(self._unit_matches(u) for u in units):
+                    cordoned.append(base)
+                continue
             if n:
                 free.append((base, n))
             elif any(self._unit_matches(u) for u in units):
@@ -294,6 +309,9 @@ class Reservation:
             return random.choice([b for b, n in free if n == most])
         if queueable:
             return random.choice(queueable)
+        if cordoned:
+            print(f"all matching hosts are cordoned; queueing on one: {cordoned}", flush=True)
+            return random.choice(cordoned)
         requested = (
             f"device={self.device or 'any'}, sku={self.sku or 'any'}, caps={self.require_caps}"
         )
@@ -321,8 +339,39 @@ class Reservation:
     def _await_active(self, timeout: float = 2400.0) -> None:
         deadline = time.time() + timeout
         last_pos = -1
+        requeues = 0
         while time.time() < deadline:
-            r = _get(f"{self.server}/reservation/{self.id}")
+            try:
+                r = _get(f"{self.server}/reservation/{self.id}")
+            except urllib.error.HTTPError as e:
+                # 404 while QUEUED = the daemon lost our slot (it keeps its queue in
+                # memory; a redeploy/restart drops every waiter). Re-queue on the same
+                # host instead of failing the test attempt — we lose our position, not
+                # the run. Bounded, so a daemon that keeps forgetting us still fails.
+                if e.code != 404 or not self._reserve_body or requeues >= _MAX_REQUEUES:
+                    raise
+                old = self.id
+                try:
+                    res = _post(f"{self.server}/reserve", self._reserve_body)
+                except ReserveError as re_err:
+                    if re.search(r": 4\d\d ", str(re_err)):
+                        raise  # rejected (e.g. the pinned unit is gone): a real error
+                    time.sleep(5)  # daemon still coming up (5xx); retry the GET loop
+                    continue
+                except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+                    time.sleep(5)  # daemon not listening yet; retry the GET loop
+                    continue
+                self.id = res.get("id") or old
+                requeues += 1
+                print(
+                    f"requeued: daemon lost reservation {old} (restart?); now {self.id}", flush=True
+                )
+                last_pos = -1
+                continue
+            except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+                # Daemon briefly unreachable (restarting): keep waiting until the deadline.
+                time.sleep(5)
+                continue
             state = r.get("state")
             if state == "active":
                 ep = r.get("endpoint") or {}
