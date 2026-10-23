@@ -26,9 +26,6 @@ pub unsafe fn exec(code: &[u32], start: usize, ctx: &mut NativeCtx) {
     let mut save = [0i32; 32];
     let mut pc = start;
     let mut steps = 0u64;
-    let out_off = core::mem::offset_of!(NativeCtx, out);
-    let rk_off = core::mem::offset_of!(NativeCtx, ret_kind);
-    let rf_off = core::mem::offset_of!(NativeCtx, ret_frac);
     loop {
         steps += 1;
         assert!(steps < 50_000_000, "emu: runaway");
@@ -103,7 +100,7 @@ pub unsafe fn exec(code: &[u32], start: usize, ctx: &mut NativeCtx) {
                 // sw
                 let imm = (((w >> 25) & 0x7f) << 5) | ((w >> 7) & 0x1f);
                 let off = ((imm as i32) << 20) >> 20;
-                store(rs1 as u32, off, x[rs2], frame, state, &mut save, ctx, out_off, rk_off, rf_off);
+                store(rs1 as u32, off, x[rs2], frame, state, &mut save, ctx);
             }
             0x63 => {
                 let off = btype_imm(w);
@@ -139,7 +136,6 @@ pub unsafe fn exec(code: &[u32], start: usize, ctx: &mut NativeCtx) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 unsafe fn store(
     base: u32,
     off: i32,
@@ -148,23 +144,21 @@ unsafe fn store(
     state: &mut [i32],
     save: &mut [i32; 32],
     _ctx: *mut NativeCtx,
-    out_off: usize,
-    rk_off: usize,
-    rf_off: usize,
 ) {
+    use crate::ctx::{OUT_OFF, RET_FRAC_OFF, RET_KIND_OFF};
     let w = (off / 4) as usize;
     match base {
         x if x == S1 => frame[w] = v,
         x if x == S11 => state[w] = v,
         x if x == SP => save[w & 31] = v,
         x if x == S0 => {
-            let o = off as usize;
+            let o = off;
             let ctx = &mut *_ctx;
-            if (out_off..out_off + 12).contains(&o) {
-                ctx.out[(o - out_off) / 4] = v;
-            } else if o == rk_off {
+            if (OUT_OFF..OUT_OFF + 12).contains(&o) {
+                ctx.out[((o - OUT_OFF) / 4) as usize] = v;
+            } else if o == RET_KIND_OFF {
                 ctx.ret_kind = v as u32;
-            } else if o == rf_off {
+            } else if o == RET_FRAC_OFF {
                 ctx.ret_frac = v as u32;
             } else {
                 panic!("emu: bad s0 store off={o}");

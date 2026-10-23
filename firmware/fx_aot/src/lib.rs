@@ -36,6 +36,7 @@ use alloc::vec::Vec;
 use ledmapper_fx_vm as fxv;
 use ledmapper_fx_vm::Op;
 
+pub mod arena;
 mod ctx;
 mod helper;
 mod verify;

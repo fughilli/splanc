@@ -12,6 +12,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "fx_aot",
     srcs = [
+        "src/arena.rs",
         "src/ctx.rs",
         "src/emu.rs",
         "src/helper.rs",
@@ -28,11 +29,20 @@ rust_library(
     ],
 )
 
+# Crate-internal unit tests (arena region planner, etc.).
+rust_test(
+    name = "fx_aot_unit_test",
+    crate = ":fx_aot",
+    crate_features = ["alloc"],
+    edition = "2021",
+)
+
 # The no-alloc firmware library (device wiring target): same code without the
 # alloc-only lowering/emulator, so it builds for the C6 triple.
 rust_library(
     name = "fx_aot_nostd",
     srcs = [
+        "src/arena.rs",
         "src/ctx.rs",
         "src/helper.rs",
         "src/lib.rs",

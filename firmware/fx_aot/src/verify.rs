@@ -111,13 +111,13 @@ pub fn verify(code: &[u32]) -> Option<VerifyErr> {
                     return Some(VerifyErr::BadJalr);
                 }
                 if is_helper {
-                    // must directly follow `lw t0, 0(s0)`.
+                    // must directly follow `lw t0, HELPER_OFF(s0)`.
                     match prev {
                         Some(p)
                             if opcode(p) == 0x03
                                 && rd(p) == T0
                                 && rs1(p) == S0
-                                && (p >> 20) == 0 => {}
+                                && ((p as i32) >> 20) == crate::ctx::HELPER_OFF => {}
                         _ => return Some(VerifyErr::HelperNotAfterLoad),
                     }
                 }

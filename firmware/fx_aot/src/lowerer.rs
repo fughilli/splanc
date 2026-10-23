@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use ledmapper_fx_jit::op_len;
 use ledmapper_fx_vm::{self as fxv, Op};
 
-use crate::ctx::{NativeCtx, RET_RET, RET_RGB8, RET_RGBFIX};
+use crate::ctx::{HELPER_OFF, OUT_OFF, RET_FRAC_OFF, RET_KIND_OFF, RET_RET, RET_RGB8, RET_RGBFIX};
 use crate::enc::*;
 use crate::reg::*;
 use crate::{deep_off, effect, Kind, DEFAULT_BUDGET, WIN_OFF, WIN_WORDS};
@@ -225,13 +225,11 @@ impl Emit<'_> {
 
     fn emit_budget_exit(&mut self) {
         // out = [0,0,0]; ret_kind = RET_RET; fall into epilogue.
-        let out_off = core::mem::offset_of!(NativeCtx, out) as i32;
-        let rk_off = core::mem::offset_of!(NativeCtx, ret_kind) as i32;
         for k in 0..3 {
-            self.push(sw(ZERO, S0, out_off + (k * 4)));
+            self.push(sw(ZERO, S0, OUT_OFF + (k * 4)));
         }
         self.li(T0, RET_RET as i32);
-        self.push(sw(T0, S0, rk_off));
+        self.push(sw(T0, S0, RET_KIND_OFF));
         // fallthrough into epilogue (emitted right after)
     }
 
@@ -284,7 +282,7 @@ impl Emit<'_> {
         self.push(addi(A1, S1, (WIN_OFF * 4) as i32)); // win ptr
         self.li(A2, code[pc] as i32); // op byte
         self.li(A3, (pc + 1) as i32); // operand byte offset in code
-        self.push(lw(T0, S0, 0)); // helper = *ctx (offset 0)
+        self.push(lw(T0, S0, HELPER_OFF)); // helper pointer in ctx
         self.push(jalr(RA, T0, 0));
         for k in 0..push {
             self.push(lw(T1, S1, ((WIN_OFF + k) * 4) as i32));
@@ -294,9 +292,6 @@ impl Emit<'_> {
     }
 
     fn emit_ret(&mut self, op: Op, code: &[u8], pc: usize, d: usize) {
-        let out_off = core::mem::offset_of!(NativeCtx, out) as i32;
-        let rk_off = core::mem::offset_of!(NativeCtx, ret_kind) as i32;
-        let rf_off = core::mem::offset_of!(NativeCtx, ret_frac) as i32;
         let (n, kind, frac) = match op {
             Op::Ret => (code[pc + 1] as usize, RET_RET, 0u32),
             Op::RetRgb8 => (3, RET_RGB8, 0),
@@ -305,13 +300,13 @@ impl Emit<'_> {
         let base = d.saturating_sub(n);
         for k in 0..n.min(3) {
             let r = self.slot_src(base + k, T0);
-            self.push(sw(r, S0, out_off + (k * 4) as i32));
+            self.push(sw(r, S0, OUT_OFF + (k * 4) as i32));
         }
         self.li(T0, kind as i32);
-        self.push(sw(T0, S0, rk_off));
+        self.push(sw(T0, S0, RET_KIND_OFF));
         if kind == RET_RGBFIX {
             self.li(T0, frac as i32);
-            self.push(sw(T0, S0, rf_off));
+            self.push(sw(T0, S0, RET_FRAC_OFF));
         }
         // jump to epilogue
         let word = self.out.len();

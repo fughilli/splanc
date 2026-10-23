@@ -124,26 +124,18 @@ fn make_ctx(
     led: &Led,
     vm: &mut Vm,
 ) -> NativeCtx {
-    NativeCtx {
-        helper: ledmapper_fx_aot::aot_win_helper,
-        code: {
-            // code bytes start after the header+manifest+consts; the helper reads
-            // operand bytes by absolute offset into the full .fxb code section, so
-            // pass the program's code slice.
-            let p = Program::parse(fxb).unwrap();
-            p.code().as_ptr()
-        },
-        code_len: Program::parse(fxb).unwrap().code().len(),
-        uniforms: uniforms.as_ptr(),
-        state: state.as_mut_ptr() as *mut f32,
-        locals: frame_mem.as_mut_ptr() as *mut f32,
-        frame: fr as *const Frame,
-        led: led as *const Led,
-        vm: vm as *mut Vm,
-        out: [0; 3],
-        ret_kind: 0,
-        ret_frac: 0,
-    }
+    let p = Program::parse(fxb).unwrap();
+    NativeCtx::new(
+        ledmapper_fx_aot::aot_win_helper,
+        p.code().as_ptr(),
+        p.code().len(),
+        uniforms.as_ptr(),
+        state.as_mut_ptr() as *mut f32,
+        frame_mem.as_mut_ptr() as *mut f32,
+        fr as *const Frame,
+        led as *const Led,
+        vm as *mut Vm,
+    )
 }
 
 /// The compiler's control/function/fixed corpus (mirrors fx_compiler's optimizer
