@@ -91,23 +91,6 @@ concurrency:
   group: hitl-tests-${{ !(github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))) && format('noop-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  # An unlabelled PR's marker: a ~5 s job whose check is named "HITL not requested",
-  # so the PR's checks say plainly that HITL was skipped because nobody asked (the
-  # hitl_tests job itself just shows "skipped" — GitHub doesn't evaluate a skipped
-  # job's name). It is NOT a HITL result; the merge queue ignores it.
-  hitl_not_requested:
-    name: HITL not requested
-    if: >-
-      github.event_name == 'pull_request' &&
-      !contains(github.event.pull_request.labels.*.name, 'hitl')
-    runs-on: ubuntu-latest
-    steps:
-      - name: HITL not requested
-        run: |
-          msg="HITL not requested: this PR has no 'hitl' label, so the on-hardware suite was skipped. Add the 'hitl' label to run it (the merge queue does this when the PR reaches the head)."
-          echo "::notice title=HITL not requested::$msg"
-          echo "### HITL not requested" >> "$GITHUB_STEP_SUMMARY"
-          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
   hitl_tests:
     # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
     # manual runs) only fire on this repo, so they always run. A pull_request runs
@@ -542,3 +525,22 @@ jobs:
             --job hitl-suite \
             --pr "${{ github.event.pull_request.number }}" \
             --commit "${{ github.sha }}"
+
+  # (Kept AFTER hitl_tests: test_ci_orchestration parses the first job's steps.)
+  # An unlabelled PR's marker: a ~5 s job whose check is named "HITL not requested",
+  # so the PR's checks say plainly that HITL was skipped because nobody asked (the
+  # hitl_tests job itself just shows "skipped" — GitHub doesn't evaluate a skipped
+  # job's name). It is NOT a HITL result; the merge queue ignores it.
+  hitl_not_requested:
+    name: HITL not requested
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'hitl')
+    runs-on: ubuntu-latest
+    steps:
+      - name: HITL not requested
+        run: |
+          msg="HITL not requested: this PR has no 'hitl' label, so the on-hardware suite was skipped. Add the 'hitl' label to run it (the merge queue does this when the PR reaches the head)."
+          echo "::notice title=HITL not requested::$msg"
+          echo "### HITL not requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
