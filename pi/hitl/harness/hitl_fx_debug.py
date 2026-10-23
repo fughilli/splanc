@@ -241,7 +241,10 @@ async def _one_effect(
     target = core.to_f32(t0 + 0.5)
     st2 = await s.step(toTime=target)
     want_dt = core.to_f32(target - core.to_f32(t0))
-    res.step_time_ok = float(st2.get("time", -1)) == target and float(st2.get("dt", -1)) == want_dt
+    # proto3 JSON prints a float as its shortest decimal, so round it back to f32
+    # before the exact comparison.
+    got_t, got_dt = core.to_f32(float(st2.get("time", -1))), core.to_f32(float(st2.get("dt", -1)))
+    res.step_time_ok = got_t == target and got_dt == want_dt
     if not res.step_time_ok:
         _log(
             f"[{name}] step to {target}: time={st2.get('time')} dt={st2.get('dt')} (want dt {want_dt})"
