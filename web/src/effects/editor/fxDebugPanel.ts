@@ -58,7 +58,11 @@ function installStyles(): void {
   style.textContent = `
 .fxdbg { display:flex; flex-direction:column; gap:var(--sp-2); padding:var(--sp-2); font-size:13px; }
 .fxdbg-row { display:flex; flex-wrap:wrap; gap:var(--sp-1); align-items:center; }
-.fxdbg-row input[type=number] { width:5.5em; }
+.fxdbg-row input[type=number] {
+  width:5.5em; background:var(--surface-2); color:var(--text); border:1px solid var(--border);
+  border-radius:var(--r-ctrl); padding:0.4rem 0.5rem; font:inherit;
+}
+.fxdbg-row input[type=number]:focus { outline:none; border-color:var(--accent); }
 .fxdbg-status { color:var(--text-dim); font-variant-numeric:tabular-nums; }
 .fxdbg-status[data-paused="1"] { color:var(--warn); }
 .fxdbg-views button[aria-pressed="true"] { outline:2px solid var(--accent); }
