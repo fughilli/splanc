@@ -14,7 +14,8 @@ use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
 use ledmapper_netstack::wpa::PmkDeriv;
 
-static mut RX: RxRing<16> = RxRing::new();
+const RX_SLOTS: usize = 16;
+static mut RX: RxRing<RX_SLOTS> = RxRing::new();
 static mut TX: TxRing<4> = TxRing::new();
 
 /// Per-STA 802.11 transmit sequence number (12-bit, mod 4096). IEEE 802.11 §9.2.4.4
@@ -302,6 +303,18 @@ pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
     }
 }
 
+/// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
+/// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
+/// retransmits. Zeros when there is no connection.
+#[no_mangle]
+pub extern "C" fn ns_tcp_stats(out: *mut u32) {
+    unsafe {
+        let s = TCP.as_ref().map(|c| c.stats).unwrap_or_default();
+        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+        core::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
+    }
+}
+
 /// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done 5=Listen 6=SynRcvd.
 #[no_mangle]
 pub extern "C" fn ns_tcp_state() -> u32 {
@@ -384,10 +397,34 @@ pub extern "C" fn ns_mac_rx_install() {
 
 /// Reap the RX ring and copy the next completed 802.11 frame (past the 92-byte
 /// hardware RX vector header) into `out`. Returns its length, or 0 if none ready.
+/// RX-ring diagnostics: (high-water of frames waiting in the ring at a poll, polls that
+/// found it completely full). Read + reset by `ns_mac_rx_stats`.
+static mut RX_HWM: u32 = 0;
+static mut RX_FULL: u32 = 0;
+
+/// Copy the RX-ring diagnostics into `out[0..2]` (high-water, full-ring polls) and reset
+/// the high-water. Lets the player log how close the 16-slot ring comes to overflowing.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_stats(out: *mut u32) {
+    unsafe {
+        *out = RX_HWM;
+        *out.add(1) = RX_FULL;
+        RX_HWM = 0;
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        RX.reap();
+        if RX.reap() > 0 {
+            let ready = RX.ready_count() as u32;
+            if ready > RX_HWM {
+                RX_HWM = ready;
+            }
+            if ready as usize >= RX_SLOTS {
+                RX_FULL = RX_FULL.wrapping_add(1);
+            }
+        }
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
             let n = frame.len().min(cap as usize);

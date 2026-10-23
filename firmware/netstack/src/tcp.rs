@@ -58,7 +58,29 @@ fn csum(data: &[u8], mut sum: u32) -> u16 {
     !sum as u16
 }
 
+/// Per-connection receive/retransmit counters (diagnostics only: no behaviour hangs off
+/// them). Surfaced on the player's periodic `[net]` status line so a HITL run can tell
+/// TCP loss/reordering from a device that stopped draining its window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpStats {
+    /// Inbound data segments (any sequence).
+    pub rx_segs: u32,
+    /// Data segments beyond `rcv_nxt` (a gap before them): discarded, re-ACKed at rcv_nxt.
+    pub rx_ooo: u32,
+    /// Data segments wholly before `rcv_nxt` (a retransmit of bytes we already had).
+    pub rx_dup: u32,
+    /// In-order segments only partly accepted (the receive buffer was nearly full).
+    pub rx_trunc: u32,
+    /// ACKs we sent advertising a zero window.
+    pub zero_wnd: u32,
+    /// Our retransmission timeouts (go-back-N) and dup-ACK fast retransmits.
+    pub rto: u32,
+    pub fast_rexmit: u32,
+}
+
 pub struct TcpConn {
+    /// Diagnostics counters (see [`TcpStats`]).
+    pub stats: TcpStats,
     src: [u8; 4],
     dst: [u8; 4],
     sport: u16,
@@ -176,6 +198,7 @@ pub struct Seg<'a>(pub &'a [u8]);
 impl TcpConn {
     pub fn new(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16, iss: u32) -> Self {
         TcpConn {
+            stats: TcpStats::default(),
             src, dst, sport, dport,
             snd_nxt: iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
             state: State::Closed,
@@ -375,6 +398,7 @@ impl TcpConn {
         // dead and tear the connection down so the app can re-listen (a single-connection
         // server would otherwise be locked out to reconnects forever).
         self.rto_count += 1;
+        self.stats.rto = self.stats.rto.wrapping_add(1);
         if self.rto_count > MAX_RTO_RETRIES {
             self.state = State::Done;
             return 0;
@@ -528,6 +552,7 @@ impl TcpConn {
                     self.dup_ack = 1;
                 }
                 if self.dup_ack == DUP_ACK_THRESH {
+                    self.stats.fast_rexmit = self.stats.fast_rexmit.wrapping_add(1);
                     self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
                     self.rtt_at_ms = 0; // the resend is a retransmission — no RTT sample off it
                     self.sent = 0;
@@ -602,10 +627,19 @@ impl TcpConn {
             State::Established | State::FinWait => {
                 let mut reply = 0;
                 if !payload.is_empty() {
+                    self.stats.rx_segs = self.stats.rx_segs.wrapping_add(1);
+                    if seq_gt(seq, self.rcv_nxt) {
+                        self.stats.rx_ooo = self.stats.rx_ooo.wrapping_add(1);
+                    } else if !seq_gt(seq.wrapping_add(payload.len() as u32), self.rcv_nxt) {
+                        self.stats.rx_dup = self.stats.rx_dup.wrapping_add(1);
+                    }
                     // In-order data: buffer what fits (partial accept when the window is
                     // tight) and advance rcv_nxt.
                     if seq == self.rcv_nxt {
                         let n = payload.len().min(self.rx.len() - self.rx_len);
+                        if n < payload.len() {
+                            self.stats.rx_trunc = self.stats.rx_trunc.wrapping_add(1);
+                        }
                         self.rx[self.rx_len..self.rx_len + n].copy_from_slice(&payload[..n]);
                         self.rx_len += n;
                         self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
@@ -674,6 +708,7 @@ impl TcpConn {
         let win = (self.rx.len() - self.rx_len).min(0xffff) as u16;
         self.last_adv_wnd = win as u32;  // remember it so window_ack() can spot a re-open
         if win == 0 {
+            self.stats.zero_wnd = self.stats.zero_wnd.wrapping_add(1);
             self.window_closed = true; // peer will zero-window-probe until we re-advertise
         }
         t[14..16].copy_from_slice(&win.to_be_bytes());

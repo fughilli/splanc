@@ -49,6 +49,11 @@ void netstack_restore_credentials(const char *ssid, const char *pass);
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);
 
+// Diagnostics for the periodic status line: TCP receive/retransmit counters, RX-ring
+// high-water / full polls, and the longest gap between two netstack_loop() passes since the
+// last call (reset on read). Formats one "[net] ..." fragment into `buf`.
+int netstack_net_stats(char *buf, size_t cap);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and

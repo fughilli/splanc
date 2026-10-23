@@ -1118,11 +1118,22 @@ static void poll_after_message() {
 // persist it if it's a state-changing upload (map/topology/effect/selection), and run the
 // post-message hw pollers. Shared by ws_compute_reply and the EFFECT-upload final step (a
 // reassembled submit_effect frame is a normal message). Returns the reply length, 0, or -1.
+// Diagnostics for the status line: the longest wait for player_mutex (the render task
+// holds it across update+shade) and the longest lm_player_handle call, in us, since the
+// last status line.
+static uint32_t g_mtx_wait_max_us = 0;
+static uint32_t g_handle_max_us = 0;
+
 static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
+  uint32_t t0 = (uint32_t)micros();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  uint32_t t1 = (uint32_t)micros();
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
+  uint32_t t2 = (uint32_t)micros();
   xSemaphoreGive(player_mutex);
+  if (t1 - t0 > g_mtx_wait_max_us) g_mtx_wait_max_us = t1 - t0;
+  if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
   return (int)n;
@@ -2996,6 +3007,12 @@ void loop() {
                  (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks,
                  (unsigned)LM_MODE.state, (unsigned)LM_MODE.accepted, (unsigned)LM_MODE.refused,
                  (unsigned)LM_MODE.unmodeled);
+    char net[200];
+    netstack_net_stats(net, sizeof net);
+    Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
+                 net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
+    g_mtx_wait_max_us = 0;
+    g_handle_max_us = 0;
 #endif
 #if defined(LM_SENSORS)
     sensor_log_status();
