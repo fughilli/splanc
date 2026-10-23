@@ -358,6 +358,11 @@ def main():
     skipped = 0
     reason = "done"
     pending_pongs = 0
+    # latest mode (VideoSender): the frames counted against --max-inflight, by ping t0.
+    # A pong not back within max(100 ms, 3x the median RTT) frees its slot anyway (the
+    # frame itself rides TCP; only the reply is late), like the web sender.
+    inflight = {}
+    rtts = []
 
     def pump_rx():
         nonlocal pending_pongs
@@ -381,6 +386,10 @@ def main():
                     f = parse_fields(m[2])
                     emit("P %.3f %.3f %.3f" % (f.get(1, 0.0), f.get(2, 0.0), t3))
                     pending_pongs -= 1
+                    t0 = f.get(1, 0.0)
+                    if inflight.pop(t0, None) is not None:
+                        rtts.append(t3 - t0)
+                        del rtts[:-90]
                 elif 9 in m:
                     emit("E %.3f device-error %r" % (t3, m[9][:80]))
 
@@ -411,6 +420,7 @@ def main():
         msg += ws_frame(client_ping(t))
         app_q.extend(msg)
         pending_pongs += 1
+        inflight[t] = True
         pump_tx()
         emit(
             "F %d %.3f %.3f %d %d %d %d"
@@ -427,7 +437,7 @@ def main():
         ):
             t_next = t_start + seq * period if seq < n_frames else now_ms() + 50
             wait = max(0.0, (t_next - now_ms()) / 1000.0)
-            tick = 0.002 if held or noise is not None else 0.05
+            tick = 0.002 if held or noise is not None or inflight else 0.05
             rl, wl, _ = select.select([s], [s] if app_q else [], [], min(wait, tick))
             if noise is not None and seq < n_frames:
                 tn = now_ms()
@@ -442,7 +452,13 @@ def main():
                 pump_rx()
             if app_q:
                 pump_tx()
-            if held is not None and pending_pongs < a.max_inflight:
+            if inflight:
+                srt = sorted(rtts)
+                limit = max(100.0, 3 * srt[len(srt) // 2]) if srt else 100.0
+                tn = now_ms()
+                for t0 in [k for k in inflight if tn - k > min(limit, 1000.0)]:
+                    del inflight[t0]
+            if held is not None and len(inflight) < a.max_inflight:
                 # A slot freed: the newest held frame goes out now (VideoSender.pump).
                 send_frame(*held)
                 held = None
@@ -450,7 +466,7 @@ def main():
                 continue
             if now_ms() < t_next:
                 continue
-            if a.mode == "latest" and pending_pongs >= a.max_inflight:
+            if a.mode == "latest" and len(inflight) >= a.max_inflight:
                 # Bounded in flight (VideoSender): hold only the newest frame; the one it
                 # replaces is dropped (stale) without ever being sent.
                 if held is not None:
