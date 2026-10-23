@@ -19,7 +19,8 @@ pub struct CompileResult {
     /// The FX debugger's symbol table JSON: [{name, kind, func, slot, width}].
     symbols: String,
     diagnostics: String,
-    /// Non-fatal lints (JSON, same shape as diagnostics; "[]" when none).
+    /// Non-fatal warnings (JSON, same shape as diagnostics; "[]" when none): lints
+    /// and perf warnings ("warning: perf: ..."), each msg prefixed "warning: ".
     warnings: String,
 }
 

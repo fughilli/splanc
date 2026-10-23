@@ -169,6 +169,33 @@ export function formatWarnings(ws: readonly FxDiagnostic[]): string {
   return ws.map((w) => `line ${w.line}: ${w.msg}`).join("\n");
 }
 
+/** The message prefix of a compiler perf warning (fx_compiler
+ * `PERF_WARNING_PREFIX`); every other warning is a correctness lint. */
+export const PERF_WARNING_PREFIX = "warning: perf: ";
+
+/** A compiler warning's kind: a correctness lint (e.g. a rate uniform
+ * multiplying `time` inside a phase: fix it) or a perf warning (it runs, but
+ * slower than it should: a float literal in fixed maths, `pow(x, 2.0)`, ...). */
+export type FxWarningKind = "correctness" | "perf";
+
+export function warningKind(w: Pick<FxDiagnostic, "msg">): FxWarningKind {
+  return w.msg.startsWith(PERF_WARNING_PREFIX) ? "perf" : "correctness";
+}
+
+/** Compile warnings as feedback for the author (the AI's compile result), each
+ * kind with its own framing: correctness lints "fix these", perf warnings "it
+ * runs, but slower than it should". "" when there are none; else starts with a
+ * newline, to append to a one-line compile summary. */
+export function warningsFeedback(ws: readonly FxDiagnostic[] | undefined): string {
+  const all = ws ?? [];
+  const fix = all.filter((w) => warningKind(w) === "correctness");
+  const perf = all.filter((w) => warningKind(w) === "perf");
+  let out = "";
+  if (fix.length > 0) out += `\nWarnings (fix these):\n${formatWarnings(fix)}`;
+  if (perf.length > 0) out += `\nPerf warnings (it runs, but slower than it should):\n${formatWarnings(perf)}`;
+  return out;
+}
+
 /** Offline preview: the exact device VM run over a map in the browser. */
 export class FxPreview {
   private constructor(private readonly inner: FxPreviewWasm) {}

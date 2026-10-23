@@ -78,7 +78,7 @@ export function builtinCostsToPrompt(table: CostTable, calibrated: boolean): str
       calibrated ? "measured on your board" : "default model"
     }) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:`,
     `  ${list}`,
-    "Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).",
+    "Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.",
   ].join("\n");
 }
 
@@ -265,8 +265,8 @@ export function perfContextToPrompt(ctx: PerfContext): string {
     )} MHz, cost table ${ctx.costTable.calibrated ? "calibrated" : "default (uncalibrated)"}.`,
   );
   lines.push(
-    "Optimize for fewer per-LED float ops: hoist loop-invariant work into update(), " +
-      "prefer step/mix/polynomial over sin/pow/exp, avoid length/normalize (hidden sqrt).",
+    "Optimize for fewer per-LED ops and no soft-float: hoist per-frame work into update(), keep per-LED " +
+      "maths in fixed (fixed() literals, sin/cos of a fixed phase in turns), avoid pow/exp/length per LED.",
   );
   return lines.join("\n");
 }

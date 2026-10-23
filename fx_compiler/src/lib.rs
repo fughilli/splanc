@@ -215,8 +215,15 @@ pub struct Compiled {
     /// What the variance pass hoisted into update() / bracketed with the per-LED
     /// cache (empty when the optimizer or the pass is off). See `memo.rs`.
     pub memo: MemoReport,
-    /// Non-fatal source lints (`lint.rs`), each `msg` prefixed "warning: " —
-    /// e.g. a rate uniform multiplying `time` inside a phase.
+    /// Non-fatal warnings, each `msg` prefixed "warning: ". Two kinds, told
+    /// apart by the message prefix (see [`PERF_WARNING_PREFIX`]):
+    /// - correctness lints (`lint.rs`), e.g. a rate uniform multiplying `time`
+    ///   inside a phase — fix these;
+    /// - perf warnings ("warning: perf: ..."): places where the source asks for
+    ///   soft-float the author almost certainly didn't mean (a float literal
+    ///   promoting fixed maths, `pow(x, 2.0)`, ...). Per-LED code only (shade()
+    ///   and helpers), so each one costs cycles on every LED every frame. The
+    ///   program runs, but slower than it should.
     pub warnings: Vec<Diagnostic>,
     /// Where each named `state` variable and local / parameter lives in the VM's
     /// state / locals slots — the FX debugger's symbol table (docs/design/
@@ -457,13 +464,21 @@ pub struct Compiler {
     buffers: Vec<BufferInfo>,
     struct_names: HashMap<String, u16>,
     cur_fn_is_entry: bool,
+    /// The function being compiled: the FX debugger's symbol table names each
+    /// local / param's function with it, and perf warnings are only for per-LED
+    /// code (not update() / poll()).
+    cur_fn: String,
+    /// Non-fatal perf diagnostics ("warning: perf: ..."; see `Compiled::warnings`).
+    perf_warnings: Vec<Diagnostic>,
+    /// For the call being compiled: the float literal each argument was (if it
+    /// was one), set by `call_args` — feeds the mixed fixed/float warning.
+    call_lits: Vec<Option<f32>>,
     uniforms: Vec<UniformInfo>,
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
-    // FX debugger symbol table + the function being compiled.
+    // FX debugger symbol table (cur_fn above names each entry's function).
     dbg_syms: Vec<DebugSym>,
-    cur_fn: String,
     // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
     consts: Vec<u32>,
     // output code (per function)
@@ -519,6 +534,21 @@ struct CtxProv {
     end: usize,
 }
 const CTX_WHOLE: u8 = 0xFF;
+
+/// The message prefix of a perf warning in [`Compiled::warnings`] ("it runs, but
+/// slower than it should"); every other warning is a correctness lint ("fix
+/// these"). Hosts tell the two kinds apart by it.
+pub const PERF_WARNING_PREFIX: &str = "warning: perf: ";
+
+/// A literal as the author would write it (`0.6`, `2.0`, `-0.25`).
+fn fmt_lit(v: f32) -> String {
+    let t = format!("{v}");
+    if t.contains('.') || t.contains('e') || t.contains("inf") || t.contains("NaN") {
+        t
+    } else {
+        format!("{t}.0")
+    }
+}
 
 /// Compile GLSL-ish source to `.fxb` + manifest, or a list of diagnostics.
 /// Runs the bytecode optimizer (FUG-125); see [`compile_opts`] to disable it.
@@ -611,12 +641,14 @@ impl Compiler {
             buffers: Vec::new(),
             struct_names: HashMap::new(),
             cur_fn_is_entry: false,
+            cur_fn: String::new(),
+            perf_warnings: Vec::new(),
+            call_lits: Vec::new(),
             uniforms: Vec::new(),
             n_uniform_slots: 0,
             n_state: 0,
             n_locals: 0,
             dbg_syms: Vec::new(),
-            cur_fn: String::new(),
             consts: Vec::new(),
             code: Vec::new(),
             update_entry: 0xFFFF,
@@ -1285,7 +1317,7 @@ impl Compiler {
         } else {
             ret_ty
         };
-        self.cur_fn_is_entry = is_entry;
+        self.cur_fn_is_entry = is_entry; // (cur_fn was set at the top, before the params)
         self.block(want)?;
         if is_entry {
             self.emit(fx_vm_op::RET);
@@ -1778,8 +1810,10 @@ impl Compiler {
     }
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Ty, Diagnostic> {
+        let l_start = self.code.len();
         let mut lty = self.unary()?;
         let mut lt = std::mem::take(&mut self.lint.taint);
+        let mut l_lit = self.float_lit_since(l_start);
         loop {
             let (op, bp): (&str, u8) = match self.cur().clone() {
                 Tok::Sym2(['&', '&']) => ("&&", 1),
@@ -1802,13 +1836,80 @@ impl Compiler {
             }
             let (_, op_line, op_col) = self.lx_toks[self.p];
             self.advance();
+            let r_start = self.code.len();
             let rty = self.expr_bp(bp + 1)?;
             let rt = std::mem::take(&mut self.lint.taint);
             lt = self.lint.binop(op, lt, rt, op_line, op_col);
+            let r_lit = self.float_lit_since(r_start);
+            self.warn_fixed_float_literal(op, &[(lty, l_lit), (rty, r_lit)], op_line, op_col);
             lty = self.emit_binop(op, lty, rty)?;
+            l_lit = None;
         }
         self.lint.taint = lt;
         Ok(lty)
+    }
+
+    /// The value of the float literal compiled since code offset `start`, if
+    /// that is all that was compiled (`0.6`, `-0.6`, `(0.6)`).
+    fn float_lit_since(&self, start: usize) -> Option<f32> {
+        let k = self.last_const?;
+        if k.is_int || k.pos != start {
+            return None;
+        }
+        let v = f32::from_bits(k.bits);
+        let n = self.code.len() - start;
+        if n == 3 {
+            Some(v)
+        } else if n == 5 && self.code[start + 3] == fx_vm_op::NEG && self.code[start + 4] == 1 {
+            Some(-v)
+        } else {
+            None
+        }
+    }
+
+    /// Per-LED code only: shade() and the helper functions (update()/poll()
+    /// run once per frame, where a conversion is noise).
+    fn in_per_led_code(&self) -> bool {
+        self.cur_fn != "update" && self.cur_fn != "poll"
+    }
+
+    fn warn_at(&mut self, line: u32, col: u32, msg: String) {
+        if self.perf_warnings.len() < 32 && !self.perf_warnings.iter().any(|w| w.line == line && w.msg == msg) {
+            self.perf_warnings.push(Diagnostic { line, col, msg });
+        }
+    }
+
+    /// Warn when a scalar fixed-point operand meets a float LITERAL: scalar
+    /// promotion makes the whole operation soft-float (a fixed→float convert,
+    /// the float op, and usually a float→fixed convert back) when the author
+    /// meant `x * fixed(0.6)`. The study behind this (docs/design/
+    /// fx-perf-study.md, Q2) found it in 8 of 30 in-app agent programs.
+    fn warn_fixed_float_literal(&mut self, what: &str, args: &[(Ty, Option<f32>)], line: u32, col: u32) {
+        if !self.in_per_led_code() {
+            return;
+        }
+        let fixed = args
+            .iter()
+            .find(|(t, _)| matches!(t, Ty::Fixed | Ty::Fixed8 | Ty::Fixed16))
+            .map(|(t, _)| *t);
+        let lit = args.iter().find_map(|(t, l)| if *t == Ty::Float { *l } else { None });
+        if let (Some(ft), Some(v)) = (fixed, lit) {
+            let fname = match ft {
+                Ty::Fixed8 => "fixed8",
+                Ty::Fixed16 => "fixed16",
+                _ => "fixed",
+            };
+            let shown = fmt_lit(v);
+            self.warn_at(
+                line,
+                col,
+                format!(
+                    "{PERF_WARNING_PREFIX}`{what}` mixes a {fname} value with the float literal {shown}, so it runs in \
+                     soft-float (~3x the cycles, with fixed<->float conversions) on every LED; write \
+                     {fname}({shown}) to keep it integer"
+                ),
+            );
+        }
     }
 
     fn emit_binop(&mut self, op: &str, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
@@ -2250,9 +2351,11 @@ impl Compiler {
             return Ok(f.ret);
         }
         // built-in functions
+        let (_, call_line, call_col) = self.lx_toks[self.p.saturating_sub(2)];
         let args = self.call_args()?;
         self.expect_sym(')')?;
         self.lint.taint = self.lint.builtin(name);
+        self.warn_builtin_call(name, &args, call_line, call_col);
         self.emit_builtin(name, &args)
     }
 
@@ -2298,13 +2401,18 @@ impl Compiler {
     fn call_args(&mut self) -> Result<Vec<Ty>, Diagnostic> {
         let mut args = Vec::new();
         let mut taints = Vec::new();
+        self.call_lits.clear();
         if *self.cur() == Tok::Sym(')') {
             self.lint.arg_taints = taints;
             return Ok(args);
         }
+        let mut lits = Vec::new();
         loop {
+            let start = self.code.len();
             args.push(self.expr()?);
             taints.push(std::mem::take(&mut self.lint.taint));
+            lits.push(self.float_lit_since(start));
+            self.call_lits = lits.clone();
             if *self.cur() == Tok::Sym(',') {
                 self.advance();
             } else {
@@ -2313,6 +2421,46 @@ impl Compiler {
         }
         self.lint.arg_taints = taints;
         Ok(args)
+    }
+
+    /// Perf warnings for one built-in call (see `Compiled::warnings`).
+    fn warn_builtin_call(&mut self, name: &str, args: &[Ty], line: u32, col: u32) {
+        if !self.in_per_led_code() {
+            return;
+        }
+        let lits = std::mem::take(&mut self.call_lits);
+        // Builtins with an integer path that a float-literal argument knocks
+        // back onto soft-float (all args must share the fixed type).
+        if matches!(name, "min" | "max" | "clamp" | "mix" | "step" | "mod" | "atan2" | "pow" | "hsv2rgb")
+            && args.iter().all(|a| a.width() == 1)
+        {
+            let pairs: Vec<(Ty, Option<f32>)> =
+                args.iter().zip(lits.iter().chain(std::iter::repeat(&None))).map(|(t, l)| (*t, *l)).collect();
+            self.warn_fixed_float_literal(&format!("{name}()"), &pairs, line, col);
+        }
+        // pow with a small constant exponent: ~1,800 cycles of soft-float for
+        // what a multiply (or a sqrt) does.
+        if name == "pow" && args.len() == 2 && args[0].fixed_frac().is_none() {
+            if let Some(Some(e)) = lits.get(1) {
+                let hint = match *e {
+                    x if x == 2.0 => Some("x * x"),
+                    x if x == 3.0 => Some("x * x * x"),
+                    x if x == 4.0 => Some("(x * x) * (x * x)"),
+                    x if x == 0.5 => Some("sqrt(x)"),
+                    _ => None,
+                };
+                if let Some(h) = hint {
+                    self.warn_at(
+                        line,
+                        col,
+                        format!(
+                            "{PERF_WARNING_PREFIX}pow(x, {}) costs ~1,800 cycles per LED on the FPU-less device; write {h}",
+                            fmt_lit(*e)
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     /// Convert every scalar int/fixed arg already on the stack (in call order,
@@ -3050,12 +3198,14 @@ impl Compiler {
             b.push(report.led_cache_groups.len() as u8);
             b.extend_from_slice(&report.led_cache_groups);
         }
+        let mut warnings = self.lint.warnings;
+        warnings.extend(self.perf_warnings);
         Compiled {
             fxb: b,
             uniforms: self.uniforms,
             exports: self.exports,
             memo: report,
-            warnings: self.lint.warnings,
+            warnings,
             symbols: self.dbg_syms,
         }
     }

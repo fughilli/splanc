@@ -30,7 +30,7 @@ import type { OutputMap, Topology } from "@ledmapper/protocol";
 import {
   FxPreview,
   deriveLedTopology,
-  formatWarnings,
+  warningsFeedback,
   type FxCompiled,
   type FxUniform,
   type LedTopology,
@@ -148,6 +148,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
+  /** The last clean compile's warnings (the estimate's findings read the perf ones). */
+  let lastWarnings: { line: number; col: number; msg: string }[] = [];
   // The .fxb last successfully pushed to the device — auto-push skips a compile
   // whose bytecode is byte-identical (e.g. a whitespace edit) so it doesn't
   // needlessly re-flash the device.
@@ -1239,13 +1241,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
     lastBytecode = r.bytecode;
     lastCompiled = r;
+    lastWarnings = r.warnings ?? [];
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
     void updateBudgetBar(r.bytecode);
     videoPanel.setBytecode(r.bytecode);
-    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
-    // Lints (e.g. a rate uniform multiplying `time` in a phase) ride the AI's
-    // compile feedback so it fixes them, not just the errors.
-    if (warnings.length > 0) lastCompileSummary += `\nWarnings (fix these):\n${formatWarnings(warnings)}`;
+    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes${warningsFeedback(r.warnings)}`;
     panel.setManifest(r.uniforms);
     if (initialScene && !sceneUniformsApplied) {
       panel.hydrate(sceneUniformValues(r.uniforms, initialScene.uniforms));
@@ -1414,7 +1414,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
     const fleet = estimateAcrossDevices(lastBytecode, targets);
-    return describeFleet(fleet);
+    return describeFleet(fleet, { bytecode: lastBytecode, source: codeEl.value, warnings: lastWarnings });
   }
 
   /** measure_on_device: run the latest compile on the connected fixture and

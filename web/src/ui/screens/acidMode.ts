@@ -14,7 +14,7 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { FxPreview, deriveLedTopology, formatWarnings, type FxUniform, type LedTopology } from "../../fx/preview";
+import { FxPreview, deriveLedTopology, warningsFeedback, type FxUniform, type LedTopology } from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -86,6 +86,8 @@ export function AcidModeScreen(router: Router): Screen {
   let currentTopo: LedTopology | null = null;
   let topoToken = 0;
   let lastBytecode: Uint8Array | null = null;
+  /** The last clean compile's warnings (the estimate's findings read the perf ones). */
+  let lastWarnings: { line: number; col: number; msg: string }[] = [];
   /** The program last uploaded to the device (measure_on_device skips re-upload). */
   let uploadedFxb: Uint8Array | null = null;
   let lastUniforms: FxUniform[] = [];
@@ -355,6 +357,7 @@ export function AcidModeScreen(router: Router): Screen {
       return `Compile failed${first ? ` — line ${first.line}: ${first.msg}` : ""}. Fix and retry.`;
     }
     lastBytecode = r.bytecode;
+    lastWarnings = r.warnings ?? [];
     lastUniforms = r.uniforms;
     await swapPreview(r.bytecode, r.uniforms);
     midiRouter.setManifest(r.uniforms);
@@ -381,9 +384,7 @@ export function AcidModeScreen(router: Router): Screen {
     } else {
       appendMsg("think", "💡 Wrote it (no device connected)");
     }
-    const warnings = r.warnings ?? [];
-    const lint = warnings.length > 0 ? `\nWarnings (fix these):\n${formatWarnings(warnings)}` : "";
-    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${lint}`;
+    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${warningsFeedback(r.warnings)}`;
   }
 
   /** Save the acid effect to the library under a stable id (create if new).
@@ -479,7 +480,11 @@ export function AcidModeScreen(router: Router): Screen {
     if (lastBytecode === null) return "Nothing compiles yet — author an effect first.";
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
-    return describeFleet(estimateAcrossDevices(lastBytecode, targets));
+    return describeFleet(estimateAcrossDevices(lastBytecode, targets), {
+      bytecode: lastBytecode,
+      source: currentSource,
+      warnings: lastWarnings,
+    });
   }
 
   /** measure_on_device: set_script already uploads, so this usually just
