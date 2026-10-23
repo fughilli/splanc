@@ -150,33 +150,39 @@ def run_on_hardware(args) -> int:
                 ssid, password = creds
         if not ssid:
             raise SystemExit("no WiFi: rig serves no AP; pass --wifi-ssid")
-        if args.bundle:
-            _log(f"[flash] {os.path.basename(args.bundle)} -> {res.host}")
-            res.scp_to([args.bundle], "/tmp/")
-            res.ssh(
-                f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs "
-                f"--monitor --monitor-seconds {args.monitor_seconds:g}",
-                capture=True,
-                timeout=args.monitor_seconds + 120,
-            )
-        redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
-        host, port = dut_target(redirect, "wss")
-        with res.forward(host, port) as local_port:
-            asyncio.run(_setup_effect(f"wss://localhost:{local_port}/ws", args, fxb))
-        res.scp_to([probe], "/tmp/")
-        # The setup socket closed; give the single-slot server a moment to re-listen.
-        time.sleep(1.0)
-        for k, (mode, fps, seconds) in enumerate(plan):
-            with res.ap_lock(f"video latency {mode} {fps:g}fps {seconds:g}s -> {host}"):
-                text = run_probe(res, host, port, mode, fps, seconds, args)
-            raw_path = os.path.join(out_dir, f"video_latency_{k}_{mode}_{fps:g}fps.txt")
-            with open(raw_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            verdict, line = judge(text, fps, args)
-            verdicts.append(verdict)
-            print(f"[video-latency] run {k} mode={mode} -> {raw_path}", flush=True)
-            print(line, flush=True)
-            time.sleep(2.0)
+        # The main bundle, then any --ab-bundle: each is flashed + provisioned in turn and
+        # runs the same plan, so an A/B compares firmwares on the SAME DUT and air.
+        bundles = [args.bundle] + list(args.ab_bundle or [])
+        for b, bundle in enumerate(bundles):
+            prefix = f"b{b}_" if len(bundles) > 1 else ""
+            if bundle:
+                _log(f"[flash] {prefix}{os.path.basename(bundle)} -> {res.host}")
+                remote = f"/tmp/vl{b}_{os.path.basename(bundle)}"
+                res.scp_to([bundle], remote)
+                res.ssh(
+                    f"hitl-flash {remote} --erase-fs "
+                    f"--monitor --monitor-seconds {args.monitor_seconds:g}",
+                    capture=True,
+                    timeout=args.monitor_seconds + 120,
+                )
+            redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
+            host, port = dut_target(redirect, "wss")
+            with res.forward(host, port) as local_port:
+                asyncio.run(_setup_effect(f"wss://localhost:{local_port}/ws", args, fxb))
+            res.scp_to([probe], "/tmp/")
+            # The setup socket closed; give the single-slot server a moment to re-listen.
+            time.sleep(1.0)
+            for k, (mode, fps, seconds) in enumerate(plan):
+                with res.ap_lock(f"video latency {mode} {fps:g}fps {seconds:g}s -> {host}"):
+                    text = run_probe(res, host, port, mode, fps, seconds, args)
+                raw_path = os.path.join(out_dir, f"{prefix}video_latency_{k}_{mode}_{fps:g}fps.txt")
+                with open(raw_path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                verdict, line = judge(text, fps, args)
+                verdicts.append(verdict)
+                print(f"[video-latency] {prefix}run {k} mode={mode} -> {raw_path}", flush=True)
+                print(line, flush=True)
+                time.sleep(2.0)
     finally:
         res.release()
         for name, text in res.serial_logs.items():
@@ -221,6 +227,12 @@ def main() -> None:
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"))
     ap.add_argument("--bundle", default=default_flashbundle())
     ap.add_argument("--no-bundle", dest="bundle", action="store_const", const=None)
+    ap.add_argument(
+        "--ab-bundle",
+        action="append",
+        help="another flash-bundle to run the same plan against afterwards, in the same "
+        "reservation (repeatable): a firmware A/B on one DUT",
+    )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument("--improv-timeout", type=float, default=75.0)
