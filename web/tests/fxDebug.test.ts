@@ -42,6 +42,7 @@ import {
   type MappingBundle,
 } from "../src/net/proto";
 import type { ClientMessage, ServerMessage } from "@ledmapper/protocol";
+import { GetFxSnapshot_Section } from "../src/gen/ledmapper_pb";
 
 const b64 = (b: Uint8Array): string => Buffer.from(b).toString("base64");
 
@@ -74,6 +75,11 @@ test("fx debugger arms round-trip the protobuf boundary", () => {
   ) as unknown as FxDebugMessage;
   assert.equal(led.led?.led, 3);
   assert.deepEqual(led.led?.locals, [1.5, -2, "NaN"], "proto3 JSON spells a NaN local as a string");
+});
+
+test("every FX_SECTION is a declared proto enum value (closed-enum decoders like Python's reject the rest)", () => {
+  const declared = new Set(Object.values(GetFxSnapshot_Section).filter((v) => typeof v === "number"));
+  for (const [name, v] of Object.entries(FX_SECTION)) assert.ok(declared.has(v), name);
 });
 
 test("FX_LED_V1 and FX_FRAME_V1 decode like the firmware writes them", () => {
