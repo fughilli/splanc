@@ -12,7 +12,10 @@ module spi_ws281x #(
     parameter integer T0H_NS    = 350,
     parameter integer T1H_NS    = 700,
     parameter integer PERIOD_NS = 1250,
-    parameter integer RESET_NS  = 300000
+    parameter integer RESET_NS  = 300000,
+    parameter integer MAX_LEDS  = 553,    // per-port frame capacity (FIFO default)
+    parameter integer FIFO_DEPTH = 0,     // per-port FIFO bytes; 0 = MAX_LEDS*3
+    parameter integer PREFILL   = 2       // bytes/port buffered before a frame starts
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -79,7 +82,10 @@ module spi_ws281x #(
       .T0H_NS(T0H_NS),
       .T1H_NS(T1H_NS),
       .PERIOD_NS(PERIOD_NS),
-      .RESET_NS(RESET_NS)
+      .RESET_NS(RESET_NS),
+      .MAX_LEDS(MAX_LEDS),
+      .FIFO_DEPTH(FIFO_DEPTH),
+      .PREFILL(PREFILL)
   ) u_stream (
       .clk(clk),
       .rst(rst),

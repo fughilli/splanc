@@ -1,0 +1,26 @@
+// Tang Nano 9K (GW1NR-9C) constraints for the INTERNAL-ONLY 20-port variant
+// (tangnano9k_20p_top.v). Same clock/SPI/LED pins as tangnano9k.cst; NO WS output
+// pins -- the 20 outputs are XOR-folded onto led[0] until the user picks the pin
+// map. Not for flashing.
+IO_LOC "clk27" 52;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "ss" 25;
+IO_PORT "ss" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "sck" 26;
+IO_PORT "sck" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "mosi" 27;
+IO_PORT "mosi" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "led[0]" 10;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "led[1]" 11;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "led[2]" 13;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "led[3]" 14;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "led[4]" 15;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "led[5]" 16;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33 DRIVE=8;

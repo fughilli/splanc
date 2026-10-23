@@ -66,3 +66,30 @@ fpga_flash(
     name = "spi_ws281x_tangnano9k_flash",
     bitstream = ":spi_ws281x_tangnano9k",
 )
+
+# ---- INTERNAL-ONLY 20-port variant (no WS pin map yet; do NOT flash) ----------
+# 20 ports x 1024 LEDs, one 2048-byte BSRAM FIFO per port, 54 MHz core. The WS
+# outputs are XOR-folded onto one onboard LED so place-and-route keeps every
+# port's logic (see tangnano9k_20p_top.v). Utilisation / fmax sweep 8..20 ports:
+# scaling_report.sh. Full path at MAX scale with an async SCK:
+verilog_sim(
+    name = "spi_ws281x_20p_sim",
+    size = "medium",
+    tb = "spi_ws281x_20p_tb.v",
+    top = "spi_ws281x_20p_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+verilog_top(
+    name = "tangnano9k_20p_top",
+    srcs = ["tangnano9k_20p_top.v"],
+    top = "tangnano9k_20p_top",
+    deps = [":spi_ws281x_lib"],
+)
+
+synthesizable_bitstream(
+    name = "spi_ws281x_tangnano9k_20p",
+    constraints = "tangnano9k_20p.cst",
+    platform = "@rules_fpga//fpga/platforms:tangnano9k",
+    top = ":tangnano9k_20p_top",
+)
