@@ -63,6 +63,7 @@ py_test(
         "test_upgrade_keeps_wifi_core.py",
         "test_video_bench.py",
         "test_video_latency.py",
+        "test_wifi_cadence_core.py",
         "test_wifi_stations.py",
     ],
     # test_board_caps pins the REAL descriptor, loaded from runfiles; the

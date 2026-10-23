@@ -84,6 +84,8 @@ const CLIENT_ARMS: Record<string, string> = {
   ota_abort: "otaAbort",
   get_ota_status: "getOtaStatus",
   ota_reboot: "otaReboot",
+  set_wifi_policy: "setWifiPolicy",
+  get_wifi_policy: "getWifiPolicy",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -117,6 +119,7 @@ const SERVER_ARMS: Record<string, string> = {
   capture_profile: "captureProfile",
   ota_status: "otaStatus",
   texture_ack: "textureAck",
+  wifi_policy_state: "wifiPolicyState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -697,6 +700,65 @@ export interface OtaStatusFlat {
 
 export interface OtaStatusMessage extends OtaStatusFlat {
   type: "ota_status";
+}
+
+// -- Wi-Fi rejoin policy (the "wifi_policy" feature) --------------------------
+// docs/design/wifi-rejoin-policy.md; the app-side shape + wording live in
+// net/wifiPolicy.ts. Enums ride the JSON boundary as their proto NAMES.
+
+/** proto WifiMode, as its enum name. */
+export type WifiModeName = "WIFI_MODE_AUTO" | "WIFI_MODE_FIXED" | "WIFI_MODE_MANUAL" | "WIFI_MODE_OFFLINE";
+
+/** proto WifiLinkState, as its enum name. */
+export type WifiLinkStateName =
+  | "WIFI_LINK_UNKNOWN"
+  | "WIFI_LINK_OFFLINE"
+  | "WIFI_LINK_UNPROVISIONED"
+  | "WIFI_LINK_IDLE"
+  | "WIFI_LINK_SEARCHING"
+  | "WIFI_LINK_JOINING"
+  | "WIFI_LINK_JOINED";
+
+/** Change the Wi-Fi rejoin policy (proto SetWifiPolicy). Unset fields keep the
+ * device's value. manual / offline are refused while a fresh firmware update is
+ * unconfirmed unless `force`. Reply: wifi_policy_state. */
+export interface SetWifiPolicyMessage {
+  type: "set_wifi_policy";
+  mode?: WifiModeName;
+  scanCapS?: number;
+  intervalS?: number;
+  decayAfterH?: number;
+  sparseIntervalS?: number;
+  force?: boolean;
+  rejoinNow?: boolean;
+}
+
+/** Read the Wi-Fi rejoin policy (proto GetWifiPolicy). Reply: wifi_policy_state. */
+export interface GetWifiPolicyMessage {
+  type: "get_wifi_policy";
+}
+
+/** Reply to set/get_wifi_policy (proto WifiPolicyState). */
+export interface WifiPolicyStateMessage {
+  type: "wifi_policy_state";
+  mode: WifiModeName;
+  scanCapS: number;
+  intervalS: number;
+  decayAfterH: number;
+  sparseIntervalS: number;
+  state: WifiLinkStateName;
+  /** Seconds until the next background scan (0 = none scheduled / scanning). */
+  nextScanS: number;
+  scans: number;
+  ssid: string;
+  /** Seconds since the network was last seen (0 = on it / unknown). */
+  unseenS: number;
+  decayed: boolean;
+  /** A firmware update is installed but not yet confirmed. */
+  otaPending: boolean;
+  /** Why the last set_wifi_policy was not applied ("" = it was): "ota_pending". */
+  refused: string;
+  radioOn: boolean;
 }
 
 /** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */
