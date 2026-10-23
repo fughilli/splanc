@@ -1351,6 +1351,15 @@ impl Player {
         self.time_base_ms
     }
 
+    /// Move the time-base epoch by `delta_ms` (device clock): after the device
+    /// clock steps by `delta_ms`, shifting the epoch the same way keeps effect
+    /// time (now - epoch) continuous, so the fixture stays in step.
+    pub fn shift_time_base(&mut self, delta_ms: i64) {
+        if let Some(t) = self.time_base_ms.as_mut() {
+            *t += delta_ms;
+        }
+    }
+
     /// Declare the protocol features this firmware serves and the .fxb format
     /// its VM accepts; echoed in every welcome (and the agent manifest). Call
     /// once at boot.

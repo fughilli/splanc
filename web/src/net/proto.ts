@@ -116,6 +116,7 @@ const SERVER_ARMS: Record<string, string> = {
   driver_state: "driverState",
   capture_profile: "captureProfile",
   ota_status: "otaStatus",
+  texture_ack: "textureAck",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -336,6 +337,23 @@ export interface SetTextureMessage {
   flags: number;
   data: Uint8Array;
   palette?: number[];
+  /** Firmware feature "texture_ack": non-zero asks for a TextureAck{seq} reply. */
+  seq?: number;
+  /** When to show the frame, ms on the shared effect time base (set_time_base). */
+  presentAtMs?: number;
+}
+
+/** Reply to a set_texture carrying a seq (proto TextureAck): decode confirmed,
+ * plus presentation telemetry. proto3 drops zero fields, hence the optionals. */
+export interface TextureAckMessage {
+  type: "texture_ack";
+  seq?: number;
+  shownSeq?: number;
+  shownLateMs?: number;
+  dropped?: number;
+  queued?: number;
+  shownAtMs?: number;
+  clockJumps?: number;
 }
 
 /** Select the active effect by id (proto SetEffect). `deck` (FUG-110): 0 = A
