@@ -21,7 +21,7 @@ import {
   downloadFirmwareToCache,
   prefetchLatestFirmware,
 } from "../../flash/firmwareRepo";
-import { loadReleaseFirmwareIndex } from "../../flash/githubReleaseRepo";
+import { loadReleaseFirmwareIndex, proxiedAssetUrl, siblingAssetUrl } from "../../flash/githubReleaseRepo";
 import { cachedIds, deleteBundle, listBundles } from "../../flash/firmwareCache";
 import {
   webSerialUnavailableReason,
@@ -41,7 +41,7 @@ import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 import { appState } from "../app/state";
 import type { LedMapperClient } from "../../net/client";
-import { inLoader, OtaError, updateFirmware, type OtaProgress } from "../../net/otaUpdate";
+import { inLoader, maxManifestAsset, OtaError, pullsImage, updateFirmware, type OtaProgress } from "../../net/otaUpdate";
 
 let openHandle: SheetHandle | null = null;
 
@@ -581,6 +581,7 @@ const OTA_PHASE_TEXT: Record<OtaProgress["phase"], string> = {
   handoff: "Restarting into the updater",
   wait: "Waiting for the device",
   transfer: "Sending firmware",
+  download: "The device is downloading the firmware",
   resume: "Reconnecting",
   verify: "Verifying",
   reboot: "Starting the new firmware",
@@ -614,16 +615,14 @@ async function startOtaUpdate(
   let lastKey = "";
   try {
     status.textContent = "Downloading firmware…";
-    const req = await loadFlashRequest(entry);
-    if (!req.otaPackage) {
-      throw new OtaError(
-        "no_package",
-        "This firmware has no over-the-air package — pick a “Netstack + OTA loader” release.",
-      );
-    }
-    appendLog(`Package: ${fmtKB(req.otaPackage.length)} (${entry.label}).`);
-    const result = await updateFirmware(client, req.otaPackage, {
-      ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}),
+    const { pkg, keyEpoch } = pullsImage(client.welcome) ? await maxPackage(client, entry) : await c6Package(entry);
+    appendLog(
+      pullsImage(client.welcome)
+        ? `Signed manifest for ${entry.label}: the device fetches the image itself.`
+        : `Package: ${fmtKB(pkg.length)} (${entry.label}).`,
+    );
+    const result = await updateFirmware(client, pkg, {
+      ...(keyEpoch ? { keyEpoch } : {}),
       onProgress: (p) => {
         const pct = p.total > 0 ? Math.min(100, Math.round((p.sent / p.total) * 100)) : 0;
         fill.style.width = `${pct}%`;
@@ -631,7 +630,7 @@ async function startOtaUpdate(
         // While waiting on the device the message carries the elapsed seconds
         // ("Waiting for the updater (12 s)") — show it, so it never looks hung.
         status.textContent =
-          p.phase === "transfer"
+          p.phase === "transfer" || p.phase === "download"
             ? `${text}… ${pct}% (${fmtKB(p.sent)} / ${fmtKB(p.total)})`
             : p.message && p.phase !== "done" && p.phase !== "rolled_back" && p.phase !== "resume"
               ? p.message
@@ -662,6 +661,37 @@ async function startOtaUpdate(
     sheet.body.append(Button({ label: "Back", block: true, onClick: () => renderIdle(sheet, index, entry) }));
     toast(msg, { error: true });
   }
+}
+
+/** A C6's `.ota` (manifest ‖ image) from the selected bundle. */
+async function c6Package(entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
+  const req = await loadFlashRequest(entry);
+  if (!req.otaPackage) {
+    throw new OtaError(
+      "no_package",
+      "This firmware has no over-the-air package — pick a “Netstack + OTA loader” release.",
+    );
+  }
+  return { pkg: req.otaPackage, ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}) };
+}
+
+/** A Splanc MAX (pull device, docs/design/max-ota.md): just the release's signed
+ * manifest for this board (`max-<board>-<ver>.manifest`, 108 bytes); the Pi
+ * downloads the system image itself. Its key-epoch record is `max-key-epoch.bin`
+ * (the C6's key-epoch.bin is signed by keys a MAX doesn't hold). */
+async function maxPackage(client: LedMapperClient, entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
+  const st = await client.getOtaStatus();
+  const board = st.board ?? "";
+  if (!board || !entry.tarUrl || !entry.version) {
+    throw new OtaError("no_package", "This device updates from a firmware release — pick a released version.");
+  }
+  const res = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, maxManifestAsset(board, entry.version))));
+  if (!res.ok) {
+    throw new OtaError("no_package", `Firmware ${entry.version} has no Splanc MAX image for this board (${board}).`);
+  }
+  const pkg = new Uint8Array(await res.arrayBuffer());
+  const er = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, "max-key-epoch.bin"))).catch(() => null);
+  return { pkg, ...(er?.ok ? { keyEpoch: new Uint8Array(await er.arrayBuffer()) } : {}) };
 }
 
 // -- done ------------------------------------------------------------------

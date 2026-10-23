@@ -32,6 +32,8 @@ REBOOTING = pb.OtaStatus.STATE_REBOOTING
 RECEIVING = pb.OtaStatus.STATE_RECEIVING
 INSTALLED = pb.OtaStatus.STATE_INSTALLED
 FAILED = pb.OtaStatus.STATE_FAILED
+DOWNLOADING = pb.OtaStatus.STATE_DOWNLOADING
+VERIFYING = pb.OtaStatus.STATE_VERIFYING
 
 
 class OtaError(RuntimeError):
@@ -155,6 +157,7 @@ def status_dict(st: Any) -> dict[str, Any]:
         "key_epoch": st.key_epoch,
         "revoked_keys": st.revoked_keys,
         "security_floor": st.security_floor,
+        "board": st.board,
     }
 
 
@@ -306,6 +309,110 @@ async def push(
             break
         await link.close()
         await asyncio.sleep(3.0)
+    await link.close()
+    if expect_healthy and r.outcome != "ok":
+        raise OtaError(r.outcome, f"after install: {r.final}")
+    return r
+
+
+def pulls_image(w: pb.Welcome) -> bool:
+    """A Splanc MAX (docs/design/max-ota.md): it downloads its own image."""
+    return "ota_pull" in list(w.features)
+
+
+async def pull(
+    link: Link,
+    manifest: bytes,
+    *,
+    source_url: str = "",
+    allow_downgrade: bool = False,
+    key_epoch: bytes = b"",
+    progress: Progress = _noop,
+    within_s: float = 1800.0,
+    poll_s: float = 2.0,
+    expect_healthy: bool = True,
+    interrupt: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
+) -> PushResult:
+    """Update a PULL device (Splanc MAX): send only the 108-byte manifest, then follow
+    the device's own download -> import -> reboot into the new system ONCE -> health
+    check over get_ota_status, reconnecting through every reboot. Mirrors
+    web/src/net/otaUpdate.ts pullUpdate. `interrupt(status)` (HITL) is awaited after
+    every status read; True = the caller cut the power, keep polling."""
+    m = Manifest.parse(manifest[:MANIFEST_LEN])
+    r = PushResult(version=m.version, size=m.size)
+    t0 = time.monotonic()
+    await link.open(time.monotonic() + 120)
+    st = await rpc(
+        link,
+        client(
+            ota_begin=pb.OtaBegin(
+                manifest=manifest[:MANIFEST_LEN],
+                allow_downgrade=allow_downgrade,
+                key_epoch=key_epoch,
+                source_url=source_url,
+            )
+        ),
+    )
+    r.final = status_dict(st)
+    if st.state == FAILED:
+        r.outcome = st.error
+        raise OtaError(st.error, "refused")
+    progress("download", {"offset": st.offset, "size": m.size})
+    installed = False
+    end = t0 + within_s
+    while True:
+        if st is not None:
+            r.final = status_dict(st)
+            if st.state == FAILED and not installed:
+                r.outcome = st.error
+                raise OtaError(st.error, "failed on the device")
+            if st.state == DOWNLOADING:
+                r.bytes_sent = st.offset
+                progress("download", {"offset": st.offset, "size": m.size})
+            elif st.state in (VERIFYING, INSTALLED):
+                if r.transfer_s is None:
+                    r.transfer_s = time.monotonic() - t0
+                    r.bytes_sent = m.size
+                if st.state == INSTALLED and not installed:
+                    installed = True
+                    r.finish_s = time.monotonic() - t0
+                    progress("installed", {"version": m.version})
+            elif st.state == IDLE:
+                if st.last_result == "ok" and st.app_version == m.version:
+                    r.outcome = "ok"
+                    r.healthy_s = time.monotonic() - t0
+                    progress("healthy", r.final)
+                    break
+                if st.last_result == "rolled_back" and (installed or st.version == m.version):
+                    r.outcome = "rolled_back"
+                    progress("rolled_back", r.final)
+                    break
+                if st.last_result == "installed":
+                    if not installed:
+                        installed = True
+                        r.finish_s = time.monotonic() - t0
+                    if r.boot_s is None:
+                        r.boot_s = time.monotonic() - t0
+                        progress("trial", r.final)
+                elif st.last_result == "aborted":
+                    r.outcome = "aborted"
+                    raise OtaError("aborted", "cancelled on the device")
+            if interrupt is not None and await interrupt(r.final):
+                r.resumes += 1
+        if time.monotonic() >= end:
+            r.outcome = r.outcome or "timeout"
+            break
+        await asyncio.sleep(poll_s)
+        try:
+            st = await rpc(link, client(get_ota_status=pb.GetOtaStatus()), timeout=15.0)
+        except (OtaError, TimeoutError, ConnectionError, OSError, LinkDropped):
+            st = None
+            r.resumes += 1
+            await link.close()
+            try:
+                await link.open(min(end, time.monotonic() + 60))
+            except (TimeoutError, ConnectionError, OSError):
+                pass
     await link.close()
     if expect_healthy and r.outcome != "ok":
         raise OtaError(r.outcome, f"after install: {r.final}")

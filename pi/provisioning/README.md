@@ -105,7 +105,21 @@ onboards with the same clients (`nix/improv.nix`):
 
 No keyboard, monitor, or config-file editing required.
 
-## 6. Troubleshooting
+## 6. Updates over Wi-Fi
+
+Once a Pi runs an OTA-capable system (any image from this tree: a `pi-v*` SD image
+after v1.0.0, or one `bazel run //pi/provisioning:update -- <host>`), it updates
+like the ESP32 fixtures: the app's **Flash → "Update over Wi-Fi"**, the agent's
+`update_firmware`, or the bridge. The Pi downloads the signed system image for its
+board from the firmware release itself, boots it **once**, and keeps it only if the
+player comes up healthy; otherwise it is back on its previous system by itself,
+also after a power cut. Wi-Fi, the hostname, SSH keys and stored data are kept.
+Details: [docs/design/max-ota.md](../../docs/design/max-ota.md).
+
+`splanc-max-ota status` (as root) shows the updater's state;
+`journalctl -u splanc-ota-apply -u splanc-ota-health -u splanc-ota-boot` its log.
+
+## 7. Troubleshooting
 
 - **No LEDs / wrong colors:** check the common ground first, then the data-line
   level shift, then that each strip's DIN is on the FPGA pin you expect

@@ -65,10 +65,12 @@ fn client_arms_decode() {
     begin.r#allow_downgrade = true;
     let epoch: Vec<u8> = (100..180u8).collect();
     begin.r#key_epoch.extend_from_slice(&epoch).unwrap();
+    let url = "http://127.0.0.1:18080/max-pi3-9.2.0.nixclosure";
+    begin.r#source_url.push_str(url).unwrap();
     let f = encode(CMsg::OtaBegin(begin));
     assert_eq!(
         wire::decode_client(&f).unwrap(),
-        ClientArm::OtaBegin { manifest: &manifest, allow_downgrade: true, key_epoch: &epoch }
+        ClientArm::OtaBegin { manifest: &manifest, allow_downgrade: true, key_epoch: &epoch, source_url: url.as_bytes() }
     );
 
     let data: Vec<u8> = (0..4096u32).map(|i| i as u8).collect();
@@ -138,6 +140,7 @@ fn sample_status<'a>() -> Status<'a> {
         slot_size: 0x240000,
         key_epoch: 3,
         revoked_keys: 0b1,
+        board: "pi3",
         security_floor: 2,
     }
 }
@@ -157,6 +160,7 @@ fn check_status(st: &pb::OtaStatus) {
     assert_eq!(st.r#max_chunk, 4096);
     assert_eq!(st.r#slot_size, 0x240000);
     assert_eq!((st.r#key_epoch, st.r#revoked_keys, st.r#security_floor), (3, 1, 2));
+    assert_eq!(st.r#board.as_str(), "pi3");
 }
 
 #[test]
@@ -182,6 +186,7 @@ fn the_state_enums_match_the_proto() {
         (State::Verifying, wire::State::Verifying),
         (State::Installed, wire::State::Installed),
         (State::Failed, wire::State::Failed),
+        (State::Downloading, wire::State::Downloading),
     ] {
         assert_eq!(p.0, w as i32);
     }

@@ -692,7 +692,7 @@ export interface OtaStatusFlat {
   /** "MODE_APP" (the player) | "MODE_LOADER" (the update loader / recovery). */
   mode: string;
   /** "STATE_IDLE" | "STATE_REBOOTING" | "STATE_RECEIVING" | "STATE_VERIFYING" |
-   * "STATE_INSTALLED" | "STATE_FAILED". */
+   * "STATE_INSTALLED" | "STATE_FAILED" | "STATE_DOWNLOADING" (a pull device). */
   state: string;
   version: number;
   size: number;
@@ -707,6 +707,9 @@ export interface OtaStatusFlat {
   loaderVersion: number;
   maxChunk: number;
   slotSize: number;
+  /** Pull devices (Splanc MAX, docs/design/max-ota.md): the board its images are
+   * built for ("pi3", …), naming the release asset max-<board>-<ver>.manifest. "" on a C6. */
+  board?: string;
 }
 
 export interface OtaStatusMessage extends OtaStatusFlat {

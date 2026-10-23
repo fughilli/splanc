@@ -16,7 +16,9 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "player_rs",
     srcs = [
+        "src/health.rs",
         "src/lib.rs",
+        "src/ota.rs",
         "src/render.rs",
         "src/server.rs",
         "src/session.rs",
@@ -27,7 +29,11 @@ rust_library(
     deps = [
         # The reused firmware session/pattern/effects core — host protobuf
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
+        "//firmware/ota",
         "//firmware/player",
+        # Over-the-air updates (docs/design/max-ota.md): the offer check + the
+        # updater's state/inbox formats.
+        "//pi/max_ota",
         "//shared/protocol/rust:ledmapper_pb",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",

@@ -1299,6 +1299,15 @@ message FxLedDebug {
 // which must prove healthy or the bootloader rolls it back to the loader
 // (ota_status.last_result says which). A dropped link or power cut resumes:
 // ota_begin with the same manifest answers the offset to continue from.
+//
+// A Splanc MAX (Raspberry Pi, docs/design/max-ota.md; welcome feature "ota_pull",
+// ota_status.board set) PULLS its image instead: ota_begin (the 108-byte manifest
+// of `max-<board>-<ver>.nixclosure`) -> ota_status{DOWNLOADING}; the Pi fetches the
+// image itself (from the release, or source_url) while the client polls
+// get_ota_status (offset = bytes fetched; VERIFYING while it imports; INSTALLED as
+// it reboots into the new system ONCE). The new system must prove healthy or the
+// Pi boots its old system again; last_result says "ok" or "rolled_back" (mode stays
+// APP: a MAX has no loader). ota_chunk / ota_finish answer error "pull_only".
 
 // Start (or resume) an update.
 message OtaBegin {
@@ -1314,6 +1323,11 @@ message OtaBegin {
   // rotation"), applied before the manifest is checked — how a revocation reaches
   // the fleet. Ignored when not newer than the device's.
   bytes key_epoch = 3;
+  // Pull devices only (feature "ota_pull"): fetch the image from this http(s) URL
+  // instead of the release asset its manifest version names (development, HITL, or
+  // a LAN mirror for a MAX without internet). The manifest's signed digest still
+  // decides what installs.
+  string source_url = 4;
 }
 
 // One piece of the image, in order.
@@ -1360,6 +1374,8 @@ message OtaStatus {
     STATE_INSTALLED = 4;
     // The request was refused; `error` says why.
     STATE_FAILED = 5;
+    // A pull device (Splanc MAX) is fetching the image itself; offset = bytes so far.
+    STATE_DOWNLOADING = 6;
   }
   Mode mode = 1;
   State state = 2;
@@ -1372,7 +1388,9 @@ message OtaStatus {
   // downgrade, wrong_chip, bad_image, out_of_order (resume at `offset`), bad_chunk,
   // overflow, incomplete, verify_failed, flash_error, no_session, no_app,
   // not_in_loader, legacy_layout (the device needs the one-time USB migration),
-  // unknown_key, revoked_key, security_floor, bad_epoch, bad_revocation.
+  // unknown_key, revoked_key, security_floor, bad_epoch, bad_revocation; on a pull
+  // device also wrong_board, busy, bad_url, pull_only, download_failed, bad_image,
+  // missing_base, import_failed, bootloader_unsupported.
   string error = 6;
   // Manifest version of the installed app (0 = unknown, e.g. flashed over USB).
   uint32 app_version = 7;
@@ -1395,6 +1413,10 @@ message OtaStatus {
   uint32 key_epoch = 14;
   uint32 revoked_keys = 15;
   uint32 security_floor = 16;
+  // Pull devices (Splanc MAX): the board its images are built for ("pi3", "pi4",
+  // "pi5", "zero2w"), which names the release asset `max-<board>-<ver>.manifest`.
+  // Empty on a C6.
+  string board = 17;
 }
 
 // ---------------------------------------------------------------------------
