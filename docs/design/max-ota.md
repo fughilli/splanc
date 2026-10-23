@@ -286,7 +286,7 @@ itself therefore lives outside the system closure:
 | State | Where | Across an update |
 |---|---|---|
 | Wi-Fi credentials | NetworkManager `/etc/NetworkManager/system-connections` (Improv writes them) | untouched by a generation switch |
-| hostname | `/var/lib/sbc/hostname` (sbc-deploy writes it once) | applied at boot by `splanc-identity` before avahi/NetworkManager; the image's baked `ledmapper` is only the default |
+| hostname | `/var/lib/sbc/hostname` (sbc-deploy writes it once) | the image bakes **no** hostname (`networking.hostName = ""`), so NixOS doesn't own `/etc/hostname` or avahi's `host-name`; activation writes `/etc/hostname` from the committed name, and avahi advertises `<name>.local` (a fresh unit takes the commissioning `--hostname`, else `ledmapper`) |
 | SSH host keys | `/etc/ssh/ssh_host_*` | untouched |
 | deploy key | `/var/lib/sbc/authorized_keys.d/root` | seeded once from the keys of the first OTA-capable system (a developer's `deploy_live`, or the SD image), then never rewritten; sshd reads it alongside the baked keys |
 | stored map / app data | `/var/lib/ledmapper` | untouched |
@@ -456,4 +456,43 @@ filesystem. Journals of the OTA units and the player are saved per phase.
 
 ## HITL results
 
-(filled in by the gate runs below)
+`//pi/hitl/harness:max_ota_gate` on rig-1 / **pi-ledmapper-1** (splanc-max-2: Pi 3
+Model B+ Rev 1.4 with its Tang Nano 9K), in one reservation, 2026-10-23. The images
+are `pi/hitl/max_ota_images.sh` deltas of 66 KB (A↔B) and 3.4 MB (U), all TEST-signed.
+
+**Verdict: PASS.** Every check passed, across two runs in the same reservation:
+
+- **run 5:** setup, upgrade, badsig, unhealthy, trialcut;
+- **run 6:** powercut, re-run alone with the download throttled, because the
+  66 KB delta had finished before the gate could cut it.
+
+| phase | result | numbers |
+|---|---|---|
+| setup | PASS | deploy over SSH 80 s. The first OTA-capable system and the trial U-Boot boot on real hardware. Hostname, Wi-Fi profiles, SSH host key and /var/lib/ledmapper kept; the deploy key was persisted |
+| upgrade A→B | PASS | **77 s total**: download 4 s, then the trial boot (U-Boot one-shot), healthy and committed 29 s after the trial came up. Runs B; all state kept |
+| bad signature | PASS | refused (`bad_signature`) before anything was fetched (dl/ empty); still on B |
+| unhealthy (U) | PASS | U booted once; no health file; rolled back at the 300 s deadline; **back on B by itself** (`unhealthy: no health file`) |
+| power cut mid-download | PASS | `sysrq b` at 28,672 / 66,362 B. The Pi came back on A; `splanc-ota-apply` resumed at 28,672 (HTTP Range); installed, healthy, committed: **runs B** (126 s) |
+| power cut in the trial | PASS | `sysrq b` while the trial was up and not yet proven. U-Boot booted the old default: **back on A**, `rolled_back` (`trial_reset`), 84 s |
+
+The device ends on B, a working system.
+
+**What the first runs found, all fixed in this PR:**
+
+- **The player SEGV'd at start.** On `main` the host-profile `Player::handle` needs
+  **8.2 MiB of stack** (`sub sp, #0x82b000`), more than the 8 MiB main thread and the
+  8 MiB tokio workers. Both `--start N` and every client frame crashed the static-musl
+  player in a loop. It now runs on 32 MiB stacks.
+- **spidev's 4 KiB buffer.** It made every 6.6 KB FPGA frame (4 × 550 LEDs) fail with
+  EMSGSIZE, silently, so the Tang got nothing. The image now sets
+  `spidev.bufsiz=65536`, and the player logs the first write error. The health check,
+  which counts frames that reached SPI, caught this.
+- **The baked hostname.** It made avahi advertise `ledmapper.local`, which would have
+  broken the rig's `splanc-max-2.local` addressing. Now the hostname comes from
+  /var/lib/sbc (see "Device state").
+- **The health service lost its first sample** across ticks; now the caller carries
+  it.
+
+**U-Boot under QEMU.** Before deploying the trial U-Boot to hardware, it was run under
+QEMU `raspi3b` against a two-partition SD image. The flag `1 abcd` became `0 abcd`;
+`0 …` and an absent flag were left alone.

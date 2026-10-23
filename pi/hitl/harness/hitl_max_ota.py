@@ -100,15 +100,21 @@ class RangeHandler(http.server.SimpleHTTPRequestHandler):
         return f
 
     def copyfile(self, src, dst):
+        # `?slow` serves at ~8 KiB/s: the powercut phase needs a download that is
+        # still running when it cuts (a delta image is only ~66 KB).
+        slow = self.path.endswith("?slow")
         left = getattr(self, "_left", None)
-        if left is None:
+        if left is None and not slow:
             return super().copyfile(src, dst)
+        left = left if left is not None else 1 << 62
         while left > 0:
-            b = src.read(min(1 << 20, left))
+            b = src.read(min(4096 if slow else 1 << 20, left))
             if not b:
                 break
             dst.write(b)
             left -= len(b)
+            if slow:
+                time.sleep(0.5)
 
 
 def serve_dir(directory: str) -> int:
@@ -175,6 +181,39 @@ class Pi:
                 time.sleep(3)
         while time.monotonic() < end:
             if self.up():
+                return True
+            time.sleep(5)
+        return False
+
+    def boot_id(self) -> str:
+        rc, out = self.run("cat /proc/sys/kernel/random/boot_id", timeout=20)
+        return out.strip() if rc == 0 else ""
+
+    def wait_reboot(self, old_boot_id: str, within: float = 900) -> bool:
+        """Until the DUT answers from a NEW boot (an SSH hiccup isn't a reboot)."""
+        end = time.monotonic() + within
+        while time.monotonic() < end:
+            b = self.boot_id()
+            if b and b != old_boot_id:
+                return True
+            time.sleep(5)
+        return False
+
+    def wait_system_not(self, toplevel: str, within: float = 600) -> bool:
+        """Until the DUT runs some other system than `toplevel` (a trial that
+        reported its own rollback reboots into the old system a moment later)."""
+        end = time.monotonic() + within
+        while time.monotonic() < end:
+            rc, out = self.run("readlink /run/current-system", timeout=20)
+            if rc == 0 and out.strip() and out.strip() != toplevel:
+                return True
+            time.sleep(5)
+        return False
+
+    def wait_player(self, within: float = 300) -> bool:
+        end = time.monotonic() + within
+        while time.monotonic() < end:
+            if self.run("systemctl is-active sbc-led-driver", timeout=20)[1].strip() == "active":
                 return True
             time.sleep(5)
         return False
@@ -253,16 +292,19 @@ def deploy(pi: Pi, toplevel: str) -> str:
     )
     if p.returncode != 0:
         raise RuntimeError(f"nix copy failed: {p.stderr[-2000:]}")
+    booted = pi.boot_id()
     rc, out = pi.run(
         f"nix-env -p /nix/var/nix/profiles/system --set {toplevel} && "
-        f"{toplevel}/bin/switch-to-configuration boot && sync && (sleep 2; systemctl reboot) >/dev/null 2>&1 &",
+        f"{toplevel}/bin/switch-to-configuration boot && sync && "
+        "systemd-run --on-active=2 --unit=max-ota-gate-reboot systemctl reboot",
         timeout=600,
     )
     if rc != 0:
         raise RuntimeError(f"activation failed: {out[-2000:]}")
     pi.drop_tunnel()
-    if not pi.wait_up(900, down_first=True):
+    if not pi.wait_reboot(booted, 900):
         raise RuntimeError("the DUT didn't come back after the setup deploy")
+    pi.wait_player()
     return f"copied in {time.monotonic() - t0:.0f}s"
 
 
@@ -312,7 +354,9 @@ def run(args) -> int:
         def link() -> WssLink:
             return WssLink(lambda: pi.wss_port())
 
-        def phase(name: str, manifest: bytes, expect: str, **kw) -> oc.PushResult | None:
+        def phase(
+            name: str, manifest: bytes, expect: str, top: str = "", **kw
+        ) -> oc.PushResult | None:
             _log(f"[{name}] ota_begin v{oc.Manifest.parse(manifest).version} expecting {expect}")
             t0 = time.monotonic()
             r = None
@@ -330,6 +374,12 @@ def run(args) -> int:
                 outcome = r.outcome
             except oc.OtaError as e:
                 outcome = e.code
+            if outcome == "rolled_back" and top:
+                # The TRIAL may have reported it (then reboots 3 s later into the old
+                # system): check the device only once it runs something else.
+                pi.drop_tunnel()
+                pi.wait_system_not(top)
+            pi.wait_player()
             report["phases"][name] = {
                 "outcome": outcome,
                 "seconds": round(time.monotonic() - t0),
@@ -406,7 +456,9 @@ def run(args) -> int:
             checks.append(oc.Check("badsig.nothing_downloaded", out.strip() == "0", out.strip()))
         # -- 3. a system that never proves healthy rolls back by itself -------------------
         if "unhealthy" in args.phases:
-            r = phase("unhealthy", man["u_from_b"], "rolled_back", source_url=url("u_from_b"))
+            r = phase(
+                "unhealthy", man["u_from_b"], "rolled_back", tops["u"], source_url=url("u_from_b")
+            )
             st = pi.state()
             checks.append(
                 oc.Check("unhealthy.back_on_b", st.get("system") == tops["b"], st.get("system", ""))
@@ -417,7 +469,10 @@ def run(args) -> int:
         # -- 4. power cut half way through the download: resume -----------------------------
         if "powercut" in args.phases:
             fired = {"done": False, "at": 0}
-            size = oc.Manifest.parse(man["a_from_b"]).size
+            # Whichever of A/B the DUT isn't on (so the phase can also run alone).
+            on_a = pi.state().get("system") == tops["a"]
+            pc, pc_top = ("b_from_a", "b") if on_a else ("a_from_b", "a")
+            size = oc.Manifest.parse(man[pc]).size
 
             async def cut_download(st: dict[str, Any]) -> bool:
                 if (
@@ -434,9 +489,9 @@ def run(args) -> int:
 
             phase(
                 "powercut",
-                man["a_from_b"],
+                man[pc],
                 "ok",
-                source_url=url("a_from_b"),
+                source_url=url(pc) + "?slow",
                 allow_downgrade=True,
                 interrupt=cut_download,
             )
@@ -446,7 +501,11 @@ def run(args) -> int:
             report["phases"]["powercut"]["apply_log"] = out[-1500:]
             st = pi.state()
             checks.append(
-                oc.Check("powercut.runs_a", st.get("system") == tops["a"], st.get("system", ""))
+                oc.Check(
+                    f"powercut.runs_{pc_top}",
+                    st.get("system") == tops[pc_top],
+                    st.get("system", ""),
+                )
             )
             kept("powercut", ref)
         # -- 5. power cut during the trial boot: the old system comes back ----------------
@@ -470,6 +529,7 @@ def run(args) -> int:
                 "trialcut",
                 man["b_from_a"],
                 "rolled_back",
+                tops["b"],
                 source_url=url("b_from_a"),
                 interrupt=cut_trial,
             )

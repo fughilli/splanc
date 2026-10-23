@@ -397,6 +397,7 @@ fn ring() -> &'static verify::Ring {
 fn run_services(pi: &mut Pi, request: Option<&Request>) {
     let mut pending = request.cloned();
     for _round in 0..20 {
+        let mut first = None;
         let mut u = Updater::load(pi, lay(), ring());
         if u.boot() == Next::Reboot {
             drop(u);
@@ -412,15 +413,18 @@ fn run_services(pi: &mut Pi, request: Option<&Request>) {
             continue;
         }
         if u.st.phase == Phase::Trial {
+            drop(u);
+            // Like the health unit: the updater is reloaded (under the lock) every
+            // tick; only the trial's first health sample carries over.
             loop {
-                u.sys.player_writes_health();
-                match u.health_tick() {
-                    Next::Wait => u.sys.now += 2_000,
+                pi.player_writes_health();
+                let mut u = Updater::load(pi, lay(), ring());
+                match u.health_tick(&mut first) {
+                    Next::Wait => pi.now += 2_000,
                     Next::Reboot => break,
                     Next::Nothing => return,
                 }
             }
-            drop(u);
             while !pi.power_on() {}
             continue;
         }

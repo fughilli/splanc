@@ -25,7 +25,24 @@ use sink::SpidevSink;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Stack for every thread that runs `Player::handle` (main + the WS workers). The
+/// host-profile core's `Player::handle` frame alone is ~8.2 MiB (by-value protobuf
+/// envelopes in every arm), more than the 8 MiB main-thread rlimit and the old
+/// 8 MiB tokio worker stacks: `--start N` (start_mapping at boot) and any client
+/// frame overflowed and SEGV'd the static-musl player. Pages are only touched when
+/// used, so a generous reservation costs address space, not RAM.
+const HANDLER_STACK: usize = 32 * 1024 * 1024;
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(HANDLER_STACK)
+        .spawn(real_main)?
+        .join()
+        .map_err(|_| "player main thread panicked")?
+}
+
+fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let argv: Vec<String> = std::env::args().collect();
     let get = |name: &str, def: &str| -> String {
         argv.windows(2)
@@ -116,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 eprintln!(
                     "player_rs: render {ports} ports @ {fps} fps, spidev{bus}.{device} @ {speed} Hz"
                 );
+                let mut write_err_logged = false;
                 loop {
                     let now_us = epoch.elapsed().as_micros() as i64;
                     let (config, stream) = {
@@ -127,8 +145,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         (f.config, f.stream)
                     };
                     let _ = sink.write(&config);
-                    if sink.write(&stream).is_ok() {
-                        health::TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    match sink.write(&stream) {
+                        // The OTA trial's health proof counts frames that reached SPI.
+                        Ok(()) => {
+                            health::TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Err(e) if !write_err_logged => {
+                            write_err_logged = true;
+                            eprintln!(
+                                "player_rs: SPI write of {} B failed ({e}); is spidev.bufsiz \
+                                 large enough? (logged once)",
+                                stream.len()
+                            );
+                        }
+                        Err(_) => {}
                     }
                     std::thread::sleep(period);
                 }
@@ -152,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // process (glibc's 8 MiB default hid this pre-musl). Pin a generous stack.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
+        .thread_stack_size(HANDLER_STACK)
         .build()?;
     rt.block_on(server::serve(player, addr, config, epoch))?;
     Ok(())

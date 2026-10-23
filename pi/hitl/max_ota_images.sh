@@ -35,10 +35,22 @@ build() { # name version variant
   cat "$f"
 }
 
-top_a="$(build a 9.1.0 "")"
-top_b="$(build b 9.2.0 "")"
-top_u="$(build u 9.3.0 unhealthy)"
-printf 'a=%s\nb=%s\nu=%s\n' "$top_a" "$top_b" "$top_u" >"$out/toplevels.txt"
+if [[ -s "$out/toplevels.txt" && -z "${MAX_OTA_REBUILD:-}" ]]; then
+  # shellcheck disable=SC1090
+  . <(sed 's/^/top_/' "$out/toplevels.txt") # a=… b=… u=… -> top_a=…
+else
+  top_a="$(build a 9.1.0 "")"
+  top_b="$(build b 9.2.0 "")"
+  top_u="$(build u 9.3.0 unhealthy)"
+  printf 'a=%s\nb=%s\nu=%s\n' "$top_a" "$top_b" "$top_u" >"$out/toplevels.txt"
+fi
+
+# zstd for the packer (from the same nixpkgs as the image, if it isn't installed).
+if ! command -v zstd >/dev/null; then
+  zbin="$(nix build --no-link --print-out-paths --impure \
+    "path:$root/pi/provisioning/nix#nixosConfigurations.ledmapper.pkgs.buildPackages.zstd.bin")"
+  PATH="$zbin/bin:$PATH"
+fi
 
 bazel "${bazel_flags[@]}" build //firmware/ota:ota_sign >/dev/null 2>&1
 signer="$(bazel "${bazel_flags[@]}" cquery --output=files //firmware/ota:ota_sign 2>/dev/null | head -n1)"
