@@ -1507,6 +1507,10 @@ static void ws_poll() {
 // they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
 static const uint32_t kStaticPollMs = 100;
 
+#if defined(LM_NETSTACK)
+static void osc_drain_frame();  // native OSC on the netstack build (below)
+#endif
+
 // Compute + push (at most) one frame. Player reads happen under player_mutex
 // (the core is single-threaded); the long RMT strip transmit runs OUTSIDE the
 // lock so the loop-task message handler isn't blocked by the strip write. Returns
@@ -1682,6 +1686,9 @@ static uint32_t render_once() {
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
     uint32_t c_update_start = c_frame_start;
+#if defined(LM_NETSTACK)
+    osc_drain_frame();  // OSC that arrived since the last frame, newest value per address
+#endif
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -1868,10 +1875,28 @@ static void osc_task(void *) {
   }
 }
 #else
-// TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
-// (uniform_bench / video_stream) is disabled on this build and setup() doesn't start the
-// task. Add a ns UDP listener + feed lm_osc_ingest to re-enable. Everything else (WS
-// player, effects, render) is unaffected.
+// Netstack build: no sockets or task — the heapless stack's UDP receive path hands every
+// datagram for udp/9000 to lm_netstack_osc_rx (netstack_transport.cpp), on the network
+// task. It is only STASHED (lm_osc_post: parse + latest value per address, no VM work);
+// the render task applies what's waiting at the next frame boundary (osc_drain_frame), so
+// a controller sending faster than the device renders never builds a queue
+// (docs/design/live-control.md). The two meet in a short critical section.
+static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t g_osc_datagrams = 0;
+
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_post(data, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+  if (g_osc_datagrams++ == 0) Log().printf("[osc] first datagram on udp/%u\n", kOscPort);
+}
+
+static void osc_drain_frame() {
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_drain();
+  taskEXIT_CRITICAL(&g_osc_mux);
+}
 #endif
 
 // The render task: forever, render one frame then sleep until the next is due.
