@@ -10,16 +10,16 @@
     "user_needs_validated": 0,
     "requirements": 39,
     "requirements_verified": 10,
-    "requirements_under_verified": 19,
+    "requirements_under_verified": 18,
     "requirements_partial": 0,
     "requirements_failed": 0,
-    "requirements_unverified": 10,
+    "requirements_unverified": 11,
     "risks": 12,
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2090,
-    "gaps": 36
+    "test_cases": 2086,
+    "gaps": 50
   },
   "levels": [
     {
@@ -2235,27 +2235,6 @@
           "kind": "target"
         },
         {
-          "name": "hitl_e2e::flash_boot",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        },
-        {
-          "name": "hitl_e2e::improv_provision",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        },
-        {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        },
-        {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
           "status": "passed",
           "level": "simulation",
@@ -3539,13 +3518,6 @@
           "status": "passed",
           "level": "simulation",
           "target": "//firmware/player_app:memory_workloads_test"
-        },
-        {
-          "name": "hitl_e2e::flash_boot",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
         }
       ],
       "demanded_level": "hil",
@@ -3617,13 +3589,6 @@
       "status": "VERIFIED",
       "description": "The system shall preserve important user work products, such as captures or map data, across transient disconnects whenever practical.",
       "evidence": [
-        {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        },
         {
           "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
           "status": "passed",
@@ -4275,13 +4240,6 @@
           "status": "passed",
           "level": "simulation",
           "target": "//firmware/player_app:memory_bounds_test"
-        },
-        {
-          "name": "hitl_e2e::flash_boot",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
         }
       ],
       "demanded_level": "hitl",
@@ -4808,13 +4766,6 @@
       "description": "Improve readiness checks, investigate coexistence/reconnect behavior, perform repeated provisioning validation, and harden naming/discovery so provisioning/association is reliable.",
       "category": "risk-control",
       "evidence": [
-        {
-          "name": "hitl_e2e::improv_provision",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        },
         {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
           "status": "passed",
@@ -6200,20 +6151,11 @@
     {
       "id": "PR-35",
       "title": "Reconcile device identity on stable attributes",
-      "status": "UNDER-VERIFIED",
+      "status": "UNVERIFIED",
       "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
       "category": "risk-control",
-      "evidence": [
-        {
-          "name": "hitl_e2e::websocket_checks",
-          "status": "passed",
-          "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
-        }
-      ],
       "demanded_level": "hitl",
-      "provided_level": "hitl",
+      "provided_level": null,
       "satisfies": [
         "UN-5"
       ],
@@ -6226,8 +6168,6 @@
         "firmware",
         "web"
       ],
-      "stale": true,
-      "pyramid_violation": true,
       "implemented_in": [
         {
           "ids": [
@@ -6766,7 +6706,7 @@
     {
       "id": "MIT-10",
       "title": "Reconcile device identity on stable attributes",
-      "status": "PARTIAL",
+      "status": "UNVERIFIED",
       "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
       "type": null,
       "mitigates": [
@@ -6938,7 +6878,7 @@
     {
       "id": "RISK-10",
       "title": "Device identity inconsistencies across IP/hostname/AP/records",
-      "status": "PARTIAL",
+      "status": "OPEN",
       "description": "Cause connection confusion, harming UN-5.",
       "severity": "medium",
       "likelihood": null,
@@ -6998,9 +6938,7 @@
     "RISK-4",
     "RISK-5"
   ],
-  "pyramid_violations": [
-    "PR-35"
-  ],
+  "pyramid_violations": [],
   "unknown_evidence": {},
   "gaps": [
     {
@@ -7194,20 +7132,11 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "stale",
+      "kind": "unverified",
       "entity": "PR-35",
-      "message": "only passing evidence is against an older build",
+      "message": "no test evidence",
       "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
-    },
-    {
-      "kind": "pyramid",
-      "entity": "PR-35",
-      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
-      "route": "autonomous",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
+      "demanded_level": "hitl"
     },
     {
       "kind": "under-verified",
@@ -7238,6 +7167,96 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:ble_player_e2e_netstack",
+      "message": "//pi/hitl/harness:ble_player_e2e_netstack pi/hitl/harness/ble_player_e2e_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:e2e_netstack",
+      "message": "//pi/hitl/harness:e2e_netstack hitl_e2e::rig error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi",
+      "message": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi pi/hitl/harness/fpga_ws281x_led-mapper-pi error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
+      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:fx_bench_netstack",
+      "message": "//pi/hitl/harness:fx_bench_netstack pi/hitl/harness/fx_bench_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:improv_e2e_led-mapper-pi",
+      "message": "//pi/hitl/harness:improv_e2e_led-mapper-pi pi/hitl/harness/improv_e2e_led-mapper-pi error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:led_capture_jit_netstack",
+      "message": "//pi/hitl/harness:led_capture_jit_netstack pi/hitl/harness/led_capture_jit_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:led_capture_netstack",
+      "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:loaded_tls_netstack",
+      "message": "//pi/hitl/harness:loaded_tls_netstack pi/hitl/harness/loaded_tls_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:map_upload_netstack",
+      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:ota_gate",
+      "message": "//pi/hitl/harness:ota_gate pi/hitl/harness/ota_gate error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:rejoin_loop",
+      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:rig_isolation",
+      "message": "//pi/hitl/harness:rig_isolation hitl_rig_isolation::reserve error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:tls_churn_netstack",
+      "message": "//pi/hitl/harness:tls_churn_netstack pi/hitl/harness/tls_churn_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:video_stream_netstack",
+      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
+      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
