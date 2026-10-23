@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p01",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\n// Calm ocean swell rolling up a cylindrical helix lamp\n// Three layered sine waves in fixed-point \u2014 primary swell + harmonic ripple + lateral shimmer\n// Color: deep indigo-blue at troughs, bright cyan at crests\n\nuniform float speed      : 0.0 .. 3.0 = 0.6;\nuniform float waves      : 1.0 .. 6.0 = 2.0;   // swell wavelength count along height\nuniform float brightness : 0.2 .. 1.0 = 0.85;\n\n// Phases in TURNS, advanced each frame\nstate fixed ph1;   // primary swell (slow, upward)\nstate fixed ph2;   // harmonic ripple (faster)\nstate fixed ph3;   // lateral shimmer (very slow)\nstate fixed kw;    // cached wave count\nstate fixed brite; // cached brightness\n\nvoid update() {\n  ph1   = fract(ph1 + fixed(dt * speed * 0.25));   // ~1 cycle / (speed * 4) seconds\n  ph2   = fract(ph2 + fixed(dt * speed * 0.41));   // ~1.6\u00d7 faster, offset phase\n  ph3   = fract(ph3 + fixed(dt * speed * 0.08));   // very slow radial drift\n  kw    = fixed(waves);\n  brite = fixed(brightness);\n}\n\nvec3 shade(Led led) {\n  // Normalise height to 0..1 (pos.y \u2208 0..0.30 m \u2192 \u00d7 1/0.30 \u2248 3.333)\n  fixed y   = fixed(led.pos.y) * fixed(3.333);\n\n  // Angle around the cylinder in TURNS (-0.5..0.5) \u2014 compiler caches this per LED\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n\n  // Primary swell: rolls upward along y, slight helical tilt from ang\n  fixed w1 = sin(y * kw - ph1 + ang * fixed(0.12)) * fixed(0.5) + fixed(0.5);\n\n  // Secondary harmonic: higher spatial frequency, faster, cross-fades texture\n  fixed w2 = sin(y * kw * fixed(2.3) - ph2 + ang * fixed(0.20)) * fixed(0.5) + fixed(0.5);\n\n  // Lateral shimmer: two slow lobes rotating around the cylinder\n  fixed w3 = sin(ang * fixed(2.0) - ph3) * fixed(0.5) + fixed(0.5);\n\n  // Blend: primary swell dominates, ripple adds mid-detail, shimmer adds glow\n  fixed t = w1 * fixed(0.55) + w2 * fixed(0.30) + w3 * fixed(0.15);\n  t = clamp(t, fixed(0.0), fixed(1.0));\n\n  // \u2500\u2500 Colour mapping (all fixed \u2192 integer HSV path) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Hue: 0.62 deep indigo-blue at troughs \u2192 0.50 bright cyan at crests\n  fixed h = fixed(0.62) - t * fixed(0.12);\n\n  // Saturation: pure at mid-wave, fractionally lighter foam near crests\n  fixed s = fixed(0.90) - t * fixed(0.20);\n\n  // Value: quadratic curve \u2192 very dark troughs, explosively bright crests\n  fixed v = (fixed(0.10) + t * t * fixed(0.90)) * brite;\n\n  return hsv2rgb(h, s, v);\n}\n```\n\n**How it works**\n\n| Layer | Role | Weight |\n|-------|------|--------|\n| `w1` primary swell | slow sinusoid rolling up +Y, gently twisted by `ang` for helix feel | 55 % |\n| `w2` harmonic ripple | 2.3\u00d7 higher frequency, 1.6\u00d7 faster phase \u2014 classic ocean cross-chop | 30 % |\n| `w3` lateral shimmer | two slow rotating brightness lobes around the cylinder | 15 % |\n\nThe combined height `t` drives an all-fixed HSV lookup: hue sweeps **indigo-blue \u2192 cyan**, saturation drops slightly at bright foam crests, and the **quadratic value curve** (`t\u00b2`) keeps troughs dim while letting crests snap to full brightness \u2014 the hallmark of a real swell under light.",
+      "is_error": false,
+      "session_id": "a7ef281f-b1b3-45ba-8578-6bb3ec6ef33d",
+      "wall_s": 113.8,
+      "duration_api_ms": 105694,
+      "cost_usd": 0.150111,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 7778,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 5572
+      },
+      "thinking_tokens": 6664,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 886
+    }
+  ],
+  "started": "2026-10-23T00:06:33",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1501,
+  "total_wall_s": 113.8,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p01.fx"
+}

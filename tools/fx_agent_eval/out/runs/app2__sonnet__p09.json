@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p09",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise: a warm glow climbing from the bottom of the helix.\n// The horizon front rises from below the lamp to above it, then resets.\n// Below the front: deep-red embers warming to yellow-orange.\n// Above the front: darkness.\n\nuniform float speed       : 0.0  .. 0.30 = 0.07;  // climb speed (norm-height / sec)\nuniform float glow_spread : 0.15 .. 1.0  = 0.50;  // depth of warm-glow zone below the front\nuniform float hue_peak    : 0.06 .. 0.18 = 0.12;  // horizon hue (0.06=orange, 0.12=golden, 0.18=yellow)\nuniform float ember_level : 0.0  .. 0.20 = 0.04;  // residual ember brightness at the base\n\nstate fixed front;       // glow-front position in normalised height (0=bottom, 1=top)\nstate fixed inv_spread;  // 1 / glow_spread, computed once per frame\nstate fixed wobble_ph;   // phase for horizontal shimmer\nstate fixed h_peak;      // hue_peak as fixed\nstate fixed ember_v;     // ember_level as fixed\n\nvoid update() {\n    wobble_ph  = fract(wobble_ph + fixed(dt * 0.6));\n    inv_spread = fixed(1.0) / fixed(glow_spread);\n    h_peak     = fixed(hue_peak);\n    ember_v    = fixed(ember_level);\n\n    // Advance the front; reset for a new sunrise when it clears the top\n    front = front + fixed(dt * speed);\n    if (front > fixed(1.25)) {\n        front = fixed(-0.25);\n    }\n}\n\nvec3 shade(Led led) {\n    // Normalised height: 0 = bottom, 1 = top.  Cylinder height = 0.30 m.\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n\n    // Subtle horizontal shimmer so the horizon ripples rather than sitting flat\n    fixed ang     = atan2(fixed(led.pos.z), fixed(led.pos.x)); // TURNS, integer LUT\n    fixed shimmer = sin(ang * fixed(2.0) + wobble_ph) * fixed(0.028);\n\n    // Signed distance *below* the glow front (+ve = below front = inside warm zone)\n    fixed below = front - y + shimmer;\n\n    // Normalised depth: 0 at the front edge, 1 far into the warm zone below\n    fixed t = clamp(below * inv_spread, fixed(0.0), fixed(1.0));\n\n    // Hard-ish cutoff: full output at/below the front, black above\n    fixed lit = clamp(below * fixed(40.0), fixed(0.0), fixed(1.0));\n\n    // Hue: warm yellow-orange at the front (h_peak) \u2192 deep red (0) at the base\n    fixed h = h_peak * (fixed(1.0) - t);\n\n    // Value: bright at the horizon, fading to dim embers far below; zero above\n    fixed vv = mix(fixed(1.0), ember_v, t) * lit;\n\n    // Saturation: vivid throughout the warm zone\n    fixed s = fixed(0.95);\n\n    return hsv2rgb(h, s, vv); // all-fixed \u2192 integer path\n}\n```",
+      "is_error": false,
+      "session_id": "14c0b1dc-3df3-41ba-b82a-fe266d019646",
+      "wall_s": 246.5,
+      "duration_api_ms": 242713,
+      "cost_usd": 0.2674782,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 17526,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 510
+      },
+      "thinking_tokens": 16656,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1034
+    }
+  ],
+  "started": "2026-10-23T00:11:58",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2675,
+  "total_wall_s": 246.5,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p09.fx"
+}

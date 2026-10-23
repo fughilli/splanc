@@ -1,0 +1,695 @@
+===== SKILL.md =====
+---
+name: splanc
+description: Drive Splanc LED players (mapped, 3-D LED fixtures — one or a whole house of them) through the splanc-agent hub — set moods with uniforms, write and deploy FX-engine effects, preview them on the real maps, keep them within each device's frame budget, and treat several fixtures as one room. Use when the user asks to change, create or tune what their Splanc lights are doing.
+---
+
+# Driving Splanc players
+
+A Splanc player is an ESP32-C6 (or Pi) running LEDs whose **3-D positions are
+known**: a camera mapping pass measured every LED, in meters, and the player stores
+that map plus a topology (segments, branch points). Every show is an **FX-engine
+effect**: a small shader-like program the player runs once per LED per frame. The
+`splanc-agent` hub is your connection to EVERY player on the LAN: it finds them
+(mDNS, players remembered from earlier runs, a LAN sweep), opens one connection
+per player on first use, and fans each tool out to the players you pick.
+
+## Which players
+
+Every device tool takes `players`: a player name, its id (MAC), a room name,
+`"all"`, or a list. Without it, a tool targets the only player — or all of them
+when they form one room — and asks you to choose when there are several rooms.
+With several targets the result is one entry per player (`ok`, `result` or
+`error`); a failure on one never hides the others' results, so report it.
+
+## First, look
+
+1. `list_players` (or the `splanc://players` resource): names, rooms, firmware.
+   It is fast and trusts what the hub remembers (`checked` says how each player
+   was confirmed); `refresh_players` looks again thoroughly. No players → ask the
+   user for the player's address and `add_player`. Players are tracked by device
+   id: one that rebooted onto a new IP is found again by itself (it shows
+   `checked: "unreachable"` with the reason until then), so there's no need to
+   `add_player` it again. A player with
+   `tls: CHANGED…` is refused: its certificate differs from the one first seen
+   for it. Tell the user; call `trust_player` only if they confirm they
+   factory-reset that player (otherwise another device may be answering as it).
+2. Several players and no rooms, and the user speaks of rooms ("the living
+   room", "the shelf")? Ask which fixture is where — `identify_player` blinks one
+   so they can tell — then `set_room {room, players}`, and `set_fixture_pose` to
+   place each fixture in the room (metres, +Y up; ask, don't guess). Rooms and
+   poses persist in the hub.
+3. Read `splanc://fixture/summary` (one player) or `splanc://room/<room>` (every
+   fixture in the room's shared frame: per-fixture and combined bounding boxes).
+   Read `splanc://player/<id>/fixture/map` / `topology` only when an effect needs
+   the actual geometry (see `geometry.md`). If the user wants the map in other
+   show software, `export_map {format: "csv"|"lxf"}` returns a TouchDesigner
+   CSV or a Chromatik `.lxf` (filename + content) to save for them.
+   To SEE a fixture (or a whole room with its poses), `plot_fixture` returns one
+   PNG with front / side / top / isometric views (+Y up, LED index hints, mapped
+   dots vs interpolated rings) plus the numbers. Use it to check a map, or poses
+   after `set_fixture_pose`, before writing geometry-dependent effects.
+4. Read `splanc://effect/active` (or call `list_uniforms`): which effect is
+   running and what its knobs are.
+
+## Changing the mood — prefer uniforms
+
+Most requests ("warmer", "calmer", "more rain") are a **uniform change on the
+effect already running**, not a new effect. Uniforms are addressed by NAME; the
+bridge checks width and range and tells you the declared names if you miss.
+
+- `set_uniforms {values: {tint: [1, 0.5, 0.2]}}` — instant.
+- `ramp_uniforms {targets: {rain: 0.8}, seconds: 20}` — a smooth glide; the bridge
+  streams the steps and commits the end value once. Use this for anything a person
+  will watch change. With several players they all glide together.
+- `commit: true` persists values across reboots — only when the user wants the
+  change to stick (flash wear).
+- `set_brightness {level}` is global output brightness (runtime-only).
+
+## Saved looks: keypoints
+
+A **keypoint** is a named set of uniform values for one effect: a look the user
+(or you) liked, stored ON the player, so the Splanc app's Show Mode and every
+agent see the same ones. The player itself moves between them in parameter space:
+numbers glide, colours blend (`color_mode: "hsv"` keeps them saturated — red to
+blue passes through magenta, not grey), and toggles/dropdowns snap to the
+heaviest look.
+
+- **"Save the look as a keypoint"** → `save_keypoint {name: "dusk"}` stores the
+  CURRENT values. Pass `values` to store a look without showing it first. A name
+  that already exists is overwritten, so `list_keypoints` first and ask before
+  replacing one you didn't make. Max 16 per effect, names up to 32 bytes.
+- **"Go back to dusk"** → `recall_keypoint {name: "dusk", seconds: 10}`. Prefer
+  a morph (`seconds` > 0) for anything a person watches; 0 jumps.
+- **"Morph between moods"** / "somewhere between calm and storm" →
+  `blend_keypoints {weights: {calm: 0.7, storm: 0.3}, seconds: 15}`: a position
+  between known-good looks — safer than inventing new values, because every
+  input is a look someone approved. Weights are normalised; up to 4 keypoints.
+- Start a mood request by reading `splanc://effect/active` (it lists the
+  effect's `keypoints`): if a saved look matches the ask, recall or blend it
+  instead of hand-setting uniforms.
+- Blends and recalls are live-only; `commit: true` makes the result survive a
+  reboot. A blend never creates a keypoint — save explicitly when the user likes
+  the result.
+- `stale: true` marks a look saved against an older build of the effect; it
+  still recalls by uniform name (renamed or removed uniforms are skipped).
+- `delete_keypoint` only when the user asks; keypoints are theirs.
+- Older firmware without the `keypoints` feature answers with a clear error: fall
+  back to `ramp_uniforms`.
+
+## A new scene or mood: the effects library first
+
+The installation keeps a library of effects that worked before (what each looks
+like, tags, its uniforms), and it grows with every deploy. Before writing an
+effect:
+
+- `search_effects {query: "slow warm cosy fireplace"}` — keywords for the look,
+  mood, colours and motion (add synonyms); no query lists everything, most used
+  first. Rows are compact; `get_effect {id}` reads one in full (source, uniforms,
+  measured frame cost).
+- **One fits** → `deploy_effect {library_id}`, then tune it with uniforms.
+- **One is close** → `duplicate_effect {id, name}`, adapt the source (preview it),
+  deploy it, and `update_effect {id: <copy>, source, description, tags}`. Reading
+  entries is also how to reuse a technique, a palette or a motion that worked.
+- **Nothing fits** → write a new one (below), and give the deploy (or a
+  `save_effect`) a rich `description` — what it looks like, the mood, when to use
+  it — and `tags`: that is what the next search matches. Deploys without one are
+  kept with `needs_description`; fill those in with `update_effect`.
+- `delete_effect` only when the user asks; the library is theirs.
+
+## Motion sensor (players with an IMU; feature `sensors`)
+
+- `read_sensors` says whether the player has a motion sensor (`status`:
+  `running` / `absent` / ...) and, when running, its orientation (`euler_deg`,
+  `tilt_deg`), the `gravity_down` vector, `shake` and tap/shake counters.
+  `samples: 20, interval_ms: 100` gives a 2 s series (e.g. "shake it now").
+- Effects get the same values as uniforms bound BY NAME: declare
+  `uniform vec3 imu_gravity = 0.0, -1.0, 0.0;` (unit down, map frame, +Y up),
+  `imu_quat` (vec4 w,x,y,z), `imu_euler` (vec3 roll,pitch,yaw rad),
+  `imu_lin_accel` / `imu_accel` (vec3, g), `imu_gyro` (vec3 rad/s),
+  `imu_shake` (0..1), `imu_tap` / `imu_shake_count` (counters: react when the
+  value changes, in `update()`). Without a sensor they are plain knobs, so the
+  effect previews and can be driven by hand. See `examples/imu_tilt.fx`.
+- `calibrate_sensors level` when the user says "this is upright"; `gyro_bias`
+  after the fixture has sat still a few seconds. Both need it held still: ask
+  first.
+
+## Other I2C sensors: write a driver (feature `drivers`)
+
+- `scan_i2c` lists the addresses that answer on the player's sensor bus. Match
+  them to a part (and ask the user which module they wired), then read its
+  datasheet.
+- `deploy_driver {source, interval_ms}` loads a DRIVER: the effect language with
+  `void poll()` instead of `shade()` and `export float|vecN name "unit";` outputs.
+  `i2c_write(addr, reg, val)`, `i2c_read8/i2c_read16/i2c_read16s(addr, reg)` (all
+  int; a read returns -1 on a bus error) talk to the part. Configure it once
+  (guard with a `state` flag), then read and convert to physical units into the
+  exports. Every export drives any effect uniform OF THE SAME NAME, live — name
+  them for the effect (`lamp_temp`, `ambient_lux`).
+- Poll slow sensors slowly (100–1000 ms); one driver runs at a time;
+  `driver_state` shows its live exports and errors; `remove_driver` stops it.
+- An IMU (MPU-6050) is driven natively — don't write a driver for it.
+
+## Writing a new effect
+
+1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;
+   using the fixture's shape: `geometry.md`; starting points: `examples/`).
+   Write it cheap from the start: the player has no FPU, every opcode costs
+   ~70 cycles of dispatch, and a float `sin` ~570, `pow` ~1,800, `hsv2rgb`
+   ~1,300, against ~8,000 cycles per LED per frame at 500 LEDs. Do per-LED maths
+   in `fixed` (`fixed()` around every literal), keep phases as `state fixed` in
+   turns advanced in `update()`, and use `sin`/`cos`/`hsv2rgb` on fixed
+   arguments (integer paths). The cost table and rules are under
+   "Performance" in `effect-language.md`; `rainbow_spin.fx`, `plasma_fixed.fx`
+   and `noise_field.fx` show the patterns.
+2. `compile_effect {source}` — fix every diagnostic; check the uniform list. Each
+   player compiles with the compiler matching ITS firmware (the hub fetches that
+   firmware's bundle when it differs from its own).
+3. `preview_effect {source, times: [0, 1.5, 3]}` — renders on the REAL map with the
+   device's own VM; LOOK at the images. Is the effect visible across the fixture?
+   Does it animate (compare frames)? Is anything clipped to black or white? With
+   several players (or a room) you get ONE image per time of every fixture in the
+   room frame, plus per-fixture stats.
+4. `deploy_effect {effect_id, source, description, tags}` — estimates each player's frame cost
+   first and deploys nowhere if any would overrun (`force: true` overrides;
+   the estimate is fitted to the C6 but can read low on branchy, buffer or
+   texture effects, so still measure), then uploads and activates
+   everywhere. A player holds one effect at a time; the hub remembers the
+   previous one per player.
+5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
+   vs budget (mean/max ms and per-window means) and `current_fps`: the player
+   autoscales each effect between 25 and 80 fps (cheaper = smoother), and parks
+   one it can't run even at 25 fps (`aborted: true`). Over budget → it rolls back;
+   simplify (see "Performance" in `effect-language.md`) and repeat from 2.
+   Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
+   nothing). It returns the frame estimate and the top cost `findings` — what to
+   change and about how many cycles per LED each saves; apply them first. Then
+   deploy + `measure_effect` to confirm — when they disagree, trust the
+   measurement.
+6. Report what you changed and which uniforms the user can now tweak.
+
+`rollback_effect` restores whatever ran before your last deploy;
+`set_effect {effect_id: "off"}` blacks out the effect.
+
+## Changing effect without a hard cut — crossfade
+
+When the user is watching (a mood change, a show), switch effects with
+`crossfade_to {effect_id, source, seconds: 8}` (or `{library_id}` for a library
+entry) instead of `deploy_effect`: the
+new effect is loaded on the player's idle FX deck and the device blends into it
+(`curve`: ease (default) / linear / ease_in / ease_out; `color_mode`: rgb or hsv).
+Several players fade together on one clock. It checks frame cost like
+`deploy_effect`; both effects render during the fade. The outgoing effect stays
+loaded, so `rollback_effect {seconds: 3}` fades back to it — even one the user
+started from the app. `list_decks` tells you which deck is live; uniform and
+keypoint tools follow it. Deck B doesn't survive a reboot (deck A's effect comes
+back), so for a permanent change finish with `deploy_effect`, or say so.
+
+## Without MCP: the CLI
+
+The same hub runs one tool per invocation and prints JSON (exit 1 on an error
+or when every targeted player failed, 2 when only some did):
+`splanc-agent list-players`, `splanc-agent ramp-uniforms rain=0.8 --seconds 20
+--players living`, `splanc-agent preview-effect --file fx.fx --out /tmp/p`,
+`splanc-agent deploy-effect calm --file calm.fx`, `splanc-agent save-keypoint
+dusk`, `splanc-agent recall-keypoint dusk --seconds 10`, `splanc-agent
+blend-keypoints calm=0.7 storm=0.3`, `splanc-agent skill <file>`;
+`splanc-agent help` lists the commands, `splanc-agent tools` every tool. No
+players found → pass `--host <ip>` (repeatable; it also skips the discovery
+wait). Progress lines go to stderr, the JSON to stdout. (Not installed: `npx -y
+https://splanc.io/agent/splanc-agent.tgz <command>` — but npx re-downloads the
+bundle on every call, so for more than a couple of calls install it once with
+`npm i -g https://splanc.io/agent/splanc-agent.tgz`.) The hub remembers players
+it reached, so after the first call each one costs a single connection (~1 s on
+the player's small chip); `list-players` from memory costs none.
+
+**From the cloud.** If your Splanc tools come from a connector (a remote MCP
+server at a relay URL ending in `/mcp`) rather than a local command, you are
+reaching the user's lights through their Splanc bridge: a computer on their
+network running the same hub. The tools and resources are the same; players are
+what the bridge sees; `add_player` takes addresses as seen from the user's LAN.
+An error saying the bridge is offline means the bridge isn't running or has no
+internet: tell the user, don't retry in a loop. A user without a bridge can set
+one up: docs/guides/cloud-agent.md in the Splanc repository.
+
+## Textures
+
+Effects that declare `texture vec3 img(W, H);` can be fed live frames:
+`list_textures`, then `stream_texture {tex_index, source: {kind: "gradient", ...}}`
+(solid / gradient / noise / raw RGBA frames), and `stop_texture` when done.
+
+## Limits and etiquette
+
+- The bridge cannot rewire, re-map or recalibrate the fixture (LED counts, GPIOs,
+  colour correction, mapping) — that is the user's job in the Splanc app. Say so
+  instead of looking for a workaround.
+- `set_device_name` renames the player (and its Bluetooth name). Only after the
+  user explicitly asks; pass `confirm: true`.
+- There is no LAN authentication: anyone on the network can drive the player.
+  Don't advertise the bridge beyond the user's machine.
+- Room-frame poses are kept by the hub until the firmware can hold them
+  (`fixture_pose` feature): previews and room summaries use them, but on older
+  firmware an effect still sees `led.pos` in its own fixture's frame — design
+  room-spanning effects per fixture there, and say so.
+- A multi-player deploy puts the players on one effect clock when their firmware
+  supports it (`time_base`); otherwise the result says "time base unsupported" and
+  their animations drift apart — fine for ambient looks, not for chases that run
+  across fixtures.
+- An error naming the firmware version (`doesn't support this`) means the player
+  is older than the feature; tell the user to update the firmware in the app.
+
+
+===== effect-language.md =====
+# The effect language
+
+GLSL-flavoured, compiled to bytecode for a small stack VM. The full reference
+is EFFECTS.md in the Splanc repo; this is what you need to write effects.
+
+## Shape of a program
+
+```glsl
+uniform float speed : 0.0 .. 4.0 = 1.0;   // knobs (uniforms-and-ui.md)
+state fixed phase;                       // persists across frames; written in update()
+
+void update() {                          // optional: once per frame
+  phase = fract(phase + fixed(dt * speed));
+}
+
+vec3 shade(Led led) {                    // required: once per LED, linear RGB 0..1
+  // fixed point end to end: the cheap form on the device (see Performance)
+  return hsv2rgb(fract(fixed(led.dist) + phase), fixed(0.9), fixed(1.0));
+}
+```
+
+- No recursion; every `for` loop needs a compile-time trip count.
+- Every invocation has an instruction budget (100k); a `shade` that blows it
+  returns black.
+
+## Types
+
+`float vec2 vec3 vec4 int bool`, fixed-point `fixed` (Q16.16 — integer maths,
+the fast type for per-LED work), `fixed16` (Q1.14) and `fixed8` (Q1.6) (range
+±2; mostly for compact buffer storage), `struct`s and fixed-size arrays
+(`Type name[N]`). Casts: `fixed(x)`, `float(x)`, `int(x)`.
+
+## Inputs
+
+| Name                   | Meaning                                                           |
+| ---------------------- | ----------------------------------------------------------------- |
+| `time`, `dt`, `frame`  | seconds since start, seconds since last frame, frame counter      |
+| `led.pos`              | LED position in METERS, map frame, +Y up                          |
+| `led.idx`, `led.count` | LED index, live LED count                                         |
+| `led.seg`, `led.s`     | segment id; position along it 0..1 (from endpoint a)              |
+| `led.branch`           | branch id                                                         |
+| `led.dist`             | geodesic distance 0..1 from the topology root (or a `flood_from`) |
+| `led.uv`               | top-down texture coordinate 0..1                                  |
+
+## Storage
+
+- `state float x;` — per-frame state; written by `update()`, read-only in `shade()`.
+- `buffer vec3 trail;` — one element per LED, persists; `trail[led.idx]` may be
+  written from `shade()` (trails, feedback).
+- `texture vec3 img(64, 64);` — a W×H texture; `sample(img, uv)` (bilinear),
+  `paint(img, uv, color);`. Can be fed live by `stream_texture`.
+- `: fixed8` / `: fixed16` on a buffer/texture element saves device RAM.
+
+## Builtins
+
+Math `sin cos tan abs floor ceil fract sqrt exp log sign min max pow mod step atan2`;
+vectors `clamp mix smoothstep dot cross length normalize distance`; colour
+`hsv2rgb(h, s, v)` (all 0..1) and `palette0/1/2`; noise `hash(x)` / `hash(vec3)`
+→ 0..1; textures `sample paint`; topology `seg_count seg_len seg_node node_deg
+node_seg node_side term_count term flood_from(node)`.
+
+## Performance (the player has no FPU)
+
+The player is an ESP32-C6 at 160 MHz with no floating-point unit. `shade()` runs
+once per LED per frame: at 500 LEDs and 30 fps that is ~10,600 cycles per LED,
+and the runtime already spends ~2,600 of them. Every opcode pays ~70 cycles of
+interpreter dispatch, even a local load or an integer add, so a fast `shade()`
+is a few dozen cheap operations. Measured cycles per call (dispatch included):
+
+| class                    | examples                                                                                              | cycles    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | --------- |
+| int / `fixed` arithmetic | `+ - * min max abs clamp fract floor mix step mod`                                                    | 100–150   |
+| `fixed` maths            | `sin`/`cos` of a fixed angle in TURNS 150, `exp` 170, `atan2` 350, `sqrt` 480, `hsv2rgb` 370          | 150–720   |
+| float arithmetic         | `+ - *` 195, `/` 350; a `vec3` op pays every lane (`vec3 + vec3` 440)                                 | 195–440   |
+| float maths              | `floor` 260, `fract` 340, `sin` 570, `cos` 650, `sqrt` 680, `exp`/`log` 850, `atan2` 1040, `pow` 1800 | 260–1800  |
+| float vector / colour    | `smoothstep` 700 per lane, `length(vec3)` 1000, `distance` 1200, `normalize` 1600, `hsv2rgb` 1300     | 700–1600  |
+| noise                    | `hash(x)` 185; 3-D value noise from 8 hashes + mixes ≈ 9,000                                          | 185–9,000 |
+| conversions, storage     | int/fixed ↔ float 320; buffer read/write 130; `sample(tex, uv)` ≈ 3,800                              | 130–3,800 |
+
+So eight float transcendentals per LED already fill the frame. What keeps an
+effect cheap (the fixed-point examples show each technique —
+`rainbow_spin.fx`, `plasma_fixed.fx`, `noise_field.fx`):
+
+- **Per-LED maths in `fixed`** (Q16.16; `int` for indices). Read LED inputs as
+  fixed — `fixed(led.uv.x)`, `fixed(led.s)`, `fixed(led.pos.y)` load directly
+  (the first one costs ~1,200 cycles per LED once, covering all of them) — and
+  wrap every literal: `x * fixed(0.6)`. One float operand turns the expression
+  back into soft-float plus two 320-cycle conversions; `compile_effect` warns
+  about it.
+- **Phases in turns.** Keep `state fixed` phases advanced in `update()`
+  (`ph = fract(ph + fixed(dt * speed))`); `sin`/`cos` of a fixed argument is an
+  integer LUT with 1.0 = one full turn (not 2π). `atan2` of two fixed arguments
+  returns turns too (-0.5..0.5).
+- **Colour**: `hsv2rgb(h, s, v)` with all three arguments the same fixed type is
+  the integer path; return that colour directly from `shade()`. For float colour
+  maths keep scalars and build the `vec3` once at the end.
+- **Hoist.** Anything that depends only on time/uniforms/state belongs in
+  `update()` → `state`. The compiler also hoists frame-invariant expressions
+  written in `shade()` and caches up to four per-LED-invariant scalars
+  (`atan2`/`length` of `led.pos`, `hash(float(led.idx))`) once per LED — only
+  expressions written directly in `shade()` and assigned once to a local, never
+  inside your helper functions. For more, fill a `buffer` on the first frame.
+- **No float `pow`/`exp`/`smoothstep`/`length` per LED** where a cheap form
+  works: `x * x`; in fixed, `clamp((x - a) * k, fixed(0.0), fixed(1.0))` for a
+  smoothstep; `dot(d, d) < r * r` for a distance test; multiply by a
+  reciprocal instead of dividing by a constant. (`exp` of a fixed argument only
+  covers -2..0.69.)
+- **No per-LED loops over many items and no per-LED multi-octave noise**: a loop
+  multiplies its body by its trip count. Precompute into `state`/buffers, or use
+  a fixed-point lattice (`noise_field.fx`).
+- `sqrt atan2 pow log tan hsv2rgb` have integer paths only when every argument
+  is the same fixed type; `smoothstep hash dot length distance normalize cross`
+  are always float (fixed arguments are converted).
+- `: fixed8` / `: fixed16` on buffer/texture elements saves RAM.
+
+`estimate_effect` returns the frame estimate and the top cost findings — what
+to change and roughly how many cycles per LED each would save. Apply them, then
+confirm with `measure_effect`.
+
+
+===== geometry.md =====
+# Using the fixture's shape
+
+What makes Splanc different: the effect knows where every LED is.
+
+## The map frame
+
+- Units are **meters**. `led.pos` is `[x, y, z]`.
+- **+Y is up** (gravity-levelled maps align −Y with measured gravity).
+- The origin is wherever the mapping put it (positions can be negative). For a
+  normalized position use `led.uv`: X and Y scaled over the map's extent to
+  0..1, so **`led.uv.y` is height, 0 = lowest LED, 1 = highest** — no bounds
+  needed (see `examples/height_gradient.fx`).
+- For absolute measures (a 30 cm wave, "the top half metre") use `led.pos`
+  with sizes from `splanc://fixture/summary` (`bounding_box_m`). Uniform ranges
+  can't have negative bounds, so expose sizes/offsets as positive uniforms.
+
+## Topology: the fixture as a graph
+
+The map's topology splits the fixture into **segments** (runs of LEDs along a
+strip, wire or branch) joined at **branch points**:
+
+- `led.seg` — which segment; `led.s` — 0..1 along it. Pulses along strips:
+  `fract(led.s - time * speed)`.
+- `led.dist` — geodesic distance 0..1 from the root, along the fixture (not
+  straight-line). Waves that flow through the structure: `fract(led.dist - time)`.
+- `flood_from(node)` (in `update()`) re-roots `led.dist`; `term_count()` /
+  `term(k)` enumerate the endpoints, for waves that start at a random tip.
+- `seg_len(seg)` is a segment's length (compare segments; don't assume units).
+
+Without topology (a fixture mapped but not segmented), `led.seg`/`led.s`/`led.dist`
+carry no structure — the summary's `topology` is null. Use `led.pos` instead.
+
+## Choosing coordinates
+
+| The user wants...                     | Use                    |
+| ------------------------------------- | ---------------------- |
+| "rising", "sunset", "fill from below" | `led.uv.y` (0..1)      |
+| "flowing along the branches/strips"   | `led.dist` or `led.s`  |
+| "ripples from the centre"             | `distance(led.pos, c)` |
+| an image / video on the fixture       | `sample(img, led.uv)`  |
+| sparkle, randomness per LED           | `hash(float(led.idx))` |
+
+Preview with `preview_effect` to check the effect reads well on THIS shape — a
+gradient along X on a fixture that is tall and narrow shows almost nothing.
+
+
+===== uniforms-and-ui.md =====
+# Uniforms: the knobs
+
+A uniform is a parameter the user (and you) can change while the effect runs,
+without redeploying. Declare one for every quality a person might want to tune —
+speed, colour, density, intensity — with a sensible default and a tight range.
+
+```glsl
+uniform float speed : 0.0 .. 5.0 = 1.0;          // slider: min .. max = default
+uniform vec3  tint  : color = 0.2, 0.6, 1.0;     // colour picker (linear RGB 0..1)
+uniform int   mode  : {"fire", "ice"} = 0;       // dropdown (index)
+uniform bool  invert = false;                    // toggle
+```
+
+Slider bounds must be non-negative literals (`-1.0 .. 1.0` doesn't parse): offset
+the value in the shader instead (`0.0 .. 2.0 = 1.0`, then `x - 1.0`).
+
+The Splanc app builds its controls from these declarations, so the same knobs
+appear for the user on their phone.
+
+## Setting them through the bridge
+
+`set_uniforms` / `ramp_uniforms` take values by NAME:
+
+| Declared as  | Pass                                     |
+| ------------ | ---------------------------------------- |
+| float slider | a number inside the range                |
+| `vec3` color | `[r, g, b]`, each 0..1                   |
+| dropdown     | the option string (`"ice"`) or its index |
+| bool toggle  | `true` / `false`                         |
+
+Out-of-range or wrong-width values are refused with the allowed range, so read
+`list_uniforms` first.
+
+- Ramps interpolate numbers and colours; dropdowns and toggles switch at the end.
+- Ramp steps are not persisted; the final value is committed once (on firmware
+  that supports `commit`; older firmware persists on its own schedule).
+- `commit: true` on `set_uniforms` asks the player to persist across reboots.
+
+## Design advice
+
+- Name uniforms for what the user perceives (`warmth`, `rain`, `calm`), not the
+  math (`k2`).
+- Ranges should be useful end to end: every slider position should look good.
+- A mood is a set of uniform values: to "make it stormy", ramp several at once.
+
+
+===== examples/height_gradient.fx =====
+// Height gradient: bottom colour to top colour, up the fixture (+Y).
+// led.uv.y is the LED's height normalized over the map (0 = lowest LED, 1 =
+// highest), so this fits any fixture without knowing its bounding box.
+uniform vec3  bottom : color = 0.9, 0.25, 0.05;
+uniform vec3  top    : color = 0.1, 0.2, 0.8;
+uniform float lo     : 0.0 .. 1.0 = 0.0;
+uniform float hi     : 0.0 .. 1.0 = 1.0;
+uniform float drift  : 0.0 .. 1.0 = 0.3;
+
+vec3 shade(Led led) {
+  float h = clamp((led.uv.y - lo) / max(hi - lo, 0.01), 0.0, 1.0);
+  float w = 0.15 * drift * sin(time * 0.7 + led.pos.x * 3.0);
+  return mix(bottom, top, clamp(h + w, 0.0, 1.0));
+}
+
+
+===== examples/imu_tilt.fx =====
+// Tilt liquid + shake flash: the fixture is a glass of light. LEDs below a
+// surface that stays level with the floor glow `liquid`, the rest `air`; tip
+// the lamp and the surface sloshes level again. Shake it (or tap it) and it
+// flashes white.
+//
+// The imu_* uniforms are the player's motion-sensor pool (read_sensors): on a
+// player with an IMU the firmware writes them every frame, BY NAME. Without
+// one they are ordinary knobs — drag imu_gravity to simulate a tilt.
+uniform vec3  imu_gravity = 0.0, -1.0, 0.0;     // unit DOWN vector, map frame (+Y up)
+uniform float imu_shake : 0.0 .. 1.0 = 0.0;      // 0..1
+uniform float imu_tap   : 0.0 .. 1000.0 = 0.0;   // tap counter
+uniform float level     : 0.0 .. 1.0 = 0.5;      // how full the glass is
+uniform vec3  liquid    : color = 0.0, 0.45, 1.0;
+uniform vec3  air       : color = 0.06, 0.0, 0.1;
+
+state float flash;
+state float last_tap;
+
+void update() {
+  if (imu_tap != last_tap) {
+    flash = 1.0;
+    last_tap = imu_tap;
+  }
+  flash = max(flash - dt * 2.5, imu_shake);
+}
+
+vec3 shade(Led led) {
+  // Depth of this LED along gravity, -1 (top) .. 1 (bottom), over the fixture's
+  // room-frame box (the map itself until the fixture is posed in a room).
+  vec3 c = (room.min + room.max) * 0.5;
+  float r = max(length(room.max - room.min) * 0.5, 0.01);
+  float d = dot(led.room - c, imu_gravity) / r;
+  float wet = smoothstep(-0.06, 0.06, d - (1.0 - 2.0 * level));
+  vec3 col = mix(air, liquid, wet);
+  return mix(col, vec3(1.0, 1.0, 1.0), flash);
+}
+
+
+===== examples/noise_field.fx =====
+// Noise field: slowly drifting value noise over the fixture (led.uv: across and
+// up), blended between two colours. A good base for "fire", "water", "aurora"
+// moods. Fixed point: an 8x8 lattice of random values is built ONCE in update()
+// (stored 9x9 so the right/top neighbours need no wrap), and each LED does four
+// lattice lookups and three fixed mixes: under 40% of the cost of 3-D float
+// value noise from hash() (~9,000 cycles per LED on its own).
+uniform float scale : 1.0 .. 7.0 = 4.0;   // lattice cells across the fixture
+uniform float speed : 0.0 .. 2.0 = 0.3;
+uniform vec3  low   : color = 0.0, 0.05, 0.2;
+uniform vec3  high  : color = 0.1, 0.9, 0.6;
+
+state fixed lat[81];
+state bool seeded;
+state fixed ox;
+state fixed oy;
+state fixed k;
+
+void update() {
+  if (!seeded) {
+    for (int i = 0; i < 81; i = i + 1) {
+      int c = (i % 9) % 8;
+      int r = (i / 9) % 8;
+      lat[i] = fixed(hash(float(r * 8 + c) * 1.37));
+    }
+    seeded = true;
+  }
+  ox = mod(ox + fixed(dt * speed), fixed(8.0));
+  oy = mod(oy + fixed(dt * speed * 0.6), fixed(8.0));
+  k = fixed(scale);
+}
+
+vec3 shade(Led led) {
+  fixed x = mod(fixed(led.uv.x) * k + ox, fixed(8.0));
+  fixed y = mod(fixed(led.uv.y) * k + oy, fixed(8.0));
+  int i = int(x) + int(y) * 9;
+  fixed fx = fract(x);
+  fixed fy = fract(y);
+  fixed a = mix(lat[i], lat[i + 1], fx);
+  fixed b = mix(lat[i + 9], lat[i + 10], fx);
+  return mix(low, high, float(mix(a, b, fy)));
+}
+
+
+===== examples/plasma_fixed.fx =====
+// Plasma: three travelling sine waves summed over the fixture and mapped to a
+// hue — the classic "trig-heavy" look, written in fixed point. Each sin() takes
+// a fixed angle in TURNS (an integer LUT, ~150 cycles) instead of float radians
+// (~570), the phases advance once per frame in update(), and the colour is the
+// integer hsv2rgb. ~2.5x cheaper than the float version.
+uniform float speed : 0.0 .. 4.0 = 1.0;
+uniform float scale : 0.5 .. 4.0 = 1.5;   // waves across the fixture
+uniform float sat   : 0.0 .. 1.0 = 0.85;
+
+state fixed p1;
+state fixed p2;
+state fixed p3;
+state fixed k;
+state fixed s;
+
+void update() {
+  p1 = fract(p1 + fixed(dt * speed * 0.16));
+  p2 = fract(p2 - fixed(dt * speed * 0.21));
+  p3 = fract(p3 + fixed(dt * speed * 0.11));
+  k = fixed(scale);
+  s = fixed(sat);
+}
+
+vec3 shade(Led led) {
+  fixed x = fixed(led.uv.x) * k;
+  fixed y = fixed(led.uv.y) * k;
+  fixed v = sin(x + p1) + sin(y * fixed(0.8) + p2) + sin((x + y) * fixed(0.7) + p3);
+  return hsv2rgb(fract(v * fixed(0.25) + p1), s, fixed(1.0));
+}
+
+
+===== examples/rainbow_spin.fx =====
+// Rotating rainbow with a vertical wobble — the fixed-point pattern for cheap
+// per-LED maths: phases are `state fixed` in TURNS (1.0 = one revolution),
+// advanced once per frame in update(); shade() reads the LED as fixed and uses
+// the integer sin and hsv2rgb. About 20 ops per LED; a float version of the same
+// look costs ~1.5x as much.
+uniform float speed : 0.0 .. 4.0 = 1.0;
+uniform float waves : 0.5 .. 8.0 = 3.0;
+uniform float sat   : 0.0 .. 1.0 = 0.9;
+
+state fixed ph1;
+state fixed ph2;
+state fixed k;
+state fixed s;
+
+void update() {
+  ph1 = fract(ph1 + fixed(dt * speed * 0.25));
+  ph2 = fract(ph2 + fixed(dt * speed * 0.17));
+  k = fixed(waves);
+  s = fixed(sat);
+}
+
+vec3 shade(Led led) {
+  // Angle around the vertical axis: atan2 of fixed args is in turns (-0.5..0.5).
+  // It depends only on led.*, so the compiler computes it once per LED and
+  // caches it.
+  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);
+  // Every literal is wrapped in fixed(): a bare 0.125 would make this float.
+  fixed w = sin(fixed(led.uv.y) * k + ph2) * fixed(0.125);
+  return hsv2rgb(fract(ang + ph1 + w), s, fixed(1.0));
+}
+
+
+===== examples/segment_pulses.fx =====
+// Pulses along segments: bright heads with fading tails run along every strip
+// (led.s, 0..1 per segment); each segment gets its own phase and hue.
+uniform float speed   : 0.0 .. 3.0 = 0.6;
+uniform float tail    : 0.02 .. 0.6 = 0.2;
+uniform float pulses  : 1.0 .. 4.0 = 1.0;
+uniform float rainbow : 0.0 .. 1.0 = 0.5;
+uniform vec3  tint    : color = 0.3, 0.8, 1.0;
+
+vec3 shade(Led led) {
+  float seg = float(led.seg);
+  float phase = fract(led.s * pulses - time * speed + hash(seg));
+  float v = smoothstep(1.0 - tail, 1.0, phase);
+  vec3 hue = hsv2rgb(hash(seg * 3.0), 0.8, 1.0);
+  return mix(tint, hue, rainbow) * v;
+}
+
+
+===== examples/solid_fill.fx =====
+// Solid fill: one colour everywhere, with an optional gentle breathing.
+uniform vec3  color   : color = 1.0, 0.55, 0.2;
+uniform float breathe : 0.0 .. 1.0 = 0.0;
+uniform float rate    : 0.05 .. 2.0 = 0.25;
+
+state float level;
+
+void update() {
+  level = 1.0 - breathe * (0.5 - 0.5 * cos(time * rate));
+}
+
+vec3 shade(Led led) {
+  return color * level;
+}
+
+
+===== examples/texture_sampler.fx =====
+// Texture sampler: show a 32x32 texture on the fixture (top-down, led.uv).
+// Feed it with stream_texture {tex_index: 0, source: ...}. Until frames arrive
+// the texture is black, so a faint base colour shows the fixture is alive.
+texture vec3 img(32, 32) : fixed8;
+uniform float gain : 0.0 .. 2.0 = 1.0;
+uniform vec3  base : color = 0.02, 0.02, 0.04;
+
+vec3 shade(Led led) {
+  return max(sample(img, led.uv) * gain, base);
+}
+
+
+---
+OFFLINE EVALUATION RUN: the splanc-agent device tools (list_players, preview_effect,
+measure_effect, deploy_effect, search_effects, ...) are NOT available in this run and
+you cannot read the fixture resources — the fixture is described in the request.
+Write a NEW effect for the request. Reply with ONLY the complete effect source in a
+single ```glsl code block, no other text.

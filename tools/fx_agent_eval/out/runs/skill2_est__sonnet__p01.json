@@ -1,0 +1,48 @@
+{
+  "name": "skill2_est__sonnet__p01",
+  "variant": "skill2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Calm ocean swell rolling up the lamp.\n// A primary swell rolls upward along the helix; a slow angular ripple wraps\n// around the cylinder to give the breathing quality of open-sea swells.\n// Colours travel from deep ocean blue at troughs through teal to near-white\n// foam at crests.\n//\n// Optimised: all per-LED blend maths kept in fixed; colour channel differences\n// precomputed once per frame in update(); vec3 built exactly once at return \u2014\n// eliminates the float arithmetic / vec3 mix lanes that exceeded the budget.\n\nuniform float speed  : 0.0 .. 3.0 = 0.40;\nuniform float swells : 0.5 .. 4.0 = 1.50;\nuniform float ripple : 0.0 .. 1.0 = 0.30;\nuniform float foam   : 0.0 .. 1.0 = 0.35;\nuniform vec3  deep   : color = 0.00, 0.08, 0.25;\nuniform vec3  mid    : color = 0.00, 0.38, 0.55;\nuniform vec3  crest  : color = 0.72, 0.94, 1.00;\n\n// Animation phases (turns)\nstate fixed ph;\nstate fixed pr;\nstate fixed k;\nstate fixed rk;\n\n// Foam blend parameters \u2014 derived from uniforms once per frame\nstate fixed foam_thr;   // 1 - foam\nstate fixed foam_rcp;   // 1 / max(foam, 0.01)\n\n// Colour channel data precomputed as fixed so shade() never touches float\nstate fixed d_r;  state fixed d_g;  state fixed d_b;   // deep\nstate fixed dm_r; state fixed dm_g; state fixed dm_b;  // mid  - deep\nstate fixed cm_r; state fixed cm_g; state fixed cm_b;  // crest - mid\nstate fixed fc_r; state fixed fc_g; state fixed fc_b;  // crest\n\nvoid update() {\n    ph = fract(ph - fixed(dt * speed * 0.25));\n    pr = fract(pr + fixed(dt * speed * 0.07));\n    k  = fixed(swells);\n    rk = fixed(ripple * 0.35);\n\n    foam_thr = fixed(1.0) - fixed(foam);\n    foam_rcp = fixed(1.0 / max(foam, 0.01));\n\n    d_r  = fixed(deep.r);   d_g  = fixed(deep.g);   d_b  = fixed(deep.b);\n    fc_r = fixed(crest.r);  fc_g = fixed(crest.g);  fc_b = fixed(crest.b);\n    dm_r = fixed(mid.r)  - d_r;\n    dm_g = fixed(mid.g)  - d_g;\n    dm_b = fixed(mid.b)  - d_b;\n    cm_r = fc_r - fixed(mid.r);\n    cm_g = fc_g - fixed(mid.g);\n    cm_b = fc_b - fixed(mid.b);\n}\n\nvec3 shade(Led led) {\n    fixed h   = fixed(led.uv.y);\n    // atan2 of fixed args returns turns; compiler caches this per-LED\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n\n    // Primary swell rolling upward (0..1) plus slow angular ripple \u2014 all fixed\n    fixed sv = sin(h * k + ph) * fixed(0.5) + fixed(0.5);\n    fixed rv = sin(ang * fixed(3.0) + pr + h * fixed(0.4)) * rk;\n    fixed t  = clamp(sv + rv, fixed(0.0), fixed(1.0));\n\n    // Two-stop gradient weights: lower half deep\u2192mid, upper half mid\u2192crest\n    fixed t1 = clamp(t * fixed(2.0), fixed(0.0), fixed(1.0));\n    fixed t2 = clamp(t * fixed(2.0) - fixed(1.0), fixed(0.0), fixed(1.0));\n\n    // Foam brightening weight (blends toward crest at wave peaks)\n    fixed ff = clamp((t - foam_thr) * foam_rcp, fixed(0.0), fixed(1.0)) * fixed(0.4);\n\n    // Two-stop gradient per channel in fixed\n    fixed r0 = d_r + t1 * dm_r + t2 * cm_r;\n    fixed g0 = d_g + t1 * dm_g + t2 * cm_g;\n    fixed b0 = d_b + t1 * dm_b + t2 * cm_b;\n\n    // Foam blend toward crest per channel; build the vec3 exactly once\n    return vec3(\n        float(r0 + ff * (fc_r - r0)),\n        float(g0 + ff * (fc_g - g0)),\n        float(b0 + ff * (fc_b - b0))\n    );\n}\n```",
+      "is_error": false,
+      "session_id": "19bd1b85-00e5-4415-952d-25acc0b8cd1d",
+      "wall_s": 319.3,
+      "duration_api_ms": 314523,
+      "cost_usd": 0.3057831,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 19593,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 1414
+      },
+      "thinking_tokens": 18299,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1400
+    }
+  ],
+  "started": "2026-10-23T00:53:04",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__sonnet__p01.fx",
+  "base_estimate": [
+    39.03,
+    [
+      "18 float arithmetic lanes per LED (~4,791 cycles; a vec3 op pays 3 lanes): do the per-LED maths in `fixed` scalars (~110 per op) and build the colour vec3 once at the end \u2014 saves up to ~1,916 cycles/LED (~6.0 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3058,
+  "total_wall_s": 319.3,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__sonnet__p01.fx"
+}

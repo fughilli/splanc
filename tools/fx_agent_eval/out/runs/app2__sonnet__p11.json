@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p11",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Police spinning lights \u2014 red and blue beams 180\u00b0 apart, strobing alternately\nuniform float speed       : 0.1 .. 5.0  = 2.0;   // rotations per second\nuniform float beam_width  : 0.02 .. 0.35 = 0.08;  // fraction of circle (0.08 \u2248 29\u00b0)\nuniform float strobe_rate : 2.0 .. 20.0 = 8.0;   // flashes per second\n\nstate fixed ph;        // spinning phase in turns [0,1)\nstate fixed red_on;    // 1 when red active, 0 otherwise\nstate fixed blue_on;   // complement\nstate fixed inv_bw;    // 1/beam_width, precomputed per frame\nstate float strobe_t;  // strobe accumulator\n\nvoid update() {\n  ph       = fract(ph + fixed(dt * speed));\n  strobe_t = strobe_t + dt * strobe_rate;\n  float s  = fract(strobe_t);\n  if (s < 0.5) {\n    red_on  = fixed(1.0);\n    blue_on = fixed(0.0);\n  } else {\n    red_on  = fixed(0.0);\n    blue_on = fixed(1.0);\n  }\n  inv_bw = fixed(1.0 / beam_width);\n}\n\nvec3 shade(Led led) {\n  // Angular position around cylinder in turns [0,1).\n  // atan2(fixed, fixed) \u2192 TURNS; depends only on led.pos, so compiler caches it once per LED.\n  fixed ang  = fract(atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5));\n  fixed norm = fract(ang - ph);                       // offset by spin phase\n\n  // Angular distance to each beam (red at 0, blue at 0.5 turn)\n  fixed red_d  = min(norm, fixed(1.0) - norm);        // wraps correctly\n  fixed blue_d = abs(norm - fixed(0.5));              // symmetric about 0.5\n\n  // Linear falloff inside beam, then squared for crisp punch\n  fixed red_v  = max(fixed(0.0), fixed(1.0) - red_d  * inv_bw);\n  fixed blue_v = max(fixed(0.0), fixed(1.0) - blue_d * inv_bw);\n  red_v  = red_v  * red_v;\n  blue_v = blue_v * blue_v;\n\n  // Apply alternating strobe\n  fixed r = red_v  * red_on;\n  fixed b = blue_v * blue_on;\n\n  return vec3(float(r), 0.0, float(b));\n}\n```\n\n**How it works:**\n\n- **Spin:** `ph` advances in `update()` as a fractional turn; `atan2(z, x)` maps each LED to its cylinder angle, offset by `ph` each frame.  \n- **Two beams:** Red sits at `norm = 0`, Blue at `norm = 0.5` (opposite side). Angular distance is wrapped so both beams have clean edges all the way around.  \n- **Strobe:** `strobe_t` toggles `red_on`/`blue_on` at `strobe_rate` Hz \u2014 never both on at once, giving the classic rapid alternation.  \n- **Performance:** The only expensive op is `atan2(fixed, fixed)` (350 cy), which the compiler caches once per LED. Everything else is fixed-point multiply/max/abs (~100\u2013150 cy each), well inside the ~8 000 cy/LED budget.",
+      "is_error": false,
+      "session_id": "076c5085-5c52-4fb9-a98c-3ae20923bf12",
+      "wall_s": 121.4,
+      "duration_api_ms": 117679,
+      "cost_usd": 0.1436682,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 9274,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 505
+      },
+      "thinking_tokens": 8351,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 772
+    }
+  ],
+  "started": "2026-10-23T00:13:22",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1437,
+  "total_wall_s": 121.4,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p11.fx"
+}

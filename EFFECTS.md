@@ -103,9 +103,13 @@ node_side term_count term`, plus `flood_from(node)` to re-root `led.dist`).
 On `int` and fixed-point (`fixed`/`fixed16`/`fixed8`) arguments, the arithmetic
 builtins run **natively** — `min max abs clamp mod sign step floor ceil fract mix`
 each have integer/fixed opcodes, and `sin`/`cos`/`exp` use a compile-time LUT
-(angle in **turns**) — instead of coercing to soft-float. Everything that stays
-float-valued converts its int/fixed args (never reinterpreting the bits). This is
-the main lever for keeping hot paths off the FPU-less C6's soft-float.
+(angle in **turns**; `exp` covers only -2..0.69) — instead of coercing to
+soft-float. `sqrt tan log` on a fixed argument, and `atan2 pow` / `hsv2rgb` when
+every argument is the same fixed type, take integer opcodes too (`atan2` then
+returns turns). `smoothstep hash dot length distance normalize cross` are always
+float. Everything that stays float-valued converts its int/fixed args (never
+reinterpreting the bits; ~320 cycles each). This is the main lever for keeping
+hot paths off the FPU-less C6's soft-float.
 
 ### Example
 
@@ -348,17 +352,17 @@ for how to run it.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
-| Program                         | Frame cycles             | Notes                            |
-| ------------------------------- | ------------------------ | -------------------------------- |
-| `empty`                         | ~0.49 M                  | per-frame overhead floor         |
-| `sweep16` / `sweep256`          | ~0.10 M / ~0.97 M        | per-LED anchors (16 / 256 LEDs)  |
-| `addM` / `mulM` / `negM`        | ~2.5 M / ~2.5 M / ~1.8 M | cheap arithmetic                 |
-| `sinM` / `cosM` / `tanM`        | ~3.9 M / ~4.1 M / ~6.8 M | LUT sin/cos (see the hill-climb) |
-| `expfM` / `powfM`               | ~6.2 M / ~9.1 M          | exp still soft-float poly        |
-| `hash12M` / `hash32M`           | ~2.9 M / ~4.2 M          | integer bit-mix hash             |
-| `smoothstep32M` / `distance32M` | ~21.4 M / ~14.4 M        | heaviest float ops               |
-| `hsv2rgbM` / `mix3M` (held-out) | ~7.1 M / ~6.7 M          | validation set                   |
-| `lavalamp` (held-out)           | ~3.6 M                   | a realistic 200-LED effect       |
+| Program                         | Frame cycles             | Notes                           |
+| ------------------------------- | ------------------------ | ------------------------------- |
+| `empty`                         | ~0.49 M                  | per-frame overhead floor        |
+| `sweep16` / `sweep256`          | ~0.10 M / ~0.97 M        | per-LED anchors (16 / 256 LEDs) |
+| `addM` / `mulM` / `negM`        | ~2.5 M / ~2.5 M / ~1.8 M | cheap arithmetic                |
+| `sinM` / `cosM` / `tanM`        | ~3.9 M / ~4.1 M / ~6.8 M | float sin/cos ≈ 570 cy per call |
+| `expfM` / `powfM`               | ~6.2 M / ~9.1 M          | exp still soft-float poly       |
+| `hash12M` / `hash32M`           | ~2.9 M / ~4.2 M          | hash ≈ 185 cy per call          |
+| `smoothstep32M` / `distance32M` | ~21.4 M / ~14.4 M        | heaviest float ops              |
+| `hsv2rgbM` / `mix3M` (held-out) | ~7.1 M / ~6.7 M          | validation set                  |
+| `lavalamp` (held-out)           | ~3.6 M                   | a realistic 200-LED effect      |
 
 `show_cycles` cluster tightly at ~1.0–1.1 M across programs (transmit-bound, not
 FX-bound). These numbers back the browser-side cost model
@@ -376,13 +380,18 @@ auto-generated from the goldens into
 [`docs/fx-vm-performance.md`](./docs/fx-vm-performance.md) and pinned by a CI freshness
 gate (`bazel run //web:gen_fx_vm_perf_doc` to regenerate).
 
-These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`):
-sin/cos are now compile-time LUTs and `hash` is an integer bit-mix, which is why
-they land far below the other transcendentals. A practical consequence of the
-FPU-less C6: prefer int/fixed types (`fixed8`/`fixed16`) on hot paths so the
-arithmetic builtins take their native opcodes instead of soft-float. (Beware of
-float literals in fixed arithmetic: `x * 0.6` promotes a fixed `x` to soft-float;
-write `x * fixed(0.6)`.)
+These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`).
+Float `sin`/`cos` use a table internally but still cost ~570–650 cycles per call
+(range reduction + interpolation in soft-float), and `hash` ~185 — cheaper than
+`exp`/`pow`, not cheap: every opcode also pays ~70 cycles of dispatch. The
+cheap forms on the FPU-less C6 are the integer ones: per-LED maths in `fixed`
+(Q16.16) with `fixed()` around every literal (`x * 0.6` promotes a fixed `x` to
+soft-float — the compiler warns), `sin`/`cos` of a fixed angle in TURNS
+(~150), and `hsv2rgb`/`atan2`/`sqrt` with all-fixed arguments. The measured
+per-op-class table the authoring agents are given is `PERF_GUIDE` in
+`web/src/effects/ai/system-prompt.ts` (and "Performance" in
+`agent/skill/effect-language.md`); `estimate_effect` / `estimate_performance`
+return the top cost findings for a program (`web/src/effects/perfFindings.ts`).
 
 The compiler now does the classic hoisting for you
 ([`docs/design/fx-memoization.md`](./docs/design/fx-memoization.md)):

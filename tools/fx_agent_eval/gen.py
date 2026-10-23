@@ -10,6 +10,15 @@ Variants (system context):
   app_perf  app + tools/fx_agent_eval/perf_addendum.txt appended
   app_lint  the `app` program for the same model/prompt, then ONE revision round
             feeding analyze.py's lint warnings back (kept only if it compiles)
+  app2, skill2
+            the same two paths rendered from the CURRENT tree. The committed `app` /
+            `skill` runs are the fx-perf-study baseline (prompts before the R6
+            cost-table fixes); `*2` are the after leg on the same 15 prompts.
+  app2_est, skill2_est
+            the `*2` program, then — only if the offline estimate (estimate.mjs,
+            the cost model estimate_effect uses) is over the 33 ms frame — ONE
+            revision round fed what estimate_effect returns: the estimate and the
+            top cost findings (kept only if it compiles)
 
 Outputs:
   firmware/fx_perf_bench/agent/<variant>__<model>__<pid>.fx   final program
@@ -19,6 +28,7 @@ Outputs:
 Stdlib only. Usage: see README.md.
 """
 import argparse
+import base64
 import concurrent.futures as cf
 import hashlib
 import json
@@ -111,11 +121,11 @@ def render_skill_prompt():
 def system_prompt(variant, cache={}):
     if variant in cache:
         return cache[variant]
-    if variant in ("app", "app_lint"):
+    if variant in ("app", "app_lint", "app2", "app2_est"):
         sp = render_app_prompt()
     elif variant == "app_perf":
         sp = system_prompt("app") + "\n\n" + open(os.path.join(HERE, "perf_addendum.txt")).read()
-    elif variant == "skill":
+    elif variant in ("skill", "skill2", "skill2_est"):
         sp = render_skill_prompt()
     else:
         raise SystemExit(f"unknown variant {variant}")
@@ -286,6 +296,8 @@ def run_one(job, ctx, fxc, force):
     try:
         if variant == "app_lint":
             src, ok = run_lint_variant(short, pid, sys_file, workdir, fxc, rec)
+        elif variant.endswith("_est"):
+            src, ok = run_est_variant(variant, short, pid, sys_file, workdir, fxc, rec)
         else:
             src, ok = run_loop(model, sys_file, ask_message(ptext, ctx), workdir, fxc, rec)
     except subprocess.TimeoutExpired:
@@ -301,7 +313,8 @@ def run_one(job, ctx, fxc, force):
         prog = os.path.join(PROG_DIR, name + ".fx")
         hdr = (
             f"// fx_agent_eval: variant={variant} model={model} prompt={pid} status={rec['status']} "
-            f"calls={rec['n_calls']}{' ' + rec['lint_outcome'] if 'lint_outcome' in rec else ''}\n"
+            f"calls={rec['n_calls']}{' ' + rec['lint_outcome'] if 'lint_outcome' in rec else ''}"
+            f"{' ' + rec['est_outcome'] if 'est_outcome' in rec else ''}\n"
             f"// request: {ptext}\n"
         )
         open(prog, "w").write(hdr + src)
@@ -335,6 +348,87 @@ def run_lint_variant(short, pid, sys_file, workdir, fxc, rec):
         rec["lint_outcome"] = "revised"
         return src, True
     rec["lint_outcome"] = "revision_failed_kept_original"
+    return base_src, True
+
+
+BUDGET_MS = 33.3
+N_LEDS = 500
+
+
+def estimate(fxc, src):
+    """estimate_effect's view of a program: (frame ms, top findings, warnings)."""
+    with tempfile.TemporaryDirectory() as d:
+        sp, op = os.path.join(d, "e.fx"), os.path.join(d, "e.fxb")
+        open(sp, "w").write(src)
+        p = subprocess.run([fxc, sp, op], capture_output=True, text=True)
+        if p.returncode != 0:
+            return None
+        warns = [
+            {"line": int(a), "col": int(b), "msg": m}
+            for a, b, m in re.findall(r"^warning: (\d+):(\d+): (.*)$", p.stderr, re.M)
+        ]
+        inp = os.path.join(d, "in.json")
+        json.dump(
+            [
+                {
+                    "name": "e",
+                    "fxb": base64.b64encode(open(op, "rb").read()).decode(),
+                    "source": src,
+                    "warnings": warns,
+                }
+            ],
+            open(inp, "w"),
+        )
+        q = subprocess.run(
+            [
+                "node",
+                "--experimental-strip-types",
+                "--no-warnings",
+                os.path.join(HERE, "estimate.mjs"),
+                str(N_LEDS),
+                inp,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        r = json.loads(q.stdout)[0]
+        return r["frameMs"], r["findings"], [f"line {w['line']}: {w['msg']}" for w in warns]
+
+
+def est_message(script, ms, findings, warnings):
+    # What an agent sees after estimate_effect on an over-budget effect.
+    res = {"leds": N_LEDS, "estimate_ms": ms, "budget_ms": BUDGET_MS, "findings": findings}
+    if warnings:
+        res["warnings"] = warnings
+    ask = (
+        f"estimate_effect says this effect needs {ms} ms per frame on the {N_LEDS}-LED fixture, over the "
+        f"{BUDGET_MS} ms budget:\n{json.dumps(res, indent=1)}\nMake it fit the budget while keeping the same "
+        "look and the same uniforms. Return the complete revised program."
+    )
+    return f"Current script:\n\n{script}\nRequested change: {ask}"
+
+
+def run_est_variant(variant, short, pid, sys_file, workdir, fxc, rec):
+    """The `*2` program, then one estimate+findings revision if it is over budget."""
+    base_v = variant[: -len("_est")]
+    base = os.path.join(PROG_DIR, f"{base_v}__{short}__{pid}.fx")
+    base_meta = json.load(open(os.path.join(RUNS, f"{base_v}__{short}__{pid}.json")))
+    rec["base_program"] = os.path.relpath(base, REPO)
+    if base_meta.get("status") != "ok":
+        rec["est_outcome"] = "base_not_compiling"
+        return open(base).read().split("\n", 2)[2] if os.path.exists(base) else None, False
+    base_src = open(base).read().split("\n", 2)[2]
+    est = estimate(fxc, base_src)
+    rec["base_estimate"] = est
+    if est is None or est[0] <= BUDGET_MS:
+        rec["est_outcome"] = "within_budget"
+        return base_src, True
+    src, ok = run_loop(MODELS[short], sys_file, est_message(base_src, *est), workdir, fxc, rec)
+    if ok:
+        rec["est_outcome"] = "revised"
+        return src, True
+    rec["est_outcome"] = "revision_failed_kept_original"
     return base_src, True
 
 

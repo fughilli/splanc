@@ -1,0 +1,20 @@
+{
+  "name": "skill2_est__sonnet__p05",
+  "variant": "skill2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [],
+  "started": "2026-10-23T00:53:47",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__sonnet__p05.fx",
+  "base_estimate": [17.95, [], []],
+  "est_outcome": "within_budget",
+  "status": "ok",
+  "n_calls": 0,
+  "total_cost_usd": 0,
+  "total_wall_s": 0,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__sonnet__p05.fx"
+}

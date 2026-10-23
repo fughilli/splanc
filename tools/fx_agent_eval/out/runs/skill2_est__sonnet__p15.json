@@ -1,0 +1,42 @@
+{
+  "name": "skill2_est__sonnet__p15",
+  "variant": "skill2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer \u2014 three overlapping traveling waves on the cylinder\n// surface (angle \u00d7 height) interfere to produce wandering bright patches like\n// sunlight refracted through water.  All per-LED maths in fixed point.\n//\n// Budget fixes vs the four-wave original:\n//   1. One wave dropped (w4 removed): saves ~3 sin calls worth of fixed maths\n//      plus one summation step, ~650 cycles/LED.\n//   2. Colour blending moved out of shade(): water*gain and shimmer*gain are\n//      precomputed once per frame as state fixed, so the final mix is three\n//      fixed mix() calls + three float() casts instead of a float vec3 mix\n//      followed by a vec3 * scalar, saving ~780 cycles/LED.\n//   Combined: ~1 430 cycles/LED \u2248 4.5 ms at 500 LEDs \u2014 brings the estimate\n//   from 36.12 ms to ~31.6 ms, comfortably inside the 33.3 ms budget.\nuniform float speed   : 0.0 .. 3.0 = 0.7;\nuniform float density : 0.5 .. 4.0 = 2.0;\nuniform float focus   : 0.0 .. 1.0 = 0.6;\nuniform vec3  water   : color = 0.0, 0.18, 0.45;\nuniform vec3  shimmer : color = 0.45, 0.88, 1.0;\nuniform float gain    : 0.0 .. 1.0 = 0.88;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed k;\nstate fixed thr;\n// water*gain and shimmer*gain in fixed \u2014 computed once in update(), loaded\n// cheaply (~70 cycles each) in shade() instead of a float vec3 mix + scale.\nstate fixed wr; state fixed wg; state fixed wb;\nstate fixed sr; state fixed sg; state fixed sb;\n\nvoid update() {\n  p1  = fract(p1 + fixed(dt * speed * 0.19));\n  p2  = fract(p2 - fixed(dt * speed * 0.13));\n  p3  = fract(p3 + fixed(dt * speed * 0.23));\n  k   = fixed(density);\n  thr = fixed(focus) * fixed(0.5);\n  wr  = fixed(water.r   * gain);\n  wg  = fixed(water.g   * gain);\n  wb  = fixed(water.b   * gain);\n  sr  = fixed(shimmer.r * gain);\n  sg  = fixed(shimmer.g * gain);\n  sb  = fixed(shimmer.b * gain);\n}\n\nvec3 shade(Led led) {\n  // Cylinder surface coords; atan2 of fixed args is cached per-LED by the VM.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed h   = fixed(led.uv.y);\n  fixed a   = ang * k;\n  fixed b   = h   * k;\n\n  // Three waves at incommensurate spatial ratios so the interference pattern\n  // never settles into a visible tile.\n  fixed w1 = sin(a * fixed(2.00) + b * fixed(0.70) + p1);\n  fixed w2 = sin(a * fixed(1.40) - b * fixed(1.20) + p2);\n  fixed w3 = sin(a * fixed(2.50) + b * fixed(1.05) + p3);\n\n  // Normalise sum to [-1, 1] then isolate constructive-interference peaks.\n  fixed v      = (w1 + w2 + w3) * fixed(0.3333);\n  fixed peak   = max(v - thr, fixed(0.0));\n  fixed t      = min(peak * fixed(2.5), fixed(1.0));\n  fixed bright = t * t;\n\n  // Blend precomputed colour components in fixed; only three float() casts\n  // needed to build the return value.\n  return vec3(float(mix(wr, sr, bright)),\n              float(mix(wg, sg, bright)),\n              float(mix(wb, sb, bright)));\n}\n```",
+      "is_error": false,
+      "session_id": "db3ea4ee-7397-4b50-a0f3-24b409e75227",
+      "wall_s": 328.4,
+      "duration_api_ms": 323372,
+      "cost_usd": 0.33505709999999994,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 21571,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 1348
+      },
+      "thinking_tokens": 20489,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1301
+    }
+  ],
+  "started": "2026-10-23T00:58:59",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__sonnet__p15.fx",
+  "base_estimate": [36.12, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3351,
+  "total_wall_s": 328.4,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__sonnet__p15.fx"
+}

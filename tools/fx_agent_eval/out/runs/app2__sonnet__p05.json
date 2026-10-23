@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p05",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Heartbeat pulse \u2014 two rings (lub-dub) expand from the cylinder's mid-height outward.\n// The first ring is brighter; the second fires ~150 ms later at 65 % amplitude.\n\nuniform float bpm        : 20.0 .. 180.0 = 72.0;   // beats per minute\nuniform float ring_speed : 0.5  ..  6.0  = 3.0;    // how fast the ring crosses the lamp (1/s)\nuniform float tail_len   : 0.04 ..  0.5  = 0.12;   // trailing glow length (fraction of height)\nuniform vec3  tint       : color = 1.0, 0.12, 0.05; // blood-red default\n\nstate fixed ph;      // heartbeat phase 0..1\nstate fixed r1;      // wavefront of first beat  (0..1 = bottom\u2013top half-distance)\nstate fixed r2;      // wavefront of second beat\nstate fixed rw_inv;  // 1 / tail_len, precomputed once per frame\nstate bool  inited;\n\nvoid update() {\n  // Start rings off-screen so there is no artefact on frame 0\n  if (!inited) {\n    r1     = fixed(2.0);\n    r2     = fixed(2.0);\n    inited = true;\n  }\n\n  rw_inv = fixed(1.0 / tail_len);\n\n  fixed old_ph = ph;\n  ph = fract(ph + fixed(dt * bpm / 60.0));\n\n  // First beat  (lub): fires on every cycle wrap-around\n  if (ph < old_ph) {\n    r1 = fixed(0.0);\n  }\n\n  // Second beat (dub): fires ~18 % into the cycle  (~150 ms at 72 BPM)\n  if (old_ph < fixed(0.18) && ph >= fixed(0.18)) {\n    r2 = fixed(0.0);\n  }\n\n  // Advance both rings; cap at 2.0 so the maths in shade() returns 0 cleanly\n  fixed advance = fixed(dt * ring_speed);\n  r1 = min(r1 + advance, fixed(2.0));\n  r2 = min(r2 + advance, fixed(2.0));\n}\n\nvec3 shade(Led led) {\n  // Normalised distance from the cylinder's mid-height:\n  //   y in 0..0.30 m  \u2192  |y - 0.15| * (1/0.15) \u2192 0 at centre, 1 at top/bottom\n  fixed dist = abs(fixed(led.pos.y) - fixed(0.15)) * fixed(6.667);\n\n  // Signed overshoot: positive  \u2192 ring has already passed this LED (tail)\n  //                  negative   \u2192 ring has not yet arrived (leading edge, near-zero glow)\n  fixed d1 = r1 - dist;\n  fixed i1 = clamp(fixed(1.0) - d1 * rw_inv,     fixed(0.0), fixed(1.0))   // trailing tail\n           * clamp(d1 * fixed(20.0) + fixed(1.0), fixed(0.0), fixed(1.0)); // sharp leading edge\n\n  fixed d2 = r2 - dist;\n  fixed i2 = clamp(fixed(1.0) - d2 * rw_inv,     fixed(0.0), fixed(1.0))\n           * clamp(d2 * fixed(20.0) + fixed(1.0), fixed(0.0), fixed(1.0))\n           * fixed(0.65);  // dub is quieter than lub\n\n  fixed intensity = max(i1, i2);\n  return tint * float(intensity);\n}\n```\n\n**How it works**\n\n| Detail | Value |\n|---|---|\n| Centre plane | `y = 0.15 m` (mid-height of 0.30 m cylinder) |\n| Ring metric | `|y \u2212 0.15| \u00d7 6.667` \u2192 0 at centre, 1 at top & bottom |\n| Lub timing | cycle wrap (`ph` rolls over) |\n| Dub timing | 18 % into the cycle \u2248 150 ms at 72 BPM |\n| Dub amplitude | 65 % of lub \u2014 physiologically accurate |\n| Ring shape | sharp leading edge (5 % anticipation), `tail_len` trailing glow |\n| Between beats | completely dark \u2014 maximum drama |\n\n**Performance** \u2014 shade() is pure fixed-point: one `fixed(led.pos.y)` load (~1 200 cycles, cached), ~12 fixed add/mul/clamp ops (~1 200 cycles total), and one `float(intensity)` + `vec3 * float` at the end (~760 cycles). Total \u2248 3 200 cycles/LED, well inside the ~8 000-cycle per-LED budget.",
+      "is_error": false,
+      "session_id": "b163c3ed-60d4-4e02-8700-c0d28f0b9175",
+      "wall_s": 228.5,
+      "duration_api_ms": 224981,
+      "cost_usd": 0.2488782,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 16286,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 510
+      },
+      "thinking_tokens": 15047,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1023
+    }
+  ],
+  "started": "2026-10-23T00:08:09",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2489,
+  "total_wall_s": 228.5,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p05.fx"
+}

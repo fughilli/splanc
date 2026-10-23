@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p05",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Heartbeat: a \"lub-dub\" double pulse starts at the lamp's middle and travels to both ends.\nuniform float bpm    : 30.0 .. 180.0 = 70.0;   // heart rate\nuniform float spread : 0.1 .. 1.0 = 0.45;      // fraction of a beat the pulse needs to reach the ends\nuniform float sharp  : 4.0 .. 30.0 = 12.0;     // pulse tightness\nuniform float fade   : 0.0 .. 1.0 = 0.6;       // dimming toward the ends\nuniform float base   : 0.0 .. 0.3 = 0.03;      // resting glow\nuniform vec3 tint : color = 1.0, 0.05, 0.08;\n\nstate fixed ph;\nstate fixed kspread;\nstate fixed ksharp;\nstate fixed kfade;\nstate fixed kbase;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * bpm * (1.0 / 60.0)));   // beat phase in turns\n  kspread = fixed(spread);\n  ksharp = fixed(sharp);\n  kfade = fixed(fade);\n  kbase = fixed(base);\n}\n\nvec3 shade(Led led) {\n  // distance from the centre of the helix chain, 0 at middle .. 1 at both ends\n  fixed d = abs(fixed(led.s) - fixed(0.5)) * fixed(2.0);\n  // local beat phase, delayed with distance so the pulse travels outward\n  fixed t = fract(ph - d * kspread);\n  // \"lub\" then a softer \"dub\"\n  fixed a = max(fixed(0.0), fixed(1.0) - abs(t - fixed(0.04)) * ksharp);\n  fixed b = max(fixed(0.0), fixed(1.0) - abs(t - fixed(0.22)) * ksharp) * fixed(0.65);\n  fixed p = a * a + b * b;\n  fixed v = p * (fixed(1.0) - d * kfade) + kbase;\n  return tint * float(v);\n}\n```",
+      "is_error": false,
+      "session_id": "a298f700-a3f0-43ed-97a5-c1f66be362e3",
+      "wall_s": 16.6,
+      "duration_api_ms": 15344,
+      "cost_usd": 0.038702999999999994,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1622,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 618
+      },
+      "thinking_tokens": 919,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1140
+    }
+  ],
+  "started": "2026-10-23T00:04:46",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0387,
+  "total_wall_s": 16.6,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p05.fx"
+}

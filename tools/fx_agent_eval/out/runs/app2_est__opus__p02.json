@@ -1,0 +1,48 @@
+{
+  "name": "app2_est__opus__p02",
+  "variant": "app2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "The spark loop was the main cost, so `shade()` no longer loops over sparks.\n\n- **Sparks:** each frame, `update()` sorts the live sparks into 16 height bins and stores one spark per bin. Each LED then checks only the spark in its own bin.\n- **Embers:** the brightness curve, intensity and floor term are now baked into the lattice cells once per frame. The lattice also stores a copy of its first column at the end, so the angle wrap needs no branch.\n- **Per-LED angle:** the angle term and the angular lattice coordinates (`a`, `fx`, `i0`) depend only on the LED. They are written directly in `shade()` so the compiler can cache them once per LED.\n- **Top of the lamp:** LEDs above the glow bed skip the ember lookup.\n\nThe uniforms are unchanged. The look is the same, with one exception: if two sparks overlap in height, only the brighter one shows. I could not run the estimate on this version, so it has not been confirmed to fit the 33.3 ms budget. Please re-run `estimate_effect` to check.\n\n```\n// Campfire embers with occasional sparks, for a helical cylinder lamp (500 LEDs).\n// Embers: an 8x8 flicker lattice (angle x height) that drifts upward, updated per frame.\n// Sparks: a few short-lived particles that rise and fade; binned by height in update()\n// so each LED tests at most one spark.\n// Per-LED maths is all fixed-point and ends in one integer hsv2rgb.\n\nuniform float intensity   : 0.0 .. 1.5 = 1.0;\nuniform float ember_speed : 0.0 .. 3.0 = 0.8;   // how fast the glow pattern rises\nuniform float flicker     : 0.0 .. 4.0 = 1.2;   // flicker rate of the embers\nuniform float bed_height  : 0.2 .. 1.0 = 0.6;   // how far up the glow reaches\nuniform float spark_rate  : 0.0 .. 3.0 = 0.8;   // spawn chance per spark slot per second\nuniform float spark_speed : 0.1 .. 2.0 = 0.6;   // rise speed (lamp heights per second)\nuniform bool  invert = false;                   // flip if led.s runs top->bottom\n\nstruct Spark { fixed a; fixed h; fixed life; fixed vel; fixed drift; };\n\nstate fixed cell[72];     // 8 rows x 9 columns (column 8 duplicates column 0 for wrap)\nstate Spark sp[4];\nstate int sbin[16];       // per height bin: index of the brightest nearby spark, -1 none\nstate fixed rise;\nstate fixed kBed;\n\nvoid update() {\n  rise = fract(rise + fixed(dt * ember_speed * 0.125));\n  kBed = fixed(1.0 / bed_height);\n  fixed kInt = fixed(intensity);\n\n  // Ember lattice: each cell oscillates at its own rate and offset.\n  // Stored pre-shaped: (0.2 + 0.8 * v^2) * intensity.\n  for (int j = 0; j < 8; j = j + 1) {\n    for (int c = 0; c < 8; c = c + 1) {\n      int i = j * 8 + c;\n      float r = 0.5 + hash(float(i) * 1.37) * 1.5;\n      float o = hash(float(i) * 5.11 + 0.3);\n      fixed ph = fixed(fract(time * r * flicker + o));\n      fixed v = fixed(0.5) + fixed(0.5) * sin(ph);\n      fixed e = (fixed(0.2) + fixed(0.8) * v * v) * kInt;\n      cell[j * 9 + c] = e;\n      if (c == 0) { cell[j * 9 + 8] = e; }\n    }\n  }\n\n  // Sparks: rise, wobble, fade; dead ones respawn at random.\n  fixed fdt = fixed(dt);\n  for (int i = 0; i < 4; i = i + 1) {\n    if (sp[i].life > fixed(0.0)) {\n      sp[i].h = sp[i].h + sp[i].vel * fdt;\n      sp[i].a = fract(sp[i].a + sp[i].drift * fdt);\n      sp[i].life = sp[i].life - fdt * fixed(0.9);\n      if (sp[i].h > fixed(1.0)) { sp[i].life = fixed(0.0); }\n    } else {\n      float rnd = hash(float(frame) * 0.618 + float(i) * 7.13);\n      if (rnd < spark_rate * dt) {\n        float s = float(frame) * 0.311 + float(i) * 3.7;\n        sp[i].a = fixed(hash(s + 1.1));\n        sp[i].h = fixed(hash(s + 2.3) * 0.15);\n        sp[i].life = fixed(1.0);\n        sp[i].vel = fixed(spark_speed * (0.7 + hash(s + 3.9) * 0.6));\n        sp[i].drift = fixed((hash(s + 5.2) - 0.5) * 0.3);\n      }\n    }\n  }\n\n  // Height bins: pick the brightest live spark within reach of each bin.\n  for (int b = 0; b < 16; b = b + 1) {\n    fixed lo = fixed(b) * fixed(0.0625);\n    fixed hi = lo + fixed(0.0625);\n    int best = -1;\n    fixed bl = fixed(0.0);\n    for (int i = 0; i < 4; i = i + 1) {\n      fixed l = sp[i].life;\n      if (l > bl) {\n        fixed d = max(max(lo - sp[i].h, sp[i].h - hi), fixed(0.0));\n        if (d < fixed(0.06)) {\n          best = i;\n          bl = l;\n        }\n      }\n    }\n    sbin[b] = best;\n  }\n}\n\nvec3 shade(Led led) {\n  // Per-LED invariants (cached by the compiler): angle in turns 0..1 and lattice column.\n  fixed a = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed fx = fract(a * fixed(8.0));\n  int i0 = min(int(floor(a * fixed(8.0))), 7);\n\n  fixed h = fixed(led.s);\n  if (invert) { h = fixed(1.0) - h; }\n\n  // Glow is strongest at the bottom bed and fades upward.\n  fixed prof = clamp(fixed(1.15) - h * kBed, fixed(0.0), fixed(1.0));\n  fixed heat = fixed(0.0);\n  if (prof > fixed(0.0)) {\n    // Bilinear lookup in the wrapped ember lattice.\n    fixed hy = fract(h * fixed(0.625) - rise) * fixed(8.0);\n    fixed fy = fract(hy);\n    int r0 = int(floor(hy)) * 9 + i0;\n    int r1 = r0 + 9;\n    if (r1 > 71) { r1 = r1 - 72; }\n    fixed v0 = mix(cell[r0], cell[r0 + 1], fx);\n    fixed v1 = mix(cell[r1], cell[r1 + 1], fx);\n    heat = prof * mix(v0, v1, fy);\n  }\n\n  // Sparks: only the one spark binned for this height.\n  fixed spark = fixed(0.0);\n  int k = sbin[min(int(h * fixed(16.0)), 15)];\n  if (k >= 0) {\n    fixed dh = abs(h - sp[k].h);\n    if (dh < fixed(0.06)) {\n      fixed da = abs(a - sp[k].a);\n      da = min(da, fixed(1.0) - da);\n      // metres-ish: circumference ~0.5 m, height ~0.3 m, radius 1/60\n      spark = clamp(fixed(1.0) - da * fixed(30.0) - dh * fixed(18.0), fixed(0.0), fixed(1.0)) * sp[k].life;\n    }\n  }\n\n  fixed total = clamp(max(heat, spark), fixed(0.0), fixed(1.0));\n  fixed hue = total * fixed(0.11);                 // deep red -> orange -> yellow\n  fixed sat = fixed(1.0) - spark * fixed(0.45);    // sparks go toward white-hot\n  return hsv2rgb(hue, sat, total);\n}\n```",
+      "is_error": false,
+      "session_id": "03576957-778f-4983-a263-27e21408ec16",
+      "wall_s": 61.9,
+      "duration_api_ms": 60196,
+      "cost_usd": 0.153451,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 6463,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 2859
+      },
+      "thinking_tokens": 3588,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2555
+    }
+  ],
+  "started": "2026-10-23T00:42:11",
+  "base_program": "firmware/fx_perf_bench/agent/app2__opus__p02.fx",
+  "base_estimate": [
+    81.55,
+    [
+      "a loop runs 4 times per LED (~17,888 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 86) \u2014 saves up to ~8,944 cycles/LED (~27.9 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1535,
+  "total_wall_s": 61.9,
+  "program": "firmware/fx_perf_bench/agent/app2_est__opus__p02.fx"
+}

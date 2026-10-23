@@ -1,0 +1,42 @@
+{
+  "name": "skill2_est__opus__p03",
+  "variant": "skill2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Aurora curtains: soft folded curtains of light hang around the cylindrical lamp\n// and drift slowly. Each curtain has a bright, wavering lower hem in green and\n// fades upward into blue and violet, over a faint night sky.\n//\n// Height comes from the LED index along the helix (0 = first LED, 1 = last), so\n// no map bounds are needed. Use `flip` if the strip starts at the top.\n// The curtain folds are a sine field over led.pos x/z. It does not depend on the\n// map origin, which only shifts the phase.\n// Everything per LED is fixed point: sin in turns and the integer hsv2rgb.\n//\n// Performance: the per-LED invariants (height along the helix and the scaled\n// x/z combinations each sine needs) are computed once into buffers on the\n// first frame. LEDs below the hem or above the fade-out only show the night\n// sky, so they skip the three curtain sines.\n\nuniform float speed     : 0.0 .. 1.0 = 0.2;    // drift speed\nuniform float folds     : 4.0 .. 30.0 = 14.0;  // curtain folds per metre\nuniform float sharpness : 1.0 .. 6.0 = 2.5;    // crisp vs. diffuse curtains\nuniform float hem       : 0.0 .. 0.6 = 0.15;   // height of the lower edge\nuniform float hue_base  : 0.0 .. 1.0 = 0.33;   // hem colour (0.33 = green)\nuniform float hue_span  : 0.0 .. 0.6 = 0.42;   // hue shift toward the top\nuniform float glow      : 0.0 .. 1.0 = 0.9;    // curtain brightness\nuniform float sky       : 0.0 .. 0.1 = 0.02;   // night-sky background level\nuniform bool  flip = false;                    // strip runs top to bottom\n\n// Per-LED invariants, filled on the first frame.\nbuffer fixed bt;   // idx / count\nbuffer fixed ba;   // pos.x\nbuffer fixed bb;   // pos.z * 0.8\nbuffer fixed bc;   // (pos.x - pos.z) * 0.6\nbuffer fixed bw;   // pos.x * 0.5 + pos.z * 0.3\n\nstate bool seen;\nstate bool ready;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed k;\nstate fixed g;\nstate fixed hb;\nstate fixed hs;\nstate fixed gl;\nstate fixed sk;\nstate fixed c0;    // flip offset minus hem height\nstate fixed fs;\n\nvoid update() {\n  if (seen) {\n    ready = true;\n  }\n  seen = true;\n\n  p1 = fract(p1 + fixed(dt * speed * 0.07));\n  p2 = fract(p2 + fixed(dt * speed * 0.05));\n  p3 = fract(p3 - fixed(dt * speed * 0.03));\n  p4 = fract(p4 + fixed(dt * speed * 0.09));\n  k  = fixed(folds);\n  g  = fixed(sharpness * 0.4);\n  hb = fract(fixed(hue_base));\n  hs = fixed(hue_span);\n  gl = fixed(glow);\n  sk = fixed(sky);\n  if (flip) {\n    c0 = fixed(1.0 - hem);\n    fs = fixed(-1.0);\n  } else {\n    c0 = fixed(0.0 - hem);\n    fs = fixed(1.0);\n  }\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n\n  if (!ready) {\n    bt[i] = fixed(float(led.idx) / float(led.count));\n    ba[i] = fixed(led.pos.x);\n    bb[i] = fixed(led.pos.z * 0.8);\n    bc[i] = fixed((led.pos.x - led.pos.z) * 0.6);\n    bw[i] = fixed(led.pos.x * 0.5 + led.pos.z * 0.3);\n  }\n\n  // Height above the wavering hem.\n  fixed r = c0 + fs * bt[i] - sin(bw[i] * k + p4) * fixed(0.08);\n\n  // Below the hem: only the night sky, at the hem hue.\n  if (r <= fixed(0.0)) {\n    return hsv2rgb(hb, fixed(0.9), sk);\n  }\n  // Fully faded out near the top: only the night sky.\n  if (r >= fixed(0.8333)) {\n    return hsv2rgb(fract(hb + min(r, fixed(1.0)) * hs), fixed(0.9), sk);\n  }\n\n  // Folded curtain field around the cylinder.\n  fixed v = sin(ba[i] * k + p1) + sin(bb[i] * k - p2)\n          + sin(bc[i] * k + p3) * fixed(0.5);\n  fixed b = clamp(v * g + fixed(0.5), fixed(0.0), fixed(1.0));\n\n  // Sharp bright lower edge that fades upward.\n  fixed lo = min(r * fixed(12.0), fixed(1.0));\n  fixed fade = fixed(1.0) - r * fixed(1.2);\n\n  fixed val = b * b * lo * fade * gl + sk;\n  return hsv2rgb(fract(hb + r * hs), fixed(0.9), val);\n}\n```",
+      "is_error": false,
+      "session_id": "a653f2b6-65bb-4895-af4c-eb71b28c9159",
+      "wall_s": 46.5,
+      "duration_api_ms": 45163,
+      "cost_usd": 0.114392,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 4752,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 2054
+      },
+      "thinking_tokens": 2921,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2093
+    }
+  ],
+  "started": "2026-10-23T00:51:11",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__opus__p03.fx",
+  "base_estimate": [38.09, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1144,
+  "total_wall_s": 46.5,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__opus__p03.fx"
+}

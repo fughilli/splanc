@@ -1,0 +1,93 @@
+{
+  "name": "app2__sonnet__p13",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\n// Starfield Twinkle \u2014 cylindrical lamp, 500 LEDs on a helix\n// Each \"star\" has its own independent twinkle phase stored per-LED in a buffer,\n// advanced every frame in shade() with a unique random rate.\n\nuniform float speed    : 0.0 .. 5.0 = 1.5;\nuniform float density  : 0.2 .. 1.0 = 0.70;\nuniform float sparkle  : 0.0 .. 1.0 = 0.85;\nuniform int   colorMode : {\"cool\",\"warm\",\"multi\"} = 0;\n\n// Per-LED twinkle phases \u2014 fixed16 (Q1.14, range \u00b12) saves RAM; phases in [0,1)\nbuffer fixed twinklePh : fixed16;\n\nstate bool  inited;\nstate fixed gDt;       // speed-scaled delta, in turns\nstate float gDensity;  // density threshold (float for hash compare)\nstate fixed gSparkle;  // sparkle blend factor\n\nvoid update() {\n  gDt      = fixed(dt * speed * 0.25);   // one full twinkle cycle ~ 4 s at speed=1\n  gDensity = density;\n  gSparkle = fixed(sparkle);\n\n  // Seed each LED with a random starting phase on the very first frame\n  if (!inited) {\n    for (int i = 0; i < 500; i = i + 1) {\n      twinklePh[i] = fixed(hash(float(i) * 1.618034));\n    }\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  // h0 decides star existence \u2014 compiler caches hash(float(led.idx)) once per LED\n  float h0 = hash(float(led.idx));\n\n  // Sparse field: most positions are dark\n  if (h0 > gDensity) {\n    return vec3(0.0, 0.0, 0.0);\n  }\n\n  float h1 = hash(float(led.idx) * 3.7133);  // twinkle rate seed\n  float h2 = hash(float(led.idx) * 7.1317);  // colour seed\n\n  // Advance this star's phase with its unique rate (0.3\u00d7 \u2026 3\u00d7 global speed)\n  fixed ph    = twinklePh[led.idx];\n  fixed rate  = fixed(0.3) + fixed(h1) * fixed(2.7);\n  fixed newPh = fract(ph + gDt * rate);\n  twinklePh[led.idx] = newPh;\n\n  // Brightness: smooth sin twinkle, sharpened toward sparkly flashes via s\u00b2\n  fixed s      = sin(newPh) * fixed(0.5) + fixed(0.5);          // 0..1\n  fixed bright = s * (fixed(1.0) - gSparkle) + s * s * gSparkle; // mix(s, s\u00b2, sparkle)\n\n  // Colour \u2014 convert hashes once, reuse across branches\n  fixed fh0 = fixed(h0);\n  fixed fh2 = fixed(h2);\n\n  // Default: cool blue-white (hue 0.57..0.70, low saturation)\n  fixed hue = fixed(0.57) + fh2 * fixed(0.13);\n  fixed sat = fh0 * fixed(0.35);\n\n  if (colorMode == 1) {\n    // Warm: orange-yellow range\n    hue = fh2 * fixed(0.12);\n    sat = fixed(0.30) + fh0 * fixed(0.50);\n  } else if (colorMode == 2) {\n    // Multi: full spectrum, vivid\n    hue = fh2;\n    sat = fixed(0.50) + fh0 * fixed(0.40);\n  }\n\n  // All-fixed hsv2rgb \u2192 integer path, no soft-float\n  return hsv2rgb(hue, sat, bright);\n}\n```\n\n**How it works:**\n\n| Feature | Detail |\n|---|---|\n| **Per-LED independence** | A `buffer fixed : fixed16` stores one phase per LED; shade() reads, advances, and writes it back each frame \u2014 no correlation between stars |\n| **Unique twinkle rates** | `hash(led.idx * 3.71)` seeds a per-star rate multiplier 0.3\u00d7\u20133.0\u00d7 so stars are clearly asynchronous |\n| **Sparkle sharpening** | `mix(s, s\u00b2, sparkle)` blends smooth sine against its square \u2014 at full sparkle, peaks stay bright but troughs drop much faster, creating sharp flashes |\n| **Performance** | All per-LED maths in `fixed`; `sin` and `hsv2rgb` take the integer LUT path; estimated ~4 k cycles/LED against a ~8 k budget |\n| **Controls** | `density` thins the field; `speed` scales all twinkle rates uniformly; `sparkle` controls flash sharpness; `colorMode` switches cool/warm/multi |",
+      "is_error": false,
+      "session_id": "eb91fdd3-0f99-48ba-8ba1-29a8b2946259",
+      "wall_s": 245.4,
+      "duration_api_ms": 242658,
+      "cost_usd": 0.27862319999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 18271,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 505
+      },
+      "thinking_tokens": 17006,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 11,
+          "col": 33,
+          "msg": "a storage annotation only applies to a float/vec element"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The `: fixed16` storage annotation only applies to `float` or `vec` element types \u2014 not to `fixed` (which is already an integer type). Simply remove the annotation.\n\n```glsl\n// Starfield Twinkle \u2014 cylindrical lamp, 500 LEDs on a helix\n// Each \"star\" has its own independent twinkle phase stored per-LED in a buffer,\n// advanced every frame in shade() with a unique random rate.\n\nuniform float speed    : 0.0 .. 5.0 = 1.5;\nuniform float density  : 0.2 .. 1.0 = 0.70;\nuniform float sparkle  : 0.0 .. 1.0 = 0.85;\nuniform int   colorMode : {\"cool\",\"warm\",\"multi\"} = 0;\n\n// Per-LED twinkle phases \u2014 fixed (Q16.16); phases in [0,1)\nbuffer fixed twinklePh;\n\nstate bool  inited;\nstate fixed gDt;       // speed-scaled delta, in turns\nstate float gDensity;  // density threshold (float for hash compare)\nstate fixed gSparkle;  // sparkle blend factor\n\nvoid update() {\n  gDt      = fixed(dt * speed * 0.25);   // one full twinkle cycle ~ 4 s at speed=1\n  gDensity = density;\n  gSparkle = fixed(sparkle);\n\n  // Seed each LED with a random starting phase on the very first frame\n  if (!inited) {\n    for (int i = 0; i < 500; i = i + 1) {\n      twinklePh[i] = fixed(hash(float(i) * 1.618034));\n    }\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  // h0 decides star existence \u2014 compiler caches hash(float(led.idx)) once per LED\n  float h0 = hash(float(led.idx));\n\n  // Sparse field: most positions are dark\n  if (h0 > gDensity) {\n    return vec3(0.0, 0.0, 0.0);\n  }\n\n  float h1 = hash(float(led.idx) * 3.7133);  // twinkle rate seed\n  float h2 = hash(float(led.idx) * 7.1317);  // colour seed\n\n  // Advance this star's phase with its unique rate (0.3\u00d7 \u2026 3\u00d7 global speed)\n  fixed ph    = twinklePh[led.idx];\n  fixed rate  = fixed(0.3) + fixed(h1) * fixed(2.7);\n  fixed newPh = fract(ph + gDt * rate);\n  twinklePh[led.idx] = newPh;\n\n  // Brightness: smooth sin twinkle, sharpened toward sparkly flashes via s\u00b2\n  fixed s      = sin(newPh) * fixed(0.5) + fixed(0.5);          // 0..1\n  fixed bright = s * (fixed(1.0) - gSparkle) + s * s * gSparkle; // mix(s, s\u00b2, sparkle)\n\n  // Colour \u2014 convert hashes once, reuse across branches\n  fixed fh0 = fixed(h0);\n  fixed fh2 = fixed(h2);\n\n  // Default: cool blue-white (hue 0.57..0.70, low saturation)\n  fixed hue = fixed(0.57) + fh2 * fixed(0.13);\n  fixed sat = fh0 * fixed(0.35);\n\n  if (colorMode == 1) {\n    // Warm: orange-yellow range\n    hue = fh2 * fixed(0.12);\n    sat = fixed(0.30) + fh0 * fixed(0.50);\n  } else if (colorMode == 2) {\n    // Multi: full spectrum, vivid\n    hue = fh2;\n    sat = fixed(0.50) + fh0 * fixed(0.40);\n  }\n\n  // All-fixed hsv2rgb \u2192 integer path, no soft-float\n  return hsv2rgb(hue, sat, bright);\n}\n```",
+      "is_error": false,
+      "session_id": "eb91fdd3-0f99-48ba-8ba1-29a8b2946259",
+      "wall_s": 12.7,
+      "duration_api_ms": 253005,
+      "cost_usd": 0.41449889999999995,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1206,
+        "cache_read_input_tokens": 5569,
+        "cache_creation_input_tokens": 19351
+      },
+      "thinking_tokens": 168,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 66,
+          "col": 10,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The language does not support `else if` \u2014 the `else` clause must be followed immediately by `{`. Fix by nesting the second `if` inside the `else` block.\n\n```glsl\n// Starfield Twinkle \u2014 cylindrical lamp, 500 LEDs on a helix\n// Each \"star\" has its own independent twinkle phase stored per-LED in a buffer,\n// advanced every frame in shade() with a unique random rate.\n\nuniform float speed    : 0.0 .. 5.0 = 1.5;\nuniform float density  : 0.2 .. 1.0 = 0.70;\nuniform float sparkle  : 0.0 .. 1.0 = 0.85;\nuniform int   colorMode : {\"cool\",\"warm\",\"multi\"} = 0;\n\n// Per-LED twinkle phases \u2014 fixed (Q16.16); phases in [0,1)\nbuffer fixed twinklePh;\n\nstate bool  inited;\nstate fixed gDt;       // speed-scaled delta, in turns\nstate float gDensity;  // density threshold (float for hash compare)\nstate fixed gSparkle;  // sparkle blend factor\n\nvoid update() {\n  gDt      = fixed(dt * speed * 0.25);   // one full twinkle cycle ~ 4 s at speed=1\n  gDensity = density;\n  gSparkle = fixed(sparkle);\n\n  // Seed each LED with a random starting phase on the very first frame\n  if (!inited) {\n    for (int i = 0; i < 500; i = i + 1) {\n      twinklePh[i] = fixed(hash(float(i) * 1.618034));\n    }\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  // h0 decides star existence \u2014 compiler caches hash(float(led.idx)) once per LED\n  float h0 = hash(float(led.idx));\n\n  // Sparse field: most positions are dark\n  if (h0 > gDensity) {\n    return vec3(0.0, 0.0, 0.0);\n  }\n\n  float h1 = hash(float(led.idx) * 3.7133);  // twinkle rate seed\n  float h2 = hash(float(led.idx) * 7.1317);  // colour seed\n\n  // Advance this star's phase with its unique rate (0.3\u00d7 \u2026 3\u00d7 global speed)\n  fixed ph    = twinklePh[led.idx];\n  fixed rate  = fixed(0.3) + fixed(h1) * fixed(2.7);\n  fixed newPh = fract(ph + gDt * rate);\n  twinklePh[led.idx] = newPh;\n\n  // Brightness: smooth sin twinkle, sharpened toward sparkly flashes via s\u00b2\n  fixed s      = sin(newPh) * fixed(0.5) + fixed(0.5);           // 0..1\n  fixed bright = s * (fixed(1.0) - gSparkle) + s * s * gSparkle; // mix(s, s\u00b2, sparkle)\n\n  // Colour \u2014 convert hashes once, reuse across branches\n  fixed fh0 = fixed(h0);\n  fixed fh2 = fixed(h2);\n\n  // Default: cool blue-white (hue 0.57..0.70, low saturation)\n  fixed hue = fixed(0.57) + fh2 * fixed(0.13);\n  fixed sat = fh0 * fixed(0.35);\n\n  if (colorMode == 1) {\n    // Warm: orange-yellow range\n    hue = fh2 * fixed(0.12);\n    sat = fixed(0.30) + fh0 * fixed(0.50);\n  } else {\n    if (colorMode == 2) {\n      // Multi: full spectrum, vivid\n      hue = fh2;\n      sat = fixed(0.50) + fh0 * fixed(0.40);\n    }\n  }\n\n  // All-fixed hsv2rgb \u2192 integer path, no soft-float\n  return hsv2rgb(hue, sat, bright);\n}\n```",
+      "is_error": false,
+      "session_id": "eb91fdd3-0f99-48ba-8ba1-29a8b2946259",
+      "wall_s": 13.1,
+      "duration_api_ms": 264660,
+      "cost_usd": 0.45543389999999995,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1324,
+        "cache_read_input_tokens": 24920,
+        "cache_creation_input_tokens": 2265
+      },
+      "thinking_tokens": 280,
+      "round": 2,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1012
+    }
+  ],
+  "started": "2026-10-23T00:16:04",
+  "status": "ok",
+  "n_calls": 3,
+  "total_cost_usd": 1.1486,
+  "total_wall_s": 271.2,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p13.fx"
+}

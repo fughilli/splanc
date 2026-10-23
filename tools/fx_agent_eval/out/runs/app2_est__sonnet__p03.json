@@ -1,0 +1,20 @@
+{
+  "name": "app2_est__sonnet__p03",
+  "variant": "app2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [],
+  "started": "2026-10-23T00:43:13",
+  "base_program": "firmware/fx_perf_bench/agent/app2__sonnet__p03.fx",
+  "base_estimate": [31.85, [], []],
+  "est_outcome": "within_budget",
+  "status": "ok",
+  "n_calls": 0,
+  "total_cost_usd": 0,
+  "total_wall_s": 0,
+  "program": "firmware/fx_perf_bench/agent/app2_est__sonnet__p03.fx"
+}
