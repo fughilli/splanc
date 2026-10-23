@@ -27,8 +27,9 @@ It prints raw rows (parsed + judged on the harness host by video_latency_core):
   END <reason>
 
 Sender modes: `fifo` queues every frame (what the web app does today: fire-and-forget
-ws.send with no bufferedAmount check), `latest` skips a frame while the previous one is
-still unsent (one-in-flight / drop-stale), so the probe can A/B the sender policy.
+ws.send with no bufferedAmount check), `latest` mirrors web/src/net/videoSender.ts: at most
+--max-inflight frames unconfirmed (a frame counts until its trailing ping's pong is back),
+newer frames skipped (drop-stale) while the bound is hit, so the probe can A/B the policy.
 
 Frames are raw RGB565 (flags=0, worst-case wire size) whose columns encode the frame
 sequence number in binary (2 columns per bit), so a logic-analyzer capture of the LED
@@ -259,6 +260,7 @@ def main():
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--seconds", type=float, default=120.0)
     ap.add_argument("--mode", choices=["fifo", "latest"], default="fifo")
+    ap.add_argument("--max-inflight", type=int, default=2, help="latest mode: unconfirmed frames")
     ap.add_argument("--calib", type=int, default=40, help="idle pings before + after")
     ap.add_argument("--drain", type=float, default=8.0, help="seconds to wait for late pongs")
     a = ap.parse_args()
@@ -384,41 +386,57 @@ def main():
                 return
             del app_q[:n]
 
+    held = None  # latest mode: (seq, t_sched) of the newest frame waiting for a slot
+
+    def send_frame(fseq, t_sched):
+        nonlocal pending_pongs, skipped
+        t = now_ms()
+        px = frame_pixels(fseq, a.width, a.height)
+        msg = ws_frame(client_set_texture(a.tex_index, a.width, a.height, px))
+        msg += ws_frame(client_ping(t))
+        app_q.extend(msg)
+        pending_pongs += 1
+        pump_tx()
+        emit(
+            "F %d %.3f %.3f %d %d %d %d"
+            % (fseq, t_sched, t, len(app_q), outq(s), len(msg), skipped)
+        )
+        skipped = 0
+        emit_tcp(t, tcp_info(s))
+
     try:
-        while seq < n_frames or (
-            pending_pongs > 0 and now_ms() < t_start + n_frames * period + a.drain * 1000
+        while (
+            seq < n_frames
+            or held is not None
+            or (pending_pongs > 0 and now_ms() < t_start + n_frames * period + a.drain * 1000)
         ):
             t_next = t_start + seq * period if seq < n_frames else now_ms() + 50
             wait = max(0.0, (t_next - now_ms()) / 1000.0)
-            rl, wl, _ = select.select([s], [s] if app_q else [], [], min(wait, 0.05))
+            rl, wl, _ = select.select(
+                [s], [s] if app_q else [], [], min(wait, 0.005 if held else 0.05)
+            )
             if s.pending() or rl:
                 pump_rx()
             if app_q:
                 pump_tx()
+            if held is not None and pending_pongs < a.max_inflight:
+                # A slot freed: the newest held frame goes out now (VideoSender.pump).
+                send_frame(*held)
+                held = None
             if seq >= n_frames:
                 continue
-            t = now_ms()
-            if t < t_next:
+            if now_ms() < t_next:
                 continue
-            if a.mode == "latest" and app_q:
-                # one-in-flight at the app layer: the previous frame hasn't even left the
-                # process, so this one would only queue behind it — drop it (stale).
+            if a.mode == "latest" and pending_pongs >= a.max_inflight:
+                # Bounded in flight (VideoSender): hold only the newest frame; the one it
+                # replaces is dropped (stale) without ever being sent.
+                if held is not None:
+                    skipped += 1
+                held = (seq, t_next)
                 seq += 1
-                skipped += 1
                 continue
-            px = frame_pixels(seq, a.width, a.height)
-            msg = ws_frame(client_set_texture(a.tex_index, a.width, a.height, px))
-            msg += ws_frame(client_ping(t))
-            app_q += msg
-            pending_pongs += 1
-            pump_tx()
-            emit(
-                "F %d %.3f %.3f %d %d %d %d"
-                % (seq, t_next, t, len(app_q), outq(s), len(msg), skipped)
-            )
-            skipped = 0
+            send_frame(seq, t_next)
             seq += 1
-            emit_tcp(t, tcp_info(s))
     except (OSError, ConnectionError) as e:
         reason = "error:%s:%s" % (type(e).__name__, str(e).replace(" ", "_")[:60])
     if reason == "done":
