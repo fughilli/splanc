@@ -13,7 +13,7 @@
  * with the sibling .wasm, cache the module promise.
  */
 
-import type { FxCompiled, FxDiagnostic, FxUniform } from "../../fx/preview";
+import type { FxCompiled, FxDiagnostic, FxSymbol, FxUniform } from "../../fx/preview";
 import { compilerAssetBase } from "./workerAssets";
 
 /** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
@@ -65,6 +65,8 @@ function loadCompiler(base = fxCompilerBase()): Promise<CompilerModule> {
 }
 
 function toCompiled(r: CompilerResult): FxCompiled {
+  // The FX debugger's symbol table (absent from compilers that predate it).
+  const syms = r.ok ? (r as { symbols?: unknown }).symbols : undefined;
   return {
     ok: r.ok,
     bytecode: r.bytecode,
@@ -72,6 +74,7 @@ function toCompiled(r: CompilerResult): FxCompiled {
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
     // (absent in compiler bundles that predate warnings)
     warnings: r.warnings ? (JSON.parse(r.warnings) as FxDiagnostic[]) : [],
+    ...(typeof syms === "string" ? { symbols: JSON.parse(syms) as FxSymbol[] } : {}),
   };
 }
 

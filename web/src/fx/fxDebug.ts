@@ -860,6 +860,11 @@ export interface CompareReport {
   decks: FxDeckInfo[];
   jit: boolean;
   notes: string[];
+  /** LEDs [first, first + ledsCompared): the device's strip colours and the
+   * replay's expected ones (RGB triples by LED index), for a diff view. */
+  first: number;
+  deviceOutput: Uint8Array | null;
+  expected: Uint8Array;
 }
 
 const ORDER_NAMES = ["R", "G", "B"];
@@ -1158,6 +1163,9 @@ async function explain(
     decks: st.decks,
     jit,
     notes: [...notes, ...busy],
+    first: rep.first,
+    deviceOutput: after.output ?? null,
+    expected: rep.expected,
   };
 }
 
