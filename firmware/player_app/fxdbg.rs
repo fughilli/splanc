@@ -23,7 +23,8 @@
 use core::ptr::{addr_of, addr_of_mut};
 
 use ledmapper_fx_vm::{
-    dbg, Frame as FxFrame, Led as FxLed, Program, Vm as FxVm, MAX_LOCALS, MAX_STATE, MAX_UNIFORM_SLOTS,
+    dbg, Frame as FxFrame, Led as FxLed, Program, Vm as FxVm, MAX_LOCALS, MAX_STATE,
+    MAX_UNIFORM_SLOTS,
 };
 
 use super::{
@@ -689,8 +690,11 @@ struct LedSave {
 
 /// Walk deck `p`'s bytes for LED `idx` (in led_elem_ranges order, capped).
 unsafe fn led_elems(p: *const DeckState, idx: usize, mut f: impl FnMut(&mut u8, usize)) {
-    let Ok(prog) = Program::parse(&(*p).bytes[..(*p).len]) else { return };
-    let arena = &mut (&mut *addr_of_mut!(FX_ARENA))[(*p).arena_off..(*p).arena_off + (*p).arena_len];
+    let Ok(prog) = Program::parse(&(*p).bytes[..(*p).len]) else {
+        return;
+    };
+    let arena =
+        &mut (&mut *addr_of_mut!(FX_ARENA))[(*p).arena_off..(*p).arena_off + (*p).arena_len];
     let mut n = 0;
     dbg::led_elem_ranges(&prog, FX_F_LEDS as usize, idx, |o, l| {
         for b in arena.iter_mut().skip(o).take(l) {
@@ -703,7 +707,9 @@ unsafe fn led_elems(p: *const DeckState, idx: usize, mut f: impl FnMut(&mut u8, 
 }
 
 unsafe fn led_save(p: *const DeckState, idx: usize) -> LedSave {
-    let mut s = LedSave { bytes: [0; SAVE_CAP] };
+    let mut s = LedSave {
+        bytes: [0; SAVE_CAP],
+    };
     led_elems(p, idx, |b, k| s.bytes[k] = *b);
     s
 }

@@ -256,7 +256,11 @@ impl FxReplay {
 
     /// The per-invocation instruction budget (the device's `budget`).
     pub fn set_budget(&mut self, instructions: u32) {
-        self.budget = if instructions == 0 { ledmapper_fx_vm::DEFAULT_BUDGET } else { instructions };
+        self.budget = if instructions == 0 {
+            ledmapper_fx_vm::DEFAULT_BUDGET
+        } else {
+            instructions
+        };
     }
 
     /// Every uniform slot (SECTION_UNIFORMS as f32s).
@@ -271,7 +275,8 @@ impl FxReplay {
         for (dst, w) in self.vm.state.iter_mut().zip(words) {
             *dst = f32::from_bits(*w);
         }
-        self.vm.set_flood_words(words.get(MAX_STATE..).unwrap_or(&[]));
+        self.vm
+            .set_flood_words(words.get(MAX_STATE..).unwrap_or(&[]));
     }
 
     /// The state in SECTION_STATE's layout (to diff against the device's).
@@ -315,9 +320,13 @@ impl FxReplay {
 
     /// Run update() once. Returns the outcome (0 ok, 1 budget, 2 timeout).
     pub fn update(&mut self) -> u32 {
-        let Ok(prog) = Program::parse(&self.bytes) else { return 1 };
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return 1;
+        };
         self.vm.set_arena(&mut self.arena);
-        self.vm.run_update_bounded(&prog, &self.frame, &Budget::instructions(self.budget)) as u32
+        self.vm
+            .run_update_bounded(&prog, &self.frame, &Budget::instructions(self.budget))
+            as u32
     }
 
     /// Shade LED `idx` from its FX_LED_V1 record: [r, g, b, outcome, has_ctx].
@@ -358,11 +367,16 @@ impl FxReplay {
     fn save_led(&self, idx: u32) -> Vec<(usize, Vec<u8>)> {
         let mut out = Vec::new();
         if let Ok(prog) = Program::parse(&self.bytes) {
-            dbg::led_elem_ranges(&prog, self.frame.led_count as usize, idx as usize, |o, l| {
-                if let Some(b) = self.arena.get(o..o + l) {
-                    out.push((o, b.to_vec()));
-                }
-            });
+            dbg::led_elem_ranges(
+                &prog,
+                self.frame.led_count as usize,
+                idx as usize,
+                |o, l| {
+                    if let Some(b) = self.arena.get(o..o + l) {
+                        out.push((o, b.to_vec()));
+                    }
+                },
+            );
         }
         out
     }
@@ -374,8 +388,12 @@ impl FxReplay {
     }
 
     fn shade_inner(&mut self, rec: &[u8], idx: u32, debug: bool) -> (Vec<u8>, u32, u16) {
-        let Ok(prog) = Program::parse(&self.bytes) else { return (vec![0, 0, 0, 1, 0], 0, 0) };
-        let Some(led) = dbg::led_from_record(rec, idx) else { return (vec![0, 0, 0, 0, 0], 0, 0) };
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return (vec![0, 0, 0, 1, 0], 0, 0);
+        };
+        let Some(led) = dbg::led_from_record(rec, idx) else {
+            return (vec![0, 0, 0, 0, 0], 0, 0);
+        };
         if debug {
             self.vm.clear_scratch();
         }
@@ -390,7 +408,13 @@ impl FxReplay {
 /// blend_rgb8: mode 0 = linear RGB, 1 = HSV shortest hue).
 #[wasm_bindgen]
 pub fn fx_blend_rgb8(a: &[u8], b: &[u8], t: f32, mode: u32) -> Vec<u8> {
-    let g = |s: &[u8]| (s.first().copied().unwrap_or(0), s.get(1).copied().unwrap_or(0), s.get(2).copied().unwrap_or(0));
+    let g = |s: &[u8]| {
+        (
+            s.first().copied().unwrap_or(0),
+            s.get(1).copied().unwrap_or(0),
+            s.get(2).copied().unwrap_or(0),
+        )
+    };
     let (r, gg, bl) = ledmapper_keypoint::blend_rgb8(g(a), g(b), t, mode);
     vec![r, gg, bl]
 }

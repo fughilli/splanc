@@ -777,8 +777,18 @@ impl Compiler {
 
     /// Record a named slot range for the FX debugger's symbol table.
     fn note_sym(&mut self, kind: &'static str, name: &str, slot: u8, width: u8) {
-        let func = if kind == "state" { String::new() } else { self.cur_fn.clone() };
-        self.dbg_syms.push(DebugSym { name: name.to_string(), kind, func, slot, width });
+        let func = if kind == "state" {
+            String::new()
+        } else {
+            self.cur_fn.clone()
+        };
+        self.dbg_syms.push(DebugSym {
+            name: name.to_string(),
+            kind,
+            func,
+            slot,
+            width,
+        });
     }
 
     /// Emit a `FillLocal` to zero-initialize `w` local slots at `slot` (array /
