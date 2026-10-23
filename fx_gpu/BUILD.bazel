@@ -14,6 +14,7 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "fx_gpu",
     srcs = [
+        "src/bench.rs",
         "src/emit_glsl.rs",
         "src/eval.rs",
         "src/ir.rs",
@@ -50,5 +51,35 @@ rust_test(
         ":fx_gpu",
         "//firmware/fx_vm",
         "//fx_compiler",
+    ],
+)
+
+# Pi 3 benchmark (docs/design/fx-gpu-lowering.md "Pi 3 measurement"): the host
+# tool that packs kernels + VM goldens, and the on-Pi VM baseline. The VM bench
+# is linked crt-static so it runs on the NixOS Pi with no loader; the GLES2
+# half is pi3bench/gles2bench.c (dlopens EGL/GLES; built by build_payload.sh).
+rust_binary(
+    name = "fxgpu_pack",
+    srcs = ["bin/pack.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_gpu",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
+)
+
+rust_binary(
+    name = "fxvm_bench",
+    srcs = ["bin/vm_bench.rs"],
+    edition = "2021",
+    rustc_flags = [
+        "-Ctarget-feature=+crt-static",
+        # gold + --gc-sections rejects static glibc stapsdt notes; use bfd.
+        "-Clink-arg=-fuse-ld=bfd",
+    ],
+    deps = [
+        ":fx_gpu",
+        "//firmware/fx_vm",
     ],
 )

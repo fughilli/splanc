@@ -60,7 +60,7 @@ fn conform(src: &str, prof: Profile) -> (u32, usize) {
     let prog = vm::Program::parse(&compiled.fxb).expect("parse");
     let (g, roots, raw) = compile_shade(&prog, prof).expect("lower");
     // GLSL ES 3.10 must emit without error.
-    let _ = emit_glsl::emit(&g, &roots, emit_glsl::Target::Es310Compute).expect("glsl310");
+    let _ = emit_glsl::emit(&g, &roots, raw, emit_glsl::Target::Es310Compute).expect("glsl310");
 
     let mut v = vm::Vm::new();
     for u in &compiled.uniforms {
@@ -162,6 +162,6 @@ fn es100_refuses_integer_graph() {
     let src = "vec3 shade(Led led) { float h = hash(led.idx); return vec3(h, h, h); }";
     let compiled = ledmapper_fx_compiler::compile(src).expect("compile");
     let prog = vm::Program::parse(&compiled.fxb).expect("parse");
-    let (g, roots, _) = compile_shade(&prog, Profile::ExactInt).expect("lower");
-    assert!(emit_glsl::emit(&g, &roots, emit_glsl::Target::Es100Fragment).is_err());
+    let (g, roots, raw) = compile_shade(&prog, Profile::ExactInt).expect("lower");
+    assert!(emit_glsl::emit(&g, &roots, raw, emit_glsl::Target::Es100Vertex).is_err());
 }

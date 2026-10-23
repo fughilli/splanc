@@ -170,7 +170,8 @@ fn to_i_trunc(x: f32) -> i32 {
     }
 }
 
-fn read_src(inp: &Inputs, s: crate::ir::Src) -> u32 {
+/// The raw input word for `s` (what the GPU's attribute/uniform carries).
+pub fn read_src(inp: &Inputs, s: crate::ir::Src) -> u32 {
     use crate::ir::Src::*;
     match s {
         Uniform(i) => *inp.uniforms.get(i as usize).unwrap_or(&0),

@@ -116,11 +116,12 @@ fn run_one(path: &str, n: usize, frames: u32, prof: Profile, emit_dir: Option<&s
 
     // Emit GLSL for external validation.
     if let Some(dir) = emit_dir {
-        if let Ok(o) = emit_glsl::emit(&g, &roots, emit_glsl::Target::Es310Compute) {
+        if let Ok(o) = emit_glsl::emit(&g, &roots, raw, emit_glsl::Target::Es310Compute) {
             let _ = std::fs::write(format!("{dir}/{name}.comp"), o.src);
         }
-        if let Ok(o) = emit_glsl::emit(&g, &roots, emit_glsl::Target::Es100Fragment) {
-            let _ = std::fs::write(format!("{dir}/{name}.frag"), o.src);
+        if let Ok(o) = emit_glsl::emit(&g, &roots, raw, emit_glsl::Target::Es100Vertex) {
+            let _ = std::fs::write(format!("{dir}/{name}.vert"), o.src);
+            let _ = std::fs::write(format!("{dir}/{name}.frag"), o.frag.unwrap());
         }
     }
 

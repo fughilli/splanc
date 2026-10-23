@@ -1,67 +1,104 @@
 //! Emit GLSL from the primitive IR.
 //!
 //! A straight walk of the DAG into SSA `vN` temporaries (CSE already happened
-//! in the graph, so each live node is exactly one statement). Two targets:
+//! in the graph, so each live node is exactly one statement). Targets:
 //!
 //! * [`Target::Es310Compute`] — GLSL ES 3.10 compute, one invocation per LED,
-//!   inputs from a std430 `float` SSBO (raw words; int inputs reinterpreted
-//!   with `floatBitsToUint`), RGBA packed into a `uint` output SSBO. Real
-//!   32-bit integers, so the hash/fixed ops are exact. This is the Pi 4/5 path
-//!   and the one glslang turns into SPIR-V.
-//! * [`Target::Es100Fragment`] — GLSL ES 1.00 fragment over a 1×N strip, one
-//!   fragment per LED, `gl_FragColor` as the result. No integers on VC4, so a
-//!   graph that needs an integer op is refused (`Err`) and the effect stays on
-//!   the VM / an int-capable tier — the Pi 3 tiering decision in the design doc.
+//!   per-LED inputs from a std430 `float` SSBO (int inputs reinterpreted with
+//!   `floatBitsToUint`), frame inputs from a second SSBO, RGB packed into a
+//!   `uint` output SSBO. Real 32-bit integers, so hash/fixed ops are exact. The
+//!   Pi 4/5 path and the SPIR-V source (glslang).
+//! * [`Target::Es100Vertex`] — GLSL ES 1.00 for VideoCore IV (Pi 3 / Zero 2 W):
+//!   the kernel runs in the **vertex** shader, one `GL_POINTS` vertex per LED.
+//!   Vertex shaders guarantee highp float, take per-LED inputs as float
+//!   attributes (vc4 has no float textures), and the colour reaches a trivial
+//!   pass-through fragment shader as a varying, written to a W×H RGBA8 target
+//!   (row = channel). No integers on vc4, so an int graph is refused (`Err`).
+//! * [`Target::Es100Fragment`] — the same kernel as a fragment shader with the
+//!   inputs as uniforms; kept only as a parse/validation target.
 //!
-//! A text generator on purpose (no `naga`/`rspirv` dep) so the prototype builds
-//! under the repo's offline Bazel crate universe; the doc specifies `naga` for
-//! production.
+//! Output quantization reproduces the VM epilogue: for a linear-float shade
+//! `floor(clamp01(x) * 255)` (the VM's `unit_u8` truncates the RNE product),
+//! for `RetRgb8`/`RetRgbFix` `floor(clamp(x, 0, 255))`. The GLES2 targets write
+//! `q / 255`: the RGBA8 store computes `round(c * 255)`, which lands on `q` with
+//! ~0.5 of margin (`(q + 0.5) / 255` would sit on the rounding tie — off by one).
 
 use crate::ir::{Graph, NodeId, Op, Src, Ty};
+use ledmapper_fx_vm as vm;
 use std::fmt::Write;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Target {
     Es310Compute,
+    Es100Vertex,
     Es100Fragment,
 }
 
 pub struct EmitOut {
+    /// The main shader (compute, vertex, or fragment).
     pub src: String,
-    /// Input words referenced, in binding order (index = SSBO/uniform slot).
-    pub inputs: Vec<Src>,
+    /// The pass-through fragment shader paired with `Es100Vertex`.
+    pub frag: Option<String>,
+    /// Per-LED inputs, in attribute/record order (`a{k/4}.{xyzw}` for GLES2).
+    pub led_inputs: Vec<Src>,
+    /// Per-frame inputs, in uniform order (`u{k}` for GLES2, `fr[k]` compute).
+    pub frame_inputs: Vec<Src>,
 }
 
-pub fn emit(g: &Graph, roots: &[NodeId; 3], target: Target) -> Result<EmitOut, String> {
-    let live = g.live(roots);
-    let es2 = target == Target::Es100Fragment;
+/// Whether a `LoadCtx` id is per-frame (a uniform) rather than per-LED.
+pub fn is_frame_ctx(id: u8) -> bool {
+    matches!(
+        id,
+        vm::C_TIME
+            | vm::C_DT
+            | vm::C_FRAME
+            | vm::C_LED_COUNT
+            | vm::C_IMU_ACCEL
+            | vm::C_IMU_GYRO
+            | vm::C_ROOM_MIN
+            | vm::C_ROOM_MAX
+    )
+}
 
-    // Inputs in first-seen order → binding slot.
-    let mut inputs: Vec<Src> = Vec::new();
+/// Per-LED (attribute) vs per-frame (uniform) classification of an input.
+pub fn is_led_input(s: Src) -> bool {
+    match s {
+        Src::LedCtx(id, _) | Src::LedCtxFix(id, _) => !is_frame_ctx(id),
+        _ => false,
+    }
+}
+
+pub fn emit(g: &Graph, roots: &[NodeId; 3], raw: bool, target: Target) -> Result<EmitOut, String> {
+    let live = g.live(roots);
+    let es2 = target != Target::Es310Compute;
+
+    let mut led_inputs: Vec<Src> = Vec::new();
+    let mut frame_inputs: Vec<Src> = Vec::new();
     for (i, n) in g.nodes.iter().enumerate() {
-        if live[i] {
-            if es2 && needs_int(n.op) {
-                return Err(format!("GLES2 has no integer op for {:?}", n.op));
-            }
-            if let Op::Input(s) = n.op {
-                if !inputs.contains(&s) {
-                    inputs.push(s);
-                }
+        if !live[i] {
+            continue;
+        }
+        if es2 && needs_int(n.op) {
+            return Err(format!("GLES2 has no integer op for {:?}", n.op));
+        }
+        if let Op::Input(s) = n.op {
+            let list = if is_led_input(s) { &mut led_inputs } else { &mut frame_inputs };
+            if !list.contains(&s) {
+                list.push(s);
             }
         }
     }
-    let slot = |s: Src| inputs.iter().position(|&x| x == s).unwrap();
+    if target == Target::Es100Vertex && led_inputs.len() > 28 {
+        return Err(format!("{} per-LED inputs exceed 7 vec4 attributes", led_inputs.len()));
+    }
 
     let gty = |id: NodeId| -> &'static str {
         match g.ty(id) {
             Ty::F => "float",
-            // ES2 has no integers (refused earlier); a U here can't occur.
             Ty::U => "uint",
             Ty::B => "bool",
         }
     };
-    let _ = es2;
-
     let mut body = String::new();
     for (i, n) in g.nodes.iter().enumerate() {
         if !live[i] {
@@ -69,60 +106,97 @@ pub fn emit(g: &Graph, roots: &[NodeId; 3], target: Target) -> Result<EmitOut, S
         }
         let id = i as NodeId;
         let rhs = match n.op {
-            Op::Input(s) => fetch(s, slot(s), target),
-            _ => expr(g, id, target)?,
+            Op::Input(s) => fetch(s, &led_inputs, &frame_inputs, target),
+            _ => expr(g, id)?,
         };
         writeln!(body, "  {} v{id} = {rhs};", gty(id)).unwrap();
     }
 
-    let (r, gb, b) = (roots[0], roots[1], roots[2]);
-    let src = match target {
+    // Quantized channel q in 0..255 (a float holding an integer value).
+    let q = |r: NodeId| {
+        if raw {
+            format!("floor(clamp(v{r}, 0.0, 255.0))")
+        } else {
+            format!("floor(clamp(v{r}, 0.0, 1.0) * 255.0)")
+        }
+    };
+    let (qr, qg, qb) = (q(roots[0]), q(roots[1]), q(roots[2]));
+
+    let mut out = EmitOut { src: String::new(), frag: None, led_inputs, frame_inputs };
+    out.src = match target {
         Target::Es310Compute => format!(
             "#version 310 es\n\
              layout(local_size_x = 64) in;\n\
-             layout(std430, binding = 0) readonly buffer In {{ float indata[]; }};\n\
-             layout(std430, binding = 1) writeonly buffer Out {{ uint outp[]; }};\n\
+             layout(std430, binding = 0) readonly buffer Leds {{ float led[]; }};\n\
+             layout(std430, binding = 1) readonly buffer Frame {{ float fr[]; }};\n\
+             layout(std430, binding = 2) writeonly buffer Out {{ uint outp[]; }};\n\
              layout(location = 0) uniform uint led_count;\n\
-             layout(location = 1) uniform uint n_inputs;\n\
              int mulhi_s(int a, int b) {{ int hi; int lo; imulExtended(a, b, hi, lo); return hi; }}\n\
              void main() {{\n  \
                uint gid = gl_GlobalInvocationID.x;\n  \
                if (gid >= led_count) return;\n\
              {body}  \
-               uint R = uint(clamp(v{r}, 0.0, 255.0));\n  \
-               uint G = uint(clamp(v{gb}, 0.0, 255.0));\n  \
-               uint B = uint(clamp(v{b}, 0.0, 255.0));\n  \
-               outp[gid] = R | (G << 8) | (B << 16);\n}}\n"
+               outp[gid] = uint({qr}) | (uint({qg}) << 8) | (uint({qb}) << 16);\n}}\n",
         ),
-        Target::Es100Fragment => {
-            // per-LED inputs sampled from a 1×N data texture (RGBA32F-ish); the
-            // feasibility emitter passes them as a uniform array instead.
-            let mut u = String::new();
-            writeln!(u, "#version 100\nprecision highp float;\nuniform float indata[{}];", inputs.len().max(1))
-                .unwrap();
+        Target::Es100Vertex => {
+            let mut h = String::from("#version 100\nprecision highp float;\nattribute vec2 a_px;\n");
+            for k in 0..out.led_inputs.len().div_ceil(4) {
+                writeln!(h, "attribute vec4 a{k};").unwrap();
+            }
+            for k in 0..out.frame_inputs.len() {
+                writeln!(h, "uniform float u{k};").unwrap();
+            }
+            h.push_str("varying vec4 v_col;\n");
+            out.frag = Some(
+                "#version 100\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\n\
+                 precision mediump float;\n#endif\nvarying vec4 v_col;\n\
+                 void main() { gl_FragColor = v_col; }\n"
+                    .into(),
+            );
             format!(
-                "{u}\nvoid main() {{\n{body}  \
-                   gl_FragColor = vec4(clamp(v{r},0.0,255.0)/255.0, \
-                   clamp(v{gb},0.0,255.0)/255.0, clamp(v{b},0.0,255.0)/255.0, 1.0);\n}}\n"
+                "{h}void main() {{\n{body}  \
+                   v_col = vec4({qr} / 255.0, {qg} / 255.0, {qb} / 255.0, 1.0);\n  \
+                   gl_Position = vec4(a_px, 0.0, 1.0);\n  \
+                   gl_PointSize = 1.0;\n}}\n"
+            )
+        }
+        Target::Es100Fragment => {
+            let mut h = String::from("#version 100\nprecision highp float;\n");
+            for k in 0..out.led_inputs.len() {
+                writeln!(h, "uniform float l{k};").unwrap();
+            }
+            for k in 0..out.frame_inputs.len() {
+                writeln!(h, "uniform float u{k};").unwrap();
+            }
+            format!(
+                "{h}void main() {{\n{body}  \
+                   gl_FragColor = vec4({qr} / 255.0, {qg} / 255.0, {qb} / 255.0, 1.0);\n}}\n"
             )
         }
     };
-    Ok(EmitOut { src, inputs })
+    Ok(out)
 }
 
-fn fetch(s: Src, slot: usize, target: Target) -> String {
-    // Raw word for input `slot`. ES3.10 reads a float SSBO; int inputs
-    // reinterpret the bits. ES2 reads a float uniform array (floats only).
-    let word = match target {
-        Target::Es310Compute => format!("indata[gid * n_inputs + {slot}u]"),
-        Target::Es100Fragment => format!("indata[{slot}]"),
-    };
-    match s {
-        // int/fixed mirrors are raw words → reinterpret on int-capable targets
-        Src::LedCtxFix(..) | Src::FrameCtxFix(..) if target == Target::Es310Compute => {
-            format!("floatBitsToUint({word})")
+fn fetch(s: Src, led: &[Src], frame: &[Src], target: Target) -> String {
+    let int_word = matches!(s, Src::LedCtxFix(..) | Src::FrameCtxFix(..));
+    let word = if is_led_input(s) {
+        let k = led.iter().position(|&x| x == s).unwrap();
+        match target {
+            Target::Es310Compute => format!("led[gid * {}u + {k}u]", led.len().max(1)),
+            Target::Es100Vertex => format!("a{}.{}", k / 4, ["x", "y", "z", "w"][k % 4]),
+            Target::Es100Fragment => format!("l{k}"),
         }
-        _ => word,
+    } else {
+        let k = frame.iter().position(|&x| x == s).unwrap();
+        match target {
+            Target::Es310Compute => format!("fr[{k}u]"),
+            _ => format!("u{k}"),
+        }
+    };
+    if int_word && target == Target::Es310Compute {
+        format!("floatBitsToUint({word})")
+    } else {
+        word
     }
 }
 
@@ -159,12 +233,11 @@ fn needs_int(op: Op) -> bool {
     ) || matches!(op, Input(Src::LedCtxFix(..)) | Input(Src::FrameCtxFix(..)))
 }
 
-fn expr(g: &Graph, id: NodeId, t: Target) -> Result<String, String> {
+fn expr(g: &Graph, id: NodeId) -> Result<String, String> {
     let n = g.node(id);
     let a = n.args();
     let x = |k: usize| format!("v{}", a[k]);
     use Op::*;
-    let _ = t;
     Ok(match n.op {
         ConstF(bits) => fmt_float(f32::from_bits(bits)),
         ConstU(u) => format!("{u}u"),
@@ -232,6 +305,8 @@ fn fmt_float(x: f32) -> String {
     if x.is_infinite() {
         return if x > 0.0 { "(1.0 / 0.0)".into() } else { "(-1.0 / 0.0)".into() };
     }
+    // `{:?}` is the shortest repr that round-trips through f32; GLSL parsers
+    // round decimal→float correctly for these.
     let s = format!("{x:?}");
     if s.contains('.') || s.contains('e') || s.contains('E') {
         s

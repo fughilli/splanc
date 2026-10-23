@@ -12,6 +12,7 @@
 //! refuses the rest (user functions, buffers/textures, graph queries, loops),
 //! which stay on the VM.
 
+pub mod bench;
 pub mod emit_glsl;
 pub mod eval;
 pub mod ir;

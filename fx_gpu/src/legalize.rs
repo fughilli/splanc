@@ -451,8 +451,9 @@ impl Legalizer<'_> {
         let inner = self.out.add(FSub, &[one, at]);
         let x = self.out.add(FMul, &[c, inner]);
         let m = self.out.add(FSub, &[v, c]);
-        // sextant = f2i(h6) ; pick (r,g,b) base then +m
-        let seg = self.f2i(h6);
+        // sextant = f2i(h6). h6 = fract(h)*6 lies in [0, 6], so trunc == floor
+        // and the pick can be float compares on floor(h6) — no integers, so it
+        // also runs on GLES2. NaN: f2i(NaN) = 0 in the VM → sextant 0.
         let zero = self.out.cf(0.0);
         // base for channel k by sextant
         let bases: [[NodeId; 6]; 3] = [
@@ -461,19 +462,17 @@ impl Legalizer<'_> {
             [zero, zero, x, c, c, x], // b
         ];
         let row = bases[k as usize];
-        // select by seg (0..5), clamped like the VM's match (_ => sextant 5)
-        let base = self.select6(seg, row);
-        self.out.add(FAdd, &[base, m])
-    }
-    fn select6(&mut self, seg: NodeId, row: [NodeId; 6]) -> NodeId {
-        // VM match: 0,1,2,3,4,_=>5 ; seg is int word
+        // VM match: 0,1,2,3,4,_=>5 over floor(h6); NaN -> sextant 0.
+        let fl = self.out.add(NFloor, &[h6]);
         let mut acc = row[5];
         for s in (0..5).rev() {
-            let sc = self.out.ci(s);
-            let eq = self.out.add(IEq, &[seg, sc]);
+            let sc = self.out.cf(s as f32);
+            let eq = self.out.add(FEq, &[fl, sc]);
             acc = self.out.add(Sel, &[eq, row[s as usize], acc]);
         }
-        acc
+        let nan = self.out.add(FNe, &[h6, h6]);
+        let base = self.out.add(Sel, &[nan, row[0], acc]);
+        self.out.add(FAdd, &[base, m])
     }
     fn palette(&mut self, id: u8, k: u8, t: NodeId) -> NodeId {
         // clamp01(t) then per-id formula (fire/ice/rainbow=hsv(t,1,1))
