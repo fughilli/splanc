@@ -23,7 +23,7 @@
 use core::ptr::{addr_of, addr_of_mut};
 
 use ledmapper_fx_vm::{
-    Frame as FxFrame, Led as FxLed, Program, Vm as FxVm, MAX_LOCALS, MAX_STATE, MAX_UNIFORM_SLOTS,
+    dbg, Frame as FxFrame, Led as FxLed, Program, Vm as FxVm, MAX_LOCALS, MAX_STATE, MAX_UNIFORM_SLOTS,
 };
 
 use super::{
@@ -62,10 +62,9 @@ pub const SECTION_LUT: i32 = 7;
 pub const SECTION_RAW: i32 = 8;
 pub const SECTION_GRAPH: i32 = 9;
 
-/// Bytes per LED of a SECTION_LED_CONTEXT record (FX_LED_V1).
-pub const LED_CTX_BYTES: usize = 44;
-/// Bytes of the FX_FRAME_V1 frame context.
-pub const FRAME_CTX_BYTES: usize = 124;
+/// Bytes per LED of a SECTION_LED_CONTEXT record (FX_LED_V1) and of the
+/// FX_FRAME_V1 frame context (layouts: ledmapper_fx_vm::dbg).
+pub use ledmapper_fx_vm::dbg::{FRAME_CTX_BYTES, LED_CTX_BYTES};
 
 const DEFAULT_HOLD_MS: u32 = 120_000;
 const MAX_HOLD_MS: u32 = 600_000;
@@ -248,29 +247,6 @@ pub(crate) unsafe fn handle_control(frame: &[u8], now_ms: i64, out: *mut u8, cap
     write_state(now_ms as u32, out, cap)
 }
 
-/// FX_FRAME_V1: the shade() Frame of the last frame, little-endian.
-unsafe fn frame_ctx_byte(f: &FxFrame, i: usize) -> u8 {
-    let word: u32 = match i / 4 {
-        0 => f.time.to_bits(),
-        1 => f.dt.to_bits(),
-        2 => f.frame,
-        3 => f.led_count,
-        k @ 4..=6 => f.imu_accel[k - 4].to_bits(),
-        k @ 7..=9 => f.imu_gyro[k - 7].to_bits(),
-        10 => f.time_fix as u32,
-        11 => f.dt_fix as u32,
-        k @ 12..=14 => f.imu_accel_fix[k - 12] as u32,
-        k @ 15..=17 => f.imu_gyro_fix[k - 15] as u32,
-        18 => f.room_posed as u32,
-        k @ 19..=21 => f.room_min[k - 19].to_bits(),
-        k @ 22..=24 => f.room_max[k - 22].to_bits(),
-        k @ 25..=27 => f.room_min_fix[k - 25] as u32,
-        k @ 28..=30 => f.room_max_fix[k - 28] as u32,
-        _ => 0,
-    };
-    word.to_le_bytes()[i % 4]
-}
-
 /// The deck's resident bytes with any JIT patch undone (the .fxb as uploaded).
 unsafe fn program_byte(d: usize, p: *const DeckState, i: usize) -> u8 {
     let b = (*p).bytes[i];
@@ -397,7 +373,7 @@ unsafe fn write_state(now_ms: u32, out: *mut u8, cap: usize) -> i32 {
         w.key(18, 2);
         w.varint(FRAME_CTX_BYTES as u64);
         for i in 0..FRAME_CTX_BYTES {
-            w.byte(frame_ctx_byte(&f, i));
+            w.byte(dbg::frame_word(&f, i / 4).to_le_bytes()[i % 4]);
         }
         w.uint(19, FX_LAST_UPDATE_OUTCOME as u64);
         w.uint(20, FX_BUDGET as u64);
@@ -515,28 +491,6 @@ unsafe fn led_ctx(p: *const DeckState, i: usize) -> Option<FxLed> {
         led.room = room_of([x, y, z]);
     }
     Some(led)
-}
-
-/// One FX_LED_V1 record: pos[3], s, dist, uv[2], room[3] (f32), seg (i16),
-/// branch (u8), flags (bit 0 = the LED has a map entry, bit 1 = its position was
-/// measured, not interpolated). The fixed (Q16.16) mirrors aren't sent: they are
-/// `(x * 65536.0) as i32` of these.
-fn led_record(led: Option<&FxLed>, mapped: bool, rec: &mut [u8; LED_CTX_BYTES]) {
-    *rec = [0; LED_CTX_BYTES];
-    let Some(l) = led else {
-        rec[40..42].copy_from_slice(&(-1i16).to_le_bytes());
-        return;
-    };
-    let f = [
-        l.pos[0], l.pos[1], l.pos[2], l.s, l.dist, l.uv[0], l.uv[1], l.room[0], l.room[1],
-        l.room[2],
-    ];
-    for (k, v) in f.iter().enumerate() {
-        rec[k * 4..k * 4 + 4].copy_from_slice(&v.to_le_bytes());
-    }
-    rec[40..42].copy_from_slice(&(l.seg as i16).to_le_bytes());
-    rec[42] = l.branch as u8;
-    rec[43] = 1 | ((mapped as u8) << 1);
 }
 
 // -- get_fx_snapshot ----------------------------------------------------------------
@@ -710,7 +664,7 @@ unsafe fn write_window(
                 if led != cur {
                     cur = led;
                     let ctx = led_ctx(p, led);
-                    led_record(ctx.as_ref(), led < fx_cap() && led_mapped(led), &mut rec);
+                    dbg::encode_led(ctx.as_ref(), led < fx_cap() && led_mapped(led), &mut rec);
                 }
                 w.byte(rec[i % LED_CTX_BYTES]);
             }
@@ -797,7 +751,7 @@ pub(crate) unsafe fn handle_debug_led(frame: &[u8], now_ms: i64, out: *mut u8, c
         Err(_) => ((0, 0, 0), ledmapper_fx_vm::Outcome::Ok, Default::default()),
     };
     let mut rec = [0u8; LED_CTX_BYTES];
-    led_record(Some(&led), i < fx_cap() && led_mapped(i), &mut rec);
+    dbg::encode_led(Some(&led), i < fx_cap() && led_mapped(i), &mut rec);
     let output = if i < frame_leds() {
         [
             *OUT_LEDS.add(i * 3),

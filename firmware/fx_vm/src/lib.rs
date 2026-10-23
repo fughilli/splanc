@@ -4226,3 +4226,112 @@ fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
         }
     }
 }
+
+/// The FX debugger's snapshot layouts (docs/design/fx-debugger.md), shared by the
+/// firmware that writes them (player_app fxdbg.rs) and the host replay that reads
+/// them (bin/wasm_lib.rs `FxReplay`). Little-endian throughout.
+pub mod dbg {
+    use super::{Frame, Led};
+
+    /// FX_FRAME_V1: the 31 words of a shade() [`Frame`].
+    pub const FRAME_CTX_BYTES: usize = 124;
+    /// FX_LED_V1: one LED's shade() inputs.
+    pub const LED_CTX_BYTES: usize = 44;
+
+    /// Word `k` of FX_FRAME_V1: time, dt, frame, led_count, imu_accel[3],
+    /// imu_gyro[3], time_fix, dt_fix, imu_accel_fix[3], imu_gyro_fix[3],
+    /// room_posed, room_min[3], room_max[3], room_min_fix[3], room_max_fix[3].
+    pub fn frame_word(f: &Frame, k: usize) -> u32 {
+        match k {
+            0 => f.time.to_bits(),
+            1 => f.dt.to_bits(),
+            2 => f.frame,
+            3 => f.led_count,
+            4..=6 => f.imu_accel[k - 4].to_bits(),
+            7..=9 => f.imu_gyro[k - 7].to_bits(),
+            10 => f.time_fix as u32,
+            11 => f.dt_fix as u32,
+            12..=14 => f.imu_accel_fix[k - 12] as u32,
+            15..=17 => f.imu_gyro_fix[k - 15] as u32,
+            18 => f.room_posed as u32,
+            19..=21 => f.room_min[k - 19].to_bits(),
+            22..=24 => f.room_max[k - 22].to_bits(),
+            25..=27 => f.room_min_fix[k - 25] as u32,
+            28..=30 => f.room_max_fix[k - 28] as u32,
+            _ => 0,
+        }
+    }
+
+    /// Parse FX_FRAME_V1 (None when `ctx` is too short).
+    pub fn frame_from_ctx(ctx: &[u8]) -> Option<Frame> {
+        if ctx.len() < FRAME_CTX_BYTES {
+            return None;
+        }
+        let w = |k: usize| u32::from_le_bytes([ctx[4 * k], ctx[4 * k + 1], ctx[4 * k + 2], ctx[4 * k + 3]]);
+        let f = |k: usize| f32::from_bits(w(k));
+        let i = |k: usize| w(k) as i32;
+        Some(Frame {
+            time: f(0),
+            dt: f(1),
+            frame: w(2),
+            led_count: w(3),
+            imu_accel: [f(4), f(5), f(6)],
+            imu_gyro: [f(7), f(8), f(9)],
+            time_fix: i(10),
+            dt_fix: i(11),
+            imu_accel_fix: [i(12), i(13), i(14)],
+            imu_gyro_fix: [i(15), i(16), i(17)],
+            room_posed: w(18) != 0,
+            room_min: [f(19), f(20), f(21)],
+            room_max: [f(22), f(23), f(24)],
+            room_min_fix: [i(25), i(26), i(27)],
+            room_max_fix: [i(28), i(29), i(30)],
+        })
+    }
+
+    /// Write FX_LED_V1: pos[3], s, dist, uv[2], room[3] (f32), seg (i16), branch
+    /// (u8), flags (bit 0 = the LED has a map entry, bit 1 = measured, not
+    /// interpolated). `None` = no map entry (all zero, seg -1). The Q16.16 mirrors
+    /// aren't carried: they are `(x * 65536.0) as i32` of these.
+    pub fn encode_led(led: Option<&Led>, mapped: bool, rec: &mut [u8; LED_CTX_BYTES]) {
+        *rec = [0; LED_CTX_BYTES];
+        let Some(l) = led else {
+            rec[40..42].copy_from_slice(&(-1i16).to_le_bytes());
+            return;
+        };
+        let f = [l.pos[0], l.pos[1], l.pos[2], l.s, l.dist, l.uv[0], l.uv[1], l.room[0], l.room[1], l.room[2]];
+        for (k, v) in f.iter().enumerate() {
+            rec[k * 4..k * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        rec[40..42].copy_from_slice(&(l.seg as i16).to_le_bytes());
+        rec[42] = l.branch as u8;
+        rec[43] = 1 | ((mapped as u8) << 1);
+    }
+
+    /// Parse FX_LED_V1 into the [`Led`] the device handed shade() for LED `idx`
+    /// (fixed mirrors recomputed exactly as the firmware builds them). None when
+    /// the record says the LED had no map entry (it rendered black).
+    pub fn led_from_record(rec: &[u8], idx: u32) -> Option<Led> {
+        if rec.len() < LED_CTX_BYTES || rec[43] & 1 == 0 {
+            return None;
+        }
+        let v = |k: usize| f32::from_le_bytes([rec[4 * k], rec[4 * k + 1], rec[4 * k + 2], rec[4 * k + 3]]);
+        let q = |x: f32| (x * 65536.0) as i32;
+        let (pos, s, dist, uv, room) = ([v(0), v(1), v(2)], v(3), v(4), [v(5), v(6)], [v(7), v(8), v(9)]);
+        Some(Led {
+            pos,
+            idx,
+            seg: i16::from_le_bytes([rec[40], rec[41]]) as i32,
+            s,
+            branch: rec[42] != 0,
+            dist,
+            uv,
+            pos_fix: [q(pos[0]), q(pos[1]), q(pos[2])],
+            uv_fix: [q(uv[0]), q(uv[1])],
+            s_fix: q(s),
+            dist_fix: q(dist),
+            room,
+            room_fix: [q(room[0]), q(room[1]), q(room[2])],
+        })
+    }
+}
