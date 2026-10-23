@@ -5,7 +5,7 @@
 //! - loads/stores only base-relative on `s0`/`s1`/`s11`/`sp`;
 //! - no computed addresses (every runtime index is clamped inside a helper);
 //! - the only `jalr` forms are `ret` (`jalr x0, 0(ra)`) and a helper call
-//!   (`jalr ra, 0(t0)`) that must directly follow `lw t0, 0(s0)`;
+//!   (`jalr ra, 0(t0)`) that must directly follow a fixed, aligned helper-table `lw` from s0;
 //! - no `ecall`/`ebreak`/CSR/`fence`/`fence.i`;
 //! - writes to `s0`/`s1`/`s11`/`sp` only in the fixed prologue/epilogue forms;
 //! - a per-block budget decrement (`addi s10, s10, -n` + `blt s10, x0, _`) is
@@ -26,6 +26,8 @@ pub enum VerifyErr {
     WriteReservedReg,
     NoBudgetCheck,
     BranchOutOfRange,
+    BranchIntoHelper,
+    BadCtxStore,
 }
 
 fn rd(w: u32) -> u32 {
@@ -84,13 +86,24 @@ pub fn verify(code: &[u32]) -> Option<VerifyErr> {
                 if !is_reserved(rs1(w)) {
                     return Some(VerifyErr::BadMemBase);
                 }
+                // Images may write results, never their trusted helper table.
+                if rs1(w) == S0 {
+                    let imm = (((w >> 25) << 5) | ((w >> 7) & 31)) as i32;
+                    let off = (imm << 20) >> 20;
+                    if f3(w) != 2 || !matches!(off, 0 | 4 | 8 | 12 | 16) {
+                        return Some(VerifyErr::BadCtxStore);
+                    }
+                }
             }
             0x63 => {
                 // branches — offset must stay inside the image.
                 let off = btype_imm(w);
                 let tgt = i as isize + (off / 4) as isize;
-                if tgt < 0 || tgt as usize >= code.len() {
+                if off % 4 != 0 || tgt < 0 || tgt as usize >= code.len() {
                     return Some(VerifyErr::BranchOutOfRange);
+                }
+                if is_helper_call(code[tgt as usize]) {
+                    return Some(VerifyErr::BranchIntoHelper);
                 }
                 if f3(w) == 0x5 && rs1(w) == S10 && rs2(w) == ZERO {
                     budget_checks += 1; // bge s10, x0, _  (the per-block budget guard)
@@ -99,25 +112,30 @@ pub fn verify(code: &[u32]) -> Option<VerifyErr> {
             0x6f => {
                 let off = jtype_imm(w);
                 let tgt = i as isize + (off / 4) as isize;
-                if tgt < 0 || tgt as usize >= code.len() {
+                if off % 4 != 0 || tgt < 0 || tgt as usize >= code.len() {
                     return Some(VerifyErr::BranchOutOfRange);
+                }
+                if is_helper_call(code[tgt as usize]) {
+                    return Some(VerifyErr::BranchIntoHelper);
                 }
             }
             0x67 => {
                 // jalr: only `ret` and the helper call.
                 let is_ret = rd(w) == ZERO && rs1(w) == RA;
-                let is_helper = rd(w) == RA && rs1(w) == T0;
-                if !is_ret && !is_helper {
+                let is_helper = is_helper_call(w);
+                if (!is_ret && !is_helper) || f3(w) != 0 || (w >> 20) != 0 {
                     return Some(VerifyErr::BadJalr);
                 }
                 if is_helper {
-                    // must directly follow `lw t0, HELPER_OFF(s0)`.
+                    // must directly follow a word load from an exact helper entry.
                     match prev {
                         Some(p)
                             if opcode(p) == 0x03
+                                && f3(p) == 2
                                 && rd(p) == T0
                                 && rs1(p) == S0
-                                && ((p as i32) >> 20) == crate::ctx::HELPER_OFF => {}
+                                && (((p as i32) >> 20) == crate::ctx::HELPER_OFF
+                                    || crate::ctx::direct_index((p as i32) >> 20).is_some()) => {}
                         _ => return Some(VerifyErr::HelperNotAfterLoad),
                     }
                 }
@@ -131,6 +149,10 @@ pub fn verify(code: &[u32]) -> Option<VerifyErr> {
         return Some(VerifyErr::NoBudgetCheck);
     }
     None
+}
+
+fn is_helper_call(w: u32) -> bool {
+    opcode(w) == 0x67 && rd(w) == RA && rs1(w) == T0
 }
 
 fn is_prologue_move(w: u32) -> bool {
@@ -166,3 +188,59 @@ fn jtype_imm(w: u32) -> i32 {
 const A0: u32 = 10;
 const A1: u32 = 11;
 const A2: u32 = 12;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ctx, direct, enc};
+
+    fn image(off: i32) -> [u32; 6] {
+        [
+            enc::addi(S10, S10, -1),
+            enc::branch(enc::F3_BGE, S10, ZERO, 4),
+            enc::lw(T0, S0, off),
+            enc::jalr(RA, T0, 0),
+            enc::sw(A0, S0, 0),
+            enc::jalr(ZERO, RA, 0),
+        ]
+    }
+
+    #[test]
+    fn fixed_helper_entries_only() {
+        assert_eq!(verify(&image(ctx::HELPER_OFF)), None);
+        for i in 0..direct::COUNT {
+            let off = ctx::DIRECT_OFF + i as i32 * direct::STRIDE;
+            assert_eq!(verify(&image(off)), None);
+            assert_eq!(verify(&image(off + 4)), Some(VerifyErr::HelperNotAfterLoad));
+        }
+        for off in [
+            -8,
+            0,
+            ctx::DIRECT_OFF + direct::COUNT as i32 * direct::STRIDE,
+        ] {
+            assert_eq!(verify(&image(off)), Some(VerifyErr::HelperNotAfterLoad));
+        }
+        let mut code = image(ctx::DIRECT_OFF);
+        code[2] ^= 1 << 12; // lw -> ld (or otherwise invalid load width)
+        assert_eq!(verify(&code), Some(VerifyErr::HelperNotAfterLoad));
+        code = image(ctx::DIRECT_OFF);
+        code[3] = enc::jalr(RA, T0, 4);
+        assert_eq!(verify(&code), Some(VerifyErr::BadJalr));
+    }
+
+    #[test]
+    fn cannot_bypass_load_or_overwrite_table() {
+        let mut code = image(ctx::DIRECT_OFF);
+        code[1] = enc::branch(enc::F3_BGE, S10, ZERO, 8);
+        assert_eq!(verify(&code), Some(VerifyErr::BranchIntoHelper));
+        code = image(ctx::DIRECT_OFF);
+        code[4] = enc::jal(ZERO, -4);
+        assert_eq!(verify(&code), Some(VerifyErr::BranchIntoHelper));
+        code = image(ctx::DIRECT_OFF);
+        code[1] = enc::branch(enc::F3_BGE, S10, ZERO, 6);
+        assert_eq!(verify(&code), Some(VerifyErr::BranchOutOfRange));
+        code = image(ctx::DIRECT_OFF);
+        code[4] = enc::sw(A0, S0, ctx::DIRECT_OFF);
+        assert_eq!(verify(&code), Some(VerifyErr::BadCtxStore));
+    }
+}

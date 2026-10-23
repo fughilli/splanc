@@ -1,7 +1,7 @@
 //! A minimal RV32IM emulator with a helper-call trap, for host differential
 //! tests (no hardware). It executes exactly the instructions the lowering emits
-//! and dispatches the one allowed indirect call (`jalr ra, 0(t0)` after
-//! `lw t0, 0(s0)`) to the Rust helper, so the emulated image and the device run
+//! and dispatches allowed indirect calls (`jalr ra, 0(t0)` after
+//! a fixed helper-table load from s0) to the corresponding Rust helper, so the emulated image and the device run
 //! identical code. Memory is keyed on the base register (s0/s1/s11/sp), matching
 //! the sandbox the verifier enforces — an out-of-grammar access panics.
 
@@ -19,16 +19,30 @@ use crate::WIN_OFF;
 /// at a `fx_vm::MAX_STATE`-word state array; `ctx.helper` must be
 /// `aot_win_helper`.
 pub unsafe fn exec(code: &[u32], start: usize, ctx: &mut NativeCtx) {
-    let frame: &mut [i32] = core::slice::from_raw_parts_mut(ctx.locals as *mut i32, crate::FRAME_WORDS);
+    exec_counted(code, start, ctx);
+}
+
+/// Counts emitted instructions only. Rust helper bodies and hardware cycles
+/// are not modeled: these counts are a code-generation estimate, not timings.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct Counts {
+    pub instructions: u64,
+    pub helpers: u64,
+}
+
+/// Count an emulated invocation. Same safety requirements as [`exec`].
+pub unsafe fn exec_counted(code: &[u32], start: usize, ctx: &mut NativeCtx) -> Counts {
+    let frame: &mut [i32] =
+        core::slice::from_raw_parts_mut(ctx.locals as *mut i32, crate::FRAME_WORDS);
     let state: &mut [i32] =
         core::slice::from_raw_parts_mut(ctx.state as *mut i32, ledmapper_fx_vm::MAX_STATE);
     let mut x = [0i32; 32];
     let mut save = [0i32; 32];
     let mut pc = start;
-    let mut steps = 0u64;
+    let mut counts = Counts::default();
     loop {
-        steps += 1;
-        assert!(steps < 50_000_000, "emu: runaway");
+        counts.instructions += 1;
+        assert!(counts.instructions < 50_000_000, "emu: runaway");
         let w = code[pc];
         pc += 1;
         let op = w & 0x7f;
@@ -124,12 +138,38 @@ pub unsafe fn exec(code: &[u32], start: usize, ctx: &mut NativeCtx) {
             0x67 => {
                 // jalr: ret or helper
                 if rd == 0 && rs1 == RA as usize {
-                    return; // ret
+                    return counts; // ret
                 }
                 assert_eq!(rs1, T0 as usize, "emu: unexpected jalr");
-                // helper call: aot_win_helper(ctx, &frame[WIN_OFF], a2, a3)
+                counts.helpers += 1;
+                // The preceding verified load selects a fixed table entry.
+                let off = (code[pc - 2] as i32) >> 20;
                 let win = frame.as_mut_ptr().add(WIN_OFF);
-                (ctx.helper)(ctx as *mut NativeCtx, win, x[A2 as usize] as u32, x[A3 as usize] as u32);
+                let result = if let Some(id) = crate::ctx::direct_index(off) {
+                    Some(crate::direct::invoke(
+                        id,
+                        [x[10] as u32, x[11] as u32, x[12] as u32, x[13] as u32],
+                        win as *mut u32,
+                    ))
+                } else {
+                    assert_eq!(off, crate::ctx::HELPER_OFF);
+                    (ctx.helper)(
+                        ctx as *mut NativeCtx,
+                        win,
+                        x[A2 as usize] as u32,
+                        x[A3 as usize] as u32,
+                    );
+                    None
+                };
+                // Model the C ABI, not an accidentally register-preserving
+                // host trap. This catches live caller-saved values in codegen.
+                for r in [1, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31] {
+                    x[r] = 0xdead_0000u32.wrapping_add(r as u32) as i32;
+                }
+                if let Some(v) = result {
+                    x[10] = v as i32;
+                    x[11] = (v >> 32) as i32;
+                }
             }
             _ => panic!("emu: opcode {op:#x}"),
         }
@@ -168,13 +208,20 @@ unsafe fn store(
     }
 }
 
-unsafe fn load(base: u32, off: i32, frame: &[i32], state: &[i32], save: &[i32; 32], _ctx: *mut NativeCtx) -> i32 {
+unsafe fn load(
+    base: u32,
+    off: i32,
+    frame: &[i32],
+    state: &[i32],
+    save: &[i32; 32],
+    _ctx: *mut NativeCtx,
+) -> i32 {
     let w = (off / 4) as usize;
     match base {
         x if x == S1 => frame[w],
         x if x == S11 => state[w],
         x if x == SP => save[w & 31],
-        x if x == S0 => 0, // helper sentinel (offset 0); value unused by the emu
+        x if x == S0 => 0, // helper sentinel; the trap decodes the verified table offset
         _ => panic!("emu: bad load base {base}"),
     }
 }
