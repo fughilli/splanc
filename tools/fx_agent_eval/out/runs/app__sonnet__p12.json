@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p12",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing Meditation Glow\n// A gentle inhale/exhale cycle: warm amber at rest, cool blue at peak breath,\n// with a luminous wave that rises from root to crown as you inhale.\n\nuniform float breath_rate  : 0.05 .. 0.5  = 0.18;   // cycles/sec (~5.5 s/breath)\nuniform vec3  rest_color   : color         = 1.0, 0.42, 0.08;  // exhale \u2014 warm amber\nuniform vec3  peak_color   : color         = 0.15, 0.40, 1.0;  // inhale \u2014 cool blue\nuniform float glow_floor   : 0.0  .. 0.4  = 0.08;   // minimum brightness at deep exhale\nuniform float wave_depth   : 0.0  .. 1.0  = 0.40;   // strength of the rising-column accent\n\nstate float breath;   // shaped breath phase  0..1\nstate float glow;     // overall brightness\nstate vec3  tint;     // interpolated color\n\nvoid update() {\n    // Raw sine \u2192 0..1\n    float raw = 0.5 + 0.5 * sin(time * breath_rate * 6.28318);\n    // Smoothstep adds soft \"holds\" at top and bottom of the breath\n    breath = smoothstep(0.1, 0.9, raw);\n    glow   = mix(glow_floor, 1.0, breath);\n    tint   = mix(rest_color, peak_color, breath);\n}\n\nvec3 shade(Led led) {\n    // Normalise vertical position: Y = 0..0.30 m \u2192 h = 0..1\n    float h      = clamp(led.pos.y / 0.30, 0.0, 1.0);\n\n    // Soft luminous band that climbs from base (h=0) on exhale to crown (h=1) on inhale\n    float dist   = abs(h - breath);\n    float column = clamp(1.0 - dist / (0.55 + 0.001), 0.0, 1.0);\n\n    // Mix a base floor brightness with the column accent, then scale by breath glow\n    float bright = glow * mix(1.0 - wave_depth, 1.0, column);\n    return tint * bright;\n}\n```\n\n**How it works:**\n\n| Phase | Visuals |\n|---|---|\n| **Exhale** (breath \u2192 0) | Dim warm amber, soft glow pooled near the base |\n| **Inhale** (breath \u2192 1) | Bright cool blue, luminous band has risen to the crown |\n| **Transition** | Smooth Hermite ramp with natural \"holds\" at each extreme |\n\n**Controls:**\n- **`breath_rate`** \u2014 pace the guide breath (0.18 \u2248 5.5 s/cycle, perfect for 4-7-8 breathing)\n- **`rest_color` / `peak_color`** \u2014 customize the warm/cool palette\n- **`glow_floor`** \u2014 how dim the lamp goes at the deepest exhale\n- **`wave_depth`** \u2014 how pronounced the rising-column accent is\n\n**Performance:** `update()` does all the float/smoothstep math once per frame; `shade()` is just two `clamp`/`abs`/`mix` calls on 500 LEDs \u2014 comfortably under budget.",
+      "is_error": false,
+      "session_id": "07b817cf-d8d4-471a-8f98-76161e770043",
+      "wall_s": 116.1,
+      "duration_api_ms": 101062,
+      "cost_usd": 0.10911269999999999,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 6985,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 505
+      },
+      "thinking_tokens": 6127,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1003
+    }
+  ],
+  "started": "2026-10-22T19:53:02",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1091,
+  "total_wall_s": 116.1,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p12.fx"
+}

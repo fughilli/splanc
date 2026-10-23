@@ -1,0 +1,60 @@
+{
+  "name": "app_lint__opus__p15",
+  "variant": "app_lint",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Water caustics shimmer \u2014 cylindrical helix lamp\n// Two layers of interfering wave fronts form thin bright caustic filaments.\n// Built from 3D pos (x,z wrap seamlessly around the cylinder); hot math in fixed.\n// All sin() calls take a fixed phase in TURNS (integer LUT path). Scale, layer\n// coefficients and the radians->turns factor are folded into per-axis constants\n// in update(), so shade() is pure fixed multiply-add.\n\nuniform float speed : 0.0 .. 3.0 = 0.6;\nuniform float scale : 4.0 .. 40.0 = 14.0;\nuniform float sharp : 1.0 .. 8.0 = 3.0;\nuniform float glow : 0.0 .. 2.0 = 1.1;\nuniform float fine : 0.0 .. 1.0 = 0.6;\nuniform vec3 deep : color = 0.0, 0.07, 0.16;\nuniform vec3 light : color = 0.55, 0.95, 1.0;\n\n// phases (turns)\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed p5;\nstate fixed p6;\n\n// layer 1 per-axis coefficients (turns per meter)\nstate fixed a1x;\nstate fixed a1y;\nstate fixed b1z;\nstate fixed b1y;\nstate fixed c1x;\nstate fixed c1y;\n\n// layer 2 per-axis coefficients (turns per meter)\nstate fixed a2x;\nstate fixed a2y;\nstate fixed b2z;\nstate fixed b2y;\nstate fixed c2x;\nstate fixed c2y;\n\nstate fixed sh;\nstate fixed fw;\nstate fixed gl;\nstate fixed one;\nstate fixed zero;\n\nvoid update() {\n  float t = time * speed;\n  float inv = 0.15915494; // 1 / (2*pi): radians -> turns\n  p1 = fixed(fract(t * 0.31 * inv));\n  p2 = fixed(fract(t * -0.27 * inv));\n  p3 = fixed(fract(t * 0.23 * inv));\n  p4 = fixed(fract(t * -0.43 * inv));\n  p5 = fixed(fract(t * 0.38 * inv));\n  p6 = fixed(fract(t * -0.35 * inv));\n\n  float k = scale * inv;\n  a1x = fixed(k * 0.8);\n  a1y = fixed(k * 0.6);\n  b1z = fixed(k * 0.9);\n  b1y = fixed(k * -0.5);\n  c1x = fixed(k * 0.7);   // (x - z) * 0.7 -> z uses -c1x\n  c1y = fixed(k * 0.3);\n\n  float k2 = k * 1.7;\n  a2x = fixed(k2 * 0.6);\n  a2y = fixed(k2 * -0.7);\n  b2z = fixed(k2 * 0.8);\n  b2y = fixed(k2 * 0.4);\n  c2x = fixed(k2 * 0.65); // (x + z) * 0.65\n  c2y = fixed(k2 * -0.35);\n\n  sh = fixed(sharp);\n  fw = fixed(fine);\n  gl = fixed(glow);\n  one = fixed(1.0);\n  zero = fixed(0.0);\n}\n\nvec3 shade(Led led) {\n  fixed x = fixed(led.pos.x);\n  fixed y = fixed(led.pos.y);\n  fixed z = fixed(led.pos.z);\n\n  // Layer 1: broad caustic net\n  fixed s1 = sin(x * a1x + y * a1y + p1)\n           + sin(z * b1z + y * b1y + p2)\n           + sin((x - z) * c1x + y * c1y + p3);\n  fixed l1 = clamp(one - abs(s1) * sh, zero, one);\n\n  // Layer 2: finer, faster shimmer\n  fixed s2 = sin(x * a2x + y * a2y + p4)\n           + sin(z * b2z + y * b2y + p5)\n           + sin((x + z) * c2x + y * c2y + p6);\n  fixed l2 = clamp(one - abs(s2) * sh, zero, one);\n\n  fixed a = l1 * l1;\n  fixed b = l2 * l2;\n  // filaments plus brighter crossings where both layers meet\n  fixed c = (a + b * fw + a * b) * gl;\n\n  return deep + light * float(c);\n}\n```",
+      "is_error": false,
+      "session_id": "477ed5e7-6a8b-4c36-8ce7-d23c971236f9",
+      "wall_s": 31.4,
+      "duration_api_ms": 20558,
+      "cost_usd": 0.0728106,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2436,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 2871
+      },
+      "thinking_tokens": 915,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1510
+    }
+  ],
+  "started": "2026-10-22T20:23:36",
+  "base_program": "firmware/fx_perf_bench/agent/app__opus__p15.fx",
+  "lint_warnings": [
+    "line 44 (`fixed s1 = sin(x * 0.8 + y * 0.6 + p1)`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 45 (`+ sin(z * 0.9 - y * 0.5 + p2)`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 46 (`+ sin((x - z) * 0.7 + y * 0.3 + p3);`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 53 (`fixed s2 = sin(x2 * 0.6 - y2 * 0.7 + p4)`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 54 (`+ sin(z2 * 0.8 + y2 * 0.4 + p5)`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "line 55 (`+ sin((x2 + z2) * 0.65 - y2 * 0.35 + p6);`): float sin() per LED (~570 cycles): use a `fixed` phase in TURNS and sin(fixed) (integer LUT ~150 cycles)",
+    "6 cheap per-LED ops depend only on time/uniforms/consts (e.g. time*speed): precompute them in update()",
+    "line 44 (`fixed s1 = sin(x * 0.8 + y * 0.6 + p1)`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 45 (`+ sin(z * 0.9 - y * 0.5 + p2)`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 46 (`+ sin((x - z) * 0.7 + y * 0.3 + p3);`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 50 (`fixed x2 = x * 1.7;`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 51 (`fixed y2 = y * 1.7;`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 52 (`fixed z2 = z * 1.7;`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 53 (`fixed s2 = sin(x2 * 0.6 - y2 * 0.7 + p4)`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 54 (`+ sin(z2 * 0.8 + y2 * 0.4 + p5)`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "line 55 (`+ sin((x2 + z2) * 0.65 - y2 * 0.35 + p6);`): float literal in fixed arithmetic promotes it to soft-float: wrap the literal in fixed(...)",
+    "(estimate: ~24135 cycles per LED in shade vs a budget of ~7700; 6 float transcendentals per LED; 6.5% of shade ops are frame-invariant)"
+  ],
+  "lint_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0728,
+  "total_wall_s": 31.4,
+  "program": "firmware/fx_perf_bench/agent/app_lint__opus__p15.fx"
+}

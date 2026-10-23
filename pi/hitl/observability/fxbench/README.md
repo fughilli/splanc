@@ -24,6 +24,17 @@ Every run logs, per effect, per build (JIT and interpreter), a line like:
 
 `frame`/`show` are CPU cycles; the harness reports the window-MINIMUM frame (the
 interrupt-free compute cost — `stable_cycles()` in `../../harness/fx_bench_core.py`).
+
+**What a `frame` number is** (see docs/design/fx-perf-study.md, "Reading the
+fx_bench numbers"): the cycles (C6 @ 160 MHz: 160 k = 1 ms) to render ONE whole
+frame of the program at its own LED count (`leds`: 128 for the `*M` calibration
+programs, 16/256 for the sweeps, 200 for lavalamp) — update() + shade() for
+every LED + the firmware's per-LED framing, compiled `--no-opt`, transmit
+excluded. It is NOT a per-op or per-LED cost: `xM` repeats one operation 32×
+per LED (`x2M` 64×), so negM's ~1.57 M = 12.3 k cycles/LED, of which ~2.4 k is
+the `empty` floor, leaving ~310 cycles per `a = -a` statement (3 opcodes). The
+dashboards' tables show a derived cycles/LED column for this reason. `show` is
+the MEAN cycles inside the LED transmit call (not compute, not gated).
 The same effect appears several times per run (interp + jit builds, fit/heldout,
 and bazel flaky retries); **every** sample is captured so the distribution is real.
 

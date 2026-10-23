@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p15",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer: bright light ribbons that network, drift and break up\n// over the cylinder, like sunlight through a rippling surface onto a pool floor.\n// Uses the 3-D position (metres), so the pattern wraps seamlessly around the helix.\nuniform vec3  deep      : color = 0.0, 0.06, 0.16;   // water colour between ribbons\nuniform vec3  light     : color = 0.45, 0.95, 1.0;   // caustic ribbon colour\nuniform float scale     : 5.0 .. 60.0 = 26.0;        // ripple density (rad per metre)\nuniform float speed     : 0.0 .. 2.0 = 0.5;          // how fast the water moves\nuniform float warp      : 0.0 .. 2.0 = 0.9;          // how wobbly / organic the ribbons are\nuniform float sharpness : 0.0 .. 1.0 = 0.6;          // soft glow .. thin crisp lines\nuniform float intensity : 0.0 .. 2.0 = 1.1;          // ribbon brightness\nuniform float surface   : 0.0 .. 1.0 = 0.4;          // brighter toward the top (near the surface)\nuniform float glints    : 0.0 .. 1.0 = 0.3;          // occasional white sparkles\n\nstate float t1;\nstate float t2;\nstate float t3;\nstate float t4;\nstate float t5;\nstate float t6;\nstate float gl;\n\nvoid update() {\n  float t = time * speed;\n  t1 = t * 1.30;\n  t2 = t * 0.93;\n  t3 = t * 1.11;\n  t4 = t * 0.71;\n  t5 = t * 0.83;\n  t6 = t * 0.57;\n  gl = floor(time * 6.0);\n}\n\nvec3 shade(Led led) {\n  vec3 p = led.pos * scale;\n\n  // domain warp: slow interfering swells bend the ribbons\n  float w1 = sin(p.x * 0.53 + p.y * 0.31 + t1) + sin(p.z * 0.47 - p.y * 0.37 + t2);\n  float w2 = sin(p.z * 0.41 + p.x * 0.29 - t3) + sin(p.y * 0.43 - p.x * 0.33 - t2);\n  vec3 q = p + vec3(w1, w2, w1 - w2) * warp;\n\n  // three crossing ridge fields; their overlaps make the caustic net\n  float a = 1.0 - abs(sin(q.x + q.y * 0.6 + t4));\n  float b = 1.0 - abs(sin(q.z - q.y * 0.8 - t5));\n  float c = 1.0 - abs(sin((q.x + q.z) * 0.7 + q.y * 0.3 + t6));\n  float l = (a * b + b * c + c * a) * 0.3333;\n\n  // sharpen: blend between l^2 (soft) and l^6 (crisp) without pow()\n  float l2 = l * l;\n  float l6 = l2 * l2 * l2;\n  float caust = mix(l2, l6 * 1.6, sharpness);\n\n  // brighter near the top, like light just under the surface\n  float depth = 1.0 - surface + surface * led.uv.y;\n\n  // sparse twinkling glints riding on the bright ribbons\n  float h = hash(float(led.idx) * 1.37 + gl);\n  float g = step(1.0 - glints * 0.06, h) * caust * 3.0;\n\n  vec3 col = deep + light * (caust * intensity * depth) + vec3(g, g, g) * glints;\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "e6cf362b-e4b2-47ad-a46d-30614ba9a33e",
+      "wall_s": 49.5,
+      "duration_api_ms": 24608,
+      "cost_usd": 0.0526324,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2274,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 610
+      },
+      "thinking_tokens": 1012,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2133
+    }
+  ],
+  "started": "2026-10-22T20:00:46",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0526,
+  "total_wall_s": 49.5,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p15.fx"
+}

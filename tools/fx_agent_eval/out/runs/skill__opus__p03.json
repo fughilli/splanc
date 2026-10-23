@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p03",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Aurora curtains: folded green-to-violet curtains of light hang around the\n// cylinder and drift slowly around it. Each curtain has a bright, wavy lower\n// hem and fades upward into the sky. Fine vertical rays shimmer through it.\n// Uses the angle around the lamp's axis and its normalized height.\n\nuniform float speed      : 0.0 .. 2.0 = 0.25;   // drift speed around the lamp\nuniform float folds      : 1.0 .. 6.0 = 3.0;    // number of curtain folds around\nuniform float sharp      : 0.0 .. 1.0 = 0.6;    // soft glow .. crisp curtains\nuniform float hem        : 0.0 .. 0.6 = 0.15;   // height of the curtains' lower edge\nuniform float reach      : 0.2 .. 1.0 = 0.85;   // how high the curtains climb\nuniform float shimmer    : 0.0 .. 1.0 = 0.4;    // vertical ray flicker\nuniform float brightness : 0.0 .. 1.0 = 0.9;\nuniform vec3  low        : color = 0.05, 1.0, 0.35;  // hem colour\nuniform vec3  high       : color = 0.55, 0.1, 0.9;   // top colour\nuniform vec3  sky        : color = 0.0, 0.01, 0.03;  // night background\n\nstate float t1;\nstate float t2;\nstate float t3;\nstate float glow;\nstate float k;\n\nvoid update() {\n  t1 = time * speed;\n  t2 = time * speed * 0.63;\n  t3 = time * speed * 0.41;\n  glow = 0.82 + 0.18 * sin(time * speed * 0.9);\n  k = floor(folds + 0.5);            // whole number of folds: no seam\n}\n\nvec3 shade(Led led) {\n  vec3 c = (room.min + room.max) * 0.5;\n  vec3 d = led.room - c;\n  float a = atan2(d.z, d.x);         // angle around the vertical axis\n  float h = clamp((led.room.y - room.min.y) / max(room.max.y - room.min.y, 0.01), 0.0, 1.0);\n\n  // Folded curtains drifting around the lamp (integer multiples of a: seamless).\n  float w = a * k + t1 + 1.2 * sin(a * 2.0 - t2);\n  float band = 0.5 + 0.5 * sin(w);\n  band = band * band;\n  float curtain = mix(band, band * band * band, sharp);\n\n  // Wavy lower hem, slow fade upward.\n  float edge = hem + 0.1 * sin(a * 3.0 + t3) + 0.05 * sin(a * 5.0 - t2 * 1.3);\n  float above = h - edge;\n  float under = clamp(1.0 + above * 10.0, 0.0, 1.0);\n  float rise = clamp(above / max(reach - edge, 0.05), 0.0, 1.0);\n  float vert = under * (1.0 - rise) * (1.0 - 0.4 * rise);\n  float hemglow = 1.0 + 0.6 * clamp(1.0 - abs(above) * 12.0, 0.0, 1.0);\n\n  // Vertical rays.\n  float s = sin(a * 23.0 + time * 1.7) * sin(a * 7.0 - time * 0.9);\n  float ray = 1.0 - shimmer * (0.5 + 0.5 * s);\n\n  vec3 col = mix(low, high, clamp(rise * 1.2, 0.0, 1.0));\n  float v = curtain * vert * hemglow * ray * glow * brightness;\n  return clamp(sky + col * v, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "4da0d694-90e6-43c1-95c8-2954417a9720",
+      "wall_s": 36.0,
+      "duration_api_ms": 28409,
+      "cost_usd": 0.0651004,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2895,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 616
+      },
+      "thinking_tokens": 1631,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2147
+    }
+  ],
+  "started": "2026-10-22T19:57:21",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0651,
+  "total_wall_s": 36.0,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p03.fx"
+}

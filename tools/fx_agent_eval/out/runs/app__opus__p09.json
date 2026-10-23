@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p09",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Sunrise: a warm glow that climbs the lamp from the bottom up, then loops.\nuniform float cycle : 4.0 .. 120.0 = 30.0;      // seconds per sunrise\nuniform float softness : 0.05 .. 1.0 = 0.35;    // height of the glow's fade-out above the horizon\nuniform float shimmer : 0.0 .. 0.5 = 0.12;      // gentle atmospheric flicker\nuniform vec3 deep : color = 0.6, 0.05, 0.02;    // colour at the dim edge of the glow\nuniform vec3 gold : color = 1.0, 0.55, 0.12;    // colour at the bright core\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform bool loop = true;\n\nstate fixed level;      // current horizon height, normalized 0..1 (can go past)\nstate fixed invSoft;    // 1 / softness\nstate fixed invH;       // 1 / lamp height\nstate fixed shPhase;    // shimmer phase in turns\nstate fixed shAmt;\nstate fixed bright;     // overall brightness ramp across the sunrise\nstate vec3 cLow;\nstate vec3 cHigh;\n\nvoid update() {\n  float p = time / cycle;\n  if (loop) { p = fract(p); } else { p = min(p, 1.0); }\n  // ease-out climb: fast at dawn, slowing as the sun gets high\n  float e = 1.0 - (1.0 - p) * (1.0 - p);\n  level = fixed(e * 1.3 - 0.15);\n  invSoft = fixed(1.0 / softness);\n  invH = fixed(1.0 / 0.30);\n  shPhase = fixed(fract(time * 0.37));\n  shAmt = fixed(shimmer);\n  // fade in at start of cycle, fade out at the very end for a clean loop\n  float fin = clamp(p * 8.0, 0.0, 1.0);\n  float fout = clamp((1.0 - p) * 12.0, 0.0, 1.0);\n  if (!loop) { fout = 1.0; }\n  bright = fixed(brightness * fin * fout);\n  cLow = deep;\n  cHigh = gold;\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * invH;               // 0 bottom .. 1 top\n  // glow: full below the horizon, fades out above it\n  fixed g = clamp(fixed(1.0) - (y - level) * invSoft, fixed(0.0), fixed(1.0));\n  g = g * g;                                        // softer falloff\n  // slow shimmer rippling up the helix (native fixed sin, turns)\n  fixed s = sin(y * fixed(1.5) - shPhase + fixed(led.idx) * fixed(0.013));\n  fixed lit = g * (fixed(1.0) - shAmt + shAmt * s) * bright;\n  float gf = float(g);\n  return mix(cLow, cHigh, gf) * float(lit);\n}\n```",
+      "is_error": false,
+      "session_id": "1bf46a26-5455-40d7-bc8a-d90912c16ad9",
+      "wall_s": 22.5,
+      "duration_api_ms": 20494,
+      "cost_usd": 0.0431946,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1856,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 619
+      },
+      "thinking_tokens": 826,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1389
+    }
+  ],
+  "started": "2026-10-22T19:40:08",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0432,
+  "total_wall_s": 22.5,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p09.fx"
+}

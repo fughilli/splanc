@@ -1,0 +1,66 @@
+{
+  "name": "app_perf__opus__p02",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Campfire embers with occasional rising sparks\nuniform float intensity : 0.2 .. 2.0 = 1.0;\nuniform float flicker : 0.1 .. 4.0 = 1.2;\nuniform float bedHeight : 0.05 .. 1.0 = 0.4;\nuniform float sparkRate : 0.0 .. 5.0 = 1.2;\nuniform float sparkSpeed : 0.1 .. 2.0 = 0.6;\nuniform float sparkSize : 0.01 .. 0.1 = 0.04;\nuniform float trailLen : 0.0 .. 0.95 = 0.8;\nuniform vec3 emberColor : color = 1.0, 0.22, 0.02;\nuniform vec3 hotColor : color = 0.6, 0.35, 0.05;\nuniform vec3 sparkColor : color = 1.0, 0.7, 0.3;\nuniform float yMin : -0.3 .. 0.3 = 0.0;\nuniform float yRange : 0.1 .. 1.0 = 0.30;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed bedInv;\nstate fixed dec;\nstate fixed r2;\nstate vec3 eCol;\nstate vec3 hCol;\nstate vec3 sCol;\nstate float sh[4];\nstate float sa[4];\nstate float sv[4];\nstate float sl[4];\nstate fixed fh[4];\nstate fixed fa[4];\nstate fixed fb[4];\nstate bool started;\nstate bool ready;\n\nbuffer float hgt : fixed16;\nbuffer float ang : fixed16;\nbuffer float rnd : fixed16;\nbuffer float trl : fixed16;\n\nvoid update() {\n  ready = started;\n  started = true;\n\n  ph1 = fract(ph1 + fixed(dt * flicker * 0.7));\n  ph2 = fract(ph2 + fixed(dt * flicker * 0.43));\n  bedInv = fixed(1.0 / bedHeight);\n  dec = fixed(trailLen);\n  float rr = sparkSize * sparkSize;\n  r2 = fixed(rr);\n\n  float g = intensity * (0.85 + 0.15 * sin(time * flicker * 2.3) * sin(time * 1.7 + 0.4));\n  eCol = emberColor * g;\n  hCol = hotColor * g;\n  sCol = sparkColor * intensity;\n\n  for (int k = 0; k < 4; k = k + 1) {\n    if (sl[k] <= 0.0) {\n      if (hash(time * 17.3 + float(k) * 5.1) < sparkRate * dt * 0.25) {\n        sh[k] = bedHeight * 0.6 * hash(time * 3.1 + float(k));\n        sa[k] = hash(time * 7.7 + float(k) * 2.3);\n        sv[k] = sparkSpeed * (0.6 + 0.8 * hash(time * 11.9 + float(k)));\n        sl[k] = 1.0;\n      }\n    } else {\n      sh[k] = sh[k] + sv[k] * dt;\n      sa[k] = fract(sa[k] + (hash(time * 5.3 + float(k) * 9.1) - 0.5) * dt * 0.6);\n      sl[k] = sl[k] - dt * (0.6 + 0.4 * sv[k]);\n      if (sh[k] > 1.1) { sl[k] = 0.0; }\n    }\n    if (sl[k] > 0.0) {\n      fh[k] = fixed(sh[k]);\n      fa[k] = fixed(sa[k]);\n      float tw = 0.7 + 0.3 * hash(time * 29.0 + float(k));\n      fb[k] = fixed(sl[k] * tw / rr);\n    } else {\n      fh[k] = fixed(-4.0);\n      fa[k] = fixed(0.0);\n      fb[k] = fixed(0.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    hgt[i] = clamp((led.pos.y - yMin) / yRange, 0.0, 1.0);\n    ang[i] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n    rnd[i] = hash(float(i) * 1.37);\n    trl[i] = 0.0;\n  }\n  fixed h = fixed(hgt[i]);\n  fixed a = fixed(ang[i]);\n  fixed r = fixed(rnd[i]);\n\n  // ember bed: per-LED flicker + slow rolling glow around the cylinder\n  fixed fl = sin(r * fixed(7.0) + ph1) * fixed(0.3)\n           + sin(a * fixed(3.0) + h * fixed(2.0) - ph2) * fixed(0.25)\n           + step(fixed(0.85), r) * fixed(0.35);\n  fixed base = clamp(fixed(1.0) - h * bedInv, fixed(0.0), fixed(1.0));\n  fixed heat = clamp(base * (fixed(0.55) + fl), fixed(0.0), fixed(1.0));\n\n  // sparks\n  fixed sp = fixed(0.0);\n  for (int k = 0; k < 4; k = k + 1) {\n    fixed dh = h - fh[k];\n    fixed da = fract(a - fa[k] + fixed(0.5)) - fixed(0.5);\n    fixed d = dh * dh + da * da * fixed(2.8);\n    sp = max(sp, (r2 - d) * fb[k]);\n  }\n  fixed s = max(fixed(trl[i]) * dec, clamp(sp, fixed(0.0), fixed(1.0)));\n  trl[i] = s;\n\n  return eCol * heat + hCol * (heat * heat * heat) + sCol * s;\n}\n```",
+      "is_error": false,
+      "session_id": "9c5993c4-16b1-4b1d-9aa1-e5b414a13a2d",
+      "wall_s": 68.4,
+      "duration_api_ms": 52970,
+      "cost_usd": 0.10869519999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 5121,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 616
+      },
+      "thinking_tokens": 3132,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 12,
+          "col": 22,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```\n// Campfire embers with occasional rising sparks\nuniform float intensity : 0.2 .. 2.0 = 1.0;\nuniform float flicker : 0.1 .. 4.0 = 1.2;\nuniform float bedHeight : 0.05 .. 1.0 = 0.4;\nuniform float sparkRate : 0.0 .. 5.0 = 1.2;\nuniform float sparkSpeed : 0.1 .. 2.0 = 0.6;\nuniform float sparkSize : 0.01 .. 0.1 = 0.04;\nuniform float trailLen : 0.0 .. 0.95 = 0.8;\nuniform vec3 emberColor : color = 1.0, 0.22, 0.02;\nuniform vec3 hotColor : color = 0.6, 0.35, 0.05;\nuniform vec3 sparkColor : color = 1.0, 0.7, 0.3;\nuniform float yOffset : 0.0 .. 0.6 = 0.3;\nuniform float yRange : 0.1 .. 1.0 = 0.30;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed bedInv;\nstate fixed dec;\nstate fixed r2;\nstate vec3 eCol;\nstate vec3 hCol;\nstate vec3 sCol;\nstate float sh[4];\nstate float sa[4];\nstate float sv[4];\nstate float sl[4];\nstate fixed fh[4];\nstate fixed fa[4];\nstate fixed fb[4];\nstate bool started;\nstate bool ready;\n\nbuffer float hgt : fixed16;\nbuffer float ang : fixed16;\nbuffer float rnd : fixed16;\nbuffer float trl : fixed16;\n\nvoid update() {\n  ready = started;\n  started = true;\n\n  ph1 = fract(ph1 + fixed(dt * flicker * 0.7));\n  ph2 = fract(ph2 + fixed(dt * flicker * 0.43));\n  bedInv = fixed(1.0 / bedHeight);\n  dec = fixed(trailLen);\n  float rr = sparkSize * sparkSize;\n  r2 = fixed(rr);\n\n  float g = intensity * (0.85 + 0.15 * sin(time * flicker * 2.3) * sin(time * 1.7 + 0.4));\n  eCol = emberColor * g;\n  hCol = hotColor * g;\n  sCol = sparkColor * intensity;\n\n  for (int k = 0; k < 4; k = k + 1) {\n    if (sl[k] <= 0.0) {\n      if (hash(time * 17.3 + float(k) * 5.1) < sparkRate * dt * 0.25) {\n        sh[k] = bedHeight * 0.6 * hash(time * 3.1 + float(k));\n        sa[k] = hash(time * 7.7 + float(k) * 2.3);\n        sv[k] = sparkSpeed * (0.6 + 0.8 * hash(time * 11.9 + float(k)));\n        sl[k] = 1.0;\n      }\n    } else {\n      sh[k] = sh[k] + sv[k] * dt;\n      sa[k] = fract(sa[k] + (hash(time * 5.3 + float(k) * 9.1) - 0.5) * dt * 0.6);\n      sl[k] = sl[k] - dt * (0.6 + 0.4 * sv[k]);\n      if (sh[k] > 1.1) { sl[k] = 0.0; }\n    }\n    if (sl[k] > 0.0) {\n      fh[k] = fixed(sh[k]);\n      fa[k] = fixed(sa[k]);\n      float tw = 0.7 + 0.3 * hash(time * 29.0 + float(k));\n      fb[k] = fixed(sl[k] * tw / rr);\n    } else {\n      fh[k] = fixed(-4.0);\n      fa[k] = fixed(0.0);\n      fb[k] = fixed(0.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    hgt[i] = clamp((led.pos.y + yOffset - 0.3) / yRange, 0.0, 1.0);\n    ang[i] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n    rnd[i] = hash(float(i) * 1.37);\n    trl[i] = 0.0;\n  }\n  fixed h = fixed(hgt[i]);\n  fixed a = fixed(ang[i]);\n  fixed r = fixed(rnd[i]);\n\n  // ember bed: per-LED flicker + slow rolling glow around the cylinder\n  fixed fl = sin(r * fixed(7.0) + ph1) * fixed(0.3)\n           + sin(a * fixed(3.0) + h * fixed(2.0) - ph2) * fixed(0.25)\n           + step(fixed(0.85), r) * fixed(0.35);\n  fixed base = clamp(fixed(1.0) - h * bedInv, fixed(0.0), fixed(1.0));\n  fixed heat = clamp(base * (fixed(0.55) + fl), fixed(0.0), fixed(1.0));\n\n  // sparks\n  fixed sp = fixed(0.0);\n  for (int k = 0; k < 4; k = k + 1) {\n    fixed dh = h - fh[k];\n    fixed da = fract(a - fa[k] + fixed(0.5)) - fixed(0.5);\n    fixed d = dh * dh + da * da * fixed(2.8);\n    sp = max(sp, (r2 - d) * fb[k]);\n  }\n  fixed s = max(fixed(trl[i]) * dec, clamp(sp, fixed(0.0), fixed(1.0)));\n  trl[i] = s;\n\n  return eCol * heat + hCol * (heat * heat * heat) + sCol * s;\n}\n```",
+      "is_error": false,
+      "session_id": "9c5993c4-16b1-4b1d-9aa1-e5b414a13a2d",
+      "wall_s": 35.7,
+      "duration_api_ms": 69104,
+      "cost_usd": 0.2112776,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2182,
+        "cache_read_input_tokens": 7312,
+        "cache_creation_input_tokens": 7184
+      },
+      "thinking_tokens": 186,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2887
+    }
+  ],
+  "started": "2026-10-22T20:13:42",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.32,
+  "total_wall_s": 104.1,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p02.fx"
+}

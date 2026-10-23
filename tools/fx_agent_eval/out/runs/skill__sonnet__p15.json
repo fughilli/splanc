@@ -1,0 +1,39 @@
+{
+  "name": "skill__sonnet__p15",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer\n// Three sinusoidal wave fields multiply together: bright veins appear only\n// where all three crests coincide \u2014 the same interference that focus real\n// caustics. A fourth, faster layer adds the rapid shimmer of rippling water.\n\nuniform vec3  shallow : color = 0.0, 0.72, 0.95;   // lit caustic colour\nuniform vec3  deep    : color = 0.0, 0.05, 0.18;   // shadow / ambient tint\nuniform float speed   : 0.0 .. 3.0 = 0.7;          // overall animation speed\nuniform float scale   : 3.0 .. 20.0 = 10.0;        // spatial cell size (\u2191 = smaller cells)\nuniform float shimmer : 0.0 .. 1.0 = 0.55;         // high-freq shimmer intensity\n\nstate float t0;   // slow wave 1\nstate float t1;   // slow wave 2\nstate float t2;   // slow wave 3\nstate float ts;   // fast shimmer wave\n\nvoid update() {\n    t0 = time * speed;\n    t1 = time * speed * 0.71;\n    t2 = time * speed * 1.33;\n    ts = time * speed * 3.8;\n}\n\nvec3 shade(Led led) {\n    float px = led.pos.x * scale;\n    float py = led.pos.y * scale;\n    float pz = led.pos.z * scale;\n\n    // Three wave fields \u2014 different spatial directions and drift speeds.\n    // Shifted into 0..1 before multiplying; each samples all three axes so\n    // the helix's angular position drives as much variation as height.\n    float a = sin(px * 2.1  + py * 3.2 + t0)            * 0.5 + 0.5;\n    float b = sin(pz * 2.6  + py * 2.3 - t1 + px * 0.6) * 0.5 + 0.5;\n    float c = sin((px - pz) * 1.9 + py * 3.7 + t2)      * 0.5 + 0.5;\n\n    // Product: non-zero only where all three crests coincide \u2192 sparse veins\n    float caus = a * b * c;\n\n    // Stretch: lift the sparse bright peaks into the visible range\n    caus = clamp(caus * 4.0 - 0.25, 0.0, 1.0);\n\n    // Fast shimmer overlay \u2014 diagonal wave to break the slow-wave symmetry\n    float sh = sin(px * 3.6 + pz * 2.9 + ts) * 0.5 + 0.5;\n    sh = sh * sh;                               // sharpen (cheap square, no pow)\n    caus = clamp(caus + sh * shimmer * 0.3, 0.0, 1.0);\n\n    return mix(deep, shallow, caus);\n}\n```",
+      "is_error": false,
+      "session_id": "2b8cb790-befb-4991-ad4a-cbffdf7692cf",
+      "wall_s": 235.6,
+      "duration_api_ms": 208720,
+      "cost_usd": 0.22484579999999998,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 14611,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 502
+      },
+      "thinking_tokens": 13846,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1179
+    }
+  ],
+  "started": "2026-10-22T20:13:06",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2248,
+  "total_wall_s": 235.6,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p15.fx"
+}

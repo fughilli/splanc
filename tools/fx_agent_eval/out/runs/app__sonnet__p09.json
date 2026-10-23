@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p09",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise: a warm glow climbs from the bottom of the cylinder helix\n\nuniform float speed     : 0.02 .. 0.5 = 0.08;           // cycles per second (~12 s per sunrise)\nuniform float peak_w    : 0.03 .. 0.4 = 0.12;           // width of the bright band above horizon\nuniform float trail_w   : 0.1  .. 1.0 = 0.55;           // warm ember-trail width below horizon\nuniform vec3  sun_color : color       = 1.0, 0.70, 0.15; // horizon burst \u2014 warm yellow-orange\nuniform vec3  ember_col : color       = 0.55, 0.10, 0.01;// trailing glow \u2014 deep orange-red\nuniform vec3  night_col : color       = 0.01, 0.00, 0.05;// pre-dawn sky \u2014 deep purple-black\n\nstate float horizon;    // current sun height (normalized 0..1, extended slightly beyond)\nstate float inv_peak;   // 1/peak_w  \u2014 hoisted, avoids per-LED float division\nstate float inv_trail;  // 1/trail_w\n\nvoid update() {\n  // Stretch range to -0.1..1.1 so the band enters/exits smoothly past lamp edges\n  float t  = fract(time * speed);\n  horizon   = t * 1.2 - 0.1;\n  inv_peak  = 1.0 / peak_w;\n  inv_trail = 1.0 / trail_w;\n}\n\nvec3 shade(Led led) {\n  // Normalize world-space height to 0 (bottom) \u2026 1 (top)\n  float y = led.pos.y * 3.3333;       // 1 / 0.30 m\n  float d = y - horizon;              // signed dist: negative = below sun, positive = above\n\n  // Asymmetric falloff: narrow bright edge above, wide warm trail below\n  float up   = clamp(1.0 - d * inv_peak,  0.0, 1.0); // 1 at/below horizon, 0 above band\n  float down = clamp(1.0 + d * inv_trail, 0.0, 1.0); // 1 at/above horizon, 0 deep below\n  float glow = up * down;                             // peak at the horizon (d = 0)\n\n  // Ember trail: warm wash that lingers below the rising sun only\n  float is_below = 1.0 - step(0.0, d);   // 1 below horizon, 0 above\n  float ember_t  = down * is_below;      // 0 deep below or above; 1 just under horizon\n\n  return night_col + ember_col * ember_t + sun_color * glow;\n}\n```\n\n**How it works:**\n\n| Zone | `d` value | Visual result |\n|---|---|---|\n| High above sun | `d > peak_w` | Deep purple-black (`night_col`) |\n| Sun band | `d \u2248 0` | Bright warm burst (`sun_color` peaks) |\n| Below, near horizon | `d < 0`, small | Orange ember glow fades in |\n| Deep below | `d < \u2013trail_w` | Back to dark night |\n\nThe horizon is stretched to \u20130.1\u20261.1 so the band glides in from below the lamp floor and exits above the top before resetting \u2014 no hard teleport. Precomputed `inv_peak`/`inv_trail` in `update()` replace the two float divisions with multiplications in the hot per-LED path (~25 float ops \u00d7 500 LEDs \u2248 12 500 soft-float ops/frame, well within the 33 ms budget).",
+      "is_error": false,
+      "session_id": "fa4a5680-2807-4bb3-866a-2361f0597920",
+      "wall_s": 334.4,
+      "duration_api_ms": 325272,
+      "cost_usd": 0.35965169999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 23686,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 509
+      },
+      "thinking_tokens": 22740,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1202
+    }
+  ],
+  "started": "2026-10-22T19:48:05",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3597,
+  "total_wall_s": 334.4,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p09.fx"
+}

@@ -1,0 +1,66 @@
+{
+  "name": "app__sonnet__p11",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Police lights \u2014 spinning red/blue beams with strobe flash\n// Angles are baked on frame 0 (avoids per-LED atan2 every frame)\n\nuniform float speed      : 0.3 ..  4.0 = 1.5;   // rotations per second\nuniform float beam_width : 0.04 .. 0.45 = 0.16;  // angular half-width (0=narrow, 0.45=flood)\nuniform float flash_rate : 1.0 .. 12.0 = 4.0;   // R-gap-B-gap cycles per second\nuniform float brightness : 0.0 ..  1.0 = 1.0;\n\nbuffer float ang : fixed16;   // per-LED base angle cached from atan2, baked once\nstate bool  baked;\nstate float spin;\nstate float flash_r;\nstate float flash_b;\n\nvoid update() {\n    // After frame 0 all shade() calls have run and filled ang[] \u2014 safe to lock\n    if (frame == 1) { baked = true; }\n\n    spin = fract(time * speed);\n\n    // Pattern: [R on][off][B on][off] per cycle \u2014 25 % each quadrant\n    float t = fract(time * flash_rate);\n    flash_r = step(t, 0.25);                              // on: t in [0, 0.25)\n    flash_b = step(0.5, t) * (1.0 - step(0.75, t));      // on: t in [0.5, 0.75)\n}\n\nvec3 shade(Led led) {\n    float base;\n    if (!baked) {\n        // Frame 0: pay the atan2 cost once and cache it\n        float ax = led.uv.x - 0.5;\n        float ay = led.uv.y - 0.5;\n        base = fract(atan2(ay, ax) * 0.15915);   // radians \u2192 turns, 0..1\n        ang[led.idx] = base;\n    } else {\n        base = ang[led.idx];\n    }\n\n    // Rotate cached angle by current spin phase\n    float angle  = fract(base + spin);\n\n    // Circular distance to the red beam (at angle=0) and blue beam (at angle=0.5)\n    float red_d  = min(angle, 1.0 - angle);\n    float blue_d = min(fract(angle + 0.5), 1.0 - fract(angle + 0.5));\n\n    // Smooth beams \u00d7 strobe flash\n    float r = smoothstep(beam_width, 0.0, red_d)  * flash_r;\n    float b = smoothstep(beam_width, 0.0, blue_d) * flash_b;\n\n    return vec3(r, 0.0, b) * brightness;\n}\n```\n\n**How it works:**\n\n| Part | Detail |\n|------|--------|\n| **Angle bake** | `atan2` (float-only) runs once on frame 0 per LED and is stored in a `fixed16` buffer (~1 KB for 500 LEDs). Every subsequent frame just reads the cached value \u2014 no soft-float in the hot path. |\n| **Spin** | `fract(base + spin)` rotates the cached angle in `update()`; all per-LED work stays in integer-friendly `fract`/`min`. |\n| **Beams** | Red at angle 0, blue diametrically opposite at 0.5. `smoothstep` tapers each beam from full brightness at center to zero at `beam_width`. |\n| **Strobe** | Quadrant pattern: R on \u2192 dark gap \u2192 B on \u2192 dark gap, repeating at `flash_rate` Hz. The gaps make the alternation visually crisp. |",
+      "is_error": false,
+      "session_id": "dbe217fb-d7d3-41bb-a2f5-e8e66d7758ec",
+      "wall_s": 265.0,
+      "duration_api_ms": 250802,
+      "cost_usd": 0.2906517,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 19088,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 18130,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 28,
+          "col": 15,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler requires variable declarations to include an initializer. `float base;` needs `= 0.0`.\n\n```glsl\n// Police lights \u2014 spinning red/blue beams with strobe flash\n// Angles are baked on frame 0 (avoids per-LED atan2 every frame)\n\nuniform float speed      : 0.3 ..  4.0 = 1.5;   // rotations per second\nuniform float beam_width : 0.04 .. 0.45 = 0.16;  // angular half-width (0=narrow, 0.45=flood)\nuniform float flash_rate : 1.0 .. 12.0 = 4.0;   // R-gap-B-gap cycles per second\nuniform float brightness : 0.0 ..  1.0 = 1.0;\n\nbuffer float ang : fixed16;   // per-LED base angle cached from atan2, baked once\nstate bool  baked;\nstate float spin;\nstate float flash_r;\nstate float flash_b;\n\nvoid update() {\n    // After frame 0 all shade() calls have run and filled ang[] \u2014 safe to lock\n    if (frame == 1) { baked = true; }\n\n    spin = fract(time * speed);\n\n    // Pattern: [R on][off][B on][off] per cycle \u2014 25 % each quadrant\n    float t = fract(time * flash_rate);\n    flash_r = step(t, 0.25);                              // on: t in [0, 0.25)\n    flash_b = step(0.5, t) * (1.0 - step(0.75, t));      // on: t in [0.5, 0.75)\n}\n\nvec3 shade(Led led) {\n    float base = 0.0;\n    if (!baked) {\n        // Frame 0: pay the atan2 cost once and cache it\n        float ax = led.uv.x - 0.5;\n        float ay = led.uv.y - 0.5;\n        base = fract(atan2(ay, ax) * 0.15915);   // radians \u2192 turns, 0..1\n        ang[led.idx] = base;\n    } else {\n        base = ang[led.idx];\n    }\n\n    // Rotate cached angle by current spin phase\n    float angle  = fract(base + spin);\n\n    // Circular distance to the red beam (at angle=0) and blue beam (at angle=0.5)\n    float red_d  = min(angle, 1.0 - angle);\n    float blue_d = min(fract(angle + 0.5), 1.0 - fract(angle + 0.5));\n\n    // Smooth beams \u00d7 strobe flash\n    float r = smoothstep(beam_width, 0.0, red_d)  * flash_r;\n    float b = smoothstep(beam_width, 0.0, blue_d) * flash_b;\n\n    return vec3(r, 0.0, b) * brightness;\n}\n```\n\n**Only change:** line 28 \u2014 `float base;` \u2192 `float base = 0.0;`",
+      "is_error": false,
+      "session_id": "dbe217fb-d7d3-41bb-a2f5-e8e66d7758ec",
+      "wall_s": 22.1,
+      "duration_api_ms": 264977,
+      "cost_usd": 0.4331796,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1453,
+        "cache_read_input_tokens": 4833,
+        "cache_creation_input_tokens": 19879
+      },
+      "thinking_tokens": 667,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 960
+    }
+  ],
+  "started": "2026-10-22T19:52:34",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.7238,
+  "total_wall_s": 287.1,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p11.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p05",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Heartbeat: a \"lub-dub\" pulse that swells from the centre of the lamp and\n// ripples outward through the helix, fading as it travels. The second beat\n// follows the first and is softer. Between beats a dim ember glow remains.\nuniform float bpm     : 30.0 .. 160.0 = 62.0;   // heart rate\nuniform vec3  color   : color = 1.0, 0.04, 0.06; // pulse colour\nuniform float width   : 0.05 .. 0.6 = 0.22;      // thickness of the wavefront\nuniform float travel  : 0.2 .. 3.0 = 0.9;        // seconds for a pulse to reach the edge\nuniform float dub     : 0.0 .. 1.0 = 0.65;       // strength of the second beat\nuniform float gap     : 0.1 .. 0.6 = 0.26;       // seconds between lub and dub\nuniform float fill    : 0.0 .. 1.0 = 0.35;       // glow left inside the wave\nuniform float ember   : 0.0 .. 0.3 = 0.04;       // resting glow between beats\n\nstate vec3  ctr;\nstate float rad;\nstate float f1;\nstate float a1;\nstate float f2;\nstate float a2;\n\nvoid update() {\n  ctr = (room.min + room.max) * 0.5;\n  rad = max(length(room.max - room.min) * 0.5, 0.01);\n\n  float period = 60.0 / max(bpm, 1.0);\n  float ph = mod(time, period);\n  float spd = 1.0 / max(travel, 0.05);\n\n  // lub\n  f1 = ph * spd;\n  a1 = max(1.0 - f1, 0.0);\n  a1 = a1 * a1;\n\n  // dub\n  float age2 = ph - gap;\n  if (age2 < 0.0) {\n    f2 = 0.0;\n    a2 = 0.0;\n  } else {\n    f2 = age2 * spd;\n    a2 = max(1.0 - f2, 0.0);\n    a2 = a2 * a2 * dub;\n  }\n}\n\nvec3 shade(Led led) {\n  float d = length(led.room - ctr) / rad;   // 0 at the centre, ~1 at the edges\n  float iw = 1.0 / width;\n\n  float r1 = max(1.0 - abs(d - f1) * iw, 0.0);\n  float r2 = max(1.0 - abs(d - f2) * iw, 0.0);\n  float v = r1 * r1 * a1 + r2 * r2 * a2;\n\n  // softer glow behind each wavefront (inside the expanding sphere)\n  if (d < f1) { v = v + fill * a1 * (1.0 - (f1 - d)); }\n  if (d < f2) { v = v + fill * a2 * (1.0 - (f2 - d)); }\n\n  v = clamp(v, 0.0, 1.0);\n  // hot cores go slightly whiter at the peak\n  vec3 c = mix(color, vec3(1.0, 0.55, 0.5), v * v * 0.35);\n  return c * max(v, ember);\n}\n```",
+      "is_error": false,
+      "session_id": "0f9b9c0d-5d60-403b-afcf-47c1be853aef",
+      "wall_s": 32.1,
+      "duration_api_ms": 20036,
+      "cost_usd": 0.0459964,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1939,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 618
+      },
+      "thinking_tokens": 895,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1753
+    }
+  ],
+  "started": "2026-10-22T19:57:58",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.046,
+  "total_wall_s": 32.1,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p05.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "skill__sonnet__p12",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing Meditation Glow\n// The lamp inhales (cools, dims, light pools at the base) then exhales (warms\n// and blooms up the helix). Match `period` to your breath pace; `hold` keeps\n// the light open at the peak before the exhale begins \u2014 like a held breath.\n\nuniform float period     : 2.0 .. 12.0 = 5.5;       // seconds per full breath cycle\nuniform float hold       : 0.0 .. 0.4  = 0.1;       // fraction spent lingering at peak\nuniform vec3  inhale_col : color = 0.04, 0.07, 0.28; // deep indigo \u2014 cool breath in\nuniform vec3  exhale_col : color = 0.88, 0.45, 0.07; // amber-gold \u2014 warm breath out\nuniform float shimmer    : 0.0 .. 0.4  = 0.08;      // organic per-LED flicker depth\nuniform float rise       : 0.0 .. 1.0  = 0.6;       // how high the bloom climbs\nuniform float brightness : 0.0 .. 1.0  = 0.85;\n\nstate float breath; // 0 = inhale trough, 1 = exhale peak\n\nvoid update() {\n  // Smooth sinusoidal breath curve; hold flattens the peak so the lamp lingers\n  float raw = 0.5 - 0.5 * cos(time * 6.28318 / period);\n  breath = clamp(raw / max(1.0 - hold * 0.55, 0.01), 0.0, 1.0);\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y; // 0 = base LED, 1 = top LED (helix rises +Y)\n\n  // On exhale the glow climbs; on inhale it settles at the base\n  float bloom = mix(1.0 - h * 0.65, sqrt(h) * 0.75 + 0.25, breath * rise);\n\n  // Each LED flickers at its own gentle pace \u2014 organic, living quality\n  float sp = hash(float(led.idx));\n  float flicker = 1.0 + shimmer * sin(time * (1.1 + sp * 0.7) + sp * 6.2832);\n\n  // Color glides from cool indigo (inhale) to warm amber (exhale)\n  vec3 col = mix(inhale_col, exhale_col, breath);\n\n  // Luminance: 30% floor at inhale trough, full at exhale peak; height bloom layers on top\n  float lum = (0.3 + 0.7 * breath) * (0.55 + 0.45 * bloom) * flicker * brightness;\n\n  return col * clamp(lum, 0.0, 1.2);\n}\n```",
+      "is_error": false,
+      "session_id": "ee82f25c-2b3f-437e-a3bf-5231ef61fafa",
+      "wall_s": 149.5,
+      "duration_api_ms": 128072,
+      "cost_usd": 0.14776679999999998,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 9472,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 503
+      },
+      "thinking_tokens": 8741,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1373
+    }
+  ],
+  "started": "2026-10-22T20:10:36",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1478,
+  "total_wall_s": 149.5,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p12.fx"
+}

@@ -1,0 +1,66 @@
+{
+  "name": "skill__sonnet__p09",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise \u2014 warm glow climbing from the base of the lamp.\n// Default: one full day\u2013night loop every ~2 min.\n// Set speed=0 and sweep phase by hand for a single, manual sunrise.\n\nuniform float speed   : 0.0 .. 0.02 = 0.008;   // cycles per second\nuniform float phase   : 0.0 .. 1.0  = 0.0;      // phase offset / manual position\nuniform float softness: 0.1 .. 0.6  = 0.30;     // horizon glow width (fixture heights)\nuniform float warmth  : 0.5 .. 1.0  = 0.90;     // colour temperature at noon\nuniform float stars   : 0.0 .. 1.0  = 0.55;     // star brightness in the night sky\n\n// sun altitude in fixture-height units; -0.15 = below lamp, 1.15 = above.\n// Driven by a smooth sine so the loop is continuous and free of hard cuts.\nstate float sun;\nstate float t_day;   // 0 = night/horizon  \u2192  1 = midday\n\nvoid update() {\n  float a = (phase + time * speed) * 6.283185;  // one full revolution per cycle\n  sun   = 0.5 + 0.65 * sin(a - 1.5708);        // -0.15 at a=0, 1.15 at a=\u03c0, smooth\n  t_day = clamp((sun + 0.15) / 1.30, 0.0, 1.0);\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y;                             // 0 = bottom  1 = top\n  float d = (h - sun) / max(softness, 0.01);      // + above horizon / - below\n\n  // \u2500\u2500 Sky background \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  vec3 sky_n  = vec3(0.010, 0.006, 0.045);         // deep-night indigo\n  vec3 sky_dw = vec3(0.88,  0.78,  0.52);           // warm noon\n  vec3 sky_dc = vec3(0.82,  0.87,  1.00);           // cool noon\n  vec3 sky_d  = mix(sky_dw, sky_dc, 1.0 - warmth);\n  vec3 sky    = mix(sky_n, sky_d, smoothstep(0.15, 0.85, t_day));\n  // darken sky below the horizon band so the glow can dominate there\n  sky         = sky * (0.12 + 0.88 * smoothstep(-1.2, 0.6, d));\n\n  // \u2500\u2500 Horizon glow \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float glow    = exp(-abs(d) * 1.8);              // Gaussian bell centred on sun\n  vec3  c_ember = vec3(0.90, 0.10, 0.02);\n  vec3  c_orang = vec3(1.00, 0.50, 0.04);\n  vec3  c_gold  = vec3(1.00, 0.84, 0.28);\n  vec3  horiz   = mix(c_ember, c_orang, smoothstep(0.05, 0.45, t_day));\n  horiz         = mix(horiz,   c_gold,  smoothstep(0.50, 0.90, t_day));\n  float vis     = smoothstep(-0.20, 0.20, sun);    // fade in as sun clears the base\n  vec3  col     = sky + horiz * glow * vis;\n\n  // \u2500\u2500 Stars in the pre-dawn / post-dusk sky \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float fidx  = float(led.idx);\n  float s     = hash(fidx);\n  float tw    = 0.5 + 0.5 * sin(time * (2.0 + hash(fidx * 7.3) * 3.0) + s * 6.28);\n  float night = smoothstep(0.25, 0.0, t_day);      // 0 at day, 1 at night\n  float above = smoothstep(0.0, 0.25, d);           // only above the glow band\n  col        += vec3(0.45, 0.55, 0.85) * step(0.92, s) * tw * night * above * stars;\n\n  return clamp(col, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "4f91efba-d0fe-40e1-ad17-9b0f831f0d45",
+      "wall_s": 196.1,
+      "duration_api_ms": 177184,
+      "cost_usd": 0.1996098,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 12927,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 11749,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 51,
+          "col": 14,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler does not support the `+=` compound-assignment operator. Replace it with an explicit `col = col + \u2026`.\n\n```glsl\n// Sunrise \u2014 warm glow climbing from the base of the lamp.\n// Default: one full day\u2013night loop every ~2 min.\n// Set speed=0 and sweep phase by hand for a single, manual sunrise.\n\nuniform float speed   : 0.0 .. 0.02 = 0.008;   // cycles per second\nuniform float phase   : 0.0 .. 1.0  = 0.0;      // phase offset / manual position\nuniform float softness: 0.1 .. 0.6  = 0.30;     // horizon glow width (fixture heights)\nuniform float warmth  : 0.5 .. 1.0  = 0.90;     // colour temperature at noon\nuniform float stars   : 0.0 .. 1.0  = 0.55;     // star brightness in the night sky\n\n// sun altitude in fixture-height units; -0.15 = below lamp, 1.15 = above.\n// Driven by a smooth sine so the loop is continuous and free of hard cuts.\nstate float sun;\nstate float t_day;   // 0 = night/horizon  \u2192  1 = midday\n\nvoid update() {\n  float a = (phase + time * speed) * 6.283185;  // one full revolution per cycle\n  sun   = 0.5 + 0.65 * sin(a - 1.5708);        // -0.15 at a=0, 1.15 at a=\u03c0, smooth\n  t_day = clamp((sun + 0.15) / 1.30, 0.0, 1.0);\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y;                             // 0 = bottom  1 = top\n  float d = (h - sun) / max(softness, 0.01);      // + above horizon / - below\n\n  // \u2500\u2500 Sky background \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  vec3 sky_n  = vec3(0.010, 0.006, 0.045);         // deep-night indigo\n  vec3 sky_dw = vec3(0.88,  0.78,  0.52);           // warm noon\n  vec3 sky_dc = vec3(0.82,  0.87,  1.00);           // cool noon\n  vec3 sky_d  = mix(sky_dw, sky_dc, 1.0 - warmth);\n  vec3 sky    = mix(sky_n, sky_d, smoothstep(0.15, 0.85, t_day));\n  // darken sky below the horizon band so the glow can dominate there\n  sky         = sky * (0.12 + 0.88 * smoothstep(-1.2, 0.6, d));\n\n  // \u2500\u2500 Horizon glow \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float glow    = exp(-abs(d) * 1.8);              // Gaussian bell centred on sun\n  vec3  c_ember = vec3(0.90, 0.10, 0.02);\n  vec3  c_orang = vec3(1.00, 0.50, 0.04);\n  vec3  c_gold  = vec3(1.00, 0.84, 0.28);\n  vec3  horiz   = mix(c_ember, c_orang, smoothstep(0.05, 0.45, t_day));\n  horiz         = mix(horiz,   c_gold,  smoothstep(0.50, 0.90, t_day));\n  float vis     = smoothstep(-0.20, 0.20, sun);    // fade in as sun clears the base\n  vec3  col     = sky + horiz * glow * vis;\n\n  // \u2500\u2500 Stars in the pre-dawn / post-dusk sky \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  float fidx  = float(led.idx);\n  float s     = hash(fidx);\n  float tw    = 0.5 + 0.5 * sin(time * (2.0 + hash(fidx * 7.3) * 3.0) + s * 6.28);\n  float night = smoothstep(0.25, 0.0, t_day);      // 0 at day, 1 at night\n  float above = smoothstep(0.0, 0.25, d);           // only above the glow band\n  col         = col + vec3(0.45, 0.55, 0.85) * step(0.92, s) * tw * night * above * stars;\n\n  return clamp(col, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "4f91efba-d0fe-40e1-ad17-9b0f831f0d45",
+      "wall_s": 55.9,
+      "duration_api_ms": 210672,
+      "cost_usd": 0.3454914,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3871,
+        "cache_read_input_tokens": 9372,
+        "cache_creation_input_tokens": 14166
+      },
+      "thinking_tokens": 2665,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1504
+    }
+  ],
+  "started": "2026-10-22T20:06:24",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.5451,
+  "total_wall_s": 252.0,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p09.fx"
+}

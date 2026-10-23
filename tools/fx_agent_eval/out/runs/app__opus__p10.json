@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p10",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Matrix-style green rain wrapped around a helical cylinder lamp.\n// Columns = angular slices around the cylinder; height = arclength along the helix (led.s).\n\nuniform float speed   : 0.05 .. 2.0 = 0.45;\nuniform float columns : 4.0 .. 32.0 = 14.0;\nuniform float tail    : 0.05 .. 0.9 = 0.35;\nuniform float rows    : 4.0 .. 40.0 = 18.0;\nuniform float flicker : 0.0 .. 20.0 = 8.0;\nuniform float glyphs  : 0.0 .. 1.0 = 0.45;\nuniform vec3  rain    : color = 0.1, 1.0, 0.25;\nuniform vec3  headCol : color = 0.75, 1.0, 0.8;\n\nstate float phase[32];\nstate float rate[32];\nstate float heads[32];\nstate float tick;\nstate int warm;\nstate bool inited;\n\n// Per-LED cache: x = angle in turns (0..1), y = normalized height (0..1)\nbuffer vec2 cache : fixed16;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      phase[i] = hash(float(i) * 3.17 + 0.5);\n      rate[i] = 0.55 + hash(float(i) * 7.31 + 1.3) * 0.9;\n    }\n    inited = true;\n  }\n  float span = 1.0 + tail;\n  for (int i = 0; i < 32; i = i + 1) {\n    float p = phase[i] + dt * speed * rate[i];\n    if (p >= 1.0) {\n      p = p - 1.0;\n      rate[i] = 0.55 + hash(float(i) * 7.31 + time) * 0.9;\n    }\n    phase[i] = p;\n    // Head starts at the top (1) and falls past the bottom so the tail can clear.\n    heads[i] = 1.0 - p * span;\n  }\n  tick = floor(time * flicker);\n  if (warm < 4) { warm = warm + 1; }\n}\n\nvec3 shade(Led led) {\n  vec2 m = cache[led.idx];\n  if (warm < 3) {\n    // One-time (first frames) cache of the expensive angle math.\n    float a = fract(atan2(led.pos.z, led.pos.x) * 0.15915494 + 0.5);\n    m = vec2(a, clamp(led.s, 0.0, 1.0));\n    cache[led.idx] = m;\n  }\n\n  int nc = int(columns);\n  int c = int(m.x * float(nc));\n  if (c >= nc) { c = nc - 1; }\n\n  float yn = m.y;\n  float d = yn - heads[c];          // distance above the falling head\n  float t = clamp(1.0 - d / tail, 0.0, 1.0) * step(0.0, d);\n  float trailB = t * t;\n\n  // Head glow just at/below the leading edge\n  float h = clamp(1.0 - abs(d) * 30.0, 0.0, 1.0);\n\n  // Flickering \"glyph\" cells along the trail\n  float cell = floor(yn * rows);\n  float g = hash(float(c) * 13.1 + cell * 7.3 + tick * 1.91);\n  float glyph = (1.0 - glyphs) + glyphs * g;\n\n  vec3 col = rain * (trailB * glyph) + headCol * h;\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "d14b9f05-c6ef-43ff-b798-83c7f4f3f56c",
+      "wall_s": 29.8,
+      "duration_api_ms": 28521,
+      "cost_usd": 0.0581946,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2608,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 614
+      },
+      "thinking_tokens": 1403,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1648
+    }
+  ],
+  "started": "2026-10-22T19:40:10",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0582,
+  "total_wall_s": 29.8,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p10.fx"
+}

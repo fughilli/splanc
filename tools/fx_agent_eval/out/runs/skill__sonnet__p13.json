@@ -1,0 +1,93 @@
+{
+  "name": "skill__sonnet__p13",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Starfield twinkle \u2014 each LED is an independent star that pulses in and out\n// at its own random rate, spending most of its time near-black between flashes.\n\nuniform float density : 0.0 .. 1.0 = 0.70;        // fraction of LEDs that are active stars\nuniform float speed   : 0.1 .. 4.0 = 0.9;         // overall twinkle cadence\nuniform float shimmer : 0.0 .. 1.0 = 0.35;        // depth of rapid secondary flicker on each peak\nuniform vec3  cool    : color = 0.72, 0.86, 1.0;  // blue-white star tint\nuniform vec3  warm    : color = 1.00, 0.90, 0.50; // warm-white star tint\nuniform float warmth  : 0.0 .. 1.0 = 0.20;        // fraction of warm stars (0 = all cool)\nuniform float glow    : 0.0 .. 0.05 = 0.005;      // faint deep-sky background level\n\nvec3 shade(Led led) {\n  float idx = float(led.idx);\n\n  // Three independent per-LED random values (cheap integer hash)\n  float r0 = hash(idx);              // density gate & primary phase offset\n  float r1 = hash(idx + 500.0);      // individual rate & shimmer phase\n  float r2 = hash(idx + 1000.0);     // colour type\n\n  // Sky: near-black with a faint blue tint\n  vec3 sky = vec3(glow * 0.4, glow * 0.5, glow);\n\n  // Most LEDs are empty sky \u2014 early out keeps the budget low\n  if (r0 > density) return sky;\n\n  // Each star has its own rate in [0.5 .. 2.0] \u00d7 speed\n  float rate = speed * (0.5 + r1 * 1.5);\n\n  // Main twinkle: cosine oscillator raised to the 4th power \u2192 narrow bright peak,\n  // star spends most of its period near zero  (two cheap multiplications, no pow)\n  float osc = 0.5 + 0.5 * cos((time * rate + r0) * 6.28318);\n  float b   = osc * osc;\n  b         = b * b;\n\n  // Shimmer: a faster secondary cosine fidgets the peak subtly\n  float flick = 0.5 + 0.5 * cos((time * rate * 5.3 + r1) * 6.28318);\n  b *= 1.0 - shimmer * 0.4 * (1.0 - flick);\n\n  // Colour: blue-white or warm-white, fixed per LED\n  vec3 col = mix(cool, warm, step(1.0 - warmth, r2));\n\n  return col * b + sky;\n}\n```",
+      "is_error": false,
+      "session_id": "e08e476c-8334-4e8c-bf69-27494de5c127",
+      "wall_s": 117.6,
+      "duration_api_ms": 97531,
+      "cost_usd": 0.11319179999999998,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 7167,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 503
+      },
+      "thinking_tokens": 6424,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 21,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler requires braces around every `if` body. Fix the braceless early-out.\n\n```glsl\n// Starfield twinkle \u2014 each LED is an independent star that pulses in and out\n// at its own random rate, spending most of its time near-black between flashes.\n\nuniform float density : 0.0 .. 1.0 = 0.70;        // fraction of LEDs that are active stars\nuniform float speed   : 0.1 .. 4.0 = 0.9;         // overall twinkle cadence\nuniform float shimmer : 0.0 .. 1.0 = 0.35;        // depth of rapid secondary flicker on each peak\nuniform vec3  cool    : color = 0.72, 0.86, 1.0;  // blue-white star tint\nuniform vec3  warm    : color = 1.00, 0.90, 0.50; // warm-white star tint\nuniform float warmth  : 0.0 .. 1.0 = 0.20;        // fraction of warm stars (0 = all cool)\nuniform float glow    : 0.0 .. 0.05 = 0.005;      // faint deep-sky background level\n\nvec3 shade(Led led) {\n  float idx = float(led.idx);\n\n  // Three independent per-LED random values (cheap integer hash)\n  float r0 = hash(idx);              // density gate & primary phase offset\n  float r1 = hash(idx + 500.0);      // individual rate & shimmer phase\n  float r2 = hash(idx + 1000.0);     // colour type\n\n  // Sky: near-black with a faint blue tint\n  vec3 sky = vec3(glow * 0.4, glow * 0.5, glow);\n\n  // Most LEDs are empty sky \u2014 early out keeps the budget low\n  if (r0 > density) { return sky; }\n\n  // Each star has its own rate in [0.5 .. 2.0] \u00d7 speed\n  float rate = speed * (0.5 + r1 * 1.5);\n\n  // Main twinkle: cosine oscillator raised to the 4th power \u2192 narrow bright peak,\n  // star spends most of its period near zero  (two cheap multiplications, no pow)\n  float osc = 0.5 + 0.5 * cos((time * rate + r0) * 6.28318);\n  float b   = osc * osc;\n  b         = b * b;\n\n  // Shimmer: a faster secondary cosine fidgets the peak subtly\n  float flick = 0.5 + 0.5 * cos((time * rate * 5.3 + r1) * 6.28318);\n  b *= 1.0 - shimmer * 0.4 * (1.0 - flick);\n\n  // Colour: blue-white or warm-white, fixed per LED\n  vec3 col = mix(cool, warm, step(1.0 - warmth, r2));\n\n  return col * b + sky;\n}\n```",
+      "is_error": false,
+      "session_id": "e08e476c-8334-4e8c-bf69-27494de5c127",
+      "wall_s": 34.5,
+      "duration_api_ms": 106179,
+      "cost_usd": 0.1767225,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 859,
+        "cache_read_input_tokens": 9369,
+        "cache_creation_input_tokens": 7971
+      },
+      "thinking_tokens": 93,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 37,
+          "col": 5,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The language does not support compound assignment (`*=`). Replace it with a plain assignment.\n\n```glsl\n// Starfield twinkle \u2014 each LED is an independent star that pulses in and out\n// at its own random rate, spending most of its time near-black between flashes.\n\nuniform float density : 0.0 .. 1.0 = 0.70;        // fraction of LEDs that are active stars\nuniform float speed   : 0.1 .. 4.0 = 0.9;         // overall twinkle cadence\nuniform float shimmer : 0.0 .. 1.0 = 0.35;        // depth of rapid secondary flicker on each peak\nuniform vec3  cool    : color = 0.72, 0.86, 1.0;  // blue-white star tint\nuniform vec3  warm    : color = 1.00, 0.90, 0.50; // warm-white star tint\nuniform float warmth  : 0.0 .. 1.0 = 0.20;        // fraction of warm stars (0 = all cool)\nuniform float glow    : 0.0 .. 0.05 = 0.005;      // faint deep-sky background level\n\nvec3 shade(Led led) {\n  float idx = float(led.idx);\n\n  // Three independent per-LED random values (cheap integer hash)\n  float r0 = hash(idx);              // density gate & primary phase offset\n  float r1 = hash(idx + 500.0);      // individual rate & shimmer phase\n  float r2 = hash(idx + 1000.0);     // colour type\n\n  // Sky: near-black with a faint blue tint\n  vec3 sky = vec3(glow * 0.4, glow * 0.5, glow);\n\n  // Most LEDs are empty sky \u2014 early out keeps the budget low\n  if (r0 > density) { return sky; }\n\n  // Each star has its own rate in [0.5 .. 2.0] \u00d7 speed\n  float rate = speed * (0.5 + r1 * 1.5);\n\n  // Main twinkle: cosine oscillator raised to the 4th power \u2192 narrow bright peak,\n  // star spends most of its period near zero  (two cheap multiplications, no pow)\n  float osc = 0.5 + 0.5 * cos((time * rate + r0) * 6.28318);\n  float b   = osc * osc;\n  b         = b * b;\n\n  // Shimmer: a faster secondary cosine fidgets the peak subtly\n  float flick = 0.5 + 0.5 * cos((time * rate * 5.3 + r1) * 6.28318);\n  b = b * (1.0 - shimmer * 0.4 * (1.0 - flick));\n\n  // Colour: blue-white or warm-white, fixed per LED\n  vec3 col = mix(cool, warm, step(1.0 - warmth, r2));\n\n  return col * b + sky;\n}\n```",
+      "is_error": false,
+      "session_id": "e08e476c-8334-4e8c-bf69-27494de5c127",
+      "wall_s": 33.6,
+      "duration_api_ms": 114245,
+      "cost_usd": 0.2052585,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 889,
+        "cache_read_input_tokens": 17340,
+        "cache_creation_input_tokens": 1665
+      },
+      "thinking_tokens": 123,
+      "round": 2,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1386
+    }
+  ],
+  "started": "2026-10-22T20:10:36",
+  "status": "ok",
+  "n_calls": 3,
+  "total_cost_usd": 0.4952,
+  "total_wall_s": 185.7,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p13.fx"
+}

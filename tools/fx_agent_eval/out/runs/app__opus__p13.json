@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p13",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Starfield twinkle: sparse stars that twinkle at their own rates and phases, over a dim night sky.\nuniform float density : 0.02 .. 1.0 = 0.25;\nuniform float speed : 0.0 .. 3.0 = 0.6;\nuniform float sharpness : 1.0 .. 3.0 = 2.0;\nuniform float floorGlow : 0.0 .. 0.6 = 0.08;\nuniform vec3 coolStar : color = 0.55, 0.7, 1.0;\nuniform vec3 warmStar : color = 1.0, 0.8, 0.5;\nuniform vec3 sky : color = 0.0, 0.004, 0.015;\n\nstate fixed ph;\nstate fixed densF;\nstate fixed sharpMix;\nstate float acc;\n\nvoid update() {\n  // Keep a wrapped accumulator so speed changes stay smooth.\n  acc = fract(acc + dt * speed * 0.25);\n  ph = fixed(acc);\n  densF = fixed(density * 1000.0);\n  sharpMix = fixed(clamp(sharpness - 1.0, 0.0, 2.0) * 0.5);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  // Cheap integer per-LED hashes.\n  int h1 = (i * 7919 + 1237) % 1000;\n  int h2 = (i * 4561 + 911) % 997;\n  int h3 = (i * 2903 + 77) % 991;\n\n  // Decide whether this LED is a star.\n  fixed star = step(fixed(h1), densF);\n\n  // Use integer rate multiples so the twinkle stays continuous when the phase wraps.\n  fixed rate = fixed(1 + h2 % 6);\n  fixed phase = fract(ph * rate + fixed(h3) / fixed(991));\n  fixed s = sin(phase) * fixed(0.5) + fixed(0.5);\n\n  // Sharpen the peaks: blend between s^2 and s^4.\n  fixed s2 = s * s;\n  fixed tw = mix(s2, s2 * s2, sharpMix);\n\n  // Give each star its own magnitude.\n  fixed mag = fixed(0.3) + fixed(0.7) * fixed(h2 % 100) / fixed(100);\n  fixed b = star * mag * mix(fixed(floorGlow), fixed(1.0), tw);\n\n  fixed warmth = fixed(h3 % 100) / fixed(100);\n  vec3 col = mix(coolStar, warmStar, float(warmth));\n  return sky + col * float(b);\n}\n```",
+      "is_error": false,
+      "session_id": "779aa6a0-2153-4b12-a94f-a5c6c4ac1fc4",
+      "wall_s": 26.5,
+      "duration_api_ms": 21087,
+      "cost_usd": 0.0466746,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2034,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 609
+      },
+      "thinking_tokens": 1152,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1331
+    }
+  ],
+  "started": "2026-10-22T19:40:34",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0467,
+  "total_wall_s": 26.5,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p13.fx"
+}

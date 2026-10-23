@@ -1,0 +1,65 @@
+{
+  "fixture_context": "Target fixture: a cylindrical lamp, 500 LEDs on a helix, radius 0.08 m, height 0.30 m (+Y up, led.pos in metres, led.uv = top-down projection), topology = 8 chained segments. Frame budget 33 ms at 30 fps.",
+  "prompts": [
+    {
+      "id": "p01",
+      "text": "a calm ocean swell rolling up the lamp"
+    },
+    {
+      "id": "p02",
+      "text": "campfire embers with occasional sparks"
+    },
+    {
+      "id": "p03",
+      "text": "aurora curtains drifting slowly"
+    },
+    {
+      "id": "p04",
+      "text": "a slow rainbow rotating around the lamp (cylindrical)"
+    },
+    {
+      "id": "p05",
+      "text": "a heartbeat pulse from the centre outward"
+    },
+    {
+      "id": "p06",
+      "text": "thunderstorm: dark clouds with lightning flashes"
+    },
+    {
+      "id": "p07",
+      "text": "fireflies blinking at random"
+    },
+    {
+      "id": "p08",
+      "text": "lava lamp blobs"
+    },
+    {
+      "id": "p09",
+      "text": "a sunrise: warm glow climbing from the bottom"
+    },
+    {
+      "id": "p10",
+      "text": "matrix-style green rain falling down"
+    },
+    {
+      "id": "p11",
+      "text": "police lights spinning red/blue"
+    },
+    {
+      "id": "p12",
+      "text": "a breathing meditation glow"
+    },
+    {
+      "id": "p13",
+      "text": "starfield twinkle"
+    },
+    {
+      "id": "p14",
+      "text": "a scanner beam sweeping left to right"
+    },
+    {
+      "id": "p15",
+      "text": "water caustics shimmer"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "app_perf__opus__p11",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Police lights: a red and a blue rotating beam sweeping around the cylinder.\nuniform float speed : 0.0 .. 4.0 = 1.2;\nuniform float beam_width : 0.05 .. 0.45 = 0.2;\nuniform vec3 red_col : color = 1.0, 0.02, 0.0;\nuniform vec3 blue_col : color = 0.0, 0.1, 1.0;\nuniform float ambient : 0.0 .. 0.3 = 0.02;\nuniform bool strobe = true;\nuniform float strobe_rate : 1.0 .. 20.0 = 8.0;\n\nstate fixed ph;\nstate fixed inv_w;\nstate vec3 rc;\nstate vec3 bc;\nstate vec3 amb;\nstate bool started;\nstate bool ready;\n\nbuffer float ang : fixed16;\n\nvoid update() {\n  ready = started;\n  started = true;\n  ph = fract(ph + fixed(dt * speed));\n  inv_w = fixed(1.0 / beam_width);\n  float fr = 1.0;\n  float fb = 1.0;\n  if (strobe) {\n    float s = step(0.5, fract(time * strobe_rate));\n    fr = 0.55 + 0.45 * s;\n    fb = 1.0 - 0.45 * s;\n  }\n  rc = red_col * fr;\n  bc = blue_col * fb;\n  amb = (red_col + blue_col) * (ambient * 0.5);\n}\n\nvec3 shade(Led led) {\n  if (!ready) {\n    ang[led.idx] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n  }\n  fixed a = fract(fixed(ang[led.idx]) - ph);\n  fixed dr = min(a, fixed(1.0) - a);\n  fixed db = abs(a - fixed(0.5));\n  fixed r = clamp(fixed(1.0) - dr * inv_w, fixed(0.0), fixed(1.0));\n  fixed b = clamp(fixed(1.0) - db * inv_w, fixed(0.0), fixed(1.0));\n  r = r * r;\n  b = b * b;\n  return rc * r + bc * b + amb;\n}\n```",
+      "is_error": false,
+      "session_id": "906935bc-2e3d-419f-8d57-8f7f8d8066b1",
+      "wall_s": 36.1,
+      "duration_api_ms": 16372,
+      "cost_usd": 0.0427912,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1827,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 1074,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1294
+    }
+  ],
+  "started": "2026-10-22T20:17:02",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0428,
+  "total_wall_s": 36.1,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p11.fx"
+}
