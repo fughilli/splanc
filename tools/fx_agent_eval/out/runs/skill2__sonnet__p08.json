@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p08",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Lava lamp: warm metaball blobs rise and fall inside a cylindrical helix lamp.\n// Four blobs oscillate in height and drift angularly; their soft quadratic\n// falloffs accumulate per LED and map to a warm lava palette.\n// Fully fixed-point per-LED maths; atan2 of led.pos cached once per LED.\n\nuniform vec3  hot   : color = 1.00, 0.38, 0.04;   // blob colour\nuniform vec3  cool  : color = 0.04, 0.00, 0.18;   // fluid / background colour\nuniform float size  : 0.1 .. 1.0 = 0.45;          // normalised blob radius\nuniform float speed : 0.0 .. 2.0 = 0.55;\nuniform float glow  : 0.0 .. 1.0 = 0.65;          // white-hot inner highlight\n\nstate fixed ph[4];    // vertical oscillator phases (turns)\nstate fixed ba[4];    // angular positions (turns 0..1)\nstate fixed vf[4];    // vertical oscillator rates (turns/s)\nstate fixed af[4];    // angular drift rates (turns/s)\nstate fixed bh[4];    // blob heights (0..1) computed each frame\nstate bool  seeded;\nstate fixed kk;       // 1 / (size * size), updated each frame\n\nvoid update() {\n  if (!seeded) {\n    ph[0] = fixed(0.00);  vf[0] = fixed(0.130);  ba[0] = fixed(0.00);  af[0] = fixed( 0.070);\n    ph[1] = fixed(0.25);  vf[1] = fixed(0.091);  ba[1] = fixed(0.25);  af[1] = fixed(-0.053);\n    ph[2] = fixed(0.50);  vf[2] = fixed(0.152);  ba[2] = fixed(0.50);  af[2] = fixed( 0.088);\n    ph[3] = fixed(0.75);  vf[3] = fixed(0.113);  ba[3] = fixed(0.75);  af[3] = fixed(-0.061);\n    seeded = true;\n  }\n  kk = fixed(1.0 / (size * size));\n  fixed dspd = fixed(dt * speed);\n  for (int i = 0; i < 4; i = i + 1) {\n    ph[i] = fract(ph[i] + dspd * vf[i]);\n    ba[i] = fract(ba[i] + dspd * af[i]);\n    // sin of fixed turns \u2192 [-1,1]; blob height oscillates 0.07 .. 0.93\n    bh[i] = sin(ph[i]) * fixed(0.43) + fixed(0.50);\n  }\n}\n\nvec3 shade(Led led) {\n  // Angular position in turns 0..1; atan2(fixed(led.pos.*)) is cached per LED.\n  fixed ang = fract(atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5));\n  fixed hy  = fixed(led.uv.y);   // normalised height: 0 = bottom, 1 = top\n\n  fixed sum = fixed(0.0);\n  for (int i = 0; i < 4; i = i + 1) {\n    fixed dy  = hy - bh[i];\n    // Angular diff wrapped to -0.5 .. 0.5 turns\n    fixed da  = fract(ang - ba[i] + fixed(0.5)) - fixed(0.5);\n    // Weighted squared distance (slight height emphasis keeps blobs tall/blobby)\n    fixed dsq = dy * dy * fixed(3.2) + da * da * fixed(1.6);\n    fixed t   = clamp(fixed(1.0) - dsq * kk, fixed(0.0), fixed(1.0));\n    sum = sum + t * t;\n  }\n\n  // fluid \u2192 warm glow \u2192 white-hot blob core\n  float v     = clamp(float(sum), 0.0, 1.0);\n  float v2    = v * v;\n  float inner = v2 * v * float(glow);\n  vec3  col   = mix(cool, hot, v2);\n  return col + vec3(inner * 0.55, inner * 0.18, 0.0);\n}\n```",
+      "is_error": false,
+      "session_id": "bb8bb3fb-d80e-451c-95a8-f7caf05bb056",
+      "wall_s": 235.4,
+      "duration_api_ms": 232817,
+      "cost_usd": 0.25333710000000004,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 16461,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 503
+      },
+      "thinking_tokens": 15315,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1336
+    }
+  ],
+  "started": "2026-10-23T00:30:17",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2533,
+  "total_wall_s": 235.4,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p08.fx"
+}

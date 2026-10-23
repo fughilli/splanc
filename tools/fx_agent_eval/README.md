@@ -13,12 +13,22 @@ Variants: `app` (A), `skill` (B), `app_perf` (A + `perf_addendum.txt` appended),
 `app_lint` (the `app` program, then one revision round that feeds back this
 tool's lint warnings; the revision is kept only if it compiles).
 
+The committed `app` / `skill` / `app_perf` / `app_lint` runs are the
+fx-perf-study baseline: their prompts are in `out/system/<variant>.txt`, from
+before the R6 prompt fixes. `app2` / `skill2` render the same two paths from the
+current tree (the after leg, same 15 prompts), and `app2_est` / `skill2_est`
+close the estimate loop: take the `*2` program and, only if the offline
+estimate is over the 33 ms frame, run one revision round fed what
+`estimate_effect` returns — the estimate plus the top cost findings
+(`web/src/effects/perfFindings.ts`, via `estimate.mjs`).
+
 ## Files
 
 | file                                                              | what                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prompts.json`                                                    | the 15 fixed requests (p01..p15) + the fixture context line appended to each                                                                                                                                                       |
 | `gen.py`                                                          | calls `claude -p` (tools off, `--system-prompt-file`, `--model`), extracts the first code block, compiles it, up to 2 repair rounds (same session, `--resume`; message mirrors `repairTurn()` in `web/src/effects/ai/generate.ts`) |
+| `estimate.mjs`                                                    | the app/agent estimate + top cost findings for compiled programs (node ≥ 22, this tree's `web/src`); `gen.py`'s `*_est` variants call it                                                                                           |
 | `analyze.py`                                                      | per-LED / per-frame op counts, heavy builtins, fixed usage, loops, variance (hoistable / memoizable) analysis, perf lint, rough cycle estimate → `out/analysis.json` + `out/summary.md`                                            |
 | `perf_addendum.txt`                                               | ≤25-line cost table + rules + one worked fast example (compiles), appended for `app_perf`                                                                                                                                          |
 | `out/runs/*.json`                                                 | one record per generated program: raw replies, diagnostics, tokens, wall time, cost                                                                                                                                                |
@@ -38,6 +48,9 @@ cp ../../bazel-bin/fx_compiler/fx_compile ~/perf/fx_compile   # stable copy
 python3 gen.py --plan app=opus+sonnet,skill=opus+sonnet,app_perf=opus --jobs 4
 # lint-feedback revision of the app/opus programs (needs the app runs above)
 python3 gen.py --plan app_lint=opus --jobs 4
+# the after leg on the current prompts, then the estimate+findings round
+python3 gen.py --plan app2=opus+sonnet,skill2=opus+sonnet --jobs 4
+python3 gen.py --plan app2_est=opus+sonnet,skill2_est=opus+sonnet --jobs 4
 python3 analyze.py            # all of firmware/fx_perf_bench/agent/*.fx
 python3 analyze.py some.fx    # or individual files / dirs (e.g. ../../firmware/fx_perf_bench/effects)
 ```

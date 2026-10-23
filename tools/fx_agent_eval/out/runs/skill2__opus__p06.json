@@ -1,0 +1,39 @@
+{
+  "name": "skill2__opus__p06",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Thunderstorm: dark, slowly churning storm clouds wrapped around the\n// cylinder, torn open by lightning strikes. Each strike is a burst of 1-3\n// flickering flashes. A jagged bright channel runs up the lamp at a random\n// angle, and the clouds light up around it.\n//\n// Coordinates: the angle around the vertical axis (atan2 of fixed args gives\n// turns) and the height along the helix (led.dist on the chained segments).\n// The noise lattice wraps in angle, so the clouds have no seam.\n//\n// Everything per LED is fixed point. Strike timing, positions and the cloud\n// lattice are computed once per frame in update().\n\nuniform float storm  : 0.0 .. 1.0 = 0.5;    // how often lightning strikes\nuniform float wind   : 0.0 .. 1.0 = 0.25;   // cloud drift speed\nuniform float clouds : 0.0 .. 1.0 = 0.35;   // brightness of the cloud layer\nuniform float billow : 1.0 .. 6.0 = 3.0;    // cloud cells up the lamp\nuniform float hue    : 0.0 .. 1.0 = 0.64;   // cloud tint (0.64 = steel blue)\nuniform float bolt   : 0.0 .. 1.0 = 1.0;    // lightning intensity\n\nstate fixed lat[81];\nstate bool  seeded;\n\nstate float nextT;\nstate float seed;\nstate float fl;\nstate float bangf;\nstate float jitf;\nstate int   burst;\n\nstate fixed ox;\nstate fixed oy;\nstate fixed ky;\nstate fixed cl;\nstate fixed hu;\nstate fixed fz;     // current flash level\nstate fixed bang;   // strike angle (turns)\nstate fixed jit;    // strike wobble phase\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 81; i = i + 1) {\n      int c = (i % 9) % 8;\n      int r = (i / 9) % 8;\n      lat[i] = fixed(hash(float(r * 8 + c) * 1.37 + 0.5));\n    }\n    seeded = true;\n    nextT = 1.0;\n  }\n\n  // Lightning scheduler\n  if (time >= nextT) {\n    seed = seed + 1.0;\n    if (burst <= 0) {\n      bangf = hash(seed * 1.7);\n      jitf  = hash(seed * 3.1);\n      burst = 1 + int(hash(seed * 2.3) * 3.0);\n    }\n    fl = 0.55 + 0.45 * hash(seed * 4.7);\n    burst = burst - 1;\n    if (burst > 0) {\n      nextT = time + 0.05 + 0.15 * hash(seed * 5.3);\n    } else {\n      nextT = time + (0.5 + 2.0 * hash(seed * 6.1)) * (0.4 + (1.0 - storm) * 6.0);\n    }\n  }\n  fl = max(fl - dt * 7.0, 0.0);\n\n  // Clouds drift around the lamp and slowly roll upward\n  ox = mod(ox + fixed(dt * wind * 0.8), fixed(8.0));\n  oy = mod(oy + fixed(dt * wind * 0.25), fixed(8.0));\n  ky = fixed(billow);\n  cl = fixed(clouds);\n  hu = fixed(hue);\n  fz = fixed(fl * bolt * min(storm * 4.0, 1.0));\n  bang = fixed(bangf);\n  jit = fixed(jitf);\n}\n\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);  // 0..1 turns\n  fixed hgt = fixed(led.dist);                                         // 0..1 along helix\n\n  // Wrapped value noise: 8 cells around, `billow` cells up\n  fixed x = mod(ang * fixed(8.0) + ox, fixed(8.0));\n  fixed y = mod(hgt * ky + oy, fixed(8.0));\n  int i = int(x) + int(y) * 9;\n  fixed tx = fract(x);\n  fixed ty = fract(y);\n  fixed a = mix(lat[i], lat[i + 1], tx);\n  fixed b = mix(lat[i + 9], lat[i + 10], tx);\n  fixed n = mix(a, b, ty);\n  fixed dense = n * n;\n\n  // Lightning: a jagged vertical channel at the strike angle\n  fixed wob = sin(hgt * fixed(2.7) + jit) * fixed(0.035)\n            + sin(hgt * fixed(7.3) + jit * fixed(3.0)) * fixed(0.015);\n  fixed da = abs(fract(ang - bang - wob + fixed(0.5)) - fixed(0.5));\n  fixed core = clamp(fixed(1.0) - da * fixed(28.0), fixed(0.0), fixed(1.0));\n  fixed glow = clamp(fixed(1.0) - da * fixed(3.0), fixed(0.0), fixed(1.0));\n  fixed l = fz * (core + glow * n * fixed(0.9) + n * fixed(0.2));\n\n  fixed v = clamp(cl * (fixed(0.06) + dense) + l, fixed(0.0), fixed(1.0));\n  fixed s = fixed(0.55) * clamp(fixed(1.0) - l * fixed(2.0), fixed(0.0), fixed(1.0));\n  return hsv2rgb(hu, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "69b060e2-74c3-493c-a989-f97b54b0b109",
+      "wall_s": 47.1,
+      "duration_api_ms": 45992,
+      "cost_usd": 0.10104799999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 4658,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 621
+      },
+      "thinking_tokens": 2744,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1970
+    }
+  ],
+  "started": "2026-10-23T00:21:07",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.101,
+  "total_wall_s": 47.1,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p06.fx"
+}

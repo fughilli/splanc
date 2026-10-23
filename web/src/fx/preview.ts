@@ -37,6 +37,10 @@ export interface FxCompiled {
   bytecode: Uint8Array;
   uniforms: FxUniform[];
   diagnostics: FxDiagnostic[];
+  /** Non-fatal perf warnings (a float literal promoting fixed maths, pow(x, 2.0)
+   * …) — the program compiles; each costs cycles per LED. Empty from compilers
+   * that predate them. */
+  warnings?: FxDiagnostic[];
 }
 
 interface CompilerResult {
@@ -44,6 +48,8 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  /** Absent on compiler builds older than the perf warnings. */
+  readonly warnings?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -126,6 +132,7 @@ export async function compileScript(src: string, opts: CompileScriptOptions = {}
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    warnings: typeof r.warnings === "string" ? (JSON.parse(r.warnings) as FxDiagnostic[]) : [],
   };
 }
 

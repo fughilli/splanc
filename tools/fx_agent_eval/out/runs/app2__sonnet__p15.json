@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p15",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Water Caustics Shimmer\n// Four interfering sine waves in cylindrical UV space,\n// thresholded and sharpened to mimic refracted light pools.\n\nuniform float speed     : 0.0 .. 3.0 = 0.8;\nuniform float scale     : 0.5 .. 5.0 = 2.5;\nuniform float sharpness : 1.0 .. 6.0 = 3.0;\nuniform float hue       : 0.0 .. 1.0 = 0.58;   // 0.58 \u2248 pool blue\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed ph3;\nstate fixed ph4;\nstate fixed ks;\nstate fixed sharp;\nstate fixed base_h;\n\nvoid update() {\n    // four independent drift speeds so the pattern never repeats\n    ph1 = fract(ph1 + fixed(dt * speed * 0.23));\n    ph2 = fract(ph2 + fixed(dt * speed * 0.31));\n    ph3 = fract(ph3 + fixed(dt * speed * 0.17));\n    ph4 = fract(ph4 + fixed(dt * speed * 0.41));\n    ks     = fixed(scale);\n    sharp  = fixed(sharpness);\n    base_h = fixed(hue);\n}\n\nvec3 shade(Led led) {\n    // angular position in turns [-0.5, 0.5] \u2014 compiler caches atan2 once per LED\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n    fixed y   = fixed(led.uv.y);\n\n    fixed ak = ang * ks;   // scaled angle\n    fixed yk = y   * ks;   // scaled height\n\n    // four waves: horizontal ring, vertical band, two diagonals\n    fixed w1 = sin(ak + ph1);\n    fixed w2 = sin(yk + ph2);\n    fixed w3 = sin(ak + yk + ph3);\n    fixed w4 = sin(ak * fixed(0.7) - yk * fixed(1.3) + ph4);\n\n    // average \u2192 [-1, 1]\n    fixed sum = (w1 + w2 + w3 + w4) * fixed(0.25);\n\n    // extract caustic peaks: threshold at 0.3, rescale remainder to [0,1]\n    fixed bright = max(fixed(0.0), sum - fixed(0.3)) * fixed(1.43);\n    // square + sharpness knob \u2192 sparse bright spikes, then clamp\n    bright = clamp(bright * bright * sharp, fixed(0.0), fixed(1.0));\n\n    // colour: deep blue \u2192 cyan \u2192 near-white at hot spots (all fixed \u2192 integer hsv2rgb)\n    fixed h = base_h - bright * fixed(0.08);          // shift slightly toward cyan\n    fixed s = fixed(1.0) - bright * fixed(0.6);        // desaturate to white\n    fixed v = fixed(0.05) + bright * fixed(0.95);      // keep floor dark\n\n    return hsv2rgb(h, s, v);\n}\n```\n\n**How it works:**\n\n| Element | Purpose |\n|---|---|\n| **4 waves** at different orientations | `w1` = azimuthal rings, `w2` = height bands, `w3/w4` = diagonals at \u00b1angles \u2014 their sum creates irregular interference like refracted light |\n| **Threshold + square** | `max(0, sum\u22120.3)\u00b2` removes the dark majority and sharpens the bright peaks into tight caustic flashes |\n| **4 phase drifts** at coprime speeds | ensures the shimmer pattern never locks into a repeating cycle |\n| **Fixed-point throughout** | `atan2(fixed,fixed)` = turns (integer LUT, cached once/LED), all 4 `sin` calls use the integer LUT path, `hsv2rgb` takes the integer path \u2014 ~2,500 cycles/LED vs. ~8,000 budget |\n\nAdjust **scale** for coarser/finer caustic grid, **sharpness** for sparse bright flashes vs. diffuse glow, and **hue** to shift from ocean blue (0.58) toward green-teal or pure cyan.",
+      "is_error": false,
+      "session_id": "a5bf6a66-27bf-4189-a35d-ac7a21639e02",
+      "wall_s": 118.3,
+      "duration_api_ms": 116760,
+      "cost_usd": 0.13008720000000001,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 8369,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 7297,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 969
+    }
+  ],
+  "started": "2026-10-23T00:17:58",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1301,
+  "total_wall_s": 118.3,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p15.fx"
+}

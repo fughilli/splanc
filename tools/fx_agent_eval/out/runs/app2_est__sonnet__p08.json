@@ -1,0 +1,28 @@
+{
+  "name": "app2_est__sonnet__p08",
+  "variant": "app2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "error": "timeout"
+    }
+  ],
+  "started": "2026-10-23T01:19:40",
+  "base_program": "firmware/fx_perf_bench/agent/app2__sonnet__p08.fx",
+  "base_estimate": [
+    70.19,
+    [
+      "a loop runs 4 times per LED (~16,604 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 55) \u2014 saves up to ~8,302 cycles/LED (~25.9 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "status": "no_reply",
+  "n_calls": 1,
+  "total_cost_usd": 0,
+  "total_wall_s": 0
+}

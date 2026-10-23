@@ -424,6 +424,10 @@ export function fusedFeatures(name: string, code: Uint8Array, at: number): Array
  * are unchanged). */
 export const DISPATCH_FEATURE = "@dispatch";
 
+/** Per-LED firmware cost of building the fixed-point context mirrors, charged
+ * when the program uses LoadCtxFix (the .fxb's FLAG_USES_CTXFIX). Absent = 0. */
+export const CTXFIX_FEATURE = "@ctxfix";
+
 // -- Cost table -------------------------------------------------------------
 
 /** Fixed/per-LED overheads, in cycles (perf-monitoring.md §"Model form"). */
@@ -452,6 +456,8 @@ interface FxbHeader {
   prepEntry: number;
   /** Per-LED memo words the program requests (0 = none). */
   ledCacheWords: number;
+  /** The .fxb header flags (FLAG_USES_CTXFIX = 0x02, FLAG_USES_UV = 0x04, …). */
+  flags: number;
 }
 
 const NO_ENTRY = 0xffff;
@@ -522,7 +528,7 @@ export function parseFxb(buf: Uint8Array): FxbHeader {
     prepEntry = rdU16(buf, t);
     ledCacheWords = buf[t + 2]!;
   }
-  return { code, consts, updateEntry, shadeEntry, prepEntry, ledCacheWords };
+  return { code, consts, updateEntry, shadeEntry, prepEntry, ledCacheWords, flags };
 }
 
 // -- Abstract interpreter ----------------------------------------------------
@@ -550,6 +556,12 @@ export interface WalkResult {
   opsMax: number;
   /** True if the walk followed a loop back-edge (a `for` body ran). */
   looped?: boolean;
+  /** EXPECTED histogram: each data-dependent arm weighted by a probability
+   * (1/2 by default; an `==` test is taken 1/8 of the time, `!=` 7/8) — the
+   * point estimate. Equals the min/max midpoint for programs without
+   * equality branches. */
+  exp?: OpHistogram;
+  opsExp?: number;
 }
 
 const LOOP_TRIP_CAP = 64; // compile-time `for` bounds are small; cap the walk.
@@ -570,13 +582,15 @@ export function walkEntry(
   entry: number,
   consts?: Uint32Array,
   uniforms?: ArrayLike<number>,
+  callDepth = 0,
 ): WalkResult {
   if (entry === NO_ENTRY || entry >= code.length) {
-    return { min: {}, max: {}, branched: false, loopCapped: false, opsMin: 0, opsMax: 0 };
+    return { min: {}, max: {}, branched: false, loopCapped: false, opsMin: 0, opsMax: 0, exp: {}, opsExp: 0 };
   }
   let branched = false;
   let loopCapped = false;
   let looped = false;
+  const calleeCache = new Map<number, WalkResult>(); // call target -> its walk
   const visits = new Map<number, number>(); // pc -> times entered (loop cap)
   let steps = 0;
   const STEP_BUDGET = 200_000;
@@ -591,17 +605,18 @@ export function walkEntry(
   // int locals with a compile-time-known value along this path (loop counters:
   // `int i = 0; i < 8; i = i + 1`), so a counted `for` loop is walked for its
   // real trip count instead of the 0..LOOP_TRIP_CAP band.
-  type Region = { min: OpHistogram; max: OpHistogram; end: number; env: Map<number, number> };
+  type Region = { min: OpHistogram; max: OpHistogram; ex: OpHistogram; end: number; env: Map<number, number> };
   function walk(pc: number, depth: number, env: Map<number, number>, stopAt = -1): Region {
     const min: OpHistogram = {};
     const max: OpHistogram = {};
-    if (depth > 512) return { min, max, end: -1, env };
+    const ex: OpHistogram = {};
+    if (depth > 512) return { min, max, ex, end: -1, env };
     let p = pc;
     const recent: number[] = []; // start pcs of the last few ops on this run
     const prev = (k: number): number => recent[recent.length - k] ?? -1;
     const isOp = (at: number, n: OpcodeName): boolean => at >= 0 && code[at] === OP(n);
     for (;;) {
-      if (p === stopAt) return { min, max, end: p, env };
+      if (p === stopAt) return { min, max, ex, end: p, env };
       if (p < 0 || p >= code.length) break;
       if (++steps > STEP_BUDGET) {
         loopCapped = true;
@@ -638,6 +653,8 @@ export function walkEntry(
       }
       addOp(min, DISPATCH_FEATURE, 1);
       addOp(max, DISPATCH_FEATURE, 1);
+      addOp(ex, histName, weight);
+      addOp(ex, DISPATCH_FEATURE, 1);
 
       // advance PC past operands
       let next = operandStart + meta.operandBytes;
@@ -648,6 +665,28 @@ export function walkEntry(
       if (meta.constTail) next += 2 * (code[operandStart] ?? 0);
 
       if (meta.ret) break; // Ret / RetFn ends this run
+
+      // A user-function call runs the callee's body here: price it at the call
+      // site (a helper called per LED is per-LED work — e.g. an if-ladder
+      // `rank()`), instead of as one cheap Call op. No recursion in the
+      // language, so the depth bound only guards a malformed program.
+      if (meta.call && callDepth < 8) {
+        const tgt = rdU16(code, operandStart);
+        let callee = calleeCache.get(tgt);
+        if (callee === undefined) {
+          callee = walkEntry(code, tgt, consts, uniforms, callDepth + 1);
+          calleeCache.set(tgt, callee);
+        }
+        addHist(min, callee.min);
+        addHist(max, callee.max);
+        addOp(min, DISPATCH_FEATURE, callee.opsMin);
+        addOp(max, DISPATCH_FEATURE, callee.opsMax);
+        addHist(ex, callee.exp ?? callee.max);
+        addOp(ex, DISPATCH_FEATURE, callee.opsExp ?? callee.opsMax);
+        branched = branched || callee.branched;
+        loopCapped = loopCapped || callee.loopCapped;
+        if (callee.looped) looped = true;
+      }
 
       // Known-int local tracking (see `env`).
       const slot = code[operandStart] ?? 0;
@@ -686,7 +725,7 @@ export function walkEntry(
           // Unconditional: follow it (backward jumps bounded by the visit cap).
           recent.push(p);
           // Leaving the current if-arm forward (if/else's jump over the else).
-          if (stopAt >= 0 && target > stopAt) return { min, max, end: target, env };
+          if (stopAt >= 0 && target > stopAt) return { min, max, ex, end: target, env };
           if (target <= p) looped = true;
           p = target;
           continue;
@@ -715,12 +754,28 @@ export function walkEntry(
         // we approximate by falling through (the trip cap bounds it).
         if (target > next) {
           branched = true;
+          // A guard — `if (led.seg < 0) { return vec3(0.0, 0.0, 0.0); }` — exits
+          // early for unmapped LEDs, which a mapped fixture has few of: price
+          // the continuation, not the midpoint of "returns at once" and "runs
+          // the whole effect" (which read sign effects at ~0.55x).
+          if (name === "BrFalse" && isConstReturnArm(code, next)) {
+            recent.length = 0;
+            p = target;
+            continue;
+          }
+          // How likely the then-arm runs: an equality test (`if (i % 16 ==
+          // slot)`, `if (drops[i].col == col)`) is mostly false, so it is
+          // weighted 1/8 (and `!=` 7/8) in the expected path; anything else 1/2.
+          const cmpKind =
+            name === "BrCmpI" ? code[operandStart]! : isOp(prev(1), "Cmp") || isOp(prev(1), "CmpI") ? code[prev(1) + 1]! : -1;
+          const pArm = cmpKind === 4 ? 0.125 : cmpKind === 5 ? 0.875 : 0.5;
           // Structured if / if-else: walk the arm(s) as bounded regions and
           // continue ONCE after them (min = cheaper arm or skip, max = dearer),
           // instead of re-walking the whole tail per path (2^n blow-up).
           const arm = walk(next, depth + 1, new Map(env), target);
           if (arm.end === target) {
             addHist(max, arm.max);
+            addScaled(ex, arm.ex, pArm);
             env = meetEnv(env, arm.env);
             recent.length = 0;
             p = target;
@@ -733,6 +788,8 @@ export function walkEntry(
               const dear = histTotal(arm.max) >= histTotal(els.max) ? arm.max : els.max;
               addHist(min, cheap);
               addHist(max, dear);
+              addScaled(ex, arm.ex, pArm);
+              addScaled(ex, els.ex, 1 - pArm);
               env = meetEnv(arm.env, els.env);
               recent.length = 0;
               p = arm.end;
@@ -744,7 +801,9 @@ export function walkEntry(
           const fall = walk(next, depth + 1, new Map(env), stopAt); // condition true: run arm
           // min path = cheaper of the two continuations; max = costlier.
           mergeMinMax(min, max, taken, fall);
-          return { min, max, end: taken.end === fall.end ? taken.end : -1, env };
+          addScaled(ex, fall.ex, pArm);
+          addScaled(ex, taken.ex, 1 - pArm);
+          return { min, max, ex, end: taken.end === fall.end ? taken.end : -1, env };
         }
         // backward BrFalse: fall through (loop exit path).
         recent.length = 0;
@@ -756,19 +815,38 @@ export function walkEntry(
       if (recent.length > 4) recent.shift();
       p = next;
     }
-    return { min, max, end: -1, env };
+    return { min, max, ex, end: -1, env };
   }
   let recentEnv = new Map<number, number>();
 
-  const { min, max } = walk(entry, 0, new Map());
+  const { min, max, ex } = walk(entry, 0, new Map());
   // The dispatch count rides the histograms during the walk (so branch min/max
   // bookkeeping covers it) but is reported separately: the histograms stay
   // pure opcode features.
   const opsMin = min[DISPATCH_FEATURE] ?? 0;
   const opsMax = max[DISPATCH_FEATURE] ?? 0;
+  const opsExp = ex[DISPATCH_FEATURE] ?? 0;
   delete min[DISPATCH_FEATURE];
   delete max[DISPATCH_FEATURE];
-  return { min, max, branched, loopCapped, opsMin, opsMax, looped };
+  delete ex[DISPATCH_FEATURE];
+  return { min, max, branched, loopCapped, opsMin, opsMax, looped, exp: ex, opsExp };
+}
+
+function addScaled(into: OpHistogram, h: OpHistogram, k: number): void {
+  for (const [key, v] of Object.entries(h)) into[key] = (into[key] ?? 0) + v * k;
+}
+
+/** True if the code at `pc` just returns constants from the entry (a guard
+ * arm: PushConst/Swizzle broadcast, then Ret/RetRgb8/RetRgbFix). */
+function isConstReturnArm(code: Uint8Array, pc: number): boolean {
+  for (let k = 0, p = pc; k < 6 && p < code.length; k++) {
+    const name = OPCODE_NAMES[code[p]!];
+    if (name === "Ret" || name === "RetRgb8" || name === "RetRgbFix") return true;
+    if (name !== "PushConst" && name !== "Swizzle") return false;
+    const meta = OP_META[name]!;
+    p += 1 + meta.operandBytes + (meta.swizzleTail ? (code[p + 2] ?? 0) : 0);
+  }
+  return false;
 }
 
 /** A walk's shade histogram WITH the dispatch count as a {@link
@@ -974,19 +1052,23 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
   // it is priced with update().
   const upWalk = walkEntry(header.code, header.updateEntry, header.consts, inp.uniforms);
   const prepWalk = walkEntry(header.code, header.prepEntry, header.consts, inp.uniforms);
-  for (const h of [upWalk.min, upWalk.max]) {
+  const upExp: OpHistogram = { ...(upWalk.exp ?? upWalk.max) };
+  for (const h of [upWalk.min, upWalk.max, upExp]) {
     for (const [k, v] of Object.entries(prepWalk.max)) h[k] = (h[k] ?? 0) + v;
   }
   const upOps = upWalk.opsMax + prepWalk.opsMax;
   upWalk.max[DISPATCH_FEATURE] = upOps;
   upWalk.min[DISPATCH_FEATURE] = upWalk.opsMin + prepWalk.opsMax;
+  upExp[DISPATCH_FEATURE] = (upWalk.opsExp ?? upWalk.opsMax) + prepWalk.opsMax;
   const updateCyclesMin = table.fixed.update_fixed + histCycles(upWalk.min, table.costs, fb);
   const updateCyclesMax = table.fixed.update_fixed + histCycles(upWalk.max, table.costs, fb);
+  const updateCyclesExp = table.fixed.update_fixed + histCycles(upExp, table.costs, fb);
 
   // shade(): per-LED. Prefer the dynamic profile histogram if supplied.
   let shadeLooped = false;
   let shadeMinPerLed: number;
   let shadeMaxPerLed: number;
+  let shadeExpPerLed: number;
   let shadeHistForHot: OpHistogram;
   let branched = upWalk.branched;
   let loopCapped = upWalk.loopCapped;
@@ -1003,6 +1085,7 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
     const c = histCycles(perLed, table.costs, fb);
     shadeMinPerLed = c;
     shadeMaxPerLed = c; // exact executed path → no band from shade
+    shadeExpPerLed = c;
     shadeHistForHot = perLed;
   } else {
     const shWalk = walkEntry(header.code, header.shadeEntry, header.consts, inp.uniforms);
@@ -1011,14 +1094,22 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
     shWalk.max[DISPATCH_FEATURE] = shWalk.opsMax;
     shadeMinPerLed = histCycles(shWalk.min, table.costs, fb);
     shadeMaxPerLed = histCycles(shWalk.max, table.costs, fb);
+    const ex: OpHistogram = { ...(shWalk.exp ?? shWalk.max), [DISPATCH_FEATURE]: shWalk.opsExp ?? shWalk.opsMax };
+    // The expected path, kept inside the band.
+    shadeExpPerLed = Math.min(shadeMaxPerLed, Math.max(shadeMinPerLed, histCycles(ex, table.costs, fb)));
     shadeHistForHot = shWalk.max;
     branched = branched || shWalk.branched;
     loopCapped = loopCapped || shWalk.loopCapped;
   }
 
-  const perLedFixed = table.fixed.shade_fixed;
+  // A program that reads LED inputs as fixed (LoadCtxFix) makes the firmware
+  // build the per-LED Q16.16 mirrors (pos, uv, s, dist) for EVERY LED every
+  // frame, whether or not the branch that reads them runs (`@ctxfix`).
+  const perLedFixed =
+    table.fixed.shade_fixed + (header.flags & 0x02 ? costFor(table.costs, CTXFIX_FEATURE, 0) : 0);
   const shadeCyclesMin = ledCount * (perLedFixed + shadeMinPerLed);
   const shadeCyclesMax = ledCount * (perLedFixed + shadeMaxPerLed);
+  const shadeCyclesExp = ledCount * (perLedFixed + shadeExpPerLed);
 
   const showCycles = table.fixed.show_fixed + ledCount * table.fixed.show_per_led;
 
@@ -1027,9 +1118,11 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
   const totalCyclesMin = frameCyclesMin + showCycles;
   const totalCyclesMax = frameCyclesMax + showCycles;
 
-  // Point estimate = midpoint of the branch band, then widen by the table's
-  // residual error (the fit's known inaccuracy) for the reported error band.
-  const totalCyclesMid = (totalCyclesMin + totalCyclesMax) / 2;
+  // Point estimate = the expected path (each data-dependent arm weighted by
+  // its probability; for 50/50 arms that is the band's midpoint), then widen
+  // by the table's residual error (the fit's known inaccuracy) for the band.
+  const updateCyclesPoint = Math.min(updateCyclesMax, Math.max(updateCyclesMin, updateCyclesExp));
+  const totalCyclesMid = updateCyclesPoint + shadeCyclesExp + showCycles;
   const totalMs = toMs(totalCyclesMid, cpuHz);
   // Control flow (data-dependent branches, loops) is priced less exactly than
   // the straight-line isolation programs the residual was fitted on: widen.
@@ -1040,8 +1133,8 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
   const fraction = totalMs > 0 ? (highMs - lowMs) / (2 * totalMs) : 0;
 
   const phaseSplit: PhaseSplit = {
-    updateMs: toMs((updateCyclesMin + updateCyclesMax) / 2, cpuHz),
-    shadeMs: toMs((shadeCyclesMin + shadeCyclesMax) / 2, cpuHz),
+    updateMs: toMs(updateCyclesPoint, cpuHz),
+    shadeMs: toMs(shadeCyclesExp, cpuHz),
     showMs: toMs(showCycles, cpuHz),
   };
 
@@ -1112,3 +1205,35 @@ export function confidenceOf(lowMs: number, highMs: number, budgetMs: number): C
 }
 
 export { NAME_TO_CODE, UN_MATH_NAMES, BIN_MATH_NAMES };
+
+/** One decoded instruction, for static analyses over the bytecode (e.g.
+ * `perfFindings.ts`). `target` is the absolute branch/call target (a branch's
+ * relative offset resolved), else null. */
+export interface DecodedOp {
+  pc: number;
+  name: OpcodeName;
+  /** Operand byte `i` (after the opcode byte); 0 past the end. */
+  operand: (i: number) => number;
+  /** PC of the following instruction. */
+  next: number;
+  target: number | null;
+  /** Vector lane count from the size operand (1 for scalar ops). */
+  lanes: number;
+}
+
+/** Decode the instruction at `pc` with the same operand widths the walker
+ * uses; null on an unknown opcode or a truncated stream. */
+export function decodeOp(code: Uint8Array, pc: number): DecodedOp | null {
+  const name = OPCODE_NAMES[code[pc] ?? 0xff];
+  if (name === undefined) return null;
+  const meta = OP_META[name]!;
+  const o = pc + 1;
+  let next = o + meta.operandBytes;
+  if (meta.swizzleTail) next += code[o + 1] ?? 0;
+  if (next > code.length) return null;
+  let target: number | null = null;
+  if (meta.branch) target = next + rdI16(code, o + (meta.relAt ?? 0));
+  else if (meta.call) target = rdU16(code, o);
+  const lanes = meta.lanesAt >= 0 ? Math.max(1, code[o + meta.lanesAt] ?? 1) : 1;
+  return { pc, name, operand: (i) => code[o + i] ?? 0, next, target, lanes };
+}

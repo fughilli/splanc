@@ -1,0 +1,42 @@
+{
+  "name": "app2_est__sonnet__p06",
+  "variant": "app2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "The main cost drivers are the expensive float path at the end of `shade()` (two fixed\u2192float conversions + vec3 float arithmetic \u2248 2250 cycles/LED) and the `atan2` (350 cycles/LED). Fixes:\n\n1. **Eliminate `atan2`** \u2014 use `led.uv.x` / `led.uv.y` (direct LED field loads) instead of computing angle from `led.pos`.\n2. **Replace float vec3 output** \u2014 use all-fixed `hsv2rgb(fixed, fixed, fixed)` (370 cycles) instead of two `float()` conversions + six float multiplies + a `vec3` add (~2250 cycles).\n\n```\nuniform float speed      : 0.0 .. 3.0 = 0.8;\nuniform float flash_rate : 0.3 .. 4.0 = 1.2;\n\nstate fixed ph1;           // cloud angular drift\nstate fixed ph2;           // cloud vertical drift\nstate fixed ph3;           // rain fall phase\nstate fixed flash_fx;      // current flash intensity 0..1\nstate fixed bolt_ang_fx;   // angular position of bolt, 0..1\nstate float flash_timer;   // countdown to next strike\n\nvoid update() {\n  ph1 = fract(ph1 + fixed(dt * speed * 0.05));\n  ph2 = fract(ph2 + fixed(dt * speed * 0.03));\n  ph3 = fract(ph3 + fixed(dt * speed * 0.45));\n\n  if (flash_fx > fixed(0.0)) {\n    flash_fx = flash_fx - fixed(dt * 7.0);\n    if (flash_fx < fixed(0.0)) {\n      flash_fx = fixed(0.0);\n    }\n  }\n\n  flash_timer = flash_timer - dt;\n  if (flash_timer <= 0.0) {\n    flash_fx    = fixed(1.0);\n    bolt_ang_fx = fixed(hash(time * 2.71));\n    flash_timer = (0.7 + hash(time * 0.41) * 2.8) / flash_rate;\n  }\n}\n\nvec3 shade(Led led) {\n  // Use UV directly \u2014 avoids expensive atan2 (saves ~350 cycles/LED)\n  fixed ang = fixed(led.uv.x);   // 0..1 horizontal (angular) position\n  fixed y   = fixed(led.uv.y);   // 0..1 vertical position\n\n  // Cloud turbulence: two overlapping sine waves\n  fixed c1    = sin(ang * fixed(2.0) + ph1)                   * fixed(0.5) + fixed(0.5);\n  fixed c2    = sin(y   * fixed(3.5) + ang * fixed(1.5) + ph2) * fixed(0.5) + fixed(0.5);\n  fixed cloud = c1 * fixed(0.6) + c2 * fixed(0.4);\n\n  // Falling rain: thin diagonal streaks\n  fixed rp   = fract(ang * fixed(11.0) + y * fixed(1.5) + ph3);\n  fixed rain = clamp((rp - fixed(0.88)) * fixed(12.0), fixed(0.0), fixed(1.0));\n\n  // Dark stormy base luminance\n  fixed base_lum = cloud * fixed(0.08) + rain * fixed(0.12) + fixed(0.02);\n\n  // Lightning: wide glow + sharp bolt core at bolt_ang_fx\n  fixed ang_diff = abs(ang - bolt_ang_fx);\n  if (ang_diff > fixed(0.5)) { ang_diff = fixed(1.0) - ang_diff; }\n  fixed glow      = clamp(fixed(1.0) - ang_diff * fixed(3.0),    fixed(0.0), fixed(1.0));\n  fixed bolt_core = clamp((fixed(0.05) - ang_diff) * fixed(20.0), fixed(0.0), fixed(1.0));\n  fixed fl        = flash_fx * (fixed(0.2) + glow * fixed(0.6) + bolt_core * fixed(0.2));\n\n  // All-fixed HSV: dark blue storm \u2192 white-blue lightning\n  // Replaces 2\u00d7float() + 6 float mults + vec3 add (~2250 cycles) with hsv2rgb(fixed) (370 cycles)\n  fixed val = clamp(base_lum + fl, fixed(0.0), fixed(1.0));\n  fixed sat = clamp(fixed(1.0) - fl * fixed(2.5), fixed(0.0), fixed(1.0));\n  return hsv2rgb(fixed(0.62), sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "4c013cb6-014e-4f37-9183-c25f75c940b9",
+      "wall_s": 587.3,
+      "duration_api_ms": 585281,
+      "cost_usd": 0.6863844,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 44234,
+        "cache_read_input_tokens": 10128,
+        "cache_creation_input_tokens": 3303
+      },
+      "thinking_tokens": 43041,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 952
+    }
+  ],
+  "started": "2026-10-23T00:43:13",
+  "base_program": "firmware/fx_perf_bench/agent/app2__sonnet__p06.fx",
+  "base_estimate": [42.42, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.6864,
+  "total_wall_s": 587.3,
+  "program": "firmware/fx_perf_bench/agent/app2_est__sonnet__p06.fx"
+}

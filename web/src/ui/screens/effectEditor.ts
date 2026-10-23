@@ -128,6 +128,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
+  /** The last clean compile's perf warnings (fed to the estimate's findings). */
+  let lastWarnings: { line: number; col: number; msg: string }[] = [];
   // The .fxb last successfully pushed to the device — auto-push skips a compile
   // whose bytecode is byte-identical (e.g. a whitespace edit) so it doesn't
   // needlessly re-flash the device.
@@ -1172,10 +1174,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const r = await worker.compile(src);
     if (seq !== compileSeq || disposed) return; // a newer compile supersedes us
 
-    renderDiagnostics(r.diagnostics);
+    renderDiagnostics([
+      ...r.diagnostics,
+      ...(r.warnings ?? []).map((w) => ({ ...w, msg: `warning — ${w.msg}` })),
+    ]);
     if (!r.ok) {
       const first = r.diagnostics[0];
-      const summary = first ? `line ${first.line + 1}: ${first.msg}` : "compile failed";
+      const summary = first ? `line ${first.line}: ${first.msg}` : "compile failed";
       setStatusErr(summary);
       lastCompileSummary = `ERROR — ${summary}`;
       lastDisassembly = "";
@@ -1186,10 +1191,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       return;
     }
     lastBytecode = r.bytecode;
+    lastWarnings = r.warnings ?? [];
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
     void updateBudgetBar(r.bytecode);
     videoPanel.setBytecode(r.bytecode);
-    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
+    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes${warningsSummary(
+      r.warnings,
+    )}`;
     panel.setManifest(r.uniforms);
     if (initialScene && !sceneUniformsApplied) {
       panel.hydrate(sceneUniformValues(r.uniforms, initialScene.uniforms));
@@ -1241,11 +1249,20 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     frame = 0;
   }
 
+  /** The compiler's perf warnings as a suffix of the compile summary the AI
+   * sees after set_script (so it fixes them in the next round). */
+  function warningsSummary(ws: { line: number; col: number; msg: string }[] | undefined): string {
+    if (!ws || ws.length === 0) return "";
+    return `\nWarnings (it runs, but slower than it should):\n${ws
+      .map((w) => `- line ${w.line}: ${w.msg}`)
+      .join("\n")}`;
+  }
+
   function renderDiagnostics(diags: { line: number; col: number; msg: string }[]): void {
     diagsEl.replaceChildren();
     for (const d of diags) {
       const li = document.createElement("li");
-      li.textContent = `line ${d.line + 1}, col ${d.col + 1}: ${d.msg}`;
+      li.textContent = `line ${d.line}, col ${d.col}: ${d.msg}`;
       diagsEl.appendChild(li);
     }
   }
@@ -1353,7 +1370,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
     const fleet = estimateAcrossDevices(lastBytecode, targets);
-    return describeFleet(fleet);
+    return describeFleet(fleet, { bytecode: lastBytecode, source: codeEl.value, warnings: lastWarnings });
   }
 
   /** measure_on_device: run the latest compile on the connected fixture and

@@ -1,0 +1,66 @@
+{
+  "name": "skill2__sonnet__p02",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Campfire embers with occasional rising sparks.\n//\n// A warm flicker wells up from the base (quadratic height fall-off) and\n// occasional bright sparks drift upward, fading as they rise. Fixed-point\n// per-LED arithmetic; spark proximity uses both height and cylindrical angle\n// for crisp point-like appearance on the helix.\n\nuniform float speed      : 0.1 .. 4.0 = 1.0;        // ember flicker rate\nuniform float intensity  : 0.0 .. 1.0 = 0.85;       // overall brightness\nuniform float spark_rate : 0.0 .. 3.0 = 0.8;        // sparks per second\nuniform vec3  col_hot    : color = 1.0, 0.55, 0.05;  // bright hot ember\nuniform vec3  col_cool   : color = 0.55, 0.03, 0.0;  // dim cool ember\n\n// Eight spark slots\nstate fixed sp_y[8];     // height 0..1\nstate fixed sp_ang[8];   // angle  0..1 turns\nstate fixed sp_life[8];  // 0 = dead\nstate fixed sp_seed[8];  // per-spark random (colour + rise speed)\n\n// Hoisted flicker waves \u2014 computed once per frame\nstate fixed fw1;\nstate fixed fw2;\n\n// Spawn countdown (seconds until next spark)\nstate float stimer;\n\nvoid update() {\n  fw1 = sin(fixed(time * speed * 1.3));\n  fw2 = sin(fixed(time * speed * 2.5 + 1.1));\n\n  // Pre-compute per-frame deltas to save fixed conversions inside the loop\n  fixed drise = fixed(dt) * fixed(0.45);\n  fixed ddead = fixed(dt * 1.1);\n\n  for (int i = 0; i < 8; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      sp_y[i]    = sp_y[i] + drise + sp_seed[i] * fixed(dt) * fixed(0.2);\n      sp_life[i] = sp_life[i] - ddead;\n      if (sp_y[i] > fixed(1.05) || sp_life[i] < fixed(0.0)) {\n        sp_life[i] = fixed(0.0);\n      }\n    }\n  }\n\n  // Spawn a new spark when the timer fires\n  if (spark_rate > 0.0) {\n    stimer = stimer - dt;\n    if (stimer <= 0.0) {\n      stimer = 1.0 / spark_rate;\n      float s = fract(time * 13.7);\n      for (int j = 0; j < 8; j = j + 1) {\n        if (sp_life[j] <= fixed(0.0)) {\n          sp_y[j]    = fixed(hash(s + 0.00) * 0.10); // spawn near bottom\n          sp_ang[j]  = fixed(hash(s + 0.11));\n          sp_life[j] = fixed(0.4 + hash(s + 0.22) * 0.6);\n          sp_seed[j] = fixed(hash(s + 0.33));\n          j = 8; // break: only fill one slot per tick\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed fy  = fixed(led.uv.y);                        // 0 = bottom, 1 = top\n  fixed ph  = fixed(hash(float(led.idx)));\n  fixed ph2 = fixed(hash(float(led.idx) * 1.618));\n\n  // Quadratic height envelope: embers are brightest at the base\n  fixed omy = fixed(1.0) - fy;\n  fixed env = omy * omy;\n\n  // Two detuned flicker oscillators with per-LED phase offsets\n  fixed flicker = sin(ph  * fixed(5.1) + fw1) * fixed(0.45)\n                + sin(ph2 * fixed(3.7) + fw2) * fixed(0.35);\n  flicker = flicker * fixed(0.5) + fixed(0.5); // remap to 0..1\n\n  // Combine envelope and flicker into a brightness value\n  fixed val = clamp(env * (flicker * fixed(0.6) + fixed(0.4)), fixed(0.0), fixed(1.0));\n\n  // Ember colour: cool dark red through hot orange, scaled by brightness\n  vec3 col = mix(col_cool, col_hot, float(val)) * (float(val) * intensity);\n\n  // Sparks \u2014 proximity in both height (uv.y) and cylindrical angle (led.pos)\n  // atan2 of fixed args returns turns in -0.5..0.5; +0.5 normalises to 0..1.\n  // The compiler caches this expression once per LED.\n  fixed led_ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  for (int i = 0; i < 8; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      fixed dy   = abs(fy - sp_y[i]);\n      // Circular angular distance 0..0.5\n      fixed dang = abs(fract(led_ang - sp_ang[i] + fixed(0.5)) - fixed(0.5));\n      // Linear kernel: height radius 0.04 uv.y, angle radius 0.08 turns\n      fixed prox = max(fixed(0.0),\n                       fixed(1.0) - dy * fixed(25.0) - dang * fixed(12.5));\n      if (prox > fixed(0.0)) {\n        fixed sv = prox * sp_life[i];\n        // Yellow-white spark: desaturates to white at peak brightness\n        fixed sh = fixed(0.09) + sp_seed[i] * fixed(0.05); // ~golden-yellow hue\n        fixed ss = (fixed(1.0) - sv) * fixed(0.6);\n        col = col + hsv2rgb(sh, ss, sv);\n      }\n    }\n  }\n\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "1986700d-88e0-41da-9406-0f037f952922",
+      "wall_s": 287.4,
+      "duration_api_ms": 285968,
+      "cost_usd": 0.3168561,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 20694,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 507
+      },
+      "thinking_tokens": 19051,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 102,
+          "col": 40,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The error \"arithmetic on non-numeric\" at the `hsv2rgb` call on line 102 is caused by calling `hsv2rgb` with all-`fixed` arguments (the integer path) and then using the result in an additive expression. The integer path can only be returned directly from `shade()`; it cannot participate in further arithmetic. The fix is to cast the three arguments to `float` so the float-path `hsv2rgb` is used, whose `vec3` result is arithmetic-compatible. That is the only change.\n\n```glsl\n// Campfire embers with occasional rising sparks.\n//\n// A warm flicker wells up from the base (quadratic height fall-off) and\n// occasional bright sparks drift upward, fading as they rise. Fixed-point\n// per-LED arithmetic; spark proximity uses both height and cylindrical angle\n// for crisp point-like appearance on the helix.\n\nuniform float speed      : 0.1 .. 4.0 = 1.0;        // ember flicker rate\nuniform float intensity  : 0.0 .. 1.0 = 0.85;       // overall brightness\nuniform float spark_rate : 0.0 .. 3.0 = 0.8;        // sparks per second\nuniform vec3  col_hot    : color = 1.0, 0.55, 0.05;  // bright hot ember\nuniform vec3  col_cool   : color = 0.55, 0.03, 0.0;  // dim cool ember\n\n// Eight spark slots\nstate fixed sp_y[8];     // height 0..1\nstate fixed sp_ang[8];   // angle  0..1 turns\nstate fixed sp_life[8];  // 0 = dead\nstate fixed sp_seed[8];  // per-spark random (colour + rise speed)\n\n// Hoisted flicker waves \u2014 computed once per frame\nstate fixed fw1;\nstate fixed fw2;\n\n// Spawn countdown (seconds until next spark)\nstate float stimer;\n\nvoid update() {\n  fw1 = sin(fixed(time * speed * 1.3));\n  fw2 = sin(fixed(time * speed * 2.5 + 1.1));\n\n  // Pre-compute per-frame deltas to save fixed conversions inside the loop\n  fixed drise = fixed(dt) * fixed(0.45);\n  fixed ddead = fixed(dt * 1.1);\n\n  for (int i = 0; i < 8; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      sp_y[i]    = sp_y[i] + drise + sp_seed[i] * fixed(dt) * fixed(0.2);\n      sp_life[i] = sp_life[i] - ddead;\n      if (sp_y[i] > fixed(1.05) || sp_life[i] < fixed(0.0)) {\n        sp_life[i] = fixed(0.0);\n      }\n    }\n  }\n\n  // Spawn a new spark when the timer fires\n  if (spark_rate > 0.0) {\n    stimer = stimer - dt;\n    if (stimer <= 0.0) {\n      stimer = 1.0 / spark_rate;\n      float s = fract(time * 13.7);\n      for (int j = 0; j < 8; j = j + 1) {\n        if (sp_life[j] <= fixed(0.0)) {\n          sp_y[j]    = fixed(hash(s + 0.00) * 0.10); // spawn near bottom\n          sp_ang[j]  = fixed(hash(s + 0.11));\n          sp_life[j] = fixed(0.4 + hash(s + 0.22) * 0.6);\n          sp_seed[j] = fixed(hash(s + 0.33));\n          j = 8; // break: only fill one slot per tick\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed fy  = fixed(led.uv.y);                        // 0 = bottom, 1 = top\n  fixed ph  = fixed(hash(float(led.idx)));\n  fixed ph2 = fixed(hash(float(led.idx) * 1.618));\n\n  // Quadratic height envelope: embers are brightest at the base\n  fixed omy = fixed(1.0) - fy;\n  fixed env = omy * omy;\n\n  // Two detuned flicker oscillators with per-LED phase offsets\n  fixed flicker = sin(ph  * fixed(5.1) + fw1) * fixed(0.45)\n                + sin(ph2 * fixed(3.7) + fw2) * fixed(0.35);\n  flicker = flicker * fixed(0.5) + fixed(0.5); // remap to 0..1\n\n  // Combine envelope and flicker into a brightness value\n  fixed val = clamp(env * (flicker * fixed(0.6) + fixed(0.4)), fixed(0.0), fixed(1.0));\n\n  // Ember colour: cool dark red through hot orange, scaled by brightness\n  vec3 col = mix(col_cool, col_hot, float(val)) * (float(val) * intensity);\n\n  // Sparks \u2014 proximity in both height (uv.y) and cylindrical angle (led.pos)\n  // atan2 of fixed args returns turns in -0.5..0.5; +0.5 normalises to 0..1.\n  // The compiler caches this expression once per LED.\n  fixed led_ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  for (int i = 0; i < 8; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      fixed dy   = abs(fy - sp_y[i]);\n      // Circular angular distance 0..0.5\n      fixed dang = abs(fract(led_ang - sp_ang[i] + fixed(0.5)) - fixed(0.5));\n      // Linear kernel: height radius 0.04 uv.y, angle radius 0.08 turns\n      fixed prox = max(fixed(0.0),\n                       fixed(1.0) - dy * fixed(25.0) - dang * fixed(12.5));\n      if (prox > fixed(0.0)) {\n        fixed sv = prox * sp_life[i];\n        // Yellow-white spark: desaturates to white at peak brightness.\n        // Cast to float so hsv2rgb returns a vec3 usable in arithmetic.\n        fixed sh = fixed(0.09) + sp_seed[i] * fixed(0.05); // ~golden-yellow hue\n        fixed ss = (fixed(1.0) - sv) * fixed(0.6);\n        col = col + hsv2rgb(float(sh), float(ss), float(sv));\n      }\n    }\n  }\n\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "1986700d-88e0-41da-9406-0f037f952922",
+      "wall_s": 98.5,
+      "duration_api_ms": 382483,
+      "cost_usd": 0.6020973,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 9819,
+        "cache_read_input_tokens": 11824,
+        "cache_creation_input_tokens": 22400
+      },
+      "thinking_tokens": 8027,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1718
+    }
+  ],
+  "started": "2026-10-23T00:23:11",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.919,
+  "total_wall_s": 385.9,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p02.fx"
+}

@@ -57,12 +57,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1535.86 | 9599.11  | yes    |
 | UnMath:tan    | 968.00  | 6049.97  | yes    |
 | BinMath:atan2 | 954.04  | 5962.76  | yes    |
 | Hsv2Rgb       | 849.10  | 5306.87  | yes    |
 | UnMath:log    | 778.28  | 4864.27  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.96  | 3849.72  | yes    |
@@ -77,7 +79,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 439.02  | 2743.89  | yes    |
 | Palette       | 416.07  | 2600.42  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.84  | 2299.02  | yes    |
 | Distance      | 364.05  | 2275.31  | yes    |
 | BinMath:mod   | 363.45  | 2271.56  | yes    |
@@ -192,7 +193,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 ```text
 BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, min 0.9x, max 0.9x, step 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, clamp 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.0x, normalize 4.7x, cross 5.2x, exp 5.3x, smoothstep 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 ```
 
 ### Estimator accuracy (held-out)
@@ -334,12 +335,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1536.31 | 9601.92  | yes    |
 | UnMath:tan    | 967.74  | 6048.38  | yes    |
 | BinMath:atan2 | 953.76  | 5961.01  | yes    |
 | Hsv2Rgb       | 848.82  | 5305.15  | yes    |
 | UnMath:log    | 777.49  | 4859.31  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.70  | 3848.14  | yes    |
@@ -354,7 +357,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 438.54  | 2740.85  | yes    |
 | Palette       | 416.05  | 2600.29  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.83  | 2298.95  | yes    |
 | Distance      | 363.90  | 2274.36  | yes    |
 | BinMath:mod   | 363.68  | 2272.99  | yes    |
@@ -469,7 +471,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 ```text
 BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, step 0.7x, clamp 0.7x, min 0.9x, max 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, smoothstep 5.2x, exp 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 ```
 
 ### Estimator accuracy (held-out)
