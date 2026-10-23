@@ -92,6 +92,8 @@ py_library(
     name = "harness",
     srcs = [
         "board_caps.py",
+        "ctrl_budget_core.py",
+        "ctrl_budget_probe.py",
         "device_cert_core.py",
         "e2e_phases.py",
         "fx_bench_core.py",
@@ -1005,6 +1007,35 @@ py_test(
         "hitl",
         "manual",
     ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-LAN live-control latency budget (docs/design/live-control.md "Measuring the
+# budget"): flashes the LM_CTRL_TRACE measurement image and runs the stdlib probe
+# (ctrl_budget_probe.py) inside the reservation, straight to the DUT over the rig AP; the
+# pure attribution (ctrl_budget_core) is unit-tested in //pi/hitl/tests. Reports a budget
+# table (heavy/light effect x wss/OSC x quiet/+400 pps); not a gate.
+py_binary(
+    name = "ctrl_budget_netstack",
+    srcs = [
+        "hitl_ctrl_budget.py",
+        "hitl_led_capture.py",
+        "hitl_live_latency.py",
+    ],
+    data = [
+        "ctrl_budget_probe.py",
+        "//firmware/player_app:esp32c6_netstack_ctrltrace_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_ctrl_budget.py",
+    tags = ["manual"],
     deps = [
         ":harness",
         "//pi/server",

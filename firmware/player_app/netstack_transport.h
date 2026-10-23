@@ -54,6 +54,24 @@ uint32_t netstack_rekey_count(void);
 // last call (reset on read). Formats one "[net] ..." fragment into `buf`.
 int netstack_net_stats(char *buf, size_t cap);
 
+// Live-control latency stamps (docs/design/live-control.md "Measuring the budget"): the
+// transport's view of the newest inbound frame, in esp_timer microseconds truncated to 32
+// bits. Always maintained (one timer read per reaped frame); main.cpp's LM_CTRL_TRACE build
+// copies them into its per-message trace at dispatch.
+struct NsRxStamps {
+  volatile uint32_t empty_poll_us;  // the last RX-ring poll that found the ring empty
+  volatile uint32_t reap_us;        // the frame being handled now was taken off the ring
+  volatile uint32_t data_reap_us;   // ... the newest frame that carried TCP payload
+  volatile uint32_t data_empty_us;  // empty_poll_us as of that reap (it arrived after this)
+  volatile uint32_t l3_reap_us;     // reap_us / empty_poll_us as of the newest L3 packet
+  volatile uint32_t l3_empty_us;    //   (a UDP datagram: OSC)
+  volatile uint32_t decoded_us;     // mbedtls_ssl_read last returned a record
+};
+extern NsRxStamps g_ns_rx_stamps;
+// Called after each WS message dispatch's reply: 1 = sent, 2 = dropped (best-effort reply
+// on a full send window), 0 = no reply. nullptr = nobody listening (the default).
+extern void (*g_ns_reply_hook)(int outcome);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and

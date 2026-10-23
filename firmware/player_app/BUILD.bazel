@@ -630,6 +630,12 @@ NETSTACK_VARIANTS = [
         "_ota_unhealthy",
         ["LM_OTA_FAULT=2"],
     ),
+    # Live-control latency trace (docs/design/live-control.md "Measuring the budget"):
+    # per-stage timestamps for every control message and frame, paged out over the WS.
+    (
+        "_ctrltrace",
+        ["LM_CTRL_TRACE=1"],
+    ),
 ]
 
 [cc_binary(
@@ -830,6 +836,20 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack_ctrltrace",
+    app = ":esp32c6_netstack_ctrltrace",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# The measurement image //pi/hitl/harness:ctrl_budget flashes (not shipped).
+flash_bundle(
+    name = "esp32c6_netstack_ctrltrace_flashbundle",
+    flash = ":flash_esp32c6_netstack_ctrltrace",
     tags = ["manual"],
 )
 
