@@ -3663,7 +3663,9 @@ pub fn expf(x: f32) -> f32 {
     let xln = x * core::f32::consts::LOG2_E; // x / ln2
     let i = floorf(xln);
     let f = xln - i;
-    let poly = 1.0 + f * (core::f32::consts::LN_2 + f * (0.2402265 + f * 0.0555041));
+    // 2^f on [0, 1): a minimax cubic (max relative error 8.6e-5). The Taylor
+    // cubic it replaces reached 1.9888 at f -> 1, a 0.56% jump at every integer.
+    let poly = 1.0 + f * (0.695_113_5 + f * (0.227_659_75 + f * 0.077_053_55));
     let bits = (f2i(i).wrapping_add(127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
@@ -3673,9 +3675,31 @@ pub fn logf(x: f32) -> f32 {
     }
     let bits = x.to_bits();
     let e = ((bits >> 23) & 0xff) as i32 - 127;
-    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000); // [1,2)
-    let p = -1.7417939 + m * (2.8212026 + m * (-1.4699568 + m * (0.4471623 - m * 0.0821854)));
-    (e as f32) * core::f32::consts::LN_2 + p
+    // ln x = (e + log2 m) * ln 2 for x = m * 2^e, m in [1, 2), with log2(1 + t)
+    // on t = m - 1 in [0, 1) as a degree-5 polynomial through 0 (max error
+    // 1.5e-5). The old version added a log2-shaped polynomial straight to
+    // e * ln 2 without scaling it by ln 2, so it was off by up to 0.13 (ln 1.5
+    // came out 0.276, not 0.405) and pow(x, 8) = exp(8 ln x) by up to 2.8x
+    // (docs/design/fx-perf-study.md).
+    // t is exactly mantissa * 2^-23 and e is a small integer, so both are built
+    // from the bits (bit-identical to `m - 1.0` and `e as f32`) instead of a
+    // soft subtract and a soft int-to-float conversion.
+    let t = u24_unit((bits & 0x007f_ffff) << 1);
+    let p = t * (1.441_966_3 + t * (-0.709_670_9 + t * (0.417_625_8 + t * (-0.196_311_97 + t * 0.046_405_36))));
+    (small_i2f(e) + p) * core::f32::consts::LN_2
+}
+
+/// `v as f32` for `|v| < 2^24` (exact there), in integer ops instead of the
+/// soft `__floatsisf`.
+#[inline]
+fn small_i2f(v: i32) -> f32 {
+    if v == 0 {
+        return 0.0;
+    }
+    let a = v.unsigned_abs();
+    let p = 31 - a.leading_zeros(); // the leading bit, <= 23
+    let sign = (v as u32) & 0x8000_0000;
+    f32::from_bits(sign | ((p + 127) << 23) | ((a << (23 - p)) & 0x007f_ffff))
 }
 pub fn powf(a: f32, b: f32) -> f32 {
     if a <= 0.0 {

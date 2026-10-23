@@ -1282,3 +1282,56 @@ fn floorf_matches_float_form() {
         assert_eq!(floorf(x).to_bits(), old(x).to_bits(), "floorf({x:e})");
     }
 }
+
+/// `logf` builds `t = m - 1` and `e as f32` from the bits; both are exact, so it
+/// is bit-identical to the float form (checked exhaustively when written).
+#[test]
+fn logf_matches_float_form() {
+    let old = |x: f32| {
+        if x <= 0.0 {
+            return -87.0;
+        }
+        let bits = x.to_bits();
+        let e = ((bits >> 23) & 0xff) as i32 - 127;
+        let t = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000) - 1.0;
+        let p = t * (1.441_966_3 + t * (-0.709_670_9 + t * (0.417_625_8 + t * (-0.196_311_97 + t * 0.046_405_36))));
+        ((e as f32) + p) * core::f32::consts::LN_2
+    };
+    let mut b: u32 = 0;
+    loop {
+        let x = f32::from_bits(b);
+        assert_eq!(logf(x).to_bits(), old(x).to_bits(), "logf({x:e} = {b:#x})");
+        match b.checked_add(997) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+}
+
+/// `logf` is ln, not "log2-ish + e*ln2" (fx-perf-study: ln 1.5 came out 0.276
+/// and pow(x, 8) was off by up to 2.8x). Bounds: |logf - ln| < 2e-5 over the
+/// whole normal range, expf within 1e-4 relative, and pow(x, 8) within 0.2% on
+/// [0.05, 2] (8x logf's error through expf).
+#[test]
+fn logf_and_powf_are_accurate() {
+    let mut x = 1.0e-30f32;
+    while x < 1.0e30 {
+        let err = (logf(x) as f64 - (x as f64).ln()).abs();
+        assert!(err < 2e-5, "logf({x:e}) = {} vs {}", logf(x), (x as f64).ln());
+        x *= 1.013;
+    }
+    assert!((logf(1.5) - 0.405_465).abs() < 2e-5);
+    let mut a = 0.05f32;
+    while a < 2.0 {
+        let want = (a as f64).powi(8);
+        let got = powf(a, 8.0) as f64;
+        assert!((got / want - 1.0).abs() < 2e-3, "pow({a}, 8) = {got} vs {want}");
+        a += 0.0137;
+    }
+    let mut x = -80.0f32;
+    while x < 80.0 {
+        let rel = (expf(x) as f64 / (x as f64).exp() - 1.0).abs();
+        assert!(rel < 1e-4, "expf({x}) = {} vs {}", expf(x), (x as f64).exp());
+        x += 0.0173;
+    }
+}
