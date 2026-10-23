@@ -111,28 +111,47 @@ export function fitCosts(
   samples: BenchSample[],
   opcodeFeatures: string[],
   lambda = 1e-3,
+  /** Costs that are KNOWN, not fitted (e.g. the interpreter's `@dispatch`):
+   * their contribution (count × cost) is subtracted from each frame target
+   * first, so the fitted features absorb only what remains. */
+  known: Record<string, number> = {},
 ): FitResult {
   const features = [...opcodeFeatures, ...FIXED_FEATURES];
   const { A, y } = buildSystem(samples, features);
+  // Frame rows are even indices (frame, show interleaved per sample).
+  const offset = new Array<number>(y.length).fill(0);
+  samples.forEach((smp, i) => {
+    let o = 0;
+    for (const [k, c] of Object.entries(known)) {
+      if (!features.includes(k)) o += (smp.opCounts[k] ?? 0) * c;
+    }
+    offset[2 * i] = o;
+    y[2 * i] = y[2 * i]! - o;
+  });
   const n = features.length;
   // Normal equations
   const ata = Array.from({ length: n }, () => new Array<number>(n).fill(0));
   const aty = new Array<number>(n).fill(0);
+  // Rows are weighted by 1/measured² (RELATIVE least squares): a 30k-cycle
+  // program and a 3M-cycle one count equally, so the cheap programs that pin
+  // the dispatch / per-op split aren't drowned by the dear ones.
   for (let r = 0; r < A.length; r++) {
     const row = A[r]!;
     const yr = y[r]!;
+    const w = yr > 0 ? 1 / (yr * yr) : 0;
     for (let i = 0; i < n; i++) {
       const ri = row[i]!;
       if (ri === 0) continue;
-      aty[i]! += ri * yr;
+      aty[i]! += w * ri * yr;
       for (let j = i; j < n; j++) {
-        ata[i]![j]! += ri * row[j]!;
+        ata[i]![j]! += w * ri * row[j]!;
       }
     }
   }
-  // symmetrize + ridge
+  // symmetrize + ridge (scaled to each column so it stays a regularizer, not a
+  // bias, under the relative weighting)
   for (let i = 0; i < n; i++) {
-    ata[i]![i]! += lambda;
+    ata[i]![i]! += lambda * 1e-6 * ata[i]![i]! + 1e-18;
     for (let j = 0; j < i; j++) ata[i]![j] = ata[j]![i]!;
   }
   const x = solveSymmetric(ata, aty);
@@ -156,7 +175,8 @@ export function fitCosts(
     let pred = 0;
     const row = A[r]!;
     for (let i = 0; i < n; i++) pred += row[i]! * (x[i] ?? 0);
-    const actual = y[r]!;
+    pred += offset[r]!;
+    const actual = y[r]! + offset[r]!;
     if (actual > 0) {
       const rel = (pred - actual) / actual;
       se += rel * rel;

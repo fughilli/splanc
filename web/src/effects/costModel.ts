@@ -111,6 +111,69 @@ export const OPCODE_NAMES = [
   "SinFix", // 67
   "CosFix",
   "ExpFix", // 69
+  // integer/fixed abs/min/max/clamp + frac-operand builtins
+  "AbsI", // 70
+  "MinI",
+  "MaxI",
+  "ClampI",
+  "SignI",
+  "StepI",
+  "FloorFix",
+  "CeilFix",
+  "FractFix",
+  "MixFix", // 79
+  // FUG-122 fixed/int vector + transcendental + colour + I/O ops
+  "SqrtFix", // 80
+  "ScaleFix",
+  "DotFix",
+  "LengthFix",
+  "DistanceFix",
+  "NormalizeFix",
+  "CrossFix",
+  "SmoothstepFix",
+  "ClampVFix",
+  "MixVFix",
+  "Hsv2RgbFix", // 90
+  "PaletteFix",
+  "Atan2Fix",
+  "LogFix",
+  "TanFix",
+  "PowFix",
+  "HashFix",
+  "Hash3Fix",
+  "RetRgb8",
+  "RetRgbFix",
+  "LoadCtxFix", // 100
+  "FillLocal",
+  // FUG-125 superinstructions + JIT dispatch
+  "TeeLocal", // 102
+  "IncLocalI",
+  "BrCmpI",
+  "JitCall", // 105
+  // FUG-107 sensor-driver I2C intrinsics (drivers only, never in an effect)
+  "I2cWrite", // 106
+  "I2cRead",
+  // per-LED memo bracket (fx_compiler memo.rs)
+  "LoadLedCache", // 108
+  "StoreLedCache", // 109
+  // 110..=119 reserved (never emitted): the walker stops on them like any
+  // unknown byte.
+  "_reserved110",
+  "_reserved111",
+  "_reserved112",
+  "_reserved113",
+  "_reserved114",
+  "_reserved115",
+  "_reserved116",
+  "_reserved117",
+  "_reserved118",
+  "_reserved119",
+  // fx-perf-study R8 operand-fused superinstructions (fx_compiler opt.rs)
+  "BinTop", // 120
+  "BinPair",
+  "PushConsts",
+  "LoadCtxLanes",
+  "MulAdd", // 124
 ] as const;
 
 export type OpcodeName = (typeof OPCODE_NAMES)[number];
@@ -182,6 +245,14 @@ interface OpMeta {
   call?: boolean;
   /** True for Ret/RetFn — ends a linear run. */
   ret?: boolean;
+  /** True for PushConsts: 2 * n bytes of const indices follow the n byte. */
+  constTail?: boolean;
+  /** Operand offset of the i16 branch rel when it isn't 0 (BrCmpI's kind byte
+   * precedes it; LoadLedCache's slot,n). */
+  relAt?: number;
+  /** LoadLedCache: in steady state (cache bound + filled) the VM jumps past
+   * the memoized expression — the estimate prices that path. */
+  memoSkip?: boolean;
 }
 
 const OP_META: Record<string, OpMeta> = {
@@ -257,7 +328,101 @@ const OP_META: Record<string, OpMeta> = {
   SinFix: { operandBytes: 1, lanesAt: -1 },
   CosFix: { operandBytes: 1, lanesAt: -1 },
   ExpFix: { operandBytes: 1, lanesAt: -1 },
+  AbsI: { operandBytes: 0, lanesAt: -1 },
+  MinI: { operandBytes: 0, lanesAt: -1 },
+  MaxI: { operandBytes: 0, lanesAt: -1 },
+  ClampI: { operandBytes: 0, lanesAt: -1 },
+  SignI: { operandBytes: 1, lanesAt: -1 },
+  StepI: { operandBytes: 1, lanesAt: -1 },
+  FloorFix: { operandBytes: 1, lanesAt: -1 },
+  CeilFix: { operandBytes: 1, lanesAt: -1 },
+  FractFix: { operandBytes: 1, lanesAt: -1 },
+  MixFix: { operandBytes: 1, lanesAt: -1 },
+  SqrtFix: { operandBytes: 1, lanesAt: -1 },
+  ScaleFix: { operandBytes: 2, lanesAt: 1 }, // frac, n
+  DotFix: { operandBytes: 2, lanesAt: 1 },
+  LengthFix: { operandBytes: 2, lanesAt: 1 },
+  DistanceFix: { operandBytes: 2, lanesAt: 1 },
+  NormalizeFix: { operandBytes: 2, lanesAt: 1 },
+  CrossFix: { operandBytes: 1, lanesAt: -1 },
+  SmoothstepFix: { operandBytes: 2, lanesAt: 1 },
+  ClampVFix: { operandBytes: 1, lanesAt: 0 },
+  MixVFix: { operandBytes: 2, lanesAt: 1 },
+  Hsv2RgbFix: { operandBytes: 1, lanesAt: -1 },
+  PaletteFix: { operandBytes: 2, lanesAt: -1 },
+  Atan2Fix: { operandBytes: 1, lanesAt: -1 },
+  LogFix: { operandBytes: 1, lanesAt: -1 },
+  TanFix: { operandBytes: 1, lanesAt: -1 },
+  PowFix: { operandBytes: 1, lanesAt: -1 },
+  HashFix: { operandBytes: 1, lanesAt: -1 },
+  Hash3Fix: { operandBytes: 1, lanesAt: -1 },
+  RetRgb8: { operandBytes: 0, lanesAt: -1, ret: true },
+  RetRgbFix: { operandBytes: 1, lanesAt: -1, ret: true },
+  LoadCtxFix: { operandBytes: 3, lanesAt: -1 },
+  FillLocal: { operandBytes: 2, lanesAt: 1 },
+  TeeLocal: { operandBytes: 2, lanesAt: 1 },
+  IncLocalI: { operandBytes: 3, lanesAt: -1 },
+  BrCmpI: { operandBytes: 3, lanesAt: -1, branch: true, relAt: 1 },
+  JitCall: { operandBytes: 2, lanesAt: -1 },
+  I2cWrite: { operandBytes: 0, lanesAt: -1 },
+  I2cRead: { operandBytes: 1, lanesAt: -1 },
+  LoadLedCache: { operandBytes: 4, lanesAt: 1, branch: true, relAt: 2, memoSkip: true },
+  StoreLedCache: { operandBytes: 2, lanesAt: 1 },
+  // R8 fused ops: priced as the plain ops they replace minus their dispatches
+  // (see `fusedFeatures`), so fitted tables need no new keys.
+  BinTop: { operandBytes: 3, lanesAt: -1 }, // mode, u16
+  BinPair: { operandBytes: 5, lanesAt: -1 }, // mode, u16, u16
+  PushConsts: { operandBytes: 1, lanesAt: -1, constTail: true }, // n, n x u16
+  LoadCtxLanes: { operandBytes: 4, lanesAt: -1 }, // id, src, k, m
+  MulAdd: { operandBytes: 1, lanesAt: 0 },
 };
+
+const FUSED_SRC = ["PushConst", "LoadLocal", "LoadState", "LoadUniform"] as const;
+const FUSED_ARITH = ["Add", "Sub", "Mul", "Div"] as const;
+const FUSED_ARITH_INT = ["AddI", "SubI", "MulI", "MulFix"] as const;
+
+/**
+ * The cost features of an R8 operand-fused opcode at `at`: the plain ops it
+ * stands for (each still priced by its own key), WITHOUT their dispatches —
+ * the caller adds one `@dispatch` for the fused op. Undefined for other ops.
+ */
+export function fusedFeatures(name: string, code: Uint8Array, at: number): Array<[string, number]> | undefined {
+  const b = (k: number) => code[at + 1 + k] ?? 0;
+  const arith = (mode: number) => ((mode & 0x40) !== 0 ? FUSED_ARITH_INT : FUSED_ARITH)[mode & 3]!;
+  switch (name) {
+    case "BinTop":
+      return [
+        [FUSED_SRC[(b(0) >> 2) & 3]!, 1],
+        [arith(b(0)), 1],
+      ];
+    case "BinPair":
+      return [
+        [FUSED_SRC[(b(0) >> 2) & 3]!, 1],
+        [FUSED_SRC[(b(0) >> 4) & 3]!, 1],
+        [arith(b(0)), 1],
+      ];
+    case "PushConsts":
+      return [["PushConst", Math.max(1, b(0))]];
+    case "LoadCtxLanes":
+      return [
+        ["LoadCtx", 1],
+        ["Swizzle", 1],
+      ];
+    case "MulAdd":
+      return [
+        ["Mul", Math.max(1, b(0))],
+        ["Add", Math.max(1, b(0))],
+      ];
+    default:
+      return undefined;
+  }
+}
+
+/** Histogram key for the interpreter's per-opcode dispatch (fetch/decode/
+ * budget/jump) — counted once per executed op, NOT lane-weighted. Priced by
+ * `@dispatch` in the cost table (absent = 0, so fitted tables that predate it
+ * are unchanged). */
+export const DISPATCH_FEATURE = "@dispatch";
 
 // -- Cost table -------------------------------------------------------------
 
@@ -277,8 +442,16 @@ export type CostMap = Record<string, number>;
 
 interface FxbHeader {
   code: Uint8Array; // the code segment only
+  /** The const pool as raw 32-bit words (ints/fixed ride as bits). */
+  consts: Uint32Array;
   updateEntry: number; // NO_ENTRY (0xFFFF) if absent
   shadeEntry: number;
+  /** The per-frame prepare entry the compiler's variance pass hoisted
+   * frame-invariant shade() work into (memo trailer); NO_ENTRY if absent. The
+   * VM runs it once per frame. */
+  prepEntry: number;
+  /** Per-LED memo words the program requests (0 = none). */
+  ledCacheWords: number;
 }
 
 const NO_ENTRY = 0xffff;
@@ -289,6 +462,32 @@ function rdU16(b: Uint8Array, o: number): number {
 function rdI16(b: Uint8Array, o: number): number {
   const v = rdU16(b, o);
   return v >= 0x8000 ? v - 0x10000 : v;
+}
+
+/**
+ * The uniform values a freshly loaded effect runs with on the device: the
+ * manifest's `default` lanes by slot (the firmware seeds them on load since
+ * R7), 0 elsewhere. Unparseable manifests give [] (all uniforms 0).
+ */
+export function manifestDefaults(buf: Uint8Array): number[] {
+  if (buf.length < 18) return [];
+  const manifestLen = rdU16(buf, 8);
+  try {
+    const json = JSON.parse(new TextDecoder().decode(buf.subarray(18, 18 + manifestLen))) as Array<{
+      slot?: number;
+      default?: number[];
+    }>;
+    const out: number[] = [];
+    for (const u of Array.isArray(json) ? json : []) {
+      if (typeof u.slot !== "number" || !Array.isArray(u.default)) continue;
+      u.default.forEach((v, k) => {
+        out[u.slot! + k] = Number(v) || 0;
+      });
+    }
+    return Array.from(out, (v) => v ?? 0);
+  } catch {
+    return [];
+  }
 }
 
 /** Parse the `.fxb` header and slice out the code segment. Throws on a bad or
@@ -304,9 +503,26 @@ export function parseFxb(buf: Uint8Array): FxbHeader {
   const codeLen = rdU16(buf, 12);
   const updateEntry = rdU16(buf, 14);
   const shadeEntry = rdU16(buf, 16);
-  let o = 18 + manifestLen + nConsts * 4;
+  const flags = buf[5]!;
+  const o = 18 + manifestLen + nConsts * 4;
   const code = buf.subarray(o, o + codeLen);
-  return { code, updateEntry, shadeEntry };
+  const consts = new Uint32Array(nConsts);
+  const c0 = 18 + manifestLen;
+  for (let i = 0; i < nConsts; i++) {
+    const b = c0 + i * 4;
+    consts[i] = (buf[b]! | (buf[b + 1]! << 8) | (buf[b + 2]! << 16) | (buf[b + 3]! << 24)) >>> 0;
+  }
+  // Optional trailers: buffer table (flags & 0x01), then the memo trailer
+  // (flags & 0x20): prep_entry(u16) words(u8) n_groups(u8) groups...
+  let t = o + codeLen;
+  if (flags & 0x01) t += 1 + (buf[t] ?? 0) * 7;
+  let prepEntry = NO_ENTRY;
+  let ledCacheWords = 0;
+  if (flags & 0x20 && t + 4 <= buf.length) {
+    prepEntry = rdU16(buf, t);
+    ledCacheWords = buf[t + 2]!;
+  }
+  return { code, consts, updateEntry, shadeEntry, prepEntry, ledCacheWords };
 }
 
 // -- Abstract interpreter ----------------------------------------------------
@@ -328,6 +544,12 @@ export interface WalkResult {
   branched: boolean;
   /** True if a loop trip cap was hit (count may under-report). */
   loopCapped: boolean;
+  /** Opcodes executed (NOT lane-weighted) on the min / max path — what the
+   * interpreter's per-op dispatch cost ({@link DISPATCH_FEATURE}) scales with. */
+  opsMin: number;
+  opsMax: number;
+  /** True if the walk followed a loop back-edge (a `for` body ran). */
+  looped?: boolean;
 }
 
 const LOOP_TRIP_CAP = 64; // compile-time `for` bounds are small; cap the walk.
@@ -343,24 +565,43 @@ function addOp(h: OpHistogram, name: string, weight: number): void {
  * it (bounding backward jumps by a trip cap). Recursion is bounded by a visit
  * budget so pathological CFGs can't hang the browser.
  */
-export function walkEntry(code: Uint8Array, entry: number): WalkResult {
+export function walkEntry(
+  code: Uint8Array,
+  entry: number,
+  consts?: Uint32Array,
+  uniforms?: ArrayLike<number>,
+): WalkResult {
   if (entry === NO_ENTRY || entry >= code.length) {
-    return { min: {}, max: {}, branched: false, loopCapped: false };
+    return { min: {}, max: {}, branched: false, loopCapped: false, opsMin: 0, opsMax: 0 };
   }
   let branched = false;
   let loopCapped = false;
+  let looped = false;
   const visits = new Map<number, number>(); // pc -> times entered (loop cap)
   let steps = 0;
   const STEP_BUDGET = 200_000;
+  const OP = (n: OpcodeName): number => NAME_TO_CODE[n]!;
+  const constInt = (pcOfPush: number): number | undefined =>
+    consts ? (consts[rdU16(code, pcOfPush + 1)] ?? 0) | 0 : undefined;
+  const cmpInt = (kind: number, a: number, b: number): boolean =>
+    [a < b, a <= b, a > b, a >= b, a === b, a !== b][kind] ?? false;
 
   // DFS that returns {min,max} op-histograms for the straight-line-plus-branch
-  // region starting at `pc`. `depth` bounds recursion for safety.
-  function walk(pc: number, depth: number): { min: OpHistogram; max: OpHistogram } {
+  // region starting at `pc`. `depth` bounds recursion for safety. `env` tracks
+  // int locals with a compile-time-known value along this path (loop counters:
+  // `int i = 0; i < 8; i = i + 1`), so a counted `for` loop is walked for its
+  // real trip count instead of the 0..LOOP_TRIP_CAP band.
+  type Region = { min: OpHistogram; max: OpHistogram; end: number; env: Map<number, number> };
+  function walk(pc: number, depth: number, env: Map<number, number>, stopAt = -1): Region {
     const min: OpHistogram = {};
     const max: OpHistogram = {};
-    if (depth > 512) return { min, max };
+    if (depth > 512) return { min, max, end: -1, env };
     let p = pc;
+    const recent: number[] = []; // start pcs of the last few ops on this run
+    const prev = (k: number): number => recent[recent.length - k] ?? -1;
+    const isOp = (at: number, n: OpcodeName): boolean => at >= 0 && code[at] === OP(n);
     for (;;) {
+      if (p === stopAt) return { min, max, end: p, env };
       if (p < 0 || p >= code.length) break;
       if (++steps > STEP_BUDGET) {
         loopCapped = true;
@@ -375,7 +616,7 @@ export function walkEntry(code: Uint8Array, entry: number): WalkResult {
 
       const opCode = code[p]!;
       const name = OPCODE_NAMES[opCode];
-      if (name === undefined) break; // unknown byte — stop this run
+      if (name === undefined || name.startsWith("_")) break; // unknown byte — stop this run
       const meta = OP_META[name]!;
       const operandStart = p + 1;
       // vector lane weight from the size operand (scalar cost × lane count).
@@ -390,8 +631,13 @@ export function walkEntry(code: Uint8Array, entry: number): WalkResult {
       // the cost map can price each builtin individually. `costFor` falls the
       // sub-key back to the family base for tables that only price the family.
       const histName = mathFeature(name, code[operandStart]);
-      addOp(min, histName, weight);
-      addOp(max, histName, weight);
+      const fused = fusedFeatures(name, code, p);
+      for (const [feat, w] of fused ?? [[histName, weight] as [string, number]]) {
+        addOp(min, feat, w);
+        addOp(max, feat, w);
+      }
+      addOp(min, DISPATCH_FEATURE, 1);
+      addOp(max, DISPATCH_FEATURE, 1);
 
       // advance PC past operands
       let next = operandStart + meta.operandBytes;
@@ -399,15 +645,69 @@ export function walkEntry(code: Uint8Array, entry: number): WalkResult {
         const dstN = code[operandStart + 1] ?? 0;
         next += dstN;
       }
+      if (meta.constTail) next += 2 * (code[operandStart] ?? 0);
 
       if (meta.ret) break; // Ret / RetFn ends this run
 
+      // Known-int local tracking (see `env`).
+      const slot = code[operandStart] ?? 0;
+      const width = code[operandStart + 1] ?? 1;
+      if (name === "StoreLocal" || name === "TeeLocal") {
+        let v1 = isOp(prev(1), "PushConst") ? constInt(prev(1)) : undefined;
+        // `int n = int(uniform)` with known uniform values (e.g. a loop bound).
+        if (uniforms && isOp(prev(1), "F2I") && isOp(prev(2), "LoadUniform") && code[prev(2) + 2] === 1) {
+          v1 = Math.trunc(uniforms[code[prev(2) + 1]!] ?? 0) | 0;
+        }
+        const inc =
+          isOp(prev(1), "AddI") && isOp(prev(2), "PushConst") && isOp(prev(3), "LoadLocal") && code[prev(3) + 1] === slot
+            ? constInt(prev(2))
+            : undefined;
+        for (let k = 0; k < width; k++) env.delete(slot + k);
+        if (width === 1 && v1 !== undefined) env.set(slot, v1);
+        else if (width === 1 && inc !== undefined && recentEnv.has(slot)) env.set(slot, (recentEnv.get(slot)! + inc) | 0);
+      } else if (name === "IncLocalI") {
+        const c = consts ? (consts[rdU16(code, operandStart + 1)] ?? 0) | 0 : undefined;
+        const cur = env.get(slot);
+        if (cur !== undefined && c !== undefined) env.set(slot, (cur + c) | 0);
+        else env.delete(slot);
+      } else if (name === "FillLocal") {
+        for (let k = 0; k < width; k++) env.set(slot + k, 0);
+      } else if (name === "StoreLocalIdx" || name === "Call") {
+        env.clear();
+      }
+      if (name === "LoadLocal") recentEnv = new Map(env); // value as loaded (for `i = i + k`)
+
       if (meta.branch) {
-        const rel = rdI16(code, operandStart);
+        const rel = rdI16(code, operandStart + (meta.relAt ?? 0));
         const target = next + rel;
-        if (name === "Jmp") {
+        if (name === "Jmp" || meta.memoSkip) {
+          // Jmp: unconditional. LoadLedCache: the steady-state cache hit skips
+          // the memoized expression (it ran once per LED, at the first frame).
           // Unconditional: follow it (backward jumps bounded by the visit cap).
+          recent.push(p);
+          // Leaving the current if-arm forward (if/else's jump over the else).
+          if (stopAt >= 0 && target > stopAt) return { min, max, end: target, env };
+          if (target <= p) looped = true;
           p = target;
+          continue;
+        }
+        // A compile-time-known loop/if condition: follow the one path it takes.
+        let known: boolean | undefined;
+        // An int operand's value if its push is a const or a known local.
+        const srcVal = (at: number): number | undefined =>
+          isOp(at, "PushConst") ? constInt(at) : isOp(at, "LoadLocal") ? env.get(code[at + 1]!) : undefined;
+        if (name === "BrCmpI") {
+          const a = srcVal(prev(2));
+          const b = srcVal(prev(1));
+          if (a !== undefined && b !== undefined) known = !cmpInt(code[operandStart]!, a, b); // branches if NOT cmp
+        } else if (name === "BrFalse" && isOp(prev(1), "CmpI")) {
+          const a = srcVal(prev(3));
+          const b = srcVal(prev(2));
+          if (a !== undefined && b !== undefined) known = !cmpInt(code[prev(1) + 1]!, a, b); // branches if false
+        }
+        if (known !== undefined) {
+          recent.length = 0;
+          p = known ? target : next;
           continue;
         }
         // BrFalse: two continuations. Only treat a FORWARD skip as an
@@ -415,24 +715,82 @@ export function walkEntry(code: Uint8Array, entry: number): WalkResult {
         // we approximate by falling through (the trip cap bounds it).
         if (target > next) {
           branched = true;
-          const taken = walk(target, depth + 1); // condition false: skip arm
-          const fall = walk(next, depth + 1); // condition true: run arm
+          // Structured if / if-else: walk the arm(s) as bounded regions and
+          // continue ONCE after them (min = cheaper arm or skip, max = dearer),
+          // instead of re-walking the whole tail per path (2^n blow-up).
+          const arm = walk(next, depth + 1, new Map(env), target);
+          if (arm.end === target) {
+            addHist(max, arm.max);
+            env = meetEnv(env, arm.env);
+            recent.length = 0;
+            p = target;
+            continue;
+          }
+          if (arm.end > target) {
+            const els = walk(target, depth + 1, new Map(env), arm.end);
+            if (els.end === arm.end) {
+              const cheap = histTotal(arm.min) <= histTotal(els.min) ? arm.min : els.min;
+              const dear = histTotal(arm.max) >= histTotal(els.max) ? arm.max : els.max;
+              addHist(min, cheap);
+              addHist(max, dear);
+              env = meetEnv(arm.env, els.env);
+              recent.length = 0;
+              p = arm.end;
+              continue;
+            }
+          }
+          // Unstructured: both continuations to the end.
+          const taken = walk(target, depth + 1, new Map(env), stopAt); // condition false: skip arm
+          const fall = walk(next, depth + 1, new Map(env), stopAt); // condition true: run arm
           // min path = cheaper of the two continuations; max = costlier.
           mergeMinMax(min, max, taken, fall);
-          return { min, max };
+          return { min, max, end: taken.end === fall.end ? taken.end : -1, env };
         }
         // backward BrFalse: fall through (loop exit path).
+        recent.length = 0;
         p = next;
         continue;
       }
 
+      recent.push(p);
+      if (recent.length > 4) recent.shift();
       p = next;
     }
-    return { min, max };
+    return { min, max, end: -1, env };
   }
+  let recentEnv = new Map<number, number>();
 
-  const { min, max } = walk(entry, 0);
-  return { min, max, branched, loopCapped };
+  const { min, max } = walk(entry, 0, new Map());
+  // The dispatch count rides the histograms during the walk (so branch min/max
+  // bookkeeping covers it) but is reported separately: the histograms stay
+  // pure opcode features.
+  const opsMin = min[DISPATCH_FEATURE] ?? 0;
+  const opsMax = max[DISPATCH_FEATURE] ?? 0;
+  delete min[DISPATCH_FEATURE];
+  delete max[DISPATCH_FEATURE];
+  return { min, max, branched, loopCapped, opsMin, opsMax, looped };
+}
+
+/** A walk's shade histogram WITH the dispatch count as a {@link
+ * DISPATCH_FEATURE} entry — the form the calibration fits consume, so a
+ * fitted table prices dispatch separately from each op's compute. */
+export function histWithDispatch(w: WalkResult): OpHistogram {
+  return { ...w.max, [DISPATCH_FEATURE]: w.opsMax };
+}
+
+function addHist(into: OpHistogram, h: OpHistogram): void {
+  for (const [k, v] of Object.entries(h)) into[k] = (into[k] ?? 0) + v;
+}
+function histTotal(h: OpHistogram): number {
+  let t = 0;
+  for (const v of Object.values(h)) t += v;
+  return t;
+}
+/** Known-int facts that hold on BOTH paths. */
+function meetEnv(a: Map<number, number>, b: Map<number, number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [k, v] of a) if (b.get(k) === v) out.set(k, v);
+  return out;
 }
 
 /** Fold two continuation results into the accumulated min/max at a branch. */
@@ -464,11 +822,12 @@ function costOf(h: OpHistogram): number {
   return t;
 }
 
-/** Σ_op count[op] * cost[op], defaulting unlisted opcodes to `fallback`. */
+/** Σ_op count[op] * cost[op], defaulting unlisted opcodes to `fallback` (and
+ * synthetic `@` features such as {@link DISPATCH_FEATURE} to 0). */
 export function histCycles(h: OpHistogram, costs: CostMap, fallback: number): number {
   let c = 0;
   for (const [name, count] of Object.entries(h)) {
-    c += count * costFor(costs, name, fallback);
+    c += count * costFor(costs, name, name.startsWith("@") ? 0 : fallback);
   }
   return c;
 }
@@ -583,6 +942,10 @@ export interface EstimateInputs {
   dynamicShadeHist?: OpHistogram;
   /** Number of LEDs the dynamic histogram was summed over (to get per-LED). */
   dynamicLedCount?: number;
+  /** Known uniform values by slot (absent slots read 0). Lets the walker
+   * resolve uniform-driven loop bounds (`for i < int(waves)`) instead of
+   * banding them. Omit when the values are unknown. */
+  uniforms?: ArrayLike<number>;
 }
 
 const CYCLES_PER_MS_DIVISOR = 1_000_000; // cpuHz(Hz) * ms / 1000 ... see toMs
@@ -606,12 +969,22 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
 
   const header = parseFxb(bytecode);
 
-  // update(): abstract-interpret once. update_fixed + Σ counts*cost.
-  const upWalk = walkEntry(header.code, header.updateEntry);
+  // update(): abstract-interpret once. update_fixed + Σ counts*cost. The
+  // per-frame prepare entry (hoisted shade() work) also runs once per frame, so
+  // it is priced with update().
+  const upWalk = walkEntry(header.code, header.updateEntry, header.consts, inp.uniforms);
+  const prepWalk = walkEntry(header.code, header.prepEntry, header.consts, inp.uniforms);
+  for (const h of [upWalk.min, upWalk.max]) {
+    for (const [k, v] of Object.entries(prepWalk.max)) h[k] = (h[k] ?? 0) + v;
+  }
+  const upOps = upWalk.opsMax + prepWalk.opsMax;
+  upWalk.max[DISPATCH_FEATURE] = upOps;
+  upWalk.min[DISPATCH_FEATURE] = upWalk.opsMin + prepWalk.opsMax;
   const updateCyclesMin = table.fixed.update_fixed + histCycles(upWalk.min, table.costs, fb);
   const updateCyclesMax = table.fixed.update_fixed + histCycles(upWalk.max, table.costs, fb);
 
   // shade(): per-LED. Prefer the dynamic profile histogram if supplied.
+  let shadeLooped = false;
   let shadeMinPerLed: number;
   let shadeMaxPerLed: number;
   let shadeHistForHot: OpHistogram;
@@ -619,15 +992,23 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
   let loopCapped = upWalk.loopCapped;
   if (inp.dynamicShadeHist && (inp.dynamicLedCount ?? 0) > 0) {
     const perLed: OpHistogram = {};
+    let ops = 0;
     for (const [k, v] of Object.entries(inp.dynamicShadeHist)) {
       perLed[k] = v / inp.dynamicLedCount!;
+      if (!k.startsWith("@")) ops += v;
     }
+    // The dynamic profile counts executed ops (lane-weighted for vectors); its
+    // total is a close upper bound on the dispatch count.
+    if (perLed[DISPATCH_FEATURE] === undefined) perLed[DISPATCH_FEATURE] = ops / inp.dynamicLedCount!;
     const c = histCycles(perLed, table.costs, fb);
     shadeMinPerLed = c;
     shadeMaxPerLed = c; // exact executed path → no band from shade
     shadeHistForHot = perLed;
   } else {
-    const shWalk = walkEntry(header.code, header.shadeEntry);
+    const shWalk = walkEntry(header.code, header.shadeEntry, header.consts, inp.uniforms);
+    shadeLooped = shWalk.looped === true;
+    shWalk.min[DISPATCH_FEATURE] = shWalk.opsMin;
+    shWalk.max[DISPATCH_FEATURE] = shWalk.opsMax;
     shadeMinPerLed = histCycles(shWalk.min, table.costs, fb);
     shadeMaxPerLed = histCycles(shWalk.max, table.costs, fb);
     shadeHistForHot = shWalk.max;
@@ -650,7 +1031,10 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
   // residual error (the fit's known inaccuracy) for the reported error band.
   const totalCyclesMid = (totalCyclesMin + totalCyclesMax) / 2;
   const totalMs = toMs(totalCyclesMid, cpuHz);
-  const resid = Math.max(0, table.residualError);
+  // Control flow (data-dependent branches, loops) is priced less exactly than
+  // the straight-line isolation programs the residual was fitted on: widen.
+  const controlFlow = branched || loopCapped || upWalk.looped || shadeLooped;
+  const resid = Math.max(0, table.residualError) + (controlFlow ? 0.05 : 0);
   const lowMs = toMs(totalCyclesMin, cpuHz) * (1 - resid);
   const highMs = toMs(totalCyclesMax, cpuHz) * (1 + resid);
   const fraction = totalMs > 0 ? (highMs - lowMs) / (2 * totalMs) : 0;
@@ -690,7 +1074,7 @@ export function estimateFrameTime(inp: EstimateInputs): FrameEstimate {
 
 function totalWeighted(h: OpHistogram): number {
   let t = 0;
-  for (const v of Object.values(h)) t += v;
+  for (const [k, v] of Object.entries(h)) if (!k.startsWith("@")) t += v;
   return t;
 }
 
@@ -704,10 +1088,10 @@ function hotOpcodesOf(
   const contrib: Record<string, number> = {};
   const fb = table.fallbackCost;
   for (const [op, n] of Object.entries(updateHist)) {
-    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, fb);
+    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, op.startsWith("@") ? 0 : fb);
   }
   for (const [op, n] of Object.entries(shadePerLedHist)) {
-    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, fb) * ledCount;
+    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, op.startsWith("@") ? 0 : fb) * ledCount;
   }
   const denom = totalCycles > 0 ? totalCycles : 1;
   return Object.entries(contrib)

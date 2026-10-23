@@ -116,6 +116,30 @@ test("walkEntry sub-keys UnMath/BinMath by fn id", () => {
   assert.equal(w.max["BinMath"], undefined);
 });
 
+test("walkEntry prices the R8 fused ops as the plain ops they replace", () => {
+  // shade: BinPair mul(local 0, c1) ; BinTop addi(state 2) ; PushConsts c0 c1 c2 ;
+  //        LoadCtxLanes led.uv src=2 [0..+1] ; MulAdd 1 ; Ret 3
+  const code = [
+    CODE["BinPair"]!, 0x02 | (1 << 2), 0, 0, 1, 0,
+    CODE["BinTop"]!, 0x40 | (2 << 2), 2, 0,
+    CODE["PushConsts"]!, 3, 0, 0, 1, 0, 2, 0,
+    CODE["LoadCtxLanes"]!, 13, 2, 0, 1,
+    CODE["MulAdd"]!, 1,
+    CODE["Ret"]!, 3,
+  ];
+  const w = walkEntry(parseFxb(fxb(code, 0xffff, 0)).code, 0);
+  assert.equal(w.max["LoadLocal"], 1);
+  assert.equal(w.max["PushConst"], 1 + 3);
+  assert.equal(w.max["Mul"], 1 + 1);
+  assert.equal(w.max["LoadState"], 1);
+  assert.equal(w.max["AddI"], 1);
+  assert.equal(w.max["LoadCtx"], 1);
+  assert.equal(w.max["Swizzle"], 1);
+  assert.equal(w.max["Add"], 1);
+  // the fused names themselves are not features (fitted tables price parts).
+  for (const n of ["BinTop", "BinPair", "PushConsts", "LoadCtxLanes", "MulAdd"]) assert.equal(w.max[n], undefined);
+});
+
 test("mathFeature maps fn ids to sub-keys and other opcodes to themselves", () => {
   assert.equal(mathFeature("UnMath", 0), "UnMath:sin");
   assert.equal(mathFeature("UnMath", 6), "UnMath:sqrt");

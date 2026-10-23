@@ -79,105 +79,169 @@ export const DEFAULT_CPU_HZ = 160_000_000;
 export const BUDGET_MS = 1000 / 30; // 33.3ms, one 30fps frame
 
 /**
- * Shipped DEFAULT cost table for the C6 (perf-monitoring.md: "shipped with the
- * app, with the last on-device calibration overriding it"). Cycle costs reflect
- * the C6's soft-float economics — transcendentals dear, int/branch/stack cheap
- * — as SCALAR (per-lane) costs; the model multiplies by lane count. These are
- * order-of-magnitude seeds; calibration replaces them with fitted values and a
- * measured residual. `residualError` is deliberately generous (25%) so the
- * uncalibrated model's error bars are honestly wide.
+ * Shipped DEFAULT cost table for the C6 @160 MHz — CALIBRATED, not guessed.
+ *
+ * The model is `Σ ops × @dispatch + Σ lane-weighted ops × cost[op]`: every
+ * interpreted opcode pays the interpreter's dispatch (fetch/decode/budget
+ * check/jump table, `@dispatch`) once, plus its compute per lane. The values are
+ * a least-squares fit of that form to the HITL fx_bench bundle
+ * (web/tests/testdata/device-bench-esp32c6.json, 69 straight-line programs;
+ * rms error 0.4%, worst 1.5%) — see docs/design/fx-memoization.md
+ * "Calibration". The old seed table priced cheap ops at 2-3 cycles and had no
+ * dispatch term, so an effect of many cheap ops was underestimated ~40× (an
+ * offline "3 ms" that ran 132 ms on a 500-LED C6). The integer/fixed ISA rows
+ * are from the memo HITL fixed-point micro-benchmarks where measured, else
+ * conservative estimates (marked). fx_compiler's memo.rs `op_cycles` mirrors
+ * this table for its cache-selection cost model. `residualError` stays a
+ * generous 15% for programs unlike the benchmarks (loops, branches, buffers).
  */
 export const DEFAULT_COSTS: CostMap = {
-  // loads / stores / stack — cheap
-  PushConst: 2,
-  LoadUniform: 3,
-  LoadState: 3,
-  StoreState: 3,
-  LoadLocal: 3,
-  StoreLocal: 3,
-  LoadCtx: 3,
-  Swizzle: 4,
-  Pop: 1,
-  Swap: 3,
-  // integer / fixed-point fast path — cheap (no FPU)
-  AddI: 2,
-  SubI: 2,
-  MulI: 4,
-  DivI: 20,
-  ModI: 20,
-  NegI: 2,
-  CmpI: 2,
-  MulFix: 6,
-  DivFix: 24,
-  I2F: 8,
-  F2I: 8,
-  Fix2F: 10,
-  F2Fix: 10,
+  // per-op interpreter dispatch (counted once per executed op, not per lane)
+  "@dispatch": 69,
+  // loads / stores / stack: dispatch + a per-word slot move
+  PushConst: 0,
+  LoadUniform: 18,
+  LoadState: 18,
+  StoreState: 18,
+  LoadLocal: 18,
+  StoreLocal: 18,
+  TeeLocal: 18,
+  FillLocal: 4,
+  LoadCtx: 10,
+  LoadCtxFix: 0,
+  Swizzle: 8,
+  Pop: 0,
+  Swap: 8,
+  // integer / fixed-point ISA. MEASURED on the C6 (memo HITL M/2M chains,
+  // docs/design/fx-memoization.md): AddI 32, MulFixN 45, SinFix 79, Atan2Fix
+  // 279, SqrtFix 414, FixFromF 249. The rest are set by analogy to those.
+  AddI: 32,
+  SubI: 32,
+  MulI: 45,
+  DivI: 80,
+  ModI: 80,
+  NegI: 32,
+  CmpI: 10,
+  IncLocalI: 40,
+  AbsI: 32,
+  MinI: 32,
+  MaxI: 32,
+  ClampI: 40,
+  SignI: 32,
+  StepI: 32,
+  FloorFix: 32,
+  CeilFix: 32,
+  FractFix: 32,
+  MixFix: 50,
+  MulFix: 45,
+  DivFix: 80,
+  MulFixN: 45,
+  DivFixN: 80,
+  FixRescale: 32,
+  SinFix: 79,
+  CosFix: 79,
+  ExpFix: 100,
+  SqrtFix: 414,
+  LogFix: 300,
+  TanFix: 300,
+  PowFix: 650,
+  Atan2Fix: 279,
+  ScaleFix: 45,
+  DotFix: 45,
+  LengthFix: 450,
+  DistanceFix: 450,
+  NormalizeFix: 700,
+  CrossFix: 200,
+  SmoothstepFix: 150,
+  ClampVFix: 40,
+  MixVFix: 50,
+  Hsv2RgbFix: 300,
+  PaletteFix: 200,
+  HashFix: 60,
+  Hash3Fix: 80,
+  RetRgb8: 0,
+  RetRgbFix: 10,
+  // float<->int/fixed boundary (soft-float convert; FixFromF measured 249)
+  I2F: 249,
+  F2I: 249,
+  Fix2F: 249,
+  F2Fix: 249,
+  FixToF: 249,
+  FixFromF: 249,
   I2Fix: 2,
   Fix2I: 2,
-  // control flow / logic — cheap
-  Cmp: 3,
-  Logic: 2,
-  BrFalse: 3,
-  Jmp: 2,
-  Call: 6,
-  Ret: 4,
-  RetFn: 4,
-  // soft-float elementwise — moderate (per lane)
-  Add: 12,
-  Sub: 12,
-  Mul: 14,
-  Div: 45,
-  Neg: 6,
-  Scale: 14,
-  Clamp: 16,
-  Mix: 20,
-  Smoothstep: 40,
-  Dot: 18,
-  Cross: 60,
-  Length: 90,
-  Normalize: 110,
-  Distance: 100,
-  // transcendentals / specials — dear. UnMath/BinMath are dispatch opcodes that
-  // collapse many fns of very different cost, so the model keys them per-fn
-  // (`UnMath:sqrt`, `BinMath:pow`, …) — see costModel.ts `mathFeature`/`costFor`.
-  // The bare `UnMath`/`BinMath` keys below are the family FALLBACK tier: any fn
-  // a calibration didn't price (or an old/host table that only priced the
-  // family) resolves through them. The per-fn seeds reflect the C6's soft-float
-  // economics (bit-twiddling abs/floor/sign cheap; poly transcendentals dear).
-  UnMath: 120,
-  "UnMath:abs": 10,
-  "UnMath:sign": 10,
-  "UnMath:floor": 16,
-  "UnMath:ceil": 16,
-  "UnMath:fract": 20,
-  "UnMath:sqrt": 60,
-  // sin/cos/tan are LUT-accelerated (flash table + interp, no soft-float poly) —
-  // ~half their old cost; tan is sin/cos + a divide.
-  "UnMath:sin": 65,
-  "UnMath:cos": 65,
-  "UnMath:tan": 100,
-  "UnMath:exp": 140,
-  "UnMath:log": 140,
-  BinMath: 130,
-  "BinMath:min": 14,
-  "BinMath:max": 14,
-  "BinMath:step": 18,
-  "BinMath:mod": 45,
-  "BinMath:atan2": 180,
-  "BinMath:pow": 180,
-  // Integer bit-mix hash (no fract(sin)) — cheap: a few int ops + one f32 convert.
-  Hash1: 30,
-  Hash3: 42,
-  Hsv2Rgb: 90,
-  Palette: 70,
+  // control flow / logic
+  Cmp: 60,
+  Logic: 10,
+  BrFalse: 10,
+  BrCmpI: 10,
+  Jmp: 0,
+  Call: 30,
+  Ret: 0,
+  RetFn: 10,
+  // per-LED memo bracket: a hit is dispatch + record lookup + word copy
+  LoadLedCache: 48,
+  StoreLedCache: 30,
+  // soft-float elementwise (per lane) — fitted
+  Add: 124,
+  Sub: 131,
+  Mul: 126,
+  Div: 278,
+  Neg: 4,
+  Scale: 126,
+  Clamp: 166,
+  Mix: 283,
+  Smoothstep: 637,
+  Dot: 124,
+  Cross: 650,
+  Length: 316,
+  Normalize: 505,
+  Distance: 387,
+  // transcendentals / specials — fitted per fn. UnMath/BinMath are dispatch
+  // opcodes that collapse many fns of very different cost, so the model keys
+  // them per-fn (`UnMath:sqrt`, `BinMath:pow`, …) — see costModel.ts
+  // `mathFeature`/`costFor`. The bare keys are the family FALLBACK tier.
+  UnMath: 600,
+  "UnMath:abs": 41,
+  "UnMath:sign": 64,
+  "UnMath:floor": 188,
+  "UnMath:ceil": 343,
+  "UnMath:fract": 269,
+  "UnMath:sqrt": 614,
+  "UnMath:sin": 504,
+  "UnMath:cos": 577,
+  "UnMath:tan": 1238,
+  "UnMath:exp": 816,
+  "UnMath:log": 783,
+  BinMath: 600,
+  "BinMath:min": 110,
+  "BinMath:max": 109,
+  "BinMath:step": 116,
+  "BinMath:mod": 522,
+  "BinMath:atan2": 969,
+  "BinMath:pow": 1741,
+  Hash1: 115,
+  Hash3: 147,
+  Hsv2Rgb: 1242,
+  Palette: 433,
+  // resource ops (estimates; resource tier not benchmarked yet)
+  LoadStateIdx: 40,
+  StoreStateIdx: 40,
+  LoadLocalIdx: 40,
+  StoreLocalIdx: 40,
+  GraphQuery: 30,
+  LoadBuf: 60,
+  StoreBuf: 60,
+  SampleTex: 400,
+  PaintTex: 80,
+  FloodFrom: 2000,
 };
 
 export const DEFAULT_FIXED: FixedOverhead = {
-  update_fixed: 200, // update() call framing + state writeback
-  shade_fixed: 60, // per-LED loop: call/ret, ctx load, buffer store
-  show_fixed: 40_000, // FastLED.show() DMA/RMT setup floor
-  show_per_led: 480, // WS2812 transmit per LED (~30µs @160MHz ≈ 4800cy; scaled)
+  update_fixed: 12_926, // per-frame framing (fitted)
+  shade_fixed: 1_986, // per-LED loop framing: call/ret, ctx build, store (fitted)
+  show_fixed: 48_146, // LED transmit setup floor (fitted)
+  show_per_led: 1_980, // WS2812 transmit per LED (fitted)
 };
 
 /** The default (uncalibrated) cost table used before any device calibration. */
@@ -191,8 +255,8 @@ export function defaultCostTable(
     budgetMs: BUDGET_MS,
     costs: { ...DEFAULT_COSTS },
     fixed: { ...DEFAULT_FIXED },
-    residualError: 0.25,
-    fallbackCost: 8,
+    residualError: 0.15,
+    fallbackCost: 20,
     budget: { ...DEFAULT_BUDGET_MODEL },
   };
 }

@@ -28,7 +28,7 @@ use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
 use ledmapper_fps::{FpsController, MAX_FPS};
-use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
+use ledmapper_fx_jit::{plan_blocks_into_consts, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
     Program, Rgb as Rgb8, Vm as FxVm,
@@ -115,12 +115,17 @@ const N_DECKS: usize = 2;
 const DECK_A_IDX: usize = 0;
 const DECK_B_IDX: usize = 1;
 
-/// One deck's loaded effect: the `.fxb` (the parsed Program borrows it fresh each
-/// call), its VM, which context mirrors it reads, its identity and its keypoint
+/// One deck's loaded effect: the `.fxb` and its parsed Program (cached at load),
+/// its VM, which context mirrors it reads, its identity and its keypoint
 /// blend state.
 struct DeckState {
     bytes: [u8; FX_MAX_BYTES],
     len: usize,
+    /// `bytes[..len]` parsed once at load (after the JIT patch), so the per-LED
+    /// shade and per-frame update don't re-parse the header on every call. It
+    /// borrows `bytes` (static storage): fx_load clears it before rewriting the
+    /// bytes and fx_clear drops it.
+    prog: Option<Program<'static>>,
     vm: Option<FxVm>,
     /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
     /// the effect (loaded, validated) without taking over rendering.
@@ -155,6 +160,7 @@ impl DeckState {
     const EMPTY: DeckState = DeckState {
         bytes: [0; FX_MAX_BYTES],
         len: 0,
+        prog: None,
         vm: None,
         active: false,
         uses_ctxfix: false,
@@ -255,7 +261,7 @@ static mut FX_JIT_TARGETS: [bool; JIT_MAX_CODE + 1] = [false; JIT_MAX_CODE + 1];
 
 /// Placeholder segment for the never-called table slots (a real segment always
 /// overwrites the slots we install). Must be a valid function, not null.
-unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32) {}
+unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32, _state: *mut i32) {}
 
 // Executable-memory primitives, provided by the C++ firmware: a fixed 2 KB
 // static region the Rust side compiles segments straight into, made RWX by a
@@ -308,10 +314,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 
     // Aligned i32 mirror of the const pool (the segments' `a2` base).
     let craw = prog.consts_raw();
-    let n_consts = craw.len() / 4;
-    if n_consts > MAX_JIT_CONSTS {
-        return;
-    }
+    // Mirror at most MAX_JIT_CONSTS words; blocks that read past them are
+    // skipped by the planner instead of the whole program going uncompiled.
+    let n_consts = (craw.len() / 4).min(MAX_JIT_CONSTS);
     let consts = &mut *addr_of_mut!(FX_JIT_CONSTS);
     for i in 0..n_consts {
         consts[i] = i32::from_le_bytes([craw[i * 4], craw[i * 4 + 1], craw[i * 4 + 2], craw[i * 4 + 3]]);
@@ -332,7 +337,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         for t in targets.iter_mut() {
             *t = false;
         }
-        plan_blocks_into(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region)
+        plan_blocks_into_consts(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region, n_consts)
     };
     FX_JIT_DIAG_PLANS = n as u32;
     if n == 0 {
@@ -388,6 +393,20 @@ static mut OSC_BY_NAME: bool = true;
 const FX_ARENA_BYTES: usize = 24 * 1024; // 24 KB
 static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
 
+// -- per-LED memo cache (fx_compiler::memo / fx_vm LoadLedCache) --------------
+// An effect's LED-invariant subexpressions (atan2(pos.x,pos.z), hash(idx), …)
+// are cached per LED in the SPARE tail of the deck's FX_ARENA slice, after its
+// buffers — no new RAM: a deck binds only the best prefix of the compiler's
+// priority-ordered groups that fits (Program::led_cache_fit), and nothing at all
+// when the arena is full (the effect then runs uncached, exactly as before).
+// The cache is keyed by LED index for the CURRENT map, so it is invalidated
+// (re-bound) whenever the map/topology changes or the LED count does.
+/// LED count the deck caches are bound for (the last lm_fx_update's count).
+static mut FX_MEMO_LEDS: usize = 0;
+/// A map/topology upload changed the per-LED attributes: re-bind (= invalidate)
+/// every deck's cache before the next shade sweep.
+static mut FX_MEMO_DIRTY: bool = false;
+
 /// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
 /// One buffer — video streams target a single texture at a time. A frame whose
 /// quantized byte size exceeds this is dropped (keep the transport small).
@@ -430,6 +449,7 @@ unsafe fn deck_b_claim() -> *mut DeckState {
     if FX_AUX_OWNER != AuxOwner::DeckB {
         core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
         addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).prog).write(None);
         addr_of_mut!((*p).shade_led).write(None);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
@@ -598,7 +618,9 @@ fn mm_sat(m: f32) -> i16 {
 /// when the loaded effect reads them), so this never grows the resident cache.
 #[inline]
 fn q16_16(x: f32) -> i32 {
-    (x * 65536.0) as i32
+    // Bit-exact with `(x * 65536.0) as i32`, in integer ops (~15 cycles instead
+    // of a soft mul + f32->i32, ~165): the per-LED fixed mirrors take seven.
+    ledmapper_fx_vm::f32_to_fix(x, 16)
 }
 
 // -- the per-LED store: sized at boot for the CONFIGURED strip -----------------
@@ -988,10 +1010,33 @@ fn fxb_hash(bytes: &[u8]) -> u32 {
 // bring their own.
 #[cfg(all(not(test), target_os = "none"))]
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    // The player contract is bounded errors, never panics; reaching this is
-    // a firmware bug. Halt where a debugger can see it.
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // The player contract is bounded errors, never panics; reaching this is a
+    // firmware bug. Say where on the console, then abort(): ESP-IDF's panic
+    // path reboots with reset reason PANIC, which the OTA crash-loop guard
+    // (ota_app.cpp) counts, so a crash-looping image falls back to the loader
+    // instead of the old `loop {}` that left the fixture dark until power-cycled.
+    extern "C" {
+        fn esp_rom_printf(fmt: *const u8, ...) -> i32;
+        fn abort() -> !;
+    }
+    unsafe {
+        match info.location() {
+            Some(l) => {
+                let f = l.file();
+                esp_rom_printf(
+                    b"[rust] panic at %.*s:%u\n\0".as_ptr(),
+                    f.len() as i32,
+                    f.as_ptr(),
+                    l.line(),
+                );
+            }
+            None => {
+                esp_rom_printf(b"[rust] panic\n\0".as_ptr());
+            }
+        }
+        abort()
+    }
 }
 
 unsafe fn player() -> &'static mut Player {
@@ -1602,6 +1647,7 @@ pub unsafe extern "C" fn lm_player_handle(
 /// Drop the resident topology (geometry + per-LED cache). The geometry
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
+    FX_MEMO_DIRTY = true; // led.seg/s/branch (and, via a map upload, pos/uv) change
     *addr_of_mut!(GEOM) = None;
     for e in topo_store().iter_mut() {
         *e = FxLedTopo::NONE;
@@ -3875,13 +3921,56 @@ fn arena_need(prog: &Program) -> usize {
     (prog.arena_bytes(unsafe { fx_arena_leds() }) + 3) & !3
 }
 
-/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing).
+/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing). The per-LED memo
+/// cache takes the largest group prefix (for FX_MEMO_LEDS LEDs) that fits in
+/// what the buffers' need leaves free, carved from the END of the slice; the
+/// buffers keep everything in front of it (all of the slice when there is no
+/// cache, exactly as before). (Re)binding the cache empties it.
 unsafe fn bind_arena(p: *mut DeckState) {
     let (o, n) = ((*p).arena_off, (*p).arena_len);
     let arena = &mut *addr_of_mut!(FX_ARENA);
+    let bytes = &(*p).bytes[..(*p).len];
+    let (need, words) = match Program::parse(bytes) {
+        Ok(pr) => {
+            let need = arena_need(&pr).min(n);
+            (need, pr.led_cache_fit(FX_MEMO_LEDS, n - need))
+        }
+        Err(_) => (n, 0),
+    };
+    let m = ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS).min(n - need);
     if let Some(vm) = (*p).vm.as_mut() {
-        vm.set_arena(&mut arena[o..o + n]);
+        // Disjoint sub-slices: the VM never sees the cache as buffer memory.
+        let (bufs, tail) = arena[o..o + n].split_at_mut(n - m);
+        vm.set_arena(bufs);
+        vm.set_led_cache(tail, words, FX_MEMO_LEDS);
     }
+}
+
+/// Re-bind every loaded deck's memo cache for `leds` LEDs (empties them). Cold:
+/// runs once per map/topology/LED-count change, off the per-LED path.
+#[cold]
+#[inline(never)]
+unsafe fn fx_memo_rebind(leds: usize) {
+    FX_MEMO_LEDS = leds.min(FX_TOPO_CAP);
+    FX_MEMO_DIRTY = false;
+    for d in 0..N_DECKS {
+        if let Some(p) = deck(d) {
+            if (*p).loaded() {
+                bind_arena(p);
+            }
+        }
+    }
+}
+
+/// Memo words bound on deck `d` (0 = uncached) — diagnostics / tests.
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_led_cache_words(d: u32) -> u32 {
+    deck(deck_index(d))
+        .and_then(|p| (*p).vm.as_ref())
+        .map_or(0, |vm| vm.led_cache_words_bound() as u32)
 }
 
 /// Load (parse + hold) a `.fxb` onto deck `d`, copying it into the deck's
@@ -3920,7 +4009,12 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         if a_need + need > FX_ARENA_BYTES {
             return Err(FxLoadError::ArenaFull);
         }
-        (FX_ARENA_BYTES - need, need)
+        // Deck B also takes up to half the spare arena for its per-LED memo
+        // cache (deck A keeps the rest of the spare for its own).
+        let spare = FX_ARENA_BYTES - a_need - need;
+        let words = prog.led_cache_fit(FX_MEMO_LEDS, spare / 2);
+        let cache = (ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS) + 3) & !3;
+        (FX_ARENA_BYTES - need - cache, need + cache)
     };
     let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
     if d == DECK_A_IDX {
@@ -3940,9 +4034,21 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     uniform_pool::bind(d, prog.manifest);
     (*p).shade_led = None;
     *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).prog = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
     (*p).vm = Some(FxVm::new());
+    // Start every uniform at its manifest default (fx-perf-study R7). Clients
+    // that send set_uniforms after a deploy still override it; before this, an
+    // effect nobody configured ran with every uniform at 0 (fx_bench's
+    // lavalamp never entered its wave loop).
+    if let Some(vm) = (*p).vm.as_mut() {
+        kp::for_each_uniform(prog.manifest, |u| {
+            if u.n_default > 0 {
+                vm.set_uniform(u.slot as usize, &u.default[..u.n_default as usize]);
+            }
+        });
+    }
     // Bind + zero this deck's arena slice (buffers start clean each load; the
     // static memory's pointer is stable so one bind holds).
     (*p).arena_off = off;
@@ -3978,6 +4084,9 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
             fx_push_graph(vm);
         }
     }
+    // Parse the resident copy once, after the JIT patch (the bytes don't change
+    // again until the next load or clear).
+    (*p).prog = Program::parse(core::slice::from_raw_parts((*p).bytes.as_ptr(), (*p).len)).ok();
     FX_ROOM_READY = false;
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
     fps_invalidate();
@@ -4002,6 +4111,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 unsafe fn fx_clear(d: usize) {
     fps_invalidate();
     if d == DECK_A_IDX {
+        DECK_A.prog = None;
         DECK_A.len = 0;
         DECK_A.active = false;
         *addr_of_mut!(DECK_A.vm) = None;
@@ -4016,6 +4126,7 @@ unsafe fn fx_clear(d: usize) {
         perf_reset_ring();
     } else if let Some(p) = deck(DECK_B_IDX) {
         (*p).vm = None;
+        (*p).prog = None;
         (*p).len = 0;
         FX_AUX_OWNER = AuxOwner::Free;
         DECK_A.arena_off = 0;
@@ -4153,7 +4264,8 @@ pub extern "C" fn lm_fx_set_deadline(hit: bool) {
 }
 
 /// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
-/// timeout. For the rate-limited `[fx]` diagnostic log in the render loop.
+/// timeout, 3=fault (a malformed program stopped instead of panicking). For
+/// the rate-limited `[fx]` diagnostic log in the render loop.
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
@@ -4291,6 +4403,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         fx_rebuild_topo();
         fx_push_graph_all();
     }
+    // Per-LED memo caches follow the map: a map/topology upload (dirty) or a new
+    // LED count re-binds them (empty) before this frame's shade sweep refills.
+    if FX_MEMO_DIRTY || FX_MEMO_LEDS != (led_count as usize).min(FX_TOPO_CAP) {
+        fx_memo_rebind(led_count as usize);
+    }
     // A new frame: reset the per-frame Tier-1 accumulators (they sum over both
     // decks' update + the coming per-LED sweep).
     FX_INSTR_UPDATE = 0;
@@ -4328,8 +4445,7 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     if !(*p).renders() {
         return None;
     }
-    let bytes = &(*p).bytes[..(*p).len];
-    let prog = Program::parse(bytes).ok()?;
+    let prog = (*p).prog.as_ref()?;
     let vm = (*p).vm.as_mut()?;
     // A keypoint morph moves the uniforms first, so this frame's update and
     // shade see the same in-between position (out of line: rarely running).
@@ -4338,13 +4454,13 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     }
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (oc, c) = vm.run_update_counted(&prog, f, &fx_budget());
+        let (oc, c) = vm.run_update_counted(prog, f, &fx_budget());
         FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
         FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
         oc
     } else {
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
-        vm.run_update_bounded(&prog, f, &fx_budget())
+        vm.run_update_bounded(prog, f, &fx_budget())
     })
 }
 
@@ -4363,11 +4479,11 @@ unsafe fn fx_advance_morph(p: *mut DeckState, dt_s: f32) {
 // second hot code block per LED cost several percent through the flash cache).
 #[inline(always)]
 unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> Option<Rgb8> {
-    let bytes = &(*p).bytes[..(*p).len];
     // &mut: run_shade writes the VM's resident scratch (stack/locals) in place
     // instead of allocating per LED (FUG-122 framing hill-climb).
     let vm = (*p).vm.as_mut()?;
-    let prog = Program::parse(bytes).ok()?;
+    // Parsed once at load (DeckState::prog), not per LED.
+    let prog = (*p).prog.as_ref()?;
     // Borrow the frame context lm_fx_update built for this frame (shared by both
     // decks), so `time`/`dt`/`frame` are the same as update() and nothing
     // frame-wide is rebuilt per LED. Before the first update() of a fresh
@@ -4425,14 +4541,14 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
-        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(&prog, f, led, &fx_budget());
+        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(prog, f, led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(k.instrs);
         if k.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = k.stack_max;
         }
         (c, outcome)
     } else {
-        vm.run_shade_bounded(&prog, f, led, &fx_budget())
+        vm.run_shade_bounded(prog, f, led, &fx_budget())
     };
     (outcome == Outcome::Ok).then_some(c)
 }

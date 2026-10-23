@@ -657,5 +657,11 @@ const _: () = assert!(MAX_SSID <= GATT_VAL_MAX && MAX_PASS <= GATT_VAL_MAX);
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+    // A bug, never an expected path: abort() takes ESP-IDF's panic path, which
+    // reboots with reset reason PANIC (counted by the OTA crash-loop guard)
+    // instead of hanging the device until it is power-cycled.
+    extern "C" {
+        fn abort() -> !;
+    }
+    unsafe { abort() }
 }

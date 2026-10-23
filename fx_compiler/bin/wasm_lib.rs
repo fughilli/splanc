@@ -3,7 +3,10 @@
 //! (JSON) + diagnostics (JSON) so the editor can show inline errors, build the
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
-use ledmapper_fx_compiler::{compile, disassemble, exports_manifest_json, manifest_json};
+use ledmapper_fx_compiler::{
+    compile, compile_with, disassemble, exports_manifest_json, manifest_json, CompileOptions, Compiled,
+    Diagnostic,
+};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -42,7 +45,19 @@ impl CompileResult {
 
 #[wasm_bindgen]
 pub fn fx_compile(src: &str) -> CompileResult {
-    match compile(src) {
+    result(compile(src))
+}
+
+/// Like [`fx_compile`] but with the variance pass (per-frame hoisting + per-LED
+/// memoization) off — for the calibration micro-benchmarks, which must measure
+/// raw opcodes rather than a cache hit.
+#[wasm_bindgen]
+pub fn fx_compile_no_memo(src: &str) -> CompileResult {
+    result(compile_with(src, &CompileOptions { optimize: true, memo: None }))
+}
+
+fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
+    match r {
         Ok(c) => CompileResult {
             ok: true,
             bytecode: c.fxb,

@@ -48,6 +48,7 @@ const TRUE_COSTS: Record<string, number> = {
   LoadCtx: 5,
   Ret: 9,
 };
+const TRUE_DISPATCH = DEFAULT_COSTS["@dispatch"]!;
 const TRUE_FIXED: FixedOverhead = {
   update_fixed: 1800,
   shade_fixed: 95,
@@ -93,7 +94,10 @@ function chainFxb(feature: string | null, reps: number): Uint8Array {
  * walking the bytecode, so the op counting under test (walkEntry) is checked
  * against an independent oracle rather than agreeing with itself. */
 function trueCycles(feature: string | null, reps: number, leds: number): { frame: number; show: number } {
-  let perLed = TRUE_FIXED.shade_fixed + TRUE_COSTS["LoadCtx"]! + TRUE_COSTS["Ret"]!;
+  // The interpreter pays its per-op dispatch on every op (LoadCtx, the reps,
+  // Ret) — the KNOWN `@dispatch` the fits subtract before solving.
+  let perLed =
+    TRUE_FIXED.shade_fixed + TRUE_COSTS["LoadCtx"]! + TRUE_COSTS["Ret"]! + TRUE_DISPATCH * (2 + reps);
   if (feature !== null) perLed += reps * lanesOf(feature) * TRUE_COSTS[feature]!;
   return {
     frame: TRUE_FIXED.update_fixed + leds * perLed,

@@ -13,7 +13,7 @@
 //! regression (optimized retiring MORE ops than baseline) fails the test.
 
 use ledmapper_fx_compiler::compile_opts;
-use ledmapper_fx_vm::{Budget, Frame, Led, Program, Vm};
+use ledmapper_fx_vm::{led_cache_bytes, Budget, Frame, Led, Program, Vm};
 
 /// Representative corpus — mirrors `tools/fx_profile` plus loop/function/fixed
 /// programs that exercise the control-flow and dead-local passes.
@@ -186,6 +186,12 @@ fn optimizer_preserves_output_and_reduces_ops() {
         for u in &opt.uniforms {
             vb.set_uniform(u.slot as usize, &u.default);
         }
+        // Bind the per-LED memo cache like the firmware does (the variance pass
+        // runs as part of -O), so the measured ops are the shipped steady state.
+        let n_leds = leds.len();
+        let mut memo = vec![0u8; led_cache_bytes(pb.led_cache_words(), n_leds)];
+        let words = pb.led_cache_fit(n_leds, memo.len());
+        vb.set_led_cache(&mut memo, words, n_leds);
 
         let mut base_ops = 0u64;
         let mut opt_ops = 0u64;
@@ -232,4 +238,58 @@ fn optimizer_preserves_output_and_reduces_ops() {
     );
     // And it should actually help across the corpus.
     assert!(total_opt < total_base, "optimizer produced no net reduction");
+}
+
+/// R3 (fx-perf-study): the VM never panics, even on a corrupted program. Flip
+/// random bytes in each compiled corpus program (both builds) and run it; any
+/// panic fails. A miscompile like #338's `clamp(vec3, 0.0, 1.0)` stack
+/// underflow must come back as `Outcome::Fault`, not hang the device.
+#[test]
+fn corrupted_programs_never_panic() {
+    let budget = Budget::instructions(20_000);
+    let frames = frames();
+    let leds = leds();
+    let mut x: u32 = 0x2545_f491;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x
+    };
+    for (name, src) in corpus() {
+        for optimize in [false, true] {
+            let c = compile_opts(src, optimize).unwrap_or_else(|d| panic!("{name}: compile: {d:?}"));
+            // Mutate past the 18-byte header (consts + code + buffer table).
+            if c.fxb.len() <= 18 {
+                continue;
+            }
+            for _ in 0..300 {
+                let mut buf = c.fxb.clone();
+                for _ in 0..1 + rnd() % 4 {
+                    let i = 18 + (rnd() as usize) % (buf.len() - 18);
+                    buf[i] = match rnd() % 3 {
+                        0 => rnd() as u8,
+                        1 => buf[i] ^ (1 << (rnd() % 8)),
+                        _ => (rnd() % 5) as u8,
+                    };
+                }
+                let ok = std::panic::catch_unwind(|| {
+                    let Ok(p) = Program::parse(&buf) else { return };
+                    let mut vm = Vm::new();
+                    for u in &c.uniforms {
+                        vm.set_uniform(u.slot as usize, &u.default);
+                    }
+                    for frame in frames.iter().take(2) {
+                        let (_, f) = seed_fixed(Led::default(), *frame);
+                        vm.run_update_bounded(&p, &f, &budget);
+                        for led in leds.iter().step_by(9) {
+                            let (l, f) = seed_fixed(*led, *frame);
+                            vm.run_shade_bounded(&p, &f, &l, &budget);
+                        }
+                    }
+                });
+                assert!(ok.is_ok(), "{name} (opt={optimize}) panicked on corrupted fxb {buf:02x?}");
+            }
+        }
+    }
 }

@@ -27,7 +27,7 @@ import {
   type DeviceBenchmarkBundle,
   type DeviceSample,
 } from "../src/effects/deviceProfile";
-import { estimateFrameTime } from "../src/effects/costModel";
+import { estimateFrameTime, manifestDefaults } from "../src/effects/costModel";
 import { validateCostModel, type HeldoutSample } from "../src/effects/profileValidation";
 import { defaultProfile, profileToStored, validateProfile } from "../src/effects/executionProfile";
 import { defaultCostTable, type StoredCostTable } from "../src/store/costTableStore";
@@ -93,7 +93,10 @@ test("every held-out effect's measured C6 frame time lies inside the calibrated 
   const bundle = golden();
   const { table } = buildDeviceProfile(bundle, TOLERANCE);
   for (const h of bundle.heldout) {
-    const est = estimateFrameTime({ bytecode: h.fxb, ledCount: h.ledCount, table });
+    // fx_bench never sends set_uniforms, so every program runs with the
+    // manifest defaults the firmware seeds on load (R7); the walker is told so:
+    // uniform-driven branches (lavalamp's `i < int(waves)`) then cost what ran.
+    const est = estimateFrameTime({ bytecode: h.fxb, ledCount: h.ledCount, table, uniforms: manifestDefaults(h.fxb) });
     const ms = measuredMs(h, bundle.cpuHz);
     assert.ok(
       est.errorBand.lowMs <= ms && ms <= est.errorBand.highMs,

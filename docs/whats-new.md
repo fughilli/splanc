@@ -5,6 +5,20 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Effects stop recomputing what doesn't change (and the cost estimate is honest)
+
+- **Automatic memoization.** `shade()` subexpressions that only depend on the LED's map position
+  (`atan2(led.pos.x, led.pos.z)` for cylindrical mappings, `length(led.pos.xz)`, `hash(led.idx)`)
+  are computed once per LED and then read from a per-LED cache in spare arena RAM. Per-frame
+  values (`sin(time * speed)`, uniform math) are computed once per frame instead of once per LED.
+  Output is bit-identical; no source changes needed. Effects that don't fit in the spare RAM just
+  run as before.
+- **The offline estimate now matches the device.** It used to stop counting at the first
+  fixed-point or optimized opcode and priced the interpreter's per-op overhead at ~2 cycles
+  (really ~69 on the C6). That's why an effect estimated at 3 ms ran at 132 ms. The default
+  cost table is now fitted to the HITL benchmark bundle (4.5% rms).
+- Design, cost table and numbers: [fx-memoization.md](design/fx-memoization.md).
+
 ### 1024 LEDs on each channel
 
 - **The C6 player now drives up to 1024 LEDs per channel, 2048 in all** (was

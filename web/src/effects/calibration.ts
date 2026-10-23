@@ -15,7 +15,7 @@
  */
 
 import { compileScript } from "../fx/preview";
-import { parseFxb, walkEntry, costFor, OPCODE_NAMES } from "./costModel";
+import { parseFxb, walkEntry, costFor, OPCODE_NAMES, histWithDispatch } from "./costModel";
 import type { OpHistogram } from "./costModel";
 import {
   benchmarksForTier,
@@ -68,7 +68,7 @@ export function clientDevice(client: LedMapperClient): CalibDevice {
  */
 function shadeHistogram(fxb: Uint8Array): OpHistogram {
   const hdr = parseFxb(fxb);
-  return walkEntry(hdr.code, hdr.shadeEntry).max;
+  return histWithDispatch(walkEntry(hdr.code, hdr.shadeEntry, hdr.consts));
 }
 
 /** FNV-1a 32-bit truncated hash of the bytecode (pins observations to a build). */
@@ -146,7 +146,8 @@ export async function runCalibration(
     const b: Benchmark = benchmarks[i]!;
     opts.onProgress?.({ step: i, total, label: `measuring ${b.label}…` });
 
-    const compiled = await compileScript(b.source);
+    // memo off: an isolation chain must measure its op, not a per-LED cache hit.
+    const compiled = await compileScript(b.source, { memo: false });
     if (!compiled.ok) {
       // A benchmark that doesn't compile is skipped (shouldn't happen); keep going.
       continue;
@@ -201,7 +202,12 @@ export async function runCalibration(
   // Fit only the opcodes this run actually measured (presence-aware), so a
   // partial/`core` run never zeroes an op it didn't exercise.
   const fitted = presentFeatures(samples, FITTED_OPCODES);
-  const fit = fitCosts(samples, fitted);
+  // Everything NOT fitted is priced as KNOWN at its seeded cost and subtracted
+  // before solving — notably the interpreter's per-op `@dispatch` (fitted once
+  // on the full HITL bundle; not separable from the ops in an M/2M isolation
+  // design) and the structural loads/stores. So each fitted cost is that op's
+  // compute alone, exactly the form estimateFrameTime prices with this table.
+  const fit = fitCosts(samples, fitted, undefined, DEFAULT_COSTS);
   // Merge: measured opcodes override the default table; everything else
   // (unfit + not-measured) keeps its seeded default.
   const costs: Record<string, number> = { ...DEFAULT_COSTS };
