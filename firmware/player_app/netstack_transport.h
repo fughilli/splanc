@@ -61,6 +61,10 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 // when its send window can't take it, instead of blocking RX behind a full window.
 bool lm_ws_reply_droppable(void);
 
+// A UDP datagram for the native OSC port (udp/9000): stash it for the next frame
+// (latest value per address). Called on the network task; must not block.
+void lm_netstack_osc_rx(const uint8_t *data, size_t len);
+
 // PROVIDED BY main.cpp. Persist the active WiFi credentials (NVS "ssid"/"pass", the keys
 // the vendor build uses) — called once a freshly provisioned network has leased. Returns
 // whether both writes succeeded.

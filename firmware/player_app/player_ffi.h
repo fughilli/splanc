@@ -313,6 +313,11 @@ void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
 // effect is active, the datagram isn't OSC, or nothing matched). Non-blocking,
 // no allocation. Call under the same lock as lm_fx_set_uniform.
 uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
+// Netstack OSC: stash a datagram (latest value per address; network task) and apply
+// what's waiting at a frame boundary (render task, under player_mutex). The caller
+// serializes the two with a short critical section.
+uint32_t lm_osc_post(const uint8_t *data, size_t len);
+uint32_t lm_osc_drain(void);
 // Select OSC addressing: true (default) resolves uniform names via the active
 // effect's manifest (unknown names fall back to slot index); false treats every
 // address as a raw slot number.
