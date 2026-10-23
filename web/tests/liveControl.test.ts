@@ -163,6 +163,87 @@ test("LiveControl: seq'd set_uniforms paced on ControlAck, merged per slot", asy
   ]);
 });
 
+test("LiveControl: maxInFlight pipelines seq'd batches; acks release them in any order", async () => {
+  const clk = new Clock();
+  const { host, sent } = fakeHost(["control_ack", "uniform_commit"]);
+  const live = new LiveControl(host, { now: clk.now, schedule: clk.schedule, maxInFlight: 2 });
+  live.setUniform(0, [0.1]);
+  clk.run(25);
+  live.setUniform(0, [0.2]);
+  clk.run(25);
+  assert.equal(sent.length, 2, "a second batch goes before the first is acked");
+  live.setUniform(0, [0.3]);
+  clk.run(100);
+  assert.equal(sent.length, 2, "never more than maxInFlight unacknowledged");
+  // The second batch's ack frees a slot even while the first is still out.
+  live.onServerMessage({ type: "control_ack", seq: sent[1]!.seq as number });
+  await flush();
+  clk.run(1);
+  assert.equal(sent.length, 3);
+  assert.deepEqual(sent[2]!.values, [{ slot: 0, value: [0.3] }]);
+  live.onServerMessage({ type: "control_ack", seq: sent[0]!.seq as number });
+  live.onServerMessage({ type: "control_ack", seq: sent[2]!.seq as number });
+  await flush();
+  await live.settled();
+});
+
+test("LiveControl: legacy firmware keeps one batch in flight whatever maxInFlight says", async () => {
+  const clk = new Clock();
+  const { host, sent } = fakeHost(["uniform_commit"]);
+  const live = new LiveControl(host, { now: clk.now, schedule: clk.schedule, maxInFlight: 3 });
+  live.setUniform(0, [0.1]);
+  clk.run(25);
+  live.setUniform(0, [0.2]);
+  clk.run(100);
+  assert.equal(sent.length, 1, "legacy replies don't name their batch");
+  live.onServerMessage({ type: "playback_state" });
+  await flush();
+  clk.run(1);
+  assert.equal(sent.length, 2);
+});
+
+test("LiveControl: one batch in flight by default, live_mailbox or not", async () => {
+  for (const [feats, want] of [
+    [["control_ack", "uniform_commit", "live_mailbox"], 1],
+    [["control_ack", "uniform_commit"], 1],
+  ] as const) {
+    const clk = new Clock();
+    const { host, sent } = fakeHost([...feats]);
+    const live = new LiveControl(host, { now: clk.now, schedule: clk.schedule });
+    for (let i = 0; i < 4; i++) {
+      live.setUniform(0, [i / 10]);
+      clk.run(25);
+    }
+    assert.equal(sent.length, want, `${feats.join(",")}: ${want} unacknowledged`);
+  }
+});
+
+test("LiveControl: the ack timeout adapts to 3x the median round trip (25..400 ms)", async () => {
+  const clk = new Clock();
+  const { host, sent } = fakeHost(["control_ack", "uniform_commit"]);
+  const live = new LiveControl(host, { now: clk.now, schedule: clk.schedule });
+  // Five batches answered after 4 ms each.
+  for (let i = 0; i < 5; i++) {
+    live.setUniform(0, [i / 10]);
+    clk.run(4);
+    live.onServerMessage({ type: "control_ack", seq: sent[sent.length - 1]!.seq as number });
+    await flush();
+    clk.run(30);
+  }
+  assert.equal(sent.length, 5);
+  // The sixth batch's ack is lost: the next goes after max(25, 3 x 4) = 25 ms, not 400.
+  live.setUniform(0, [0.9]);
+  assert.equal(sent.length, 6);
+  live.setUniform(0, [0.95]);
+  clk.run(24);
+  assert.equal(sent.length, 6, "still waiting inside the adaptive timeout");
+  clk.run(2);
+  await flush();
+  clk.run(1);
+  assert.equal(sent.length, 7, "the lost ack cost ~25 ms");
+  assert.deepEqual(sent[6]!.values, [{ slot: 0, value: [0.95] }]);
+});
+
 test("LiveControl: one commit:true with every touched slot once idle", async () => {
   const clk = new Clock();
   const { host, sent } = fakeHost(["control_ack", "uniform_commit"]);

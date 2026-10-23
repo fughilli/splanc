@@ -37,7 +37,8 @@ export interface LiveHost {
 export interface LiveControlOptions {
   now?: () => number;
   schedule?: LiveTimer;
-  /** Give up on a batch's ack after this long (ms). Default 400. */
+  /** Give up on a batch's ack after this long (ms). Default: adaptive — 3x the median
+   * round trip of recent acked batches, 25..400 ms (400 until there are samples). */
   ackTimeoutMs?: number;
   /** Send a commit this long after the last live change on a deck (ms). Default 600. */
   commitIdleMs?: number;
@@ -45,6 +46,18 @@ export interface LiveControlOptions {
   defaultFps?: number;
   /** Hold batches while the socket has more than this many bytes queued. Default 1024. */
   maxBuffered?: number;
+  /** Batches allowed unacknowledged at once on firmware with `control_ack`. Default 1:
+   * on the LAN bench a second batch didn't reliably help (the adaptive ack timeout
+   * already removes the lost-ack stalls) and on pre-mailbox firmware it piled moves
+   * behind the render mutex. Legacy reply pacing always keeps one. */
+  maxInFlight?: number;
+}
+
+/** One batch on the wire: the replies it still expects, and its settle callback. */
+interface Flight {
+  expect: Matcher[];
+  resolve: () => void;
+  sentAt: number;
 }
 
 type Item =
@@ -59,6 +72,9 @@ type Matcher = (msg: { type: string } & Record<string, unknown>) => boolean;
 const MIN_INTERVAL_MS = 8;
 /** The slowest: a 5-fps fixture still feels live at 10 updates/s. */
 const MAX_INTERVAL_MS = 100;
+/** Adaptive ack timeout bounds (ms). */
+const MIN_ACK_MS = 25;
+const MAX_ACK_MS = 400;
 
 export class LiveControl {
   private readonly sender: LatestWinsSender<string, Item>;
@@ -67,9 +83,11 @@ export class LiveControl {
   private readonly commitIdleMs: number;
   private readonly defaultFps: number;
   private seq = 0;
-  /** Expected replies of the batch in flight, matched in arrival order. */
-  private expect: Matcher[] = [];
-  private resolveFlight: (() => void) | null = null;
+  private readonly maxInFlightOpt: number | undefined;
+  /** Round trips (ms) of recently acked batches: the adaptive ack timeout. */
+  private readonly rtts: number[] = [];
+  /** The batches in flight, oldest first, each with the replies it still expects. */
+  private flights: Flight[] = [];
   /** Every value set per deck since its effect changed (what a commit persists). */
   private readonly known = new Map<number, Map<number, number[]>>();
   /** Decks with uncommitted live changes, and when each last changed. */
@@ -86,12 +104,17 @@ export class LiveControl {
     this.commitIdleMs = opts.commitIdleMs ?? 600;
     this.defaultFps = opts.defaultFps ?? 40;
     const maxBuffered = opts.maxBuffered ?? 1024;
+    this.maxInFlightOpt =
+      opts.maxInFlight === undefined ? undefined : Math.max(1, Math.floor(opts.maxInFlight));
+    const fixedAck = opts.ackTimeoutMs;
     this.sender = new LatestWinsSender<string, Item>((batch) => this.sendBatch(batch), {
       now: this.now,
       schedule: this.schedule,
-      ackTimeoutMs: opts.ackTimeoutMs ?? 400,
+      ackTimeoutMs: fixedAck !== undefined ? fixedAck : () => this.adaptiveAckMs(),
       minIntervalMs: () => this.intervalMs(),
       canSend: () => this.host.bufferedAmount() <= maxBuffered,
+      // Seq'd acks name their batch; legacy replies don't, so they pace one at a time.
+      maxInFlight: () => this.inFlightBound(),
     });
   }
 
@@ -166,7 +189,7 @@ export class LiveControl {
   onDisconnect(): void {
     this.sender.clear();
     this.dirtyAt.clear();
-    this.finishFlight();
+    for (const f of this.flights.splice(0)) f.resolve();
   }
 
   /**
@@ -176,15 +199,39 @@ export class LiveControl {
    */
   onServerMessage(msg: { type: string } & Record<string, unknown>): boolean {
     const isAck = msg.type === "control_ack";
-    const i = this.expect.findIndex((m) => m(msg));
-    if (i >= 0) {
-      this.expect.splice(i, 1);
-      if (this.expect.length === 0) this.finishFlight();
+    for (let k = 0; k < this.flights.length; k++) {
+      const f = this.flights[k]!;
+      const i = f.expect.findIndex((m) => m(msg));
+      if (i < 0) continue;
+      f.expect.splice(i, 1);
+      if (f.expect.length === 0) {
+        this.flights.splice(k, 1);
+        // Round trips of answered batches feed the adaptive ack timeout (a batch
+        // dropped as timed out, or released by a disconnect, doesn't).
+        this.rtts.push(this.now() - f.sentAt);
+        if (this.rtts.length > 32) this.rtts.shift();
+        f.resolve();
+      }
+      break;
     }
     return isAck;
   }
 
   // -- internals ----------------------------------------------------------------
+
+  /** A lost ack (a dropped segment the device only resends on its >= 120 ms RTO, or
+   * an ack dropped on a full window) costs ~this, not a fixed 400 ms. */
+  private adaptiveAckMs(): number {
+    if (this.rtts.length < 5) return MAX_ACK_MS;
+    const s = [...this.rtts].sort((a, b) => a - b);
+    const med = s[s.length >> 1]!;
+    return Math.min(MAX_ACK_MS, Math.max(MIN_ACK_MS, 3 * med));
+  }
+
+  private inFlightBound(): number {
+    if (!this.has("control_ack")) return 1;
+    return this.maxInFlightOpt ?? 1;
+  }
 
   private intervalMs(): number {
     const fps = this.host.renderFps() > 0 ? this.host.renderFps() : this.defaultFps;
@@ -230,16 +277,11 @@ export class LiveControl {
     }, ms);
   }
 
-  private finishFlight(): void {
-    this.expect = [];
-    const r = this.resolveFlight;
-    this.resolveFlight = null;
-    r?.();
-  }
-
   private sendBatch(batch: Map<string, Item>): Promise<void> | null {
-    // A batch replaces whatever the previous (timed-out) one still expected.
-    this.finishFlight();
+    // The sender only sends with a slot free, so flights beyond the bound are ones it
+    // already gave up on (ack timeout): forget what they still expected.
+    const bound = this.inFlightBound();
+    while (this.flights.length >= bound) this.flights.shift()!.resolve();
     const acks = this.has("control_ack");
     const commitOk = this.has("uniform_commit");
     const perDeck = new Map<number, { values: Map<number, number[]>; commit: boolean }>();
@@ -303,7 +345,7 @@ export class LiveControl {
       wrote = true;
     }
     if (!wrote) return Promise.resolve();
-    this.expect = expect;
-    return new Promise<void>((r) => (this.resolveFlight = r));
+    const sentAt = this.now();
+    return new Promise<void>((resolve) => this.flights.push({ expect, resolve, sentAt }));
   }
 }
