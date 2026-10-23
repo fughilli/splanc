@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2068,
+    "test_cases": 2073,
     "gaps": 35
   },
   "levels": [
@@ -6316,6 +6316,36 @@
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_wifi_stations::test_claims_the_dut_ip_then_reads_its_station",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_wifi_stations::test_old_daemon_or_no_ap_raises_reserve_error",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_wifi_stations::test_plain_read_uses_get",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_wifi_stations::test_requires_a_reservation",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_wifi_stations::test_station_absent_is_none",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
         }
       ],
       "demanded_level": "hitl",
@@ -6366,6 +6396,14 @@
           "relation": "verifies",
           "path": "pi/hitl/tests/test_reservation_readiness.py",
           "line": 26
+        },
+        {
+          "ids": [
+            "PR-36"
+          ],
+          "relation": "verifies",
+          "path": "pi/hitl/tests/test_wifi_stations.py",
+          "line": 12
         }
       ]
     },
