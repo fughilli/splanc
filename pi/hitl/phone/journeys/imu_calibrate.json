@@ -1,0 +1,27 @@
+{
+  "name": "imu_calibrate",
+  "description": "Hands-free Calibrate IMU through the REAL capture screen: the synthetic camera renders a known fixture (stored as a library map) from a near-still viewpoint, the real detector + decoder + PnP register it, and ImuCalFlow takes each pose with no button press when the map registers and everything holds still. A scripted 'user' tilts the fixture to the next pose whenever the screen shows one taken; a fake fixture IMU (consistent with the tilt and a known R_fi) answers get_sensors / set_sensor_mount on the client. After the third pose the flow solves and writes + read-back-verifies the mount; the journey asserts the stored mount is the true R_fi and nothing is left pending. Needs a connected device (the mock is fine).",
+  "inputs": {},
+  "steps": [
+    { "runFlow": "connect" },
+    {
+      "description": "store the synthetic fixture's map, install its fake IMU, open Calibrate IMU",
+      "do": "openImuCalibration",
+      "expect": { "mapId": "present" }
+    },
+    {
+      "description": "three auto-captured poses -> auto solve -> write -> read-back confirmed",
+      "do": "awaitImuCalibration",
+      "with": { "timeoutMs": 150000 },
+      "timeout": 170,
+      "expect": {
+        "taken": { "equals": 3 },
+        "mountExtrinsic": { "equals": true },
+        "mountYawResolved": { "equals": true },
+        "mountPoses": { "equals": 3 },
+        "mountAccurate": { "equals": true },
+        "pending": { "equals": false }
+      }
+    }
+  ]
+}

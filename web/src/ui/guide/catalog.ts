@@ -327,9 +327,14 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         body: [
           "A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt " +
             "automatically when you map it. To also fix its heading, open the map and tap " +
-            "Calibrate IMU: the LEDs play the mapping code, the camera locks onto the known " +
-            "map, and you capture two or three still poses, tipping the fixture at least " +
-            "45° between them. Save when the fit says good.",
+            "Calibrate IMU: the LEDs play the mapping code and the camera locks onto the known " +
+            "map. There are no buttons to press. Each time the map registers and the fixture " +
+            "and phone hold still, a pose is taken, and the screen asks for the next one: " +
+            "first the normal position, then tilted about 45° to one side, then about 45° " +
+            "toward or away from you. A pose too close to an earlier one is refused, and the " +
+            "screen says how far to tilt. After the third pose the fit is solved and written " +
+            "to the fixture, then read back to confirm it. If the fixture disconnects first, " +
+            "the phone keeps the calibration and sends it on the next connection.",
           "The panel also holds the capture settings — diffuse on/off, the LED stride, " +
             "manual camera exposure and LED brightness — so you can make the LEDs readable " +
             "in your lighting. If the map has no saved capture settings (it was mapped " +

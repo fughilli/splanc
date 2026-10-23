@@ -72,6 +72,12 @@ export interface SyntheticSceneOpts {
   durationSec?: number;
   /** Orbit radius (m) about the fixture centroid — the VIO parallax lever. */
   radius?: number;
+  /** Hold the camera nearly still (a hand-held wobble of a fraction of a
+   * degree) instead of orbiting — the Calibrate-IMU journey. */
+  still?: boolean;
+  /** Fixture->room rotation [x, y, z, w] about the LED centroid at
+   * performance.now() time `tMs` (the fixture being tilted). Default identity. */
+  fixtureRotAt?: (tMs: number) => readonly number[];
 }
 
 /** A planar grid fixture centred on the origin in the z=0 plane (0.1 m pitch). */
@@ -99,6 +105,8 @@ export class SyntheticCaptureSource implements CaptureSource {
   private readonly durationSec: number;
   private readonly radius: number;
   private readonly centroid: Vec3;
+  private readonly still: boolean;
+  private readonly fixtureRotAt: ((tMs: number) => readonly number[]) | null;
 
   private cb: ((f: CaptureFrame) => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -122,6 +130,8 @@ export class SyntheticCaptureSource implements CaptureSource {
     this.discR = opts.discRadius ?? 2;
     this.durationSec = opts.durationSec ?? 8;
     this.radius = opts.radius ?? 1.8;
+    this.still = opts.still ?? false;
+    this.fixtureRotAt = opts.fixtureRotAt ?? null;
     const n = this.leds.length || 1;
     const sum: Vec3 = [0, 0, 0];
     for (const l of this.leds) {
@@ -186,6 +196,16 @@ export class SyntheticCaptureSource implements CaptureSource {
    * vertical bob, so both parallax and rotation make VIO scale observable. Mirrors
    * solver/src/synth.rs cam_pos/cam_rot (the solver's own solvable benchmark). */
   private poseAtTime(tSec: number): Pose {
+    if (this.still) {
+      // Hand-held, framing the fixture: ~0.3° of slow wobble, no orbit.
+      const th = -0.15 + 0.004 * Math.sin(1.3 * tSec);
+      const eye: Vec3 = [
+        this.centroid[0] + this.radius * Math.sin(th),
+        this.centroid[1] + 0.25 + 0.003 * Math.sin(0.9 * tSec),
+        this.centroid[2] + this.radius * Math.cos(th),
+      ];
+      return { p: eye, q: lookAtQuat(eye, this.centroid) };
+    }
     const theta = -0.5 + tSec / this.durationSec + 0.12 * Math.sin(1.7 * tSec);
     const eye: Vec3 = [
       this.centroid[0] + this.radius * Math.sin(theta),
@@ -223,8 +243,9 @@ export class SyntheticCaptureSource implements CaptureSource {
     if (this.code) {
       const { params, epoch, toServer } = this.code;
       const frameIdx = frameIndexAt(toServer(tLocalMs), epoch, params);
+      const rot = this.fixtureRotAt ? quatToRotMat(this.fixtureRotAt(this.t0Ms + tLocalMs) as unknown as Parameters<typeof quatToRotMat>[0]) : null;
       for (let id = 0; id < this.leds.length; id++) {
-        const pr = project(pose, this.K, this.leds[id]!);
+        const pr = project(pose, this.K, rot ? this.tilted(rot, this.leds[id]!) : this.leds[id]!);
         if (pr.depth <= 0) continue;
         const dx = pr.u / this.ds;
         const dy = pr.v / this.ds;
@@ -251,6 +272,17 @@ export class SyntheticCaptureSource implements CaptureSource {
       imgH: this.imgH,
       tCaptureMs: this.t0Ms + tLocalMs,
     };
+  }
+
+  /** An LED's room position with the fixture rotated by `r` about the centroid. */
+  private tilted(r: Mat3, p: Vec3): Vec3 {
+    const c = this.centroid;
+    const d: Vec3 = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+    return [
+      c[0] + r[0] * d[0] + r[1] * d[1] + r[2] * d[2],
+      c[1] + r[3] * d[0] + r[4] * d[1] + r[5] * d[2],
+      c[2] + r[6] * d[0] + r[7] * d[1] + r[8] * d[2],
+    ];
   }
 
   /** Stamp a filled disc: alpha = lit mask / luminance, RGB = the LED colour. */
