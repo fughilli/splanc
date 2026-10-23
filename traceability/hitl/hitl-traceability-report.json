@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 22,
-    "gaps": 43
+    "test_cases": 20,
+    "gaps": 44
   },
   "levels": [
     {
@@ -1587,8 +1587,14 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ota_gate",
-      "message": "//pi/hitl/harness:ota_gate pi/hitl/harness/ota_gate error and traces to no requirement",
+      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
+      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:rejoin_loop",
+      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
       "route": "autonomous"
     },
     {
