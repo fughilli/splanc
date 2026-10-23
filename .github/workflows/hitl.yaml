@@ -1,6 +1,7 @@
 # On-hardware HITL test suite (FUG-33).
 #
-# Runs on every (same-repo) PR and on demand: it needs a live rig on the tailnet
+# Runs on same-repo PRs that carry the `hitl` label, post-merge on main, and on
+# demand (see "When HITL runs" below): it needs a live rig on the tailnet
 # and a real ESP32-C6. It joins the tailnet with an ephemeral Tailscale auth key
 # and runs the WHOLE //pi/hitl/harness on-hardware suite against the runner pool —
 # e2e (flash + improv + time-sync + rename), map_upload (wss sharding), the
@@ -22,13 +23,26 @@
 #   secrets.HITL_WIFI_PASS   provisioned onto. Unset by default: the DUT is
 #                            provisioned onto the rig's OWN AP (creds served by
 #                            the daemon), so no external WiFi is needed.
+#
+# When HITL runs. The rigs are a scarce shared bench (queues ran 70+ deep when every
+# PR push ran the full suite), so on pull_request it runs ONLY for a PR labelled
+# `hitl` — in practice the merge-queue head: the queue runner adds the label when a
+# PR reaches the head (unless it's queued `nohitl`), and the PR's full HITL then runs
+# at the commit that is about to merge. Adding the label (`labeled`) starts a run;
+# later pushes to a labelled PR re-run it. An unlabelled PR gets a skipped
+# hitl_tests plus a ~5 s "HITL not requested" marker check — not a pass, just
+# "nobody asked"; add the `hitl` label to request a run. push to main and workflow_dispatch
+# (the Mac's 6h periodic + manual runs) always run the full suite. hitl_tests is not
+# a required status check (main has no branch protection), so the skip never blocks
+# a merge by itself; the merge queue enforces HITL-green for non-`nohitl` PRs.
 name: HITL tests
 on:
-  # Runs on PRs (full flash + improv + ws against a real rig), post-merge on main,
-  # and on demand. The job below is guarded to same-repo events only — fork PRs
-  # can't read the HITL environment's secrets, and the tailnet join would fail.
+  # Runs on `hitl`-labelled PRs (full flash + improv + ws against a real rig),
+  # post-merge on main, and on demand. The job below is guarded to same-repo events
+  # only — fork PRs can't read the HITL environment's secrets, and the tailnet join
+  # would fail. `labeled` so adding the `hitl` label starts a run.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
   # Post-merge run against main so there's an authoritative "latest HITL run
   # against main" (FUG-129): the README's HITL badge pins to
   # ?branch=main&event=push, so it reflects THIS run — not whatever PR branch
@@ -69,18 +83,23 @@ concurrency:
   # Periodic/manual dispatch runs (the Mac 6h cron drives these now) get their own
   # group so they never cancel — or get canceled by — an authoritative push/PR run
   # on the same ref.
-  group: hitl-tests-${{ github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
+  #
+  # A pull_request event that WON'T run HITL (an unlabelled PR, or an unrelated label
+  # added to a labelled one) gets a throwaway per-run group, so its instant skip can
+  # never cancel a real in-flight HITL run for the same PR. The condition is the
+  # job-level `if` below, repeated (Actions has no shared expressions).
+  group: hitl-tests-${{ !(github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))) && format('noop-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   hitl_tests:
-    # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
     # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
-    # manual runs) only fire on this repo, so they're always allowed; PRs are gated
-    # to same-repo head.
+    # manual runs) only fire on this repo, so they always run. A pull_request runs
+    # only for a same-repo PR (fork PRs have no access to the HITL environment
+    # secrets / tailnet) labelled `hitl`; on a `labeled` event only when the label
+    # added is `hitl` (or the hitl-android/-ios lane opt-ins, which re-run the suite
+    # with those lanes on), so tagging an unrelated label doesn't re-run the bench.
     if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))
     runs-on: ubuntu-latest
     # Opt into the "HITL" environment so its TS_AUTHKEY secret + HITL_SERVERS
     # variable (and the HITL_WIFI_* secrets, if set) are visible to this job.
@@ -506,3 +525,22 @@ jobs:
             --job hitl-suite \
             --pr "${{ github.event.pull_request.number }}" \
             --commit "${{ github.sha }}"
+
+  # (Kept AFTER hitl_tests: test_ci_orchestration parses the first job's steps.)
+  # An unlabelled PR's marker: a ~5 s job whose check is named "HITL not requested",
+  # so the PR's checks say plainly that HITL was skipped because nobody asked (the
+  # hitl_tests job itself just shows "skipped" — GitHub doesn't evaluate a skipped
+  # job's name). It is NOT a HITL result; the merge queue ignores it.
+  hitl_not_requested:
+    name: HITL not requested
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'hitl')
+    runs-on: ubuntu-latest
+    steps:
+      - name: HITL not requested
+        run: |
+          msg="HITL not requested: this PR has no 'hitl' label, so the on-hardware suite was skipped. Add the 'hitl' label to run it (the merge queue does this when the PR reaches the head)."
+          echo "::notice title=HITL not requested::$msg"
+          echo "### HITL not requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"

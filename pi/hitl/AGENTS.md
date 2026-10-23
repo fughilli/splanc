@@ -133,6 +133,11 @@ In the test body, reuse the harness rather than reimplementing the rig dance
   `provision.provision_dut(res, ssid, password, …)` (SSID/PSK default to the
   rig's own AP via `res.wifi()`), then `res.forward(host, port)` to tunnel the
   DUT's player socket to a localhost port.
+- to read the DUT's real radio link as the rig's AP sees it (tx/rx bitrate,
+  retries, tx_failed, signal), call `res.wifi_station(dut_ip)`. It claims that
+  station for your reservation and returns its `iw station dump` stats, e.g.
+  `rx_bitrate_mbps` for the DUT's uplink. The daemon only ever shows a
+  reservation its own stations.
 - drive it over the WebSocket with `server.proto_wire.encode_client` /
   `decode_server`; retry the initial connect+hello until a settle deadline (a
   just-provisioned board drops the first socket while its servers rebind).
