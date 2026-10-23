@@ -162,6 +162,13 @@ impl<const N: usize> RxRing<N> {
         n
     }
 
+    /// Frames reaped but not yet consumed (driver-owned slots). Diagnostics: a value
+    /// that reaches `N` means the ring filled between polls and the MAC had nowhere to
+    /// put the next frame (it was dropped after the hardware already ACKed it).
+    pub fn ready_count(&self) -> usize {
+        self.slots.iter().filter(|s| !s.owned_by_hw).count()
+    }
+
     // --- host-testable ring logic (no MMIO) ---------------------------------
 
     /// Called (from the ISR/poll) when the DMA has filled slot `idx` with `len`
