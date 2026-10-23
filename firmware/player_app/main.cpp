@@ -1436,6 +1436,8 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // The netstack transport's WS pump calls this: dispatch the received message IN PLACE in
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
+static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
+
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   g_reply_droppable = false;
 #if defined(LM_CTRL_TRACE)
@@ -1457,6 +1459,24 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
     }
   }
 #endif
+  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
+  // now — never wait behind a render frame for the player mutex (lm_live_post).
+  if (live_post(in, len)) {
+    fx_live_at = millis();
+    int a = lm_take_control_ack(tx, sizeof tx);
+#if defined(LM_CTRL_TRACE)
+    if (g_tr_cur) {
+      g_tr_cur->handled_us = tr_now();
+      g_tr_cur->flags |= 1;
+    }
+#endif
+    if (a > 0) {
+      g_reply_droppable = true;
+      *reply = tx;
+      return a;
+    }
+    return 0;
+  }
   int n = ws_compute_reply(in, len);
   *reply = tx;
   return n;
@@ -2061,7 +2081,15 @@ void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
 static void osc_drain_frame() {
   taskENTER_CRITICAL(&g_osc_mux);
   lm_osc_drain();
+  lm_live_drain();  // the WS live channel's moves (lm_live_post), same boundary
   taskEXIT_CRITICAL(&g_osc_mux);
+}
+
+static bool live_post(const uint8_t *in, size_t len) {
+  taskENTER_CRITICAL(&g_osc_mux);
+  uint32_t seq = lm_live_post(in, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+  return seq != 0;
 }
 #endif
 
