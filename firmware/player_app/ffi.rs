@@ -56,6 +56,9 @@ mod uniform_pool;
 // The driver VM host (FUG-107): one `.fxb` I2C driver, exports into the pool.
 mod driver_ffi;
 pub use driver_ffi::*;
+// The Wi-Fi rejoin policy (auto / fixed / manual / offline): config + protocol arms.
+mod wifi_ffi;
+pub use wifi_ffi::*;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -1610,6 +1613,9 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_SENSOR_MOUNT) => return sensor_ffi::handle_set_sensor_mount(frame, out, out_cap),
         Some(ARM_SET_CAPTURE_PROFILE) => return sensor_ffi::handle_set_capture_profile(frame, out, out_cap),
         Some(ARM_GET_CAPTURE_PROFILE) => return sensor_ffi::handle_get_capture_profile(out, out_cap),
+        // Wi-Fi rejoin policy (wifi_ffi.rs): zero-copy replies into `out`.
+        Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
+        Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -2092,6 +2098,8 @@ const ARM_GET_DRIVER_STATE: u32 = 53;
 const ARM_SET_SENSOR_MOUNT: u32 = 54;
 const ARM_SET_CAPTURE_PROFILE: u32 = 55;
 const ARM_GET_CAPTURE_PROFILE: u32 = 56;
+const ARM_SET_WIFI_POLICY: u32 = 90;
+const ARM_GET_WIFI_POLICY: u32 = 91;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -2116,6 +2124,7 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "wifi_policy",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.

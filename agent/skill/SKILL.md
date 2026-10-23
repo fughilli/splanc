@@ -160,6 +160,22 @@ effect:
   `driver_state` shows its live exports and errors; `remove_driver` stops it.
 - An IMU (MPU-6050) is driven natively — don't write a driver for it.
 
+## Wi-Fi rejoin policy / forward-deployed units (feature `wifi_policy`)
+
+- `get_wifi_policy` reports the mode, whether the player is joined or searching
+  (next scan, how long the network has been unseen) and `ota_pending`.
+- `set_wifi_policy {mode}`: `auto` (default; backoff rescans, slowing after
+  `decay_after_h` hours unseen), `fixed` (every `interval_s`), `manual` (only on
+  `rejoin_now`), `offline` (no AP at the venue: Wi-Fi radio off, also after
+  reboots; the show keeps playing). Unset fields keep their value.
+- Before `manual` / `offline`: make sure `ota_pending` is false — confirm any
+  pending firmware update first, while the player is online. The player refuses
+  otherwise (`refused: "ota_pending"`); report that. Pass `force: true` only when
+  the user explicitly says to go anyway.
+- `offline` keeps the Wi-Fi credentials (switching back to `auto` rejoins), but
+  this bridge loses the player: changing it back needs Bluetooth (the Splanc
+  app) or the wired console. Confirm with the user before going offline.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;

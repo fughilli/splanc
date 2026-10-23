@@ -81,6 +81,20 @@ export class FakePlayer {
   sensor: Record<string, unknown> | null = null;
   /** The loaded sensor driver's driver_state (null = none). */
   driver: Record<string, unknown> | null = null;
+  /** The Wi-Fi rejoin policy (proto3-JSON names; the "wifi_policy" feature).
+   * set_wifi_policy merges the set fields; manual/offline are refused while
+   * `otaPending` unless forced, like the firmware. */
+  wifi: Record<string, unknown> = {
+    mode: "WIFI_MODE_AUTO",
+    scanCapS: 60,
+    intervalS: 300,
+    decayAfterH: 24,
+    sparseIntervalS: 900,
+    state: "WIFI_LINK_JOINED",
+    ssid: "Venue1",
+    radioOn: true,
+  };
+  otaPending = false;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
@@ -390,6 +404,29 @@ export class FakePlayer {
           this.sensor = { ...this.sensor, calibrationSeq: seq + 1, calibrationResult: "ok", calibrated: true };
         }
         return this.reply(ws, reply);
+      }
+      case "get_wifi_policy":
+        return this.reply(ws, { type: "wifi_policy_state", ...this.wifi, otaPending: this.otaPending });
+      case "set_wifi_policy": {
+        const mode = m["mode"] as string | undefined;
+        const leaving = mode === "WIFI_MODE_MANUAL" || mode === "WIFI_MODE_OFFLINE";
+        if (leaving && mode !== this.wifi["mode"] && this.otaPending && m["force"] !== true) {
+          return this.reply(ws, {
+            type: "wifi_policy_state",
+            ...this.wifi,
+            otaPending: true,
+            refused: "ota_pending",
+          });
+        }
+        for (const k of ["mode", "scanCapS", "intervalS", "decayAfterH", "sparseIntervalS"]) {
+          if (m[k] !== undefined) this.wifi[k] = m[k];
+        }
+        if (this.wifi["mode"] === "WIFI_MODE_OFFLINE") {
+          this.wifi = { ...this.wifi, state: "WIFI_LINK_OFFLINE", radioOn: false, nextScanS: 0 };
+        } else if (m["rejoinNow"] === true && this.wifi["state"] !== "WIFI_LINK_JOINED") {
+          this.wifi = { ...this.wifi, state: "WIFI_LINK_SEARCHING", radioOn: true, nextScanS: 0 };
+        }
+        return this.reply(ws, { type: "wifi_policy_state", ...this.wifi, otaPending: this.otaPending });
       }
       case "scan_i2c":
         return this.reply(ws, { type: "i2c_scan_result", addresses: [0x40, 0x68] });

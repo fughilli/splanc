@@ -85,4 +85,47 @@ void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persis
 int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const uint8_t *ip,
                   uint8_t *out, size_t cap, bool *unicast);
 
+// --- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -------------------------
+// mode: 0 auto (5 s -> scan_cap_s backoff, decaying to sparse_interval_s after
+// decay_after_h hours unseen), 1 fixed (every interval_s), 2 manual (only in a join
+// window opened by netstack_wifi_rejoin or a new provision), 3 offline (radio off).
+struct NetstackWifiPolicy {
+  uint8_t mode;
+  uint32_t scan_cap_s;
+  uint32_t interval_s;
+  uint32_t decay_after_h;
+  uint32_t sparse_interval_s;
+};
+// Apply a policy. Before netstack_setup() it is the boot policy (offline: the radio is
+// never started); later it takes effect at once (to offline: silent now, radio off from
+// the next boot; from offline: the radio comes up / wakes and rejoins). Never reboots.
+void netstack_set_wifi_policy(const NetstackWifiPolicy *p);
+// Try to (re)join now: an immediate scan (manual: also a 2 min join window).
+void netstack_wifi_rejoin(void);
+// A new provision changed the mode itself (offline -> auto); true once per change.
+bool netstack_take_policy_change(NetstackWifiPolicy *out);
+// Whether a lease is expected right now: the policy lets the board join on its own
+// (not offline; manual only inside a join window) AND the network was seen this boot.
+// The OTA health check only requires a lease when it is — a fresh update never rolls
+// back merely because the AP is gone.
+bool netstack_wifi_wants_network(void);
+// Seconds the network had already been unseen before this boot (persisted by the app).
+void netstack_set_unseen_base(uint32_t seconds);
+// The live link state (WifiLinkState numbering) for the app / agent / console.
+struct NetstackWifiStatus {
+  uint8_t state;
+  bool radio_on;
+  bool decayed;
+  uint32_t next_scan_s;
+  uint32_t scans;
+  uint32_t unseen_s;
+  char ssid[33];
+};
+void netstack_wifi_status(NetstackWifiStatus *out);
+
+// PROVIDED BY the app (weak no-op default in the transport, so the OTA loader needn't).
+// A console line starting "WIFI " that the transport's own link diagnostics (WIFI SCAN /
+// DHCP / GIVEUP) don't handle — the player parses its Wi-Fi policy commands here.
+void netstack_console_hook(const char *line, size_t len);
+
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_

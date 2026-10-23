@@ -489,6 +489,91 @@ message GetTlsInfo {}
 // running as fast as it can — the player never parks or blanks an effect for
 // being slow; fps_state reports it `lagging`. The pin is runtime-only and
 // survives effect reloads. Reply: fps_state.
+// -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -----------------------
+// How the player (re)joins its stored network when it isn't on it. Persisted (NVS)
+// and applied without a reboot; settable over wss, the BLE player transport, and the
+// wired console ("WIFI MODE ..."). Firmware advertising the "wifi_policy" feature
+// answers it.
+enum WifiMode {
+  // Background rescans on a 5 s -> scan_cap_s exponential backoff (default).
+  WIFI_MODE_AUTO = 0;
+  // A rescan every interval_s while the network is missing (no backoff).
+  WIFI_MODE_FIXED = 1;
+  // Never scan or join on its own: only on rejoin_now (app / agent / console
+  // "WIFI REJOIN") or a new provision, each of which opens a ~2 min join window.
+  WIFI_MODE_MANUAL = 2;
+  // Forward-deployed, no AP: the Wi-Fi radio stays off (no scans, no RF; it is
+  // never started on boot), the stored show plays, and the board stays
+  // reconfigurable over BLE and the console. Credentials are kept, so switching
+  // back to auto rejoins without re-entering them.
+  WIFI_MODE_OFFLINE = 3;
+}
+
+// Change the policy. Unset fields keep their current value. Going to manual or
+// offline is refused while a freshly installed firmware update is still awaiting
+// confirmation (it would otherwise have no network to prove itself on) unless
+// `force` is set; the reply then carries refused = "ota_pending". Reply:
+// wifi_policy_state.
+message SetWifiPolicy {
+  optional WifiMode mode = 1;
+  // auto: the backoff's cap (10..86400 s; default 60).
+  optional uint32 scan_cap_s = 2;
+  // fixed: the rescan period (10..86400 s; default 300).
+  optional uint32 interval_s = 3;
+  // auto: after this many hours without ever seeing the network, slow the
+  // rescans to sparse_interval_s (0 = never; default 24).
+  optional uint32 decay_after_h = 4;
+  // The decayed rescan period (60..86400 s; default 900).
+  optional uint32 sparse_interval_s = 5;
+  bool force = 6;
+  // Try to (re)join now (manual: opens a join window; others: an immediate scan).
+  bool rejoin_now = 7;
+}
+
+message GetWifiPolicy {}
+
+enum WifiLinkState {
+  WIFI_LINK_UNKNOWN = 0;
+  // offline mode: the radio is off.
+  WIFI_LINK_OFFLINE = 1;
+  // No credentials stored or provisioned yet.
+  WIFI_LINK_UNPROVISIONED = 2;
+  // manual mode, outside a join window: not trying.
+  WIFI_LINK_IDLE = 3;
+  // Looking for the network (between / during background scans).
+  WIFI_LINK_SEARCHING = 4;
+  // The network was seen: authenticating / 4-way / DHCP.
+  WIFI_LINK_JOINING = 5;
+  // Leased on the network.
+  WIFI_LINK_JOINED = 6;
+}
+
+message WifiPolicyState {
+  WifiMode mode = 1;
+  uint32 scan_cap_s = 2;
+  uint32 interval_s = 3;
+  uint32 decay_after_h = 4;
+  uint32 sparse_interval_s = 5;
+  WifiLinkState state = 6;
+  // Seconds until the next background scan (0 = none scheduled / scanning now).
+  uint32 next_scan_s = 7;
+  // Background scans run since the network went missing.
+  uint32 scans = 8;
+  // The stored / active network name ("" = none).
+  string ssid = 9;
+  // Seconds since the network was last seen (0 = on it / unknown).
+  uint32 unseen_s = 10;
+  // auto: the decay to sparse_interval_s is in force.
+  bool decayed = 11;
+  // A firmware update is installed but not yet confirmed (stay online until it is).
+  bool ota_pending = 12;
+  // Why the last set_wifi_policy was not applied ("" = it was): "ota_pending".
+  string refused = 13;
+  // The Wi-Fi radio is running (false in offline mode, and after switching to
+  // offline at runtime it is silent; fully off from the next boot).
+  bool radio_on = 14;
+}
+
 message SetFps {
   uint32 target_fps = 1;
   // Deprecated, ignored: it held off the old "park a slow effect" abort, which
@@ -956,6 +1041,10 @@ message ClientMessage {
     OtaAbort ota_abort = 73;
     GetOtaStatus get_ota_status = 74;
     OtaReboot ota_reboot = 75;
+    // 76-89: left free for in-flight branches (#357's FX debugger takes 80-82).
+    // Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md).
+    SetWifiPolicy set_wifi_policy = 90;
+    GetWifiPolicy get_wifi_policy = 91;
   }
 }
 
@@ -1606,5 +1695,9 @@ message ServerMessage {
     // 31: left free for in-flight branches (#325's ramp_state takes 40).
     // Reply to every OTA arm (docs/design/ota.md).
     OtaStatus ota_status = 32;
+    // 40-50: left free for in-flight branches (#325 ramp_state 40, #353 control_ack 41,
+    // #359 texture_ack 42, #357 fx_debug 50).
+    // Reply to set_wifi_policy / get_wifi_policy.
+    WifiPolicyState wifi_policy_state = 51;
   }
 }

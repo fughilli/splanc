@@ -104,6 +104,7 @@ rust_static_library(
         "ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
+        "wifi_ffi.rs",
     ],
     crate_name = "ledmapper_player_ffi",
     crate_root = "ffi.rs",
@@ -146,6 +147,7 @@ rust_library(
         "ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
+        "wifi_ffi.rs",
     ],
     # The host tests never allocate the per-LED store: lm_player_init binds a
     # static one for the whole cap (the firmware sizes its own at boot).
@@ -207,6 +209,20 @@ rust_test(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         "@crates//:serde_json",
+    ],
+)
+
+# The Wi-Fi rejoin policy (wifi_ffi.rs): validation, the OTA-pending refusal, the NVS
+# record, the console grammar and the protocol arms through the C ABI. Own binary.
+rust_test(
+    name = "wifi_policy_test",
+    srcs = ["tests/wifi_policy.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
     ],
 )
 

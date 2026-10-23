@@ -121,6 +121,7 @@ py_library(
         "upgrade_keeps_wifi_core.py",
         "video_bench_core.py",
         "video_latency_core.py",
+        "wifi_cadence_core.py",
     ],
     imports = ["."],
     # board_caps parses the BoardCapabilities textproto via the generated py proto.
@@ -648,6 +649,47 @@ py_test(
     },
     imports = ["."],
     main = "hitl_no_reboot_no_park.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Wi-Fi recovery vs LED cadence: drive every scan / join / DHCP / fallback path on the
+# console while a light and a heavy effect play, and time the LED output across each from
+# the logic analyzer (wire frame intervals + damage) and the firmware's [fx] ft= cadence
+# fields. Gates (exit 1) on any excursion past the steady phase's spread; infra = SKIP.
+# Needs an analyzer-tapped C6 (hitl-rig-2). Pure logic: wifi_cadence_core.
+py_test(
+    name = "wifi_cadence",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_wifi_cadence.py",
+    ],
+    args = ["--gate"],
+    data = [
+        ":plasma_hue_fixed_fxb",
+        ":slow_lag_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "CADENCE_HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/slowLag.fxb",
+        "CADENCE_LIGHT_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_wifi_cadence.py",
     tags = [
         "hitl",
         "manual",

@@ -35,6 +35,7 @@
 #include "wifi_creds.h"     // persisted WiFi credentials: restore / persist decisions
 #include "wifi_scan.h"      // in-place background rescan (never a reboot)
 #include "esp_system.h"     // esp_get_free_heap_size
+#include "esp_log.h"        // esp_log_level_set: silence the vendor "wifi" tag after the hijack
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
@@ -263,6 +264,8 @@ void wifi_scan_cache() {
 // Once g_ssid is known, find its cached AP and latch the real BSSID + channel + reprogram
 // the hardware. Without a match nothing is latched and the join waits for the background
 // rescan (below) to find the AP. Returns whether a scan match was applied.
+void mark_seen();  // the rejoin-policy clock (below): the network was just seen
+
 bool scan_latch_ap() {
   for (uint8_t i = 0; i < g_scan_n; i++) {
     if (strncmp(g_scan[i].ssid, g_ssid, 32) == 0) {
@@ -273,6 +276,7 @@ bool scan_latch_ap() {
       Serial.printf("[t=%lu] [scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", (unsigned long)millis(), g_ssid,
                     g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
       g_scan_matched = true;
+      mark_seen();
       return true;
     }
   }
@@ -289,6 +293,46 @@ bool scan_latch_ap() {
 // frame in all-frames mode), one non-blocking hop per pass, while render keeps going.
 lm_wifi_scan::ScanSchedule g_scan_sched;
 lm_wifi_scan::ChannelHop g_hop;
+bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
+bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
+bool g_force_giveup = false;  // console WIFI GIVEUP: take the random-MAC fallback now
+
+// --- Rejoin policy (wifi_scan.h Policy; set by the app via netstack_set_wifi_policy) ----
+lm_wifi_scan::Policy g_policy;
+bool g_radio_up = false;         // esp_wifi started + MAC hijacked (never, in offline mode)
+bool g_silent = false;           // offline at runtime: radio initialised but no TX, MAC asleep
+uint32_t g_window_until = 0;     // manual mode: a commanded / provisioned join window (ms)
+bool g_policy_changed = false;   // a provision changed the mode itself (the app persists it)
+bool g_scan_decayed = false;     // auto: the sparse period is in force
+bool g_link_reset_pending = false;  // going offline: drop the join state on the next loop
+bool g_authenticating = true;    // mirror of the loop's join state (st == AUTH), for status
+// Network last seen (a scan match or a lease), as seconds of uptime; unseen time carried
+// over from previous boots (main.cpp persists it, so a nightly power cycle doesn't reset
+// the decay clock).
+uint32_t g_seen_at_s = 0;
+uint32_t g_unseen_base_s = 0;
+
+uint32_t uptime_s() { return (uint32_t)(millis() / 1000u); }
+uint32_t unseen_s() { return g_unseen_base_s + (uptime_s() - g_seen_at_s); }
+bool g_seen_this_boot = false;   // a scan matched / a lease came this boot
+void mark_seen() {
+  g_seen_this_boot = true;
+  g_unseen_base_s = 0;
+  g_seen_at_s = uptime_s();
+}
+// Whether the board may scan / join on its own right now.
+bool autonomous(uint32_t now_ms) {
+  if (!g_radio_up || g_silent) return false;
+  switch (g_policy.mode) {
+    case lm_wifi_scan::kModeAuto:
+    case lm_wifi_scan::kModeFixed:
+      return true;
+    case lm_wifi_scan::kModeManual:
+      return g_window_until != 0 && lm_wifi_scan::at_or_after(g_window_until, now_ms);
+    default:
+      return false;
+  }
+}
 
 // Tune to `ch` and ask for the wanted SSID there (a hidden AP answers a directed probe).
 void bgscan_tune(uint8_t ch) {
@@ -1065,6 +1109,8 @@ void handle_l3(const uint8_t *pt, int pl) {
       } else if (mt == 5) {
         bool first = !g_leased;
         g_leased = true;
+        mark_seen();
+        g_window_until = 0;  // manual: the join window did its job
         g_persist.on_lease((uint32_t)millis());  // proves freshly provisioned creds (wifi_creds.h)
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
@@ -1527,6 +1573,9 @@ int netstack_net_stats(char *buf, size_t cap) {
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
 // init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
+// Weak default for the app's console hook (netstack_transport.h): the loader has none.
+__attribute__((weak)) void netstack_console_hook(const char *, size_t) {}
+
 void netstack_prepare_restart() {
   // OTA-specific (docs/design/ota.md): before a PLANNED restart (the app <-> loader
   // handoff, booting an installed app) say goodbye now — the same sequence-numbered
@@ -1545,6 +1594,8 @@ void netstack_prepare_restart() {
   }
 }
 
+static void radio_bringup(bool at_boot);
+
 void netstack_setup() {
   // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
   // fills with no host draining the port, which would wedge loopTask mid-association during
@@ -1556,6 +1607,21 @@ void netstack_setup() {
   uint32_t aes = ns_aes_selftest(aesct);
   Serial.printf("[netstack] AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
                 aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    // Offline mode (a forward-deployed unit with no AP): the Wi-Fi radio is never started
+    // — no scans, no RF, no TLS server heap. BLE + the console stay up; switching the mode
+    // back (or provisioning) brings the radio up in place (radio_bringup from the loop).
+    Serial.printf("[wifi] offline mode: radio off (BLE + console stay up for reconfiguration)\n");
+    return;
+  }
+  radio_bringup(true);
+}
+
+// Start the Wi-Fi radio and hijack the MAC (boot, or later when leaving offline mode).
+// `at_boot`: also run the RX sanity check (a 1.2 s diagnostic that would only stall the
+// loop task when the radio comes up at runtime).
+static void radio_bringup(bool at_boot) {
+  if (g_radio_up) return;
   // The BT controller is already up (the app's improv_ble_begin ran first); hijack the MAC
   // last so our heapless RX/g_bssid/force-awake setup wins the shared radio config.
   //
@@ -1654,6 +1720,17 @@ void netstack_setup() {
   // on both a Pi 3 AP (recovers the SYN) and a Pi 5 AP (no regression).
   esp_wifi_set_promiscuous_rx_cb(&sink);
   esp_wifi_set_promiscuous(true);
+  // The vendor driver is a shell from here on (its event loop is gone), so every
+  // esp_wifi_set_channel (the background sweeps) logs "failed to post WiFi event" at
+  // ERROR — 13 lines a sweep through the console, from the WiFi task (priority 23,
+  // above render). Silence the vendor tag; our own [wifi]/[scan] lines say what happens.
+  esp_log_level_set("wifi", ESP_LOG_NONE);
+  g_radio_up = true;
+  if (!at_boot) {
+    tls_init();
+    Serial.printf("[wifi] radio up (left offline mode)\n");
+    return;
+  }
 
   // Sanity: continuous all-frames RX into our ring (promiscuous on; see above).
   uint8_t rx[400];
@@ -1718,6 +1795,12 @@ extern "C" void pm_go_to_sleep();
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  // Offline at runtime: the MAC was released to sleep (netstack_set_wifi_policy) — keep
+  // it there (no force-awake), BLE has the radio.
+  if (g_silent) {
+    mode = 1;
+    return;
+  }
   // Normal coex: yield the radio to BLE only around a LIVE connection's events. The
   // vestigial post-provision link that used to steal airtime here is now torn down
   // gracefully the moment a wss client appears (see netstack_loop), so there's no dead
@@ -1768,6 +1851,116 @@ static void drop_link_for_new_network() {
   g_bio_tx = g_bio_rx = 0;
 }
 
+// New credentials (wired PROV / BLE Improv) are the user's intent to join: an offline
+// board brings its radio up and goes back to auto (the app persists the change); a
+// manual board opens a join window. Credentials themselves are never dropped by a mode.
+static void on_provisioned() {
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    g_policy.mode = lm_wifi_scan::kModeAuto;
+    g_policy_changed = true;
+    Serial.printf("[wifi] provisioned while offline -> mode auto\n");
+  }
+  if (g_silent) {
+    g_silent = false;
+    pm_go_to_wake();
+  }
+  if (!g_radio_up) radio_bringup(false);
+  if (g_policy.mode == lm_wifi_scan::kModeManual)
+    g_window_until = (uint32_t)millis() + lm_wifi_scan::kJoinWindowMs;
+}
+
+void netstack_set_wifi_policy(const NetstackWifiPolicy *p) {
+  if (!p) return;
+  lm_wifi_scan::Policy np;
+  np.mode = p->mode <= lm_wifi_scan::kModeOffline ? p->mode : lm_wifi_scan::kModeAuto;
+  np.cap_s = p->scan_cap_s;
+  np.interval_s = p->interval_s;
+  np.decay_h = p->decay_after_h;
+  np.sparse_s = p->sparse_interval_s;
+  bool to_offline = np.mode == lm_wifi_scan::kModeOffline && g_policy.mode != np.mode;
+  bool from_offline = g_policy.mode == lm_wifi_scan::kModeOffline && np.mode != g_policy.mode;
+  g_policy = np;
+  g_scan_sched.due(false, 0);  // the next need re-arms under the new rules
+  if (to_offline && g_radio_up) {
+    // Go silent now: say goodbye to the AP, drop the link, stop sweeping, release the
+    // MAC to sleep. The radio is fully off from the next boot (offline is persisted);
+    // the board never reboots for it.
+    netstack_prepare_restart();
+    g_link_reset_pending = true;
+    bgscan_cancel();
+    g_silent = true;
+    pm_go_to_sleep();
+    Serial.printf("[wifi] offline mode: Wi-Fi silent now (no scans, no TX), radio off from the "
+                  "next boot; credentials kept\n");
+  } else if (from_offline && g_radio_up && g_silent) {
+    g_silent = false;
+    pm_go_to_wake();
+    Serial.printf("[wifi] leaving offline mode: rejoining\n");
+  } else if (from_offline && !g_radio_up) {
+    // Booted offline (radio never started): bring it up in place now.
+    Serial.printf("[wifi] leaving offline mode: starting the radio\n");
+    radio_bringup(false);
+  }
+  if (g_policy.mode != lm_wifi_scan::kModeManual) g_window_until = 0;
+}
+
+void netstack_wifi_rejoin() {
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    Serial.printf("[wifi] rejoin ignored: offline mode (switch the mode first)\n");
+    return;
+  }
+  if (g_policy.mode == lm_wifi_scan::kModeManual)
+    g_window_until = (uint32_t)millis() + lm_wifi_scan::kJoinWindowMs;
+  if (!g_radio_up) radio_bringup(false);
+  g_scan_sched.kick((uint32_t)millis());
+  if (!g_scan_matched) g_force_sweep = true;
+  Serial.printf("[wifi] rejoin requested%s\n",
+                g_policy.mode == lm_wifi_scan::kModeManual ? " (manual: 2 min join window)" : "");
+}
+
+bool netstack_take_policy_change(NetstackWifiPolicy *out) {
+  if (!g_policy_changed || !out) return false;
+  g_policy_changed = false;
+  out->mode = g_policy.mode;
+  out->scan_cap_s = g_policy.cap_s;
+  out->interval_s = g_policy.interval_s;
+  out->decay_after_h = g_policy.decay_h;
+  out->sparse_interval_s = g_policy.sparse_s;
+  return true;
+}
+
+// A network is "expected" only when the policy lets the board join on its own AND the
+// network was actually seen this boot. An AP that is simply absent (a unit moved to the
+// field right after an update) is no evidence against a fresh image, so the OTA health
+// check must not hold the missing lease against it; an AP that IS there but can't be
+// joined is, and still rolls a broken image back.
+bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
+
+void netstack_set_unseen_base(uint32_t seconds) { g_unseen_base_s = seconds; }
+
+void netstack_wifi_status(NetstackWifiStatus *o) {
+  if (!o) return;
+  memset(o, 0, sizeof *o);
+  uint32_t now = (uint32_t)millis();
+  bool joined = g_leased && !g_authenticating;
+  if (!g_radio_up || g_silent) o->state = 1;           // OFFLINE
+  else if (!g_creds_ready) o->state = 2;               // UNPROVISIONED
+  else if (joined) o->state = 6;                       // JOINED
+  else if (!autonomous(now)) o->state = 3;             // IDLE (manual, no window)
+  else if (g_scan_matched && !g_hop.active()) o->state = 5;  // JOINING
+  else o->state = 4;                                   // SEARCHING
+  o->radio_on = g_radio_up && !g_silent;
+  o->decayed = g_scan_decayed && !joined;
+  if (o->state == 4 && g_scan_sched.armed() && !g_hop.active()) {
+    int32_t d = (int32_t)(g_scan_sched.next_ms() - now);
+    o->next_scan_s = d > 0 ? (uint32_t)(d + 999) / 1000u : 0;
+  }
+  o->scans = joined ? 0 : g_scan_sched.attempt();
+  o->unseen_s = joined ? 0 : unseen_s();
+  if (g_creds_ready) memcpy(o->ssid, g_ssid, sizeof o->ssid);
+  o->ssid[32] = 0;
+}
+
 void netstack_loop() {
   {
     uint32_t now_us = (uint32_t)micros();
@@ -1778,10 +1971,18 @@ void netstack_loop() {
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
+  if (g_link_reset_pending) {  // offline at runtime: forget the join (netstack_set_wifi_policy)
+    g_link_reset_pending = false;
+    st = AUTH;
+    inited = false;
+    t = 0;
+    drop_link_for_new_network();
+  }
+  g_authenticating = st == AUTH;
   // Start the high-frequency coex tick once (defined above; the vendor PM lever it calls is only
   // declared after netstack_setup, so arm it here on the first loop rather than in setup).
   static esp_timer_handle_t coex_timer = nullptr;
-  if (!coex_timer) {
+  if (!coex_timer && g_radio_up) {
     esp_timer_create_args_t a = {};
     a.callback = &coex_timer_cb;
     a.dispatch_method = ESP_TIMER_TASK;
@@ -1806,7 +2007,20 @@ void netstack_loop() {
     g_restore_pending = false;
     ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
   }
-  if (g_creds_ready && !ns_pmk_ready()) ns_pmk_step(64);
+  // (Only with the radio up: offline mode has no use for it until it joins.)
+  //
+  // Measured on hitl-rig-2 (wifi_cadence, logic analyzer on the strip): the netstack loop
+  // runs at the render task's priority, so these ~14 ms PBKDF2 chunks were time-sliced
+  // 1:1 against rendering for the ~2 s a derivation takes — a heavy effect's frames
+  // stretched 184 -> 196 ms, a light one's 13 -> 16 ms, on every new provision /
+  // wrong-PSK retry. The derivation is pure CPU with no deadline, so run each chunk one
+  // priority BELOW render: render preempts it the moment a frame is due.
+  if (g_radio_up && g_creds_ready && !ns_pmk_ready()) {
+    UBaseType_t prio = uxTaskPriorityGet(nullptr);
+    if (prio > tskIDLE_PRIORITY + 1) vTaskPrioritySet(nullptr, prio - 1);
+    ns_pmk_step(64);
+    vTaskPrioritySet(nullptr, prio);
+  }
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
   // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.
@@ -1816,7 +2030,7 @@ void netstack_loop() {
   // storm). Post-link we DISABLE the HW crypto engine (CTRL0=0) so the MAC passes
   // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
   // decap, while still auto-ACKing. (Set once on entering DONE.)
-  mac_own_bssid();
+  if (g_radio_up) mac_own_bssid();
   // Post-link: HW crypto stays ENABLED (install_hw_key replicated the vendor's
   // connected-STA crypto state) so the MAC hardware-decrypts protected unicast to us
   // and delivers plaintext (handled by the g_hwkey branch).
@@ -1825,7 +2039,7 @@ void netstack_loop() {
   // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
   uint32_t n;
   int drained = 0;
-  while (drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
+  while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
   bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
@@ -2026,10 +2240,38 @@ void netstack_loop() {
             st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
             inited = false;        // the 4-way re-inits for the new AP / PMK
             drop_link_for_new_network();
+            on_provisioned();
             ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
                          strlen(g_pass));
             Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
                           (unsigned long)millis(), g_ssid);
+          }
+        } else if (plen >= 5 && strncmp(pbuf, "WIFI ", 5) == 0) {
+          // Link diagnostics on the console (the HITL wifi_cadence gate drives each
+          // recovery path on demand to time the LED output across it):
+          //   WIFI SCAN    run one background sweep now
+          //   WIFI DHCP    drop the lease and re-DISCOVER (the DHCP retry path)
+          //   WIFI GIVEUP  re-join through the random-MAC fallback (stable-address loss)
+          // Anything else goes to the app's console hook (Wi-Fi policy: WIFI MODE …).
+          const char *arg = pbuf + 5;
+          uint32_t nowc = (uint32_t)millis();
+          if (strcmp(arg, "SCAN") == 0) {
+            g_force_sweep = true;
+            Serial.printf("[t=%lu] [wifi] console: sweep requested\n", (unsigned long)nowc);
+          } else if (strcmp(arg, "DHCP") == 0) {
+            drop_link_for_new_network();
+            Serial.printf("[t=%lu] [wifi] console: lease dropped -> re-DISCOVER\n",
+                          (unsigned long)nowc);
+          } else if (strcmp(arg, "GIVEUP") == 0) {
+            st = AUTH;
+            inited = false;
+            t = 0;
+            drop_link_for_new_network();
+            g_force_giveup = true;
+            Serial.printf("[t=%lu] [wifi] console: re-joining via the random-MAC fallback\n",
+                          (unsigned long)nowc);
+          } else {
+            netstack_console_hook(pbuf, plen);
           }
         }
         plen = 0;
@@ -2057,7 +2299,7 @@ void netstack_loop() {
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
   // cache (once) BEFORE the first auth — so auth/assoc go out on the right channel to the
   // right BSS on ANY rig, not just the baked rig-3 default.
-  if (g_creds_ready && !g_ap_latched) {
+  if (g_creds_ready && !g_ap_latched && g_radio_up) {
     bgscan_cancel();  // new credentials: a sweep for the old SSID is moot
     scan_latch_ap();
     g_ap_latched = true;
@@ -2085,10 +2327,15 @@ void netstack_loop() {
   if (g_ap_latched) {
     uint32_t now_ms = (uint32_t)millis();
     // (A lease only counts once past AUTH: re-authenticating means we hold no link.)
-    bool wanted = lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
+    bool wanted = autonomous(now_ms) &&
+                  lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
                                             g_scan_matched, g_authw.waited_ms(now_ms));
-    if (!g_hop.active() && g_scan_sched.due(wanted, now_ms)) {
+    bool forced = g_force_sweep && !g_hop.active() && g_radio_up && !g_silent;
+    g_force_sweep = false;
+    uint32_t first_gap = lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s());
+    if (forced || (!g_hop.active() && g_scan_sched.due(wanted, now_ms, first_gap))) {
       g_hop.start();
+      g_sweep_forced = forced;
       Serial.printf("[t=%lu] [wifi] \"%s\" %s — background scan %u (effect keeps running)\n",
                     (unsigned long)now_ms, g_ssid,
                     g_scan_matched ? "not answering auth" : "not in the last scan",
@@ -2098,8 +2345,17 @@ void netstack_loop() {
     lm_wifi_scan::ChannelHop::Step hs = g_hop.step(now_ms, &ch);
     if (hs == lm_wifi_scan::ChannelHop::Step::kTune) {
       bgscan_tune(ch);
+    } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone && g_sweep_forced && st != AUTH) {
+      // A diagnostic sweep while associated: report, change nothing about the link.
+      Serial.printf("[t=%lu] [wifi] background scan (forced): \"%s\" %s\n", (unsigned long)now_ms,
+                    g_ssid, g_hop.found() ? "seen" : "not seen");
+      esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
     } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone) {
-      g_scan_sched.on_scan_done(now_ms);
+      if (!g_sweep_forced) {
+        g_scan_sched.on_scan_done(
+            now_ms, lm_wifi_scan::policy_delay_ms(g_policy, g_scan_sched.attempt() + 1, unseen_s(),
+                                                  &g_scan_decayed));
+      }
       if (g_hop.found()) {
         const uint8_t *b = g_hop.found_bssid();
         uint8_t fch = g_hop.found_chan();
@@ -2108,6 +2364,7 @@ void netstack_loop() {
         memcpy(g_bssid, b, 6);
         g_chan = fch;
         g_scan_matched = true;
+        mark_seen();
         mac_own_bssid();
         if (moved) g_authw.reset();  // a new AP/channel: its own unanswered-auth clock
         Serial.printf("[t=%lu] [wifi] background scan found \"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x "
@@ -2116,9 +2373,10 @@ void netstack_loop() {
                       moved ? "" : " (unchanged)");
       } else {
         g_scan_matched = false;
-        Serial.printf("[t=%lu] [wifi] background scan: \"%s\" not found; next in %lu s (BLE "
+        Serial.printf("[t=%lu] [wifi] background scan: \"%s\" not found; next in %lu s%s (BLE "
                       "Improv stays up to re-provision)\n", (unsigned long)now_ms, g_ssid,
-                      (unsigned long)(lm_wifi_scan::scan_delay_ms(g_scan_sched.attempt()) / 1000));
+                      (unsigned long)((g_scan_sched.next_ms() - now_ms) / 1000),
+                      g_scan_decayed ? " (decayed: network unseen for a long time)" : "");
       }
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
@@ -2133,7 +2391,7 @@ void netstack_loop() {
   // ever coming due. The rescan finds the AP and sets the match. Not while a sweep has the
   // radio on another channel either.
   if (st == AUTH && g_creds_ready && ns_pmk_ready() && g_scan_matched && !g_hop.active() &&
-      millis() - t > 200) {
+      autonomous((uint32_t)millis()) && millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
     uint32_t now_ms = (uint32_t)millis();
     bool stable = !lm_sta_mac::random_mac_is_build_default() && !g_mac_fallback;
@@ -2160,7 +2418,8 @@ void netstack_loop() {
     }
     // Only when a scan actually saw the AP: an absent AP (powered off, still booting) isn't
     // ignoring our MAC, so it must not cost the board its stable MAC/IP once it is back.
-    if (stable && g_scan_matched && g_authw.give_up(now_ms, g_mac_fallback)) {
+    if (stable && g_scan_matched && (g_force_giveup || g_authw.give_up(now_ms, g_mac_fallback))) {
+      g_force_giveup = false;
       // Last resort: this AP won't talk to the factory MAC (it is still holding a stale
       // station for it). Join as a per-boot random MAC instead — a new lease/IP, but online.
       uint8_t rnd[4];
@@ -2249,6 +2508,7 @@ void netstack_loop() {
         st = AUTH;
         inited = false;  // the 4-way re-inits for the new AP / PMK
         drop_link_for_new_network();
+        on_provisioned();
         // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
         // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
         ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
@@ -2366,7 +2626,8 @@ void netstack_loop() {
   // manifest-less paths (mDNS TXT tls=, TlsInfo over BLE) report "generating". Normally
   // the identity was loaded/generated in setup() and this is a no-op; it only does work
   // when that generation failed (e.g. no heap), retrying on the machine's backoff.
-  if (TLS_SERVER && !g_tls_setup) {
+  // (Not in offline mode: no radio, no :443 — radio_bringup runs tls_init when it leaves.)
+  if (TLS_SERVER && !g_tls_setup && g_radio_up) {
     if (!g_identity_installed) {
       if (device_cert_poll((uint32_t)millis()) && tls_install_identity()) tls_setup_session();
     } else {

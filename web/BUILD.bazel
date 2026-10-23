@@ -90,6 +90,7 @@ copy_to_bin(
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
+        "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
         "tsconfig.json",  # rolldown resolves these modules' tsconfig in the bin tree
     ],
