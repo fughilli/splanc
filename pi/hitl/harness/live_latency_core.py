@@ -184,23 +184,34 @@ def verdict(
     last: list[float],
     overall: list[float],
     base_rtt_ms: float,
+    probe_timeouts: int = 0,
 ) -> tuple[str, list[str]]:
     """The gate. SKIP without a baseline or with too few samples to judge (the
     bench, not the firmware); FAIL when the lag is over budget or grows between
-    the first and the last minute."""
+    the first and the last minute.
+
+    A backlogged device starves the probe itself (each echo waits behind the
+    queue), so few samples are NOT automatically a SKIP: a probe that timed out,
+    or the samples there are already over budget, is the symptom — FAIL."""
     if not baseline_ok:
         return SKIP, ["no baseline (device never answered before the stream)"]
-    if len(first) < MIN_SAMPLES or len(last) < MIN_SAMPLES:
-        # Too few echoes: in a backlogged run every probe waits behind the
-        # backlog, so a starved LAST window is itself the symptom — fail it when
-        # the first window was healthy; otherwise the bench couldn't measure.
-        if len(first) >= MIN_SAMPLES and len(last) < MIN_SAMPLES:
-            return FAIL, [f"probe echoes starved in the last window ({len(last)} < {MIN_SAMPLES})"]
-        return SKIP, [f"too few probe samples (first={len(first)}, last={len(last)})"]
-    reasons = []
-    o = Stats.of(overall)
     allow50 = base_rtt_ms + P50_BUDGET_MS
     allow99 = base_rtt_ms * 2 + P99_BUDGET_MS
+    o = Stats.of(overall)
+    if len(first) < MIN_SAMPLES or len(last) < MIN_SAMPLES:
+        starved = []
+        if probe_timeouts:
+            starved.append(f"{probe_timeouts} probe echo(es) timed out behind the backlog")
+        if overall and o.p50 > allow50:
+            starved.append(f"p50 {o.p50:.0f}ms > {allow50:.0f}ms over {o.n} starved samples")
+        if len(first) >= MIN_SAMPLES and len(last) < MIN_SAMPLES:
+            starved.append(f"probe echoes starved in the last window ({len(last)} < {MIN_SAMPLES})")
+        if starved:
+            return FAIL, starved
+        return SKIP, [f"too few probe samples (first={len(first)}, last={len(last)})"]
+    reasons = []
+    if probe_timeouts:
+        reasons.append(f"{probe_timeouts} probe echo(es) timed out")
     if o.p50 > allow50:
         reasons.append(f"p50 {o.p50:.0f}ms > {allow50:.0f}ms")
     if o.p99 > allow99:

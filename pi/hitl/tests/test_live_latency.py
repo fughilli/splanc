@@ -69,6 +69,12 @@ def test_verdict():
     assert st == core.FAIL and any("grows" in r for r in why)
     st, why = core.verdict(True, good, [], good, 30)
     assert st == core.FAIL and "starved" in why[0]
+    # A backlog starves the probe itself: a few samples, over budget, or a
+    # probe that timed out, is a FAIL, not a SKIP.
+    st, why = core.verdict(True, [8000.0], [15000.0], [8000.0, 15000.0], 150, probe_timeouts=2)
+    assert st == core.FAIL and "timed out" in why[0], why
+    assert core.verdict(True, [9000.0], [], [9000.0], 150)[0] == core.FAIL
+    assert core.verdict(True, [40.0], [], [40.0], 150)[0] == core.SKIP
 
 
 def _model(sender: str, service_s: float, rtt_s: float, seconds: float):
