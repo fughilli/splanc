@@ -10,8 +10,14 @@
 // The FIFO decouples SPI arrival from WS emission: clock SPI FASTER than the
 // strip drains, prefill a few bytes (PREFILL), then emit while SPI keeps filling.
 // Because SPI outruns the drain, once started the FIFO only grows, so it never
-// underflows mid-frame. Depth is one full frame per port (MAX_LEDS*3 bytes = one
-// 18 Kbit BSRAM block for MAX_LEDS <= 768), so it can't overflow at any SPI rate.
+// underflows mid-frame. By default the depth is one full frame per port
+// (MAX_LEDS*3 bytes = one 18 Kbit BSRAM block for MAX_LEDS <= 682), so it can't
+// overflow at any SPI rate. FIFO_DEPTH overrides that: with SPI at r x the drain
+// rate the peak fill is ~frame_bytes * (1 - 1/r) + PREFILL, so a shallower FIFO
+// (e.g. 2048 B = one BSRAM for 1024-LED ports at r <= ~3) is enough and keeps 20
+// ports inside the GW1NR-9's 26 BSRAM blocks. If a FIFO ever empties mid-frame
+// the line is held low in S_WAIT; a stall longer than the WS latch (>50 us)
+// splits the frame, so the host must keep SPI ahead of the drain.
 // On stream-end (CS deasserts -> stream_active low) with the FIFOs drained, the
 // FSM holds the >50us WS reset (latch), flushes, and idles for the next frame.
 //
@@ -80,7 +86,9 @@ module ws281x_stream #(
     // WS2812/WS2812B latch is >50us; 80us keeps a full 60Hz/550-LED (and
     // 120Hz/270-LED) frame inside its refresh budget. Too short for WS2813 (280us).
     parameter integer RESET_NS  = 80000,
-    parameter integer PREFILL   = 2      // bytes/port buffered before emit starts
+    parameter integer PREFILL   = 2,     // bytes/port buffered before emit starts
+    // Per-port FIFO depth in bytes; 0 = one full frame (MAX_LEDS*3).
+    parameter integer FIFO_DEPTH = 0
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -92,7 +100,7 @@ module ws281x_stream #(
     output reg  [MAX_PORTS-1:0] ws,
     output reg                  frame_pulse   // 1-cycle strobe when a frame starts
 );
-  localparam integer DEPTH = MAX_LEDS * 3;
+  localparam integer DEPTH = (FIFO_DEPTH > 0) ? FIFO_DEPTH : MAX_LEDS * 3;
   localparam integer AW = $clog2(DEPTH);
   localparam integer T0H = T0H_NS * CLK_MHZ / 1000;
   localparam integer T1H = T1H_NS * CLK_MHZ / 1000;
@@ -146,6 +154,26 @@ module ws281x_stream #(
       );
     end
   endgenerate
+
+`ifdef VERILATOR
+  // Simulation-only instrumentation (not synthesized): sticky overflow (a byte
+  // arrived for a full FIFO and was dropped), peak fill across ports, and the
+  // number of S_WAIT underflow stalls. Read hierarchically by the testbenches.
+  reg         ovf = 1'b0;
+  reg  [AW:0] max_fill = '0;
+  integer     stalls = 0;
+  integer     si;
+  always @(posedge clk) begin
+    for (si = 0; si < MAX_PORTS; si = si + 1) begin
+      if (stream_valid && (wr_port == 8'(si)) && active_mask[si] &&
+          fcnt[si] == (AW + 1)'(DEPTH))
+        ovf <= 1'b1;
+      if (fcnt[si] > max_fill) max_fill <= fcnt[si];
+    end
+    if (state == S_DRIVE && cnt == CNT_W'(PERIOD - 1) && bit_idx == 3'd7 && !all_ne && stream_active)
+      stalls <= stalls + 1;
+  end
+`endif
 
   // Reductions over active ports: prefill met / no active FIFO empty.
   reg all_pre, all_ne;
