@@ -234,7 +234,7 @@ frame; CS-high latches). It must sustain ≥ the drain rate
 - So 20 channels run at r ≈ 1.38 over the 16.06 Mbit/s drain. The FPGA sim
   (#370) passes 16.7–27 MHz with peak FIFO fill ≈ `L·(1−1/r)`.
 
-| layout | N | wire ms (fps ceiling) | min SPI Mbit/s | SPI ms @ 22.2 MHz | frame bytes | fits spidev 4096? | FPGA (in-tree 8-port / #370 20-port) |
+| layout | N | wire ms (fps ceiling) | min SPI Mbit/s | SPI ms @ 22.2 MHz | frame bytes | fits spidev 4096 (main)? (#369: 65536) | FPGA (in-tree 8-port / #370 20-port) |
 |---|---:|---:|---:|---:|---:|:-:|---|
 | 1×500 | 500 | 15.0 (66) | 0.8 | 0.54 | 1,501 | yes | ok / ok |
 | 1×2048 | 2,048 | 61.3 (16) | 0.8 | 2.2 | 6,145 | **no** | **overflows**: 2048 LEDs on one 1,659 B FIFO, peak ≈ 3,074 B at the player's r = 2 / ok |
@@ -267,17 +267,18 @@ that crossover per effect.
 
 ### MAX image changes this needs (proposals)
 
-1. **Raise `spidev.bufsiz`.** spidev rejects any single write larger than
-   `bufsiz` (default **4,096 bytes**). The player writes each STREAM frame in one
-   `write_all`, which must stay one transfer because CS-high latches. So any
-   frame over **1,365 LEDs fails**, including today's 4×550 (6,601 bytes) unless
-   the running image already overrides it. The payload's `env` line reads the
-   live value. Proposal for `pi/provisioning`:
-   `boot.kernelParams = [ "spidev.bufsiz=65536" ];` if spidev is built in, or
-   `boot.extraModprobeConfig = "options spidev bufsiz=65536";` if it's a module.
-   65,536 bytes covers 20×1024 (61,441). The bcm2835 SPI DMA handles a single
-   transfer that size (*to verify on the rig*). Above 21,845 LEDs the codec would
-   need to split frames with CS held, which the current `write_all` can't do.
+1. **`spidev.bufsiz`: handled by the MAX OTA PR #369.** spidev rejects any
+   single write larger than `bufsiz` (default **4,096 bytes**). The player writes
+   each STREAM frame in one `write_all`, which must stay one transfer because
+   CS-high latches. So on `main` every frame over **1,365 LEDs** fails, including
+   today's 4×550 (6,601 bytes). #369 found that this failed *silently* with
+   EMSGSIZE and makes the error visible. Its image sets `spidev.bufsiz=65536`,
+   which covers 20×1024 (61,441 bytes). #369 also fixes a player crash-loop on
+   `main` (stack overflow in an 8 MiB thread). Nothing more is needed here beyond
+   landing #369. Above 21,845 LEDs the codec would have to split frames with CS
+   held, which `write_all` can't do. The bcm2835 SPI DMA handling a single
+   61 KB transfer is *to verify* on the #369 test image (the planned SPI-tap
+   capture on `pi-ledmapper-1`).
 2. **Pin the VideoCore core clock on the Pi 3.** The Pi 3's SPI clock divides
    `core_clk`, which drops with frequency scaling (400 → 250 MHz). That would take
    a 22.2 MHz SCK down to ~13.9 MHz, *below* the 20-channel drain. Set
@@ -568,8 +569,8 @@ render/readback column of the §4 scaling model.**
    load-time per-effect probe (lower → tolerance-check → cache the verdict),
    readback → `FpgaCodec` → SPI; keep the VM fallback.
 5. **Image:** lean Mesa overlay (§8) into `pi/provisioning`, add Pi 4 / Zero 2 W
-   board targets; measure closure growth. Also `spidev.bufsiz=65536` and a
-   pinned Pi 3 `core_freq` (§4 proposals).
+   board targets; measure closure growth. Also a pinned Pi 3 `core_freq` (§4).
+   `spidev.bufsiz=65536` arrives with #369.
 5b. **20-channel FPGA:** #370's internal-only variant → pin map → a flashable
    20-port target; `PREFILL` + "start on CS-end"; logic-analyzer validation on 4
    channels.
@@ -595,9 +596,9 @@ render/readback column of the §4 scaling model.**
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
    first, built on the AOT path, with PARLIO+BitScrambler output second?
-5. **MAX image** (§4): add `spidev.bufsiz=65536` (needed for any frame over 1,365
-   LEDs, including today's 4×550) and pin the Pi 3 `core_freq`? Both are small
-   `pi/provisioning` changes, best as their own PR.
+5. **Pi 3 `core_freq` pin** (§4): fix the VideoCore core clock so the SPI clock
+   can't drop below the 20-channel drain under frequency scaling? This is a small
+   `config.txt` change. (`spidev.bufsiz` is already handled by #369.)
 6. **20-channel pin map** (#370): pick the 12 extra Tang Nano 9K header pins. And
    should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
    600 µs Pi-side pauses at frame start?

@@ -610,7 +610,7 @@ rounds to ~22.2 MHz (<code class="docutils literal notranslate"><span class="pre
 <th class="head text-right"><p>min SPI Mbit/s</p></th>
 <th class="head text-right"><p>SPI ms &#64; 22.2 MHz</p></th>
 <th class="head text-right"><p>frame bytes</p></th>
-<th class="head text-center"><p>fits spidev 4096?</p></th>
+<th class="head text-center"><p>fits spidev 4096 (main)? (#369: 65536)</p></th>
 <th class="head"><p>FPGA (in-tree 8-port / #370 20-port)</p></th>
 </tr>
 </thead>
@@ -705,17 +705,18 @@ fit spidev’s buffer.</p></li>
 <section id="max-image-changes-this-needs-proposals">
 <h3>MAX image changes this needs (proposals)<a class="headerlink" href="#max-image-changes-this-needs-proposals" title="Link to this heading">¶</a></h3>
 <ol class="arabic simple">
-<li><p><strong>Raise <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code>.</strong> spidev rejects any single write larger than
-<code class="docutils literal notranslate"><span class="pre">bufsiz</span></code> (default <strong>4,096 bytes</strong>). The player writes each STREAM frame in one
-<code class="docutils literal notranslate"><span class="pre">write_all</span></code>, which must stay one transfer because CS-high latches. So any
-frame over <strong>1,365 LEDs fails</strong>, including today’s 4×550 (6,601 bytes) unless
-the running image already overrides it. The payload’s <code class="docutils literal notranslate"><span class="pre">env</span></code> line reads the
-live value. Proposal for <code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code>:
-<code class="docutils literal notranslate"><span class="pre">boot.kernelParams</span> <span class="pre">=</span> <span class="pre">[</span> <span class="pre">&quot;spidev.bufsiz=65536&quot;</span> <span class="pre">];</span></code> if spidev is built in, or
-<code class="docutils literal notranslate"><span class="pre">boot.extraModprobeConfig</span> <span class="pre">=</span> <span class="pre">&quot;options</span> <span class="pre">spidev</span> <span class="pre">bufsiz=65536&quot;;</span></code> if it’s a module.
-65,536 bytes covers 20×1024 (61,441). The bcm2835 SPI DMA handles a single
-transfer that size (<em>to verify on the rig</em>). Above 21,845 LEDs the codec would
-need to split frames with CS held, which the current <code class="docutils literal notranslate"><span class="pre">write_all</span></code> can’t do.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code>: handled by the MAX OTA PR #369.</strong> spidev rejects any
+single write larger than <code class="docutils literal notranslate"><span class="pre">bufsiz</span></code> (default <strong>4,096 bytes</strong>). The player writes
+each STREAM frame in one <code class="docutils literal notranslate"><span class="pre">write_all</span></code>, which must stay one transfer because
+CS-high latches. So on <code class="docutils literal notranslate"><span class="pre">main</span></code> every frame over <strong>1,365 LEDs</strong> fails, including
+today’s 4×550 (6,601 bytes). #369 found that this failed <em>silently</em> with
+EMSGSIZE and makes the error visible. Its image sets <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code>,
+which covers 20×1024 (61,441 bytes). #369 also fixes a player crash-loop on
+<code class="docutils literal notranslate"><span class="pre">main</span></code> (stack overflow in an 8 MiB thread). Nothing more is needed here beyond
+landing #369. Above 21,845 LEDs the codec would have to split frames with CS
+held, which <code class="docutils literal notranslate"><span class="pre">write_all</span></code> can’t do. The bcm2835 SPI DMA handling a single
+61 KB transfer is <em>to verify</em> on the #369 test image (the planned SPI-tap
+capture on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1</span></code>).</p></li>
 <li><p><strong>Pin the VideoCore core clock on the Pi 3.</strong> The Pi 3’s SPI clock divides
 <code class="docutils literal notranslate"><span class="pre">core_clk</span></code>, which drops with frequency scaling (400 → 250 MHz). That would take
 a 22.2 MHz SCK down to ~13.9 MHz, <em>below</em> the 20-channel drain. Set
@@ -1112,8 +1113,8 @@ class-1 exact; golden tolerance tests per tier.</p></li>
 load-time per-effect probe (lower → tolerance-check → cache the verdict),
 readback → <code class="docutils literal notranslate"><span class="pre">FpgaCodec</span></code> → SPI; keep the VM fallback.</p></li>
 <li><p><strong>Image:</strong> lean Mesa overlay (§8) into <code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code>, add Pi 4 / Zero 2 W
-board targets; measure closure growth. Also <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> and a
-pinned Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code> (§4 proposals).
+board targets; measure closure growth. Also a pinned Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code> (§4).
+<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> arrives with #369.
 5b. <strong>20-channel FPGA:</strong> #370’s internal-only variant → pin map → a flashable
 20-port target; <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> + “start on CS-end”; logic-analyzer validation on 4
 channels.</p></li>
@@ -1141,9 +1142,9 @@ readback cost</strong> — if VC4 readback is a few ms, Pi 3 GLES2 is worth it; 
 DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.</p></li>
 <li><p><strong>P4 priority</strong> (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
 first, built on the AOT path, with PARLIO+BitScrambler output second?</p></li>
-<li><p><strong>MAX image</strong> (§4): add <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> (needed for any frame over 1,365
-LEDs, including today’s 4×550) and pin the Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code>? Both are small
-<code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code> changes, best as their own PR.</p></li>
+<li><p><strong>Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code> pin</strong> (§4): fix the VideoCore core clock so the SPI clock
+can’t drop below the 20-channel drain under frequency scaling? This is a small
+<code class="docutils literal notranslate"><span class="pre">config.txt</span></code> change. (<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code> is already handled by #369.)</p></li>
 <li><p><strong>20-channel pin map</strong> (#370): pick the 12 extra Tang Nano 9K header pins. And
 should <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> go to 64, with the one-LUT “start on CS-end” fix, to tolerate
 600 µs Pi-side pauses at frame start?</p></li>
