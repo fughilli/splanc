@@ -261,6 +261,14 @@ def main():
     ap.add_argument("--seconds", type=float, default=120.0)
     ap.add_argument("--mode", choices=["fifo", "latest"], default="fifo")
     ap.add_argument("--max-inflight", type=int, default=2, help="latest mode: unconfirmed frames")
+    ap.add_argument(
+        "--noise-pps",
+        type=float,
+        default=0.0,
+        help="stress: also send this many 200-byte UDP datagrams/s to the DUT (discard port 9) "
+        "during the stream — extra frames the device must pull through its 16-slot RX ring, "
+        "a stand-in for a busy channel",
+    )
     ap.add_argument("--calib", type=int, default=40, help="idle pings before + after")
     ap.add_argument("--drain", type=float, default=8.0, help="seconds to wait for late pongs")
     a = ap.parse_args()
@@ -386,6 +394,13 @@ def main():
                 return
             del app_q[:n]
 
+    noise = None
+    noise_next = 0.0
+    if a.noise_pps > 0:
+        noise = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        noise.setblocking(False)
+        noise_next = t_start
+    noise_sent = 0
     held = None  # latest mode: (seq, t_sched) of the newest frame waiting for a slot
 
     def send_frame(fseq, t_sched):
@@ -412,9 +427,17 @@ def main():
         ):
             t_next = t_start + seq * period if seq < n_frames else now_ms() + 50
             wait = max(0.0, (t_next - now_ms()) / 1000.0)
-            rl, wl, _ = select.select(
-                [s], [s] if app_q else [], [], min(wait, 0.005 if held else 0.05)
-            )
+            tick = 0.002 if held or noise is not None else 0.05
+            rl, wl, _ = select.select([s], [s] if app_q else [], [], min(wait, tick))
+            if noise is not None and seq < n_frames:
+                tn = now_ms()
+                while noise_next <= tn:
+                    try:
+                        noise.sendto(b"\0" * 200, (a.host, 9))
+                        noise_sent += 1
+                    except OSError:
+                        pass
+                    noise_next += 1000.0 / a.noise_pps
             if s.pending() or rl:
                 pump_rx()
             if app_q:
@@ -452,6 +475,8 @@ def main():
         pass
     if ti:
         emit_tcp(now_ms(), ti)
+    if noise is not None:
+        emit("E %.3f noise-datagrams-sent %d" % (now_ms(), noise_sent))
     emit("END %s" % reason)
     out.flush()
     return 0
