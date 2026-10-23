@@ -61,6 +61,14 @@ export interface Env {
   /** Canonical public origin (no trailing slash) when the request URL isn't it
    * (behind a proxy such as `tailscale funnel`). */
   PUBLIC_URL?: string;
+  /** Worker secret: a fine-grained GitHub PAT with Issues: write on the bug
+   * repository only, for POST /bugs (docs/design/agent-bug-reports.md). Unset =
+   * direct bug filing is "not configured" and agents hand out a link instead. */
+  GITHUB_ISSUES_TOKEN?: string;
+  /** owner/repo bugs are filed in (default fughilli/splanc). */
+  GITHUB_ISSUES_REPO?: string;
+  /** GitHub API base (default https://api.github.com; tests point it at a mock). */
+  GITHUB_API_URL?: string;
   /** Present under the Node host. */
   HOST?: HostHooks;
 }

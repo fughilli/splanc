@@ -26,6 +26,7 @@ import { toolCalls, toolFailure } from "../../relay/src/mcpLibrary";
 import type { Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/protocol";
 import type { Hub } from "../hub";
 import type { ProgressSink } from "../progress";
+import type { BugFilingOptions } from "../bugs";
 import { createServer } from "../server";
 import { loadLanCert } from "./lanCert";
 import { LiveMux, type LiveConn } from "./live";
@@ -75,6 +76,8 @@ export interface LanBridgeOptions {
    * work; the direct LAN endpoint needs `stateDir` (its certificate + tickets) and
    * listens on `port` (default 8443; 0 = relay only). */
   live?: { stateDir?: string; port?: number; host?: string; advertise?: string };
+  /** file_bug's direct filing (signed as this bridge; passed to createServer). */
+  bugs?: BugFilingOptions;
 }
 
 interface Session {
@@ -609,6 +612,7 @@ export class LanBridge {
     const server = createServer(this.opts.hub, {
       ...(this.opts.root !== undefined ? { root: this.opts.root } : {}),
       ...(this.opts.echo ? { echo: this.opts.echo } : {}),
+      ...(this.opts.bugs ? { bugs: this.opts.bugs } : {}),
     });
     await server.connect(session.transport);
     return session;

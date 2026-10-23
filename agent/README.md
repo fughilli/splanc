@@ -114,6 +114,13 @@ is reported through `src/progress.ts` (per call, via AsyncLocalStorage): the MCP
 `notifications/progress` when the call carries a `progressToken` and as `notifications/message` log
 lines (it declares the `logging` capability); the CLI prints it to stderr.
 
+## Bug reports
+
+Every surface has `file_bug` (CLI: `splanc-agent file-bug --title … --description … --severity …`):
+a scrubbed report with diagnostics, a duplicate check, and a pre-filled GitHub link; with the
+user's go-ahead it files directly through the relay's `POST /bugs`, which needs the
+`GITHUB_ISSUES_TOKEN` Worker secret ([docs/design/agent-bug-reports.md](../docs/design/agent-bug-reports.md)).
+
 ## Cloud agents: bridge + relay
 
 Hosted agents can't see the LAN. `splanc-agent bridge --relay <url>` runs the hub on an

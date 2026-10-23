@@ -359,7 +359,7 @@ describe("mcp", () => {
       for (const k of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const) {
         assert.equal(typeof a[k], "boolean", `${t.name}.${k}`);
       }
-      assert.equal(a.openWorldHint, false, t.name);
+      assert.equal(a.openWorldHint, t.name === "file_bug", t.name); // file_bug reaches GitHub
       if (a.readOnlyHint) assert.equal(a.destructiveHint, false, t.name);
     }
     const ro = tools.filter((t) => t.annotations!.readOnlyHint).map((t) => t.name).sort();

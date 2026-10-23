@@ -29,6 +29,7 @@ import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
 import { renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
+import { localBugOptions, registerFileBug, type BugFilingOptions } from "./bugs";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
@@ -130,6 +131,9 @@ export interface ServerOptions {
    * own (stdio/CLI: libraryLocal.ts). None behind the cloud relay, which holds the
    * library and serves its tools itself. */
   library?: EffectLibrary | null;
+  /** How file_bug files directly (bugs.ts). Default: localBugOptions() (stdio/CLI:
+   * the default relay, signed as this host's bridge if it runs one). */
+  bugs?: BugFilingOptions;
 }
 
 export function createServer(target: DeviceSession | Hub, opts: ServerOptions = {}): McpServer {
@@ -145,6 +149,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   withCallProgress(server, opts.echo);
   withAnnotations(server);
   if (library) registerLibraryTools(server, library);
+  registerFileBug(server, hub, opts.root ?? "", opts.bugs ?? localBugOptions());
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });
