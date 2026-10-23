@@ -424,7 +424,9 @@ def main() -> int:
     ap.add_argument("--minutes", type=float, default=4.0)
     ap.add_argument("--controls", type=int, default=4)
     ap.add_argument("--hz", type=float, default=100.0, help="per-control CC rate")
-    ap.add_argument("--leds", type=int, default=300)
+    # <= ~200: the map goes up as ONE frame (the netstack WS buffer is 6 KB; the app
+    # shards larger maps). The shader is heavy per LED instead.
+    ap.add_argument("--leds", type=int, default=150)
     ap.add_argument("--probe-s", type=float, default=0.25, help="echo period")
     ap.add_argument("--probe-timeout", type=float, default=60.0)
     ap.add_argument("--warmup-s", type=float, default=5.0)
