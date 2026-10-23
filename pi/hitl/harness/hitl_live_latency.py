@@ -597,11 +597,16 @@ def run_on_hardware(args) -> int:
         res = run_all(args.device_ws, local_burst)
         return 1 if res["status"] == core.FAIL else 0
 
-    from hitl_client import Reservation
+    from hitl_client import Reservation, ReserveError
     from provision import HarnessError, dut_target, provision_dut, wire_provision_dut
 
     r = Reservation(server=args.server, owner=args.owner, device=args.unit)
-    r.acquire()
+    try:
+        r.acquire()
+    except ReserveError as e:
+        # Infra, not the firmware: a contended rig that never handed us a DUT. SKIP.
+        _log(f"[live] no DUT ({e}) — SKIP (bench)")
+        return 0
     result: dict[str, Any] = {
         "status": core.SKIP,
         "result_line": "RESULT live_latency verdict=SKIP (no run)",
