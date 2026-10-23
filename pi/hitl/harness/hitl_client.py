@@ -706,6 +706,44 @@ class Reservation:
             return None
         return (p["ssid"], p.get("psk", ""))
 
+    def wifi_stations(self, dut_ip: str | None = None) -> dict:
+        """The rig AP's per-station link stats for THIS reservation's DUT(s).
+
+        The rig hosts the provisioning AP the DUT joins, so the AP sees the DUT's
+        real radio link (what a test can't see from inside the DUT): tx/rx bitrate,
+        retries, tx_failed, signal, bytes/packets, per station MAC — from the
+        daemon's `iw dev <ap> station dump` (GET /reservation/<id>/wifi). E.g. a
+        video-latency test reads `rx_bitrate_mbps` (station -> AP) to know the
+        fixture's actual uplink rate.
+
+        The daemon only ever reports stations this reservation OWNS: a network DUT's
+        address is owned automatically; a USB board's station (a fresh random MAC
+        every boot) is owned by CLAIMING the IP it was provisioned to — pass
+        `dut_ip` (exclusive among active reservations; idempotent, so passing it on
+        every call is fine and re-resolves the DUT's current MAC). Returns the
+        report: {reservation, unit, iface, time, stations: [{mac, ip, hostname,
+        signal_dbm, signal_avg_dbm, tx_bitrate_mbps, rx_bitrate_mbps, tx_retries,
+        tx_failed, ..., raw}], missing: [owned IPs with no station right now]}.
+        Raises ReserveError if not reserved, if the rig's daemon predates the
+        endpoint / runs no AP (404/501), or if another reservation owns the IP.
+        """
+        if not self.id or not self.server:
+            raise ReserveError("wifi_stations: no active reservation")
+        url = f"{self.server}/reservation/{self.id}/wifi"
+        if dut_ip:
+            return _post(url, {"ip": dut_ip})
+        try:
+            return _get(url)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            raise ReserveError(f"{url}: {e.code} {detail}") from e
+
+    def wifi_station(self, dut_ip: str) -> dict | None:
+        """The AP's stats for the one station at `dut_ip` (claimed for this
+        reservation), or None if it isn't associated right now. See wifi_stations."""
+        rep = self.wifi_stations(dut_ip)
+        return next((s for s in rep.get("stations") or [] if s.get("ip") == dut_ip), None)
+
     def assert_reachable(
         self,
         host: str,

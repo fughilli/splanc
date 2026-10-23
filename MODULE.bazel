@@ -427,7 +427,12 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # 1a7a1cc (PR #15, squash-merged on main): the "timing" op
+    # 4d323e3 (PR #16, squash-merged on main): per-unit-class concurrency caps
+    # (--max-concurrent-class TYPE=N, so rig-1's network Pi jobs no longer idle its
+    # USB C6s behind the host cap) + GET/POST /reservation/{id}/wifi, the AP's
+    # `iw station dump` stats for a reservation's own DUT stations
+    # (hitl_client.Reservation.wifi_stations).
+    # Prior: 1a7a1cc (PR #15): the "timing" op
     # captures several WS2812 channels in ONE acquisition (one sample clock),
     # tags every frame with its channel + start_sample, and takes a per-request
     # `channels` override — what //pi/hitl/harness:time_base_skew needs for its
@@ -439,7 +444,7 @@ git_override(
     # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
     # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "1a7a1cc057c6bc127acce0435221ceca0feed8f1",
+    commit = "4d323e3f1e5c571286687944ecee6e8a5dac79bd",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
