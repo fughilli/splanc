@@ -240,3 +240,15 @@ fn blend_hsv_grey_end_borrows_the_other_hue() {
     let (r, g, b) = blend_rgb8((255, 255, 255), (0, 255, 0), 0.5, 1);
     assert!(g == 255 && r == b && r > 100, "white->green = {r},{g},{b}");
 }
+
+#[test]
+fn manifest_defaults_are_scanned() {
+    // fx_compiler's manifest shape: scalar + vec3 defaults, plus a doc string
+    // that mentions "default" (must not confuse the key-position scanner).
+    let m = br#"[{"name":"speed","slot":0,"width":1,"ui":{"kind":"slider","min":0,"max":4},"default":[1.25],"doc":"\"default\":[9]"},
+{"name":"tint","slot":1,"width":3,"ui":{"kind":"color"},"default":[0.2, 0.6, -1e-1]},
+{"name":"waves","slot":4,"width":1,"default":[]}]"#;
+    let mut seen = Vec::new();
+    ledmapper_keypoint::for_each_uniform(m, |u| seen.push((u.slot, u.default[..u.n_default as usize].to_vec())));
+    assert_eq!(seen, vec![(0, vec![1.25]), (1, vec![0.2, 0.6, -0.1]), (4, vec![])]);
+}

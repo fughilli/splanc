@@ -4029,6 +4029,17 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
     (*p).vm = Some(FxVm::new());
+    // Start every uniform at its manifest default (fx-perf-study R7). Clients
+    // that send set_uniforms after a deploy still override it; before this, an
+    // effect nobody configured ran with every uniform at 0 (fx_bench's
+    // lavalamp never entered its wave loop).
+    if let Some(vm) = (*p).vm.as_mut() {
+        kp::for_each_uniform(prog.manifest, |u| {
+            if u.n_default > 0 {
+                vm.set_uniform(u.slot as usize, &u.default[..u.n_default as usize]);
+            }
+        });
+    }
     // Bind + zero this deck's arena slice (buffers start clean each load; the
     // static memory's pointer is stable so one bind holds).
     (*p).arena_off = off;

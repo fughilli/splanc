@@ -210,6 +210,9 @@ pub struct Uniform<'a> {
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub step: Option<f32>,
+    /// The manifest's `default` (first `n_default` lanes; up to 4).
+    pub default: [f32; 4],
+    pub n_default: u8,
 }
 
 /// Walk the manifest's top-level objects, handing each uniform that has a name
@@ -227,7 +230,17 @@ pub fn for_each_uniform<'a>(json: &'a [u8], mut f: impl FnMut(&Uniform<'a>)) {
         i = skip_ws(json, i);
         match json.get(i) {
             Some(b'{') => {
-                let mut u = Uniform { name: b"", slot: u16::MAX, width: 1, kind: Kind::Other, min: None, max: None, step: None };
+                let mut u = Uniform {
+                    name: b"",
+                    slot: u16::MAX,
+                    width: 1,
+                    kind: Kind::Other,
+                    min: None,
+                    max: None,
+                    step: None,
+                    default: [0.0; 4],
+                    n_default: 0,
+                };
                 let Some(end) = scan_object(json, i, &mut u) else { return };
                 if !u.name.is_empty() && u.slot != u16::MAX {
                     f(&u);
@@ -393,6 +406,23 @@ fn scan_object<'a>(j: &'a [u8], i: usize, u: &mut Uniform<'a>) -> Option<usize> 
                     b"max" => {
                         u.max = parse_num(j, k);
                         k = skip_value(j, k)?;
+                    }
+                    b"default" if j.get(k) == Some(&b'[') => {
+                        let end = skip_value(j, k)?;
+                        let mut p = k + 1;
+                        while u.n_default < 4 {
+                            p = skip_ws(j, p);
+                            match j.get(p) {
+                                Some(b',') => p += 1,
+                                Some(&c) if c == b'-' || c.is_ascii_digit() => {
+                                    u.default[u.n_default as usize] = parse_num(j, p).unwrap_or(0.0);
+                                    u.n_default += 1;
+                                    p = skip_value(j, p)?;
+                                }
+                                _ => break,
+                            }
+                        }
+                        k = end;
                     }
                     _ => k = skip_value(j, k)?,
                 }
