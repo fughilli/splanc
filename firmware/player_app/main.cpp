@@ -1605,7 +1605,9 @@ static uint32_t render_once() {
   } else if (lm_fx_active()) {
     // User effect (.fxb shader): run update() once, then shade() per LED over the
     // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
-    // deadline flag); a cancelled shade holds black for that LED. ~30 fps.
+    // deadline flag) — a correctness guard against a runaway program, never a speed limit: a
+    // cancelled shade keeps that LED's previous colour (no black flash). The frame rate is
+    // whatever the autoscaler picks, or as fast as the effect can go (never parked for speed).
     static uint32_t fx_frame = 0;
     static uint32_t fx_last_ms = 0;
     static float fx_time_s = 0.0f;
@@ -1650,7 +1652,8 @@ static uint32_t render_once() {
           if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
             leds[i] = cc_apply(rgb);
           } else {
-            leds[i] = Rgb::Black;  // a cancelled/timed-out shade
+            // A cancelled/timed-out shade (the bounded-exec guard cut a runaway
+            // invocation short): keep the LED's previous colour rather than blanking it.
             shade_bad++;
           }
         } else {
@@ -1673,8 +1676,7 @@ static uint32_t render_once() {
                      fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
       }
     } else {
-      // Effect active but not runnable (shouldn't happen) — hold black.
-      fill_rgb(leds, g_led_cap, Rgb::Black);
+      // Effect active but no deck loaded (shouldn't happen): hold the last frame.
     }
     {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
@@ -1753,11 +1755,13 @@ static uint32_t render_once() {
     uint32_t cost_us = period_c / (160000000u / 1000000u);  // 160 cycles/us
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
-    // starts land one period apart. Also parks the effect + latches an
-    // app-notify if the floor / pinned rate proved unachievable.
+    // starts land one period apart. An effect that can't hold the floor / pinned
+    // rate is never parked: it runs as fast as it can, and after an overrunning
+    // frame the sleep is the bounded-duty-cycle slice (≥ 4 ms, ≥ 20% of the wall
+    // clock) so loopTask (netstack + control), the IMU sampler and TLS stay serviced.
     // With the strip: its wire floor (28.8 us per LED of the longest channel +
     // the latch) caps the ladder at what the wire can carry, and its length
-    // lowers the abort floor past 512 LEDs (heavy effects run slower, not parked).
+    // lowers the autoscaler floor past 512 LEDs (a steady slower rung).
     next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
     if (perf_on) {
       // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
@@ -1944,20 +1948,25 @@ static void emit_perf_report_if_due() {
 #endif
 }
 
-// -- fps autoscaler: unsolicited abort notification (FUG-82) ------------------
-// When the autoscaler can't hold even 25 fps (or an app-pinned rate) it parks the
-// effect on the render task and latches a notify; ship fps_state{aborted=true}
-// over the open session so the app can tell the user. Same push path as the perf
-// report (netstack: the TLS/WS session; vendor: the plain ws:81 socket). A client
-// that misses it sees the effect inactive in the next playback_state.
-static void emit_fps_abort_if_pending() {
+// -- fps autoscaler: unsolicited lag advisory (FUG-82) -------------------------
+// An effect that can't hold even the floor (or an app-pinned rate) is NOT parked:
+// it keeps rendering as fast as it can. When it starts (or stops) lagging, ship one
+// fps_state{lagging, current_fps = achieved} over the open session so the app can
+// show the real rate — an advisory, nothing is stopped. Same push path as the perf
+// report (netstack: the TLS/WS session; vendor: the plain ws:81 socket).
+static void emit_fps_lag_if_changed() {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  bool pending = lm_fps_take_abort_notify();
-  uint32_t fps = pending ? lm_fps_current_fps() : 0;
-  int32_t n = pending ? lm_fps_build_state(tx, sizeof tx, /*aborted=*/true) : 0;
+  bool lagging = false;
+  bool changed = lm_fps_take_lag_notify(&lagging);
+  uint32_t fps = changed ? lm_fps_current_fps() : 0;
+  int32_t n = changed ? lm_fps_build_state(tx, sizeof tx) : 0;
   xSemaphoreGive(player_mutex);
-  if (!pending) return;
-  Log().printf("[fps] effect parked: can't hold %u fps with 5%% headroom\n", (unsigned)fps);
+  if (!changed) return;
+  if (lagging)
+    Log().printf("[fps] effect lagging: running at %u fps, below its target (still playing)\n",
+                 (unsigned)fps);
+  else
+    Log().printf("[fps] effect back on its target rate (%u fps)\n", (unsigned)fps);
 #if defined(LM_NETSTACK)
   if (n > 0 && netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
 #else
@@ -2957,7 +2966,7 @@ void loop() {
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();
-  emit_fps_abort_if_pending();
+  emit_fps_lag_if_changed();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

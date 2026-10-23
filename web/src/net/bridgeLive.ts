@@ -79,7 +79,7 @@ export interface LiveClientEvents {
   onPlayers?: (players: LivePlayer[], rooms: Record<string, string[]>) => void;
   /** An asynchronous failure from the bridge (a control it couldn't apply). */
   onError?: (code: string, message: string, player?: string) => void;
-  /** A player's framerate autoscaler parked the effect (FUG-82 fps_state{aborted}). */
+  /** A player's effect started/stopped lagging below its target fps (FUG-82; advisory). */
   onFps?: (m: FpsMsg) => void;
   /** New LAN ticket/endpoint: persist them. */
   onLan?: (lan: LanInfo | null, lanToken: string | undefined) => void;

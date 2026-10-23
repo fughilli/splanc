@@ -22,7 +22,7 @@ const CSS = `
 .bridge-lan:empty { display:none; }
 .bridge-chips { display:flex; flex-wrap:wrap; gap:var(--sp-2); }
 .bridge-chips .k-chip[data-online="0"] { opacity:.55; }
-.bridge-chips .k-chip[data-parked="1"] { border-color:var(--err); }
+.bridge-chips .k-chip[data-lagging="1"] { border-color:var(--warn); }
 .bridge-lock { margin-left:6px; font-size:11px; }
 .bridge-cue { display:flex; gap:var(--sp-2); align-items:center; margin:var(--sp-2) 0; }
 .bridge-select { flex:1; min-width:0; padding:8px; border-radius:var(--sp-1); border:1px solid var(--border);

@@ -168,10 +168,12 @@ export function BridgeLiveScreen(_router: Router): Screen {
         if (code !== "bad_uniform") toast(msg, { error: true });
       },
       onFps: (m) => {
-        if (m.aborted) {
+        // Advisory only: a lagging effect keeps playing, just slower.
+        if (m.lagging) {
+          const rate = m.achieved_fps || m.current_fps;
           toast(
-            `${m.name} parked the effect: it can't hold ${m.auto ? `even ${m.min_fps || 25} fps` : `the pinned ${m.target_fps} fps`}. Cue something lighter.`,
-            { error: true, ms: 8000 },
+            `${m.name}: effect running at ${rate ? `${rate} fps` : "a reduced rate"}, below its ${m.auto ? m.min_fps || 25 : m.target_fps} fps target — it keeps playing.`,
+            { ms: 6000 },
           );
         }
       },
@@ -321,9 +323,14 @@ export function BridgeLiveScreen(_router: Router): Screen {
         },
       });
       chip.dataset["online"] = p.connected ? "1" : "0";
-      const fps = p.fps ? (p.fps.aborted ? " · effect parked (too heavy)" : p.fps.current ? ` · ${p.fps.current} fps` : "") : "";
+      const rate = p.fps ? p.fps.achieved || p.fps.current : 0;
+      const fps = p.fps?.lagging
+        ? ` · lagging at ${rate ? `${rate} fps` : "a reduced rate"} (below target)`
+        : rate
+          ? ` · ${rate} fps`
+          : "";
       chip.title = `${p.host}${p.fw ? ` · fw ${p.fw}` : ""}${p.connected ? "" : " · not connected"}${fps}${p.lock ? ` · locked by ${p.lock.by}` : ""}`;
-      if (p.fps?.aborted) chip.dataset["parked"] = "1";
+      if (p.fps?.lagging) chip.dataset["lagging"] = "1";
       if (p.lock) {
         const b = document.createElement("span");
         b.className = "bridge-lock";

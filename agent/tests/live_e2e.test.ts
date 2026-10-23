@@ -208,15 +208,19 @@ test("via the relay: player list, deploy + align, uniforms/crossfade/brightness 
     c.control(["all"], { xf: { pos: 0.25 }, bri: 0.5 });
     await until(() => players.every((p) => p.crossfade === 0.25 && p.brightness === 0.5), "xf + brightness");
 
-    // The framerate autoscaler (FUG-82): a step shows in the player list; an abort
-    // (the effect parked) reaches the app at once.
-    const fpsMsgs: { name: string; aborted: boolean }[] = [];
+    // The framerate autoscaler (FUG-82): a step shows in the player list; the
+    // effect starting to lag (still playing, below the floor) reaches the app at once.
+    const fpsMsgs: { name: string; lagging: boolean; achieved_fps: number }[] = [];
     c.events.onFps = (m) => fpsMsgs.push(m);
-    players[1]!.pushFpsState({ targetFps: 0, currentFps: 40, auto: true, aborted: false });
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 40, auto: true, lagging: false });
     await until(() => c.players.find((p) => p.name === "Hall")?.fps?.current === 40, "fps in the player list", 10_000);
-    players[1]!.pushFpsState({ targetFps: 0, currentFps: 25, auto: true, aborted: true });
-    await until(() => fpsMsgs.some((m) => m.name === "Hall" && m.aborted), "fps abort pushed");
-    await until(() => c.players.find((p) => p.name === "Hall")?.fps?.aborted === true, "parked in the list", 10_000);
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 17, auto: true, lagging: true, achievedFps: 17 });
+    await until(() => fpsMsgs.some((m) => m.name === "Hall" && m.lagging && m.achieved_fps === 17), "lagging pushed");
+    await until(() => c.players.find((p) => p.name === "Hall")?.fps?.lagging === true, "lagging in the list", 10_000);
+    assert.equal(c.players.find((p) => p.name === "Hall")?.fps?.achieved, 17);
+    // Back on target: one push for the change.
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 25, auto: true, lagging: false, achievedFps: 25 });
+    await until(() => fpsMsgs.some((m) => m.name === "Hall" && !m.lagging), "lag cleared pushed");
 
     // An unknown uniform is reported (asynchronously), not silently dropped.
     const errs: string[] = [];

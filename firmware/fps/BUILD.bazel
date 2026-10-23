@@ -1,7 +1,8 @@
 """Framerate autoscaler (FUG-82): the pure `FpsController` that keeps effects at
 a consistent FPS by adapting a 5-fps-ladder target to each effect's real
-per-frame cost (5% headroom + an x/N missed-frame window), and aborts when even
-25 fps (or a user-pinned rate) can't be held.
+per-frame cost (5% headroom + an x/N missed-frame window). An effect that can't
+hold even the 25-fps floor (or a user-pinned rate) is never parked: it lags at the
+rate it achieves, with the render duty cycle bounded so the device stays responsive.
 
 no_std, zero-dependency, integer-only (no hardware f64 on the C6) so it unit
 tests on the host and compiles unchanged for the ESP32-C6. Driven by the render

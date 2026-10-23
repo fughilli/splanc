@@ -200,8 +200,9 @@ test("effect arms carry the deck selector (FUG-110)", () => {
 test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {
   type CMsg = Parameters<typeof encodeClient>[0];
   type SMsg = Parameters<typeof encodeServer>[0];
-  // Pin a rate, hold (no abort), and back to autoscale (proto3 zeroes/false are
-  // implicit on the wire; flatFpsState fills them back in on the server side).
+  // Pin a rate and back to autoscale (proto3 zeroes/false are implicit on the
+  // wire; flatFpsState fills them back in on the server side). The deprecated
+  // no_abort still round-trips (old firmware read it; current firmware ignores it).
   const pin = { type: "set_fps", targetFps: 60, noAbort: true } as const;
   assert.deepEqual(decodeClient(encodeClient(pin as unknown as CMsg)), pin);
   const auto = decodeClient(encodeClient({ type: "set_fps", targetFps: 0 } as unknown as CMsg)) as unknown as {
@@ -211,25 +212,34 @@ test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {
   assert.equal(auto.type, "set_fps");
   assert.equal(auto.targetFps ?? 0, 0);
 
-  const aborted = {
+  // A pinned rate the effect can't hold: it lags (keeps running at what it
+  // achieves) — current_fps is the achieved rate.
+  const lagging = {
     type: "fps_state",
     targetFps: 70,
-    currentFps: 70,
+    currentFps: 41,
     minFps: 25,
     maxFps: 80,
     auto: false,
-    aborted: true,
+    lagging: true,
+    achievedFps: 41,
+    aborted: false,
     noAbort: false,
   } as const;
-  const back = flatFpsState(decodeServer(encodeServer(aborted as unknown as SMsg)) as never);
-  assert.deepEqual(back, aborted);
-  // An autoscaling state drops target_fps/aborted/no_abort on the wire.
+  const back = flatFpsState(decodeServer(encodeServer(lagging as unknown as SMsg)) as never);
+  assert.deepEqual(back, lagging);
+  // An autoscaling state drops target_fps/lagging/achieved_fps on the wire.
   const live = flatFpsState(
     decodeServer(
       encodeServer({ type: "fps_state", currentFps: 45, minFps: 25, maxFps: 80, auto: true } as unknown as SMsg),
     ) as never,
   );
-  assert.deepEqual(live, { ...aborted, targetFps: 0, currentFps: 45, auto: true, aborted: false });
+  assert.deepEqual(live, { ...lagging, targetFps: 0, currentFps: 45, auto: true, lagging: false, achievedFps: 0 });
+  // Old (pre-lag) firmware's aborted flag still decodes, for back-compat.
+  const old = flatFpsState(
+    decodeServer(encodeServer({ type: "fps_state", currentFps: 25, minFps: 25, auto: true, aborted: true } as unknown as SMsg)) as never,
+  );
+  assert.equal(old.aborted, true);
 });
 
 test("TS re-encode of every golden decodes back to the same object", () => {

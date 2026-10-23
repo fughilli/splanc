@@ -693,6 +693,7 @@ cc_library(
         "sta_mac.h",
         "tls_region.cpp",
         "wifi_creds.h",
+        "wifi_scan.h",
     ],
     hdrs = [
         "improv_ble.h",
@@ -1241,8 +1242,9 @@ cc_test(
     ],
 )
 
-# Persisted WiFi credentials on the netstack build (restore at boot, persist once leased,
-# restart-to-rescan backoff): the pure decisions netstack_transport.cpp drives.
+# Persisted WiFi credentials on the netstack build (restore at boot, persist once leased),
+# and the in-place background rescan that replaced restart-to-rescan (wifi_scan.h): the
+# pure decisions netstack_transport.cpp drives.
 # The netstack's station MAC choice (factory efuse MAC; random per boot only opt-in).
 # Stable-MAC rejoin guards: per-boot 802.11 sequence numbers + the unanswered-auth watch.
 cc_library(
@@ -1283,6 +1285,20 @@ cc_test(
     srcs = ["wifi_creds_test.cc"],
     deps = [
         ":wifi_creds",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+cc_library(
+    name = "wifi_scan",
+    hdrs = ["wifi_scan.h"],
+)
+
+cc_test(
+    name = "wifi_scan_test",
+    srcs = ["wifi_scan_test.cc"],
+    deps = [
+        ":wifi_scan",
         "@rules_requirements//cc:case",
     ],
 )

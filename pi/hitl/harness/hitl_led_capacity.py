@@ -185,8 +185,13 @@ async def _drive(ws_url: str, args) -> dict:
         )
         await asyncio.sleep(args.settle_s)
         fps = await _rpc(sock, {"type": "set_fps", "target_fps": 0}, "fps_state")
-        out["fps"] = {k: fps.get(k) for k in ("currentFps", "maxFps", "minFps", "aborted")}
+        out["fps"] = {
+            k: fps.get(k)
+            for k in ("currentFps", "maxFps", "minFps", "lagging", "achievedFps", "aborted")
+        }
         _log(f"RESULT fps_state {out['fps']}")
+        # Current firmware never parks (aborted is always false; a slow effect lags
+        # instead); pre-lag firmware set aborted when it stopped the effect.
         check(not fps.get("aborted"), "the effect runs (not aborted)")
         out["perf_loaded"] = await _perf(sock)
         _log(f"RESULT perf loaded {out['perf_loaded']}")

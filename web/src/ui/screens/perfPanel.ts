@@ -90,6 +90,7 @@ export function PerfPanelScreen(router: Router): Screen {
   let curFps = 30;
   let autoscaled = false;
   let pinnedFps = 0; // the device's adopted pin (0 = Auto), from fps_state
+  let lagging = false; // fps_state: running below its target (it keeps playing)
 
   const client = appState.client;
   const connected = client !== null && client.isConnected;
@@ -124,15 +125,20 @@ export function PerfPanelScreen(router: Router): Screen {
 
   function showFps(currentFps: number, auto: boolean): void {
     if (currentFps > 0) curFps = currentFps;
-    fpsNow.textContent = curFps > 0 ? (auto ? `auto · ${curFps} fps` : `${curFps} fps`) : "—";
+    const rate = curFps > 0 ? (auto ? `auto · ${curFps} fps` : `${curFps} fps`) : "—";
+    fpsNow.textContent = lagging ? `${rate} · lagging` : rate;
+    fpsNow.title = lagging
+      ? "The effect is too heavy for its target rate: it keeps playing as fast as this device can render it. Simplify it for smoother motion."
+      : "";
   }
 
   // Mirror the device's adopted state (the app-wide handler in app/state.ts
-  // toasts an abort; the pin stays until the user changes it here).
+  // mentions a lagging effect once; the pin stays until the user changes it here).
   function applyFpsState(s: FpsStateMessage): void {
     pinnedFps = s.auto ? 0 : s.targetFps;
+    lagging = s.lagging;
     fpsSelect.value = String(pinnedFps);
-    showFps(s.currentFps, s.auto);
+    showFps(s.achievedFps || s.currentFps, s.auto);
   }
 
   fpsSelect.addEventListener("change", () => {
@@ -223,8 +229,10 @@ export function PerfPanelScreen(router: Router): Screen {
     // Under Auto an overrun above the floor is the autoscaler's cue to step down
     // (FUG-82), not a problem; warn only for a pinned rate or at the floor.
     // (Firmware without the autoscaler reports no currentFps: a fixed 30 fps.)
+    // A lagging effect (fps_state) was already mentioned app-wide: it keeps
+    // playing, slower, so don't add an error on top.
     const autoAboveFloor = autoscaled && pinnedFps === 0 && curFps > 25;
-    if (headroomMs < 0 && !overrunToasted && !autoAboveFloor) {
+    if (headroomMs < 0 && !overrunToasted && !autoAboveFloor && !lagging) {
       overrunToasted = true;
       toast(`Effect overruns the ${curFps} fps budget`, { error: true });
     }

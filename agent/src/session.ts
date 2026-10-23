@@ -47,14 +47,15 @@ import {
   type UniformInput,
 } from "./uniforms";
 
-/** The framerate autoscaler's abort floor (FUG-82; firmware/fps MIN_FPS) for a
- * strip of up to FPS_FLOOR_REF_LEDS LEDs. */
+/** The framerate autoscaler's lowest rung (FUG-82; firmware/fps MIN_FPS) for a
+ * strip of up to FPS_FLOOR_REF_LEDS LEDs. An effect too heavy for it lags (runs
+ * slower); the player never parks it. */
 const FPS_FLOOR = 25;
 const FPS_FLOOR_REF_LEDS = 512;
 
-/** The abort floor for a strip of `leds` (firmware/fps `floor_fps_for`): 25 fps
+/** The autoscaler floor for a strip of `leds` (firmware/fps `floor_fps_for`): 25 fps
  * up to 512 LEDs, then the 5-fps rung (rounded down, >= 5) that keeps the same
- * shaded LEDs per second — a long strip runs heavy effects slower, not parked. */
+ * shaded LEDs per second — a long strip runs heavy effects slower. */
 export function fpsFloorFor(leds: number): number {
   if (leds <= FPS_FLOOR_REF_LEDS) return FPS_FLOOR;
   const f = Math.floor((FPS_FLOOR * FPS_FLOOR_REF_LEDS) / leds);
@@ -215,16 +216,16 @@ export class DeviceSession {
   toolchain: Toolchain | undefined;
   /** The last clock sync against this player. */
   clock: ClockSync | null = null;
-  /** The framerate autoscaler's last abort (FUG-82): the player parked the
-   * running effect because it couldn't hold even the floor / a pinned rate.
-   * Cleared when this session activates an effect. */
-  private parked: (FpsStateMessage & { at: number }) | null = null;
   /** The player's last-reported effect framerate (FUG-82 autoscaler; 0 = unknown).
    * Ramps never stream uniforms faster than the player renders. */
   private playerFps = 0;
   /** The player's last fps_state (FUG-82), and who wants each one (the live mux
    * forwards them to app sessions). */
   private lastFps: FpsStateMessage | null = null;
+  /** When lastFps arrived, and when this session last (de)activated an effect: a
+   * lagging report from before the switch was about the previous effect. */
+  private lastFpsAt = 0;
+  private activatedAt = 0;
   private readonly fpsSubs = new Set<(st: FpsStateMessage) => void>();
   /**
    * A live performer's show lock (docs/design/live-vj-relay.md, "Arbitration"):
@@ -269,9 +270,9 @@ export class DeviceSession {
       schedule: (fn, ms) => void setTimeout(fn, ms).unref(),
     });
     this.client.onFpsState((st) => {
-      if (st.aborted) this.parked = { ...st, at: performance.now() };
       if (st.currentFps > 0) this.playerFps = st.currentFps;
       this.lastFps = st;
+      this.lastFpsAt = performance.now();
       for (const fn of this.fpsSubs) fn(st);
     });
     this.client.onPerfReport((r) => {
@@ -289,7 +290,7 @@ export class DeviceSession {
     return this.lastFps;
   }
 
-  /** Every fps_state the player pushes (autoscaler steps, aborts); returns unsubscribe. */
+  /** Every fps_state the player pushes (set_fps replies, lagging changes); returns unsubscribe. */
   onFps(fn: (st: FpsStateMessage) => void): () => void {
     this.fpsSubs.add(fn);
     return () => this.fpsSubs.delete(fn);
@@ -877,7 +878,7 @@ export class DeviceSession {
     const wasLive = activate ? this.liveDeck() : 0;
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
-      this.parked = null;
+      this.activatedAt = performance.now();
       this.effectGen++;
       const outgoing = this.current ?? (wasLive === 1 ? await this.deviceHeld(1) : null);
       // Deck A was just overwritten; an outgoing effect on deck B is still there.
@@ -897,7 +898,7 @@ export class DeviceSession {
     this.assertUnlocked();
     this.effectGen++;
     const id = effectId === "off" ? "" : effectId;
-    this.parked = null;
+    this.activatedAt = performance.now();
     if (id === "") {
       if (this.current) {
         this.previous = { ...this.current, onDevice: false };
@@ -934,7 +935,7 @@ export class DeviceSession {
     this.assertUnlocked();
     this.effectGen++;
     const prev = this.previous;
-    this.parked = null;
+    this.activatedAt = performance.now();
     if (prev?.onDevice && this.decksUsable()) {
       await this.run(() => this.client.setEffect(prev.effectId, prev.deck));
       await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease" });
@@ -1278,17 +1279,27 @@ export class DeviceSession {
    * On firmware with the framerate autoscaler (the "fps" feature, FUG-82) the
    * budget is the live target (cpu_hz / current_fps) and an overrun above the
    * 25-fps floor is just the autoscaler stepping down, so the verdict is "over
-   * budget" only when the player PARKED the effect (fps_state{aborted}) or its
-   * mean frame cost can't keep 5% headroom even at the floor. */
+   * budget" only when the effect LAGS: the player reports fps_state{lagging} or
+   * its mean frame cost can't keep 5% headroom even at the floor. A lagging
+   * effect keeps playing at whatever rate it achieves (the player never parks
+   * it), so the verdict is an advisory: simplify it if smoothness matters. */
   async measureEffect(
     seconds: number,
     opts: { sleep?: (ms: number) => Promise<void> } = {},
   ): Promise<Record<string, unknown>> {
     if (!(seconds > 0 && seconds <= 60)) throw new ToolError("seconds must be within (0, 60]");
     progress(`measuring for ${seconds} s…`);
-    const t0 = performance.now();
     const reports: PerfReportMessage[] = [];
     const unsub = this.client.onPerfReport((r) => reports.push(r));
+    // Lagging as of the measurement: the last fps_state before it, then any during.
+    let lag: FpsStateMessage | null =
+      this.lastFps?.lagging && this.lastFpsAt >= this.activatedAt ? this.lastFps : null;
+    // Pre-lag firmware parked (stopped) an effect it couldn't hold: aborted.
+    let oldAbort: FpsStateMessage | null = null;
+    const unsubFps = this.onFps((st) => {
+      lag = st.lagging ? st : null;
+      if (st.aborted) oldAbort = st;
+    });
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     try {
       await this.run(() => this.client.setPerf("BASIC", 1000));
@@ -1296,22 +1307,22 @@ export class DeviceSession {
       await this.run(() => this.client.getPerfReport());
     } finally {
       unsub();
+      unsubFps();
       await this.run(() => this.client.setPerf("OFF", 0)).catch(() => undefined);
     }
     const live = reports.filter((r) => r.frameCyclesMax > 0 || r.frameCyclesMean > 0);
-    // The abort counts if it landed during this measurement, or before it with
-    // nothing rendering since (an effect that is running again isn't parked).
-    const parked = this.parked && (this.parked.at >= t0 || live.length === 0) ? this.parked : null;
-    const parkedNote = parked
+    const lagSt = lag as FpsStateMessage | null;
+    const abortSt = oldAbort as FpsStateMessage | null;
+    const oldAbortNote = abortSt
       ? {
           aborted: true,
-          verdict:
-            `over budget: the player parked the effect — it can't hold ${parked.auto ? `even ${parked.minFps || 25} fps` : `the pinned ${parked.targetFps} fps`} ` +
-            "with 5% headroom. Roll back (rollback_effect) and simplify it.",
+          note:
+            `this player's older firmware stopped the effect: it couldn't hold ${abortSt.auto ? `${abortSt.minFps || 25} fps` : `the pinned ${abortSt.targetFps} fps`}. ` +
+            "Current firmware keeps a slow effect playing (lagging) instead; update it, or simplify the effect.",
         }
       : {};
     if (live.length === 0) {
-      return { reports: 0, note: "no frames were measured (is an effect active?)", ...parkedNote };
+      return { reports: 0, note: "no frames were measured (is an effect active?)", ...oldAbortNote };
     }
     const last = live[live.length - 1]!;
     const meanCycles = live.reduce((s, r) => s + r.frameCyclesMean, 0) / live.length;
@@ -1326,11 +1337,16 @@ export class DeviceSession {
     const fx = this.fixture?.bundle.map;
     const floorFps = fpsFloorFor(fx?.ledCount ?? fx?.leds?.length ?? 0);
     const floorCycles = currentFps > 0 && last.cpuHz > 0 ? (last.cpuHz / floorFps) * 0.95 : 0;
+    // The rate it really runs at: the player's measured rate while lagging, else
+    // the rung (current_fps is the achieved rate on lag-aware firmware too).
+    const achieved = lagSt?.achievedFps || currentFps;
     let verdict: string;
     if (currentFps > 0) {
+      const target = lagSt && !lagSt.auto && lagSt.targetFps > 0 ? `the pinned ${lagSt.targetFps}` : `the ${floorFps}`;
       verdict =
-        meanCycles > floorCycles
-          ? `over budget: it can't keep 5% headroom even at ${floorFps} fps — the player will park it. Roll back and simplify.`
+        lagSt || meanCycles > floorCycles
+          ? `over budget (advisory): it runs at ~${achieved} fps on this device, below ${target} fps target — it keeps ` +
+            "playing but will lag; simplify it if smoothness matters (rollback_effect restores the previous effect)."
           : `within budget (the player runs it at ${currentFps} fps)`;
     } else {
       verdict =
@@ -1344,6 +1360,8 @@ export class DeviceSession {
       budget_cycles: budget,
       // The autoscaler's live target (FUG-82); absent on fixed-30-fps firmware.
       ...(currentFps > 0 ? { current_fps: currentFps, fps_per_window: live.map((r) => r.currentFps ?? 0) } : {}),
+      // The player's own lag report (fps_state): below its target, still playing.
+      ...(lagSt ? { lagging: true, achieved_fps: lagSt.achievedFps || currentFps } : {}),
       frame_cycles_mean: Math.round(meanCycles),
       frame_cycles_max: maxCycles,
       // The same numbers in ms, and per window (one per ~1 s report), so stability
@@ -1356,7 +1374,7 @@ export class DeviceSession {
       heap_free: last.heapFree,
       heap_min_free: Math.min(...live.map((r) => r.heapMinFree)),
       verdict,
-      ...parkedNote,
+      ...oldAbortNote,
     };
   }
 

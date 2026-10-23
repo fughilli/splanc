@@ -18,40 +18,45 @@
 //!   [`miss_limit`](FpsController::miss_limit) frames were missed, drop one
 //!   rung. A clean window whose worst frame still fits the *next* rung's
 //!   headroom budget steps up one rung.
-//! - **Abort.** If we are already at the floor ([`MIN_FPS`] = 25 fps for a strip
-//!   of up to 512 LEDs, proportionally lower for a longer one — see
-//!   [`floor_fps_for`] — or a user-pinned target) and a window still fails, the
-//!   effect can't run within budget:
-//!   [`take_abort`](FpsController::take_abort) reports it so the caller parks
-//!   the effect (freeing the CPU) and notifies the app.
+//! - **Lag, never park.** The autoscaler's lowest target is the floor
+//!   ([`MIN_FPS`] = 25 fps for a strip of up to 512 LEDs, proportionally lower
+//!   for a longer one — see [`floor_fps_for`]). An effect that can't hold even
+//!   the floor (or a user-pinned rate) is NOT stopped: it keeps rendering as
+//!   fast as it can, and the controller reports it as
+//!   [`lagging`](FpsController::lagging) with the rate it really achieves
+//!   ([`current_fps`](FpsController::current_fps)). A slow effect lags; it is
+//!   never blanked or parked for being slow. (Before, a failing floor window
+//!   "aborted" and the player parked the effect — on a fixture that looked like
+//!   the show cutting out.)
 //! - **Override.** The app can pin an exact target with [`set_target`]; the
-//!   controller stops autoscaling and holds that rung. If the pinned rung keeps
-//!   missing, it aborts (the user asked for a rate this effect can't hit).
-//! - **Hold (no abort).** A benchmark / profiling client that must measure an
-//!   effect whatever it costs (the HITL fx_bench sweep runs programs up to
-//!   ~130 ms/frame) turns the abort off with [`set_abort_enabled`]: a failing
-//!   floor/pinned window then just holds the rung.
+//!   controller stops autoscaling and holds that rung (lagging, not parked, if
+//!   the effect can't keep it).
 //! - **Wire ceiling.** The WS2812 wire itself bounds the rate: 24 bits at
 //!   ~833 kHz is [`WIRE_NS_PER_LED`] = 28.8 µs per LED, plus the latch low, on the
 //!   LONGEST channel (the two channels clock out in parallel). The caller reports
 //!   that floor with [`set_wire_us`](FpsController::set_wire_us); the ladder never
 //!   climbs (and a pin never lands) above the highest rung whose headroom budget
 //!   still holds one wire frame, and a frame that is slow ONLY because the wire is
-//!   is not the effect's fault — it never counts toward an abort.
-//! - **Minimum yield.** Even a frame that overran its period sleeps at least
-//!   `cost / 19` (≥ 5% of the wall clock to the lower-priority network task),
-//!   so an over-budget effect can't starve WiFi/TLS while the window decides.
+//!   is not the effect's fault — it never counts as a miss.
+//! - **Bounded render duty cycle.** What keeps the device responsive under a
+//!   slow effect is the sleep between frames, not parking: a frame within its
+//!   period sleeps the rest of it (≥ 5% of the wall clock, [`min_yield_ms`]); a
+//!   frame that overran its period sleeps at least [`overrun_yield_ms`] — a
+//!   [`MIN_SLICE_MS`] slice and ≥ (100 − [`RENDER_DUTY_PCT`])% of the wall clock —
+//!   so the network loop, the IMU sampler and TLS are always serviced between
+//!   frames, however heavy the effect.
 //!
 //! Pure, `no_std`, zero-dependency, integer-only (no hardware f64 on the C6) so
 //! it unit-tests on the host and compiles unchanged for the device.
 
 #![no_std]
 
-/// The abort floor, in FPS, for a strip of up to [`FLOOR_REF_LEDS`] LEDs: below
-/// it an effect is deemed unrunnable (abort). A longer strip's floor scales down
-/// with its length ([`floor_fps_for`]) — shading 2048 LEDs at 10 fps is the same
-/// per-LED throughput as 512 at 40 — so a big fixture runs heavy effects slower
-/// instead of having them parked.
+/// The autoscaler's floor, in FPS, for a strip of up to [`FLOOR_REF_LEDS`] LEDs:
+/// the lowest rung it targets. An effect that can't hold it runs as fast as it
+/// can (lagging) — it is never parked. A longer strip's floor scales down with
+/// its length ([`floor_fps_for`]) — shading 2048 LEDs at 10 fps is the same
+/// per-LED throughput as 512 at 40 — so a big fixture gets a steady slower
+/// cadence for heavy effects.
 pub const MIN_FPS: u32 = 25;
 /// Strip length the [`MIN_FPS`] floor is defined for (the LED cap before 1024
 /// LEDs per channel): the floor holds 25 x 512 = 12,800 shaded LEDs/s.
@@ -64,7 +69,7 @@ pub const MAX_FPS: u32 = 80;
 /// Ladder step. Rungs are LADDER_MIN_FPS, LADDER_MIN_FPS+STEP, ..., MAX_FPS.
 pub const FPS_STEP: u32 = 5;
 
-/// The abort floor for a strip of `leds` shaded LEDs: [`MIN_FPS`] up to
+/// The autoscaler floor for a strip of `leds` shaded LEDs: [`MIN_FPS`] up to
 /// [`FLOOR_REF_LEDS`], then the rung (rounded down) that keeps the same shaded
 /// LEDs per second, never below [`LADDER_MIN_FPS`] (1024 LEDs -> 10 fps,
 /// 2048 -> 5 fps).
@@ -107,6 +112,17 @@ pub const LADDER_LEN: u32 = (MAX_FPS - LADDER_MIN_FPS) / FPS_STEP + 1;
 /// i.e. we insist on (100 - this)% = 5% headroom for the other tasks.
 pub const HEADROOM_PCT: u32 = 95;
 
+/// The most of the wall clock a frame that overran its period may take: such a
+/// frame then sleeps ≥ (100 − this)% ([`overrun_yield_ms`]). 80% render / 20%
+/// for the network loop, the IMU sampler and TLS — under a heavy effect that
+/// used to win ~95% of the CPU the IMU fell from 100 Hz to ~11 Hz with FIFO
+/// overflows (PixieLamp bootloop log).
+pub const RENDER_DUTY_PCT: u32 = 80;
+/// The shortest sleep after a frame that overran its period, in ms: a slice
+/// long enough for the lower/equal-priority tasks to run a full pass (the
+/// netstack RX drain + TLS pump, an I2C FIFO read) whatever the frame cost.
+pub const MIN_SLICE_MS: u32 = 4;
+
 /// Frames per evaluation window. ~1 s at 30 fps: long enough that one stray
 /// WiFi/BLE IRQ stealing a frame doesn't trigger a step, short enough to react
 /// within a second.
@@ -148,16 +164,14 @@ pub fn period_us(fps: u32) -> u32 {
 }
 
 /// The controller's decision after a frame: how long to sleep before the next
-/// one, and whether the effect just became unrunnable.
+/// one. (There is no "stop" decision: a slow effect lags, it is never parked.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Decision {
     /// Milliseconds to sleep before rendering the next frame (period − work),
     /// so the *interval* between frame starts tracks the target period. Always
-    /// at least 1 ms so the render task yields.
+    /// at least 1 ms so the render task yields, and at least
+    /// [`overrun_yield_ms`] after a frame that overran its period.
     pub delay_ms: u32,
-    /// The effect can't hold even the floor / pinned rung — the caller should
-    /// park it and notify the app. Latched; read once via [`take_abort`].
-    pub abort: bool,
 }
 
 /// Framerate autoscaler state. One instance drives the active effect; reset it
@@ -174,15 +188,17 @@ pub struct FpsController {
     win_missed: u32,
     /// Worst (largest) frame cost seen this window, in µs — gates step-up.
     win_max_cost_us: u32,
-    /// Latched abort request, drained by [`take_abort`].
-    abort: bool,
-    /// False = never abort (hold the floor / pinned rung instead); for
-    /// benchmark/profiling clients. Survives [`reset`](Self::reset), like a pin.
-    abort_enabled: bool,
+    /// Sum of this window's frame intervals (cost + the sleep after it), in µs.
+    win_interval_us: u32,
+    /// The rate the last closed window really ran at (0 = no window yet).
+    achieved_fps: u32,
+    /// The last window failed at the floor / pinned rung: the effect runs as
+    /// fast as it can, below the target. Cleared by a window that holds.
+    lagging: bool,
     /// The WS2812 wire floor of the frames being shown, in µs (0 = unknown /
     /// none): a hardware property of the strip lengths, so it survives reset.
     wire_us: u32,
-    /// LEDs each frame shades (0 = unknown): sets the abort floor
+    /// LEDs each frame shades (0 = unknown): sets the floor
     /// ([`floor_fps_for`]). Survives reset, like the wire floor.
     leds: u32,
 }
@@ -201,8 +217,9 @@ impl FpsController {
             win_frames: 0,
             win_missed: 0,
             win_max_cost_us: 0,
-            abort: false,
-            abort_enabled: true,
+            win_interval_us: 0,
+            achieved_fps: 0,
+            lagging: false,
             wire_us: 0,
             leds: 0,
         }
@@ -210,22 +227,51 @@ impl FpsController {
 
     /// Reset to a fresh search (new effect loaded / (de)activated). A user pin
     /// is preserved — the app's chosen rate should survive an effect reload —
-    /// but the abort latch and window clear so the new program starts clean.
+    /// but the window and the lag state clear so the new program starts clean.
     pub fn reset(&mut self) {
         self.idx = self.clamp_idx(if self.pinned_fps != 0 {
             idx_for_fps(self.pinned_fps)
         } else {
             (DEFAULT_FPS - LADDER_MIN_FPS) / FPS_STEP
         });
+        self.clear_window();
+        self.achieved_fps = 0;
+        self.lagging = false;
+    }
+
+    fn clear_window(&mut self) {
         self.win_frames = 0;
         self.win_missed = 0;
         self.win_max_cost_us = 0;
-        self.abort = false;
+        self.win_interval_us = 0;
     }
 
-    /// Current target FPS.
-    pub fn current_fps(&self) -> u32 {
+    /// The ladder rung the controller targets now (the cadence it paces to).
+    pub fn rung_fps(&self) -> u32 {
         fps_at(self.idx)
+    }
+
+    /// The rate the effect runs at now: the rung while it holds it, the rate it
+    /// really achieves (below the rung) while [`lagging`](Self::lagging).
+    pub fn current_fps(&self) -> u32 {
+        let rung = self.rung_fps();
+        if self.lagging && self.achieved_fps > 0 {
+            self.achieved_fps.min(rung)
+        } else {
+            rung
+        }
+    }
+
+    /// The measured rate of the last closed window (0 before the first one).
+    pub fn achieved_fps(&self) -> u32 {
+        self.achieved_fps
+    }
+
+    /// True while the effect can't hold even the floor (or the pinned rate)
+    /// and is running as fast as it can below it. Advisory only: nothing is
+    /// stopped.
+    pub fn lagging(&self) -> bool {
+        self.lagging
     }
 
     /// Report the wire floor of the frames being shown ([`wire_frame_us`] of the
@@ -247,9 +293,9 @@ impl FpsController {
     }
 
     /// Report how many LEDs each frame shades: a strip past [`FLOOR_REF_LEDS`]
-    /// lowers the abort floor ([`floor_fps_for`]), so its heavy effects step down
-    /// to a slower rung instead of being parked. A rung below a risen floor (the
-    /// strip got shorter) is lifted to it.
+    /// lowers the floor ([`floor_fps_for`]), so its heavy effects step down to a
+    /// steady slower rung. A rung below a risen floor (the strip got shorter) is
+    /// lifted to it.
     pub fn set_leds(&mut self, leds: u32) {
         if leds == self.leds {
             return;
@@ -265,7 +311,8 @@ impl FpsController {
         }
     }
 
-    /// The abort floor for the reported strip ([`MIN_FPS`] until one is).
+    /// The autoscaler floor for the reported strip ([`MIN_FPS`] until one is):
+    /// the lowest rung it targets; below it an effect lags, it isn't parked.
     pub fn min_fps(&self) -> u32 {
         floor_fps_for(self.leds)
     }
@@ -303,7 +350,7 @@ impl FpsController {
 
     /// True when the wire alone can't fit even the current rung's budget.
     fn wire_bound(&self) -> bool {
-        self.wire_us > headroom_budget_us(period_us(self.current_fps()))
+        self.wire_us > headroom_budget_us(period_us(self.rung_fps()))
     }
 
     /// User-pinned FPS (0 = autoscale).
@@ -316,20 +363,6 @@ impl FpsController {
         self.pinned_fps != 0
     }
 
-    /// Whether a failing floor/pinned window aborts (true, the default) or holds.
-    pub fn abort_enabled(&self) -> bool {
-        self.abort_enabled
-    }
-
-    /// Enable (default) or disable the abort. Disabling also drops a pending
-    /// latch so a hold request can't be followed by a stale abort.
-    pub fn set_abort_enabled(&mut self, enabled: bool) {
-        self.abort_enabled = enabled;
-        if !enabled {
-            self.abort = false;
-        }
-    }
-
     /// Miss threshold: drop a rung when a window has *more than* this many
     /// missed frames. x/N = a quarter of the window (rounded down).
     pub fn miss_limit(&self) -> u32 {
@@ -337,7 +370,7 @@ impl FpsController {
     }
 
     /// Pin the target to `fps` (snapped to the ladder), or pass 0 to return to
-    /// autoscale. Clears the window + abort latch so the new mode starts fresh;
+    /// autoscale. Clears the window + lag state so the new mode starts fresh;
     /// an autoscale hand-back keeps the current rung as its starting point.
     pub fn set_target(&mut self, fps: u32) {
         if fps == 0 {
@@ -350,22 +383,20 @@ impl FpsController {
             // pin itself is kept as asked.
             self.idx = self.clamp_idx(idx);
         }
-        self.win_frames = 0;
-        self.win_missed = 0;
-        self.win_max_cost_us = 0;
-        self.abort = false;
+        self.clear_window();
+        self.lagging = false;
     }
 
     /// Account for one rendered frame whose measured cost (update + shade +
-    /// show) was `cost_us`, and return the sleep + abort decision.
+    /// show) was `cost_us`, and return how long to sleep before the next one.
     ///
     /// The window drives the rung: on the N-th frame we drop if too many missed,
     /// or step up if the window was clean and the next rung would still fit. A
-    /// floor/pinned failure latches an abort. The returned delay is period−work
-    /// so the frame *interval* holds the target, not work+period.
+    /// floor/pinned failure marks the effect lagging (it keeps running). The
+    /// returned delay is period−work so the frame *interval* holds the target,
+    /// not work+period — and never less than the bounded-duty-cycle yield.
     pub fn on_frame(&mut self, cost_us: u32) -> Decision {
-        let fps = self.current_fps();
-        let period = period_us(fps);
+        let period = period_us(self.rung_fps());
         let headroom_budget = headroom_budget_us(period);
 
         self.win_frames += 1;
@@ -384,77 +415,90 @@ impl FpsController {
             self.win_max_cost_us = cost_us;
         }
 
+        // Sleep = period − work already spent this frame, so successive frame
+        // starts land one period apart regardless of how long the frame took.
+        // Round to whole ms (the render task's vTaskDelay is ms-granular) and
+        // never sleep less than the minimum yield (≥1 ms and ≥5% of the wall
+        // clock — see min_yield_ms). A frame that overran its period instead
+        // sleeps the bounded-duty-cycle slice (overrun_yield_ms): the effect lags,
+        // the rest of the device keeps being serviced.
+        let delay_ms = if cost_us > period {
+            overrun_yield_ms(cost_us)
+        } else {
+            let remaining_us = period - cost_us;
+            ((remaining_us + 500) / 1000).max(min_yield_ms(cost_us))
+        };
+        self.win_interval_us = self
+            .win_interval_us
+            .saturating_add(cost_us.saturating_add(delay_ms.saturating_mul(1000)));
+
         if self.win_frames >= WINDOW_N {
             self.evaluate_window();
         }
 
-        // Sleep = period − work already spent this frame, so successive frame
-        // starts land one period apart regardless of how long the frame took.
-        // Round to whole ms (the render task's vTaskDelay is ms-granular) and
-        // never sleep less than the minimum yield (≥1 ms, and ≥5% of the wall
-        // clock for an overrunning frame — see min_yield_ms).
-        let remaining_us = period.saturating_sub(cost_us);
-        let delay_ms = ((remaining_us + 500) / 1000).max(min_yield_ms(cost_us));
-
-        Decision {
-            delay_ms,
-            abort: self.abort,
-        }
+        Decision { delay_ms }
     }
 
-    /// Close the current window: decide whether to drop, hold, step up, or
-    /// abort, then reset the window counters.
+    /// Close the current window: decide whether to drop, hold or step up, and
+    /// whether the effect is lagging, then reset the window counters.
     fn evaluate_window(&mut self) {
         let missed = self.win_missed;
         let max_cost = self.win_max_cost_us;
         let over_limit = missed > self.miss_limit();
+        if self.win_interval_us > 0 {
+            // Rounded frames-per-second of the window just closed.
+            let us = self.win_interval_us as u64;
+            self.achieved_fps = ((self.win_frames as u64 * 1_000_000 + us / 2) / us) as u32;
+        }
 
         if over_limit {
             // Too many missed frames at this rung.
             if self.idx <= self.floor_idx() || self.is_pinned() {
-                // Already at the floor, or the app pinned this rate — the effect
-                // cannot run within budget. Ask the caller to park + notify
-                // (unless a benchmark asked us to hold instead).
-                if self.abort_enabled {
-                    self.abort = true;
-                }
+                // Already at the floor, or the app pinned this rate: hold the rung
+                // and let the effect run as fast as it can below it. Lagging is
+                // reported, never acted on — the show goes on.
+                self.lagging = true;
             } else {
                 // Back off one rung and try again.
                 self.idx -= 1;
             }
-        } else if !self.is_pinned() && missed == 0 && self.idx + 1 <= self.ceiling_idx() {
-            // Clean window and room to climb: step up only if the worst frame we
-            // saw would still leave 5% headroom at the FASTER rung, so we don't
-            // immediately bounce back down.
-            let next_period = period_us(fps_at(self.idx + 1));
-            if max_cost <= headroom_budget_us(next_period) {
-                self.idx += 1;
+        } else {
+            self.lagging = false;
+            if !self.is_pinned() && missed == 0 && self.idx < self.ceiling_idx() {
+                // Clean window and room to climb: step up only if the worst frame
+                // we saw would still leave 5% headroom at the FASTER rung, so we
+                // don't immediately bounce back down.
+                let next_period = period_us(fps_at(self.idx + 1));
+                if max_cost <= headroom_budget_us(next_period) {
+                    self.idx += 1;
+                }
             }
         }
 
-        self.win_frames = 0;
-        self.win_missed = 0;
-        self.win_max_cost_us = 0;
-    }
-
-    /// Read and clear the abort latch. The render loop calls this each frame; on
-    /// true it parks the effect and the network loop notifies the app.
-    pub fn take_abort(&mut self) -> bool {
-        let a = self.abort;
-        self.abort = false;
-        a
+        self.clear_window();
     }
 }
 
-/// The shortest sleep after a frame that cost `cost_us`: at least 1 ms, and at
-/// least `cost × (100 − HEADROOM_PCT) / HEADROOM_PCT` (rounded up) so the render
-/// task — which outranks the network task — always cedes ≥ 5% of the wall clock,
-/// even on a frame that blew through its period (an over-budget effect the window
-/// hasn't stepped down / aborted yet, or a held benchmark program).
+/// The shortest sleep after an in-period frame that cost `cost_us`: at least
+/// 1 ms, and at least `cost × (100 − HEADROOM_PCT) / HEADROOM_PCT` (rounded up)
+/// so the render task — which outranks or ties every other task — always cedes
+/// ≥ 5% of the wall clock.
 #[inline]
 pub fn min_yield_ms(cost_us: u32) -> u32 {
     let free_us = (cost_us as u64 * (100 - HEADROOM_PCT) as u64).div_ceil(HEADROOM_PCT as u64);
     (free_us.div_ceil(1000) as u32).max(1)
+}
+
+/// The sleep after a frame that overran its period (a lagging effect, or one
+/// the window hasn't stepped down yet): at least [`MIN_SLICE_MS`], and at least
+/// `cost × (100 − RENDER_DUTY_PCT) / RENDER_DUTY_PCT` (rounded up), so a slow
+/// effect takes at most [`RENDER_DUTY_PCT`]% of the wall clock and the network
+/// loop, sensors and TLS always get a real slice between its frames.
+#[inline]
+pub fn overrun_yield_ms(cost_us: u32) -> u32 {
+    let free_us =
+        (cost_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
+    (free_us.div_ceil(1000) as u32).max(MIN_SLICE_MS)
 }
 
 /// The per-frame cost ceiling that still leaves the required headroom.
@@ -513,10 +557,10 @@ mod tests {
         // Cheap enough for 30 but not for 35 (so it holds, doesn't climb).
         let cost = budget(30);
         for _ in 0..WINDOW_N {
-            let d = c.on_frame(cost);
-            assert!(!d.abort);
+            c.on_frame(cost);
         }
         assert_eq!(c.current_fps(), 30);
+        assert!(!c.lagging());
     }
 
     #[test]
@@ -538,8 +582,7 @@ mod tests {
         let cost = budget(35) + 1; // a miss at 35, comfortable at 30
         assert!(cost <= budget(30));
         for _ in 0..(WINDOW_N * 3) {
-            let d = c.on_frame(cost);
-            assert!(!d.abort);
+            c.on_frame(cost);
         }
         assert_eq!(c.current_fps(), 30);
     }
@@ -578,23 +621,47 @@ mod tests {
     }
 
     #[test]
-    fn aborts_at_the_floor() {
+    fn lags_at_the_floor_instead_of_parking() {
         let mut c = FpsController::new();
-        // Drive it all the way down: every frame blows even 25 fps.
-        let mut aborted = false;
+        // Every frame blows even 25 fps (110 ms: the PixieLamp effect, ~9 fps).
+        let cost = 110_000;
         for _ in 0..(LADDER_LEN * WINDOW_N * 2) {
-            let d = c.on_frame(period_us(MIN_FPS) * 2); // 2× the floor period
-            if d.abort {
-                aborted = true;
-                break;
-            }
+            let d = c.on_frame(cost);
+            assert!(d.delay_ms >= MIN_SLICE_MS);
         }
-        assert!(aborted, "should abort once it can't hold 25 fps");
+        // The rung holds the floor; the effect runs flat out below it, reported
+        // as lagging with the rate it really achieves — never stopped.
+        assert_eq!(c.rung_fps(), MIN_FPS);
+        assert!(c.lagging());
+        let interval = cost + overrun_yield_ms(cost) * 1000;
+        let want = (1_000_000 + interval / 2) / interval;
+        assert_eq!(c.achieved_fps(), want);
+        assert_eq!(c.current_fps(), want, "reports the achieved rate while lagging");
+        assert!(c.current_fps() >= 7, "{} fps", c.current_fps());
+        // The effect gets lighter: a holding window clears the lag.
+        for _ in 0..WINDOW_N {
+            c.on_frame(budget(MIN_FPS));
+        }
+        assert!(!c.lagging());
         assert_eq!(c.current_fps(), MIN_FPS);
-        // take_abort drains the latch.
-        c.abort = true;
-        assert!(c.take_abort());
-        assert!(!c.take_abort());
+    }
+
+    #[test]
+    fn a_lagging_effect_still_yields_a_bounded_slice_every_frame() {
+        // Render duty under overload is at most RENDER_DUTY_PCT, with at least a
+        // MIN_SLICE_MS sleep, whatever the frame costs.
+        for cost in [40_001u32, 50_000, 110_000, 130_000, 500_000, 2_000_000] {
+            let y = overrun_yield_ms(cost) * 1000;
+            assert!(y >= MIN_SLICE_MS * 1000);
+            assert!(
+                (cost as u64) * 100 <= (cost as u64 + y as u64) * RENDER_DUTY_PCT as u64,
+                "{cost}: render took more than {RENDER_DUTY_PCT}%"
+            );
+        }
+        let mut c = FpsController::new();
+        assert_eq!(c.on_frame(110_000).delay_ms, overrun_yield_ms(110_000));
+        assert_eq!(overrun_yield_ms(110_000), 28);
+        assert_eq!(overrun_yield_ms(1_000), MIN_SLICE_MS);
     }
 
     #[test]
@@ -605,26 +672,24 @@ mod tests {
         assert!(c.is_pinned());
         // Cheap frames: a free autoscaler would climb, a pin must stay at 60.
         for _ in 0..(WINDOW_N * 4) {
-            let d = c.on_frame(comfortable(80));
-            assert!(!d.abort);
+            c.on_frame(comfortable(80));
         }
         assert_eq!(c.current_fps(), 60);
     }
 
     #[test]
-    fn pinned_target_aborts_when_unachievable() {
+    fn an_unholdable_pin_lags_and_keeps_the_pin() {
         let mut c = FpsController::new();
         c.set_target(75);
-        let mut aborted = false;
         for _ in 0..(WINDOW_N * 2) {
-            let d = c.on_frame(just_missing(75));
-            if d.abort {
-                aborted = true;
-                break;
-            }
+            c.on_frame(just_missing(75));
         }
-        assert!(aborted, "a pinned rate it can't hit must abort, not drop");
-        assert_eq!(c.current_fps(), 75); // stayed pinned, didn't step down
+        assert!(c.lagging(), "a pinned rate it can't hit lags, it isn't dropped or parked");
+        assert_eq!(c.rung_fps(), 75); // stayed pinned, didn't step down
+        assert!(c.current_fps() < 75 && c.current_fps() > 0);
+        // A new pin starts clean.
+        c.set_target(30);
+        assert!(!c.lagging());
     }
 
     #[test]
@@ -643,10 +708,10 @@ mod tests {
         let d = c.on_frame(10_000); // 10 ms of work
         // remaining ≈ 23_333 µs -> 23 ms.
         assert_eq!(d.delay_ms, 23);
-        // A frame that eats the whole period still yields ≥5% of the wall clock:
-        // 38.3 ms of work -> ceil(38.3 × 5/95) = 3 ms (not 1).
+        // A frame that overran the period yields the bounded-duty slice:
+        // 38.3 ms of work -> ceil(38.3 × 20/80) = 10 ms.
         let d2 = c.on_frame(period_us(30) + 5_000);
-        assert_eq!(d2.delay_ms, 3);
+        assert_eq!(d2.delay_ms, 10);
     }
 
     #[test]
@@ -664,26 +729,16 @@ mod tests {
     }
 
     #[test]
-    fn hold_mode_never_aborts_and_survives_reset() {
+    fn reset_clears_the_lag() {
         let mut c = FpsController::new();
-        c.set_abort_enabled(false);
-        for _ in 0..(LADDER_LEN * WINDOW_N * 3) {
-            assert!(!c.on_frame(period_us(MIN_FPS) * 3).abort);
+        for _ in 0..(LADDER_LEN * WINDOW_N) {
+            c.on_frame(period_us(MIN_FPS) * 3);
         }
-        assert_eq!(c.current_fps(), MIN_FPS, "still steps down to the floor, then holds");
+        assert!(c.lagging());
         c.reset();
-        assert!(!c.abort_enabled(), "hold survives an effect reload");
-        c.set_target(60);
-        for _ in 0..(WINDOW_N * 3) {
-            assert!(!c.on_frame(just_missing(60)).abort);
-        }
-        assert_eq!(c.current_fps(), 60, "a held pin neither aborts nor steps down");
-        c.set_abort_enabled(true);
-        let mut aborted = false;
-        for _ in 0..WINDOW_N {
-            aborted |= c.on_frame(just_missing(60)).abort;
-        }
-        assert!(aborted, "re-enabled: the pinned rate it can't hold aborts");
+        assert!(!c.lagging());
+        assert_eq!(c.achieved_fps(), 0);
+        assert_eq!(c.current_fps(), DEFAULT_FPS);
     }
 
     #[test]
@@ -695,7 +750,7 @@ mod tests {
         c.reset();
         assert_eq!(c.current_fps(), 45); // pin preserved
         assert!(c.is_pinned());
-        assert!(!c.take_abort());
+        assert!(!c.lagging());
     }
 
     // -- wire ceiling (WS2812: 28.8 µs/LED on the longest channel) -------------
@@ -767,16 +822,17 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_above_the_ceiling_runs_at_the_ceiling_without_aborting() {
+    fn a_pin_above_the_ceiling_runs_at_the_ceiling_without_lagging() {
         let mut c = FpsController::new();
         c.set_wire_us(wire_frame_us(1024));
         c.set_target(60);
         assert_eq!(c.pinned_fps(), 60, "the pin is kept as asked");
         assert_eq!(c.current_fps(), 30, "but runs at the wire ceiling");
-        // Frames cost what the wire costs: never an abort.
+        // Frames cost what the wire costs: never a miss, never lagging.
         for _ in 0..(WINDOW_N * 4) {
-            assert!(!c.on_frame(wire_frame_us(1024) + 200).abort);
+            c.on_frame(wire_frame_us(1024) + 200);
         }
+        assert!(!c.lagging());
         assert_eq!(c.current_fps(), 30);
         // The strip gets shorter: the pin is honoured again.
         c.set_wire_us(wire_frame_us(256));
@@ -784,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn the_abort_floor_scales_down_with_the_strip() {
+    fn the_floor_scales_down_with_the_strip() {
         assert_eq!(floor_fps_for(0), MIN_FPS);
         assert_eq!(floor_fps_for(512), MIN_FPS);
         assert_eq!(floor_fps_for(600), 20);
@@ -794,26 +850,29 @@ mod tests {
     }
 
     #[test]
-    fn a_heavy_effect_on_a_long_strip_slows_down_instead_of_aborting() {
+    fn a_heavy_effect_on_a_long_strip_steps_down_to_a_steady_rung() {
         // 2048 LEDs at ~3.6k cycles each (a plasma) = ~46 ms of shading: under
-        // the 25 fps floor (38 ms budget) a 512-LED strip would park it.
+        // the 25 fps floor (38 ms budget) on a 512-LED strip it lags instead.
         let mut c = FpsController::new();
         c.set_wire_us(wire_frame_us(1024)); // two parallel 1024-LED channels
         c.set_leds(2048);
         assert_eq!(c.min_fps(), 5);
         let cost = 46_000;
         for _ in 0..(WINDOW_N * 12) {
-            assert!(!c.on_frame(cost).abort, "a long strip's floor is lower");
+            c.on_frame(cost);
         }
+        assert!(!c.lagging(), "a long strip's floor is lower");
         assert_eq!(c.current_fps(), 20, "the fastest rung that fits 46 ms");
-        // The same cost on a reference-length strip is over its floor: abort.
+        // The same cost on a reference-length strip is under its floor: it keeps
+        // running, lagging at what it achieves (46 ms + the 12 ms slice ≈ 17 fps).
         let mut c = FpsController::new();
         c.set_leds(512);
-        let mut aborted = false;
         for _ in 0..(WINDOW_N * 12) {
-            aborted |= c.on_frame(cost).abort;
+            c.on_frame(cost);
         }
-        assert!(aborted);
+        assert!(c.lagging());
+        assert_eq!(c.rung_fps(), MIN_FPS);
+        assert_eq!(c.current_fps(), 17);
     }
 
     #[test]
@@ -829,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wire_bound_floor_blames_the_effect_only_beyond_the_wire() {
+    fn a_wire_bound_floor_flags_lag_only_beyond_the_wire() {
         let mut c = FpsController::new();
         // A wire longer than even the 25-fps budget (38 ms) under the reference
         // floor (no strip length reported, so the floor stays 25 fps): the wire
@@ -839,18 +898,15 @@ mod tests {
         assert_eq!(c.min_fps(), MIN_FPS);
         assert_eq!(c.current_fps(), 20);
         for _ in 0..(WINDOW_N * 4) {
-            assert!(
-                !c.on_frame(wire + 300).abort,
-                "the wire's own cost never aborts"
-            );
+            c.on_frame(wire + 300);
         }
-        let mut aborted = false;
+        assert!(!c.lagging(), "the wire's own cost is never the effect lagging");
         for _ in 0..WINDOW_N {
-            aborted |= c.on_frame(wire + 10 * WIRE_SLACK_US).abort;
+            c.on_frame(wire + 10 * WIRE_SLACK_US);
         }
         assert!(
-            aborted,
-            "an effect slower than the wire still aborts at the floor"
+            c.lagging(),
+            "an effect slower than the wire lags at the floor (and keeps running)"
         );
     }
 

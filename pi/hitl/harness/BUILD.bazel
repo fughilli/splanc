@@ -106,6 +106,7 @@ py_library(
         "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
+        "no_reboot_no_park_core.py",
         "ota_core.py",
         "provision.py",
         "rejoin_loop_core.py",
@@ -608,6 +609,53 @@ py_test(
     deps = [
         ":harness",
         "@rules_python//python/runfiles",
+    ],
+)
+
+# A slow effect lags (never parked) and the board never reboots for WiFi (the PixieLamp
+# field report): a deliberately slow effect keeps advancing frames for 75 s while control
+# commands are answered within budget; then credentials for an SSID that doesn't exist:
+# no reset for 100 s (no boot banner, frame counter + effect time keep climbing), the
+# effect keeps running, the background rescan runs; then the rig AP's creds lease again.
+# Pure logic: no_reboot_no_park_core (tests/test_no_reboot_no_park_core.py).
+genrule(
+    name = "slow_lag_fxb",
+    srcs = ["ab_demo/slowLag.fx"],
+    outs = ["slowLag.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "no_reboot_no_park",
+    timeout = "eternal",
+    srcs = [
+        "hitl_map_upload.py",
+        "hitl_no_reboot_no_park.py",
+    ],
+    data = [
+        ":slow_lag_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "NO_PARK_FXB_RUNFILE": "_main/pi/hitl/harness/slowLag.fxb",
+    },
+    imports = ["."],
+    main = "hitl_no_reboot_no_park.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
     ],
 )
 

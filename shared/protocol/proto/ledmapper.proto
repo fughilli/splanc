@@ -485,14 +485,15 @@ message GetTlsInfo {}
 // feature). By default the player autoscales the effect FPS on a 5-fps ladder
 // (25..80) keeping at least 5% of every frame period free; `target_fps` pins an
 // exact rate (snapped to the ladder) and stops autoscaling, 0 returns to
-// autoscale. If the floor (or a pinned rate) can't be held the player parks the
-// effect and pushes fps_state{aborted=true}, unless `no_abort` is set: then it
-// just holds the rung (benchmark/profiling clients that must measure an effect
-// whatever it costs). Both settings are runtime-only and survive effect reloads.
-// Reply: fps_state.
+// autoscale. An effect that can't hold the floor (or a pinned rate) keeps
+// running as fast as it can — the player never parks or blanks an effect for
+// being slow; fps_state reports it `lagging`. The pin is runtime-only and
+// survives effect reloads. Reply: fps_state.
 message SetFps {
   uint32 target_fps = 1;
-  bool no_abort = 2;
+  // Deprecated, ignored: it held off the old "park a slow effect" abort, which
+  // no longer exists (every effect now runs at whatever rate it achieves).
+  bool no_abort = 2 [deprecated = true];
 }
 
 // -- Sensor core (docs/design/sensor-core.md) ---------------------------------
@@ -1545,21 +1546,29 @@ message TlsInfo {
 }
 
 // Framerate autoscaler state (FUG-82). Reply to set_fps, and pushed
-// unsolicited when the autoscaler parks an effect it can't run within budget.
+// unsolicited when the effect starts or stops lagging (an advisory).
 // `target_fps` is the pinned rate (0 = autoscaling); `current_fps` the rate the
-// effect runs at now; `min_fps`/`max_fps` the ladder bounds (25/80). `aborted`:
-// the effect (every deck that was rendering) was just parked because even the
-// floor/pinned rate couldn't keep 5% headroom — surface it to the user; the
-// effect stays loaded and set_effect resumes it.
+// effect runs at now (the ladder rung, or what it really achieves while
+// lagging); `min_fps`/`max_fps` the autoscaler's lowest/highest rung for this
+// strip (25/80 for up to 512 LEDs). A slow effect is never parked: below
+// `min_fps` (or a pinned rate) it keeps rendering as fast as it can, with the
+// render task's duty cycle bounded so the network, sensors and control stay
+// responsive.
 message FpsState {
   uint32 target_fps = 1;
   uint32 current_fps = 2;
   uint32 min_fps = 3;
   uint32 max_fps = 4;
   bool auto = 5;
-  bool aborted = 6;
-  // Echo of SetFps.no_abort.
-  bool no_abort = 7;
+  // Deprecated, always false: the player no longer parks a slow effect.
+  bool aborted = 6 [deprecated = true];
+  // Deprecated, always false (SetFps.no_abort is ignored).
+  bool no_abort = 7 [deprecated = true];
+  // The effect can't hold min_fps (or the pinned rate) and is running below it,
+  // as fast as it can (current_fps = achieved_fps). Advisory: nothing stops.
+  bool lagging = 8;
+  // The frame rate the last ~30-frame window really ran at (0 = not measured yet).
+  uint32 achieved_fps = 9;
 }
 
 message ServerMessage {

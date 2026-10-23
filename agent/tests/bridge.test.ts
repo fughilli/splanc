@@ -282,7 +282,7 @@ describe("effects", () => {
 
   });
 
-  test("measure_effect on autoscaling firmware (FUG-82): live fps, floor verdict, abort", async () => {
+  test("measure_effect on autoscaling firmware (FUG-82): live fps, floor verdict, lagging (never parked)", async () => {
     await session.deployEffect("a", EFFECT, true);
     // 25 ms frames at a 35-fps target: overruns while it settles are the
     // autoscaler's business, not "over budget" (the floor is 25 fps).
@@ -290,24 +290,38 @@ describe("effects", () => {
     const m = await session.measureEffect(1, { sleep: noSleep });
     assert.equal(m["current_fps"], 35);
     assert.match(String(m["verdict"]), /^within budget \(the player runs it at 35 fps\)/);
-    assert.equal(m["aborted"], undefined);
-    // Mean cost over 95% of the 25-fps period: it can't hold the floor.
+    assert.equal(m["lagging"], undefined);
+    // Mean cost over 95% of the 25-fps period: it can't hold the floor, so it lags
+    // (an advisory: it keeps playing).
     player.perf = { budgetCycles: 160_000_000 / 25, frameCyclesMean: 6_200_000, frameCyclesMax: 6_500_000, overruns: 9, currentFps: 25 };
-    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /^over budget: it can't keep 5% headroom even at 25 fps/);
-    // The player parks it mid-measure (fps_state{aborted}): over budget + aborted.
-    player.abortOnNextPerf = { auto: true, targetFps: 0 };
+    const m2 = await session.measureEffect(1, { sleep: noSleep });
+    assert.match(String(m2["verdict"]), /^over budget \(advisory\): it runs at ~25 fps on this device, below the 25 fps target/);
+    assert.match(String(m2["verdict"]), /keeps playing/);
+    assert.doesNotMatch(String(m2["verdict"]), /park/);
+    // The player reports it lagging (fps_state{lagging}): the achieved rate is reported.
+    player.perf = { budgetCycles: 160_000_000 / 25, frameCyclesMean: 8_900_000, frameCyclesMax: 9_100_000, overruns: 9, currentFps: 18 };
+    player.lagOnNextPerf = { auto: true, targetFps: 0, achievedFps: 18 };
     const m3 = await session.measureEffect(1, { sleep: noSleep });
-    assert.equal(m3["aborted"], true);
-    assert.match(String(m3["verdict"]), /parked the effect — it can't hold even 25 fps/);
-    // A fresh deploy clears the parked state.
+    assert.equal(m3["lagging"], true);
+    assert.equal(m3["achieved_fps"], 18);
+    assert.equal(m3["aborted"], undefined);
+    assert.match(String(m3["verdict"]), /runs at ~18 fps on this device, below the 25 fps target — it keeps playing/);
+    // A fresh deploy forgets the previous effect's lag report.
     player.perf = { budgetCycles: Math.round(160_000_000 / 60), frameCyclesMean: 900_000, frameCyclesMax: 1_000_000, overruns: 0, currentFps: 60 };
     await session.deployEffect("b", EFFECT, true);
     const m4 = await session.measureEffect(1, { sleep: noSleep });
-    assert.equal(m4["aborted"], undefined);
+    assert.equal(m4["lagging"], undefined);
     assert.match(String(m4["verdict"]), /^within budget/);
-    // Pinned-rate abort names the pin.
-    player.abortOnNextPerf = { auto: false, targetFps: 70 };
-    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /the pinned 70 fps/);
+    // A pinned rate it can't hold names the pin.
+    player.lagOnNextPerf = { auto: false, targetFps: 70, achievedFps: 52 };
+    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /~52 fps on this device, below the pinned 70 fps target/);
+    // Pre-lag firmware that still parks (aborted): noted, not mistaken for lagging.
+    await session.deployEffect("c", EFFECT, true);
+    player.lagOnNextPerf = { auto: true, targetFps: 0, achievedFps: 0, oldAbort: true };
+    const m5 = await session.measureEffect(1, { sleep: noSleep });
+    assert.equal(m5["aborted"], true);
+    assert.equal(m5["lagging"], undefined);
+    assert.match(String(m5["note"]), /older firmware stopped the effect/);
     player.perf = { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
   });
 

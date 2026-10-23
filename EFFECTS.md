@@ -431,10 +431,12 @@ and the autoscaler (`firmware/fps`, FUG-82) runs at whichever is lower:
   ~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
   reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.
 
-The autoscaler's abort floor scales with the strip, so a long strip runs a heavy
-effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
-rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
-20 fps at 600, 10 fps at 1024, 5 fps at 2048. `FpsState.min_fps` reports it.
+The autoscaler's floor (its lowest rung) scales with the strip: 25 fps up to 512
+shaded LEDs, then the rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded
+down, never below 5): 20 fps at 600, 10 fps at 1024, 5 fps at 2048.
+`FpsState.min_fps` reports it. An effect too heavy even for the floor is never
+parked: it keeps playing at whatever rate it achieves (`FpsState.lagging`,
+`achieved_fps`).
 
 LED-arity `buffer` arrays are sized for the stored map / configured strip (at
 least 512 LEDs), not the 2048 cap, and both decks share the 24 KB `FX_ARENA`:

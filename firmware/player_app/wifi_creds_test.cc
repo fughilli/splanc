@@ -1,6 +1,7 @@
 // Host unit tests for the netstack's persisted-WiFi-credential decisions (wifi_creds.h):
 // what is restorable, what a repeated provision does to the link, when a provisioned
-// network is written to NVS, and the restart-to-rescan backoff.
+// network is written to NVS. (The in-place rescan that replaced the restart-to-rescan is
+// wifi_scan_test.cc.)
 #include "firmware/player_app/wifi_creds.h"
 
 #include <cassert>
@@ -120,28 +121,6 @@ static void test_persist_is_wrap_safe() {
   assert(p.due(true, t + lm_wifi::kPersistGraceMs));  // wraps past 0
 }
 
-static void test_rescan_backoff() {
-  assert(lm_wifi::rescan_delay_ms(0) == 20000);
-  assert(lm_wifi::rescan_delay_ms(1) == 40000);
-  assert(lm_wifi::rescan_delay_ms(3) == 160000);
-  assert(lm_wifi::rescan_delay_ms(4) == lm_wifi::kRescanMaxMs);
-  assert(lm_wifi::rescan_delay_ms(100) == lm_wifi::kRescanMaxMs);
-}
-
-static void test_rescan_only_for_unseen_stored_network() {
-  // Stored creds, SSID not in the boot scan, nothing leased, no central: due after backoff.
-  assert(!lm_wifi::rescan_due(true, false, false, false, 19999, 0));
-  assert(lm_wifi::rescan_due(true, false, false, false, 20000, 0));
-  assert(lm_wifi::rescan_due(true, false, false, false, 40000, 1));
-  // Never for a fresh provision, a seen network, a lease, or a connected central.
-  assert(!lm_wifi::rescan_due(false, false, false, false, 1000000, 0));
-  assert(!lm_wifi::rescan_due(true, true, false, false, 1000000, 0));
-  assert(!lm_wifi::rescan_due(true, false, true, false, 1000000, 0));
-  assert(!lm_wifi::rescan_due(true, false, false, true, 1000000, 0));
-  // The budget runs out: stop restarting until the next power-on.
-  assert(!lm_wifi::rescan_due(true, false, false, false, 1000000, lm_wifi::kRescanMaxAttempts));
-}
-
 int main(int argc, char **argv) {
   return rr::RunCases(
       argc, argv, "wifi_creds",
@@ -157,7 +136,5 @@ int main(int argc, char **argv) {
           {"stale_lease_does_not_prove_new_creds", test_stale_lease_does_not_prove_new_creds},
           {"failed_write_retries_after_grace", test_failed_write_retries_after_grace},
           {"persist_is_wrap_safe", test_persist_is_wrap_safe},
-          {"rescan_backoff", test_rescan_backoff},
-          {"rescan_only_for_unseen_stored_network", test_rescan_only_for_unseen_stored_network},
       });
 }

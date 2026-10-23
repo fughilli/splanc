@@ -168,9 +168,11 @@ effect:
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
    vs budget (mean/max ms and per-window means) and `current_fps`: the player
-   autoscales each effect between 25 and 80 fps (cheaper = smoother), and parks
-   one it can't run even at 25 fps (`aborted: true`). Over budget → it rolls back;
-   simplify (see "Performance" in `effect-language.md`) and repeat from 2.
+   autoscales each effect between 25 and 80 fps (cheaper = smoother). An effect
+   slower than 25 fps runs at whatever rate it achieves (`lagging: true`,
+   `achieved_fps`); the player never parks it. Over budget → it lags (and
+   `rollback_on_overrun` rolls it back); simplify (see "Performance" in
+   `effect-language.md`) and repeat from 2 if smoothness matters.
    Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
    nothing), then deploy + `measure_effect` to confirm — when they disagree, trust
    the measurement.

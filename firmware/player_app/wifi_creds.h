@@ -16,8 +16,8 @@
 //   - re-provisioning the network the board is already on (or joining) is a no-op, not a
 //     teardown;
 //   - a stored network that wasn't in the boot scan (the AP still booting after a power
-//     cut) is retried by rescanning — the netstack can only scan at boot, so that is a
-//     restart — on a capped backoff, never while a central is connected.
+//     cut) is found by a background rescan in place, on a capped backoff, while the
+//     player keeps rendering (wifi_scan.h) — never by restarting the board.
 //
 // Credentials are NOT cleared on a failed join (unlike the vendor build's join timeout):
 // an AP that is down for a while must not cost the user their configuration. BLE Improv
@@ -39,13 +39,6 @@ constexpr size_t kMaxPass = 64;  // 8..63 passphrase chars, or 64 hex digits (a 
 // Hold a lease this long with the provisioning central still connected before
 // persisting anyway (it normally takes the redirect and leaves within a few seconds).
 constexpr uint32_t kPersistGraceMs = 15000;
-// Restart-to-rescan backoff for a stored network missing from the boot scan, and how
-// many restarts in a row before giving up until the next power-on (~50 min of retrying
-// covers a router that boots slower than the board after a power cut; past that the
-// board stops restarting and stays re-provisionable over BLE).
-constexpr uint32_t kRescanFirstMs = 20000;
-constexpr uint32_t kRescanMaxMs = 300000;
-constexpr uint32_t kRescanMaxAttempts = 12;
 
 // Bounded strlen (no read past `cap`); returns cap + 1 when no NUL within cap + 1 bytes.
 inline size_t bounded_len(const char *s, size_t cap) {
@@ -125,22 +118,5 @@ class Persist {
   uint32_t proven_ms_ = 0;
   uint32_t retry_ms_ = 0;
 };
-
-// Restart-to-rescan backoff for attempt `n` (0-based): 20 s, 40 s, 80 s, 160 s, then 300 s.
-inline uint32_t rescan_delay_ms(uint32_t n) {
-  if (n >= 5) return kRescanMaxMs;
-  uint32_t d = kRescanFirstMs << n;
-  return d > kRescanMaxMs ? kRescanMaxMs : d;
-}
-
-// Whether a restart-to-rescan is due: stored credentials are the active ones, the boot
-// scan didn't see that SSID, nothing has leased, no central is mid-(re)provisioning, the
-// attempt budget isn't spent, and this attempt's backoff has elapsed since boot.
-inline bool rescan_due(bool using_stored, bool scan_matched, bool leased, bool central_connected,
-                       uint32_t since_boot_ms, uint32_t attempt) {
-  if (!using_stored || scan_matched || leased || central_connected) return false;
-  if (attempt >= kRescanMaxAttempts) return false;
-  return since_boot_ms >= rescan_delay_ms(attempt);
-}
 
 }  // namespace lm_wifi

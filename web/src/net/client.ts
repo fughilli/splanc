@@ -273,7 +273,7 @@ export class LedMapperClient {
   private perfSubs = new Set<(r: PerfReportMessage) => void>();
 
   // fps_state subscribers (FUG-82): fps_state is both the set_fps reply AND an
-  // unsolicited push when the player parks an effect it can't run within budget,
+  // unsolicited push when the effect starts or stops lagging (below its target),
   // so — like perf_report — it fans out rather than going to a single waiter.
   private fpsSubs = new Set<(s: FpsStateMessage) => void>();
 
@@ -1130,15 +1130,15 @@ export class LedMapperClient {
 
   /** Override the effect framerate (FUG-82; the "fps" feature). `targetFps` 0
    * returns to autoscale, any other value pins that rate (snapped to the 5-fps
-   * ladder); `noAbort` holds the rung instead of parking an effect that can't
-   * keep it. Reply: the adopted fps_state. */
-  async setFps(targetFps: number, noAbort = false): Promise<FpsStateMessage> {
-    const r = await this.request({ type: "set_fps", targetFps, noAbort } as unknown as ClientMessage, "fps_state");
+   * ladder). An effect that can't hold the rate keeps running, slower (fps_state
+   * `lagging`); the player never parks it. Reply: the adopted fps_state. */
+  async setFps(targetFps: number): Promise<FpsStateMessage> {
+    const r = await this.request({ type: "set_fps", targetFps } as unknown as ClientMessage, "fps_state");
     return flatFpsState(r as unknown as Partial<FpsStateMessage>);
   }
 
   /** Subscribe to fps_state frames: set_fps replies and the unsolicited
-   * `aborted` push. Returns an unsubscribe fn. */
+   * `lagging` change push. Returns an unsubscribe fn. */
   onFpsState(fn: (s: FpsStateMessage) => void): () => void {
     this.fpsSubs.add(fn);
     return () => this.fpsSubs.delete(fn);
