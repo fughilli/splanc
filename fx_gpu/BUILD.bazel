@@ -1,0 +1,54 @@
+"""fx_gpu — feasibility prototype for lowering the FX engine to GPU shaders.
+
+Host-only (std). Lowers a `.fxb` `shade()` kernel to a primitive IR and emits
+GLSL ES 1.00 / 3.10 (+ SPIR-V via glslang in the external validator). The VM
+(//firmware/fx_vm) stays the semantic reference; the conformance test compares a
+host evaluator of the lowered IR against it within tolerance.
+See docs/design/fx-gpu-lowering.md.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_gpu",
+    srcs = [
+        "src/emit_glsl.rs",
+        "src/eval.rs",
+        "src/ir.rs",
+        "src/kernel.rs",
+        "src/legalize.rs",
+        "src/lib.rs",
+        "src/lower.rs",
+    ],
+    crate_name = "fx_gpu",
+    edition = "2021",
+    deps = ["//firmware/fx_vm"],
+)
+
+# Host conformance + codegen sweep over a set of .fx files (run manually with
+# the effect corpus; see docs/design/fx-gpu-lowering.md "Prototype").
+rust_binary(
+    name = "fxgpu_conform",
+    srcs = ["bin/conform.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_gpu",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
+)
+
+# CI: inline effects lowered + compared against fx_vm within tolerance, plus
+# the refusal checks (loops / integer-on-GLES2 stay on the VM).
+rust_test(
+    name = "fx_gpu_conform_test",
+    srcs = ["tests/conform.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_gpu",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
+)
