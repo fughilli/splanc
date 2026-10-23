@@ -209,11 +209,97 @@ The GPU result must reach the Tang FPGA over SPI (the `pi/player_rs` sink,
   CPU-visible buffer, so it doesn't avoid readback. The prior-art baseline (§7)
   used plain SPI at 15.6 MHz and never needed this.
 
-**Frame budget (Splanc MAX, 2048 LEDs, 30 fps = 33 ms):** render (Pi4/5 compute)
-≪ 1 ms; readback+drain ~1–3 ms (to measure); SPI at the prior-art 15.6 MHz
-≈ 1.4 ms/900 LEDs → ≈ 3.2 ms/2048; FPGA WS2812 refresh ≈ 11 ms per 300-LED strip
-in parallel. Comfortable at 30 fps and likely 60 fps, versus the VM today which
-fits only a solid fill at 2048.
+### End-to-end scaling model, 500 LEDs → 20 × 1024 (MAX target)
+
+Per frame the stages are: render (GPU or VM) → readback → SPI to the FPGA → FPGA
+streaming → WS wire. SPI, FPGA and wire run concurrently with each other: the
+core streams while SPI is still arriving. They're decoupled from render by the
+player's render thread. The frame rate is set by the slowest stage:
+`fps ≈ 1 / max(render + readback, SPI, wire)`.
+
+**Wire (hard ceiling).** Per channel, `L` LEDs × 3 bytes × 9.963 µs (the core's
+54 MHz bit period of 1.2407 µs, plus 2 clocks per byte) + 80 µs latch. All
+channels run in parallel, so this depends only on LEDs per channel.
+
+**FPGA FIFO** (#370): with SPI at `r ×` the drain rate, each port's FIFO peaks at
+about `3L·(1 − 1/r) + PREFILL` bytes. The in-tree core has 1,659 B/port (553
+LEDs); #370's 20-port variant has 2,048 B/port.
+
+**SPI.** One frame is `3N + 1` bytes in a single spidev write (CS low for the whole
+frame; CS-high latches). It must sustain ≥ the drain rate
+`channels × 0.803 Mbit/s` and finish within the wire time. The player asks for
+`min(2 × channels × 0.8 MHz, 24 MHz)`.
+- The Pi 3's SPI clock is `core_clk / even divisor`. At 400 MHz the 24 MHz request
+  rounds to ~22.2 MHz (`/18`; *to confirm on the capture*).
+- So 20 channels run at r ≈ 1.38 over the 16.06 Mbit/s drain. The FPGA sim
+  (#370) passes 16.7–27 MHz with peak FIFO fill ≈ `L·(1−1/r)`.
+
+| layout | N | wire ms (fps ceiling) | min SPI Mbit/s | SPI ms @ 22.2 MHz | frame bytes | fits spidev 4096? | FPGA (in-tree 8-port / #370 20-port) |
+|---|---:|---:|---:|---:|---:|:-:|---|
+| 1×500 | 500 | 15.0 (66) | 0.8 | 0.54 | 1,501 | yes | ok / ok |
+| 1×2048 | 2,048 | 61.3 (16) | 0.8 | 2.2 | 6,145 | **no** | **overflows**: 2048 LEDs on one 1,659 B FIFO, peak ≈ 3,074 B at the player's r = 2 / ok |
+| 4×550 | 2,200 | 16.5 (60) | 3.2 | 2.4 | 6,601 | **no** | ok / ok |
+| 4×1024 | 4,096 | 30.7 (32.6) | 3.2 | 4.4 | 12,289 | **no** | peak ≈ 1,538 of 1,659 B at r = 2 (7% margin; overflows at r > 2.17) / ok |
+| 8×1024 | 8,192 | 30.7 (32.6) | 6.4 | 8.9 | 24,577 | **no** | as 4×1024 / ok |
+| 16×1024 | 16,384 | 30.7 (32.6) | 12.9 | 17.7 | 49,153 | **no** | needs 16 ports / ok |
+| 20×1024 | 20,480 | 30.7 (32.6) | 16.1 | 22.1 | 61,441 | **no** | needs 20 ports / ok (20/26 BSRAM, 83 MHz) |
+
+The table is *computed* from the core and protocol constants. The wire timing is
+validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
+16- and 20-channel rows are **extrapolation** until a 20-pin bitstream exists.
+
+**Render + readback** (the GPU vs VM question) are the Pi 3 measurement,
+pending. The payload is `fx_gpu/pi3bench` and the results go in §5. For the GPU,
+render + readback is at most a few ms at 20k LEDs if vc4 behaves like its
+llvmpipe self-test, so the **wire ceiling (32.6 fps at 1024/channel) is the
+bottleneck at every MAX scale**. The VM's cost grows linearly with N on one A53
+core, so it is the bottleneck wherever `VM ms > 30.7`; the measurement locates
+that crossover per effect.
+
+**Where the bottleneck sits** (render column pending the Pi 3 numbers):
+- ≤ 4×550: the wire (16.5 ms) or the VM for heavy effects.
+- 4×1024 – 20×1024: the **wire, at 32.6 fps**, if render + readback < 30 ms.
+  With the GPU that holds for every lowered effect. With the VM it holds only
+  for cheap effects at the low end.
+- SPI is never the limit once it runs at ≥ 16.7 MHz at 20 channels. It is a
+  *hard failure* below the drain rate (underrun, see #370) or if a frame doesn't
+  fit spidev's buffer.
+
+### MAX image changes this needs (proposals)
+
+1. **Raise `spidev.bufsiz`.** spidev rejects any single write larger than
+   `bufsiz` (default **4,096 bytes**). The player writes each STREAM frame in one
+   `write_all`, which must stay one transfer because CS-high latches. So any
+   frame over **1,365 LEDs fails**, including today's 4×550 (6,601 bytes) unless
+   the running image already overrides it. The payload's `env` line reads the
+   live value. Proposal for `pi/provisioning`:
+   `boot.kernelParams = [ "spidev.bufsiz=65536" ];` if spidev is built in, or
+   `boot.extraModprobeConfig = "options spidev bufsiz=65536";` if it's a module.
+   65,536 bytes covers 20×1024 (61,441). The bcm2835 SPI DMA handles a single
+   transfer that size (*to verify on the rig*). Above 21,845 LEDs the codec would
+   need to split frames with CS held, which the current `write_all` can't do.
+2. **Pin the VideoCore core clock on the Pi 3.** The Pi 3's SPI clock divides
+   `core_clk`, which drops with frequency scaling (400 → 250 MHz). That would take
+   a 22.2 MHz SCK down to ~13.9 MHz, *below* the 20-channel drain. Set
+   `core_freq=400` + `core_freq_min=400` (or a fixed 250 with the divider retuned)
+   in `config.txt`. This matters only from ~16 channels up, but it silently
+   breaks frames when it does.
+3. **20 channels on the FPGA:** the in-tree Tang Nano bitstream drives **8**
+   outputs (`NUM_WS = 8`, `ws[0..7]` on pins 70–77) with **553 LEDs/port** FIFOs.
+   20 × 1024 needs `MAX_PORTS = NUM_WS = 20`, 12 more `.cst` pins (Tang Nano 9K
+   header I/O to be chosen), `FIFO_DEPTH = 2048` (one BSRAM/port; full-frame FIFOs
+   need 40 of the 26 BSRAMs), and SPI ≥ 16.7 MHz. Draft **#370** adds that variant
+   internal-only (no pin map) and verifies it in place-and-route (2145 LUT4, 1415
+   DFF, 20/26 BSRAM, 83 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
+   the core README's stale "~2 bytes of buffer per port" claim; the core has had
+   per-port BSRAM FIFOs since the double-buffer was replaced.
+4. **Start-of-frame gap guard.** The FIFOs absorb mid-frame SPI pauses of
+   hundreds of µs. Right after a frame starts, though, the only slack is
+   `PREFILL × 10 µs` (20 µs by default), and a longer Pi-side pause latches the
+   strip mid-frame. `PREFILL = 64` absorbs 600 µs at zero resource cost (sim,
+   #370). It needs the one-LUT "start on CS-end" fix for frames under 64
+   bytes/port. The SPI-tap capture on rig-1 will show whether the Pi 3 actually
+   pauses there.
 
 ## 5. Expected speedups
 
@@ -324,11 +410,14 @@ td-deploy already solved the hard image/toolchain parts; reuse directly
   `-Dllvm=disabled` (plus rusticl/vdpau/va/xa/teflon off). This is what keeps the
   **507 MB LLVM** out of the image (td-deploy's whale). **Reproduced on this
   host in this PR:** a lean Mesa 26.2.4 with vc4+v3d+broadcom and **zero LLVM in
-  the closure** (mesa ≈ 118 MB; the shippable lib subset ≈ 40–45 MB on top of a
-  splanc image that has no Mesa today). Mesa 26 needs two extra knobs vs
-  td-deploy's pin (`-Dtools=`, `-Dvideo-codecs=`, `install-mesa-clc`/`intel-rt`
-  off, and dropping the rusticl `postFixup`); captured in
-  `/workspace/.claude/fxgpu/dev/nix/mesa-lean.nix`.
+  the closure**. Mesa itself is **35 MB** on disk (an earlier draft said 118 MB,
+  a misread of the closure size). The whole relocatable runtime set (Mesa +
+  libglvnd + libdrm + X/wayland client libs + glibc) is ~125 MB, ~37 MB
+  compressed. In an image that already ships glibc, Mesa adds ~40–60 MB. Mesa 26
+  needs extra knobs vs td-deploy's pin (`-Dtools=`, `-Dvideo-codecs=`,
+  `-Dvulkan-layers=`, `install-mesa-clc`/`install-precomp-compiler`/`intel-rt`
+  off, no `gallium-vdpau`/`xa` options, and dropping the rusticl `postFixup`);
+  captured in `fx_gpu/pi3bench/mesa-lean.nix`.
 * **Surfaceless EGL context** (`runtime_rs/src/main.rs make_gl`):
   `eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA)`, dlopen libEGL via
   `khronos-egl`'s `dynamic` feature, no display; target chosen per board
@@ -432,28 +521,58 @@ of the GPU result) or `emit_glsl` (ES 1.00 / 3.10 → SPIR-V via glslang).
 * **Run the corpus sweep:**
   `bazel run //fx_gpu:fxgpu_conform -- --profile exact --emit /tmp/shaders $(find … -name '*.fx')`.
 
-**Not done: on-Pi measurement.** Reaching the reservable `pi-ledmapper` Pi 3B+
-DUTs requires copying the Pi root deploy key into the shared HITL reservation
-container, which was not done without owner approval. So there are **no measured
-VC4 ms/frame** here; the host prototype establishes correctness + coverage, and
-the first staged step is the GLES2 offscreen-render + readback microbenchmark on
-`pi-ledmapper-1/2` (or the user's own Pi).
+* **GLES2 for vc4 = kernel in the vertex shader** (`Target::Es100Vertex`). One
+  `GL_POINTS` vertex per LED into a *LEDs-per-channel × channels* RGBA8 target
+  (row = channel = one FPGA output's address range), so 20×1024 is 1024×20 and
+  needs no tiling under vc4's 2048 limit. The vertex stage guarantees highp, and
+  per-LED inputs ride as float attributes (vc4 has no float textures). Output is
+  quantized like the VM epilogue (`floor(clamp01(x)·255)`) and written as `q/255`,
+  so the RGBA8 store yields exactly `q`. (An early draft wrote `(q+0.5)/255`,
+  which sits on the rounding tie, off by one.)
+* **hsv2rgb on GLES2:** the sextant pick uses float `floor` compares instead of
+  `f2i`. That is exact for `h6 ∈ [0,6]` (NaN → 0 as in the VM), and it moved
+  hsv-based effects (e.g. `cylinder`) onto the GLES2 tier.
+* **Host GLES2 run (llvmpipe, harness check only):** the relocated payload
+  renders under `env -i`. `solid_fill`/`imu_tilt` match the VM goldens
+  **exactly**; `plasma`/`cylinder` (native `sin` vs the VM's LUT sine) are within
+  **1/255 on 1–14% of LEDs**. The VM bench reproduces its goldens with 0 errors.
+
+### Pi 3 measurement (step 2): payload ready, run pending
+
+`fx_gpu/pi3bench/` builds a self-contained aarch64 payload, 37 MB; see its
+README. It contains:
+- an LLVM-free lean Mesa (vc4+v3d), relocated with RUNPATHs stripped, plus the
+  glibc loader;
+- `gles2bench`: surfaceless EGL, render and readback timed separately, readback
+  formats compared (RGBA8, the driver's preferred format, RGB565), a pipelined
+  loop, and a byte-exact check against VM goldens;
+- a static `fxvm_bench` VM baseline;
+- 8 kernels × 7 layouts, from 1×500 to 20×1024.
+
+`run.sh` reports whether vc4 and a render node are present, and the live
+`spidev.bufsiz`. It unpacks into a temp dir that a trap removes. The operator
+runs it on `pi-ledmapper-2`/`-1` through an atomic HITL reservation (the agent
+does not handle the Pi key). **Results: pending; they fill §5 and the
+render/readback column of the §4 scaling model.**
 
 ## 11. Staged plan
 
 1. **(this PR)** Host IR + lowering + legalize + GLSL/SPIR-V emit + conformance
    harness. Design + numerics policy + P4 survey + prior art.
-2. **Pi 3 GLES2 microbenchmark (HITL/Pi):** glslang → `spirv-cross --es 100`,
-   surfaceless EGL, render a float-only effect to a 1×N FBO, `glReadPixels`,
-   compare to VM, report ms/frame + readback cost. **Decides whether Pi 3 GLES2
-   is worth shipping.**
+2. **Pi 3 GLES2 microbenchmark (HITL/Pi):** payload built and host-validated
+   (`fx_gpu/pi3bench`; vertex-shader kernel, 1×500 … 20×1024, VM goldens). Run on
+   `pi-ledmapper-1/2` pending. **Decides whether Pi 3 GLES2 is worth shipping.**
 3. **Pi 4/5 compute path:** `naga` SPIR-V, V3D compute over an SSBO, highp,
    class-1 exact; golden tolerance tests per tier.
 4. **Player integration:** glibc GPU helper process (musl player stays), a
    load-time per-effect probe (lower → tolerance-check → cache the verdict),
    readback → `FpgaCodec` → SPI; keep the VM fallback.
 5. **Image:** lean Mesa overlay (§8) into `pi/provisioning`, add Pi 4 / Zero 2 W
-   board targets; measure closure growth.
+   board targets; measure closure growth. Also `spidev.bufsiz=65536` and a
+   pinned Pi 3 `core_freq` (§4 proposals).
+5b. **20-channel FPGA:** #370's internal-only variant → pin map → a flashable
+   20-port target; `PREFILL` + "start on CS-end"; logic-analyzer validation on 4
+   channels.
 6. **GPU-native textures/decks** (`SampleTex`/blending) and **shader-emulated
    LUT sine** for class-3 exactness, if measured need.
 7. **(parallel track)** P4: PIE SIMD tier (shortlist #1) via the AOT path;
@@ -476,3 +595,9 @@ the first staged step is the GLES2 offscreen-render + readback microbenchmark on
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
    first, built on the AOT path, with PARLIO+BitScrambler output second?
+5. **MAX image** (§4): add `spidev.bufsiz=65536` (needed for any frame over 1,365
+   LEDs, including today's 4×550) and pin the Pi 3 `core_freq`? Both are small
+   `pi/provisioning` changes, best as their own PR.
+6. **20-channel pin map** (#370): pick the 12 extra Tang Nano 9K header pins. And
+   should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
+   600 µs Pi-side pauses at frame start?
