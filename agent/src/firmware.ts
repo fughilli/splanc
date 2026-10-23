@@ -12,15 +12,19 @@
 
 import { readFile } from "node:fs/promises";
 
-import { splitPackage, versionNumber } from "../../web/src/net/otaUpdate";
+import { MANIFEST_LEN, maxManifestAsset, parseManifest, splitPackage, versionNumber } from "../../web/src/net/otaUpdate";
 
 export const REPO = "fughilli/splanc";
 
 export interface PackageSource {
   /** "1.9.0", "v1.9.0" or "latest". */
   version?: string;
-  /** A local `.ota` file (development builds). */
+  /** A local `.ota` file (development builds) — or, for a Splanc MAX, a local
+   * 108-byte `.manifest`. */
   packagePath?: string;
+  /** A Splanc MAX board ("pi3", …: ota_status.board) — the release's
+   * `max-<board>-<ver>.manifest` instead of the C6 `.ota` (docs/design/max-ota.md). */
+  board?: string;
 }
 
 export interface ResolvedPackage {
@@ -50,24 +54,61 @@ export function releaseEpochUrl(version: string): string {
   return `https://github.com/${REPO}/releases/download/firmware-v${v}/key-epoch.bin`;
 }
 
+/** A Splanc MAX release manifest (the Pi downloads the image itself). */
+export function releaseMaxManifestUrl(board: string, version: string): string {
+  const v = version.replace(/^v/, "");
+  return `https://github.com/${REPO}/releases/download/firmware-v${v}/${maxManifestAsset(board, v)}`;
+}
+
+/** The MAX ring's key-epoch record (the C6's key-epoch.bin is signed by keys a MAX
+ * doesn't trust). */
+export function releaseMaxEpochUrl(version: string): string {
+  const v = version.replace(/^v/, "");
+  return `https://github.com/${REPO}/releases/download/firmware-v${v}/max-key-epoch.bin`;
+}
+
+async function latestVersion(fetchImpl: Fetch): Promise<string> {
+  const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) throw new Error(`couldn't look up the latest release (HTTP ${res.status})`);
+  const tag = (await res.json()) as { tag_name?: string };
+  if (!tag.tag_name?.startsWith("firmware-v")) throw new Error(`the latest release isn't a firmware release (${tag.tag_name})`);
+  return tag.tag_name.replace(/^firmware-v/, "");
+}
+
 /** Fetch (or read) and sanity-check the package. */
 export async function resolvePackage(src: PackageSource, fetchImpl: Fetch = fetch as unknown as Fetch): Promise<ResolvedPackage> {
   let bytes: Uint8Array;
   let label: string;
+  if (src.board) {
+    // A pull device: only the signed manifest travels; the Pi fetches the image.
+    if (src.packagePath) {
+      bytes = new Uint8Array(await readFile(src.packagePath)).slice(0, MANIFEST_LEN);
+      return { bytes, version: parseManifest(bytes).version, label: src.packagePath };
+    }
+    let version = src.version ?? "latest";
+    if (version === "latest") version = await latestVersion(fetchImpl);
+    if (versionNumber(version) === null) throw new Error(`"${version}" isn't a release version (X.Y.Z or "latest")`);
+    const url = releaseMaxManifestUrl(src.board, version);
+    const res = await fetchImpl(url);
+    if (!res.ok) throw new Error(`firmware ${version} has no Splanc MAX image for ${src.board} (HTTP ${res.status} for ${url})`);
+    bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length !== MANIFEST_LEN) throw new Error(`${url} isn't a ${MANIFEST_LEN}-byte manifest`);
+    const er = await fetchImpl(releaseMaxEpochUrl(version));
+    return {
+      bytes,
+      version: parseManifest(bytes).version,
+      label: `firmware ${version} (Splanc MAX ${src.board})`,
+      ...(er.ok ? { keyEpoch: new Uint8Array(await er.arrayBuffer()) } : {}),
+    };
+  }
   if (src.packagePath) {
     bytes = new Uint8Array(await readFile(src.packagePath));
     label = src.packagePath;
   } else {
     let version = src.version ?? "latest";
-    if (version === "latest") {
-      const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`, {
-        headers: { Accept: "application/vnd.github+json" },
-      });
-      if (!res.ok) throw new Error(`couldn't look up the latest release (HTTP ${res.status})`);
-      const tag = (await res.json()) as { tag_name?: string };
-      if (!tag.tag_name?.startsWith("firmware-v")) throw new Error(`the latest release isn't a firmware release (${tag.tag_name})`);
-      version = tag.tag_name.replace(/^firmware-v/, "");
-    }
+    if (version === "latest") version = await latestVersion(fetchImpl);
     if (versionNumber(version) === null) throw new Error(`"${version}" isn't a release version (X.Y.Z or "latest")`);
     const url = releasePackageUrl(version);
     const res = await fetchImpl(url);

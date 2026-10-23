@@ -888,6 +888,7 @@ export class LedMapperClient {
       loaderVersion: r.loaderVersion ?? 0,
       maxChunk: r.maxChunk ?? 0,
       slotSize: r.slotSize ?? 0,
+      board: r.board ?? "",
     };
   }
 
@@ -897,9 +898,17 @@ export class LedMapperClient {
   }
 
   /** Offer a signed image (its 108-byte manifest). The app answers STATE_REBOOTING
-   * (it restarts into the loader); the loader answers STATE_RECEIVING + the offset. */
-  otaBegin(manifest: Uint8Array, allowDowngrade = false, keyEpoch?: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) });
+   * (it restarts into the loader); the loader answers STATE_RECEIVING + the offset;
+   * a pull device (Splanc MAX, feature "ota_pull") answers STATE_DOWNLOADING and
+   * fetches the image itself (from `sourceUrl`, else the release). */
+  otaBegin(manifest: Uint8Array, allowDowngrade = false, keyEpoch?: Uint8Array, sourceUrl?: string): Promise<OtaStatusMessage> {
+    return this.ota({
+      type: "ota_begin",
+      manifest,
+      allowDowngrade,
+      ...(keyEpoch ? { keyEpoch } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
+    });
   }
 
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {

@@ -56,6 +56,11 @@ let
   # "player") — no staged prebuilt, and static so it runs on NixOS with NO loader
   # and NO patchelf.
   playerRsWssPort = 8443;
+  # HITL test images (docs/design/max-ota.md "HITL"): SPLANC_MAX_VARIANT=unhealthy
+  # builds a player that runs but never writes its health file, so the updater's
+  # trial check must roll it back. Read --impure, like every sbc-deploy seam.
+  maxVariant = builtins.getEnv "SPLANC_MAX_VARIANT";
+  unhealthyFlags = pkgs.lib.optionalString (maxVariant == "unhealthy") " --add-flags \"--health-file ''\"";
   playerRsBin = sbcBuildData."player" or (throw
     "player binary missing from build_data — add //pi/player_rs/musl:player_musl "
   + "to sbc_application(build_data=…).");
@@ -66,7 +71,7 @@ let
       --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
       --add-flags "--start ${toString ledStartLeds}" \
       --add-flags "--fps ${toString ledFps}" \
-      --add-flags "--serve-port ${toString playerRsWssPort}"
+      --add-flags "--serve-port ${toString playerRsWssPort}"${unhealthyFlags}
   '';
 
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
@@ -117,6 +122,14 @@ let
     fi
 
     echo "[fpga-commission] flashing gateware onto the Tang Nano 9K" >&2
+    # Invalidate the stamp FIRST: a power cut mid-flash must not leave the previous
+    # gateware's stamp next to a half-written bitstream (the next boot — e.g. an OTA
+    # rollback to that previous system — would then skip the flash). Zeros never
+    # match a sha256.
+    z=$(mktemp); printf '%064d' 0 > "$z"
+    $ofl -b tangnano9k --freq 10000000 --external-flash -f \
+      -o "$off" --file-type raw "$z" >/dev/null 2>&1 || true
+    rm -f "$z"
     # NON-FATAL during bring-up: log + continue so a DUT without a (working) Tang
     # still boots the player. Flip to required (exit on failure) once validated.
     if $ofl -b tangnano9k -f "$want"; then
@@ -152,6 +165,12 @@ let
   '';
 in
 {
+  # One FPGA frame is a single spidev write: 4 ports x 550 LEDs is a ~6.6 KB STREAM,
+  # past spidev's 4 KiB default buffer, which fails every write (EMSGSIZE) — the
+  # player rendered but the Tang got nothing. (Found by the OTA health check, which
+  # counts frames actually written: docs/design/max-ota.md "Health proof".)
+  boot.kernelParams = pkgs.lib.optionals (ledOutput == "fpga") [ "spidev.bufsiz=65536" ];
+
   services.sbcApps = {
     # M1 — pattern driver. Real-time FIFO scheduling + CAP_SYS_NICE, owns SPI,
     # exposes the control socket under /run/ledmapper. Creates the shared

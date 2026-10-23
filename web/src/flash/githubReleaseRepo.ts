@@ -45,6 +45,12 @@ export function proxiedAssetUrl(url: string): string {
   return `${ASSET_PROXY}?url=${encodeURIComponent(url)}`;
 }
 
+/** Another asset of the same release as `assetUrl` (…/releases/download/<tag>/<name>),
+ * e.g. a Splanc MAX manifest next to the C6 bundle (docs/design/max-ota.md). */
+export function siblingAssetUrl(assetUrl: string, name: string): string {
+  return assetUrl.replace(/\/[^/]*$/, `/${encodeURIComponent(name)}`);
+}
+
 /** Compare dotted versions numerically, newest first ("1.10.0" before "1.9.0").
  * A pre-release suffix ("1.10.0-rc1") sorts just below its release; anything
  * unparseable sorts last, by plain string order. */

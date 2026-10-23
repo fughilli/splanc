@@ -2,7 +2,9 @@
 # gated on per-component version tags (deploys never happen on a plain push to main;
 # see test.yaml / macos.yaml, which only build + preview per commit):
 #
-#   firmware-vX.Y.Z  -> build both ESP32-C6 flashbundles, attach as Release assets.
+#   firmware-vX.Y.Z  -> build both ESP32-C6 flashbundles, attach as Release assets;
+#                       then (job `max`) the signed Splanc MAX over-the-air images
+#                       (docs/design/max-ota.md), one per board, on the same release.
 #   pi-vX.Y.Z        -> build the Pi 3 player SD image (.img.zst) + wiring README,
 #                       attach as Release assets.
 #   app-vX.Y.Z       -> deploy the webapp to GitHub Pages + Cloudflare (iOS/TestFlight
@@ -165,6 +167,122 @@ jobs:
           # Record the exact tagged commit so the webapp can show + link the build
           # each firmware asset was cut from (githubReleaseRepo reads this).
           target_commitish: ${{ github.sha }}
+
+  # --- firmware-v* : Splanc MAX over-the-air images (docs/design/max-ota.md) ---
+  # One signed image per board, on the SAME release as the C6 firmware, so "latest"
+  # means the same version for every fixture. A MAX downloads its image itself from
+  # this release (max-<board>-<ver>.nixclosure); clients only send the 108-byte
+  # max-<board>-<ver>.manifest. Signed with the MAX key (key id 3, the
+  # MAX_OTA_SIGNING_KEY secret), never the C6 loader ring's keys. Until that key
+  # exists (firmware/ota/keys/max.pub is UNSET) or while the secret is missing, the
+  # job SKIPS signing with a warning instead of failing the firmware release.
+  max:
+    if: startsWith(github.ref, 'refs/tags/firmware-v')
+    needs: firmware # publish onto the release the firmware job created
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        # Board -> sbc_application. Pi 3 is the released fleet; add a board here once
+        # its trial boot is wired (Pi 4 / Zero 2W: same U-Boot path, need their
+        # sbc_application targets; Pi 5: tryboot, docs/design/max-ota.md).
+        include:
+          - board: pi3
+            app: ledmapper_pi3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Is the MAX signing key provisioned?
+        id: key
+        env:
+          MAX_OTA_SIGNING_KEY: ${{ secrets.MAX_OTA_SIGNING_KEY }}
+        run: |
+          if grep -qx UNSET firmware/ota/keys/max.pub; then
+            echo "::warning::firmware/ota/keys/max.pub is UNSET: no Splanc MAX OTA images this release (docs/design/max-ota.md \"Signing\")"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "${MAX_OTA_SIGNING_KEY}" ]; then
+            echo "::warning::the MAX_OTA_SIGNING_KEY secret is not set: no Splanc MAX OTA images this release"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Free runner disk space
+        if: steps.key.outputs.ok == 'true'
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        if: steps.key.outputs.ok == 'true'
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        if: steps.key.outputs.ok == 'true'
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-pi-${{ hashFiles('MODULE.bazel.lock', 'pi/provisioning/nix/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-pi-
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-pi-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        if: steps.key.outputs.ok == 'true'
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        if: steps.key.outputs.ok == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-pi-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-pi-${{ runner.os }}-
+
+      # The system closure, stamped with the release version (ota.nix reads
+      # SPLANC_MAX_VERSION into /etc/splanc-max/version, which is what the Pi reports
+      # and compares). The image_sd launcher builds `images.maxOtaSystem`, whose
+      # toplevel.img names the system's store path.
+      - name: Build the ${{ matrix.board }} system
+        if: steps.key.outputs.ok == 'true'
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          SPLANC_MAX_VERSION="${VER}" bazel run //pi/provisioning:${{ matrix.app }}.image_sd \
+            --disk_cache="$HOME/.cache/bazel-disk" -- --no-write --attr images.maxOtaSystem 2>&1 | tee /tmp/max-system.log
+          TOP="$(sed -n 's/^==> Built image: //p' /tmp/max-system.log | tail -n1)"
+          test -n "$TOP" && test -f "$TOP" || { echo "::error::no system built"; exit 1; }
+          echo "MAX_TOPLEVEL_FILE=${TOP}" >> "$GITHUB_ENV"
+          bazel build --disk_cache="$HOME/.cache/bazel-disk" //firmware/ota:ota_sign
+
+      - name: Pack and sign the ${{ matrix.board }} image
+        if: steps.key.outputs.ok == 'true'
+        env:
+          MAX_OTA_SIGNING_KEY: ${{ secrets.MAX_OTA_SIGNING_KEY }}
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          nix shell nixpkgs#zstd -c python3 tools/max_ota_release.py \
+            --toplevel "${MAX_TOPLEVEL_FILE}" --board ${{ matrix.board }} --version "${VER}" \
+            --signer bazel-bin/firmware/ota/ota_sign --pubkey firmware/ota/keys/max.pub \
+            --key-env MAX_OTA_SIGNING_KEY --out-dir _assets
+          if [ -f firmware/ota/keys/max_epoch.bin ]; then cp firmware/ota/keys/max_epoch.bin _assets/max-key-epoch.bin; fi
+          ls -l _assets
+
+      - name: Publish onto the release
+        if: steps.key.outputs.ok == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            _assets/max-*.nixclosure
+            _assets/max-*.manifest
+            _assets/max-key-epoch.bin
+          fail_on_unmatched_files: false
 
   # --- pi-v* : Pi 3 player SD image + wiring README ---------------------------
   # Native aarch64 build on GitHub's arm64 Linux runner (the SD image is an

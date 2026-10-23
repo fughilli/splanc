@@ -10,6 +10,8 @@
 //! `pi/led_driver/led_driver/{fpga_spi,spi}.py` it replaces, pinned by the same
 //! encoder vectors.
 
+pub mod health;
+pub mod ota;
 pub mod render;
 pub mod server;
 pub mod session;

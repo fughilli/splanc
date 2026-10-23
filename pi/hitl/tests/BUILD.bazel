@@ -44,6 +44,7 @@ py_test(
         "test_map_upload.py",
         "test_map_upload_scale.py",
         "test_mapping_trigger.py",
+        "test_max_ota_core.py",
         "test_ota_core.py",
         "test_pool.py",
         "test_provision.py",

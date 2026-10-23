@@ -21,8 +21,8 @@ def _binary_impl(ctx):
     src = ctx.attr.src[0][DefaultInfo].files.to_list()[0]
 
     # Name the output "player" (not the target name) so build_data keys it as
-    # "player" for apps.nix.
-    out = ctx.actions.declare_file("player")
+    # "player" for apps.nix (`out` renames it, e.g. "splanc-max-ota").
+    out = ctx.actions.declare_file(ctx.attr.out)
     ctx.actions.symlink(output = out, target_file = src, is_executable = True)
     return [DefaultInfo(files = depset([out]), executable = out)]
 
@@ -30,6 +30,7 @@ static_musl_binary = rule(
     implementation = _binary_impl,
     executable = True,
     attrs = {
+        "out": attr.string(default = "player"),
         "src": attr.label(cfg = _static_musl_transition, mandatory = True),
         "target_platform": attr.label(mandatory = True),
         "_allowlist_function_transition": attr.label(

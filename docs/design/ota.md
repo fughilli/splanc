@@ -1,5 +1,8 @@
 # Firmware updates over the air (split loader + app)
 
+(The Splanc MAX — a Raspberry Pi — updates through the same protocol and keyring
+tooling, as whole NixOS systems it downloads itself: [max-ota.md](max-ota.md).)
+
 Status: implemented (PR "OTA: split loader + app"). HITL results at the end.
 
 A Splanc C6 player updates over Wi-Fi from the web app, the agent
