@@ -554,7 +554,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const panel = new UniformPanel(uniformsHost, (slot, value) => {
     preview?.setUniform(slot, value);
     const c = appState.client;
-    if (c?.isConnected) c.setUniforms([{ slot, value }]);
+    // The live-control channel: latest value wins, paced on the device.
+    if (c?.isConnected) c.live.setUniform(slot, value);
   });
 
   // -- MIDI: route hardware controls into the SAME uniform seam as a manual

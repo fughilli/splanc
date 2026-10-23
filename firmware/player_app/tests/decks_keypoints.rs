@@ -10,8 +10,9 @@ use std::sync::Mutex;
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_fx_last_deck, lm_fx_shade, lm_fx_update, lm_kp_commit, lm_kp_commit_frame, lm_kp_set_store,
-    lm_player_handle, lm_player_init, lm_set_uniforms_commit, FEATURES, FX_TOPO_CAP,
+    encode_control_ack, lm_fx_last_deck, lm_fx_shade, lm_fx_update, lm_kp_commit, lm_kp_commit_frame,
+    lm_kp_set_store, lm_last_was_live_control, lm_player_handle, lm_player_init, lm_set_uniforms_commit,
+    lm_take_control_ack, FEATURES, FX_TOPO_CAP,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -150,7 +151,7 @@ fn blend(deck: u32, w: &[(&str, f32)], seconds: f32, color_mode: u32, commit: bo
 }
 
 fn crossfade(pos: f64, mode: u32) {
-    match handle(CMsg::SetCrossfade(pb::SetCrossfade { r#position: pos, r#mode: mode })) {
+    match handle(CMsg::SetCrossfade(pb::SetCrossfade { r#position: pos, r#mode: mode, ..Default::default() })) {
         Some(SMsg::Welcome(w)) => {
             assert_eq!(w.crossfade(), Some(&pos.clamp(0.0, 1.0)));
             assert_eq!(w.crossfade_mode(), Some(&mode));
@@ -325,6 +326,48 @@ fn decks_crossfade_and_keypoints() {
     crossfade(0.5, 0);
     assert!(near(frame(0.03), [0, 128, 64]));
     crossfade(7.0, 1); // clamps to 1
+
+    // -- live-control acks (docs/design/live-control.md) -------------------------
+    // A seq'd set_crossfade / set_uniforms is still applied (and its legacy reply
+    // computed, for persistence), then swapped for a tiny ControlAck{seq}.
+    assert!(FEATURES.contains(&"control_ack"));
+    let ack = |msg: CMsg, seq: u32| {
+        let r = handle(msg);
+        assert!(unsafe { lm_last_was_live_control() });
+        let mut out = [0u8; 64];
+        let n = unsafe { lm_take_control_ack(out.as_mut_ptr(), out.len()) };
+        if seq == 0 {
+            assert_eq!(n, 0, "a legacy update keeps its reply");
+            return r;
+        }
+        assert!(n > 0 && n <= 8, "ack is tiny ({n} B)");
+        let mut reply = pb::ServerMessage::default();
+        reply.decode_from_bytes(&out[..n as usize]).unwrap();
+        match reply.r#msg {
+            Some(SMsg::ControlAck(a)) => assert_eq!(a.r#seq, seq),
+            other => panic!("expected control_ack, got {other:?}"),
+        }
+        // Taken once: the next call has nothing to swap.
+        assert_eq!(unsafe { lm_take_control_ack(out.as_mut_ptr(), out.len()) }, 0);
+        r
+    };
+    assert!(matches!(
+        ack(CMsg::SetCrossfade(pb::SetCrossfade { r#position: 0.25, r#seq: 7, ..Default::default() }), 7),
+        Some(SMsg::Welcome(_))
+    ));
+    assert!(near(frame(0.03), [0, 64, 96]), "the seq'd crossfade applied");
+    ack(CMsg::SetCrossfade(pb::SetCrossfade { r#position: 1.0, ..Default::default() }), 0);
+    let mut su = pb::SetUniforms { r#deck: 0, r#seq: 0xfffff, ..Default::default() };
+    su.r#values.push(uv(3, &[0.5])).unwrap();
+    su.set_commit(false);
+    assert!(matches!(ack(CMsg::SetUniforms(su), 0xfffff), Some(SMsg::PlaybackState(_))));
+    assert!(!unsafe { lm_set_uniforms_commit() });
+    // Not a live control: no flag, no ack.
+    handle(CMsg::ListEffects(pb::ListEffects::default()));
+    assert!(!unsafe { lm_last_was_live_control() });
+    let mut tiny = [0u8; 3];
+    assert_eq!(encode_control_ack(1 << 20, &mut tiny), None, "too small a buffer is refused");
+
     match handle(CMsg::ListEffects(pb::ListEffects::default())) {
         Some(SMsg::EffectList(l)) => {
             let decks: Vec<_> = l.r#effects.iter().map(|e| (e.r#effect_id.as_str().to_string(), e.r#deck)).collect();

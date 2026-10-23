@@ -461,7 +461,8 @@ message SetEffect {
 }
 
 // Set live uniform values on the active effect (slider drags). Coalesced and
-// persisted like set_playback. Reply: playback_state.
+// persisted like set_playback. Reply: playback_state, or a ControlAck when
+// `seq` is set (the live-control channel, docs/design/live-control.md).
 message SetUniforms {
   repeated UniformValue values = 1;
   // Persist these values (auto-resume on boot) — true or unset, today's behaviour —
@@ -472,6 +473,12 @@ message SetUniforms {
   // FX deck whose uniforms to set: 0 = A (default), 1 = B. Deck B is never
   // persisted (commit is ignored there).
   uint32 deck = 3;
+  // Live-control sequence number (firmware feature "control_ack"). 0 (unset) keeps
+  // today's playback_state reply. Non-zero: the device replies with a tiny
+  // ControlAck{seq} once the values are applied — the client keeps at most one
+  // live update in flight and paces on it — and, when its send window is full,
+  // may drop that ack rather than stall (the client times out and moves on).
+  uint32 seq = 4;
 }
 
 // Ask for the device's TLS identity state (docs/design/per-device-cert.md). Works over
@@ -747,6 +754,9 @@ message SetCrossfade {
   double position = 1;
   // 0 = linear RGB, 1 = linear HSV.
   uint32 mode = 2;
+  // Live-control sequence number, as SetUniforms.seq: non-zero answers with a
+  // ControlAck{seq} instead of the (much larger) welcome.
+  uint32 seq = 3;
 }
 
 // -- Uniform keypoints (docs/design/uniform-keypoints.md) --------------------
@@ -1394,6 +1404,14 @@ message ChunkAck {
   uint32 seq = 2;
 }
 
+// Reply to a live-control update that carried a `seq` (SetUniforms.seq,
+// SetCrossfade.seq): the update with that seq — and everything before it on
+// this connection — has been applied. Deliberately tiny (one short TLS record),
+// so a fader stream costs the device almost nothing to acknowledge.
+message ControlAck {
+  uint32 seq = 1;
+}
+
 message Error {
   string code = 1;
   string message = 2;
@@ -1606,5 +1624,8 @@ message ServerMessage {
     // 31: left free for in-flight branches (#325's ramp_state takes 40).
     // Reply to every OTA arm (docs/design/ota.md).
     OtaStatus ota_status = 32;
+    // 33-40: left free for in-flight branches (#325's ramp_state takes 40).
+    // Reply to a live-control update with a seq (SetUniforms / SetCrossfade).
+    ControlAck control_ack = 41;
   }
 }
