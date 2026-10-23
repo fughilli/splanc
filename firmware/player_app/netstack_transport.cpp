@@ -122,6 +122,10 @@ extern "C" void sta_rx_start_handler(void *req) {
 // stops the vendor from processing/delivering packets, so our ring owns RX.
 void IRAM_ATTR sink(void *, wifi_promiscuous_pkt_type_t) {}
 
+NsRxStamps g_ns_rx_stamps = {};
+void (*g_ns_reply_hook)(int outcome) = nullptr;
+static inline uint32_t ns_now_us() { return (uint32_t)esp_timer_get_time(); }
+
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 // No WiFi credentials are baked into the image: they arrive at runtime, over either BLE
@@ -898,6 +902,8 @@ void handle_l3(const uint8_t *pt, int pl) {
   if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
   if (pt[7] != 0x00) return;            // only IPv4 past here
   const uint8_t *ip = pt + 8;
+  g_ns_rx_stamps.l3_reap_us = g_ns_rx_stamps.reap_us;
+  g_ns_rx_stamps.l3_empty_us = g_ns_rx_stamps.empty_poll_us;
   if (pl >= 8 + 20) learn_neighbor(ip + 12);
   // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
   // data segment never arrives amid a flood of large frames.
@@ -929,6 +935,10 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (tcp[2] << 8) | tcp[3], tcp[13],
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
+      if (dlen > 0) {
+        g_ns_rx_stamps.data_reap_us = g_ns_rx_stamps.reap_us;
+        g_ns_rx_stamps.data_empty_us = g_ns_rx_stamps.empty_poll_us;
+      }
       uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, tx_ip_slot(), kTxIpCap);
       if (rl > 0) send_ip(tx_ip_slot(), rl);
     }
@@ -1208,6 +1218,8 @@ size_t g_ws_rxlen = 0;
 static void pump_link_once() {
   static uint8_t rxb[1600];
   uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
+  if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
+  else g_ns_rx_stamps.reap_us = ns_now_us();
   if (n > 0 && (rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
     static uint8_t pt[1600];  // static: single-threaded, and keeps this off the deep TLS-write stack
     uint32_t pl = 0;
@@ -1292,6 +1304,7 @@ static bool ws_pump() {
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;  // drained
     if (r <= 0) return false;  // close_notify or error
     g_ws_rxlen += r;
+    g_ns_rx_stamps.decoded_us = ns_now_us();
 
     if (!g_ws_up) {
       // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
@@ -1385,12 +1398,16 @@ static bool ws_pump() {
         // every frame behind it unread for up to seconds — exactly the input backlog a
         // knob stream builds (docs/design/live-control.md). A seq'd client whose ack is
         // dropped times out and sends its next update anyway.
+        int outcome = tn > 0 && reply ? 1 : 0;
         if (tn > 0 && reply && lm_ws_reply_droppable() &&
-            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96)
+            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96) {
           tn = 0;
+          outcome = 2;
+        }
         if (tn > 0 && reply &&
             !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
           return false;
+        if (g_ns_reply_hook) g_ns_reply_hook(outcome);
       } else if (h.opcode == WS_OP_PING) {
         if (!ws_send(WS_OP_PONG, payload, h.payload_len, h.header_len)) return false;
       } else if (h.opcode == WS_OP_CLOSE) {
@@ -1733,9 +1750,10 @@ void netstack_loop() {
 
   // Drain up to N frames per loop() so a burst (e.g. dnsmasq's DHCP retransmits) can't
   // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
-  uint32_t n;
+  uint32_t n = 0;
   int drained = 0;
   while (drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
+  g_ns_rx_stamps.reap_us = ns_now_us();
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
   if (st == DONE && n >= 10 && allf < 30) {
@@ -1884,6 +1902,7 @@ void netstack_loop() {
     }
   }
   } // end RX drain loop
+  if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
