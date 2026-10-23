@@ -14,6 +14,7 @@ rust_library(
     srcs = [
         "src/arena.rs",
         "src/ctx.rs",
+        "src/direct.rs",
         "src/emu.rs",
         "src/helper.rs",
         "src/lib.rs",
@@ -44,6 +45,7 @@ rust_library(
     srcs = [
         "src/arena.rs",
         "src/ctx.rs",
+        "src/direct.rs",
         "src/helper.rs",
         "src/lib.rs",
         "src/verify.rs",
@@ -62,10 +64,14 @@ rust_library(
 # plus the instruction-stream verifier on every lowered image.
 rust_test(
     name = "fx_aot_diff_test",
-    srcs = ["tests/diff.rs"],
+    srcs = [
+        "tests/diff.rs",
+        "tests/raw_cases.rs",
+    ],
     compile_data = glob([
         "testdata/*.fx",
     ]),
+    crate_root = "tests/diff.rs",
     edition = "2021",
     deps = [
         ":fx_aot",

@@ -127,7 +127,11 @@ pub(crate) fn lower_body(prog: &fxv::Program, entry: usize, out: &mut Vec<u32>) 
     }
 
     // --- 2. Emission ---------------------------------------------------------
-    let mut e = Emit { out, pc_word: BTreeMap::new(), fixups: Vec::new() };
+    let mut e = Emit {
+        out,
+        pc_word: BTreeMap::new(),
+        fixups: Vec::new(),
+    };
     let func_start = e.out.len();
     e.prologue();
     for &pc in &pcs {
@@ -220,7 +224,13 @@ impl Emit<'_> {
         self.push(branch(F3_BGE, S10, ZERO, 8)); // skip the jal when s10 >= 0
         let word = self.out.len();
         self.push(jal(ZERO, 0)); // patched to budget_exit
-        self.fixups.push(Fixup { word, target: 0, is_jal: true, budget: true, epi: false });
+        self.fixups.push(Fixup {
+            word,
+            target: 0,
+            is_jal: true,
+            budget: true,
+            epi: false,
+        });
     }
 
     fn emit_budget_exit(&mut self) {
@@ -274,6 +284,9 @@ impl Emit<'_> {
     /// Spill the top `pop` slots into the window, call the generic helper, then
     /// reload the `push` result slots.
     fn helper_call(&mut self, code: &[u8], pc: usize, base: usize, pop: usize, push: usize) {
+        if self.direct_op(code, pc, base) {
+            return;
+        }
         for k in 0..pop {
             let r = self.slot_src(base + k, T0);
             self.push(sw(r, S1, ((WIN_OFF + k) * 4) as i32));
@@ -289,6 +302,142 @@ impl Emit<'_> {
             self.slot_dst(base + k, T1);
         }
         let _ = (pc, WIN_WORDS);
+    }
+
+    /// Move only the consumed operands. All other slots keep their callee-saved
+    /// register homes (or their existing deep-frame homes) across the call.
+    fn direct_args(&mut self, args: &[usize]) {
+        for (i, &src) in args.iter().enumerate() {
+            let dst = A0 + i as u32;
+            let r = self.slot_src(src, dst);
+            if r != dst {
+                self.push(addi(dst, r, 0));
+            }
+        }
+    }
+
+    fn direct_call(&mut self, id: crate::direct::Id) {
+        let off = crate::ctx::DIRECT_OFF + id as i32 * crate::direct::STRIDE;
+        self.push(lw(T0, S0, off));
+        self.push(jalr(RA, T0, 0));
+    }
+
+    /// Lane-wise operations write only their own first input lane; subsequent
+    /// lanes therefore remain live through all calls.
+    fn direct_lanes(&mut self, id: crate::direct::Id, base: usize, n: usize, arity: usize) {
+        for lane in 0..n {
+            let mut args = [0; 3];
+            for (k, arg) in args.iter_mut().enumerate().take(arity) {
+                *arg = base + k * n + lane;
+            }
+            self.direct_args(&args[..arity]);
+            self.direct_call(id);
+            self.slot_dst(base + lane, A0);
+        }
+    }
+
+    fn direct_op(&mut self, code: &[u8], pc: usize, base: usize) -> bool {
+        use crate::direct::Id;
+        let op = Op::from_u8(code[pc]).unwrap();
+        let b = |k: usize| code[pc + 1 + k] as usize;
+        let (id, n, arity) = match op {
+            Op::Add => (Id::Add, b(0), 2),
+            Op::Sub => (Id::Sub, b(0), 2),
+            Op::Mul => (Id::Mul, b(0), 2),
+            Op::Div => (Id::Div, b(0), 2),
+            Op::Neg => (Id::Neg, b(0), 1),
+            // These VM arms choose NaN payloads in a different operand order
+            // after optimization. Keep their existing exact window helper.
+            Op::Scale | Op::Mix => return false,
+            Op::UnMath => {
+                let id = match b(0) as u8 {
+                    fxv::F_SIN => Id::Sin,
+                    fxv::F_COS => Id::Cos,
+                    fxv::F_ABS => Id::Abs,
+                    fxv::F_FLOOR => Id::Floor,
+                    fxv::F_CEIL => Id::Ceil,
+                    fxv::F_FRACT => Id::Fract,
+                    fxv::F_SQRT => Id::Sqrt,
+                    fxv::F_EXP => Id::Exp,
+                    fxv::F_LOG => Id::Log,
+                    fxv::F_SIGN => Id::Sign,
+                    fxv::F_TAN => Id::Tan,
+                    _ => return false,
+                };
+                (id, b(1), 1)
+            }
+            Op::BinMath => {
+                let id = match b(0) as u8 {
+                    fxv::B_MIN => Id::Min,
+                    fxv::B_MAX => Id::Max,
+                    fxv::B_POW => Id::Pow,
+                    fxv::B_MOD => Id::Mod,
+                    fxv::B_STEP => Id::Step,
+                    fxv::B_ATAN2 => Id::Atan2,
+                    _ => return false,
+                };
+                (id, b(1), 2)
+            }
+            Op::Clamp => (Id::Clamp, b(0), 3),
+            Op::Smoothstep => (Id::Smoothstep, b(0), 3),
+            Op::Cmp => {
+                let id = match b(0) {
+                    0 => Id::Lt,
+                    1 => Id::Le,
+                    2 => Id::Gt,
+                    3 => Id::Ge,
+                    4 => Id::Eq,
+                    _ => Id::Ne,
+                };
+                (id, 1, 2)
+            }
+            Op::Logic => match b(0) {
+                0 => (Id::And, 1, 2),
+                2 => (Id::Not, 1, 1),
+                _ => (Id::Or, 1, 2),
+            },
+            Op::Hash1 => (Id::Hash1, 1, 1),
+            Op::Hash3 => (Id::Hash3, 1, 3),
+            Op::I2F => (Id::I2F, 1, 1),
+            Op::F2I => (Id::F2I, 1, 1),
+            Op::Fix2F => (Id::Fix2F, 1, 1),
+            Op::F2Fix => (Id::F2Fix, 1, 1),
+            Op::FixToF | Op::FixFromF => {
+                self.direct_args(&[base]);
+                self.li(A1, b(0) as i32);
+                self.direct_call(if op == Op::FixToF {
+                    Id::FixToF
+                } else {
+                    Id::FixFromF
+                });
+                self.slot_dst(base, A0);
+                return true;
+            }
+            Op::Hsv2Rgb | Op::Palette => {
+                if op == Op::Hsv2Rgb {
+                    self.direct_args(&[base, base + 1, base + 2]);
+                } else {
+                    self.direct_args(&[base]);
+                    self.li(A1, b(0) as i32);
+                }
+                // RV32's C ABI returns at most two words in registers. Only
+                // blue uses a fixed output word; no colour inputs are spilled.
+                self.push(addi(A3, S1, (WIN_OFF * 4) as i32));
+                self.direct_call(if op == Op::Hsv2Rgb {
+                    Id::Hsv2Rgb
+                } else {
+                    Id::Palette
+                });
+                self.slot_dst(base, A0);
+                self.slot_dst(base + 1, A1);
+                self.push(lw(T1, S1, (WIN_OFF * 4) as i32));
+                self.slot_dst(base + 2, T1);
+                return true;
+            }
+            _ => return false,
+        };
+        self.direct_lanes(id, base, n, arity);
+        true
     }
 
     fn emit_ret(&mut self, op: Op, code: &[u8], pc: usize, d: usize) {
@@ -311,7 +460,13 @@ impl Emit<'_> {
         // jump to epilogue
         let word = self.out.len();
         self.push(jal(ZERO, 0));
-        self.fixups.push(Fixup { word, target: 0, is_jal: true, budget: false, epi: true });
+        self.fixups.push(Fixup {
+            word,
+            target: 0,
+            is_jal: true,
+            budget: false,
+            epi: true,
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -470,7 +625,13 @@ impl Emit<'_> {
                 let word = self.out.len();
                 self.push(jal(ZERO, 0));
                 let t = target_of(code, pc).unwrap();
-                self.fixups.push(Fixup { word, target: t, is_jal: true, budget: false, epi: false });
+                self.fixups.push(Fixup {
+                    word,
+                    target: t,
+                    is_jal: true,
+                    budget: false,
+                    epi: false,
+                });
             }
             Op::BrFalse => {
                 let c = self.slot_src(base, T0);
@@ -478,7 +639,13 @@ impl Emit<'_> {
                 let word = self.out.len();
                 self.push(branch(F3_BEQ, T2, ZERO, 0));
                 let t = target_of(code, pc).unwrap();
-                self.fixups.push(Fixup { word, target: t, is_jal: false, budget: false, epi: false });
+                self.fixups.push(Fixup {
+                    word,
+                    target: t,
+                    is_jal: false,
+                    budget: false,
+                    epi: false,
+                });
             }
             Op::BrCmpI => {
                 let kind = code[pc + 1];
@@ -486,18 +653,24 @@ impl Emit<'_> {
                 let bb = self.slot_src(base + 1, T1);
                 // Branch when the comparison is FALSE (mirrors the VM fusion).
                 let (f3, swap) = match kind {
-                    0 => (F3_BGE, false), // !(a<b)  -> a>=b
-                    1 => (F3_BLT, true),  // !(a<=b) -> a>b  -> b<a
-                    2 => (F3_BGE, true),  // !(a>b)  -> a<=b -> b>=a
-                    3 => (F3_BLT, false), // !(a>=b) -> a<b
-                    4 => (F3_BNE, false), // !(a==b) -> a!=b
-                    _ => (F3_BEQ, false), // !(a!=b) -> a==b
+                    0 => (F3_BGE, false),       // !(a<b)  -> a>=b
+                    1 => (F3_BLT, true), // !(a<=b) -> a>b  -> b<a
+                    2 => (F3_BGE, true), // !(a>b)  -> a<=b -> b>=a
+                    3 => (F3_BLT, false),       // !(a>=b) -> a<b
+                    4 => (F3_BNE, false),       // !(a==b) -> a!=b
+                    _ => (F3_BEQ, false),       // !(a!=b) -> a==b
                 };
                 let (r1, r2) = if swap { (bb, a) } else { (a, bb) };
                 let word = self.out.len();
                 self.push(branch(f3, r1, r2, 0));
                 let t = target_of(code, pc).unwrap();
-                self.fixups.push(Fixup { word, target: t, is_jal: false, budget: false, epi: false });
+                self.fixups.push(Fixup {
+                    word,
+                    target: t,
+                    is_jal: false,
+                    budget: false,
+                    epi: false,
+                });
             }
             _ => unreachable!("inline op {:?}", op),
         }

@@ -16,8 +16,10 @@
 //!   spill), deeper slots in a frame next to the locals.
 //! - **Inline vs helper.** Integer/fixed arithmetic, compares, the control flow,
 //!   const pushes, local/state loads/stores and the moves lower to inline RV32.
-//!   Float/transcendental/colour/vector/convert/context ops call a helper that
-//!   reuses `fx_vm`'s own maths, so the result is identical by construction.
+//!   Scalar/lane float arithmetic, maths, comparisons, conversions and colour
+//!   use dedicated register-argument helpers. Scale/Mix, vector reductions,
+//!   context and remaining complex ops retain the generic window helper.
+//!   All reuse `fx_vm`'s maths and are checked bit-for-bit, including NaNs.
 //! - **Unsupported → VM.** Anything not in the supported set (buffers, textures,
 //!   graph queries, flood, I2C, the JIT op, user functions) makes [`lower`]
 //!   return `None`; the caller keeps the VM for that effect.
@@ -38,10 +40,11 @@ use ledmapper_fx_vm::Op;
 
 pub mod arena;
 mod ctx;
+mod direct;
 mod helper;
 mod verify;
 
-pub use ctx::{NativeCtx, HelperFn, RET_RET, RET_RGB8, RET_RGBFIX};
+pub use ctx::{HelperFn, NativeCtx, RET_RET, RET_RGB8, RET_RGBFIX};
 pub use helper::aot_win_helper;
 pub use verify::{verify, VerifyErr};
 
@@ -122,7 +125,12 @@ mod enc {
         let b11 = (im >> 11) & 1;
         let b10_5 = (im >> 5) & 0x3f;
         let b4_1 = (im >> 1) & 0xf;
-        (b12 << 31) | (b10_5 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (b4_1 << 8)
+        (b12 << 31)
+            | (b10_5 << 25)
+            | (rs2 << 20)
+            | (rs1 << 15)
+            | (funct3 << 12)
+            | (b4_1 << 8)
             | (b11 << 7)
             | 0x63
     }
@@ -297,7 +305,11 @@ pub fn lower(prog: &fxv::Program) -> Option<Image> {
     }
     let shade_off = code.len();
     lower_body(prog, prog.shade_entry as usize, &mut code)?;
-    Some(Image { code, update_off, shade_off })
+    Some(Image {
+        code,
+        update_off,
+        shade_off,
+    })
 }
 
 /// Default per-invocation instruction budget mirrored into native code.

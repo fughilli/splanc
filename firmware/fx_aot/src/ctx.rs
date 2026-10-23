@@ -1,14 +1,13 @@
 //! The execution context handed to a lowered image and its helper.
 //!
-//! The emitted code reaches float/complex ops through a single generic helper
-//! whose pointer is the **first** field of [`NativeCtx`] (so `lw t0, 0(s0)`
-//! loads it, with `s0` = the context pointer). The helper reproduces the exact
-//! `fx_vm` interpreter arm for the op, reading the op's operand bytes from
-//! `code` and the live operands from a window the emitted code spilled.
+//! Generated code loads trusted helper entry points at fixed offsets from s0.
+//! Scalar float helpers pass words in a0..a3 and return in a0. Colour helpers
+//! return two words in a0/a1 and put the third in a fixed frame word. The
+//! original generic window helper remains for operations not specialized yet.
 
 use ledmapper_fx_vm as fxv;
 
-/// The one indirect call the sandbox allows besides `ret`: a helper that runs an
+/// The generic indirect helper runs an
 /// opcode's `fx_vm` semantics over a window of operand slots.
 /// `(ctx, win, op, code_off)` — `op` is the opcode byte, `code_off` the byte
 /// offset of its operands within `ctx.code`.
@@ -29,6 +28,18 @@ pub const OUT_OFF: i32 = 0; // out[0..3] at 0, 4, 8
 pub const RET_KIND_OFF: i32 = 12;
 pub const RET_FRAC_OFF: i32 = 16;
 pub const HELPER_OFF: i32 = 24; // 8-aligned on host AND 4-aligned on device
+pub const DIRECT_OFF: i32 = 32;
+
+pub(crate) fn direct_index(off: i32) -> Option<usize> {
+    let delta = off.checked_sub(DIRECT_OFF)?;
+    if delta >= 0 && delta % crate::direct::STRIDE == 0 {
+        let i = (delta / crate::direct::STRIDE) as usize;
+        if i < crate::direct::COUNT {
+            return Some(i);
+        }
+    }
+    None
+}
 
 /// Everything a lowered image and its helper touch. `#[repr(C)]`: the header's
 /// four-byte slots (out/ret_kind/ret_frac) sit at fixed offsets and `_pad`
@@ -44,6 +55,9 @@ pub struct NativeCtx {
     _pad: u32,
     /// The generic opcode helper (offset 24 — load-bearing for the emitted code).
     pub helper: HelperFn,
+    /// Fixed-stride, trusted per-operation entry points (never writable by an
+    /// image). Alignment keeps the table offset identical on RV32 and host.
+    pub(crate) direct: [crate::direct::Entry; crate::direct::COUNT],
     /// The `.fxb` code bytes (helpers read operand bytes from here).
     pub code: *const u8,
     pub code_len: usize,
@@ -80,6 +94,7 @@ impl NativeCtx {
             ret_frac: 0,
             _pad: 0,
             helper,
+            direct: crate::direct::TABLE,
             code,
             code_len,
             uniforms,
@@ -99,6 +114,7 @@ const _: () = {
     assert!(core::mem::offset_of!(NativeCtx, ret_kind) == RET_KIND_OFF as usize);
     assert!(core::mem::offset_of!(NativeCtx, ret_frac) == RET_FRAC_OFF as usize);
     assert!(core::mem::offset_of!(NativeCtx, helper) == HELPER_OFF as usize);
+    assert!(core::mem::offset_of!(NativeCtx, direct) == DIRECT_OFF as usize);
 };
 
 impl NativeCtx {

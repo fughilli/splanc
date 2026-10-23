@@ -336,18 +336,118 @@ first-party images. Don't build (c).**
 
 - `firmware/fx_aot` lowers verified `.fxb` to position-independent RV32IM: static
   CFG depth analysis, slots 0–7 in `s2..s9` and deeper slots in a frame, inline
-  integer/fixed/control codegen, one generic helper for the float / transcendental
-  / colour / vector / convert / context / uniform / indexed ops (reusing `fx_vm`'s
-  own now-`pub` maths), a per-block budget decrement, and a VM fallback for any
+  integer/fixed/control codegen, dedicated helpers for scalar/lane float maths,
+  comparisons, conversions and colour, plus the generic helper for remaining
+  operations (reusing `fx_vm`'s own now-`pub` maths), a per-block budget decrement, and a VM fallback for any
   unsupported opcode. Buffers, textures, graph queries, flood, I2C, the JIT op and
   **user functions** are not yet lowered (they fall back to the VM); user-function
   cloning per entry depth is the main stage-2 follow-up.
 - The instruction-stream **verifier** re-checks every emitted image.
 - A **differential test** (`fx_aot_diff_test`) proves native output equals the VM
   **bit-for-bit** over the compiler corpus + embedded study/agent effects, 64 LED
-  positions × 3 frames. 24 effects lower and match; 5 fall back. The bench's
+  positions × 3 frames, including raw state checks. The current 36-effect
+  corpus has 28 effects lowering and matching and 8 falling back (unchanged by
+  the dedicated-helper follow-up). The bench's
   on-C6 `aot` pass cross-checks every LED against the VM on the real helix.
 - The **arena W^X scheme is hardware-confirmed** (the PMA probe above).
+
+### Dedicated helper follow-up (host and RV32 emulator only)
+
+Compared with `agent/fx-aot` at `f6caeca9b618038204e5f2fa3f06825c1fc5e773`:
+
+- Float Add/Sub/Mul/Div/Neg, unary and binary maths, Clamp/Smoothstep,
+  comparisons/logic, hash, conversions, HSV and palette use per-operation
+  helper entries. Scalar operands move directly from their callee-saved homes
+  into `a0..a3`; scalar results return in `a0`. HSV/palette return red/green in
+  `a0/a1`; blue alone uses one fixed output word because RV32's C ABI returns
+  at most two words in registers.
+- The fixed-stride table is embedded in `NativeCtx`, initialized outside the
+  bench timer. On RV32 Add/Sub/Mul/I2F point directly at the compiler-builtins
+  used by the VM (`__addsf3`, `__subsf3`, `__mulsf3`, `__floatsisf`). Div,
+  comparisons and float-to-int retain small semantic wrappers for zero
+  divisors, float booleans and Rust's saturating casts. No ROM addresses are
+  baked into images. The context grows by 344 bytes on the host and 348 bytes on RV32
+  (including alignment padding; 408 bytes total on RV32).
+- **Scale and Mix deliberately retain the generic helper.** Dedicated versions
+  changed NaN payload selection after optimization. Vector reductions and
+  cross/normalize, fixed-point complex operations, context/uniform/indexed
+  operations also retain it. Buffer/texture/graph/flood/user-function support
+  remains follow-up work; I2C and JIT calls still fall back to the VM.
+- Verifier additions: calls must follow an exact aligned table-entry word
+  load; no branch/jump may enter a helper call after its load; branch/jump
+  offsets must be word-aligned; `jalr` must have funct3/offset zero; context
+  stores may address only the five output words, never the helper table.
+  Negative tests cover table bounds/padding, load width, call offsets,
+  bypassing loads and writes into the table. Arena/PMP/PMA policy is unchanged.
+- The host emulator now clobbers caller-saved registers at calls and reports
+  emitted instruction/helper-call counts. Counts exclude helper bodies,
+  soft-float routines and hardware timing. More lane helpers can mean **more
+  calls despite fewer emitted instructions**; this is not a C6 speed claim.
+- The new raw-word host differential tests signed zeros, subnormals,
+  infinities, quiet/signaling NaN payloads, conversion boundaries, lane widths
+  1–4 and live stack prefixes at depths 0/7/8/13: **492,096 comparisons in opt**.
+  Debug mode skips only inputs where the baseline VM itself panics (existing
+  overflowing sqrtf/expf arithmetic); returning inputs still compare exactly.
+- `tests/run_rv32.sh` runs the actual RV32 VM and helper machine code plus
+  emitted images under QEMU user-mode, with Rust 1.85.0 and the
+  `riscv32imac-unknown-none-elf` target. **521,920 raw comparisons pass**, also
+  covering the retained Scale/Mix path. It needs an installed Rust target and
+  `qemu-riscv32`; it downloads nothing and accesses no rig. This verifies the
+  integer register ABI and target soft-float, not C6 timings or peripherals.
+
+Both AOT Bazel tests, `native_vs_vm_test`, and the host `fx_aot_nostd` build
+pass (host invocations used an external bazelrc omitting the firmware-only
+linker override before Nix was available). The RV32 no_std crate links and
+executes in the QEMU test. Nix now builds locally in an isolated container,
+but the full `fx_perf_bench_flashbundle` build stops while realizing the
+Arduino toolchain: the workspace proxy rejects `cache.nixos.org` with HTTP
+403, and the source-build fallback fails fetching GNU Bash. No bench-image
+compilation or C6 execution is claimed. The C6 build remains pending download
+access; the owner's team supplies noise/particles timings after publication.
+PR #350 was still open when this follow-up was prepared; rebasing/integrating
+its new opcodes remains required before landing this stack.
+
+Same compiler, default uniforms, 64 LEDs × 3 frames, update plus shade,
+original/current code-generation counts (not timings):
+
+| Effect                  | Bytes before | Bytes after | Emitted instructions before |   After |
+| ----------------------- | -----------: | ----------: | --------------------------: | ------: |
+| band                    |        1,036 |         848 |                      39,480 |  30,456 |
+| hue_gradient            |          856 |         716 |                      30,840 |  24,120 |
+| breathing               |          848 |         716 |                      16,848 |  15,804 |
+| plasma_c                |        1,648 |       1,172 |                      68,856 |  46,008 |
+| const_math              |          584 |         444 |                      26,688 |  19,968 |
+| fixed16_grad            |          640 |         600 |                      20,472 |  18,552 |
+| loopy                   |          992 |         768 |                     132,216 |  87,864 |
+| study_solid             |          992 |         804 |                      16,956 |  15,870 |
+| study_sweep             |          968 |         784 |                      45,120 |  36,288 |
+| study_gradient          |        1,460 |       1,092 |                      68,736 |  51,072 |
+| study_pulses            |        1,388 |       1,060 |                      65,280 |  49,536 |
+| study_sparkle           |        1,496 |       1,020 |                      52,677 |  32,475 |
+| study_plasma            |        2,532 |       1,588 |                     120,192 |  74,880 |
+| study_noise             |        4,328 |       3,624 |                     191,259 | 158,790 |
+| study_particles         |        4,784 |       3,664 |                     257,322 | 210,645 |
+| study_cylinder          |        1,480 |       1,060 |                      69,696 |  49,536 |
+| study_rain_naive        |        9,108 |       5,720 |                     335,848 | 211,498 |
+| opt_rainforest          |        5,644 |       4,220 |                     125,511 | 113,514 |
+| opt_metaballs           |        7,760 |       5,472 |                     146,472 | 133,758 |
+| agent_app_opus_p01      |        3,552 |       2,832 |                      64,236 |  58,971 |
+| agent_app_opus_p05      |        4,520 |       2,960 |                     103,584 |  69,927 |
+| agent_app_opus_p12      |        3,472 |       2,508 |                      36,531 |  29,655 |
+| agent_app_sonnet_p03    |        5,536 |       4,484 |                     139,623 | 125,982 |
+| agent_app_sonnet_p08    |        5,384 |       4,120 |                     436,896 | 396,755 |
+| agent_app_lint_opus_p06 |        8,440 |       5,968 |                     131,172 | 124,110 |
+| agent_skill_opus_p04    |        2,512 |       1,884 |                      60,033 |  42,363 |
+| agent_skill_sonnet_p02  |        8,772 |       6,316 |                     807,552 | 516,288 |
+| agent_skill_sonnet_p13  |        2,956 |       1,992 |                     116,364 |  77,862 |
+
+Noise's emitted instruction count falls 17.0%; particles falls 18.1%.
+`rain_naive` shrinks from 9,108 to 5,720 bytes and now fits the existing 8 KB
+bench region without increasing its allocation. The eight corpus fallbacks
+are study rain/flood/texture, opt fire_helix/rainbow2, agent app perf opus
+p02/p09, and agent skill opus p11.
+
+### Original stage 2 hardware baseline (unchanged)
 
 **Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):**
 
