@@ -1120,10 +1120,13 @@ static void poll_after_message() {
 // reassembled submit_effect frame is a normal message). Returns the reply length, 0, or -1.
 // Take the player mutex for a network-side dispatch. The render task holds it across a
 // whole update+shade (~10 ms+); on the heapless netstack, loopTask services the WiFi RX
-// ring while it waits instead of blocking, so inbound frames aren't lost to a full ring.
+// ring every few ms while it waits, so inbound frames aren't lost to a full ring. It
+// waits in 4 ms BLOCKING slices (a registered waiter, so render's give hands the mutex
+// straight over): a 1-tick poll lost the handoff to render's next frame and doubled
+// the waits on the bench.
 static void take_player_mutex_for_network() {
 #if defined(LM_NETSTACK)
-  while (xSemaphoreTake(player_mutex, 1) != pdTRUE) netstack_service_link(16);
+  while (xSemaphoreTake(player_mutex, pdMS_TO_TICKS(4)) != pdTRUE) netstack_service_link(16);
 #else
   xSemaphoreTake(player_mutex, portMAX_DELAY);
 #endif
