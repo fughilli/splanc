@@ -130,8 +130,9 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "splanc-ota-boot.service" "network-online.target" ];
     wants = [ "network-online.target" ];
+    # simple, not oneshot: a long download mustn't hold multi-user.target.
     serviceConfig = {
-      TimeoutStartSec = "infinity";
+      Type = "simple";
       Nice = 10;
       IOSchedulingClass = "idle";
     };
@@ -147,11 +148,12 @@ in
     description = "Splanc MAX OTA: keep the new system only if the player proves healthy";
     wantedBy = [ "multi-user.target" ];
     after = [ "splanc-ota-boot.service" ];
-    serviceConfig.TimeoutStartSec = "infinity";
+    serviceConfig.Type = "simple";
   };
 
   # The player may write the inbox (its unit sandboxes the rest of /var read-only).
-  services.sbcApps.led-driver.readWritePaths = [ "${stateDir}/inbox" ];
+  # ("-": tolerate a first boot where tmpfiles hasn't made it yet.)
+  services.sbcApps.led-driver.readWritePaths = [ "-${stateDir}/inbox" ];
 
   # -- device identity, kept across updates ---------------------------------------
   # An OTA image is built ONCE per board (hostname "ledmapper", the CI deploy key),
