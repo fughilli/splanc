@@ -1020,3 +1020,37 @@ fn jitcall_renders_identically_to_the_interpreter() {
     vm.clear_jit();
     let _ = vm.run_shade(&progj, &Frame::default(), &Led::default());
 }
+
+/// `Vm::flood_from` / `Vm::led_dist` / `Vm::graph_query` (the native-code
+/// helpers' entry points, firmware/fx_aot) agree with the opcodes they mirror.
+#[test]
+fn pub_graph_helpers_match_opcodes() {
+    let seg_len = [0.5f32, 1.25, 0.75, 2.0];
+    let seg_a = [0i32, 1, 2, 1];
+    let seg_b = [1i32, 2, 3, 4];
+    let src = f32::from_bits(2u32);
+    // update: flood_from(2); state[0] = led.dist (default led); state[1] = seg_len(1)
+    let mut code = vec![Op::PushConst as u8, 0, 0, Op::FloodFrom as u8];
+    code.extend_from_slice(&[Op::LoadCtx as u8, C_LED_DIST, Op::StoreState as u8, 0, 1]);
+    code.extend_from_slice(&[Op::PushConst as u8, 1, 0, Op::GraphQuery as u8, gq::SEG_LEN]);
+    code.extend_from_slice(&[Op::StoreState as u8, 1, 1, Op::Ret as u8, 0]);
+    let bytes = fxb(2, 0, 0, NO_ENTRY, &[src, f32::from_bits(1)], &code);
+    let prog = Program::parse(&bytes).unwrap();
+    let mut a = Vm::new();
+    a.set_graph(&seg_len, &seg_a, &seg_b);
+    let mut b = Vm::new();
+    b.set_graph(&seg_len, &seg_a, &seg_b);
+    a.run_update(&prog, &Frame::default());
+    b.flood_from(2);
+    assert_eq!(a.state[0].to_bits(), b.led_dist(&Led::default()).to_bits());
+    assert_eq!(a.state[1].to_bits(), b.graph_query(gq::SEG_LEN, 1, 0).to_bits());
+    for seg in -1..5 {
+        for k in 0..8 {
+            let led = Led { seg, s: k as f32 / 7.0, dist: 0.3, ..Default::default() };
+            assert_eq!(a.led_dist(&led).to_bits(), b.led_dist(&led).to_bits());
+        }
+    }
+    let fresh = Vm::new();
+    let led = Led { dist: 0.42, ..Default::default() };
+    assert_eq!(fresh.led_dist(&led), 0.42);
+}

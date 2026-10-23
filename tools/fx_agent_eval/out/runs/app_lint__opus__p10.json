@@ -1,0 +1,46 @@
+{
+  "name": "app_lint__opus__p10",
+  "variant": "app_lint",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Matrix-style green rain wrapped around a helical cylinder lamp.\n// Columns = angular slices around the cylinder; height = arclength along the helix (led.s).\n// Hot per-LED math runs in int/fixed; frame-invariant terms are hoisted into update().\n\nuniform float speed   : 0.05 .. 2.0 = 0.45;\nuniform float columns : 4.0 .. 32.0 = 14.0;\nuniform float tail    : 0.05 .. 0.9 = 0.35;\nuniform float rows    : 4.0 .. 40.0 = 18.0;\nuniform float flicker : 0.0 .. 20.0 = 8.0;\nuniform float glyphs  : 0.0 .. 1.0 = 0.45;\nuniform vec3  rain    : color = 0.1, 1.0, 0.25;\nuniform vec3  headCol : color = 0.75, 1.0, 0.8;\n\nstate float phase[32];\nstate float rate[32];\nstate fixed heads[32];\nstate int warm;\nstate bool inited;\n\n// Frame-invariant values precomputed once per frame\nstate int   nc;\nstate fixed ncF;\nstate fixed invTail;\nstate fixed rowsF;\nstate int   tickI;\nstate fixed glyphA;\nstate fixed glyphK;\n\n// Per-LED cache: x = angle in turns (0..1), y = normalized height (0..1)\nbuffer vec2 cache : fixed16;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      phase[i] = hash(float(i) * 3.17 + 0.5);\n      rate[i] = 0.55 + hash(float(i) * 7.31 + 1.3) * 0.9;\n    }\n    inited = true;\n  }\n  float span = 1.0 + tail;\n  float adv = dt * speed;\n  for (int i = 0; i < 32; i = i + 1) {\n    float p = phase[i] + adv * rate[i];\n    if (p >= 1.0) {\n      p = p - 1.0;\n      rate[i] = 0.55 + hash(float(i) * 7.31 + time) * 0.9;\n    }\n    phase[i] = p;\n    // Head starts at the top (1) and falls past the bottom so the tail can clear.\n    heads[i] = fixed(1.0 - p * span);\n  }\n\n  nc = int(columns);\n  ncF = fixed(float(nc));\n  invTail = fixed(1.0 / tail);\n  rowsF = fixed(rows);\n  tickI = int(floor(time * flicker));\n  glyphA = fixed(1.0 - glyphs);\n  glyphK = fixed(glyphs / 1024.0);\n\n  if (warm < 4) { warm = warm + 1; }\n}\n\nvec3 shade(Led led) {\n  vec2 m = cache[led.idx];\n  if (warm < 3) {\n    // One-time (first frames) cache of the expensive angle math.\n    float a = fract(atan2(led.pos.z, led.pos.x) * 0.15915494 + 0.5);\n    m = vec2(a, clamp(led.s, 0.0, 1.0));\n    cache[led.idx] = m;\n  }\n\n  fixed ax = fixed(m.x);\n  fixed yn = fixed(m.y);\n\n  int c = int(ax * ncF);\n  c = min(c, nc - 1);\n\n  fixed d = yn - heads[c];          // distance above the falling head\n  fixed one = 1.0;\n  fixed zero = 0.0;\n  fixed t = clamp(one - d * invTail, zero, one) * step(zero, d);\n  fixed trailB = t * t;\n\n  // Head glow just at/below the leading edge\n  fixed h = clamp(one - abs(d) * 30.0, zero, one);\n\n  // Flickering \"glyph\" cells along the trail (integer hash)\n  int cell = int(yn * rowsF);\n  int n = c * 1973 + cell * 9277 + tickI * 26699;\n  n = abs(n * 1103515245 + 12345);\n  n = abs(n * 1103515245 + 12345);\n  int g = (n / 65536) % 1024;\n  fixed glyph = glyphA + glyphK * fixed(g);\n\n  float k = float(trailB * glyph);\n  float hf = float(h);\n  vec3 col = rain * k + headCol * hf;\n  return min(col, vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "40fab72c-293d-48a2-b69f-482ecb469c74",
+      "wall_s": 34.6,
+      "duration_api_ms": 24268,
+      "cost_usd": 0.0698866,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2655,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 1958
+      },
+      "thinking_tokens": 1150,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1780
+    }
+  ],
+  "started": "2026-10-22T20:23:10",
+  "base_program": "firmware/fx_perf_bench/agent/app__opus__p10.fx",
+  "lint_warnings": [
+    "line 50 (`float a = fract(atan2(led.pos.z, led.pos.x) * 0.15915494 + 0.5);`): atan2() depends only on led.* (constant per LED): compute it once into a `buffer` (first frame) and read it back",
+    "5 cheap per-LED ops depend only on time/uniforms/consts (e.g. time*speed): precompute them in update()",
+    "(estimate: ~14480 cycles per LED in shade vs a budget of ~7700; 1 float transcendentals per LED; 12.5% of shade ops are frame-invariant)"
+  ],
+  "lint_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0699,
+  "total_wall_s": 34.6,
+  "program": "firmware/fx_perf_bench/agent/app_lint__opus__p10.fx"
+}

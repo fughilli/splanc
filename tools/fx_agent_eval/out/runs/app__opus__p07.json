@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p07",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Fireflies: each LED is a potential firefly that blinks on its own random\n// rhythm. Every cycle it randomly decides whether to flash, so the pattern\n// never repeats. Per-LED math is all int/fixed with integer hashing and no\n// branches.\n\nuniform float speed   : 0.05 .. 1.0 = 0.22;   // base blink cycles per second\nuniform float duty    : 0.03 .. 0.4 = 0.12;   // fraction of a cycle spent glowing\nuniform float density : 0.0 .. 1.0 = 0.3;     // chance a firefly flashes each cycle\nuniform float bright  : 0.0 .. 1.0 = 1.0;\nuniform vec3 glow     : color = 1.0, 0.85, 0.15;\nuniform vec3 glow2    : color = 0.55, 1.0, 0.1;\nuniform float ambient : 0.0 .. 0.1 = 0.006;\nuniform vec3 night    : color = 0.02, 0.05, 0.12;\n\nstate fixed phase;\nstate int cyc;\nstate fixed invDuty;\nstate fixed dens;\nstate vec3 cA;\nstate vec3 cB;\nstate vec3 amb;\n\nvoid update() {\n  float t = time * speed;\n  float ft = floor(t);\n  cyc = int(ft);\n  phase = fixed(t - ft);\n  invDuty = fixed(1.0 / duty);\n  dens = fixed(density);\n  cA = glow * bright;\n  cB = glow2 * bright;\n  amb = night * ambient;\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n\n  // Static per-LED randomness: phase offset, integer rate multiplier, and hue.\n  int h1 = abs(i * 1103515245 + 12345);\n  fixed off = fixed((h1 / 65536) % 1024) * 0.0009765625;\n  int rate = 1 + (h1 / 16) % 3;\n\n  // Per-LED cycle position. An integer rate keeps the phase continuous.\n  fixed q = phase * fixed(rate) + off;\n  fixed fq = floor(q);\n  int cid = cyc * rate + int(fq);\n  fixed p = q - fq;\n\n  // Per-cycle random decision on whether this firefly flashes.\n  int h2 = abs((i * 7919 + cid * 104729) * 1103515245 + 12345);\n  fixed r = fixed((h2 / 65536) % 1024) * 0.0009765625;\n  fixed on = step(r, dens);\n\n  // Smooth flash envelope inside the duty window.\n  fixed u = min(p * invDuty, 1.0);\n  fixed b = u * (1.0 - u) * 4.0;\n  b = b * b * on;\n\n  // Colour varies per firefly between the two tints.\n  vec3 col = mix(cA, cB, float(off));\n  return amb + col * float(b);\n}\n```",
+      "is_error": false,
+      "session_id": "500dcb48-8358-4530-8bd9-6d2819c0d83e",
+      "wall_s": 28.7,
+      "duration_api_ms": 27453,
+      "cost_usd": 0.0584466,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2621,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 1635,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1477
+    }
+  ],
+  "started": "2026-10-22T19:39:39",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0584,
+  "total_wall_s": 28.7,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p07.fx"
+}

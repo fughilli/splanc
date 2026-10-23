@@ -1,0 +1,66 @@
+{
+  "name": "skill__sonnet__p03",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Aurora curtains: vertical sheets of colour drift slowly around the cylinder,\n// rippling with height \u2014 green at the base, teal through the mid, purple at\n// the crown. Two overlapping curtain layers add depth; per-LED shimmer gives\n// the live, breathing quality of real aurora.\n\nuniform float speed      : 0.0 .. 2.0 = 0.22;       // azimuthal drift, cycles/s\nuniform float bands      : 1.0 .. 6.0 = 3.0;        // number of curtain sheets\nuniform float ripple     : 0.0 .. 2.0 = 1.0;        // vertical wave amplitude\nuniform vec3  col_base   : color = 0.0, 0.85, 0.35;  // ground-level green\nuniform vec3  col_mid    : color = 0.0, 0.65, 0.88;  // mid-height teal\nuniform vec3  col_crown  : color = 0.55, 0.1,  0.92; // crown purple\nuniform float shimmer    : 0.0 .. 1.0 = 0.35;       // sparkle depth\nuniform float brightness : 0.0 .. 1.0 = 0.90;\n\nstate float drift;   // primary drift phase\nstate float sway;    // secondary (slower) drift phase\nstate float tick;    // shimmer clock (low-res)\n\nvoid update() {\n  drift = time * speed;\n  sway  = time * speed * 0.41;\n  tick  = floor(time * 7.0) * 0.17;\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y;   // 0 = bottom LED, 1 = top LED\n\n  // Azimuthal angle mapped to 0..1 around the cylinder\n  float theta = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;  // 1/(2\u03c0)\n\n  // Primary curtain: phase shifts with height to make each sheet ripple/wave\n  float phase1 = theta + drift + sin(h * 4.3 + sway) * ripple * 0.10;\n  float c1 = 0.5 + 0.5 * cos(phase1 * bands * 6.2832);\n  c1 = c1 * c1;           // x\u00b2 sharpens the lobe without pow()\n\n  // Secondary curtain (slower, offset frequency) for layered depth\n  float phase2 = theta + drift * 0.57 + cos(h * 3.1 - sway * 0.6) * ripple * 0.07;\n  float c2 = 0.5 + 0.5 * cos(phase2 * bands * 6.2832 * 1.31 + 1.57);\n  c2 = c2 * c2 * 0.55;\n\n  float lum = c1 * 0.72 + c2 * 0.28;\n\n  // Per-LED shimmer: hash on index + low-res time tick\n  float sp = 1.0 - shimmer * 0.38 * hash(float(led.idx) * 0.37 + tick);\n  lum *= sp;\n\n  // Height-driven colour blend: base \u2192 mid \u2192 crown\n  vec3 col = mix(col_base, col_mid,   smoothstep(0.0,  0.55, h));\n  col       = mix(col,     col_crown, smoothstep(0.45, 1.0,  h));\n\n  // Soft vignette: fade gently at very bottom and top\n  float vign = smoothstep(0.0, 0.07, h) * (1.0 - smoothstep(0.86, 1.0, h));\n\n  return col * lum * vign * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "b5f8c521-d507-4dee-9873-0ce021930ed3",
+      "wall_s": 112.8,
+      "duration_api_ms": 78500,
+      "cost_usd": 0.0926238,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 5795,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 505
+      },
+      "thinking_tokens": 4815,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 45,
+          "col": 7,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The language does not support compound assignment operators (`*=`). Line 45 `lum *= sp;` must be written as a plain assignment.\n\n```glsl\n// Aurora curtains: vertical sheets of colour drift slowly around the cylinder,\n// rippling with height \u2014 green at the base, teal through the mid, purple at\n// the crown. Two overlapping curtain layers add depth; per-LED shimmer gives\n// the live, breathing quality of real aurora.\n\nuniform float speed      : 0.0 .. 2.0 = 0.22;       // azimuthal drift, cycles/s\nuniform float bands      : 1.0 .. 6.0 = 3.0;        // number of curtain sheets\nuniform float ripple     : 0.0 .. 2.0 = 1.0;        // vertical wave amplitude\nuniform vec3  col_base   : color = 0.0, 0.85, 0.35;  // ground-level green\nuniform vec3  col_mid    : color = 0.0, 0.65, 0.88;  // mid-height teal\nuniform vec3  col_crown  : color = 0.55, 0.1,  0.92; // crown purple\nuniform float shimmer    : 0.0 .. 1.0 = 0.35;       // sparkle depth\nuniform float brightness : 0.0 .. 1.0 = 0.90;\n\nstate float drift;   // primary drift phase\nstate float sway;    // secondary (slower) drift phase\nstate float tick;    // shimmer clock (low-res)\n\nvoid update() {\n  drift = time * speed;\n  sway  = time * speed * 0.41;\n  tick  = floor(time * 7.0) * 0.17;\n}\n\nvec3 shade(Led led) {\n  float h = led.uv.y;   // 0 = bottom LED, 1 = top LED\n\n  // Azimuthal angle mapped to 0..1 around the cylinder\n  float theta = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;  // 1/(2\u03c0)\n\n  // Primary curtain: phase shifts with height to make each sheet ripple/wave\n  float phase1 = theta + drift + sin(h * 4.3 + sway) * ripple * 0.10;\n  float c1 = 0.5 + 0.5 * cos(phase1 * bands * 6.2832);\n  c1 = c1 * c1;           // x\u00b2 sharpens the lobe without pow()\n\n  // Secondary curtain (slower, offset frequency) for layered depth\n  float phase2 = theta + drift * 0.57 + cos(h * 3.1 - sway * 0.6) * ripple * 0.07;\n  float c2 = 0.5 + 0.5 * cos(phase2 * bands * 6.2832 * 1.31 + 1.57);\n  c2 = c2 * c2 * 0.55;\n\n  float lum = c1 * 0.72 + c2 * 0.28;\n\n  // Per-LED shimmer: hash on index + low-res time tick\n  float sp = 1.0 - shimmer * 0.38 * hash(float(led.idx) * 0.37 + tick);\n  lum = lum * sp;\n\n  // Height-driven colour blend: base \u2192 mid \u2192 crown\n  vec3 col = mix(col_base, col_mid,   smoothstep(0.0,  0.55, h));\n  col       = mix(col,     col_crown, smoothstep(0.45, 1.0,  h));\n\n  // Soft vignette: fade gently at very bottom and top\n  float vign = smoothstep(0.0, 0.07, h) * (1.0 - smoothstep(0.86, 1.0, h));\n\n  return col * lum * vign * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "b5f8c521-d507-4dee-9873-0ce021930ed3",
+      "wall_s": 43.5,
+      "duration_api_ms": 98195,
+      "cost_usd": 0.1713801,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2328,
+        "cache_read_input_tokens": 9371,
+        "cache_creation_input_tokens": 6836
+      },
+      "thinking_tokens": 1312,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1642
+    }
+  ],
+  "started": "2026-10-22T20:01:17",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.264,
+  "total_wall_s": 156.3,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p03.fx"
+}

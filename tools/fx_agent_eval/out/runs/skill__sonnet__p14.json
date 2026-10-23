@@ -1,0 +1,66 @@
+{
+  "name": "skill__sonnet__p14",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Scanner beam: a bright stripe races left\u2192right across the cylinder and\n// bounces back, leaving a decaying tail behind it.\n// Horizontal position via led.uv.x (0 = left, 1 = right).\n\nuniform float speed      : 0.1 .. 4.0  = 1.0;   // ping-pong sweeps per second\nuniform float beam_width : 0.01 .. 0.3  = 0.05;  // beam half-width, fraction of total width\nuniform float tail_len   : 0.0 .. 0.9   = 0.35;  // trailing tail length\nuniform float tail_dim   : 0.0 .. 1.0   = 0.25;  // tail brightness relative to beam\nuniform float glow       : 0.0 .. 1.0   = 0.3;   // soft bloom radius around beam\nuniform vec3  beam_col   : color = 0.1, 0.85, 1.0;\nuniform vec3  bg_col     : color = 0.0, 0.0, 0.015;\n\nstate float beam_pos;   // current beam centre, 0..1\nstate float beam_dir;   // +1.0 = moving right, -1.0 = moving left\n\nvoid update() {\n    float t     = fract(time * speed * 0.5);\n    float phase = t < 0.5 ? t * 2.0 : 2.0 - t * 2.0;  // triangle wave 0\u21921\u21920\n    beam_pos    = phase;\n    beam_dir    = t < 0.5 ? 1.0 : -1.0;\n}\n\nvec3 shade(Led led) {\n    float x    = led.uv.x;\n    float dist = abs(x - beam_pos);\n\n    // Sharp core (bright centre, falls to zero at beam_width) + optional soft bloom\n    float core = smoothstep(beam_width, beam_width * 0.1, dist);\n    float halo = smoothstep(beam_width * 4.0, 0.0, dist) * glow;\n    float beam = max(core, halo);\n\n    // Tail: only behind the beam in its direction of travel, decays over tail_len\n    float behind = max(0.0, -(x - beam_pos) * beam_dir - beam_width);\n    float tail   = smoothstep(max(tail_len, 0.001), 0.0, behind);\n    tail = tail * tail;   // quadratic decay for a sharper fade-out\n\n    float lit = max(beam, tail * tail_dim);\n    return mix(bg_col, beam_col, lit);\n}\n```",
+      "is_error": false,
+      "session_id": "f68fbe86-e6bc-4841-8ecc-cef80ea3edb2",
+      "wall_s": 216.7,
+      "duration_api_ms": 198645,
+      "cost_usd": 0.2255718,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 14657,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 508
+      },
+      "thinking_tokens": 13977,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 18,
+          "col": 27,
+          "msg": "expected ';'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The ternary operator `?:` is not supported \u2014 that is the only error (line 18 and the same pattern on line 20). Replace both with equivalent arithmetic.\n\n```glsl\n// Scanner beam: a bright stripe races left\u2192right across the cylinder and\n// bounces back, leaving a decaying tail behind it.\n// Horizontal position via led.uv.x (0 = left, 1 = right).\n\nuniform float speed      : 0.1 .. 4.0  = 1.0;   // ping-pong sweeps per second\nuniform float beam_width : 0.01 .. 0.3  = 0.05;  // beam half-width, fraction of total width\nuniform float tail_len   : 0.0 .. 0.9   = 0.35;  // trailing tail length\nuniform float tail_dim   : 0.0 .. 1.0   = 0.25;  // tail brightness relative to beam\nuniform float glow       : 0.0 .. 1.0   = 0.3;   // soft bloom radius around beam\nuniform vec3  beam_col   : color = 0.1, 0.85, 1.0;\nuniform vec3  bg_col     : color = 0.0, 0.0, 0.015;\n\nstate float beam_pos;   // current beam centre, 0..1\nstate float beam_dir;   // +1.0 = moving right, -1.0 = moving left\n\nvoid update() {\n    float t  = fract(time * speed * 0.5);\n    beam_pos = 1.0 - abs(2.0 * t - 1.0);        // triangle wave 0\u21921\u21920\n    beam_dir = 1.0 - 2.0 * step(0.5, t);        // +1 first half, -1 second half\n}\n\nvec3 shade(Led led) {\n    float x    = led.uv.x;\n    float dist = abs(x - beam_pos);\n\n    // Sharp core (bright centre, falls to zero at beam_width) + optional soft bloom\n    float core = smoothstep(beam_width, beam_width * 0.1, dist);\n    float halo = smoothstep(beam_width * 4.0, 0.0, dist) * glow;\n    float beam = max(core, halo);\n\n    // Tail: only behind the beam in its direction of travel, decays over tail_len\n    float behind = max(0.0, -(x - beam_pos) * beam_dir - beam_width);\n    float tail   = smoothstep(max(tail_len, 0.001), 0.0, behind);\n    tail = tail * tail;   // quadratic decay for a sharper fade-out\n\n    float lit = max(beam, tail * tail_dim);\n    return mix(bg_col, beam_col, lit);\n}\n```",
+      "is_error": false,
+      "session_id": "f68fbe86-e6bc-4841-8ecc-cef80ea3edb2",
+      "wall_s": 54.7,
+      "duration_api_ms": 221141,
+      "cost_usd": 0.352167,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2092,
+        "cache_read_input_tokens": 9374,
+        "cache_creation_input_tokens": 15399
+      },
+      "thinking_tokens": 1377,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1299
+    }
+  ],
+  "started": "2026-10-22T20:10:52",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.5777,
+  "total_wall_s": 271.4,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p14.fx"
+}

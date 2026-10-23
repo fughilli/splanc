@@ -1,0 +1,39 @@
+{
+  "name": "app_perf__opus__p05",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Heartbeat: a \"lub-dub\" pulse that starts at the vertical middle of the lamp\n// and travels toward the top and bottom.\n\nuniform float bpm      : 40.0 .. 160.0 = 68.0;\nuniform float travel   : 0.3 .. 4.0    = 1.6;   // wavefront speed (centre\u2192ends per second)\nuniform float width    : 0.03 .. 0.5   = 0.14;  // thickness of the pulse ring\nuniform float decay    : 0.2 .. 6.0    = 2.2;   // how quickly each beat fades\nuniform float dub      : 0.0 .. 1.0    = 0.6;   // strength of the second beat\nuniform float glow     : 0.0 .. 0.5    = 0.06;  // resting ember level\nuniform vec3  tint     : color = 0.9, 0.05, 0.08;\nuniform vec3  hot      : color = 1.0, 0.55, 0.4;\n\nstate fixed f1;\nstate fixed f2;\nstate fixed a1;\nstate fixed a2;\nstate fixed invw;\nstate fixed base;\nstate vec3  colA;\nstate vec3  colB;\nstate bool  started;\nstate bool  ready;\n\nbuffer float dd : fixed16;   // cached distance from the centre (0 = middle, 1 = ends)\n\nvoid update() {\n  ready = started;\n  started = true;\n\n  float period = 60.0 / bpm;\n  float age1 = fract(time / period) * period;   // seconds since \"lub\"\n  float age2 = age1 - 0.3 * period;              // \"dub\" follows shortly after\n\n  f1 = fixed(age1 * travel);\n  a1 = fixed(exp(-age1 * decay));\n\n  if (age2 >= 0.0) {\n    f2 = fixed(age2 * travel);\n    a2 = fixed(exp(-age2 * decay) * dub);\n  } else {\n    f2 = fixed(-1.0);\n    a2 = fixed(0.0);\n  }\n\n  invw = fixed(1.0 / width);\n  // core breathes a little with the beat\n  base = fixed(glow * (0.6 + 0.4 * exp(-age1 * 6.0)));\n  colA = tint;\n  colB = hot;\n}\n\nvec3 shade(Led led) {\n  if (!ready) { dd[led.idx] = abs(led.s - 0.5) * 2.0; }\n  fixed d = fixed(dd[led.idx]);\n\n  fixed x1 = max(fixed(0.0), fixed(1.0) - abs(d - f1) * invw);\n  fixed x2 = max(fixed(0.0), fixed(1.0) - abs(d - f2) * invw);\n  fixed b = min(x1 * x1 * a1 + x2 * x2 * a2 + base, fixed(1.0));\n\n  return colA * b + colB * (b * b * b);\n}\n```",
+      "is_error": false,
+      "session_id": "5a6361c7-379d-49da-bb8d-9c5cbda163eb",
+      "wall_s": 44.0,
+      "duration_api_ms": 25277,
+      "cost_usd": 0.0477912,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2075,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 618
+      },
+      "thinking_tokens": 1108,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1562
+    }
+  ],
+  "started": "2026-10-22T20:15:23",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0478,
+  "total_wall_s": 44.0,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p05.fx"
+}

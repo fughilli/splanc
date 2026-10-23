@@ -1,0 +1,39 @@
+{
+  "name": "app__opus__p12",
+  "variant": "app",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Breathing meditation glow: a slow inhale/exhale cycle.\n// On the inhale, light rises up the lamp and warms. On the exhale, it sinks and cools.\n\nuniform float bpm : 2.0 .. 12.0 = 6.0;           // breaths per minute\nuniform float inhale_ratio : 0.3 .. 0.7 = 0.45;  // share of each cycle spent inhaling\nuniform vec3 calm : color = 0.12, 0.22, 0.85;    // exhale colour\nuniform vec3 warm : color = 1.0, 0.55, 0.25;     // inhale colour\nuniform float floor_glow : 0.0 .. 0.5 = 0.08;    // resting brightness\nuniform float rise : 0.0 .. 1.0 = 0.7;           // how much the glow climbs vs. fills evenly\nuniform float softness : 0.05 .. 0.6 = 0.25;     // softness of the rising edge\nuniform float brightness : 0.1 .. 1.0 = 0.8;\nuniform float lamp_height : 0.1 .. 1.0 = 0.30;\n\nstate float phase;\nstate vec3 col;\nstate fixed lv;     // edge position, scaled by 1/softness\nstate fixed hs;     // height scale, 1 / (height * softness)\nstate fixed amb;    // constant term of the intensity\nstate fixed kf;     // edge-dependent term of the intensity\n\nvoid update() {\n  phase = fract(phase + dt * bpm / 60.0);\n\n  float t = 0.0;\n  if (phase < inhale_ratio) {\n    t = phase / inhale_ratio;\n  } else {\n    t = 1.0 - (phase - inhale_ratio) / (1.0 - inhale_ratio);\n  }\n  float b = t * t * (3.0 - 2.0 * t);  // eased breath, 0..1\n\n  col = mix(calm, warm, b) * brightness;\n\n  float inv = 1.0 / softness;\n  lv = fixed(b * (1.0 + softness) * inv);\n  hs = fixed(inv / lamp_height);\n\n  float swing = (1.0 - floor_glow) * b;\n  amb = fixed(floor_glow + swing * (1.0 - rise));\n  kf = fixed(swing * rise);\n}\n\nvec3 shade(Led led) {\n  fixed f = clamp(lv - fixed(led.pos.y) * hs, 0.0, 1.0);\n  return col * float(amb + kf * f);\n}\n```",
+      "is_error": false,
+      "session_id": "c68bd69a-208b-453b-aaf2-c129f5a87b14",
+      "wall_s": 27.8,
+      "duration_api_ms": 20574,
+      "cost_usd": 0.0473986,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2069,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 612
+      },
+      "thinking_tokens": 1222,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1651
+    }
+  ],
+  "started": "2026-10-22T19:40:30",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0474,
+  "total_wall_s": 27.8,
+  "program": "firmware/fx_perf_bench/agent/app__opus__p12.fx"
+}

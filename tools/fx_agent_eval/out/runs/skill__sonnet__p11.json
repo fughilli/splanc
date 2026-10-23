@@ -1,0 +1,39 @@
+{
+  "name": "skill__sonnet__p11",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Police siren: spinning red + blue beams (180\u00b0 apart) with alternating strobe flash\nuniform float spin_speed : 0.5 .. 10.0 = 4.0;   // rotations per second\nuniform float flash_rate : 1.0 .. 20.0 = 7.0;   // strobe flashes per second per colour\nuniform float beam_width : 0.05 .. 0.45 = 0.18; // beam angular half-width (fraction of circle)\nuniform float glow       : 0.0 .. 0.3  = 0.04;  // ambient fill while that colour is flashing\nuniform vec3  red_col    : color = 1.0, 0.0, 0.02;\nuniform vec3  blue_col   : color = 0.0, 0.08, 1.0;\n\nstate float spin;\nstate float red_on;\nstate float blue_on;\n\nvoid update() {\n  spin = fract(time * spin_speed);\n\n  // Alternate: red on for first 45 % of flash cycle, blue on for next 45 %\n  float t = fract(time * flash_rate);\n  red_on  = 1.0 - step(0.45, t);\n  blue_on = step(0.5, t) * (1.0 - step(0.95, t));\n}\n\nvec3 shade(Led led) {\n  // Azimuth around Y axis, 0..1\n  float az = fract(atan2(led.pos.z, led.pos.x) / 6.28318 + 0.5);\n\n  // Angular distance from each beam centre:\n  //   red beam  at spin,        blue beam at spin + 0.5 (opposite)\n  float dr = abs(fract(az - spin + 0.5) - 0.5);\n  float db = abs(fract(az - spin      ) - 0.5);\n\n  // Bright at centre (dr=0 \u2192 1), fades to 0 at beam_width, plus constant glow fill\n  float r_bright = smoothstep(beam_width, 0.0, dr) + glow;\n  float b_bright = smoothstep(beam_width, 0.0, db) + glow;\n\n  // Soft top/bottom edge vignette so helix ends don't clip hard\n  float edge = smoothstep(0.0, 0.08, led.uv.y) * smoothstep(1.0, 0.92, led.uv.y);\n\n  return (red_col * r_bright * red_on + blue_col * b_bright * blue_on) * edge;\n}\n```",
+      "is_error": false,
+      "session_id": "88926650-3cc7-4368-a514-737597465273",
+      "wall_s": 160.0,
+      "duration_api_ms": 137436,
+      "cost_usd": 0.1660428,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 10690,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 10015,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1232
+    }
+  ],
+  "started": "2026-10-22T20:10:34",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.166,
+  "total_wall_s": 160.0,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p11.fx"
+}

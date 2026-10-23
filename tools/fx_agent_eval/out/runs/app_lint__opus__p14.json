@@ -1,0 +1,45 @@
+{
+  "name": "app_lint__opus__p14",
+  "variant": "app_lint",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Scanner beam: a bright vertical bar sweeps left to right across the lamp.\n// It either ping-pongs like a Cylon eye or wraps around, and leaves a fading tail.\n\nuniform float speed : 0.05 .. 2.0 = 0.4;       // sweeps per second\nuniform float width : 0.02 .. 0.4 = 0.08;      // beam half-width (fraction of lamp width)\nuniform float tail : 0.0 .. 0.8 = 0.3;         // trail length behind the beam\nuniform float tailGlow : 0.0 .. 1.0 = 0.5;     // trail brightness\nuniform bool bounce = true;                    // ping-pong instead of wrap-around\nuniform vec3 beam : color = 1.0, 0.08, 0.02;\nuniform float hotCore : 0.0 .. 1.0 = 0.4;      // white-hot centre of the beam\nuniform float ambient : 0.0 .. 0.2 = 0.01;\n\nstate float phase;\nstate fixed bpos;     // beam position in uv.x space\nstate fixed bdir;     // +1 moving right, -1 moving left\nstate fixed invW;\nstate fixed invT;\nstate fixed tAmt2;    // tailGlow squared (applied after squaring the ramp)\nstate fixed hot;\nstate fixed fOne;     // fixed-point constants so shade() never mixes float literals\nstate fixed fZero;\nstate vec3 amb;\n\nvoid update() {\n  phase = fract(phase + speed * dt);\n  float p = phase;\n  float d = 1.0;\n  if (bounce) {\n    p = 1.0 - abs(2.0 * phase - 1.0);\n    if (phase >= 0.5) {\n      d = -1.0;\n    }\n  }\n  // overshoot the edges so the beam fully enters and exits\n  float lo = -width;\n  float hi = 1.0 + width;\n  bpos = fixed(lo + (hi - lo) * p);\n  bdir = fixed(d);\n  invW = fixed(1.0 / width);\n  invT = fixed(1.0 / max(tail, 0.02));\n  float ta = 0.0;\n  if (tail > 0.0) {\n    ta = tailGlow;\n  }\n  tAmt2 = fixed(ta * ta);\n  hot = fixed(hotCore);\n  fOne = fixed(1.0);\n  fZero = fixed(0.0);\n  amb = beam * ambient;\n}\n\nvec3 shade(Led led) {\n  fixed u = fixed(led.uv.x);\n  fixed rel = (bpos - u) * bdir;              // > 0 means behind the beam\n  fixed core = clamp(fOne - abs(rel) * invW, fZero, fOne);\n  core = core * core;\n  fixed tr = clamp(fOne - rel * invT, fZero, fOne) * step(fZero, rel);\n  fixed c = core + tr * tr * tAmt2;\n  fixed w = core * core * hot;\n  float cf = float(c);\n  float wf = float(w);\n  return amb + beam * cf + vec3(wf, wf, wf);\n}\n```",
+      "is_error": false,
+      "session_id": "8ffdaa23-c6c9-4569-a6b7-dfa0de049c5b",
+      "wall_s": 26.3,
+      "duration_api_ms": 14299,
+      "cost_usd": 0.0460746,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1596,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 1629
+      },
+      "thinking_tokens": 541,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1587
+    }
+  ],
+  "started": "2026-10-22T20:23:29",
+  "base_program": "firmware/fx_perf_bench/agent/app__opus__p14.fx",
+  "lint_warnings": [
+    "3 fixed->float->fixed round-trips per LED (a float literal or float value mixed into fixed math): keep both operands fixed",
+    "(estimate: ~7535 cycles per LED in shade vs a budget of ~7700; 0 float transcendentals per LED; 3.2% of shade ops are frame-invariant)"
+  ],
+  "lint_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0461,
+  "total_wall_s": 26.3,
+  "program": "firmware/fx_perf_bench/agent/app_lint__opus__p14.fx"
+}

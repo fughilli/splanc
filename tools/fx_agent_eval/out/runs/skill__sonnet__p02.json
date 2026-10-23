@@ -1,0 +1,66 @@
+{
+  "name": "skill__sonnet__p02",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Campfire embers with occasional rising sparks\n// Cylindrical helix lamp \u00b7 r = 0.08 m \u00b7 h = 0.30 m \u00b7 500 LEDs \u00b7 8 segments\n\nuniform float ember_speed  : 0.1 .. 3.0 = 0.9;       // flicker / shimmer rate\nuniform float ember_chaos  : 0.0 .. 1.0 = 0.5;        // per-LED vs spatial noise mix\nuniform float spark_rate   : 0.05 .. 1.5 = 0.4;       // spark frequency (per channel)\nuniform float spark_spread : 0.02 .. 0.3  = 0.09;     // angular width of a spark (0..1 of circle)\nuniform vec3  ember_low    : color = 0.45, 0.04, 0.0; // cool ember: deep red\nuniform vec3  ember_high   : color = 1.0,  0.55, 0.05;// hot ember: orange-yellow\nuniform float brightness   : 0.2 .. 2.0 = 1.0;\n\nvec3 shade(Led led) {\n  float h   = led.uv.y;          // 0 = base, 1 = top\n  float idx = float(led.idx);\n\n  // \u2500\u2500 Ember base \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Per-LED independent flicker (each coal breathes on its own clock)\n  float r0      = hash(idx);\n  float r1      = hash(idx * 11.1 + 3.7);\n  float flicker = 0.5 + 0.5 * sin(time * ember_speed * (0.6 + r1 * 0.8) + r0 * 6.283);\n\n  // 3-D value noise drifting upward (heat shimmer / fire body)\n  float sc = 5.0;\n  vec3  pn = led.pos * sc + vec3(0.0, time * ember_speed * 0.25, 0.0);\n  vec3  fi = floor(pn);\n  vec3  ff = fract(pn);\n  vec3  uu = ff * ff * (3.0 - 2.0 * ff);\n  float noise = mix(\n    mix(mix(hash(fi),                          hash(fi + vec3(1.0, 0.0, 0.0)), uu.x),\n        mix(hash(fi + vec3(0.0, 1.0, 0.0)),    hash(fi + vec3(1.0, 1.0, 0.0)), uu.x), uu.y),\n    mix(mix(hash(fi + vec3(0.0, 0.0, 1.0)),    hash(fi + vec3(1.0, 0.0, 1.0)), uu.x),\n        mix(hash(fi + vec3(0.0, 1.0, 1.0)),    hash(fi + vec3(1.0, 1.0, 1.0)), uu.x), uu.y),\n    uu.z);\n\n  // Blend noise + flicker; heat pools at the base, dims toward top\n  float ev = clamp(\n    mix(noise, flicker, ember_chaos) * (1.0 - smoothstep(0.1, 1.0, h)),\n    0.0, 1.0);\n  vec3 col = mix(ember_low, ember_high, pow(ev, 1.5)) * ev;\n\n  // \u2500\u2500 Sparks (4 independent channels) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Hoist the LED's normalised cylinder angle (0..1) once\n  float led_ang = fract(atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5);\n  float sp = 0.0;\n\n  for (int k = 0; k < 4; k++) {\n    float kf = float(k);\n\n    // Each channel fires at a slightly varied rate so sparks stagger\n    float rate  = spark_rate * (0.65 + 0.7 * hash(kf * 19.3 + 0.5));\n    float epoch = floor(time * rate);\n    float phase = fract(time * rate);\n\n    // Spark lives for the first 40 % of its epoch; the rest is a dark gap\n    float alive = step(phase, 0.4);\n    float rise  = phase / 0.4;          // 0\u21921 while alive\n\n    // New random angle every epoch; tiny lateral wobble as it climbs\n    float sang  = hash(kf * 7.7 + epoch * 53.1);\n    float drift = 0.04 * sin(rise * 9.42 + kf * 2.1);\n    float dang  = abs(fract(led_ang - sang - drift + 0.5) - 0.5);\n    float awin  = 1.0 - smoothstep(0.0, spark_spread, dang);\n\n    // Bright head + decaying trail below the head\n    float delta = h - rise;\n    float head  = 1.0 - smoothstep(0.0, 0.06, abs(delta));\n    float trail = smoothstep(-0.22, 0.0, delta) * step(delta, 0.0);\n    trail = trail * trail * 0.45;       // sharper falloff, dimmer than head\n\n    sp = max(sp, awin * max(head, trail) * alive);\n  }\n\n  // Spark shifts from ember-orange to near-white at full intensity\n  vec3 spark_col = mix(vec3(1.0, 0.55, 0.05), vec3(1.0, 0.95, 0.75), sp);\n  col = mix(col, spark_col, sp);\n\n  return col * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "1304f301-04e4-4cec-9199-7fb38ec5e2f8",
+      "wall_s": 260.1,
+      "duration_api_ms": 234433,
+      "cost_usd": 0.332952,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 18447,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 9373
+      },
+      "thinking_tokens": 16940,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 46,
+          "col": 27,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler doesn't support the `++` post-increment operator. Line 46 is the `for` loop; `k++` at col 27 needs to be `k = k + 1`.\n\n```glsl\n// Campfire embers with occasional rising sparks\n// Cylindrical helix lamp \u00b7 r = 0.08 m \u00b7 h = 0.30 m \u00b7 500 LEDs \u00b7 8 segments\n\nuniform float ember_speed  : 0.1 .. 3.0 = 0.9;       // flicker / shimmer rate\nuniform float ember_chaos  : 0.0 .. 1.0 = 0.5;        // per-LED vs spatial noise mix\nuniform float spark_rate   : 0.05 .. 1.5 = 0.4;       // spark frequency (per channel)\nuniform float spark_spread : 0.02 .. 0.3  = 0.09;     // angular width of a spark (0..1 of circle)\nuniform vec3  ember_low    : color = 0.45, 0.04, 0.0; // cool ember: deep red\nuniform vec3  ember_high   : color = 1.0,  0.55, 0.05;// hot ember: orange-yellow\nuniform float brightness   : 0.2 .. 2.0 = 1.0;\n\nvec3 shade(Led led) {\n  float h   = led.uv.y;          // 0 = base, 1 = top\n  float idx = float(led.idx);\n\n  // \u2500\u2500 Ember base \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Per-LED independent flicker (each coal breathes on its own clock)\n  float r0      = hash(idx);\n  float r1      = hash(idx * 11.1 + 3.7);\n  float flicker = 0.5 + 0.5 * sin(time * ember_speed * (0.6 + r1 * 0.8) + r0 * 6.283);\n\n  // 3-D value noise drifting upward (heat shimmer / fire body)\n  float sc = 5.0;\n  vec3  pn = led.pos * sc + vec3(0.0, time * ember_speed * 0.25, 0.0);\n  vec3  fi = floor(pn);\n  vec3  ff = fract(pn);\n  vec3  uu = ff * ff * (3.0 - 2.0 * ff);\n  float noise = mix(\n    mix(mix(hash(fi),                          hash(fi + vec3(1.0, 0.0, 0.0)), uu.x),\n        mix(hash(fi + vec3(0.0, 1.0, 0.0)),    hash(fi + vec3(1.0, 1.0, 0.0)), uu.x), uu.y),\n    mix(mix(hash(fi + vec3(0.0, 0.0, 1.0)),    hash(fi + vec3(1.0, 0.0, 1.0)), uu.x),\n        mix(hash(fi + vec3(0.0, 1.0, 1.0)),    hash(fi + vec3(1.0, 1.0, 1.0)), uu.x), uu.y),\n    uu.z);\n\n  // Blend noise + flicker; heat pools at the base, dims toward top\n  float ev = clamp(\n    mix(noise, flicker, ember_chaos) * (1.0 - smoothstep(0.1, 1.0, h)),\n    0.0, 1.0);\n  vec3 col = mix(ember_low, ember_high, pow(ev, 1.5)) * ev;\n\n  // \u2500\u2500 Sparks (4 independent channels) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Hoist the LED's normalised cylinder angle (0..1) once\n  float led_ang = fract(atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5);\n  float sp = 0.0;\n\n  for (int k = 0; k < 4; k = k + 1) {\n    float kf = float(k);\n\n    // Each channel fires at a slightly varied rate so sparks stagger\n    float rate  = spark_rate * (0.65 + 0.7 * hash(kf * 19.3 + 0.5));\n    float epoch = floor(time * rate);\n    float phase = fract(time * rate);\n\n    // Spark lives for the first 40 % of its epoch; the rest is a dark gap\n    float alive = step(phase, 0.4);\n    float rise  = phase / 0.4;          // 0\u21921 while alive\n\n    // New random angle every epoch; tiny lateral wobble as it climbs\n    float sang  = hash(kf * 7.7 + epoch * 53.1);\n    float drift = 0.04 * sin(rise * 9.42 + kf * 2.1);\n    float dang  = abs(fract(led_ang - sang - drift + 0.5) - 0.5);\n    float awin  = 1.0 - smoothstep(0.0, spark_spread, dang);\n\n    // Bright head + decaying trail below the head\n    float delta = h - rise;\n    float head  = 1.0 - smoothstep(0.0, 0.06, abs(delta));\n    float trail = smoothstep(-0.22, 0.0, delta) * step(delta, 0.0);\n    trail = trail * trail * 0.45;       // sharper falloff, dimmer than head\n\n    sp = max(sp, awin * max(head, trail) * alive);\n  }\n\n  // Spark shifts from ember-orange to near-white at full intensity\n  vec3 spark_col = mix(vec3(1.0, 0.55, 0.05), vec3(1.0, 0.95, 0.75), sp);\n  col = mix(col, spark_col, sp);\n\n  return col * brightness;\n}\n```",
+      "is_error": false,
+      "session_id": "1304f301-04e4-4cec-9199-7fb38ec5e2f8",
+      "wall_s": 60.7,
+      "duration_api_ms": 275948,
+      "cost_usd": 0.5244579,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 4573,
+        "cache_read_input_tokens": 9373,
+        "cache_creation_input_tokens": 20015
+      },
+      "thinking_tokens": 3015,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2074
+    }
+  ],
+  "started": "2026-10-22T20:01:03",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.8574,
+  "total_wall_s": 320.8,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p02.fx"
+}

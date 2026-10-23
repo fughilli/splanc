@@ -1,0 +1,39 @@
+{
+  "name": "skill__sonnet__p04",
+  "variant": "skill",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Rotating rainbow cylinder: hue is driven by azimuthal angle around the Y\n// axis so the spectrum wraps once (or more) around the lamp and spins slowly.\n// A subtle height lean and breathing keep it alive at rest.\n\nuniform float speed      : 0.0 .. 2.0  = 0.18;  // revolutions per second\nuniform float hue_wraps  : 1.0 .. 6.0  = 1.0;   // rainbow cycles per revolution\nuniform float height_lean: 0.0 .. 1.0  = 0.15;  // how much height tilts the hue\nuniform float sat        : 0.0 .. 1.0  = 0.92;\nuniform float val        : 0.0 .. 1.0  = 1.0;\nuniform float breathe    : 0.0 .. 1.0  = 0.25;  // gentle brightness pulse\nuniform float breath_rate: 0.05 .. 2.0 = 0.4;   // Hz\n\nstate float angle_offset;  // hue rotation, 0..1\nstate float breath_level;\n\nvoid update() {\n  angle_offset = fract(time * speed);\n  // cosine breath: 1.0 at peak, (1-breathe) at trough\n  breath_level = 1.0 - breathe * (0.5 - 0.5 * cos(time * breath_rate * 6.2832));\n}\n\nvec3 shade(Led led) {\n  // Azimuthal angle in the XZ plane (around vertical Y axis), mapped to 0..1\n  float az = fract(atan2(led.pos.z, led.pos.x) * 0.15915); // / (2*pi)\n\n  // Height lean: highest LED nudges hue forward slightly\n  float lean = led.uv.y * height_lean;\n\n  float hue = fract(az * hue_wraps + angle_offset + lean);\n  return hsv2rgb(hue, sat, val * breath_level);\n}\n```",
+      "is_error": false,
+      "session_id": "bb90ee9e-6a04-43cb-9c3e-c822dc0df663",
+      "wall_s": 48.6,
+      "duration_api_ms": 21061,
+      "cost_usd": 0.0268518,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1409,
+        "cache_read_input_tokens": 8866,
+        "cache_creation_input_tokens": 508
+      },
+      "thinking_tokens": 888,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1168
+    }
+  ],
+  "started": "2026-10-22T20:01:36",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0269,
+  "total_wall_s": 48.6,
+  "program": "firmware/fx_perf_bench/agent/skill__sonnet__p04.fx"
+}

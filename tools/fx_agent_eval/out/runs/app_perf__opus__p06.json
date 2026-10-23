@@ -1,0 +1,39 @@
+{
+  "name": "app_perf__opus__p06",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p06",
+  "prompt": "thunderstorm: dark clouds with lightning flashes",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Thunderstorm: drifting dark cloud banks with multi-stroke lightning bolts\nuniform float storminess : 0.0 .. 1.0 = 0.5;\nuniform float cloudSpeed : 0.0 .. 2.0 = 0.4;\nuniform float boltWidth : 0.01 .. 0.15 = 0.04;\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform vec3 cloudColor : color = 0.08, 0.09, 0.16;\nuniform vec3 boltColor : color = 0.85, 0.9, 1.0;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed flashF;\nstate fixed boltF;\nstate fixed bAng;\nstate fixed bSeed;\nstate fixed bLow;\nstate fixed invW;\nstate vec3 cLo;\nstate vec3 cSpan;\nstate vec3 bCol;\nstate float nextT;\nstate float strokeT;\nstate int strokes;\nstate float flash;\nstate float bolt;\nstate bool started;\nstate bool ready;\n\nbuffer float ang : fixed16;\n\nvoid update() {\n  if (!started) { nextT = 1.0; strokes = 0; }\n  ready = started;\n  started = true;\n\n  ph1 = fract(ph1 + fixed(dt * cloudSpeed * 0.11));\n  ph2 = fract(ph2 + fixed(1.0 - fract(dt * cloudSpeed * 0.07)));\n\n  flash = flash * exp(-dt * 14.0);\n  bolt = bolt * exp(-dt * 25.0);\n\n  // schedule a new strike (a burst of 1-4 strokes at one location)\n  if (time >= nextT) {\n    strokes = 1 + int(hash(time * 3.1) * 3.99);\n    strokeT = time;\n    bAng = fixed(hash(time * 7.3));\n    bSeed = fixed(hash(time * 1.7));\n    bLow = fixed(hash(time * 5.9) * 0.6);\n    nextT = time + mix(6.0, 0.4, storminess) * (0.3 + 1.4 * hash(time * 2.3));\n  }\n  if (strokes > 0) {\n    if (time >= strokeT) {\n      flash = 1.0;\n      bolt = 1.0;\n      strokes = strokes - 1;\n      strokeT = time + 0.05 + 0.12 * hash(time * 9.1);\n    }\n  }\n\n  float flick = 0.7 + 0.3 * hash(float(frame) * 0.37);\n  flashF = fixed(flash * flick * brightness);\n  boltF = fixed(bolt * flick * brightness);\n  invW = fixed(1.0 / boltWidth);\n  cLo = cloudColor * (0.25 * brightness);\n  cSpan = cloudColor * (1.2 * brightness);\n  bCol = boltColor;\n}\n\nvec3 shade(Led led) {\n  if (!ready) { ang[led.idx] = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5; }\n  fixed a = fixed(ang[led.idx]);\n  fixed h = fixed(led.s);\n\n  // cloud density: two drifting fixed-point sine layers (turns)\n  fixed n = sin(a * fixed(2.0) + h * fixed(3.0) + ph1) * fixed(0.5)\n          + sin(a * fixed(3.0) - h * fixed(5.0) + ph2) * fixed(0.35);\n  fixed v = clamp(n * fixed(0.6) + fixed(0.5), fixed(0.0), fixed(1.0));\n  v = v * v;\n\n  // jagged bolt around angle bAng, reaching down to bLow\n  fixed off = sin(h * fixed(4.0) + bSeed) * fixed(0.04)\n            + sin(h * fixed(11.0) + bSeed * fixed(3.0)) * fixed(0.015);\n  fixed d = abs(fract(a - bAng - off + fixed(0.5)) - fixed(0.5));\n  fixed b = clamp(fixed(1.0) - d * invW, fixed(0.0), fixed(1.0)) * step(bLow, h) * boltF;\n\n  // clouds lit from within by the flash, strongest near the bolt\n  fixed glow = (clamp(fixed(1.0) - d * fixed(3.0), fixed(0.0), fixed(1.0)) * fixed(0.6) + fixed(0.4))\n             * flashF * (v + fixed(0.3));\n\n  vec3 c = cLo + cSpan * v + bCol * (b + glow);\n  return min(c, vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "bd2388f4-733d-4e0c-8ee8-f97ea1f4f514",
+      "wall_s": 62.5,
+      "duration_api_ms": 40006,
+      "cost_usd": 0.08992319999999998,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 4180,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 622
+      },
+      "thinking_tokens": 2578,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1770
+    }
+  ],
+  "started": "2026-10-22T20:15:26",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0899,
+  "total_wall_s": 62.5,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p06.fx"
+}

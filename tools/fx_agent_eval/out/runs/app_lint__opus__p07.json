@@ -1,0 +1,45 @@
+{
+  "name": "app_lint__opus__p07",
+  "variant": "app_lint",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "Changes for speed, with the same look and uniforms:\n- **No float literals in fixed math.** Every per-LED constant is now a `fixed` state value, computed once in `update()`.\n- **Integer density test.** The per-cycle random value is compared as an integer against a threshold that `update()` pre-scales.\n- **Fixed per-channel colour.** The two-tint blend, flash brightness and ambient floor are done per channel in `fixed`. Only the final three components go to float, replacing about a dozen soft-float vec3 multiplies and adds.\n\n```\n// Fireflies: each LED is a potential firefly that blinks on its own random\n// rhythm. Every cycle it randomly decides whether to flash, so the pattern\n// never repeats. Per-LED math is all int/fixed with integer hashing and no\n// branches; all constants are hoisted fixed state (no float round-trips).\n\nuniform float speed   : 0.05 .. 1.0 = 0.22;   // base blink cycles per second\nuniform float duty    : 0.03 .. 0.4 = 0.12;   // fraction of a cycle spent glowing\nuniform float density : 0.0 .. 1.0 = 0.3;     // chance a firefly flashes each cycle\nuniform float bright  : 0.0 .. 1.0 = 1.0;\nuniform vec3 glow     : color = 1.0, 0.85, 0.15;\nuniform vec3 glow2    : color = 0.55, 1.0, 0.1;\nuniform float ambient : 0.0 .. 0.1 = 0.006;\nuniform vec3 night    : color = 0.02, 0.05, 0.12;\n\nstate fixed phase;\nstate int cyc;\nstate fixed invDuty;\nstate fixed densK;     // density scaled to 0..1024 for integer-hash compare\nstate fixed kOne;\nstate fixed k16;\nstate fixed kInv1024;\n// colour A and (B - A), plus ambient, per channel in fixed\nstate fixed aR;\nstate fixed aG;\nstate fixed aB;\nstate fixed dR;\nstate fixed dG;\nstate fixed dB;\nstate fixed mR;\nstate fixed mG;\nstate fixed mB;\n\nvoid update() {\n  float t = time * speed;\n  float ft = floor(t);\n  cyc = int(ft);\n  phase = fixed(t - ft);\n  invDuty = fixed(1.0 / duty);\n  densK = fixed(density * 1024.0);\n  kOne = fixed(1.0);\n  k16 = fixed(16.0);\n  kInv1024 = fixed(0.0009765625);\n  vec3 cA = glow * bright;\n  vec3 cD = glow2 * bright - cA;\n  vec3 amb = night * ambient;\n  aR = fixed(cA.x); aG = fixed(cA.y); aB = fixed(cA.z);\n  dR = fixed(cD.x); dG = fixed(cD.y); dB = fixed(cD.z);\n  mR = fixed(amb.x); mG = fixed(amb.y); mB = fixed(amb.z);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n\n  // Static per-LED randomness: phase offset, integer rate multiplier, and hue.\n  int h1 = abs(i * 1103515245 + 12345);\n  fixed off = fixed((h1 / 65536) % 1024) * kInv1024;\n  int rate = 1 + (h1 / 16) % 3;\n\n  // Per-LED cycle position. An integer rate keeps the phase continuous.\n  fixed q = phase * fixed(rate) + off;\n  fixed fq = floor(q);\n  int cid = cyc * rate + int(fq);\n  fixed p = q - fq;\n\n  // Per-cycle random decision on whether this firefly flashes.\n  int h2 = abs((i * 7919 + cid * 104729) * 1103515245 + 12345);\n  fixed on = step(fixed((h2 / 65536) % 1024), densK);\n\n  // Smooth flash envelope inside the duty window: (4u(1-u))^2.\n  fixed u = min(p * invDuty, kOne);\n  fixed b = u - u * u;\n  b = b * b * k16 * on;\n\n  // Colour varies per firefly between the two tints (all fixed per channel).\n  fixed r = mR + (aR + dR * off) * b;\n  fixed g = mG + (aG + dG * off) * b;\n  fixed bl = mB + (aB + dB * off) * b;\n  return vec3(float(r), float(g), float(bl));\n}\n```",
+      "is_error": false,
+      "session_id": "137a8385-501c-4ec6-9dac-0d1375a1e6f7",
+      "wall_s": 36.0,
+      "duration_api_ms": 25874,
+      "cost_usd": 0.06590259999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2577,
+        "cache_read_input_tokens": 5573,
+        "cache_creation_input_tokens": 1655
+      },
+      "thinking_tokens": 1043,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1615
+    }
+  ],
+  "started": "2026-10-22T20:22:53",
+  "base_program": "firmware/fx_perf_bench/agent/app__opus__p07.fx",
+  "lint_warnings": [
+    "4 fixed->float->fixed round-trips per LED (a float literal or float value mixed into fixed math): keep both operands fixed",
+    "(estimate: ~11740 cycles per LED in shade vs a budget of ~7700; 0 float transcendentals per LED; 0.0% of shade ops are frame-invariant)"
+  ],
+  "lint_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0659,
+  "total_wall_s": 36.0,
+  "program": "firmware/fx_perf_bench/agent/app_lint__opus__p07.fx"
+}

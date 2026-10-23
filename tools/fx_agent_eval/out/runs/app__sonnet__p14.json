@@ -1,0 +1,39 @@
+{
+  "name": "app__sonnet__p14",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Scanner beam \u2014 sweeps left-to-right across the cylinder top-down projection (uv.x).\n// Bright narrow beam with a fading afterglow trail.\n\nuniform float speed      : 0.1 .. 5.0 = 1.2;\nuniform float beam_width : 0.01 .. 0.2 = 0.04;\nuniform float trail_len  : 0.05 .. 0.6 = 0.22;\nuniform vec3  beam_color : color = 0.5, 0.95, 1.0;\nuniform vec3  trail_color : color = 0.04, 0.12, 0.38;\nuniform bool  bounce = false;\n\nstate float scan_pos;   // current beam X position, 0..1\n\nvoid update() {\n    // half-speed fract so one period = 1/speed seconds either direction\n    float t = fract(time * speed * 0.5);\n    if (bounce) {\n        // triangle wave: 0 \u2192 1 \u2192 0\n        scan_pos = 1.0 - abs(2.0 * t - 1.0);\n    } else {\n        // continuous left-to-right wrap\n        scan_pos = t;\n    }\n}\n\nvec3 shade(Led led) {\n    // led.uv.x = top-down-projection X, 0 = left, 1 = right\n    float x     = led.uv.x;\n    float d     = scan_pos - x;       // +: beam has passed (trail side)\n    float adist = abs(d);\n\n    // Narrow bright beam \u2014 quadratic falloff for hard-edged look\n    float beam  = max(0.0, 1.0 - adist / beam_width);\n    beam = beam * beam;\n\n    // Trailing afterglow (only behind the beam, d > 0), linear fade over trail_len\n    float td    = clamp(d / trail_len, 0.0, 1.0);\n    float trail = step(0.0, d) * (1.0 - td) * (1.0 - beam);\n\n    return beam_color * beam + trail_color * trail;\n}\n```\n\n**How it works:**\n\n| Piece | What it does |\n|---|---|\n| `led.uv.x` | Top-down x projection \u2192 natural left/right axis on the cylinder |\n| `scan_pos` | Beam centre swept 0 \u2192 1 (or bouncing) in `update()` \u2014 one float per frame |\n| `beam` | Quadratic falloff within `beam_width` of centre \u2192 sharp, bright stripe |\n| `trail` | Linear fade for LEDs the beam has already passed, capped at `trail_len` |\n| `bounce` toggle | Switches between endless left-to-right wrap and back-and-forth |\n\n`shade()` is pure arithmetic (no trig, no branches), so all 500 LEDs stay well inside the 33 ms budget.",
+      "is_error": false,
+      "session_id": "9c0613e5-822a-4cf1-a02f-c42f01c2dae2",
+      "wall_s": 111.9,
+      "duration_api_ms": 102522,
+      "cost_usd": 0.1197447,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 7693,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 507
+      },
+      "thinking_tokens": 6953,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 935
+    }
+  ],
+  "started": "2026-10-22T19:54:58",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1197,
+  "total_wall_s": 111.9,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p14.fx"
+}

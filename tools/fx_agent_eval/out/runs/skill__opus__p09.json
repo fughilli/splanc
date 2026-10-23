@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p09",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Sunrise: a warm glow climbs the lamp from the bottom. The horizon line rises\n// up the cylinder: LEDs below it glow from fresh red-ember at the line to\n// golden light deeper down, with a soft halo just above it. The not-yet-lit\n// top fades from deep night blue. A gentle shimmer runs along the helix.\nuniform float duration : 5.0 .. 600.0 = 60.0;    // seconds for a full sunrise\nuniform bool  animate  = true;                   // run the sunrise by itself\nuniform bool  loop     = true;                   // start over when the sun is up\nuniform float progress : 0.0 .. 1.0 = 0.5;       // manual position when not animating\nuniform float softness : 0.02 .. 0.5 = 0.12;     // width of the horizon edge\nuniform float halo     : 0.0 .. 0.6 = 0.25;      // pre-dawn glow above the horizon\nuniform float shimmer  : 0.0 .. 1.0 = 0.3;       // gentle flicker along the helix\nuniform vec3  ember    : color = 0.9, 0.12, 0.02;\nuniform vec3  gold     : color = 1.0, 0.6, 0.2;\nuniform vec3  night    : color = 0.02, 0.01, 0.08;\n\nstate float phase;\nstate float hz;     // horizon height, 0..1 of the lamp\nstate float hlo;\nstate float hinv;\nstate float warm;   // overall warmth as the sun comes up\nstate float nightk;\n\nvoid update() {\n  if (animate) {\n    phase = phase + dt / duration;\n    if (phase > 1.0) {\n      if (loop) { phase = 0.0; } else { phase = 1.0; }\n    }\n  } else {\n    phase = progress;\n  }\n  hz = phase * 1.4 - 0.2;\n  hlo = room.min.y;\n  hinv = 1.0 / max(room.max.y - room.min.y, 0.01);\n  warm = 0.35 + 0.65 * phase;\n  nightk = 1.0 - phase;\n}\n\nvec3 shade(Led led) {\n  float h = (led.room.y - hlo) * hinv;      // 0 = bottom, 1 = top\n  float d = hz - h;                          // > 0: below the horizon (lit)\n\n  float lit = clamp(d / softness + 0.5, 0.0, 1.0);\n  float depth = clamp(d / (softness * 4.0), 0.0, 1.0);\n  vec3 sun = mix(ember, gold, depth) * lit;\n\n  float a = clamp(1.0 + d / max(halo, 0.01), 0.0, 1.0) * (1.0 - lit);\n  vec3 glow = ember * (a * a * 0.5);\n\n  float sh = 1.0 + shimmer * 0.15 * sin(time * 1.3 + led.s * 6.28 + float(led.seg) * 1.7);\n\n  vec3 col = (sun + glow) * warm * sh + night * nightk * (1.0 - lit);\n  return clamp(col, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "225b6ea9-cd91-49fb-b0fb-681cdcae6a80",
+      "wall_s": 37.7,
+      "duration_api_ms": 22900,
+      "cost_usd": 0.0478284,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2029,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 622
+      },
+      "thinking_tokens": 977,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1873
+    }
+  ],
+  "started": "2026-10-22T19:58:37",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0478,
+  "total_wall_s": 37.7,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p09.fx"
+}

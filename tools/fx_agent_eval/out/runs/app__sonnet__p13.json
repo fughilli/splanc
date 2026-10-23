@@ -1,0 +1,66 @@
+{
+  "name": "app__sonnet__p13",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```\n// Starfield Twinkle \u2014 cylindrical helix lamp, 500 LEDs\n// Per-star properties are baked into buffers on init so shade() stays lean.\n\nuniform float density    : 0.1 .. 1.0 = 0.4;   // fraction of LEDs that are stars\nuniform float speed      : 0.1 .. 5.0 = 1.5;   // global twinkle rate multiplier\nuniform float brightness : 0.1 .. 2.0 = 1.0;   // master brightness\nuniform vec3  cool_color : color = 0.7, 0.85, 1.0;   // blue-white (A/B-type)\nuniform vec3  warm_color : color = 1.0, 0.88, 0.62;  // yellow-orange (K/M-type)\n\n// Per-LED baked properties (stored at 1 byte/component = ~2 KB total)\nbuffer vec3  star_anim   : fixed8;  // .x = visible (0/1), .y = rate_norm, .z = phase_norm\nbuffer float star_bright : fixed8;  // base brightness tier  [0..1]\nbuffer float star_warm   : fixed8;  // spectral warmth blend [0..1]\n\nstate float prev_density;\nstate bool  inited;\n\nvoid update() {\n  // Re-bake whenever density changes or on first frame\n  if (!inited || prev_density != density) {\n    for (int i = 0; i < 500; i = i + 1) {\n      float fi      = float(i);\n      float vis     = step(hash(fi * 0.137), density);   // 1 if this LED is a star\n      star_anim[i]  = vec3(vis, hash(fi * 0.573), hash(fi * 0.419));\n      star_bright[i] = hash(fi * 0.271);\n      star_warm[i]  = hash(fi * 0.831);\n    }\n    prev_density = density;\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  vec3 a = star_anim[led.idx];\n\n  // ~60 % of LEDs are dark sky \u2014 early exit is free\n  if (a.x < 0.5) return vec3(0.0, 0.0, 0.0);\n\n  // Per-star twinkle rate (0.3 \u2013 3.0 Hz), random phase\n  float rate    = 0.3 + a.y * 2.7;\n  float twinkle = 0.5 + 0.5 * sin(time * rate * speed + a.z * 6.283);\n\n  // Power-law brightness: squaring makes dim stars far more common than bright ones\n  float base = star_bright[led.idx];\n  float tier = base * base;\n  float lum  = (0.15 + 0.85 * tier) * (0.35 + 0.65 * twinkle) * brightness;\n\n  // Spectral color blend: cool blue-white \u2192 warm yellow\n  vec3 col = mix(cool_color, warm_color, star_warm[led.idx]);\n  return col * lum;\n}\n```\n\n**How it works:**\n\n| Concern | Decision |\n|---|---|\n| Per-star random properties | Pre-baked into `buffer \u2026 : fixed8` on init \u2014 shade() reads instead of calling `hash()` repeatedly |\n| Re-init on slider change | `prev_density != density` guard re-seeds when the user moves the density slider |\n| Twinkle | Independent sinusoidal oscillator per star (random rate 0.3\u20133 Hz, random phase) |\n| Brightness distribution | `tier = base\u00b2` \u2192 power-law: many faint stars, few brilliant ones |\n| Color | `mix(cool_color, warm_color, warmth)` \u2014 blue-white A/B-type to yellow K/M-type |\n| Dark-sky LEDs | Early `return vec3(0,0,0)` for ~(1\u2212density) of LEDs \u2014 costs almost nothing |\n\nAdjust **density** for sparse vs dense fields, **speed** for calm vs agitated twinkling, and the two color pickers to shift between ice-blue and warm-amber star palettes.",
+      "is_error": false,
+      "session_id": "06fbf8d8-c0b4-4e57-9977-27062c5255f2",
+      "wall_s": 220.8,
+      "duration_api_ms": 209250,
+      "cost_usd": 0.25176570000000004,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 16496,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 503
+      },
+      "thinking_tokens": 15426,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 37,
+          "col": 18,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler requires `if` bodies to always use `{ }` \u2014 a braceless single-statement `if` isn't accepted. Line 37 is the only offender.\n\n```\n// Starfield Twinkle \u2014 cylindrical helix lamp, 500 LEDs\n// Per-star properties are baked into buffers on init so shade() stays lean.\n\nuniform float density    : 0.1 .. 1.0 = 0.4;   // fraction of LEDs that are stars\nuniform float speed      : 0.1 .. 5.0 = 1.5;   // global twinkle rate multiplier\nuniform float brightness : 0.1 .. 2.0 = 1.0;   // master brightness\nuniform vec3  cool_color : color = 0.7, 0.85, 1.0;   // blue-white (A/B-type)\nuniform vec3  warm_color : color = 1.0, 0.88, 0.62;  // yellow-orange (K/M-type)\n\n// Per-LED baked properties (stored at 1 byte/component = ~2 KB total)\nbuffer vec3  star_anim   : fixed8;  // .x = visible (0/1), .y = rate_norm, .z = phase_norm\nbuffer float star_bright : fixed8;  // base brightness tier  [0..1]\nbuffer float star_warm   : fixed8;  // spectral warmth blend [0..1]\n\nstate float prev_density;\nstate bool  inited;\n\nvoid update() {\n  // Re-bake whenever density changes or on first frame\n  if (!inited || prev_density != density) {\n    for (int i = 0; i < 500; i = i + 1) {\n      float fi      = float(i);\n      float vis     = step(hash(fi * 0.137), density);   // 1 if this LED is a star\n      star_anim[i]  = vec3(vis, hash(fi * 0.573), hash(fi * 0.419));\n      star_bright[i] = hash(fi * 0.271);\n      star_warm[i]  = hash(fi * 0.831);\n    }\n    prev_density = density;\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  vec3 a = star_anim[led.idx];\n\n  // ~60 % of LEDs are dark sky \u2014 early exit is free\n  if (a.x < 0.5) { return vec3(0.0, 0.0, 0.0); }\n\n  // Per-star twinkle rate (0.3 \u2013 3.0 Hz), random phase\n  float rate    = 0.3 + a.y * 2.7;\n  float twinkle = 0.5 + 0.5 * sin(time * rate * speed + a.z * 6.283);\n\n  // Power-law brightness: squaring makes dim stars far more common than bright ones\n  float base = star_bright[led.idx];\n  float tier = base * base;\n  float lum  = (0.15 + 0.85 * tier) * (0.35 + 0.65 * twinkle) * brightness;\n\n  // Spectral color blend: cool blue-white \u2192 warm yellow\n  vec3 col = mix(cool_color, warm_color, star_warm[led.idx]);\n  return col * lum;\n}\n```",
+      "is_error": false,
+      "session_id": "06fbf8d8-c0b4-4e57-9977-27062c5255f2",
+      "wall_s": 22.8,
+      "duration_api_ms": 225263,
+      "cost_usd": 0.3853443000000001,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1858,
+        "cache_read_input_tokens": 4832,
+        "cache_creation_input_tokens": 17375
+      },
+      "thinking_tokens": 1001,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1170
+    }
+  ],
+  "started": "2026-10-22T19:53:39",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.6371,
+  "total_wall_s": 243.6,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p13.fx"
+}

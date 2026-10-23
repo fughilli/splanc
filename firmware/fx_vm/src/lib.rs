@@ -1051,6 +1051,102 @@ impl Vm {
         }
     }
 
+    /// The `GraphQuery` opcode's result for `kind` with int args `a`, `b` (the
+    /// same [`GraphRef::query`] the interpreter's arm calls). For native code
+    /// (firmware/fx_aot), whose helpers must match the VM bit for bit.
+    pub fn graph_query(&self, kind: u8, a: i32, b: i32) -> f32 {
+        GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
+        }
+        .query(kind, a, b)
+    }
+
+    /// What `LoadCtx C_LED_DIST` pushes for `led`: the `flood_from` geodesic
+    /// distance when a source is set, else `led.dist`. Mirrors the interpreter's
+    /// arm expression for expression (fx_vm/tests/vm.rs checks they agree), for
+    /// native code (firmware/fx_aot).
+    pub fn led_dist(&self, led: &Led) -> f32 {
+        let dist = &self.dist_src;
+        if dist.set && led.seg >= 0 && (led.seg as usize) < (self.n_seg as usize).min(MAX_SEG) {
+            let si = led.seg as usize;
+            let a = self.seg_node[si][0];
+            let b = self.seg_node[si][1];
+            let l = self.seg_len[si];
+            let da = if a >= 0 && (a as usize) < MAX_NODE {
+                dist.d[a as usize] + led.s * l
+            } else {
+                f32::INFINITY
+            };
+            let db = if b >= 0 && (b as usize) < MAX_NODE {
+                dist.d[b as usize] + (1.0 - led.s) * l
+            } else {
+                f32::INFINITY
+            };
+            let g = if da < db { da } else { db };
+            if g.is_finite() {
+                (g / dist.max).min(1.0)
+            } else {
+                1.0
+            }
+        } else {
+            led.dist
+        }
+    }
+
+    /// The `FloodFrom` opcode's effect for source node `src`: a single-source
+    /// geodesic sweep into the VM's distance field. Mirrors the interpreter's
+    /// arm (fx_vm/tests/vm.rs checks they agree), for native code (fx_aot).
+    pub fn flood_from(&mut self, src: i32) {
+        let dist = &mut self.dist_src;
+        for x in dist.d.iter_mut() {
+            *x = f32::INFINITY;
+        }
+        dist.set = false;
+        if src >= 0 && (src as usize) < MAX_NODE {
+            dist.d[src as usize] = 0.0;
+            let ns = (self.n_seg as usize).min(MAX_SEG);
+            for _ in 0..MAX_NODE {
+                let mut changed = false;
+                for si in 0..ns {
+                    let a = self.seg_node[si][0];
+                    let b = self.seg_node[si][1];
+                    if a < 0 || b < 0 {
+                        continue;
+                    }
+                    let (a, b) = (a as usize, b as usize);
+                    if a >= MAX_NODE || b >= MAX_NODE {
+                        continue;
+                    }
+                    let w = self.seg_len[si];
+                    if dist.d[a] + w < dist.d[b] {
+                        dist.d[b] = dist.d[a] + w;
+                        changed = true;
+                    }
+                    if dist.d[b] + w < dist.d[a] {
+                        dist.d[a] = dist.d[b] + w;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let mut mx = 0.0f32;
+            for &x in dist.d.iter() {
+                if x.is_finite() && x > mx {
+                    mx = x;
+                }
+            }
+            dist.max = if mx > 1e-6 { mx } else { 1.0 };
+            dist.set = true;
+        }
+    }
+
     /// Run `update()` (if present), evolving `state`. Uses the default budget.
     pub fn run_update(&mut self, prog: &Program, frame: &Frame) {
         self.run_update_bounded(prog, frame, &Budget::default());
@@ -1267,7 +1363,7 @@ impl Vm {
 }
 
 #[inline]
-fn clamp01(x: f32) -> f32 {
+pub fn clamp01(x: f32) -> f32 {
     if x < 0.0 {
         0.0
     } else if x > 1.0 {
@@ -2761,7 +2857,7 @@ fn run(
 // --- soft-float helpers (no libm dependency; small polynomial approximations
 // good enough for LED effects, deterministic on host + wasm + device) ---------
 
-fn sqrtf(x: f32) -> f32 {
+pub fn sqrtf(x: f32) -> f32 {
     if x <= 0.0 {
         return 0.0;
     }
@@ -2772,7 +2868,7 @@ fn sqrtf(x: f32) -> f32 {
     x * y // x * rsqrt(x) = sqrt(x)
 }
 
-fn floorf(x: f32) -> f32 {
+pub fn floorf(x: f32) -> f32 {
     let t = x as i32 as f32;
     if t > x {
         t - 1.0
@@ -2780,7 +2876,7 @@ fn floorf(x: f32) -> f32 {
         t
     }
 }
-fn fractf(x: f32) -> f32 {
+pub fn fractf(x: f32) -> f32 {
     x - floorf(x)
 }
 
@@ -2846,7 +2942,7 @@ pub fn sinf(x: f32) -> f32 {
 pub fn cosf(x: f32) -> f32 {
     sinf(x + PI * 0.5)
 }
-fn expf(x: f32) -> f32 {
+pub fn expf(x: f32) -> f32 {
     // 2^(x/ln2) via bit manipulation + poly (adequate for decay curves).
     let xln = x * core::f32::consts::LOG2_E; // x / ln2
     let i = floorf(xln);
@@ -2855,7 +2951,7 @@ fn expf(x: f32) -> f32 {
     let bits = ((i as i32 + 127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
-fn logf(x: f32) -> f32 {
+pub fn logf(x: f32) -> f32 {
     if x <= 0.0 {
         return -87.0;
     }
@@ -2865,13 +2961,13 @@ fn logf(x: f32) -> f32 {
     let p = -1.7417939 + m * (2.8212026 + m * (-1.4699568 + m * (0.4471623 - m * 0.0821854)));
     (e as f32) * core::f32::consts::LN_2 + p
 }
-fn powf(a: f32, b: f32) -> f32 {
+pub fn powf(a: f32, b: f32) -> f32 {
     if a <= 0.0 {
         return 0.0;
     }
     expf(b * logf(a))
 }
-fn tanf(x: f32) -> f32 {
+pub fn tanf(x: f32) -> f32 {
     let c = cosf(x);
     if c.abs() < 1e-6 {
         0.0
@@ -2880,7 +2976,7 @@ fn tanf(x: f32) -> f32 {
     }
 }
 
-fn un_math(f: u8, x: f32) -> f32 {
+pub fn un_math(f: u8, x: f32) -> f32 {
     match f {
         F_SIN => sinf(x),
         F_COS => cosf(x),
@@ -2904,7 +3000,7 @@ fn un_math(f: u8, x: f32) -> f32 {
         _ => x,
     }
 }
-fn bin_math(f: u8, a: f32, b: f32) -> f32 {
+pub fn bin_math(f: u8, a: f32, b: f32) -> f32 {
     match f {
         B_MIN => {
             if a < b {
@@ -2933,7 +3029,7 @@ fn bin_math(f: u8, a: f32, b: f32) -> f32 {
         _ => a,
     }
 }
-fn atan2f(y: f32, x: f32) -> f32 {
+pub fn atan2f(y: f32, x: f32) -> f32 {
     // crude atan2 adequate for effects (angles for radial patterns).
     if x == 0.0 && y == 0.0 {
         return 0.0;
@@ -2960,7 +3056,7 @@ fn atan2f(y: f32, x: f32) -> f32 {
 /// two mults are cheap — replacing the old `fract(sin(x)*k)` GLSL hash, which
 /// dragged the soft-float `sin` into every `hash()` on the FPU-less C6.
 #[inline]
-fn mix32(mut h: u32) -> u32 {
+pub fn mix32(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
     h ^= h >> 15;
@@ -2971,7 +3067,7 @@ fn mix32(mut h: u32) -> u32 {
 
 /// Map a mixed 32-bit hash to a float in [0, 1) (top 24 bits → an exact f32).
 #[inline]
-fn unit_from_hash(h: u32) -> f32 {
+pub fn unit_from_hash(h: u32) -> f32 {
     (h >> 8) as f32 * (1.0 / 16_777_216.0)
 }
 
@@ -2990,7 +3086,7 @@ pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
     unit_from_hash(h)
 }
 
-fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+pub fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h6 = fractf(h) * 6.0;
     let c = v * s;
     let x = c * (1.0 - (fractf(h6 * 0.5) * 2.0 - 1.0).abs());
@@ -3006,7 +3102,7 @@ fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     (r + m, g + m, b + m)
 }
 
-fn palette(id: u8, t: f32) -> (f32, f32, f32) {
+pub fn palette(id: u8, t: f32) -> (f32, f32, f32) {
     let t = clamp01(t);
     match id {
         // fire: black -> red -> orange -> yellow -> white
@@ -3078,7 +3174,7 @@ static EXP_LUT: [i32; 256] = [
 /// `sin(turns)` in Q1.`frac` fixed-point. `raw` is the angle in TURNS (1.0 =
 /// 2π) as Q1.`frac`; the result is Q1.`frac` in [-1, 1]. Frac ≤ 15. No range
 /// reduction — the phase wraps by masking the fractional turn (power-of-two).
-fn sin_fix(raw: i32, frac: u32) -> i32 {
+pub fn sin_fix(raw: i32, frac: u32) -> i32 {
     let one = 1i64 << frac; // 1.0 turn
     let phase = (raw as i64) & (one - 1); // fractional turn, 0..one
     let n = SIN_LUT.len() as i64; // 256
@@ -3095,7 +3191,7 @@ fn sin_fix(raw: i32, frac: u32) -> i32 {
 /// `e^x` in Q1.`frac`. `raw` is Q1.`frac` in [-2, 2); the result is Q1.`frac`
 /// SATURATED to [-2, 2) (so exp pins at +2 once x ≳ 0.69 — meant for decay).
 /// Frac ≤ 14.
-fn exp_fix(raw: i32, frac: u32) -> i32 {
+pub fn exp_fix(raw: i32, frac: u32) -> i32 {
     let one = 1i64 << frac;
     let span = 4 * one; // domain width [-2, 2) in Q1.frac
     let shifted = ((raw as i64) + 2 * one).clamp(0, span - 1); // (x+2), 0..span
@@ -3117,7 +3213,7 @@ fn exp_fix(raw: i32, frac: u32) -> i32 {
 
 /// `cos(turns)` in Q1.`frac`: sin shifted a quarter turn (matches the CosFix op).
 #[inline]
-fn cos_fix(raw: i32, frac: u32) -> i32 {
+pub fn cos_fix(raw: i32, frac: u32) -> i32 {
     sin_fix(raw.wrapping_add(1 << (frac.saturating_sub(2))), frac)
 }
 
@@ -3146,7 +3242,7 @@ fn isqrt_i64(v: i64) -> i64 {
 
 /// `sqrt(x)` in Q1.`frac` for an i64 operand (used by the vector length ops,
 /// whose sum-of-squares can exceed i32). `sqrt(x)·2^frac = sqrt(raw·2^frac)`.
-fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
+pub fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
     if raw <= 0 {
         return 0;
     }
@@ -3154,12 +3250,12 @@ fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
 }
 
 /// `sqrt(x)` in Q1.`frac` for a scalar slot word.
-fn sqrt_fix(raw: i32, frac: u32) -> i32 {
+pub fn sqrt_fix(raw: i32, frac: u32) -> i32 {
     sqrt_fix_i64(raw as i64, frac) as i32
 }
 
 /// `tan(turns)` in Q1.`frac` = sin/cos. Guards a near-zero cosine (returns 0).
-fn tan_fix(raw: i32, frac: u32) -> i32 {
+pub fn tan_fix(raw: i32, frac: u32) -> i32 {
     let c = cos_fix(raw, frac);
     if c == 0 {
         return 0;
@@ -3171,7 +3267,7 @@ fn tan_fix(raw: i32, frac: u32) -> i32 {
 /// `atan2(y, x)` as a fraction of a TURN in Q1.`frac`, range [-0.5, 0.5). Uses
 /// the same minimax atan poly as the float path, evaluated in Q30 fixed then
 /// rescaled and converted radians→turns (·1/2π) — all integer.
-fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
+pub fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
     if x == 0 && y == 0 {
         return 0;
     }
@@ -3210,7 +3306,7 @@ fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
 /// `ln(x)` in Q1.`frac` for `x = raw/2^frac > 0`. Decomposes x = m·2^e with the
 /// mantissa m ∈ [1,2), so ln(x) = e·ln2 + ln(m); ln(m) via a short minimax poly.
 /// All integer (Q30 intermediate). Returns 0 for x ≤ 0.
-fn log_fix(raw: i32, frac: u32) -> i32 {
+pub fn log_fix(raw: i32, frac: u32) -> i32 {
     if raw <= 0 {
         return 0;
     }
@@ -3243,7 +3339,7 @@ fn log_fix(raw: i32, frac: u32) -> i32 {
 /// `a^b` in Q1.`frac` via `exp(b·ln a)`, both LUT/poly-based (integer). Uses the
 /// bounded [-2,2) `exp_fix`, so large results saturate — adequate for effect
 /// shaping curves. `a ≤ 0` returns 0.
-fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
+pub fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
     if a <= 0 {
         return 0;
     }
@@ -3255,13 +3351,13 @@ fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
 /// Deterministic `hash -> [0,1)` in Q1.`frac` from a raw 32-bit slot word (the
 /// int/fixed bits). Reuses the integer avalanche mixer — no soft-float, unlike
 /// the f32 `hash1`. The top `frac` bits of the mixed value form the fraction.
-fn hash_fix(bits: u32, frac: u32) -> i32 {
+pub fn hash_fix(bits: u32, frac: u32) -> i32 {
     let h = mix32(bits ^ 0x9e37_79b9);
     (h >> (32 - frac)) as i32
 }
 
 /// 3-input fixed hash -> [0,1) in Q1.`frac` (folds three slot words).
-fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
+pub fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
     let mut h = mix32(x ^ 0x9e37_79b9);
     h = mix32(h ^ y.wrapping_add(0x85eb_ca6b));
     h = mix32(h ^ z.wrapping_add(0xc2b2_ae35));
@@ -3271,7 +3367,7 @@ fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
 /// `hsv2rgb` entirely in Q1.`frac`. `h` is in TURNS (wrapped), `s`,`v` in [0,1];
 /// returns `(r,g,b)` each Q1.frac in [0,1]. Mirrors the float `hsv2rgb` using
 /// only integer arithmetic (the ±chroma ramp is a fixed abs/sub).
-fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
+pub fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
     let one = 1i64 << frac;
     let mulf = |a: i64, b: i64| (a * b) >> frac;
     // hue sextant: h6 = frac_of(h) * 6
@@ -3296,7 +3392,7 @@ fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
 }
 
 /// Fixed-point palette lookup (mirrors the float `palette`), Q1.`frac` in/out.
-fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
+pub fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
     let one = 1i64 << frac;
     let clamp01f = |x: i64| x.clamp(0, one);
     let t = clamp01f(t as i64);

@@ -1,0 +1,66 @@
+{
+  "name": "app_perf__opus__p10",
+  "variant": "app_perf",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "50efb7d7270cf3d6",
+  "system_prompt_chars": 14744,
+  "attempts": [
+    {
+      "text": "```\n// Matrix-style green rain on a helix cylinder.\n// Columns come from the LED's angle around the lamp, and drops fall down each column.\n// Geometry and randomness are cached once in buffers, so the per-LED path is integer/fixed math.\n\nuniform float speed : 0.0 .. 3.0 = 1.0;\nuniform float tail : 0.05 .. 1.0 = 0.4;\nuniform float columns : 4.0 .. 32.0 = 16.0;\nuniform float flicker : 0.0 .. 1.0 = 0.35;\nuniform float glyphRate : 1.0 .. 20.0 = 8.0;\nuniform vec3 tint : color = 0.1, 1.0, 0.25;\nuniform bool flip = false;\n\nstate fixed T;\nstate fixed invTail;\nstate fixed headW;\nstate fixed g;\nstate fixed flk;\nstate fixed tipAmt;\nstate float lastKey;\nstate bool started;\nstate bool ready;\n\nbuffer float base : fixed16;   // fract(height + column offset)\nbuffer float spd : fixed16;    // column speed, in quarters (0.5 .. 1.5)\nbuffer float rnd : fixed8;     // per-LED glyph random\n\nvoid update() {\n  float key = floor(columns) + (flip ? 100.0 : 0.0);\n  if (key != lastKey) {\n    started = false;\n    lastKey = key;\n  }\n  ready = started;\n  started = true;\n\n  // Wrap T at 4. Every speed is a multiple of 0.25, so T*spd jumps by an integer at the wrap,\n  // and that integer jump disappears under fract().\n  T = mod(T + fixed(dt * speed * 0.5), fixed(4.0));\n  invTail = fixed(1.0 / tail);\n  headW = fixed(0.025);\n  g = fixed(fract(floor(time * glyphRate) * 0.618034));\n  flk = fixed(flicker);\n  tipAmt = fixed(0.7);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    float nc = floor(columns);\n    float a = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n    float c = mod(floor(a * nc), nc);\n    float h = led.s;\n    if (flip) { h = 1.0 - h; }\n    base[i] = fract(h + hash(c * 12.9898 + 1.3));\n    spd[i] = 0.5 + floor(hash(c * 7.31 + 4.1) * 4.999) * 0.25;\n    rnd[i] = hash(float(i) * 0.731 + 0.2);\n  }\n\n  // p = distance above the falling head, wrapping.\n  fixed p = fract(fixed(base[i]) + T * fixed(spd[i]));\n  fixed b = max(fixed(0.0), fixed(1.0) - p * invTail);\n  b = b * b;\n\n  // Glyph flicker: each LED toggles its brightness at the glyph rate.\n  fixed fl = fixed(1.0) - flk * step(fixed(0.5), fract(fixed(rnd[i]) + g));\n\n  // Bright white-green tip at the head of each drop.\n  fixed tip = step(p, headW) * tipAmt;\n\n  return tint * (b * fl) + vec3(tip, tip, tip);\n}\n```",
+      "is_error": false,
+      "session_id": "6e9f5182-9243-48e6-8aac-8fd40594bf44",
+      "wall_s": 58.6,
+      "duration_api_ms": 42639,
+      "cost_usd": 0.08734319999999998,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 4055,
+        "cache_read_input_tokens": 6696,
+        "cache_creation_input_tokens": 612
+      },
+      "thinking_tokens": 2914,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 28,
+          "col": 38,
+          "msg": "expected ')'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler doesn't support the `?:` ternary operator, so I replaced it with an `if` statement.\n\n```\n// Matrix-style green rain on a helix cylinder.\n// Columns come from the LED's angle around the lamp, and drops fall down each column.\n// Geometry and randomness are cached once in buffers, so the per-LED path is integer/fixed math.\n\nuniform float speed : 0.0 .. 3.0 = 1.0;\nuniform float tail : 0.05 .. 1.0 = 0.4;\nuniform float columns : 4.0 .. 32.0 = 16.0;\nuniform float flicker : 0.0 .. 1.0 = 0.35;\nuniform float glyphRate : 1.0 .. 20.0 = 8.0;\nuniform vec3 tint : color = 0.1, 1.0, 0.25;\nuniform bool flip = false;\n\nstate fixed T;\nstate fixed invTail;\nstate fixed headW;\nstate fixed g;\nstate fixed flk;\nstate fixed tipAmt;\nstate float lastKey;\nstate bool started;\nstate bool ready;\n\nbuffer float base : fixed16;   // fract(height + column offset)\nbuffer float spd : fixed16;    // column speed, in quarters (0.5 .. 1.5)\nbuffer float rnd : fixed8;     // per-LED glyph random\n\nvoid update() {\n  float key = floor(columns);\n  if (flip) { key = key + 100.0; }\n  if (key != lastKey) {\n    started = false;\n    lastKey = key;\n  }\n  ready = started;\n  started = true;\n\n  // Wrap T at 4. Every speed is a multiple of 0.25, so T*spd jumps by an integer at the wrap,\n  // and that integer jump disappears under fract().\n  T = mod(T + fixed(dt * speed * 0.5), fixed(4.0));\n  invTail = fixed(1.0 / tail);\n  headW = fixed(0.025);\n  g = fixed(fract(floor(time * glyphRate) * 0.618034));\n  flk = fixed(flicker);\n  tipAmt = fixed(0.7);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  if (!ready) {\n    float nc = floor(columns);\n    float a = atan2(led.pos.z, led.pos.x) * 0.15915 + 0.5;\n    float c = mod(floor(a * nc), nc);\n    float h = led.s;\n    if (flip) { h = 1.0 - h; }\n    base[i] = fract(h + hash(c * 12.9898 + 1.3));\n    spd[i] = 0.5 + floor(hash(c * 7.31 + 4.1) * 4.999) * 0.25;\n    rnd[i] = hash(float(i) * 0.731 + 0.2);\n  }\n\n  // p = distance above the falling head, wrapping.\n  fixed p = fract(fixed(base[i]) + T * fixed(spd[i]));\n  fixed b = max(fixed(0.0), fixed(1.0) - p * invTail);\n  b = b * b;\n\n  // Glyph flicker: each LED toggles its brightness at the glyph rate.\n  fixed fl = fixed(1.0) - flk * step(fixed(0.5), fract(fixed(rnd[i]) + g));\n\n  // Bright white-green tip at the head of each drop.\n  fixed tip = step(p, headW) * tipAmt;\n\n  return tint * (b * fl) + vec3(tip, tip, tip);\n}\n```",
+      "is_error": false,
+      "session_id": "6e9f5182-9243-48e6-8aac-8fd40594bf44",
+      "wall_s": 25.1,
+      "duration_api_ms": 51915,
+      "cost_usd": 0.15452079999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1177,
+        "cache_read_input_tokens": 7308,
+        "cache_creation_input_tokens": 5271
+      },
+      "thinking_tokens": 0,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1360
+    }
+  ],
+  "started": "2026-10-22T20:16:39",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.2419,
+  "total_wall_s": 83.7,
+  "program": "firmware/fx_perf_bench/agent/app_perf__opus__p10.fx"
+}

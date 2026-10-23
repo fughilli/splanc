@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p07",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Fireflies: scattered LEDs light up at random moments with a soft glow,\n// then fade back into a dim night. Each LED keeps its own rhythm, and each\n// cycle a hash decides whether it flashes, so the pattern never repeats.\nuniform float density : 0.0 .. 1.0 = 0.12;     // chance an LED flashes each cycle\nuniform float speed   : 0.05 .. 3.0 = 0.6;     // overall pace of the blinking\nuniform float glow    : 0.05 .. 0.9 = 0.35;    // flash length, as a share of a cycle\nuniform vec3  fly     : color = 0.75, 1.0, 0.15;  // firefly colour\nuniform float vary    : 0.0 .. 1.0 = 0.3;      // per-flash colour variation\nuniform vec3  night   : color = 0.0, 0.012, 0.03; // background\nuniform float bright  : 0.0 .. 1.0 = 1.0;\n\nstate float clock;\nstate float invGlow;\n\nvoid update() {\n  clock = clock + dt * speed;      // accumulated: speed changes don't jump\n  invGlow = 1.0 / glow;\n}\n\nvec3 shade(Led led) {\n  float id = float(led.idx);\n  float r1 = hash(id * 1.731 + 0.5);\n  float r2 = hash(id * 7.137 + 3.1);\n\n  // Each LED has its own cycle length and phase.\n  float t = clock * (0.6 + 0.8 * r1) + r2 * 17.0;\n  float k = floor(t);\n  float f = fract(t);\n\n  // Does this LED flash in this cycle?\n  float roll = hash(id * 0.917 + k * 13.37);\n  if (roll >= density) {\n    return night;\n  }\n\n  // Flash envelope: quick swell, slower fade (offset start within the cycle).\n  float start = hash(k * 5.11 + id * 2.3) * (1.0 - glow);\n  float x = (f - start) * invGlow;\n  if (x <= 0.0 || x >= 1.0) {\n    return night;\n  }\n  float e = sin(x * 3.14159);\n  e = e * e;\n  // bias toward a fast attack / long tail\n  e = e * (1.0 - 0.4 * x);\n\n  // Slight per-flash tint shift toward warm amber or cool green.\n  float h = hash(k * 2.71 + id * 0.37) - 0.5;\n  vec3 c = fly + vec3(h * 0.4, -abs(h) * 0.2, -h * 0.2) * vary;\n  c = clamp(c, 0.0, 1.0);\n\n  return night + c * (e * bright);\n}\n```",
+      "is_error": false,
+      "session_id": "3febecc5-da59-4efb-bbbf-1811a1a27834",
+      "wall_s": 29.1,
+      "duration_api_ms": 15949,
+      "cost_usd": 0.0332684,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1305,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 612
+      },
+      "thinking_tokens": 396,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1475
+    }
+  ],
+  "started": "2026-10-22T19:58:08",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0333,
+  "total_wall_s": 29.1,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p07.fx"
+}

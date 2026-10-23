@@ -1,0 +1,66 @@
+{
+  "name": "app__sonnet__p15",
+  "variant": "app",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "33e8eb55b3848efc",
+  "system_prompt_chars": 12396,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer \u2014 four mutually-incommensurable wave fronts whose\n// zero-crossings intersect to form the characteristic bright caustic veins.\n// All hot per-LED maths live in fixed-point (native integer path on RV32).\n\nuniform float speed      : 0.1 .. 3.0 = 0.7;\nuniform float scale      : 0.5 .. 5.0 = 2.5;\nuniform float shimmer    : 0.5 .. 3.0 = 1.5;\nuniform vec3  deep       : color = 0.0, 0.06, 0.22;\nuniform vec3  caustic_col: color = 0.48, 0.90, 1.0;\n\n// Phases advanced in update() (1\u00d7 per frame); boost folded from float uniforms.\nstate fixed ph1, ph2, ph3, ph4;\nstate fixed sc;      // scale as fixed \u2014 avoids per-LED float cast\nstate fixed boost;   // shimmer*10, hoisted from per-LED work\n\nvoid update() {\n    fixed t = fixed(time * speed);       // one soft-float op, once per frame\n    sc    = fixed(scale);\n    boost = fixed(shimmer) * fixed(10.0);\n\n    // Four phases at irrational speed ratios \u2192 never lock in step\n    ph1 = fract(t * fixed(0.313));\n    ph2 = fract(t * fixed(0.271));\n    ph3 = fract(t * fixed(0.197));\n    ph4 = fract(t * fixed(0.157));\n}\n\nvec3 shade(Led led) {\n    // 3 float\u2192fixed conversions per LED (unavoidable); everything after is native.\n    fixed u = fixed(led.uv.x) * sc;\n    fixed v = fixed(led.uv.y) * sc;\n    fixed h = fixed(led.pos.y) * fixed(3.333);  // 0.30 m height \u2192 \u22480..1\n\n    // Four waves at different spatial frequencies and orientations.\n    // fract() wraps the argument to [0,1) turns before the LUT sin.\n    fixed s1 = sin(fract( u * fixed(2.531) + v * fixed(1.374)                  + ph1));\n    fixed s2 = sin(fract( u * fixed(1.374) - v * fixed(2.617) + h * fixed(0.50) + ph2));\n    fixed s3 = sin(fract( u * fixed(2.617) + v * fixed(0.938) + h * fixed(0.31) - ph3));\n    fixed s4 = sin(fract( u * fixed(-0.938)+ v * fixed(2.531) - h * fixed(0.43) + ph4));\n\n    // (1 \u2212 |sin|) is 1 at zero-crossings, 0 at crests/troughs.\n    // The product is bright only where ALL four waves simultaneously cross zero \u2014\n    // exactly the sparse, jagged caustic loci.\n    fixed c1 = fixed(1.0) - abs(s1);\n    fixed c2 = fixed(1.0) - abs(s2);\n    fixed c3 = fixed(1.0) - abs(s3);\n    fixed c4 = fixed(1.0) - abs(s4);\n\n    fixed caustic = c1 * c2 * c3 * c4;            // all native fixed muls\n    caustic = clamp(caustic * boost, fixed(0.0), fixed(1.0));\n\n    return mix(deep, caustic_col, float(caustic));\n}\n```\n\n**How it works:**\n\n| Technique | Purpose |\n|-----------|---------|\n| **4 incommensurate wave layers** | Interference pattern that never periodically repeats \u2014 organic caustic veins |\n| `1 \u2212 |sin(\u03b8)|` per wave | Peaks at zero-crossings (the \"fold\" loci where light focuses) |\n| **Product** of all four | Bright only at multi-wave intersections \u2192 naturally sparse bright knots against dark water |\n| Height `h` mixed into phases | Breaks the cylindrical symmetry so each helix turn has a distinct caustic patch |\n| All trig in `fixed` | Integer LUT sin, no soft-float in the hot 500-LED loop |\n| Phases hoisted to `update()` | Only 3 float ops per `shade()` call (the UV/pos casts) |",
+      "is_error": false,
+      "session_id": "3d30542a-1b6c-4007-8fac-310e4826cc8a",
+      "wall_s": 291.9,
+      "duration_api_ms": 282986,
+      "cost_usd": 0.3234267,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 21273,
+        "cache_read_input_tokens": 4329,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 20155,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 12,
+          "col": 16,
+          "msg": "expected ';'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler doesn't allow multiple variables in one `state` declaration. Split line 12 into separate declarations.\n\n```glsl\n// Water caustics shimmer \u2014 four mutually-incommensurable wave fronts whose\n// zero-crossings intersect to form the characteristic bright caustic veins.\n// All hot per-LED maths live in fixed-point (native integer path on RV32).\n\nuniform float speed      : 0.1 .. 3.0 = 0.7;\nuniform float scale      : 0.5 .. 5.0 = 2.5;\nuniform float shimmer    : 0.5 .. 3.0 = 1.5;\nuniform vec3  deep       : color = 0.0, 0.06, 0.22;\nuniform vec3  caustic_col: color = 0.48, 0.90, 1.0;\n\n// Phases advanced in update() (1\u00d7 per frame); boost folded from float uniforms.\nstate fixed ph1;\nstate fixed ph2;\nstate fixed ph3;\nstate fixed ph4;\nstate fixed sc;      // scale as fixed \u2014 avoids per-LED float cast\nstate fixed boost;   // shimmer*10, hoisted from per-LED work\n\nvoid update() {\n    fixed t = fixed(time * speed);       // one soft-float op, once per frame\n    sc    = fixed(scale);\n    boost = fixed(shimmer) * fixed(10.0);\n\n    // Four phases at irrational speed ratios \u2192 never lock in step\n    ph1 = fract(t * fixed(0.313));\n    ph2 = fract(t * fixed(0.271));\n    ph3 = fract(t * fixed(0.197));\n    ph4 = fract(t * fixed(0.157));\n}\n\nvec3 shade(Led led) {\n    // 3 float\u2192fixed conversions per LED (unavoidable); everything after is native.\n    fixed u = fixed(led.uv.x) * sc;\n    fixed v = fixed(led.uv.y) * sc;\n    fixed h = fixed(led.pos.y) * fixed(3.333);  // 0.30 m height \u2192 \u22480..1\n\n    // Four waves at different spatial frequencies and orientations.\n    // fract() wraps the argument to [0,1) turns before the LUT sin.\n    fixed s1 = sin(fract( u * fixed(2.531) + v * fixed(1.374)                   + ph1));\n    fixed s2 = sin(fract( u * fixed(1.374) - v * fixed(2.617) + h * fixed(0.50) + ph2));\n    fixed s3 = sin(fract( u * fixed(2.617) + v * fixed(0.938) + h * fixed(0.31) - ph3));\n    fixed s4 = sin(fract( u * fixed(-0.938)+ v * fixed(2.531) - h * fixed(0.43) + ph4));\n\n    // (1 \u2212 |sin|) is 1 at zero-crossings, 0 at crests/troughs.\n    // The product is bright only where ALL four waves simultaneously cross zero \u2014\n    // exactly the sparse, jagged caustic loci.\n    fixed c1 = fixed(1.0) - abs(s1);\n    fixed c2 = fixed(1.0) - abs(s2);\n    fixed c3 = fixed(1.0) - abs(s3);\n    fixed c4 = fixed(1.0) - abs(s4);\n\n    fixed caustic = c1 * c2 * c3 * c4;            // all native fixed muls\n    caustic = clamp(caustic * boost, fixed(0.0), fixed(1.0));\n\n    return mix(deep, caustic_col, float(caustic));\n}\n```",
+      "is_error": false,
+      "session_id": "3d30542a-1b6c-4007-8fac-310e4826cc8a",
+      "wall_s": 40.5,
+      "duration_api_ms": 293534,
+      "cost_usd": 0.4752816,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 1126,
+        "cache_read_input_tokens": 4833,
+        "cache_creation_input_tokens": 22251
+      },
+      "thinking_tokens": 177,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1050
+    }
+  ],
+  "started": "2026-10-22T19:55:31",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.7987,
+  "total_wall_s": 332.4,
+  "program": "firmware/fx_perf_bench/agent/app__sonnet__p15.fx"
+}

@@ -1,0 +1,234 @@
+"""FX perf-study bench (docs/design/fx-perf-study.md).
+
+A radio-less ESP32-C6 image that measures the effects VM, the VM + on-device
+RV32 JIT, and hand-written native Rust twins of the same effects, all on the
+chip's cycle counter, and logs `fxpb ...` lines. Flash + capture it over HITL
+with //tools/fx_perf:run_bench.
+
+Effect groups compiled into the image (gen_effects.rs):
+  study  effects/*.fx       VM + JIT + native, helix @ 500 and 2048 LEDs
+  agent  agent/*.fx         VM + JIT, helix @ 500 (tools/fx_agent_eval output)
+  user   user/*.fx          VM + JIT, synthetic sign @ 500 + cylinder @ 250 —
+                            the user's own library, NOT committed (gitignored);
+                            drop the .fx files in locally to include them
+  valid  fx_bench programs  VM, fx_bench's linear map + LED count, --no-opt
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "gen_effects",
+    srcs = ["gen_effects.rs"],
+    edition = "2021",
+    deps = [
+        "//firmware/fx_aot",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+    ],
+)
+
+STUDY = glob(["effects/*.fx"])
+
+AGENT = glob(
+    ["agent/*.fx"],
+    allow_empty = True,
+)
+
+# user/ = the user's library (local only); optimized/ = our committed hand-
+# optimised rewrites of its worst effects, measured on the same fixtures.
+USER = glob(
+    [
+        "user/*.fx",
+        "optimized/*.fx",
+    ],
+    allow_empty = True,
+)
+
+# fx_bench calibration programs re-measured here to tie this bench's numbers to
+# the fx_bench goldens (same map, LED count and --no-opt compile).
+VALID = [
+    "empty",
+    "sweep256",
+    "negM",
+    "addM",
+    "sinM",
+    "atan2fM",
+    "powfM",
+    "lavalamp.heldout",
+]
+
+genrule(
+    name = "effects_gen",
+    srcs = STUDY + AGENT + USER + ["//pi/hitl/harness:fx_benchmarks"],
+    outs = ["src/effects_gen.rs"],
+    cmd = """
+set -e
+specs=""
+for f in {study}; do n=$$(basename $$f .fx); specs="$$specs study:$$n:opt:0:$$f"; done
+for f in {agent}; do n=$$(basename $$f .fx); specs="$$specs agent:$$n:opt:0:$$f"; done
+for f in {user}; do n=$$(basename $$f .fx); specs="$$specs user:$$n:opt:0:$$f"; done
+for f in $(locations //pi/hitl/harness:fx_benchmarks); do
+  n=$$(basename $$f .fx)
+  case " {valid} " in *" $$n "*)
+    leds=$$(sed -n 's/.*Intended LED count: \\([0-9]*\\).*/\\1/p' $$f | head -1)
+    specs="$$specs valid:$$n:noopt:$${{leds:-128}}:$$f";;
+  esac
+done
+$(execpath :gen_effects) $@ $$specs
+""".format(
+        agent = " ".join(["$(location %s)" % f for f in AGENT]),
+        study = " ".join(["$(location %s)" % f for f in STUDY]),
+        user = " ".join(["$(location %s)" % f for f in USER]),
+        valid = " ".join(VALID),
+    ),
+    tools = [":gen_effects"],
+)
+
+BENCH_SRCS = [
+    "src/lib.rs",
+    "src/engine.rs",
+    "src/fixture.rs",
+    "src/native.rs",
+    "src/device.rs",
+    "src/micro.rs",
+    "src/fastfloat.rs",
+    ":effects_gen",
+]
+
+# The bench core as the C6 links it (carries the panic handler).
+rust_static_library(
+    name = "fx_perf_bench_ffi",
+    srcs = BENCH_SRCS,
+    crate_name = "fx_perf_bench",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Host check: every native twin renders the same LEDs as the VM (within the
+# tolerance its variant documents), over several frames, at 500 and 2048 LEDs.
+rust_test(
+    name = "native_vs_vm_test",
+    srcs = BENCH_SRCS + ["src/host_test.rs"],
+    args = [
+        "--test-threads=1",
+        "--nocapture",
+    ],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+    ],
+)
+
+# The bench core as a host library (for the tools below).
+rust_library(
+    name = "fx_perf_bench_host",
+    srcs = BENCH_SRCS,
+    crate_name = "fx_perf_bench",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    deps = [
+        "//firmware/fx_aot:fx_aot_nostd",
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Render two effects over the same fixture/frames and report how different
+# they look + opcodes/LED (checks a hand-optimised rewrite keeps the look).
+rust_binary(
+    name = "fx_diff",
+    srcs = ["fx_diff.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_perf_bench_host",
+        "//fx_compiler",
+    ],
+)
+
+cc_binary(
+    name = "fx_perf_bench",
+    srcs = ["bench_main.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":fx_perf_bench_ffi",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+firmware_binary(
+    name = "fx_perf_bench_esp32c6",
+    binary = ":fx_perf_bench",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# PMA write-protection probe (docs/design/fx-native-aot.md): does an unlocked
+# Espressif PMA entry deny a machine-mode store while an unlocked PMP entry
+# grants execute? Flash + capture `fxpb pma ...` over HITL. No Rust, no radios.
+cc_binary(
+    name = "pma_probe",
+    srcs = ["pma_probe_main.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+)
+
+firmware_binary(
+    name = "pma_probe_esp32c6",
+    binary = ":pma_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "pma_probe_flash",
+    app = ":pma_probe_esp32c6",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "pma_probe_flashbundle",
+    flash = ":pma_probe_flash",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "fx_perf_bench_flash",
+    app = ":fx_perf_bench_esp32c6",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "fx_perf_bench_flashbundle",
+    flash = ":fx_perf_bench_flash",
+    tags = ["manual"],
+)

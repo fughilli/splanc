@@ -1,0 +1,39 @@
+{
+  "name": "skill__opus__p11",
+  "variant": "skill",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "358ce83b86e52585",
+  "system_prompt_chars": 27824,
+  "attempts": [
+    {
+      "text": "```glsl\n// Police lights: a red and a blue beacon beam sweep around the cylinder's\n// axis, like a rotating light bar. In \"strobe\" mode the two sides\n// double-flash alternately instead (red on one half, blue on the other).\nuniform int   mode    : {\"spin\", \"strobe\"} = 0;\nuniform float speed   : 0.1 .. 4.0 = 1.2;     // turns per second (spin) / cycles per second (strobe)\nuniform float width   : 0.05 .. 0.5 = 0.18;   // beam width, fraction of a turn\nuniform float glow    : 0.0 .. 0.3 = 0.04;    // dim ambient tint between beams\nuniform vec3  red     : color = 1.0, 0.0, 0.0;\nuniform vec3  blue    : color = 0.0, 0.1, 1.0;\nuniform float tilt    : 0.0 .. 2.0 = 0.0;     // twists beams up the helix (turns over height)\n\nstate float phase;\nstate float red_on;\nstate float blue_on;\nstate float cx;\nstate float cz;\nstate float inv_w;\n\nvoid update() {\n  phase = fract(phase + dt * speed);\n  cx = (room.min.x + room.max.x) * 0.5;\n  cz = (room.min.z + room.max.z) * 0.5;\n  inv_w = 1.0 / width;\n\n  // Strobe: first half of the cycle red double-flashes, second half blue.\n  float t = phase;\n  float fr = fract(t * 4.0);\n  red_on = 0.0;\n  blue_on = 0.0;\n  if (t < 0.5) {\n    if (fr < 0.5) { red_on = 1.0; }\n  } else {\n    if (fr < 0.5) { blue_on = 1.0; }\n  }\n}\n\nvec3 shade(Led led) {\n  float dx = led.pos.x - cx;\n  float dz = led.pos.z - cz;\n  float a = atan2(dz, dx) * 0.15915494 + 0.5;   // 0..1 around the axis\n  a = a + led.uv.y * tilt;\n\n  if (mode == 1) {\n    float side = fract(a);\n    vec3 col = red * glow;\n    if (side < 0.5) {\n      col = col + red * red_on;\n    } else {\n      col = blue * glow + blue * blue_on;\n    }\n    return col;\n  }\n\n  float u = fract(a - phase);\n  // Red beam centred at 0.25, blue beam at 0.75 (opposite sides).\n  float dr = abs(u - 0.25);\n  float db = abs(u - 0.75);\n  float lr = clamp(1.0 - dr * inv_w, 0.0, 1.0);\n  float lb = clamp(1.0 - db * inv_w, 0.0, 1.0);\n  lr = lr * lr;\n  lb = lb * lb;\n\n  // Ambient: whichever half we're in carries a faint tint of its colour.\n  vec3 amb = blue * glow;\n  if (u < 0.5) { amb = red * glow; }\n\n  return clamp(amb + red * lr + blue * lb, 0.0, 1.0);\n}\n```",
+      "is_error": false,
+      "session_id": "550c88cf-a70c-40a1-9999-3553dbf20f8d",
+      "wall_s": 47.0,
+      "duration_api_ms": 20256,
+      "cost_usd": 0.0412004,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1702,
+        "cache_read_input_tokens": 11322,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 643,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1694
+    }
+  ],
+  "started": "2026-10-22T19:59:15",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0412,
+  "total_wall_s": 47.0,
+  "program": "firmware/fx_perf_bench/agent/skill__opus__p11.fx"
+}
