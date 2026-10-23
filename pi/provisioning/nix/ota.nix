@@ -44,6 +44,13 @@ let
     "02" = "zero2w";
   }.${config.boot.loader.raspberry-pi.variant} or "unknown";
 
+  # The name a FRESH unit takes (no /var/lib/sbc/hostname yet): the sbc-deploy
+  # commissioning `--hostname` ($SBC_HOSTNAME_OVERRIDE, read --impure like every
+  # sbc seam), else "ledmapper". After that, /var/lib/sbc/hostname is the identity.
+  seedName =
+    let o = builtins.getEnv "SBC_HOSTNAME_OVERRIDE";
+    in if o != "" then o else "ledmapper";
+
   toolPath = [ pkgs.curl pkgs.zstd config.nix.package pkgs.coreutils pkgs.systemd ];
 
   # U-Boot with the one-shot trial in front of the stock boot. U-Boot 2025.01's
@@ -71,6 +78,8 @@ let
     extraMeta.platforms = [ "aarch64-linux" ];
     filesToInstall = [ "u-boot.bin" ];
     extraConfig = ''
+      CONFIG_CMD_FS_GENERIC=y
+      CONFIG_CMD_MEMORY=y
       CONFIG_CMD_FAT=y
       CONFIG_FAT_WRITE=y
       CONFIG_CMD_ITEST=y
@@ -157,26 +166,28 @@ in
 
   # -- device identity, kept across updates ---------------------------------------
   # An OTA image is built ONCE per board (hostname "ledmapper", the CI deploy key),
-  # not per device, so what makes a unit itself lives in /var and is applied at
-  # runtime: the committed hostname (sbc-deploy identity.nix writes it once) and the
-  # root deploy keys (seeded from the keys baked into the first OTA-capable system,
-  # i.e. the developer's deploy_live or the SD image; never overwritten).
-  systemd.services.splanc-identity = {
-    description = "Splanc MAX: apply the committed hostname";
-    wantedBy = [ "multi-user.target" ];
-    before = [ "avahi-daemon.service" "NetworkManager.service" "network-pre.target" ];
-    wants = [ "network-pre.target" ];
-    after = [ "local-fs.target" ];
-    unitConfig.DefaultDependencies = false;
-    serviceConfig.Type = "oneshot";
-    path = [ pkgs.nettools ];
-    script = ''
-      if [ -s /var/lib/sbc/hostname ]; then
-        h="$(head -n1 /var/lib/sbc/hostname)"
-        [ "$(hostname)" = "$h" ] || hostname "$h"
-      fi
-    '';
-  };
+  # not per device, so what makes a unit itself lives in /var: the committed
+  # hostname (sbc-deploy identity.nix, /var/lib/sbc/hostname) and the root deploy
+  # keys. The hostname must not be baked at all: NixOS would own /etc/hostname
+  # (systemd-hostnamed re-applies it) and write it into avahi-daemon.conf, so the
+  # unit would advertise ledmapper.local instead of its own name. With an empty
+  # networking.hostName NixOS leaves both alone: /etc/hostname becomes a stateful
+  # file written here from the committed identity, and avahi uses the system
+  # hostname (HITL/rig addressing — splanc-max-2.local — keeps working).
+  networking.hostName = lib.mkForce "";
+  system.activationScripts.splancHostname = lib.stringAfter [ "etc" "var" "sbcIdentity" ] ''
+    h=""
+    [ -s /var/lib/sbc/hostname ] && h="$(head -n1 /var/lib/sbc/hostname)"
+    if [ -z "$h" ]; then
+      h=${lib.escapeShellArg seedName}
+      mkdir -p /var/lib/sbc && printf '%s\n' "$h" > /var/lib/sbc/hostname
+    fi
+    if [ -L /etc/hostname ] || [ "$(cat /etc/hostname 2>/dev/null)" != "$h" ]; then
+      rm -f /etc/hostname
+      printf '%s\n' "$h" > /etc/hostname
+    fi
+    ${pkgs.nettools}/bin/hostname "$h" 2>/dev/null || true
+  '';
   services.openssh.authorizedKeysFiles = [ "/var/lib/sbc/authorized_keys.d/%u" ];
   system.activationScripts.splancDeployKeys = lib.stringAfter [ "var" ] ''
     if [ ! -e /var/lib/sbc/authorized_keys.d/root ]; then

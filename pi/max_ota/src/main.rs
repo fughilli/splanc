@@ -96,11 +96,13 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
-        "health" => loop {
+        "health" => {
+            let mut first = None;
+            loop {
             let next = {
                 let _l = Lock::take(&lay.state_dir);
                 let mut u = Updater::load(&mut sys, lay.clone(), splanc_max_ota::ring());
-                u.health_tick()
+                u.health_tick(&mut first)
             };
             match next {
                 Next::Wait => std::thread::sleep(Duration::from_secs(2)),
@@ -110,7 +112,8 @@ fn run() -> Result<(), String> {
                 }
                 Next::Nothing => return Ok(()),
             }
-        },
+            }
+        }
         "status" => {
             print!("{}", fs::read_to_string(lay.state()).unwrap_or_default());
             Ok(())

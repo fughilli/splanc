@@ -165,6 +165,12 @@ let
   '';
 in
 {
+  # One FPGA frame is a single spidev write: 4 ports x 550 LEDs is a ~6.6 KB STREAM,
+  # past spidev's 4 KiB default buffer, which fails every write (EMSGSIZE) — the
+  # player rendered but the Tang got nothing. (Found by the OTA health check, which
+  # counts frames actually written: docs/design/max-ota.md "Health proof".)
+  boot.kernelParams = pkgs.lib.optionals (ledOutput == "fpga") [ "spidev.bufsiz=65536" ];
+
   services.sbcApps = {
     # M1 — pattern driver. Real-time FIFO scheduling + CAP_SYS_NICE, owns SPI,
     # exposes the control socket under /run/ledmapper. Creates the shared

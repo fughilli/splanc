@@ -157,14 +157,12 @@ pub struct Updater<'a, S: Sys> {
     pub lay: Layout,
     pub ring: &'static Ring,
     pub st: State,
-    /// The first fresh health sample of this trial (in memory: a trial is one boot).
-    first: Option<Sample>,
 }
 
 impl<'a, S: Sys> Updater<'a, S> {
     pub fn load(sys: &'a mut S, lay: Layout, ring: &'static Ring) -> Self {
         let st = sys.read(&lay.state()).map(|b| State::parse(&String::from_utf8_lossy(&b))).unwrap_or_default();
-        Updater { sys, lay, ring, st, first: None }
+        Updater { sys, lay, ring, st }
     }
 
     pub fn save(&mut self) {
@@ -550,7 +548,9 @@ impl<'a, S: Sys> Updater<'a, S> {
     // -- the trial's health check ------------------------------------------------------
 
     /// One health tick during the trial. `Wait` = call again in a couple of seconds.
-    pub fn health_tick(&mut self) -> Next {
+    /// `first` is the trial's first fresh health sample: the caller keeps it across
+    /// ticks (it reloads the updater, under the lock, every tick).
+    pub fn health_tick(&mut self, first: &mut Option<Sample>) -> Next {
         if self.st.phase != Phase::Trial {
             return Next::Nothing;
         }
@@ -560,11 +560,11 @@ impl<'a, S: Sys> Updater<'a, S> {
             Sample::parse(&String::from_utf8_lossy(&b), now, age)
         });
         if let Some(s) = &sample {
-            if self.first.is_none() && s.listening && s.age_ms <= health::STALE_MS {
-                self.first = Some(*s);
+            if first.is_none() && s.listening && s.age_ms <= health::STALE_MS {
+                *first = Some(*s);
             }
         }
-        match health::verdict(self.first.as_ref(), sample.as_ref(), self.st.net, self.sys.has_network()) {
+        match health::verdict(first.as_ref(), sample.as_ref(), self.st.net, self.sys.has_network()) {
             Verdict::Healthy => {
                 self.st.phase = Phase::Committing;
                 self.save();
