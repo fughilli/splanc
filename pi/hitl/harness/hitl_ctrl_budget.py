@@ -166,7 +166,7 @@ def _out_dir(args) -> str:
 
 
 def run_on_hardware(args) -> int:
-    from hitl_client import Reservation
+    from hitl_client import Reservation, ReserveError
     from provision import HarnessError, dut_target, provision_dut, wire_provision_dut
 
     plan = parse_plan(args.plan, args.inflight, args.ack_timeout_ms)
@@ -182,7 +182,12 @@ def run_on_hardware(args) -> int:
         bundles.append((lab, path))
     budgets: list[core.Budget] = []
     res = Reservation(server=args.server, owner=args.owner, device=args.unit, sku="esp32c6")
-    res.acquire()
+    try:
+        res.acquire()
+    except ReserveError as e:
+        # Infra, not the firmware: a contended rig that never handed us a DUT. SKIP.
+        _log(f"[budget] no DUT ({e}) — SKIP (bench)")
+        return 0
     try:
         ssid, pw = res.wifi() or (None, None)
         if not ssid:
