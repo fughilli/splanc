@@ -29,9 +29,9 @@
 # `hitl` — in practice the merge-queue head: the queue runner adds the label when a
 # PR reaches the head (unless it's queued `nohitl`), and the PR's full HITL then runs
 # at the commit that is about to merge. Adding the label (`labeled`) starts a run;
-# later pushes to a labelled PR re-run it. An unlabelled PR gets a quick SKIPPED
-# check named "hitl_tests (HITL not requested)" — that is not a pass, just "nobody
-# asked"; add the `hitl` label to request a run. push to main and workflow_dispatch
+# later pushes to a labelled PR re-run it. An unlabelled PR gets a skipped
+# hitl_tests plus a ~5 s "HITL not requested" marker check — not a pass, just
+# "nobody asked"; add the `hitl` label to request a run. push to main and workflow_dispatch
 # (the Mac's 6h periodic + manual runs) always run the full suite. hitl_tests is not
 # a required status check (main has no branch protection), so the skip never blocks
 # a merge by itself; the merge queue enforces HITL-green for non-`nohitl` PRs.
@@ -91,15 +91,24 @@ concurrency:
   group: hitl-tests-${{ !(github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))) && format('noop-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  # An unlabelled PR's marker: a ~5 s job whose check is named "HITL not requested",
+  # so the PR's checks say plainly that HITL was skipped because nobody asked (the
+  # hitl_tests job itself just shows "skipped" — GitHub doesn't evaluate a skipped
+  # job's name). It is NOT a HITL result; the merge queue ignores it.
+  hitl_not_requested:
+    name: HITL not requested
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'hitl')
+    runs-on: ubuntu-latest
+    steps:
+      - name: HITL not requested
+        run: |
+          msg="HITL not requested: this PR has no 'hitl' label, so the on-hardware suite was skipped. Add the 'hitl' label to run it (the merge queue does this when the PR reaches the head)."
+          echo "::notice title=HITL not requested::$msg"
+          echo "### HITL not requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
   hitl_tests:
-    # The check's name says WHY a PR run was skipped, so an unlabelled PR reads
-    # "HITL not requested" rather than a bare skip — and only a run that really
-    # executes is named plain `hitl_tests` (what the merge queue waits on), so a
-    # skipped no-op event can never shadow a real result as the "latest" hitl_tests.
-    name: >-
-      ${{ (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))) && 'hitl_tests' ||
-      (github.event.action == 'labeled' && contains(github.event.pull_request.labels.*.name, 'hitl')) && 'hitl_tests (no-op: label event)' ||
-      'hitl_tests (HITL not requested)' }}
     # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
     # manual runs) only fire on this repo, so they always run. A pull_request runs
     # only for a same-repo PR (fork PRs have no access to the HITL environment
