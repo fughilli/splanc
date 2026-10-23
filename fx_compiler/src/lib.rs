@@ -3195,7 +3195,41 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
             (format!("LOAD_LED_CACHE slot={} n={} hit-> {tgt}", b(0), b(1)), 5)
         }
         STORE_LED_CACHE => (format!("STORE_LED_CACHE slot={} n={}", b(0), b(1)), 3),
+        BIN_TOP => (format!("BIN_TOP {} {}", bin_op_name(b(0)), bin_src_name(b(0) >> 2, u16at(1))), 4),
+        PUSH_CONSTS => {
+            let n = b(0) as usize;
+            let idx: Vec<String> = (0..n).map(|j| format!("c{}", u16at(1 + 2 * j))).collect();
+            (format!("PUSH_CONSTS {}", idx.join(" ")), 2 + 2 * n)
+        }
+        LOAD_CTX_LANES => (format!("LOAD_CTX_LANES {} src={} [{}..+{}]", ctx_name(b(0)), b(1), b(2), b(3)), 5),
+        MUL_ADD => (format!("MUL_ADD n={}", b(0)), 2),
+        BIN_PAIR => (
+            format!(
+                "BIN_PAIR {} {} {}",
+                bin_op_name(b(0)),
+                bin_src_name(b(0) >> 2, u16at(1)),
+                bin_src_name(b(0) >> 4, u16at(3))
+            ),
+            6,
+        ),
         other => (format!("?? 0x{other:02x}"), 0),
+    }
+}
+
+fn bin_op_name(mode: u8) -> &'static str {
+    if mode & 0x40 != 0 {
+        ["addi", "subi", "muli", "mulfix"][(mode & 3) as usize]
+    } else {
+        ["add", "sub", "mul", "div"][(mode & 3) as usize]
+    }
+}
+
+fn bin_src_name(src: u8, i: u16) -> String {
+    match src & 3 {
+        0 => format!("c{i}"),
+        1 => format!("local{i}"),
+        2 => format!("state{i}"),
+        _ => format!("uniform{i}"),
     }
 }
 
@@ -3423,6 +3457,12 @@ mod fx_vm_op {
     // Per-LED memoization bracket (emitted by fx_compiler::memo).
     pub const LOAD_LED_CACHE: u8 = 108;
     pub const STORE_LED_CACHE: u8 = 109;
+    // fx-perf-study R8 operand-fused float arithmetic (110..=119 reserved).
+    pub const BIN_TOP: u8 = 120;
+    pub const BIN_PAIR: u8 = 121;
+    pub const PUSH_CONSTS: u8 = 122;
+    pub const LOAD_CTX_LANES: u8 = 123;
+    pub const MUL_ADD: u8 = 124;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors

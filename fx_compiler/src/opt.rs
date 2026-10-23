@@ -161,6 +161,11 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         I2C_READ => 2,
         LOAD_LED_CACHE => 5,
         STORE_LED_CACHE => 3,
+        BIN_TOP => 4,
+        BIN_PAIR => 6,
+        PUSH_CONSTS => 2 + 2 * b(0) as usize,
+        LOAD_CTX_LANES => 5,
+        MUL_ADD => 2,
         _ => return None,
     };
     Some(n)
@@ -198,15 +203,18 @@ pub(crate) fn optimize(
         changed |= eliminate_dead_locals(&mut prog);
         changed |= remove_unreachable(&mut prog);
         changed |= fuse_superinstructions(&mut prog, consts);
+        changed |= simplify_swizzles(&mut prog);
         if !changed {
             break;
         }
     }
-
     let (u0, s0) = (*update, *shade);
     if let Some((cfg, bufs, n_state)) = memo {
         let mut memo_prog = prog.clone();
         let mut report = crate::memo::run(&mut memo_prog, bufs, n_state, cfg);
+        // Operand fusion runs last, after the variance pass, which reasons
+        // about the plain push/op sequences.
+        fuse_operands(&mut memo_prog);
         if let Some(bytes) = encode(&memo_prog, update, shade) {
             report.prep_entry = prep_offset(&memo_prog);
             return (bytes, Some(report));
@@ -214,6 +222,7 @@ pub(crate) fn optimize(
         *update = u0;
         *shade = s0;
     }
+    fuse_operands(&mut prog);
     match encode(&prog, update, shade) {
         Some(bytes) => (bytes, None),
         None => {
@@ -245,6 +254,7 @@ pub(crate) fn classify(
         changed |= eliminate_dead_locals(&mut prog);
         changed |= remove_unreachable(&mut prog);
         changed |= fuse_superinstructions(&mut prog, consts);
+        changed |= simplify_swizzles(&mut prog);
         if !changed {
             break;
         }
@@ -796,6 +806,200 @@ fn fuse_superinstructions(prog: &mut Prog, consts: &[u32]) -> bool {
                 changed = true;
                 continue;
             }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// -- pass: swizzle simplification (fx-perf-study R8) ----------------------------
+
+/// The load ops whose `slot, n` operands address a contiguous slot range.
+fn is_slot_load(o: u8) -> bool {
+    matches!(o, op::LOAD_LOCAL | op::LOAD_STATE | op::LOAD_UNIFORM)
+}
+
+/// True if `[i+1, i+n)` are not branch/call/entry targets. The first
+/// instruction may be one: a fusion keeps its id, so a jump to it still lands
+/// on the fused instruction.
+fn tail_unreferenced(ins: &[Ins], i: usize, n: usize, refd: &HashSet<u32>) -> bool {
+    ins[i + 1..i + n].iter().all(|x| !refd.contains(&x.id))
+}
+
+/// Two exact rewrites the front-end leaves behind for every component access
+/// and scalar-times-vector:
+///  - `Load{Local,State,Uniform} s,n ; Swizzle src=n dst=m [k, k+1, .., k+m-1]`
+///    -> `Load s+k, m` (read just the lanes, no shuffle);
+///  - `Swizzle src=1 dst=n [0,..,0] ; Mul n` -> `Scale n` (`v * splat(s)` is
+///    `v[i] * s` either way).
+fn simplify_swizzles(prog: &mut Prog) -> bool {
+    let mut changed = false;
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if !tail_unreferenced(&prog.ins, i, 2, &refd) {
+            i += 1;
+            continue;
+        }
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        if is_slot_load(a.op) && b.op == op::SWIZZLE && a.ops.len() == 2 && b.ops.len() >= 2 {
+            let (slot, n) = (a.ops[0], a.ops[1]);
+            let (src, dst) = (b.ops[0], b.ops[1]);
+            let idx = &b.ops[2..];
+            if src == n && dst >= 1 && idx.len() == dst as usize {
+                let k = idx[0];
+                let contiguous = idx.iter().enumerate().all(|(j, &c)| c as usize == k as usize + j);
+                if contiguous && k as usize + dst as usize <= n as usize {
+                    if let Some(ns) = slot.checked_add(k) {
+                        let (id, o) = (a.id, a.op);
+                        prog.ins.splice(i..i + 2, [Ins { id, op: o, ops: vec![ns, dst], target: 0 }]);
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        if a.op == op::SWIZZLE && b.op == op::MUL && a.ops.len() >= 2 && b.ops.len() == 1 {
+            let (src, dst) = (a.ops[0], a.ops[1]);
+            if src == 1 && dst >= 2 && b.ops[0] == dst && a.ops[2..].iter().all(|&c| c == 0) {
+                let id = a.id;
+                prog.ins.splice(i..i + 2, [Ins { id, op: op::SCALE, ops: vec![dst], target: 0 }]);
+                changed = true;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// -- pass: operand fusion (fx-perf-study R8) ----------------------------------
+
+/// The `BinTop`/`BinPair` source code and index of a scalar push, if it is one.
+fn operand_src(ins: &Ins) -> Option<(u8, u16)> {
+    match ins.op {
+        op::PUSH_CONST => Some((0, u16::from_le_bytes([ins.ops[0], ins.ops[1]]))),
+        op::LOAD_LOCAL if ins.ops[1] == 1 => Some((1, ins.ops[0] as u16)),
+        op::LOAD_STATE if ins.ops[1] == 1 => Some((2, ins.ops[0] as u16)),
+        op::LOAD_UNIFORM if ins.ops[1] == 1 => Some((3, ins.ops[0] as u16)),
+        _ => None,
+    }
+}
+
+/// The mode bits of a scalar float `Add`/`Sub`/`Mul`/`Div`, or (bit 6) an
+/// integer `AddI`/`SubI`/`MulI`/`MulFix`.
+fn scalar_arith(ins: &Ins) -> Option<u8> {
+    match ins.op {
+        op::ADD_I => return Some(0x40),
+        op::SUB_I => return Some(0x41),
+        op::MUL_I => return Some(0x42),
+        op::MUL_FIX => return Some(0x43),
+        _ => {}
+    }
+    if ins.ops.first().copied() != Some(1) {
+        return None;
+    }
+    match ins.op {
+        op::ADD => Some(0),
+        op::SUB => Some(1),
+        op::MUL => Some(2),
+        op::DIV => Some(3),
+        _ => None,
+    }
+}
+
+/// `LoadCtx id ; Swizzle src->m [k..k+m)` -> `LoadCtxLanes id src k m`, then
+/// `X a ; Y b ; OP` -> `BinPair OP X a Y b` and `X a ; OP` -> `BinTop OP X a`,
+/// where X/Y push a const, local, state or uniform scalar and OP is a scalar
+/// float add/sub/mul/div. Exact: the VM computes the same IEEE op on the same
+/// two values (and the same div-by-zero = 0), without the push/pop traffic.
+fn fuse_operands(prog: &mut Prog) -> bool {
+    let mut changed = false;
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if !tail_unreferenced(&prog.ins, i, 2, &refd) {
+            i += 1;
+            continue;
+        }
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        // `LoadCtx id ; Swizzle src->m [k..k+m)` -> `LoadCtxLanes id src k m`.
+        if a.op == op::LOAD_CTX && b.op == op::SWIZZLE && b.ops.len() >= 2 {
+            let (src, dst) = (b.ops[0], b.ops[1]);
+            let idx = &b.ops[2..];
+            if (1..=4).contains(&dst) && idx.len() == dst as usize {
+                let k = idx[0];
+                let contiguous = idx.iter().enumerate().all(|(j, &c)| c as usize == k as usize + j);
+                if contiguous && k as usize + dst as usize <= src as usize {
+                    let (id, ctx) = (a.id, a.ops[0]);
+                    let ops = vec![ctx, src, k, dst];
+                    prog.ins.splice(i..i + 2, [Ins { id, op: op::LOAD_CTX_LANES, ops, target: 0 }]);
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if i + 2 < prog.ins.len() && tail_unreferenced(&prog.ins, i, 3, &refd) {
+            let w = &prog.ins[i..i + 3];
+            if let (Some((sa, a)), Some((sb, b)), Some(k)) = (operand_src(&w[0]), operand_src(&w[1]), scalar_arith(&w[2])) {
+                let id = w[0].id;
+                let mut ops = vec![k | sa << 2 | sb << 4];
+                ops.extend_from_slice(&a.to_le_bytes());
+                ops.extend_from_slice(&b.to_le_bytes());
+                prog.ins.splice(i..i + 3, [Ins { id, op: op::BIN_PAIR, ops, target: 0 }]);
+                changed = true;
+                i += 1;
+                continue;
+            }
+        }
+        if tail_unreferenced(&prog.ins, i, 2, &refd) {
+            let w = &prog.ins[i..i + 2];
+            if let (Some((sa, a)), Some(k)) = (operand_src(&w[0]), scalar_arith(&w[1])) {
+                let id = w[0].id;
+                let mut ops = vec![k | sa << 2];
+                ops.extend_from_slice(&a.to_le_bytes());
+                prog.ins.splice(i..i + 2, [Ins { id, op: op::BIN_TOP, ops, target: 0 }]);
+                changed = true;
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    // `Mul n ; Add n` -> `MulAdd n` (a + b*c, the same two roundings).
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        if a.op == op::MUL && b.op == op::ADD && a.ops == b.ops && tail_unreferenced(&prog.ins, i, 2, &refd) {
+            let (id, ops) = (a.id, a.ops.clone());
+            prog.ins.splice(i..i + 2, [Ins { id, op: op::MUL_ADD, ops, target: 0 }]);
+            changed = true;
+        }
+        i += 1;
+    }
+    // Runs of 2..=4 `PushConst` -> one `PushConsts`.
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        let mut n = 0usize;
+        while n < 4 && i + n < prog.ins.len() && prog.ins[i + n].op == op::PUSH_CONST && (n == 0 || !refd.contains(&prog.ins[i + n].id)) {
+            n += 1;
+        }
+        if n >= 2 {
+            let id = prog.ins[i].id;
+            let mut ops = vec![n as u8];
+            for k in 0..n {
+                ops.extend_from_slice(&prog.ins[i + k].ops[..2]);
+            }
+            prog.ins.splice(i..i + n, [Ins { id, op: op::PUSH_CONSTS, ops, target: 0 }]);
+            changed = true;
         }
         i += 1;
     }

@@ -383,8 +383,11 @@ pub fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         | BinMath | BrFalse | Jmp | Swap | Call | ScaleFix | DotFix | LengthFix | DistanceFix
         | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall
         | StoreLedCache => 3,
-        LoadCtxFix | IncLocalI | BrCmpI => 4,
-        LoadLedCache => 5,
+        LoadCtxFix | IncLocalI | BrCmpI | BinTop => 4,
+        LoadLedCache | LoadCtxLanes => 5,
+        BinPair => 6,
+        MulAdd => 2,
+        PushConsts => 2 + 2 * *code.get(pc + 1).unwrap_or(&0) as usize,
         LoadStateIdx | StoreStateIdx | LoadLocalIdx | StoreLocalIdx => 6,
     })
 }
@@ -408,6 +411,56 @@ fn op_to_ir(code: &[u8], pc: usize) -> Option<(Ir, usize)> {
         Op::Pop => (Ir::Pop(b(0)), 2),
         _ => return None,
     })
+}
+
+/// Like [`op_to_ir`], but an opcode may lower to several IR ops: the optimizer's
+/// `PushConsts` run is its `PushConst`s. Writes into `out` (room for 4) and
+/// returns `(ir_count, byte_len)`.
+fn op_to_irs(code: &[u8], pc: usize, out: &mut [Ir]) -> Option<(usize, usize)> {
+    if Op::from_u8(code[pc])? == Op::PushConsts {
+        let n = *code.get(pc + 1)? as usize;
+        if n == 0 || n > out.len() || pc + 2 + 2 * n > code.len() {
+            return None;
+        }
+        for (j, o) in out.iter_mut().enumerate().take(n) {
+            *o = Ir::PushConst(u16::from_le_bytes([code[pc + 2 + 2 * j], code[pc + 3 + 2 * j]]));
+        }
+        return Some((n, 2 + 2 * n));
+    }
+    // An integer-family BinTop/BinPair whose operands are consts/locals is
+    // the PushConst/LoadLocal + AddI/SubI/MulI/MulFix it fused.
+    let op = Op::from_u8(code[pc])?;
+    if matches!(op, Op::BinTop | Op::BinPair) {
+        let mode = *code.get(pc + 1)?;
+        if mode & 0x40 == 0 || out.len() < 3 {
+            return None;
+        }
+        let rd = |at: usize| Some(u16::from_le_bytes([*code.get(at)?, *code.get(at + 1)?]));
+        let src = |s: u8, i: u16| match s & 3 {
+            0 => Some(Ir::PushConst(i)),
+            1 if i <= u8::MAX as u16 => Some(Ir::LoadLocal(i as u8)),
+            _ => None,
+        };
+        let arith = match mode & 3 {
+            0 => Ir::AddI,
+            1 => Ir::SubI,
+            2 => Ir::MulI,
+            _ => Ir::MulFix(16),
+        };
+        return if op == Op::BinTop {
+            out[0] = src(mode >> 2, rd(pc + 2)?)?;
+            out[1] = arith;
+            Some((2, 4))
+        } else {
+            out[0] = src(mode >> 2, rd(pc + 2)?)?;
+            out[1] = src(mode >> 4, rd(pc + 4)?)?;
+            out[2] = arith;
+            Some((3, 6))
+        };
+    }
+    let (ir, len) = op_to_ir(code, pc)?;
+    *out.first_mut()? = ir;
+    Some((1, len))
 }
 
 /// The absolute byte target of a branch/call at `code[pc]`, if any (so a block is
@@ -464,14 +517,15 @@ fn scan_blocks(code: &[u8], is_target: &mut [bool], mut on_block: impl FnMut(usi
             if q > start && is_target[q] {
                 break; // a jump lands here — the block must not swallow it
             }
-            match op_to_ir(code, q) {
-                Some((ir, len)) => {
-                    irs[n] = ir;
-                    n += 1;
+            let mut tmp = [Ir::AddI; 4];
+            match op_to_irs(code, q, &mut tmp) {
+                Some((k, len)) if n + k <= MAX_BLOCK_IR => {
+                    irs[n..n + k].copy_from_slice(&tmp[..k]);
+                    n += k;
                     end = q + len;
                     q += len;
                 }
-                None => break,
+                _ => break,
             }
         }
         if n >= MIN_BLOCK_OPS && end - start >= 3 {
@@ -880,6 +934,46 @@ mod tests {
         assert_eq!((plans[0].start, plans[0].end), (2, 13));
         assert_eq!(plans[0].net_delta, 1, "5 ops net +1 on the stack");
         assert!(!plans[0].code.is_empty());
+    }
+
+    #[test]
+    fn plan_blocks_lowers_a_push_consts_run() {
+        use ledmapper_fx_vm::Op;
+        // The optimizer's PushConsts (2 consts) stays inside a JIT block, as the
+        // two PushConst it replaced did: LoadLocal; PushConsts c0 c1; MulI; AddI.
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,                  // 0: non-JIT
+            Op::LoadLocal as u8, 0, 1,             // 2: block start
+            Op::PushConsts as u8, 2, 0, 0, 1, 0,   // 5
+            Op::MulI as u8,                        // 11
+            Op::AddI as u8,                        // 12: block end -> 13
+            Op::Ret as u8, 0,                      // 13
+        ];
+        let plans = plan_blocks(&code);
+        assert_eq!(plans.len(), 1);
+        assert_eq!((plans[0].start, plans[0].end), (2, 13));
+        assert_eq!(plans[0].net_delta, 1);
+    }
+
+    #[test]
+    fn plan_blocks_lowers_integer_bin_ops_and_skips_float_ones() {
+        use ledmapper_fx_vm::Op;
+        // BinPair mulfix(local0, c1) ; BinTop addi(c0) ; BinTop subi(local2) is
+        // JIT-able (+1 net); a float BinTop (mode bit 6 clear) ends the block.
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,                         // 0
+            Op::BinPair as u8, 0x43 | 1 << 2, 0, 0, 1, 0, // 2: local0 *fix c1
+            Op::BinTop as u8, 0x40, 0, 0,                 // 8: + c0
+            Op::BinTop as u8, 0x41 | 1 << 2, 2, 0,        // 12: - local2 -> 16
+            Op::BinTop as u8, 0x02, 0, 0,                 // 16: float mul (not JIT)
+            Op::Ret as u8, 0,
+        ];
+        let plans = plan_blocks(&code);
+        assert_eq!(plans.len(), 1);
+        assert_eq!((plans[0].start, plans[0].end), (2, 16));
+        assert_eq!(plans[0].net_delta, 1);
     }
 
     #[test]

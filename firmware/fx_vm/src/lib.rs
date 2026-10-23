@@ -320,7 +320,26 @@ pub enum Op {
     // with no cache bound both ops are no-ops (the original code runs).
     LoadLedCache,  // u8 slot, u8 n, i16 skip
     StoreLedCache, // u8 slot, u8 n
+    // --- operand-fused float arithmetic (fx-perf-study R8) ---------------------
+    // 110..=119 are reserved for other work in flight; `from_u8` rejects the gap.
+    // A scalar float `Add`/`Sub`/`Mul`/`Div` with one or both operands read
+    // straight from the const pool / a local / state / a uniform instead of being
+    // pushed first: 59–67% of retired opcodes were such stack plumbing. Mode byte:
+    // bits 0-1 = the op, bits 2-3 = the first source, bits 4-5 = the second
+    // (0 const, 1 local, 2 state, 3 uniform), bit 6 = the integer family. Float:
+    // add, sub, mul, div (div by 0 = 0); integer: AddI, SubI, MulI (wrapping),
+    // MulFix (Q16.16). Exact fusions: the optimizer emits them for the same ops.
+    BinTop = 120, // u8 mode, u16 i : top = top OP src(i)        (src in bits 2-3)
+    BinPair,      // u8 mode, u16 a, u16 b : push srcA(a) OP srcB(b)
+    // Runs the optimizer collapses (exact: the same pushes / IEEE ops):
+    PushConsts,   // u8 n, n x u16 idx : PushConst idx_0 .. PushConst idx_{n-1}
+    LoadCtxLanes, // u8 id, u8 src, u8 k, u8 m : LoadCtx id ; Swizzle src->m [k..k+m)
+    MulAdd,       // u8 n : a(n) b(n) c(n) -> a + b*c   (Mul n ; Add n)
 }
+
+/// The last opcode below the reserved gap, and the last overall.
+const LAST_LOW_OP: u8 = Op::StoreLedCache as u8;
+pub const LAST_OP: u8 = Op::MulAdd as u8;
 
 /// A register-oriented I2C master for driver programs (FUG-107). The firmware
 /// backs it with the same ESP-IDF bus as the native sensor core; host tests
@@ -488,8 +507,9 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=StoreLedCache; guard the range then transmute.
-        if b <= Op::StoreLedCache as u8 {
+        // Op is contiguous over 0..=LAST_LOW_OP and 120..=LAST_OP (110..=119 are
+        // reserved); guard both ranges, then transmute.
+        if b <= LAST_LOW_OP || (Op::BinTop as u8..=LAST_OP).contains(&b) {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -2193,6 +2213,71 @@ fn run(
                 }
                 sp = base + n;
             }
+            Op::BinTop => {
+                let mode = cb!(pc);
+                let i = rd16!(pc + 1) as usize;
+                pc += 3;
+                if sp == 0 {
+                    fault!();
+                }
+                let b = bin_src(mode >> 2, i, prog, uniforms, state, locals);
+                stack[sp - 1] = bin_arith(mode, stack[sp - 1], b);
+            }
+            Op::BinPair => {
+                let mode = cb!(pc);
+                let ia = rd16!(pc + 1) as usize;
+                let ib = rd16!(pc + 3) as usize;
+                pc += 5;
+                let a = bin_src(mode >> 2, ia, prog, uniforms, state, locals);
+                let b = bin_src(mode >> 4, ib, prog, uniforms, state, locals);
+                push!(bin_arith(mode, a, b));
+            }
+            Op::PushConsts => {
+                let n = cb!(pc) as usize;
+                for j in 0..n {
+                    push!(prog.const_f32(rd16!(pc + 1 + 2 * j) as usize));
+                }
+                pc += 1 + 2 * n;
+            }
+            Op::LoadCtxLanes => {
+                let id = cb!(pc);
+                let src = cb!(pc + 1) as usize;
+                let k0 = cb!(pc + 2) as usize;
+                let m = cb!(pc + 3) as usize;
+                pc += 4;
+                let mut v = [0.0f32; 3];
+                let k = load_ctx(id, frame, led, graph, dist, &mut v);
+                // As if the k context values were pushed and then swizzled: lane
+                // `ci` of the swizzle window [top - src, top) reads either the
+                // stack below the context values or the values themselves.
+                let top = (sp + k).min(MAX_STACK);
+                let base = match top.checked_sub(src) {
+                    Some(b) => b,
+                    None => fault!(),
+                };
+                if m > 4 || base + m > MAX_STACK {
+                    fault!();
+                }
+                let mut tmp = [0.0f32; 4];
+                for (j, t) in tmp.iter_mut().enumerate().take(m) {
+                    let at = base + k0 + j;
+                    *t = if at >= sp { *v.get(at - sp).unwrap_or(&0.0) } else { stack[at] };
+                }
+                for (j, t) in tmp.iter().enumerate().take(m) {
+                    stack[base + j] = *t;
+                }
+                sp = base + m;
+            }
+            Op::MulAdd => {
+                let n = cb!(pc) as usize;
+                pc += 1;
+                let base = sub!(3 * n);
+                for i in 0..n {
+                    let bc = stack[base + n + i] * stack[base + 2 * n + i];
+                    stack[base + i] = stack[base + i] + bc;
+                }
+                sp = base + n;
+            }
             Op::Neg => {
                 let n = cb!(pc) as usize;
                 pc += 1;
@@ -3354,6 +3439,46 @@ fn run(
         }
     }
     ([0.0, 0.0, 0.0], None, outcome, Counters { instrs, stack_max: sp_max as u16 })
+}
+
+/// Operand source of a `BinTop`/`BinPair` (mode bits): the same reads as
+/// `PushConst` / `LoadLocal` / `LoadState` / `LoadUniform` (out of range = 0.0).
+#[inline(always)]
+fn bin_src(src: u8, i: usize, prog: &Program, uniforms: &[f32], state: &[f32], locals: &[f32]) -> f32 {
+    match src & 3 {
+        0 => prog.const_f32(i),
+        1 => *locals.get(i).unwrap_or(&0.0),
+        2 => *state.get(i).unwrap_or(&0.0),
+        _ => *uniforms.get(i).unwrap_or(&0.0),
+    }
+}
+
+/// The scalar float `Add`/`Sub`/`Mul`/`Div` (div by zero = 0.0), or with mode
+/// bit 6 the integer `AddI`/`SubI`/`MulI`/`MulFix`, exactly as in `run()`.
+#[inline(always)]
+fn bin_arith(mode: u8, a: f32, b: f32) -> f32 {
+    if mode & 0x40 != 0 {
+        let (x, y) = (a.to_bits() as i32, b.to_bits() as i32);
+        let r = match mode & 3 {
+            0 => x.wrapping_add(y),
+            1 => x.wrapping_sub(y),
+            2 => x.wrapping_mul(y),
+            _ => ((x as i64 * y as i64) >> 16) as i32,
+        };
+        return f32::from_bits(r as u32);
+    }
+    match mode & 3 {
+        0 => a + b,
+        1 => a - b,
+        2 => a * b,
+        _ => {
+            if b == 0.0 {
+                0.0
+            } else {
+                a / b
+            }
+        }
+    }
 }
 
 // --- soft-float helpers (no libm dependency; small polynomial approximations

@@ -889,6 +889,11 @@ fn classify(op: Op) -> Cov {
         Normalize => FloatWithTwin(NormalizeFix),
         Distance => FloatWithTwin(DistanceFix),
         Cmp => FloatWithTwin(CmpI),
+        // R8 operand-fused float arithmetic (fused PushConst/Load + Add..Div).
+        BinTop | BinPair => FloatWithTwin(AddI),
+        MulAdd => FloatWithTwin(AddI),
+        PushConsts => TypeAgnostic,
+        LoadCtxLanes => FloatWithTwin(LoadCtxFix),
         Hash1 => FloatWithTwin(HashFix),
         Hash3 => FloatWithTwin(Hash3Fix),
         Hsv2Rgb => FloatWithTwin(Hsv2RgbFix),
@@ -920,7 +925,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::StoreLedCache as u8) {
+    for b in (0..=(Op::StoreLedCache as u8)).chain(Op::BinTop as u8..=LAST_OP) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.
@@ -936,8 +941,8 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     }
     // Every soft-float compute/I-O op is paired; sanity-check we covered them all.
     assert_eq!(
-        float_with_twin, 23,
-        "expected 23 float ops each mapped to a fixed/integer twin"
+        float_with_twin, 27,
+        "expected 27 float ops each mapped to a fixed/integer twin"
     );
 }
 
