@@ -42,6 +42,7 @@ import sys
 import tempfile
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import hitl_ws
 import live_latency_core as core
@@ -157,7 +158,71 @@ def current_values(reply: dict) -> dict[int, list[float]]:
     return {int(c.get("slot", 0)): list(c.get("value", [])) for c in reply.get("current", [])}
 
 
-async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) -> dict[str, Any]:
+# Sends `n` OSC messages `/probe ,f <base+i>` to <ip>:9000 at `hz`, from the rig (the
+# DUT's LAN), like a DAW / TouchDesigner would. Inlined into an ssh command (base64).
+OSC_SENDER = """\
+import socket, struct, sys, time
+ip, n, hz, base = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+head = b"/probe\\0\\0,f\\0\\0"
+t0 = time.monotonic()
+for i in range(1, n + 1):
+    due = t0 + i / hz
+    d = due - time.monotonic()
+    if d > 0:
+        time.sleep(d)
+    s.sendto(head + struct.pack(">f", float(base + i)), (ip, 9000))
+print("osc-sent", n, round(time.monotonic() - t0, 3))
+"""
+
+
+def osc_sender_cmd(ip: str, n: int, hz: float, base: int) -> str:
+    b64 = base64.b64encode(OSC_SENDER.encode()).decode()
+    return f"echo {b64} | base64 -d > /tmp/osc_send.py && python3 /tmp/osc_send.py {ip} {n} {hz:g} {base}"
+
+
+async def osc_phase(c: "Conn", send_burst, args, base_rtt: float) -> tuple[str, list[str], str]:
+    """Native OSC on udp/9000 (netstack): a --osc-messages burst at --osc-hz on
+    /probe; values must be applied while the burst runs and the final one within
+    the settle budget after it ends (latest value per address, applied at frame
+    boundaries: no queue)."""
+    base = 1_000_000
+    n = args.osc_messages
+    seen: list[int] = []
+    burst = asyncio.ensure_future(asyncio.to_thread(send_burst, n, args.osc_hz, base))
+    while not burst.done():
+        r = await c.rpc({"type": "get_effect_uniforms"}, "effect_uniforms")
+        seen.append(int(round((current_values(r).get(0) or [0.0])[0])))
+        await asyncio.sleep(0.25)
+    await burst
+    t_done = time.monotonic()
+    final = None
+    while time.monotonic() - t_done < 5.0:
+        r = await c.rpc({"type": "get_effect_uniforms"}, "effect_uniforms")
+        final = int(round((current_values(r).get(0) or [0.0])[0]))
+        if final == base + n:
+            break
+        await asyncio.sleep(0.05)
+    settle_ms = (time.monotonic() - t_done) * 1000.0
+    mid = [v for v in seen if base < v < base + n]
+    reasons = []
+    if final != base + n:
+        reasons.append(f"OSC final value never applied (last {final}, want {base + n})")
+    elif settle_ms > base_rtt + 1500:
+        reasons.append(f"OSC final value took {settle_ms:.0f}ms after the burst")
+    if not mid:
+        reasons.append(f"no OSC value applied while the burst ran (probes {seen[:6]}...)")
+    status = core.FAIL if reasons else core.PASS
+    line = (
+        f"RESULT live_latency_osc verdict={status.upper()} messages={n} hz={args.osc_hz:g} "
+        f"settle={settle_ms:.0f}ms live_probes={len(mid)}/{len(seen)}"
+    )
+    return status, reasons, line
+
+
+async def drive(
+    url: str, insecure: bool, args, fxb: bytes, sender_kind: str, send_burst=None
+) -> dict[str, Any]:
     from hitl_led_capture import _connect_ws
 
     ctx = None
@@ -329,6 +394,15 @@ async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) ->
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     t_last = time.monotonic()
+    osc = None
+    if args.osc_messages > 0 and send_burst is not None and c.closed is None:
+        await asyncio.sleep(1.0)
+        try:
+            osc = await osc_phase(c, send_burst, args, base_rtt)
+        except Exception as e:  # noqa: BLE001
+            _log(f"[live] OSC phase could not run ({type(e).__name__}: {e}) — not gated")
+        if osc:
+            _log(osc[2])
     try:
         await asyncio.wait_for(sock.close(), 10)
     except Exception:  # noqa: BLE001
@@ -349,6 +423,10 @@ async def drive(url: str, insecure: bool, args, fxb: bytes, sender_kind: str) ->
         f"minutes={args.minutes:g} frames_sent={sent_frames} sender_stats={json.dumps(sender.stats)}"
     )
     line = core.result_line(status, sender_kind, fs, ls, os_, extra)
+    if osc and osc[0] == core.FAIL and status != core.SKIP:
+        status = core.FAIL
+        reasons = [*reasons, *osc[1]]
+        line = line.replace("verdict=PASS", "verdict=FAIL")
     _log(f"[live] reasons: {reasons}")
     return {
         "status": status,
@@ -365,12 +443,14 @@ def run_on_hardware(args) -> int:
     if not kinds or any(k not in ("live", "naive") for k in kinds):
         raise SystemExit(f"--sender: live and/or naive, got {args.sender!r}")
 
-    def run_all(url: str) -> dict[str, Any]:
+    def run_all(url: str, send_burst) -> dict[str, Any]:
         """Each sender on a fresh session (same flash). The gate is the `live`
         run when there is one; the others are reported, not gated (the A/B)."""
         results = {}
         for k in kinds:
-            results[k] = asyncio.run(drive(url, True, args, fxb, k))
+            # The OSC phase rides the gated (live) session only.
+            burst = send_burst if k == "live" else None
+            results[k] = asyncio.run(drive(url, True, args, fxb, k, burst))
             _log(results[k]["result_line"])
         gated = results.get("live") or results[kinds[0]]
         if len(results) > 1:
@@ -378,7 +458,12 @@ def run_on_hardware(args) -> int:
         return gated
 
     if args.device_ws:
-        res = run_all(args.device_ws)
+        ip = urlparse(args.device_ws).hostname
+
+        def local_burst(n: int, hz: float, base: int) -> None:
+            subprocess.run(osc_sender_cmd(ip, n, hz, base), shell=True, check=True)
+
+        res = run_all(args.device_ws, local_burst)
         return 1 if res["status"] == core.FAIL else 0
 
     from hitl_client import Reservation
@@ -416,7 +501,14 @@ def run_on_hardware(args) -> int:
                 return 0
         host, port = dut_target(redirect, "wss")
         with r.forward(host, port) as local_port:
-            result = run_all(f"wss://localhost:{local_port}/ws")
+
+            def rig_burst(n: int, hz: float, base: int) -> None:
+                p = r.ssh(osc_sender_cmd(host, n, hz, base), capture=True, timeout=n / hz + 60)
+                _log(
+                    f"[osc] rig sender: {(p.stdout or '').strip()} {(p.stderr or '').strip()[-200:]}"
+                )
+
+            result = run_all(f"wss://localhost:{local_port}/ws", rig_burst)
     finally:
         r.release()
         _log(result.get("result_line", ""))
@@ -454,6 +546,13 @@ def main() -> int:
     ap.add_argument("--probe-s", type=float, default=0.25, help="echo period")
     ap.add_argument("--probe-timeout", type=float, default=15.0)
     ap.add_argument("--warmup-s", type=float, default=5.0)
+    ap.add_argument(
+        "--osc-messages",
+        type=int,
+        default=2000,
+        help="after the live stream, an OSC burst on udp/9000 from the rig (0 = skip)",
+    )
+    ap.add_argument("--osc-hz", type=float, default=400.0)
     ap.add_argument("--settle", type=float, default=hitl_ws.CONNECT_SETTLE)
     ap.add_argument(
         "--settle-fx", type=float, default=4.0, help="autoscaler settle before the stream"
