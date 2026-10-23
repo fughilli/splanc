@@ -1112,3 +1112,35 @@ export function confidenceOf(lowMs: number, highMs: number, budgetMs: number): C
 }
 
 export { NAME_TO_CODE, UN_MATH_NAMES, BIN_MATH_NAMES };
+
+/** One decoded instruction, for static analyses over the bytecode (e.g.
+ * `perfFindings.ts`). `target` is the absolute branch/call target (a branch's
+ * relative offset resolved), else null. */
+export interface DecodedOp {
+  pc: number;
+  name: OpcodeName;
+  /** Operand byte `i` (after the opcode byte); 0 past the end. */
+  operand: (i: number) => number;
+  /** PC of the following instruction. */
+  next: number;
+  target: number | null;
+  /** Vector lane count from the size operand (1 for scalar ops). */
+  lanes: number;
+}
+
+/** Decode the instruction at `pc` with the same operand widths the walker
+ * uses; null on an unknown opcode or a truncated stream. */
+export function decodeOp(code: Uint8Array, pc: number): DecodedOp | null {
+  const name = OPCODE_NAMES[code[pc] ?? 0xff];
+  if (name === undefined) return null;
+  const meta = OP_META[name]!;
+  const o = pc + 1;
+  let next = o + meta.operandBytes;
+  if (meta.swizzleTail) next += code[o + 1] ?? 0;
+  if (next > code.length) return null;
+  let target: number | null = null;
+  if (meta.branch) target = next + rdI16(code, o + (meta.relAt ?? 0));
+  else if (meta.call) target = rdU16(code, o);
+  const lanes = meta.lanesAt >= 0 ? Math.max(1, code[o + meta.lanesAt] ?? 1) : 1;
+  return { pc, name, operand: (i) => code[o + i] ?? 0, next, target, lanes };
+}

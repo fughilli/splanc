@@ -1,0 +1,66 @@
+{
+  "name": "skill2__sonnet__p13",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Starfield twinkle: each LED is an independent star, dark most of the time\n// with brief flares. Per-LED hashes give unique phases and twinkle rates;\n// fixed-point sin (integer LUT, ~150 cycles) keeps the per-LED cost low.\n// Inactive LEDs return black immediately, further halving average work.\n\nuniform float speed   : 0.1 .. 4.0 = 1.2;   // master twinkle rate\nuniform float density : 0.1 .. 1.0 = 0.65;  // fraction of LEDs that are stars\nuniform float depth   : 0.0 .. 1.0 = 0.85;  // twinkle swing (0=steady glow, 1=full blink)\nuniform float spread  : 0.0 .. 1.0 = 0.30;  // colour spread cool\u2192warm\nuniform vec3  cold    : color = 0.72, 0.82, 1.0;   // blue-white star\nuniform vec3  warm    : color = 1.0,  0.75, 0.38;  // warm-orange star\n\nstate fixed t;\n\nvoid update() {\n  // Advance a shared 0..1 phase; each LED multiplies it by its own rate,\n  // giving independent twinkle speeds without storing 500 phases.\n  t = fract(t + fixed(dt * speed * 0.08));\n}\n\nvec3 shade(Led led) {\n  // Three per-LED randoms \u2014 compiler caches hash(float(led.idx)) variants.\n  float h0 = hash(float(led.idx));              // on/off seed + phase\n  float h1 = hash(float(led.idx) * 1.618);      // individual rate\n  float h2 = hash(float(led.idx) * 2.718);      // colour tint\n\n  // Early-out for the (~35 %) dark gaps between stars.\n  if (h0 > density) return vec3(0.0, 0.0, 0.0);\n\n  // Individual twinkle rate 0.2 .. 1.0\u00d7 base speed.\n  fixed rate  = fixed(0.2) + fixed(h1) * fixed(0.8);\n  // Phase offset so every star is out of sync with its neighbours.\n  fixed phase = fixed(h0);\n  fixed angle = fract(t * rate + phase);\n\n  // sin in turns (-1..1) \u2192 0..1; squaring pushes most values near zero\n  // and keeps peaks sharp \u2014 the star flares briefly then dims again.\n  fixed s     = sin(angle) * fixed(0.5) + fixed(0.5);\n  fixed b     = s * s;\n\n  // depth=0: constant glow; depth=1: full on/off swing.\n  fixed out_b = fixed(1.0) - fixed(depth) + b * fixed(depth);\n\n  // Colour: smooth spread between cool and warm star tones.\n  float tint = h2 * spread;\n  return mix(cold, warm, tint) * float(out_b);\n}\n```",
+      "is_error": false,
+      "session_id": "38fcb935-2d1f-42e3-84ef-aa80901f6df4",
+      "wall_s": 165.3,
+      "duration_api_ms": 163459,
+      "cost_usd": 0.16797510000000002,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 10771,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 501
+      },
+      "thinking_tokens": 9999,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 28,
+          "col": 21,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler requires braces on `if` bodies. Fix that one line, nothing else.\n\n```glsl\n// Starfield twinkle: each LED is an independent star, dark most of the time\n// with brief flares. Per-LED hashes give unique phases and twinkle rates;\n// fixed-point sin (integer LUT, ~150 cycles) keeps the per-LED cost low.\n// Inactive LEDs return black immediately, further halving average work.\n\nuniform float speed   : 0.1 .. 4.0 = 1.2;   // master twinkle rate\nuniform float density : 0.1 .. 1.0 = 0.65;  // fraction of LEDs that are stars\nuniform float depth   : 0.0 .. 1.0 = 0.85;  // twinkle swing (0=steady glow, 1=full blink)\nuniform float spread  : 0.0 .. 1.0 = 0.30;  // colour spread cool\u2192warm\nuniform vec3  cold    : color = 0.72, 0.82, 1.0;   // blue-white star\nuniform vec3  warm    : color = 1.0,  0.75, 0.38;  // warm-orange star\n\nstate fixed t;\n\nvoid update() {\n  // Advance a shared 0..1 phase; each LED multiplies it by its own rate,\n  // giving independent twinkle speeds without storing 500 phases.\n  t = fract(t + fixed(dt * speed * 0.08));\n}\n\nvec3 shade(Led led) {\n  // Three per-LED randoms \u2014 compiler caches hash(float(led.idx)) variants.\n  float h0 = hash(float(led.idx));              // on/off seed + phase\n  float h1 = hash(float(led.idx) * 1.618);      // individual rate\n  float h2 = hash(float(led.idx) * 2.718);      // colour tint\n\n  // Early-out for the (~35 %) dark gaps between stars.\n  if (h0 > density) { return vec3(0.0, 0.0, 0.0); }\n\n  // Individual twinkle rate 0.2 .. 1.0\u00d7 base speed.\n  fixed rate  = fixed(0.2) + fixed(h1) * fixed(0.8);\n  // Phase offset so every star is out of sync with its neighbours.\n  fixed phase = fixed(h0);\n  fixed angle = fract(t * rate + phase);\n\n  // sin in turns (-1..1) \u2192 0..1; squaring pushes most values near zero\n  // and keeps peaks sharp \u2014 the star flares briefly then dims again.\n  fixed s     = sin(angle) * fixed(0.5) + fixed(0.5);\n  fixed b     = s * s;\n\n  // depth=0: constant glow; depth=1: full on/off swing.\n  fixed out_b = fixed(1.0) - fixed(depth) + b * fixed(depth);\n\n  // Colour: smooth spread between cool and warm star tones.\n  float tint = h2 * spread;\n  return mix(cold, warm, tint) * float(out_b);\n}\n```",
+      "is_error": false,
+      "session_id": "38fcb935-2d1f-42e3-84ef-aa80901f6df4",
+      "wall_s": 8.3,
+      "duration_api_ms": 170617,
+      "cost_usd": 0.2545335,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 892,
+        "cache_read_input_tokens": 11818,
+        "cache_creation_input_tokens": 11604
+      },
+      "thinking_tokens": 98,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1194
+    }
+  ],
+  "started": "2026-10-23T00:35:17",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.4225,
+  "total_wall_s": 173.6,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p13.fx"
+}

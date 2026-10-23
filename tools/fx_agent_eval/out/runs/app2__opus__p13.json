@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p13",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p13",
+  "prompt": "starfield twinkle",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Starfield twinkle \u2014 sparse stars that fade in and out at their own pace.\nuniform float speed      : 0.0 .. 3.0 = 0.6;\nuniform float density    : 0.0 .. 1.0 = 0.35;\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform float sky        : 0.0 .. 0.2 = 0.02;\nuniform float hue        : 0.0 .. 1.0 = 0.6;\nuniform float hue_spread : 0.0 .. 0.5 = 0.12;\nuniform float tint       : 0.0 .. 1.0 = 0.25;\n\nstate fixed ph;\nstate fixed dens;\nstate fixed bri;\nstate fixed bg;\nstate fixed hb;\nstate fixed hs;\nstate fixed sat;\n\nvoid update() {\n  // Advance the shared phase in turns. Each star multiplies it by an integer,\n  // so the wrap at 1.0 stays seamless.\n  ph   = fract(ph + fixed(dt * speed * 0.25));\n  dens = fixed(density);\n  bri  = fixed(brightness);\n  bg   = fixed(sky);\n  hb   = fixed(hue);\n  hs   = fixed(hue_spread);\n  sat  = fixed(tint);\n}\n\nvec3 shade(Led led) {\n  // Per-LED random seeds. The compiler caches these once per LED.\n  fixed r1 = fixed(hash(float(led.idx)));\n  fixed r2 = fixed(hash(float(led.idx) * 17.13 + 3.7));\n  fixed r3 = fixed(hash(float(led.idx) * 5.31 + 11.9));\n\n  // Each star has its own integer rate (1..4) and phase offset.\n  fixed k = floor(r3 * fixed(4.0)) + fixed(1.0);\n  fixed t = fract(ph * k + r1);\n\n  // Sharpen the sine into a short twinkle.\n  fixed w = max(sin(t), fixed(0.0));\n  w = w * w;\n  w = w * w;\n\n  // Only a fraction of the LEDs are stars.\n  fixed star = step(r2, dens);\n  fixed v = min(bg + w * star * bri, fixed(1.0));\n\n  // Give each star a slight colour variation around the chosen hue.\n  fixed h = fract(hb + (r3 - fixed(0.5)) * hs * fixed(2.0));\n  return hsv2rgb(h, sat * star, v);\n}\n```",
+      "is_error": false,
+      "session_id": "a66fce94-fced-4925-8b81-b61ed5c649bc",
+      "wall_s": 36.0,
+      "duration_api_ms": 22282,
+      "cost_usd": 0.04954700000000001,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2167,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 611
+      },
+      "thinking_tokens": 1319,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1265
+    }
+  ],
+  "started": "2026-10-23T00:05:58",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0495,
+  "total_wall_s": 36.0,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p13.fx"
+}

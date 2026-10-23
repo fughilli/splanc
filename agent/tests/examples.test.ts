@@ -15,7 +15,13 @@ import { yFixture } from "./fakePlayer";
 
 const WASM_ROOT = process.env["AGENT_WASM_ROOT"] ?? "wasm";
 const EXAMPLES = process.env["AGENT_EXAMPLES"] ?? join(process.cwd(), "skill/examples");
-const ANIMATED = new Set(["segment_pulses.fx", "noise_field.fx", "height_gradient.fx"]);
+const ANIMATED = new Set([
+  "segment_pulses.fx",
+  "noise_field.fx",
+  "height_gradient.fx",
+  "rainbow_spin.fx",
+  "plasma_fixed.fx",
+]);
 
 before(async () => {
   await loadFxHost(WASM_ROOT);

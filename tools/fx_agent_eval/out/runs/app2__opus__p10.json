@@ -1,0 +1,66 @@
+{
+  "name": "app2__opus__p10",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Matrix-style green rain falling down the cylinder.\n// 16 angular columns, each with its own fall phase and speed.\nuniform float speed   : 0.1 .. 3.0 = 1.0;\nuniform float trail   : 0.05 .. 1.0 = 0.35;\nuniform float hue     : 0.0 .. 1.0 = 0.33;\nuniform float shimmer : 0.0 .. 1.0 = 0.45;\nuniform float height  : 0.1 .. 1.0 = 0.30;\nuniform float base    : -0.5 .. 0.5 = 0.0;\n\nstate fixed ph[16];\nstate fixed spd[16];\nstate bool inited;\nstate fixed invTrail;\nstate fixed invH;\nstate fixed y0;\nstate fixed hh;\nstate fixed shim;\nstate fixed gph;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      ph[i]  = fixed(hash(float(i) * 1.7 + 0.3));\n      spd[i] = fixed(0.35 + hash(float(i) * 5.3 + 2.0) * 0.65);\n    }\n    inited = true;\n  }\n  fixed step_ = fixed(dt * speed * 0.4);\n  for (int i = 0; i < 16; i = i + 1) {\n    ph[i] = fract(ph[i] + spd[i] * step_);\n  }\n  invTrail = fixed(1.0 / trail);\n  invH = fixed(1.0 / height);\n  y0 = fixed(base);\n  hh = fixed(hue);\n  shim = fixed(shimmer);\n  gph = fract(gph + fixed(dt * 3.1));\n}\n\nvec3 shade(Led led) {\n  // angle around the vertical axis in turns, 0..1 (cached per LED)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  int col = min(int(ang * fixed(16.0)), 15);\n  fixed yn = (fixed(led.pos.y) - y0) * invH;\n\n  // head falls from above the top (1.5) to below the bottom (-1.0)\n  fixed head = fixed(1.5) - ph[col] * fixed(2.5);\n  fixed d = yn - head;          // distance above the head = trail region\n  fixed t = d * invTrail;\n  if (d < fixed(0.0) || t > fixed(1.0)) {\n    return vec3(0.0, 0.0, 0.0);\n  }\n  fixed v = fixed(1.0) - t;\n  v = v * v;\n\n  // glyph shimmer: per-cell flicker\n  fixed cell = floor(yn * fixed(24.0));\n  fixed fl = fixed(0.5) + fixed(0.5) * sin(cell * fixed(0.618) + fixed(col) * fixed(0.137) + gph);\n  fixed g = fixed(1.0) - shim * fl;\n\n  // white-hot head, saturated green tail\n  fixed sat = clamp(d * fixed(20.0), fixed(0.15), fixed(0.95));\n  return hsv2rgb(hh, sat, v * g);\n}\n```",
+      "is_error": false,
+      "session_id": "01c92ceb-d813-4fdb-bbcd-46c4fa8c8289",
+      "wall_s": 40.1,
+      "duration_api_ms": 29468,
+      "cost_usd": 0.065263,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2952,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 1863,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 8,
+          "col": 25,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```\n// Matrix-style green rain falling down the cylinder.\n// 16 angular columns, each with its own fall phase and speed.\nuniform float speed   : 0.1 .. 3.0 = 1.0;\nuniform float trail   : 0.05 .. 1.0 = 0.35;\nuniform float hue     : 0.0 .. 1.0 = 0.33;\nuniform float shimmer : 0.0 .. 1.0 = 0.45;\nuniform float height  : 0.1 .. 1.0 = 0.30;\nuniform float base    : 0.0 .. 1.0 = 0.5;\n\nstate fixed ph[16];\nstate fixed spd[16];\nstate bool inited;\nstate fixed invTrail;\nstate fixed invH;\nstate fixed y0;\nstate fixed hh;\nstate fixed shim;\nstate fixed gph;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      ph[i]  = fixed(hash(float(i) * 1.7 + 0.3));\n      spd[i] = fixed(0.35 + hash(float(i) * 5.3 + 2.0) * 0.65);\n    }\n    inited = true;\n  }\n  fixed step_ = fixed(dt * speed * 0.4);\n  for (int i = 0; i < 16; i = i + 1) {\n    ph[i] = fract(ph[i] + spd[i] * step_);\n  }\n  invTrail = fixed(1.0 / trail);\n  invH = fixed(1.0 / height);\n  y0 = fixed(base - 0.5);\n  hh = fixed(hue);\n  shim = fixed(shimmer);\n  gph = fract(gph + fixed(dt * 3.1));\n}\n\nvec3 shade(Led led) {\n  // angle around the vertical axis in turns, 0..1 (cached per LED)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  int col = min(int(ang * fixed(16.0)), 15);\n  fixed yn = (fixed(led.pos.y) - y0) * invH;\n\n  // head falls from above the top (1.5) to below the bottom (-1.0)\n  fixed head = fixed(1.5) - ph[col] * fixed(2.5);\n  fixed d = yn - head;          // distance above the head = trail region\n  fixed t = d * invTrail;\n  if (d < fixed(0.0) || t > fixed(1.0)) {\n    return vec3(0.0, 0.0, 0.0);\n  }\n  fixed v = fixed(1.0) - t;\n  v = v * v;\n\n  // glyph shimmer: per-cell flicker\n  fixed cell = floor(yn * fixed(24.0));\n  fixed fl = fixed(0.5) + fixed(0.5) * sin(cell * fixed(0.618) + fixed(col) * fixed(0.137) + gph);\n  fixed g = fixed(1.0) - shim * fl;\n\n  // white-hot head, saturated green tail\n  fixed sat = clamp(d * fixed(20.0), fixed(0.15), fixed(0.95));\n  return hsv2rgb(hh, sat, v * g);\n}\n```",
+      "is_error": false,
+      "session_id": "01c92ceb-d813-4fdb-bbcd-46c4fa8c8289",
+      "wall_s": 24.3,
+      "duration_api_ms": 41190,
+      "cost_usd": 0.1241846,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1228,
+        "cache_read_input_tokens": 7168,
+        "cache_creation_input_tokens": 4115
+      },
+      "thinking_tokens": 134,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1494
+    }
+  ],
+  "started": "2026-10-23T00:05:29",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1894,
+  "total_wall_s": 64.4,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p10.fx"
+}

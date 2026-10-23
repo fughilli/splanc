@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p12",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing meditation glow \u2014 slow rhythmic pulse on a helix cylinder lamp.\n// Inhale: light blooms upward and shifts to cool blue.\n// Exhale: warmth pools at the base and dims gently.\n// All per-LED arithmetic in fixed point (no FPU on the C6).\n\nuniform float bpm   : 2.0 .. 18.0 = 6.0;        // breaths per minute (6 \u2248 deep meditation)\nuniform vec3  c_in  : color = 0.40, 0.72, 1.0;   // inhale: soft cool blue-white\nuniform vec3  c_out : color = 1.0,  0.48, 0.10;  // exhale: warm amber\nuniform float lo    : 0.04 .. 0.40 = 0.14;       // dim floor at full exhale\nuniform float hi    : 0.40 .. 1.0  = 0.92;       // peak brightness at full inhale\nuniform float rise  : 0.0  .. 1.0  = 0.60;       // how far the glow wells upward on inhale\nuniform float bloom : 0.0  .. 1.0  = 0.35;       // subtle angular shimmer depth on the helix\n\n// Per-frame state \u2014 all computed once in update(), read-only in shade()\nstate fixed phase;   // 0..1 cycle counter\nstate fixed b;       // breath envelope: 0 = full exhale, 1 = full inhale\nstate fixed inv_b;   // 1 - b (hoisted so shade() avoids a redundant sub)\nstate fixed brt;     // base brightness for this frame\nstate fixed blo;\nstate fixed bhi;\nstate fixed rr;\nstate fixed blm;\nstate float  bf;     // float(b) for the vec3 colour mix \u2014 one conversion per frame\n\nvoid update() {\n  phase = fract(phase + fixed(dt * bpm / 60.0));\n  // sin of a fixed angle is in TURNS (integer LUT, ~150 cycles).\n  // Peaks at phase = 0.25 (full inhale), troughs at 0.75 (full exhale).\n  b     = fixed(0.5) + sin(phase) * fixed(0.5);\n  inv_b = fixed(1.0) - b;\n  blo   = fixed(lo);\n  bhi   = fixed(hi);\n  brt   = blo + (bhi - blo) * b;\n  rr    = fixed(rise);\n  blm   = fixed(bloom);\n  bf    = float(b);\n}\n\nvec3 shade(Led led) {\n  fixed h = fixed(led.uv.y);             // height: 0 = bottom LED, 1 = top LED\n\n  // Vertical shaping: on exhale the glow pools at the bottom (upper LEDs dim);\n  // on inhale it fills completely.  Clamped so nothing drops fully dark.\n  fixed vert   = fixed(1.0) - rr * (fixed(1.0) - h) * inv_b;\n  fixed bright = brt * clamp(vert, fixed(0.15), fixed(1.0));\n\n  // Very subtle angular shimmer along each helix wrap \u2014 gives the cylinder depth\n  // without distracting from the breathing rhythm.\n  fixed shimmer = sin(fixed(led.s) + fixed(float(led.seg) * 0.125)) * blm * fixed(0.5);\n  bright = clamp(bright + shimmer * b, fixed(0.0), fixed(1.0));\n\n  // Colour blends from warm amber (exhale) to cool blue (inhale).\n  return mix(c_out, c_in, bf) * float(bright);\n}\n```",
+      "is_error": false,
+      "session_id": "39974816-0393-44b1-8e01-ec88333996e2",
+      "wall_s": 133.6,
+      "duration_api_ms": 128568,
+      "cost_usd": 0.13778310000000002,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 8757,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 504
+      },
+      "thinking_tokens": 7817,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1388
+    }
+  ],
+  "started": "2026-10-23T00:34:13",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1378,
+  "total_wall_s": 133.6,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p12.fx"
+}

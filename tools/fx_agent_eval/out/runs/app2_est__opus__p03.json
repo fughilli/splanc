@@ -1,0 +1,42 @@
+{
+  "name": "app2_est__opus__p03",
+  "variant": "app2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "The estimate is over budget because `shade()` evaluates five fixed-point sines for every LED. Four of those sines depend only on the LED's angle and the frame phases. They are the curtain, the warp, the hem edge and the rays.\n\nThis version computes them once per frame in `update()` into two 128-bin angle tables (stored in textures):\n- `tGlow` holds curtain \u00d7 rays \u00d7 brightness.\n- `tEdge` holds the hem height.\n\nEach LED then reads its bin directly, with no interpolation. This gives the same result as evaluating the original formulas at an angle at most 1/256 turn (about 1.4\u00b0) away from the LED's true angle.\n\nWhat is left per LED is the height ramps (hem and fade), the glow lift and the hue.\n\nOther changes:\n- The sharpness remap is folded into one multiply-add.\n- The hue clamp is rewritten as one clamp with the same result, so the `fract` is dropped.\n\nBy my rough cycle counts this lands around 25\u201327 ms; I haven't run `estimate_effect` on it, so that number still needs checking. The uniforms and the look are unchanged.\n\n```\nuniform float speed      : 0.0 .. 2.0 = 0.35;\nuniform float folds      : 2.0 .. 9.0 = 4.0;\nuniform float sharpness  : 1.0 .. 3.0 = 2.0;\nuniform float brightness : 0.0 .. 1.0 = 0.9;\nuniform float hue_low    : 0.0 .. 1.0 = 0.36;\nuniform float hue_high   : 0.0 .. 1.0 = 0.82;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed ph3;\nstate fixed ph4;\nstate fixed hLo;\nstate fixed hS14;\nstate fixed hMin;\nstate fixed hMax;\n\n// per-frame angular tables (128 bins around the lamp, bin i centred at i/128 - 0.5 turns)\ntexture fixed tGlow(128, 1);   // curtain * rays * brightness\ntexture fixed tEdge(128, 1);   // height of the wavy hem\n\nvoid update() {\n  // slow phases in TURNS\n  ph1 = fract(ph1 + fixed(dt * speed * 0.050));\n  ph2 = fract(ph2 + fixed(dt * speed * 0.031));\n  ph3 = fract(ph3 + fixed(dt * speed * 0.023));\n  ph4 = fract(ph4 + fixed(dt * speed * 0.400));\n  // integer fold counts so the curtain wraps seamlessly around the cylinder\n  fixed k1 = fixed(floor(folds));\n  fixed k2 = fixed(floor(folds * 0.5) + 1.0);\n  fixed k3 = fixed(floor(folds) + 1.0);\n  fixed rayK = k3 * fixed(3.0);\n  fixed halfSharp = fixed(sharpness * 0.5);\n  fixed bri = fixed(brightness);\n\n  hLo  = fixed(hue_low);\n  hS14 = fixed((hue_high - hue_low) * 1.4);\n  hMin = fixed(min(hue_low, hue_high));\n  hMax = fixed(max(hue_low, hue_high));\n\n  fixed a = fixed(-0.5);\n  for (int i = 0; i < 128; i = i + 1) {\n    fixed ak2 = a * k2;\n    // folded, drifting curtain: domain-warped angular wave\n    fixed warp = sin(ak2 + ph2) * fixed(0.14) + sin(a * k3 - ph3) * fixed(0.07);\n    fixed cur = clamp(sin(a * k1 + ph1 + warp) * halfSharp + fixed(0.5), fixed(0.0), fixed(1.0));\n    // faint vertical rays shimmering upward\n    fixed ray = sin(a * rayK + warp + ph4) * fixed(0.2) + fixed(0.8);\n    tGlow[i] = cur * cur * ray * bri;\n    // wavy lower hem of the curtain\n    tEdge[i] = fixed(0.22) + sin(ak2 - ph1 + warp) * fixed(0.10);\n    a = a + fixed(0.0078125);\n  }\n}\n\nvec3 shade(Led led) {\n  // nearest angular bin (per-LED invariant, cached by the compiler)\n  int bin = int(fract(atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.50390625)) * fixed(128.0));\n  // normalised height 0..1 over the 0.30 m lamp\n  fixed h = clamp(fixed(led.pos.y) * fixed(3.333), fixed(0.0), fixed(1.0));\n\n  fixed above = h - tEdge[bin];\n  fixed hem  = clamp(above * fixed(10.0), fixed(0.0), fixed(1.0));\n  fixed fade = clamp(fixed(1.0) - above * fixed(1.3), fixed(0.0), fixed(1.0));\n\n  fixed v = tGlow[bin] * hem * fade;\n  v = v * (fixed(2.0) - v);   // gentle lift of the glow\n\n  // green at the hem, shifting toward violet/pink as it rises\n  fixed hue = clamp(hLo + above * hS14, hMin, hMax);\n  return hsv2rgb(hue, fixed(0.85), v);\n}\n```",
+      "is_error": false,
+      "session_id": "13250a07-60f8-4079-a00d-a535db049743",
+      "wall_s": 159.9,
+      "duration_api_ms": 157054,
+      "cost_usd": 0.328683,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 15603,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 1913
+      },
+      "thinking_tokens": 13762,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1488
+    }
+  ],
+  "started": "2026-10-23T00:42:11",
+  "base_program": "firmware/fx_perf_bench/agent/app2__opus__p03.fx",
+  "base_estimate": [43.62, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3287,
+  "total_wall_s": 159.9,
+  "program": "firmware/fx_perf_bench/agent/app2_est__opus__p03.fx"
+}

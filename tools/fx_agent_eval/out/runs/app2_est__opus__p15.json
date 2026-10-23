@@ -1,0 +1,42 @@
+{
+  "name": "app2_est__opus__p15",
+  "variant": "app2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "Three main savings bring the cost per LED down:\n\n- **Cached angle multiples.** The angle multiples (\u00d72, \u00d73, \u00d75, \u00d7\u22124) are now four per-LED-invariant locals. The compiler computes them once per LED and caches them, so they no longer cost multiplies every frame. The \u00d71 angle wave is rebuilt as `a5 + a4n` (5a \u2212 4a = a), so it stays exactly the same.\n- **Height scales moved to `update()`.** The height scales are multiplied into state there, so each wave is just `y * kXX`.\n- **Cheaper colour stage.** Clamps whose lower bound can never trigger became `max`/`min`. The saturation ramp now uses a scale computed in `update()`.\n\nThe look, all the wave frequencies and all the uniforms are unchanged. I couldn't run `estimate_performance` here, so the new frame time is unconfirmed. If it's still a bit over 33.3 ms, the next thing to cut is one of the five `sin` calls per LED.\n\n```\n// Water caustics shimmer: moving bright lines on a cylinder, built from warped interference waves.\n// Per-LED maths is all in fixed point. Angles are in TURNS.\n\nuniform float speed     : 0.0 .. 3.0  = 0.8;\nuniform float density   : 2.0 .. 30.0 = 10.0;   // wave turns per metre of height\nuniform float sharpness : 0.5 .. 6.0  = 2.2;    // thinner, crisper caustic lines\nuniform float warp      : 0.0 .. 0.4  = 0.18;   // ripple distortion of the lines\nuniform float hue       : 0.0 .. 1.0  = 0.53;   // water colour\nuniform float depth     : 0.0 .. 0.6  = 0.18;   // ambient brightness of the water\nuniform float glow      : 0.0 .. 1.0  = 0.85;   // brightness of the caustic highlights\nuniform float sat       : 0.0 .. 1.0  = 0.85;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed p5;\nstate fixed kh;    // height scale for warp 1\nstate fixed k13;   // height scale for warp 2 (x1.3)\nstate fixed k07;   // height scales for the three waves\nstate fixed k11;\nstate fixed k19;\nstate fixed kw;\nstate fixed ks;\nstate fixed fh;\nstate fixed fs;\nstate fixed fs6;   // sat * 0.6: highlight whitening\nstate fixed fb;\nstate fixed fg;\n\nvoid update() {\n  float t = dt * speed;\n  p1 = fract(p1 + fixed(t * 0.23));\n  p2 = fract(p2 + fixed(t * 0.31));\n  p3 = fract(p3 + fixed(t * 0.41));\n  p4 = fract(p4 + fixed(t * 0.37));\n  p5 = fract(p5 + fixed(t * 0.29));\n  kh  = fixed(density);\n  k13 = fixed(density * 1.3);\n  k07 = fixed(density * 0.7);\n  k11 = fixed(density * 1.1);\n  k19 = fixed(density * 1.9);\n  kw = fixed(warp);\n  ks = fixed(sharpness);\n  fh = fixed(hue);\n  fs = fixed(sat);\n  fs6 = fixed(sat * 0.6);\n  fb = fixed(depth);\n  fg = fixed(glow);\n}\n\nvec3 shade(Led led) {\n  // Angular multiples depend only on the LED: written directly so the compiler caches them (4 slots).\n  fixed a2  = atan2(fixed(led.pos.z), fixed(led.pos.x)) * fixed(2.0);\n  fixed a3  = atan2(fixed(led.pos.z), fixed(led.pos.x)) * fixed(3.0);\n  fixed a5  = atan2(fixed(led.pos.z), fixed(led.pos.x)) * fixed(5.0);\n  fixed a4n = atan2(fixed(led.pos.z), fixed(led.pos.x)) * fixed(-4.0);\n  fixed y = fixed(led.pos.y);\n\n  // Slow warp fields. Integer angular frequencies keep the pattern seamless around the cylinder.\n  fixed w1 = sin(a3 + y * kh + p1) * kw;\n  fixed w2 = sin(a2 - y * k13 + p2) * kw;\n\n  // Three interfering waves. The bright caustic lines sit near where their sum crosses zero.\n  fixed s1 = sin(a5 + y * k07 + w1 + p3);\n  fixed s2 = sin(a4n + y * k11 + w2 + p4);\n  fixed s3 = sin(a5 + a4n + y * k19 + w1 - w2 + p5);   // a5 + a4n == 1 x angle\n\n  fixed c = abs(s1 + s2 + s3);\n  fixed l = max(fixed(1.0) - c * ks, fixed(0.0));      // c >= 0, so only the lower bound matters\n  l = l * l;\n\n  fixed v = min(fb + l * fg, fixed(1.0));               // all terms >= 0\n  fixed hh = fract(fh - l * fixed(0.04));\n  fixed ss = fs - l * fs6;                               // highlights wash toward white\n  return hsv2rgb(hh, ss, v);\n}\n```",
+      "is_error": false,
+      "session_id": "6ae80e90-2b35-4f5d-8b28-8f0916b573ea",
+      "wall_s": 59.7,
+      "duration_api_ms": 57243,
+      "cost_usd": 0.126831,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 5532,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 1859
+      },
+      "thinking_tokens": 3680,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1863
+    }
+  ],
+  "started": "2026-10-23T00:43:04",
+  "base_program": "firmware/fx_perf_bench/agent/app2__opus__p15.fx",
+  "base_estimate": [40.2, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1268,
+  "total_wall_s": 59.7,
+  "program": "firmware/fx_perf_bench/agent/app2_est__opus__p15.fx"
+}

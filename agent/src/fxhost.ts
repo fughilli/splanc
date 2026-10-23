@@ -105,6 +105,9 @@ async function withToolchain<T>(tc: Toolchain | undefined, fn: () => Promise<T>)
 export interface CompileOutcome {
   ok: boolean;
   diagnostics: { line: number; col: number; msg: string }[];
+  /** Perf warnings (compiles, but slower than it should be); [] from compilers
+   * that predate them. */
+  warnings: { line: number; col: number; msg: string }[];
   uniforms: ManifestUniform[];
   bytecodeBytes: number;
   textures: FxbTexture[];
@@ -117,6 +120,7 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
   return {
     ok: r.ok,
     diagnostics: r.diagnostics,
+    warnings: r.warnings ?? [],
     uniforms: r.uniforms as unknown as ManifestUniform[],
     bytecodeBytes: r.bytecode.length,
     textures: r.ok ? parseFxbTextures(r.bytecode) : [],

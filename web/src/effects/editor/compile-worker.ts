@@ -31,6 +31,8 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  /** Perf warnings JSON; absent on compiler builds that predate them. */
+  readonly warnings?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -69,6 +71,7 @@ function toCompiled(r: CompilerResult): FxCompiled {
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    warnings: typeof r.warnings === "string" ? (JSON.parse(r.warnings) as FxDiagnostic[]) : [],
   };
 }
 

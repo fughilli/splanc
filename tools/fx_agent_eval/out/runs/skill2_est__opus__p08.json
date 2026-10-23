@@ -1,0 +1,75 @@
+{
+  "name": "skill2_est__opus__p08",
+  "variant": "skill2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Lava lamp: soft wax blobs rise and sink slowly around the cylinder.\n// Blobs live on the lamp's surface (angle around the axis x height),\n// merge like metaballs, and glow over a warm liquid that is hotter at the\n// bottom. Per-LED maths is fixed point; blob paths are computed in update().\n//\n// Fit to budget: the 4-blob loop is unrolled into scalar state (no array\n// indexing), every per-blob constant (aspect^2/r^2, 0.64/r^2, angle offset,\n// vertical reach) is folded in update(), each blob is rejected early by a\n// cheap vertical test before any angular maths, and the LED's angle/height\n// are cached in buffers after the first frames (no per-frame atan2).\n\nuniform float speed  : 0.0 .. 2.0 = 0.4;     // how fast the wax drifts\nuniform float size   : 0.05 .. 0.4 = 0.17;   // blob radius (fraction of lamp height)\nuniform float merge  : 0.1 .. 0.9 = 0.35;    // metaball threshold (lower = fatter, gooier)\nuniform float soft   : 1.0 .. 12.0 = 5.0;    // edge sharpness\nuniform vec3  wax    : color = 1.0, 0.25, 0.02;\nuniform vec3  liquid : color = 0.35, 0.02, 0.12;\nuniform float heat   : 0.0 .. 1.0 = 0.6;     // brighter liquid at the bottom\n\nstate fixed ph[4];     // vertical cycle phase per blob, turns\nstate fixed ba[4];     // blob angle around the axis, turns\nstate bool seeded;\nstate int warm;        // frames rendered (buffers valid once >= 2)\n\n// Per-blob, per-frame constants (unrolled).\nstate fixed bo0; state fixed bo1; state fixed bo2; state fixed bo3;   // 0.5 - angle\nstate fixed bh0; state fixed bh1; state fixed bh2; state fixed bh3;   // height 0..1\nstate fixed au0; state fixed au1; state fixed au2; state fixed au3;   // aspect^2 / r^2\nstate fixed av0; state fixed av1; state fixed av2; state fixed av3;   // 0.64 / r^2\nstate fixed rv0; state fixed rv1; state fixed rv2; state fixed rv3;   // vertical reach\n\nstate fixed cx;\nstate fixed cz;\nstate fixed y0;\nstate fixed invh;\nstate fixed thr;\nstate fixed kk;\nstate fixed hk8;\n\nbuffer fixed angb;     // cached LED angle, turns\nbuffer fixed vb;       // cached LED height 0..1\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 4; i = i + 1) {\n      ph[i] = fixed(hash(float(i) * 3.17 + 0.5));\n      ba[i] = fixed(hash(float(i) * 7.31 + 1.9));\n    }\n    seeded = true;\n  }\n  if (warm < 4) { warm = warm + 1; }\n\n  cx = fixed((room.min.x + room.max.x) * 0.5);\n  cz = fixed((room.min.z + room.max.z) * 0.5);\n  y0 = fixed(room.min.y);\n  float h = max(room.max.y - room.min.y, 0.01);\n  invh = fixed(1.0 / h);\n  float rad = max((room.max.x - room.min.x) * 0.5, 0.01);\n  float asp = 6.2832 * rad / h;\n  fixed a2 = fixed(asp * asp);\n\n  fixed bo[4];\n  fixed bh[4];\n  fixed au[4];\n  fixed av[4];\n  fixed rv[4];\n  for (int i = 0; i < 4; i = i + 1) {\n    float rate = 0.05 + 0.03 * float(i);\n    ph[i] = fract(ph[i] + fixed(dt * speed * rate));\n    float drift = 0.012 * (float(i) - 1.5);\n    ba[i] = fract(ba[i] + fixed(dt * speed * drift));\n    fixed c = cos(ph[i]);\n    // Rise and sink, slightly past the ends so blobs pool and hide.\n    bh[i] = fixed(0.5) - fixed(0.58) * c;\n    // Blobs swell when warm (low) and shrink near the top.\n    fixed r = fixed(size) * (fixed(1.0) + fixed(0.25) * c);\n    fixed ir2 = fixed(1.0) / max(r * r, fixed(0.001));\n    bo[i] = fract(fixed(0.5) - ba[i]);\n    au[i] = a2 * ir2;\n    av[i] = fixed(0.64) * ir2;\n    rv[i] = r * fixed(1.25);              // |dv*0.8| < r\n  }\n  bo0 = bo[0]; bo1 = bo[1]; bo2 = bo[2]; bo3 = bo[3];\n  bh0 = bh[0]; bh1 = bh[1]; bh2 = bh[2]; bh3 = bh[3];\n  au0 = au[0]; au1 = au[1]; au2 = au[2]; au3 = au[3];\n  av0 = av[0]; av1 = av[1]; av2 = av[2]; av3 = av[3];\n  rv0 = rv[0]; rv1 = rv[1]; rv2 = rv[2]; rv3 = rv[3];\n\n  thr = fixed(merge);\n  kk = fixed(soft);\n  hk8 = fixed(heat * 0.8);\n}\n\nvec3 shade(Led led) {\n  fixed ang;\n  fixed v;\n  if (warm < 2) {\n    fixed lx = fixed(led.room.x) - cx;\n    fixed lz = fixed(led.room.z) - cz;\n    ang = atan2(lz, lx);                          // turns, -0.5..0.5\n    v = (fixed(led.room.y) - y0) * invh;          // 0 bottom .. 1 top\n    angb[led.idx] = ang;\n    vb[led.idx] = v;\n  } else {\n    ang = angb[led.idx];\n    v = vb[led.idx];\n  }\n\n  fixed f = fixed(0.0);\n  fixed dv; fixed d; fixed w;\n\n  dv = v - bh0;\n  if (abs(dv) < rv0) {\n    d = fract(ang + bo0) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au0 - dv * dv * av0, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh1;\n  if (abs(dv) < rv1) {\n    d = fract(ang + bo1) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au1 - dv * dv * av1, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh2;\n  if (abs(dv) < rv2) {\n    d = fract(ang + bo2) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au2 - dv * dv * av2, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh3;\n  if (abs(dv) < rv3) {\n    d = fract(ang + bo3) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au3 - dv * dv * av3, fixed(0.0));\n    f = f + w * w;\n  }\n\n  fixed glow = fixed(1.0) - hk8 * v;\n  vec3 base = liquid * float(glow);\n  if (f <= thr) {\n    return base;\n  }\n  fixed t = min((f - thr) * kk, fixed(1.0));\n  return mix(base, wax, float(t));\n}\n```",
+      "is_error": false,
+      "session_id": "b129b211-f572-4192-aebb-7957897d712b",
+      "wall_s": 41.9,
+      "duration_api_ms": 40849,
+      "cost_usd": 0.113252,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 4595,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 2304
+      },
+      "thinking_tokens": 1910,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 95,
+          "col": 12,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Lava lamp: soft wax blobs rise and sink slowly around the cylinder.\n// Blobs live on the lamp's surface (angle around the axis x height),\n// merge like metaballs, and glow over a warm liquid that is hotter at the\n// bottom. Per-LED maths is fixed point; blob paths are computed in update().\n//\n// Fit to budget: the 4-blob loop is unrolled into scalar state (no array\n// indexing), every per-blob constant (aspect^2/r^2, 0.64/r^2, angle offset,\n// vertical reach) is folded in update(), each blob is rejected early by a\n// cheap vertical test before any angular maths, and the LED's angle/height\n// are cached in buffers after the first frames (no per-frame atan2).\n\nuniform float speed  : 0.0 .. 2.0 = 0.4;     // how fast the wax drifts\nuniform float size   : 0.05 .. 0.4 = 0.17;   // blob radius (fraction of lamp height)\nuniform float merge  : 0.1 .. 0.9 = 0.35;    // metaball threshold (lower = fatter, gooier)\nuniform float soft   : 1.0 .. 12.0 = 5.0;    // edge sharpness\nuniform vec3  wax    : color = 1.0, 0.25, 0.02;\nuniform vec3  liquid : color = 0.35, 0.02, 0.12;\nuniform float heat   : 0.0 .. 1.0 = 0.6;     // brighter liquid at the bottom\n\nstate fixed ph[4];     // vertical cycle phase per blob, turns\nstate fixed ba[4];     // blob angle around the axis, turns\nstate bool seeded;\nstate int warm;        // frames rendered (buffers valid once >= 2)\n\n// Per-blob, per-frame constants (unrolled).\nstate fixed bo0; state fixed bo1; state fixed bo2; state fixed bo3;   // 0.5 - angle\nstate fixed bh0; state fixed bh1; state fixed bh2; state fixed bh3;   // height 0..1\nstate fixed au0; state fixed au1; state fixed au2; state fixed au3;   // aspect^2 / r^2\nstate fixed av0; state fixed av1; state fixed av2; state fixed av3;   // 0.64 / r^2\nstate fixed rv0; state fixed rv1; state fixed rv2; state fixed rv3;   // vertical reach\n\nstate fixed cx;\nstate fixed cz;\nstate fixed y0;\nstate fixed invh;\nstate fixed thr;\nstate fixed kk;\nstate fixed hk8;\n\nbuffer fixed angb;     // cached LED angle, turns\nbuffer fixed vb;       // cached LED height 0..1\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 4; i = i + 1) {\n      ph[i] = fixed(hash(float(i) * 3.17 + 0.5));\n      ba[i] = fixed(hash(float(i) * 7.31 + 1.9));\n    }\n    seeded = true;\n  }\n  if (warm < 4) { warm = warm + 1; }\n\n  cx = fixed((room.min.x + room.max.x) * 0.5);\n  cz = fixed((room.min.z + room.max.z) * 0.5);\n  y0 = fixed(room.min.y);\n  float h = max(room.max.y - room.min.y, 0.01);\n  invh = fixed(1.0 / h);\n  float rad = max((room.max.x - room.min.x) * 0.5, 0.01);\n  float asp = 6.2832 * rad / h;\n  fixed a2 = fixed(asp * asp);\n\n  fixed bo[4];\n  fixed bh[4];\n  fixed au[4];\n  fixed av[4];\n  fixed rv[4];\n  for (int i = 0; i < 4; i = i + 1) {\n    float rate = 0.05 + 0.03 * float(i);\n    ph[i] = fract(ph[i] + fixed(dt * speed * rate));\n    float drift = 0.012 * (float(i) - 1.5);\n    ba[i] = fract(ba[i] + fixed(dt * speed * drift));\n    fixed c = cos(ph[i]);\n    // Rise and sink, slightly past the ends so blobs pool and hide.\n    bh[i] = fixed(0.5) - fixed(0.58) * c;\n    // Blobs swell when warm (low) and shrink near the top.\n    fixed r = fixed(size) * (fixed(1.0) + fixed(0.25) * c);\n    fixed ir2 = fixed(1.0) / max(r * r, fixed(0.001));\n    bo[i] = fract(fixed(0.5) - ba[i]);\n    au[i] = a2 * ir2;\n    av[i] = fixed(0.64) * ir2;\n    rv[i] = r * fixed(1.25);              // |dv*0.8| < r\n  }\n  bo0 = bo[0]; bo1 = bo[1]; bo2 = bo[2]; bo3 = bo[3];\n  bh0 = bh[0]; bh1 = bh[1]; bh2 = bh[2]; bh3 = bh[3];\n  au0 = au[0]; au1 = au[1]; au2 = au[2]; au3 = au[3];\n  av0 = av[0]; av1 = av[1]; av2 = av[2]; av3 = av[3];\n  rv0 = rv[0]; rv1 = rv[1]; rv2 = rv[2]; rv3 = rv[3];\n\n  thr = fixed(merge);\n  kk = fixed(soft);\n  hk8 = fixed(heat * 0.8);\n}\n\nvec3 shade(Led led) {\n  fixed ang = fixed(0.0);\n  fixed v = fixed(0.0);\n  if (warm < 2) {\n    fixed lx = fixed(led.room.x) - cx;\n    fixed lz = fixed(led.room.z) - cz;\n    ang = atan2(lz, lx);                          // turns, -0.5..0.5\n    v = (fixed(led.room.y) - y0) * invh;          // 0 bottom .. 1 top\n    angb[led.idx] = ang;\n    vb[led.idx] = v;\n  } else {\n    ang = angb[led.idx];\n    v = vb[led.idx];\n  }\n\n  fixed f = fixed(0.0);\n  fixed dv = fixed(0.0);\n  fixed d = fixed(0.0);\n  fixed w = fixed(0.0);\n\n  dv = v - bh0;\n  if (abs(dv) < rv0) {\n    d = fract(ang + bo0) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au0 - dv * dv * av0, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh1;\n  if (abs(dv) < rv1) {\n    d = fract(ang + bo1) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au1 - dv * dv * av1, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh2;\n  if (abs(dv) < rv2) {\n    d = fract(ang + bo2) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au2 - dv * dv * av2, fixed(0.0));\n    f = f + w * w;\n  }\n  dv = v - bh3;\n  if (abs(dv) < rv3) {\n    d = fract(ang + bo3) - fixed(0.5);\n    w = max(fixed(1.0) - d * d * au3 - dv * dv * av3, fixed(0.0));\n    f = f + w * w;\n  }\n\n  fixed glow = fixed(1.0) - hk8 * v;\n  vec3 base = liquid * float(glow);\n  if (f <= thr) {\n    return base;\n  }\n  fixed t = min((f - thr) * kk, fixed(1.0));\n  return mix(base, wax, float(t));\n}\n```",
+      "is_error": false,
+      "session_id": "b129b211-f572-4192-aebb-7957897d712b",
+      "wall_s": 26.1,
+      "duration_api_ms": 65361,
+      "cost_usd": 0.24062080000000002,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3259,
+        "cache_read_input_tokens": 16864,
+        "cache_creation_input_tokens": 7351
+      },
+      "thinking_tokens": 530,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2379
+    }
+  ],
+  "started": "2026-10-23T00:52:37",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__opus__p08.fx",
+  "base_estimate": [
+    78.32,
+    [
+      "a loop runs 4 times per LED (~16,628 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 68) \u2014 saves up to ~8,314 cycles/LED (~26.0 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.3539,
+  "total_wall_s": 68.0,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__opus__p08.fx"
+}

@@ -42,6 +42,14 @@ rust_test(
     ],
 )
 
+# Perf warnings (float literal in fixed maths, pow(x, 2.0), ...).
+rust_test(
+    name = "warnings_test",
+    srcs = ["tests/warnings.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
+)
+
 # FUG-107 sensor drivers: export / poll() / i2c intrinsics, FLAG_DRIVER .fxb,
 # and the MPU-6050 driver program against a register-file bus.
 rust_test(

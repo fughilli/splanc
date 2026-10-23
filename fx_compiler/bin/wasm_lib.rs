@@ -17,6 +17,8 @@ pub struct CompileResult {
     /// Driver export table JSON (FUG-107); "[]" for an effect.
     exports: String,
     diagnostics: String,
+    /// Non-fatal perf warnings JSON (`[{line,col,msg}]`), "[]" if none.
+    warnings: String,
 }
 
 #[wasm_bindgen]
@@ -41,6 +43,10 @@ impl CompileResult {
     pub fn diagnostics(&self) -> String {
         self.diagnostics.clone()
     }
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        self.warnings.clone()
+    }
 }
 
 #[wasm_bindgen]
@@ -64,28 +70,25 @@ fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
             manifest: manifest_json(&c.uniforms),
             exports: exports_manifest_json(&c.exports),
             diagnostics: "[]".into(),
+            warnings: diags_json(&c.warnings),
         },
-        Err(ds) => {
-            let items: Vec<String> = ds
-                .iter()
-                .map(|d| {
-                    format!(
-                        "{{\"line\":{},\"col\":{},\"msg\":{}}}",
-                        d.line,
-                        d.col,
-                        json_str(&d.msg)
-                    )
-                })
-                .collect();
-            CompileResult {
-                ok: false,
-                bytecode: vec![],
-                manifest: "[]".into(),
-                exports: "[]".into(),
-                diagnostics: format!("[{}]", items.join(",")),
-            }
-        }
+        Err(ds) => CompileResult {
+            ok: false,
+            bytecode: vec![],
+            manifest: "[]".into(),
+            exports: "[]".into(),
+            diagnostics: diags_json(&ds),
+            warnings: "[]".into(),
+        },
     }
+}
+
+fn diags_json(ds: &[Diagnostic]) -> String {
+    let items: Vec<String> = ds
+        .iter()
+        .map(|d| format!("{{\"line\":{},\"col\":{},\"msg\":{}}}", d.line, d.col, json_str(&d.msg)))
+        .collect();
+    format!("[{}]", items.join(","))
 }
 
 /// Disassemble compiled `.fxb` bytecode to a readable op listing (offsets +

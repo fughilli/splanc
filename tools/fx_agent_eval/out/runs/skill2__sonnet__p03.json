@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p03",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Aurora curtains: bright vertical rays drifting slowly around a cylindrical\n// lamp. Two periodic sine waves (seamless on the angle axis for integer 'bands')\n// create the band structure and within-band brightness texture; all per-LED\n// maths is fixed-point for the frame budget.\n//\n// Tip: integer values of 'bands' (1\u20135) wrap seamlessly around the cylinder.\n\nuniform float speed    : 0.0 .. 1.0 = 0.08;   // drift speed (turns per second)\nuniform float bands    : 1.0 .. 5.0 = 3.0;    // curtain-band count around the lamp\nuniform float shimmer  : 0.0 .. 1.0 = 0.45;   // side-to-side sway amplitude\nuniform float hue_base : 0.0 .. 1.0 = 0.33;   // base hue  (0.33 = green)\nuniform float hue_rise : 0.0 .. 0.4 = 0.20;   // extra hue shift toward blue at top\nuniform float fade_top : 0.0 .. 1.0 = 0.55;   // brightness roll-off toward the top\n\n// All uniforms are copied to fixed-point state once per frame so shade() never\n// pays a runtime float\u2192fixed conversion per LED.\nstate fixed drift1;   // main curtain drift (turns)\nstate fixed drift2;   // secondary texture drift, counter-rotates (turns)\nstate fixed shim_ph;  // shimmer phase (turns)\nstate fixed k;        // = fixed(bands)\nstate fixed sh;       // = fixed(shimmer)\nstate fixed hue_b;    // = fixed(hue_base)\nstate fixed hue_r;    // = fixed(hue_rise)\nstate fixed fd;       // = fixed(fade_top)\n\nvoid update() {\n    drift1  = fract(drift1  + fixed(dt * speed * 0.50));\n    drift2  = fract(drift2  - fixed(dt * speed * 0.37));\n    shim_ph = fract(shim_ph + fixed(dt * speed * 0.43));\n    k     = fixed(bands);\n    sh    = fixed(shimmer);\n    hue_b = fixed(hue_base);\n    hue_r = fixed(hue_rise);\n    fd    = fixed(fade_top);\n}\n\nvec3 shade(Led led) {\n    // Angle 0..1 around the cylinder; integer band counts wrap seamlessly here\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n    fixed ht  = fixed(led.uv.y);   // 0 = lowest LED, 1 = highest\n\n    // Shimmer: a slow sine along the height sways each curtain side-to-side.\n    // Amplitude is kept small (\u00d70.04 turns) so the sway is gentle, not wild.\n    fixed sway = sin(ht * fixed(2.1) + shim_ph) * sh * fixed(0.04);\n\n    // Shared angular argument \u2014 reused by both waves to avoid a second multiply\n    fixed as = (ang + sway) * k;\n\n    // Main curtain bands: k full periods around the cylinder, slowly drifting\n    fixed v = sin(as + drift1);\n\n    // Secondary layer: 2.5\u00d7 frequency, counter-drifting; modulates brightness\n    // within each curtain so some rays are brighter and others dimmer\n    fixed v2 = sin(as * fixed(2.5) + drift2) * fixed(0.35) + fixed(0.65);\n\n    // Rectify to keep only the bright half-cycle, then square to sharpen each\n    // ray into a narrow vertical streak (aurora curtain shape)\n    v = max(v, fixed(0.0));\n    v = v * v;\n    v = v * v2;\n\n    // Height fade: aurora starts from a bright base band and dims toward the top\n    v = v * (fixed(1.0) - fd * ht);\n\n    // Hue: green at the base, shifting toward blue-cyan at the top\n    fixed hue = hue_b + hue_r * ht;\n\n    return hsv2rgb(hue, fixed(0.9), v);\n}\n```",
+      "is_error": false,
+      "session_id": "e069ba9c-f5f5-4149-8bba-543b73fa2a0e",
+      "wall_s": 437.6,
+      "duration_api_ms": 436240,
+      "cost_usd": 0.45363509999999996,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 29813,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 28731,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1332
+    }
+  ],
+  "started": "2026-10-23T00:23:19",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.4536,
+  "total_wall_s": 437.6,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p03.fx"
+}

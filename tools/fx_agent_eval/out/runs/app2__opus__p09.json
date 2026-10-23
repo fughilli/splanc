@@ -1,0 +1,66 @@
+{
+  "name": "app2__opus__p09",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p09",
+  "prompt": "a sunrise: warm glow climbing from the bottom",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Sunrise: a warm glow climbs the lamp from the bottom, deep red at first,\n// warming to gold as it rises. Per-LED maths is fixed point.\n\nuniform float duration   : 5.0 .. 120.0 = 30.0;   // seconds for a full sunrise\nuniform bool  loop_rise  = true;                  // restart when finished\nuniform float softness   : 0.02 .. 0.6 = 0.25;    // width of the glowing edge\nuniform float brightness : 0.1 .. 1.0 = 1.0;\nuniform float warmth     : 0.0 .. 0.12 = 0.04;    // starting hue (0 = red)\nuniform float gold       : 0.0 .. 0.15 = 0.09;    // extra hue gained as the sun rises\nuniform float saturation : 0.3 .. 1.0 = 0.95;\nuniform float shimmer    : 0.0 .. 0.3 = 0.08;     // gentle flicker around the cylinder\nuniform float base_y     : -0.3 .. 0.3 = 0.0;     // y of the lamp's bottom (m)\nuniform float height     : 0.1 .. 0.6 = 0.30;     // lamp height (m)\n\nstate float prog;\nstate fixed lvl;\nstate fixed kEdge;\nstate fixed hBase;\nstate fixed hSpan;\nstate fixed sat;\nstate fixed bri;\nstate fixed shim;\nstate fixed ph;\nstate fixed y0;\nstate fixed invH;\n\nvoid update() {\n  prog = prog + dt / duration;\n  if (prog > 1.0) {\n    if (loop_rise) { prog = 0.0; } else { prog = 1.0; }\n  }\n  // ease-out so the light climbs quickly at first, then lingers\n  float p = 1.0 - (1.0 - prog) * (1.0 - prog);\n\n  // horizon level runs from just below the bottom to past the top\n  lvl   = fixed(p * (1.0 + softness) - softness * 0.5);\n  kEdge = fixed(1.0 / softness);\n  hBase = fixed(warmth + gold * p * 0.6);\n  hSpan = fixed(gold * 0.4);\n  sat   = fixed(saturation - 0.15 * p);\n  bri   = fixed(brightness * (0.35 + 0.65 * p));\n  shim  = fixed(shimmer);\n  ph    = fract(ph + fixed(dt * 0.15));\n  y0    = fixed(base_y);\n  invH  = fixed(1.0 / height);\n}\n\nvec3 shade(Led led) {\n  // normalized height 0 (bottom) .. 1 (top)\n  fixed h = clamp((fixed(led.pos.y) - y0) * invH, fixed(0.0), fixed(1.0));\n  // angle around the axis, cached per LED (turns)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n\n  // glow: full below the horizon, fading over `softness` above it\n  fixed g = clamp((lvl - h) * kEdge + fixed(1.0), fixed(0.0), fixed(1.0));\n  fixed v = g * g;\n\n  // slow shimmer, strongest near the glowing edge\n  fixed edge = g * (fixed(1.0) - g) * fixed(4.0);\n  fixed w = sin(ang * fixed(3.0) + ph + h * fixed(2.0)) * shim;\n  v = clamp(v + w * edge, fixed(0.0), fixed(1.0)) * bri;\n\n  // hue: redder at the bottom, more golden near the climbing edge\n  fixed hue = hBase + h * hSpan;\n  fixed s = clamp(sat + (fixed(1.0) - g) * fixed(0.05), fixed(0.0), fixed(1.0));\n\n  return hsv2rgb(hue, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "47acbb67-1679-4b21-9fc3-e563271abf82",
+      "wall_s": 36.5,
+      "duration_api_ms": 24771,
+      "cost_usd": 0.052151,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2294,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 619
+      },
+      "thinking_tokens": 974,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 12,
+          "col": 28,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```\n// Sunrise: a warm glow climbs the lamp from the bottom, deep red at first,\n// warming to gold as it rises. Per-LED maths is fixed point.\n\nuniform float duration   : 5.0 .. 120.0 = 30.0;   // seconds for a full sunrise\nuniform bool  loop_rise  = true;                  // restart when finished\nuniform float softness   : 0.02 .. 0.6 = 0.25;    // width of the glowing edge\nuniform float brightness : 0.1 .. 1.0 = 1.0;\nuniform float warmth     : 0.0 .. 0.12 = 0.04;    // starting hue (0 = red)\nuniform float gold       : 0.0 .. 0.15 = 0.09;    // extra hue gained as the sun rises\nuniform float saturation : 0.3 .. 1.0 = 0.95;\nuniform float shimmer    : 0.0 .. 0.3 = 0.08;     // gentle flicker around the cylinder\nuniform float base_y     : 0.0 .. 0.6 = 0.3;      // y of the lamp's bottom (m) + 0.3 (0.3 = y 0)\nuniform float height     : 0.1 .. 0.6 = 0.30;     // lamp height (m)\n\nstate float prog;\nstate fixed lvl;\nstate fixed kEdge;\nstate fixed hBase;\nstate fixed hSpan;\nstate fixed sat;\nstate fixed bri;\nstate fixed shim;\nstate fixed ph;\nstate fixed y0;\nstate fixed invH;\n\nvoid update() {\n  prog = prog + dt / duration;\n  if (prog > 1.0) {\n    if (loop_rise) { prog = 0.0; } else { prog = 1.0; }\n  }\n  // ease-out so the light climbs quickly at first, then lingers\n  float p = 1.0 - (1.0 - prog) * (1.0 - prog);\n\n  // horizon level runs from just below the bottom to past the top\n  lvl   = fixed(p * (1.0 + softness) - softness * 0.5);\n  kEdge = fixed(1.0 / softness);\n  hBase = fixed(warmth + gold * p * 0.6);\n  hSpan = fixed(gold * 0.4);\n  sat   = fixed(saturation - 0.15 * p);\n  bri   = fixed(brightness * (0.35 + 0.65 * p));\n  shim  = fixed(shimmer);\n  ph    = fract(ph + fixed(dt * 0.15));\n  y0    = fixed(base_y - 0.3);\n  invH  = fixed(1.0 / height);\n}\n\nvec3 shade(Led led) {\n  // normalized height 0 (bottom) .. 1 (top)\n  fixed h = clamp((fixed(led.pos.y) - y0) * invH, fixed(0.0), fixed(1.0));\n  // angle around the axis, cached per LED (turns)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n\n  // glow: full below the horizon, fading over `softness` above it\n  fixed g = clamp((lvl - h) * kEdge + fixed(1.0), fixed(0.0), fixed(1.0));\n  fixed v = g * g;\n\n  // slow shimmer, strongest near the glowing edge\n  fixed edge = g * (fixed(1.0) - g) * fixed(4.0);\n  fixed w = sin(ang * fixed(3.0) + ph + h * fixed(2.0)) * shim;\n  v = clamp(v + w * edge, fixed(0.0), fixed(1.0)) * bri;\n\n  // hue: redder at the bottom, more golden near the climbing edge\n  fixed hue = hBase + h * hSpan;\n  fixed s = clamp(sat + (fixed(1.0) - g) * fixed(0.05), fixed(0.0), fixed(1.0));\n\n  return hsv2rgb(hue, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "47acbb67-1679-4b21-9fc3-e563271abf82",
+      "wall_s": 23.5,
+      "duration_api_ms": 35438,
+      "cost_usd": 0.1122378,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1457,
+        "cache_read_input_tokens": 7174,
+        "cache_creation_input_tokens": 3688
+      },
+      "thinking_tokens": 116,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2093
+    }
+  ],
+  "started": "2026-10-23T00:05:25",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1644,
+  "total_wall_s": 60.0,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p09.fx"
+}
