@@ -65,19 +65,23 @@ def _probe_path() -> str | None:
     return here if os.path.exists(here) else None
 
 
-def parse_plan(plan: str) -> list[tuple[str, float, float, float]]:
-    """'fifo:30:120,latest:30:60:100' -> [(mode, fps, seconds, present_delay_ms), ...].
+def parse_plan(plan: str, noise: float = 0.0) -> list[tuple[str, float, float, float, float]]:
+    """'fifo:30:120,latest:30:60:100:400' ->
+    [(mode, fps, seconds, present_delay_ms, noise_pps), ...].
     A 4th field > 0 stamps frames with present_at = capture + that many ms (needs the
-    firmware feature texture_ack) and reports when frames were actually shown."""
+    firmware feature texture_ack) and reports when frames were actually shown; a 5th
+    sets that run's background UDP rate (default: --noise-pps)."""
     out = []
     for item in plan.split(","):
         item = item.strip()
         if not item:
             continue
-        mode, fps, secs, delay = (item.split(":") + ["", "", ""])[:4]
+        mode, fps, secs, delay, npps = (item.split(":") + ["", "", "", ""])[:5]
         if mode not in ("fifo", "latest"):
             raise SystemExit(f"--plan: unknown sender mode {mode!r} (fifo|latest)")
-        out.append((mode, float(fps or 30), float(secs or 120), float(delay or 0)))
+        out.append(
+            (mode, float(fps or 30), float(secs or 120), float(delay or 0), float(npps or noise))
+        )
     if not out:
         raise SystemExit("--plan is empty")
     return out
@@ -94,13 +98,21 @@ def _out_dir(args) -> str:
 
 
 def run_probe(
-    res, host: str, port: int, mode: str, fps: float, seconds: float, delay: float, args
+    res,
+    host: str,
+    port: int,
+    mode: str,
+    fps: float,
+    seconds: float,
+    delay: float,
+    noise: float,
+    args,
 ) -> str:
     cmd = (
         f"python3 /tmp/wss_video_latency.py --host {host} --port {port} "
         f"--tex-index {args.tex_index} --width {args.width} --height {args.height} "
         f"--fps {fps:g} --seconds {seconds:g} --mode {mode} --calib {args.calib} "
-        f"--noise-pps {args.noise_pps:g} --present-delay-ms {delay:g}"
+        f"--noise-pps {noise:g} --present-delay-ms {delay:g}"
     )
     _log(f"[probe] {cmd}")
     proc = res.ssh(cmd, capture=True, timeout=seconds + 4 * args.calib + 120)
@@ -135,7 +147,7 @@ def run_on_hardware(args) -> int:
     from hitl_client import Reservation
     from provision import dut_target, provision_dut
 
-    plan = parse_plan(args.plan)
+    plan = parse_plan(args.plan, args.noise_pps)
     probe = _probe_path()
     if not probe:
         raise SystemExit("wss_video_latency.py not found (runfiles or source tree)")
@@ -174,12 +186,27 @@ def run_on_hardware(args) -> int:
             with res.forward(host, port) as local_port:
                 asyncio.run(_setup_effect(f"wss://localhost:{local_port}/ws", args, fxb))
             res.scp_to([probe], "/tmp/")
+            if args.rig_diag and b == 0:
+                # Can this container see the AP's view of the DUT (tx/rx bitrate)?
+                diag = res.ssh(
+                    "sh -c 'for c in iw iwconfig hostapd_cli; do command -v $c; done; "
+                    "ls /sys/class/net; iw dev 2>&1 | head -20; "
+                    "iw dev 2>/dev/null | sed -n s/.*Interface.//p | while read i; do "
+                    "iw dev $i station dump 2>&1 | head -40; done'",
+                    capture=True,
+                    timeout=30,
+                )
+                _log(f"[rig-diag]\n{diag.stdout}{diag.stderr}")
             # The setup socket closed; give the single-slot server a moment to re-listen.
             time.sleep(1.0)
-            for k, (mode, fps, seconds, delay) in enumerate(plan):
+            for k, (mode, fps, seconds, delay, noise) in enumerate(plan):
                 with res.ap_lock(f"video latency {mode} {fps:g}fps {seconds:g}s -> {host}"):
-                    text = run_probe(res, host, port, mode, fps, seconds, delay, args)
-                tag = f"{mode}_{fps:g}fps" + (f"_at{delay:g}ms" if delay else "")
+                    text = run_probe(res, host, port, mode, fps, seconds, delay, noise, args)
+                tag = (
+                    f"{mode}_{fps:g}fps"
+                    + (f"_at{delay:g}ms" if delay else "")
+                    + (f"_noise{noise:g}" if noise else "")
+                )
                 raw_path = os.path.join(out_dir, f"{prefix}video_latency_{k}_{tag}.txt")
                 with open(raw_path, "w", encoding="utf-8") as f:
                     f.write(text)
@@ -217,6 +244,11 @@ def main() -> None:
     ap.add_argument("--led-count", type=int, default=256)
     ap.add_argument("--calib", type=int, default=40, help="idle clock-sync pings before/after")
     ap.add_argument("--stall-ms", type=float, default=100.0)
+    ap.add_argument(
+        "--rig-diag",
+        action="store_true",
+        help="log what the reservation container can see of the AP (iw station dump)",
+    )
     ap.add_argument(
         "--noise-pps",
         type=float,
