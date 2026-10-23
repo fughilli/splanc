@@ -1,0 +1,2402 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>FX engine performance study (ESP32-C6) - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/fx-perf-study.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/fx-perf-study.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="fx-engine-performance-study-esp32-c6">
+<h1>FX engine performance study (ESP32-C6)<a class="headerlink" href="#fx-engine-performance-study-esp32-c6" title="Link to this heading">¶</a></h1>
+<p><strong>Scope.</strong> How fast is the effects engine on the ESP32-C6 (RV32IMAC, no FPU,
+160 MHz) compared with what the chip can do, how well do the authoring agents
+use it, how good is the offline estimator, and what should change. Every number
+below was measured on a HITL C6 unless it says “estimated”. The bench, the
+agent-eval harness and the charts are in this PR; how to rerun them is at the
+end.</p>
+<p><strong>Short answers.</strong></p>
+<ol class="arabic simple">
+<li><p><strong>Native ceiling.</strong> A native Rust version of an effect that uses the same
+float maths is <strong>2–5× faster</strong> than the VM. A fixed-point native rewrite is
+<strong>7–70× faster</strong>. At 2048 LEDs, 9 of the 13 study effects fit 30 fps natively (all under
+20 ms); through the VM none of them does. Where the VM’s cycles go, in order: the operand-stack interpreter
+(about 54 cycles of dispatch per opcode, plus stack traffic, which together
+is 40–75% of a heavy effect), a fixed <strong>1,790 cycles per LED</strong> for each VM
+invocation, soft-float math, and the per-LED framing. The JIT saves 0–8%.</p></li>
+<li><p><strong>Agent authoring.</strong> The agents write expensive effects. The <strong>MCP skill
+path never uses fixed point</strong> (0 of 30 programs). Only 3 of 30 skill programs
+and 10 of 30 in-app programs fit 33 ms at 500 LEDs. Your 45-effect library
+needs a median of <strong>49 ms</strong> on the 500-LED sign and <strong>31 ms</strong> on the 250-LED
+lamp. Per LED, the sign effects are no more expensive than the lamp effects.
+The sign is slower because it has twice the LEDs, and that pushes 24 of its
+35 deployments past the 33 ms frame. <strong>A 24-line prompt addendum cut the
+in-app agent’s cost by 30%</strong> (paired, same 15 prompts). Hand-optimising the
+4 worst library effects gave only <strong>1.35–1.65×</strong> under the VM (up to 2.2×
+with the JIT), because dispatch dominates once the floats are gone. <strong>9 of
+the 90 generated programs hang the device</strong>: a compiler bug makes
+<code class="docutils literal notranslate"><span class="pre">clamp(vec3,</span> <span class="pre">0.0,</span> <span class="pre">1.0)</span></code> underflow the VM stack. The fix is a separate PR.</p></li>
+<li><p><strong>Estimator.</strong> The estimate the MCP agent uses (main’s default table)
+predicts <strong>5% of the measured frame time</strong> in the median. For agent programs
+it predicts 0.6%, and the worst case is <strong>0.3%</strong> (330× low). This is the
+“3 ms vs 132 ms”. Two bugs cause it: the cost table prices ops at 2–14 cycles
+when they cost 54–250, and the walker stops at the first opcode numbered 70
+or above (every fixed-point op and superinstruction). <strong>PR #328</strong> fixes both.
+Its median is 1.00, with p10 0.59 and a worst case of 0.29 (branchy <code class="docutils literal notranslate"><span class="pre">if</span></code>
+ladders, <code class="docutils literal notranslate"><span class="pre">SampleTex</span></code>). The dashboard’s “negM ≈ 1.57 M” is <strong>cycles for one
+whole frame of 128 LEDs</strong> (update + shade + firmware framing), from a
+program that negates a local 32 times per LED. That is 12.3 k cycles per LED,
+or ≈310 cycles per <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">=</span> <span class="pre">-a</span></code> statement above the empty-program floor. The
+panels now say so.</p></li>
+<li><p><strong>Architecture.</strong> The cheapest large win is VM invocation overhead.
+Prototype P2 is bit-exact and changes about 60 lines: an integer RGB
+epilogue and an out-of-line <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>. It cuts <strong>1,790 → 1,031 cycles per
+LED</strong>: −41% for a solid fill, −16% for rain, −6% median on your library.
+PR #328’s memoization is orthogonal (−15% median). Moving the interpreter to
+IRAM gained &lt;1%. A faster soft-float <code class="docutils literal notranslate"><span class="pre">fadd</span></code>/<code class="docutils literal notranslate"><span class="pre">fmul</span></code> gained nothing (the C6 ROM
+versions take ~55 cycles). The big remaining lever is <strong>AOT native code</strong>,
+worth 3–20× on top. It is feasible as signed, sandboxed, position-independent
+code, building on the existing JIT’s W^X region and the OTA signing.</p></li>
+</ol>
+<p><img alt="VM vs JIT vs native" src="docs/design/img/fx-perf/q1-vm-jit-native.png" /></p>
+<hr class="docutils" />
+<section id="method">
+<h2>Method<a class="headerlink" href="#method" title="Link to this heading">¶</a></h2>
+<p><strong>The bench image</strong> (<code class="docutils literal notranslate"><span class="pre">//firmware/fx_perf_bench:fx_perf_bench_flashbundle</span></code>) is a
+C6 firmware with no radios. It boots, runs every measurement once, logs
+<code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">…</span></code> lines, and keeps re-dumping its RAM log so a late or resetting serial
+reader still gets all of it. It links:</p>
+<ul class="simple">
+<li><p>the <strong>real <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code></strong> (the firmware’s crate, <code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code>, <code class="docutils literal notranslate"><span class="pre">riscv32imac</span></code>,
+<code class="docutils literal notranslate"><span class="pre">opt-level=3</span></code>), with <code class="docutils literal notranslate"><span class="pre">Led</span></code> framing reproduced from <code class="docutils literal notranslate"><span class="pre">ffi.rs</span> <span class="pre">fx_shade_one</span></code>. That
+framing is the per-LED soft-float uv projection when the program reads
+<code class="docutils literal notranslate"><span class="pre">led.uv</span></code>, and the Q16 mirrors when it reads fixed context;</p></li>
+<li><p>the <strong>real JIT install path</strong>, copied from <code class="docutils literal notranslate"><span class="pre">ffi.rs</span> <span class="pre">fx_build_jit</span></code>: the same
+2 KB PMP W^X region, the same limits (8 blocks, 64 constants, 1 KB of code),
+and the same <code class="docutils literal notranslate"><span class="pre">JitCall</span></code> patching;</p></li>
+<li><p><strong>hand-written native twins</strong> of 13 study effects (<code class="docutils literal notranslate"><span class="pre">src/native.rs</span></code>), compiled
+the same way. <code class="docutils literal notranslate"><span class="pre">f32</span></code> twins do the VM’s maths operation for operation through
+the same fx_vm helpers. They are <strong>bit-identical to the VM on every LED</strong> (host
+test <code class="docutils literal notranslate"><span class="pre">native_vs_vm_test</span></code>, 500 and 2048 LEDs, 3 frames), so VM − f32 is the
+interpretation cost alone. <code class="docutils literal notranslate"><span class="pre">q16</span></code> twins are fixed-point rewrites with the same
+look; their max error is 1–2/255 per channel;</p></li>
+<li><p><strong>micro-benchmarks</strong> (<code class="docutils literal notranslate"><span class="pre">src/micro.rs</span></code>): soft-float primitives, the VM’s maths
+helpers, and hand-assembled <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> programs that isolate dispatch, stack
+traffic and single opcodes.</p></li>
+</ul>
+<p><strong>Fixtures</strong> (<code class="docutils literal notranslate"><span class="pre">src/fixture.rs</span></code>, synthesized):</p>
+<ul class="simple">
+<li><p>a <strong>3-D helix</strong>: 10 turns, r = 8 cm, 30 cm tall, +Y up, 8 chained topology
+segments. Used at 500 and 2048 LEDs, and at 250 LEDs to stand in for the
+cylindrical PixieLamp;</p></li>
+<li><p>a <strong>planar two-row letter sign</strong>: “CAMP / THERAPY” in a crude 29-stroke font,
+about 1 m × 0.45 m, one topology segment per stroke, 500 LEDs. It stands in for
+FugWidget. The real sign map wasn’t available, so its stroke numbering is ours;</p></li>
+<li><p><strong>fx_bench’s linear map</strong>.</p></li>
+</ul>
+<p>Frames start at t = 10 s at 30 fps. Each number is the cheapest of 3 frames
+(interrupts only add cycles, as in <code class="docutils literal notranslate"><span class="pre">fx_bench</span></code>). Uniforms are set to their
+defaults.</p>
+<p><strong>Validation against fx_bench.</strong> The bench re-measures 8 fx_bench programs on
+fx_bench’s own map and LED count (<code class="docutils literal notranslate"><span class="pre">--no-opt</span></code>), so its numbers can be tied to
+the CI goldens and to the Grafana dataset’s latest <code class="docutils literal notranslate"><span class="pre">main</span></code> medians:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>program</p></th>
+<th class="head text-right"><p>this bench, cyc/LED</p></th>
+<th class="head text-right"><p>fx_bench on main (Grafana, last 10)</p></th>
+<th class="head text-right"><p>Δ</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>empty</p></td>
+<td class="text-right"><p>1,835</p></td>
+<td class="text-right"><p>2,451</p></td>
+<td class="text-right"><p>−616</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep256</p></td>
+<td class="text-right"><p>1,943</p></td>
+<td class="text-right"><p>2,541</p></td>
+<td class="text-right"><p>−598</p></td>
+</tr>
+<tr class="row-even"><td><p>negM</p></td>
+<td class="text-right"><p>12,514</p></td>
+<td class="text-right"><p>12,634</p></td>
+<td class="text-right"><p>−1%</p></td>
+</tr>
+<tr class="row-odd"><td><p>addM</p></td>
+<td class="text-right"><p>18,895</p></td>
+<td class="text-right"><p>18,718</p></td>
+<td class="text-right"><p>+1%</p></td>
+</tr>
+<tr class="row-even"><td><p>sinM</p></td>
+<td class="text-right"><p>28,608</p></td>
+<td class="text-right"><p>28,763</p></td>
+<td class="text-right"><p>−1%</p></td>
+</tr>
+<tr class="row-odd"><td><p>atan2fM</p></td>
+<td class="text-right"><p>46,559</p></td>
+<td class="text-right"><p>45,753</p></td>
+<td class="text-right"><p>+2%</p></td>
+</tr>
+<tr class="row-even"><td><p>powfM</p></td>
+<td class="text-right"><p>70,759</p></td>
+<td class="text-right"><p>70,259</p></td>
+<td class="text-right"><p>+1%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The heavy programs agree to ±2%. The firmware adds <strong>≈600 cycles per LED</strong> of
+framing that the radio-less bench doesn’t run: the stored-map position read and
+the colour correction (<code class="docutils literal notranslate"><span class="pre">lm_map_led</span></code> + <code class="docutils literal notranslate"><span class="pre">cc_apply</span></code>). Where this doc gives a
+firmware-equivalent frame time, it adds 600 × LEDs. The field data is
+consistent with this. Your hand-optimised rain measures 22.6 ms here on the
+500-LED sign and 23.4 ms on the rig in PR #328 (500 LEDs); FugWidget showed
+25.3 ms mean. A solid colour is 7.3 ms here and 7.9 ms on FugWidget. Repeat
+runs on the same DUT agreed to a median of 0.7% (max 2.8%). Two different C6
+boards gave identical numbers (median Δ 0.0%).</p>
+<p><strong>fx_bench measures <code class="docutils literal notranslate"><span class="pre">lavalamp</span></code> (its only “realistic” held-out effect) with every
+uniform at 0.</strong> The firmware doesn’t apply manifest defaults; clients send
+<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> after a deploy, and fx_bench never does. So <code class="docutils literal notranslate"><span class="pre">waves</span> <span class="pre">=</span> <span class="pre">0</span></code> and the
+loop body never runs. The golden of 16.5 k cycles per LED is about 130 opcodes
+per LED. With its defaults the same effect runs 585 opcodes and costs
+<strong>90 k cycles per LED, 5.5× the golden</strong>. Recommendation: fx_bench should apply
+the manifest defaults, and the firmware should probably apply them on load too.</p>
+</section>
+<hr class="docutils" />
+<section id="q1-the-native-ceiling">
+<h2>Q1 — the native ceiling<a class="headerlink" href="#q1-the-native-ceiling" title="Link to this heading">¶</a></h2>
+<p>The table is per LED per frame on the 500-LED helix. Per-LED cost at 2048 LEDs
+is the same within 1–3%, so the ms columns scale linearly. “q16 ms &#64;2048” is
+the best native version.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>VM cyc/LED</p></th>
+<th class="head text-right"><p>JIT cyc/LED</p></th>
+<th class="head text-right"><p>native f32</p></th>
+<th class="head text-right"><p>native q16</p></th>
+<th class="head text-right"><p>VM ÷ f32</p></th>
+<th class="head text-right"><p>VM ÷ q16</p></th>
+<th class="head text-right"><p>VM ms &#64;500</p></th>
+<th class="head text-right"><p>VM ms &#64;2048</p></th>
+<th class="head text-right"><p>best native ms &#64;2048</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid</p></td>
+<td class="text-right"><p>2,328</p></td>
+<td class="text-right"><p>2,307 (no JIT)</p></td>
+<td class="text-right"><p>10</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>(const)</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>7.3</p></td>
+<td class="text-right"><p>29.1</p></td>
+<td class="text-right"><p>0.1</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>5,484</p></td>
+<td class="text-right"><p>5,470 (no JIT)</p></td>
+<td class="text-right"><p>1,297</p></td>
+<td class="text-right"><p>79</p></td>
+<td class="text-right"><p>4.2×</p></td>
+<td class="text-right"><p>70×</p></td>
+<td class="text-right"><p>17.1</p></td>
+<td class="text-right"><p>69.7</p></td>
+<td class="text-right"><p>1.0</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>7,643</p></td>
+<td class="text-right"><p>7,635 (no JIT)</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>173</p></td>
+<td class="text-right"><p>4.3×</p></td>
+<td class="text-right"><p>44×</p></td>
+<td class="text-right"><p>23.9</p></td>
+<td class="text-right"><p>97.3</p></td>
+<td class="text-right"><p>2.2</p></td>
+</tr>
+<tr class="row-odd"><td><p>texture</p></td>
+<td class="text-right"><p>6,140</p></td>
+<td class="text-right"><p>6,091</p></td>
+<td class="text-right"><p>3,110</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>2.0×</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>19.2</p></td>
+<td class="text-right"><p>75.6</p></td>
+<td class="text-right"><p>38.9</p></td>
+</tr>
+<tr class="row-even"><td><p>rain (yours, hand-opt.)</p></td>
+<td class="text-right"><p>7,284</p></td>
+<td class="text-right"><p>7,227 (consts&gt;64)</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>881</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>22.8</p></td>
+<td class="text-right"><p>88.1</p></td>
+<td class="text-right"><p>10.3</p></td>
+</tr>
+<tr class="row-odd"><td><p>pulses</p></td>
+<td class="text-right"><p>8,768</p></td>
+<td class="text-right"><p>8,755 (no JIT)</p></td>
+<td class="text-right"><p>3,835</p></td>
+<td class="text-right"><p>1,035</p></td>
+<td class="text-right"><p>2.3×</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>27.4</p></td>
+<td class="text-right"><p>111.7</p></td>
+<td class="text-right"><p>13.2</p></td>
+</tr>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>8,274</p></td>
+<td class="text-right"><p>8,263 (no JIT)</p></td>
+<td class="text-right"><p>3,389</p></td>
+<td class="text-right"><p>1,125*</p></td>
+<td class="text-right"><p>2.4×</p></td>
+<td class="text-right"><p>7×</p></td>
+<td class="text-right"><p>25.9</p></td>
+<td class="text-right"><p>105.4</p></td>
+<td class="text-right"><p>14.3</p></td>
+</tr>
+<tr class="row-odd"><td><p>flood</p></td>
+<td class="text-right"><p>10,820</p></td>
+<td class="text-right"><p>10,791 (no JIT)</p></td>
+<td class="text-right"><p>3,477</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>3.1×</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>33.8</p></td>
+<td class="text-right"><p>137.4</p></td>
+<td class="text-right"><p>44.5</p></td>
+</tr>
+<tr class="row-even"><td><p>cylinder (#328’s)</p></td>
+<td class="text-right"><p>10,529</p></td>
+<td class="text-right"><p>9,729</p></td>
+<td class="text-right"><p>4,384</p></td>
+<td class="text-right"><p>941</p></td>
+<td class="text-right"><p>2.4×</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>32.9</p></td>
+<td class="text-right"><p>134.6</p></td>
+<td class="text-right"><p>12.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>plasma</p></td>
+<td class="text-right"><p>15,854</p></td>
+<td class="text-right"><p>14,770</p></td>
+<td class="text-right"><p>6,137</p></td>
+<td class="text-right"><p>1,404</p></td>
+<td class="text-right"><p>2.6×</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>49.5</p></td>
+<td class="text-right"><p>202.3</p></td>
+<td class="text-right"><p>17.9</p></td>
+</tr>
+<tr class="row-even"><td><p>noise (skill example)</p></td>
+<td class="text-right"><p>22,196</p></td>
+<td class="text-right"><p>22,184 (no JIT)</p></td>
+<td class="text-right"><p>5,383</p></td>
+<td class="text-right"><p>3,168</p></td>
+<td class="text-right"><p>4.1×</p></td>
+<td class="text-right"><p>7×</p></td>
+<td class="text-right"><p>69.4</p></td>
+<td class="text-right"><p>283.5</p></td>
+<td class="text-right"><p>40.5</p></td>
+</tr>
+<tr class="row-odd"><td><p>particles (8 agents)</p></td>
+<td class="text-right"><p>28,384</p></td>
+<td class="text-right"><p>28,367</p></td>
+<td class="text-right"><p>6,861</p></td>
+<td class="text-right"><p>1,263</p></td>
+<td class="text-right"><p>4.1×</p></td>
+<td class="text-right"><p>22×</p></td>
+<td class="text-right"><p>88.7</p></td>
+<td class="text-right"><p>361.2</p></td>
+<td class="text-right"><p>16.0</p></td>
+</tr>
+<tr class="row-even"><td><p>rain_naive†</p></td>
+<td class="text-right"><p>35,701</p></td>
+<td class="text-right"><p>34,352</p></td>
+<td class="text-right"><p>7,154</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>5.0×</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>111.6</p></td>
+<td class="text-right"><p>456.2</p></td>
+<td class="text-right"><p>91.5</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The study effects are in <code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench/effects/</span></code>. solid, gradient,
+noise and pulses are the MCP skill’s own examples; cylinder and sparkle come
+from PR #328’s tests. † <code class="docutils literal notranslate"><span class="pre">rain_naive</span></code> is a <strong>reconstruction</strong>, not your file: the
+straightforward all-per-LED, all-float first draft of <code class="docutils literal notranslate"><span class="pre">rain.fx</span></code>. It costs
+111 ms, against the 132 ms the field report gave for the real first draft.
+* sparkle’s q16 computes <code class="docutils literal notranslate"><span class="pre">x^8</span></code> exactly and differs from the VM; see “VM maths
+accuracy” below. The f32 twin matches the VM bit for bit.</p>
+<p><strong>Where the cycles go.</strong> VM − native-f32 is pure interpretation, because the
+maths is identical. native-f32 − native-q16 is soft-float plus the float
+transcendental implementations.</p>
+<p><img alt="decomposition" src="docs/design/img/fx-perf/q1-decomposition.png" /></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>per-LED framing</p></th>
+<th class="head text-right"><p>VM invocation (fixed)</p></th>
+<th class="head text-right"><p>interpretation</p></th>
+<th class="head text-right"><p>soft-float + transcendentals</p></th>
+<th class="head text-right"><p>q16 compute</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>sweep</p></td>
+<td class="text-right"><p>353</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>2,044</p></td>
+<td class="text-right"><p>1,218</p></td>
+<td class="text-right"><p>79</p></td>
+</tr>
+<tr class="row-odd"><td><p>gradient</p></td>
+<td class="text-right"><p>346</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>3,718</p></td>
+<td class="text-right"><p>1,617</p></td>
+<td class="text-right"><p>173</p></td>
+</tr>
+<tr class="row-even"><td><p>pulses</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>3,118</p></td>
+<td class="text-right"><p>2,800</p></td>
+<td class="text-right"><p>1,035</p></td>
+</tr>
+<tr class="row-odd"><td><p>cylinder</p></td>
+<td class="text-right"><p>25</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>4,329</p></td>
+<td class="text-right"><p>3,443</p></td>
+<td class="text-right"><p>941</p></td>
+</tr>
+<tr class="row-even"><td><p>plasma</p></td>
+<td class="text-right"><p>26</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>7,902</p></td>
+<td class="text-right"><p>4,733</p></td>
+<td class="text-right"><p>1,404</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>14,999</p></td>
+<td class="text-right"><p>2,215</p></td>
+<td class="text-right"><p>3,168</p></td>
+</tr>
+<tr class="row-even"><td><p>particles</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p>1,790</p></td>
+<td class="text-right"><p>19,709</p></td>
+<td class="text-right"><p>5,598</p></td>
+<td class="text-right"><p>1,263</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The terms, measured:</p>
+<ul class="simple">
+<li><p><strong>Dispatch: ~54 cycles per opcode</strong>, measured with 200 <code class="docutils literal notranslate"><span class="pre">Pop</span> <span class="pre">0</span></code> per LED. That
+covers the instruction-budget decrement, the counter and stack high-water
+updates, the deadline poll mask, <code class="docutils literal notranslate"><span class="pre">Op::from_u8</span></code>, and the jump-table <code class="docutils literal notranslate"><span class="pre">match</span></code>. A
+push+pop averages 83 cycles per op and a load/store-local 88. A <code class="docutils literal notranslate"><span class="pre">vecN</span></code>
+opcode adds ~10 cycles per extra lane of stack traffic. Effects spend
+<strong>59–67% of their opcodes on plumbing</strong> (load, store, push const, swizzle; per
+<code class="docutils literal notranslate"><span class="pre">tools/fx_agent_eval/analyze.py</span></code>). So ops × 54 is a hard floor: about 9.7 k
+of particles’ 19.7 k interpretation cycles. Most of the rest is
+operand-stack moves, operand decoding and bounds checks.</p></li>
+<li><p><strong>VM invocation: 1,790 cycles per LED, even for <code class="docutils literal notranslate"><span class="pre">return</span> <span class="pre">vec3(0)</span></code>.</strong> Two
+causes, both visible in the RV32 disassembly of <code class="docutils literal notranslate"><span class="pre">run()</span></code>. First, LLVM hoists
+<code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>’s loop-invariant soft-float (<code class="docutils literal notranslate"><span class="pre">1.0</span> <span class="pre">−</span> <span class="pre">led.s</span></code>, int→f32 of
+idx/seg/frame, …) into <code class="docutils literal notranslate"><span class="pre">run()</span></code>’s prologue, so every invocation pays ~5
+soft-float calls whether or not the program reads those inputs. Second, the
+<code class="docutils literal notranslate"><span class="pre">clamp01(x)</span> <span class="pre">*</span> <span class="pre">255</span> <span class="pre">as</span> <span class="pre">u8</span></code> epilogue is 3 × (2 compares + mul + f32→int).
+Prototype P2 below removes ~760 cycles of it.</p></li>
+<li><p><strong>Soft-float primitives are not the problem.</strong> Measured with precomputed
+inputs, the C6 ROM’s libgcc <code class="docutils literal notranslate"><span class="pre">__addsf3</span></code> takes 57 cycles, <code class="docutils literal notranslate"><span class="pre">__mulsf3</span></code> 53,
+<code class="docutils literal notranslate"><span class="pre">__divsf3</span></code> 166, a compare 25, f32→i32 ~110 and i32→f32 87. A hand-written,
+bit-exact RV32 fast path (<code class="docutils literal notranslate"><span class="pre">src/fastfloat.rs</span></code>, checked against hardware
+floats on 4 M random pairs) took 71 and 51, no better. <strong>The VM’s maths
+helpers are where float costs pile up:</strong> <code class="docutils literal notranslate"><span class="pre">sinf</span></code> 482 (a f32→i64 + u32→f32
+round trip to build the LUT phase), <code class="docutils literal notranslate"><span class="pre">floorf</span></code> 217, <code class="docutils literal notranslate"><span class="pre">fractf</span></code> 269, <code class="docutils literal notranslate"><span class="pre">sqrtf</span></code> 566,
+<code class="docutils literal notranslate"><span class="pre">atan2f</span></code> 900, <code class="docutils literal notranslate"><span class="pre">expf</span></code> 845, <code class="docutils literal notranslate"><span class="pre">logf</span></code> 684, <code class="docutils literal notranslate"><span class="pre">powf</span></code> 1,696, <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> 1,371. The
+fixed-point equivalents: <code class="docutils literal notranslate"><span class="pre">sin_fix</span></code> 86, <code class="docutils literal notranslate"><span class="pre">atan2_fix</span></code> 258, <code class="docutils literal notranslate"><span class="pre">sqrt_fix</span></code> 574 (a
+bit-by-bit sqrt), the integer <code class="docutils literal notranslate"><span class="pre">hash1</span></code> 109. Including dispatch, an <code class="docutils literal notranslate"><span class="pre">UnMath</span> <span class="pre">sin</span></code>
+opcode costs ~580 cycles and a <code class="docutils literal notranslate"><span class="pre">SinFix</span></code> ~146.</p></li>
+<li><p><strong>Per-LED framing.</strong> The soft-float uv projection (<code class="docutils literal notranslate"><span class="pre">led.uv</span></code>) costs ~330
+cycles per LED. The Q16 context mirrors cost <strong>1,100–1,500 cycles per LED</strong>
+whenever a program reads any fixed context. They are recomputed per LED per
+frame in <code class="docutils literal notranslate"><span class="pre">fx_shade_one</span></code> (<code class="docutils literal notranslate"><span class="pre">q16_16(x)</span></code> = soft mul + f32→i32 × 7), although the
+struct comment says “at map-load”. That is 20% of the hand-optimised rain.
+Caching them at map load is pure win.</p></li>
+<li><p><strong>The JIT</strong> compiled blocks for 31 of the 45 library effects but saved a
+median of only 1.7% (best 10.8%). It never engaged for 4 of the 13 study
+effects (<code class="docutils literal notranslate"><span class="pre">consts&gt;64</span></code> for rain, which has 73 constants; no candidate block for
+the float effects). Its IR covers only straight-line <code class="docutils literal notranslate"><span class="pre">PushConst</span></code> /
+<code class="docutils literal notranslate"><span class="pre">Load</span></code>/<code class="docutils literal notranslate"><span class="pre">Store</span></code>/<code class="docutils literal notranslate"><span class="pre">TeeLocal</span></code> / <code class="docutils literal notranslate"><span class="pre">AddI</span> <span class="pre">SubI</span> <span class="pre">MulI</span> <span class="pre">NegI</span> <span class="pre">MulFix</span> <span class="pre">Pop</span></code> (<code class="docutils literal notranslate"><span class="pre">fx_jit</span> <span class="pre">op_to_ir</span></code>). It does better on fixed-point code: the hand-optimised
+<code class="docutils literal notranslate"><span class="pre">rainforest</span></code> gets <strong>2.2×</strong> with the JIT against 1.5× without, and hits the
+8-block cap.</p></li>
+</ul>
+<p><strong>VM maths accuracy (a correctness finding).</strong> <code class="docutils literal notranslate"><span class="pre">fx_vm::logf</span></code> adds a
+polynomial that approximates log₂(m) − 1 to e·ln 2. It is off by up to ~0.13
+nats: <code class="docutils literal notranslate"><span class="pre">logf(1.5)</span></code> = 0.276 against ln 1.5 = 0.405. So <code class="docutils literal notranslate"><span class="pre">powf(x,</span> <span class="pre">8)</span></code> (= exp(8·log
+x)) is off by up to ~2.8×. sparkle’s <code class="docutils literal notranslate"><span class="pre">pow(…,</span> <span class="pre">8.0)</span></code> renders 12/255 where the
+exact value is 102/255. A fix (<code class="docutils literal notranslate"><span class="pre">(e</span> <span class="pre">+</span> <span class="pre">p(m))</span> <span class="pre">·</span> <span class="pre">ln</span> <span class="pre">2</span></code> with a log₂ poly) changes
+every pow/log effect’s look, so it needs its own PR and owner sign-off.</p>
+<p><strong>Native ms/frame at 2048 LEDs.</strong> Through the VM, only solid fits 33 ms at
+2048 LEDs (29 ms). Natively, 9 of the 13 study effects fit, all in under
+20 ms, including the 8-agent particles at 16 ms. The four that don’t are noise
+(40 ms even in fixed point: 8 lattice hashes per LED) and texture, flood and
+rain_naive, which have only f32 twins.</p>
+</section>
+<hr class="docutils" />
+<section id="q2-agent-authoring-quality">
+<h2>Q2 — agent authoring quality<a class="headerlink" href="#q2-agent-authoring-quality" title="Link to this heading">¶</a></h2>
+<section id="the-generated-set-tools-fx-agent-eval">
+<h3>The generated set (<code class="docutils literal notranslate"><span class="pre">tools/fx_agent_eval</span></code>)<a class="headerlink" href="#the-generated-set-tools-fx-agent-eval" title="Link to this heading">¶</a></h3>
+<p>The harness gave 15 fixed mood, scene and spatial prompts
+(<code class="docutils literal notranslate"><span class="pre">prompts.json</span></code>, each with the same fixture/budget line) to <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">-p</span></code>
+headless:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">app</span></code>: the in-app system prompt, rendered from <code class="docutils literal notranslate"><span class="pre">system-prompt.ts</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">skill</span></code>: the MCP skill files (<code class="docutils literal notranslate"><span class="pre">SKILL.md</span></code> + <code class="docutils literal notranslate"><span class="pre">effect-language.md</span></code> + geometry
+and uniforms docs + the skill’s example effects);</p></li>
+</ul>
+<p>with <strong>claude-opus-5-5</strong> and <strong>claude-sonnet-4-6</strong>, plus two Opus-only
+variants that test a fix (below). A compile-and-repair loop like the app’s
+(2 rounds) got 90 of 90 programs to compile. No OpenAI model was run: there is
+no OpenAI key in <code class="docutils literal notranslate"><span class="pre">/workspace/credentials</span></code>. Each program ran on the C6 bench
+(VM and VM+JIT, 500-LED helix). Times below include the ~600-cycle firmware
+framing. The programs were measured on the bench rather than through
+<code class="docutils literal notranslate"><span class="pre">fx_bench_netstack</span></code>, which is equivalent within ±2% (see Method).</p>
+<p><img alt="agent cost" src="docs/design/img/fx-perf/q2-agent-cost.png" /></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>path / model</p></th>
+<th class="head text-right"><p>n</p></th>
+<th class="head text-right"><p>median ms &#64;500</p></th>
+<th class="head text-right"><p>p25–p75 ms</p></th>
+<th class="head text-right"><p>fits 33 ms (VM)</p></th>
+<th class="head text-right"><p>fits (VM+JIT)</p></th>
+<th class="head text-right"><p>mean cyc/LED</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>skill / sonnet</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>58.6</p></td>
+<td class="text-right"><p>39.3–98.0</p></td>
+<td class="text-right"><p>1/15</p></td>
+<td class="text-right"><p>1/15</p></td>
+<td class="text-right"><p>25,926</p></td>
+</tr>
+<tr class="row-odd"><td><p>skill / opus</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>56.6</p></td>
+<td class="text-right"><p>37.9–98.2</p></td>
+<td class="text-right"><p>2/15</p></td>
+<td class="text-right"><p>3/15</p></td>
+<td class="text-right"><p>20,512</p></td>
+</tr>
+<tr class="row-even"><td><p>app / sonnet</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>37.9</p></td>
+<td class="text-right"><p>27.4–162.6</p></td>
+<td class="text-right"><p>6/15</p></td>
+<td class="text-right"><p>7/15</p></td>
+<td class="text-right"><p>24,842</p></td>
+</tr>
+<tr class="row-odd"><td><p>app / opus</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>51.0</p></td>
+<td class="text-right"><p>31.2–99.6</p></td>
+<td class="text-right"><p>4/15</p></td>
+<td class="text-right"><p>5/15</p></td>
+<td class="text-right"><p>18,701</p></td>
+</tr>
+<tr class="row-even"><td><p>app + lint round / opus</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>44.8</p></td>
+<td class="text-right"><p>30.5–56.0</p></td>
+<td class="text-right"><p>6/15</p></td>
+<td class="text-right"><p>7/15</p></td>
+<td class="text-right"><p>14,243</p></td>
+</tr>
+<tr class="row-odd"><td><p>app + perf addendum / opus</p></td>
+<td class="text-right"><p>15</p></td>
+<td class="text-right"><p>35.9</p></td>
+<td class="text-right"><p>31.4–43.2</p></td>
+<td class="text-right"><p>7/15</p></td>
+<td class="text-right"><p>10/15</p></td>
+<td class="text-right"><p>12,833</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Static analysis (<code class="docutils literal notranslate"><span class="pre">analyze.py</span></code>: disassembly-level counts, a variance analysis
+and perf-lint rules; <code class="docutils literal notranslate"><span class="pre">out/summary.md</span></code>):</p>
+<ul class="simple">
+<li><p><strong>The skill path never uses fixed point</strong> (0 of 30 programs, against 24 of
+30 for the app path). It averages 2.6–5.1 float transcendentals per LED and
+~38 float ops per LED. Its docs tell the model “<code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code> are cheap LUTs;
+<code class="docutils literal notranslate"><span class="pre">hash</span></code> is an integer mix (cheap)”. For float arguments <code class="docutils literal notranslate"><span class="pre">sin</span></code> costs ~580
+cycles. All the skill’s example effects are float.</p></li>
+<li><p><strong>Where a cheaper equivalent exists, the agents mostly don’t pick it:</strong></p>
+<ul>
+<li><p>float <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code> in shade: 56 hits in 20 programs;</p></li>
+<li><p>per-LED-invariant <code class="docutils literal notranslate"><span class="pre">atan2</span></code> / <code class="docutils literal notranslate"><span class="pre">hash(led.idx)</span></code>: 38 hits in 18;</p></li>
+<li><p>frame-invariant maths left in shade: 36 hits in 28;</p></li>
+<li><p>a float literal silently promoting fixed maths back to soft-float
+(<code class="docutils literal notranslate"><span class="pre">fixed</span> <span class="pre">x;</span> <span class="pre">x</span> <span class="pre">*</span> <span class="pre">12.5</span></code>): 29 hits in 8, all from Opus with the app prompt;</p></li>
+<li><p>a loop per LED: 11 hits in 10;</p></li>
+<li><p>noise octaves per LED: 7 hits in 7.</p></li>
+</ul>
+</li>
+<li><p><strong>Fixed point helps less than people think under the VM.</strong> The median
+fixed-using program costs 13.2 k cycles per LED and the median float-only one
+17.3 k. The 54-cycle dispatch per opcode stays.</p></li>
+<li><p><strong>9 of 90 programs crash the device.</strong> <code class="docutils literal notranslate"><span class="pre">clamp(color,</span> <span class="pre">0.0,</span> <span class="pre">1.0)</span></code> is
+idiomatic GLSL. The compiler emits <code class="docutils literal notranslate"><span class="pre">CLAMP</span> <span class="pre">3</span></code> over 3 + 1 + 1 stack slots, the
+VM indexes below its stack (an index-out-of-bounds panic), and the player’s
+panic handler is <code class="docutils literal notranslate"><span class="pre">loop</span> <span class="pre">{}</span></code>, so the render task hangs. 8 of the 9 are
+skill/opus programs. The compiler fix (broadcast scalar bounds, or reject
+them) is follow-up PR #338. The VM should also never
+panic on a malformed stack (recommendation R3).</p></li>
+<li><p>The two prompts <strong>contradict the compiler</strong> in places. The in-app prompt
+says <code class="docutils literal notranslate"><span class="pre">sqrt</span> <span class="pre">log</span> <span class="pre">tan</span> <span class="pre">pow</span> <span class="pre">atan2</span> <span class="pre">hsv2rgb</span></code> are float-only, but the compiler has
+fixed paths for all of them (<code class="docutils literal notranslate"><span class="pre">SqrtFix</span></code>, <code class="docutils literal notranslate"><span class="pre">Atan2Fix</span></code>, <code class="docutils literal notranslate"><span class="pre">Hsv2RgbFix</span></code>, …). It also
+promises the JIT gives “a further ~2×”. The VM has <code class="docutils literal notranslate"><span class="pre">SmoothstepFix</span></code>,
+<code class="docutils literal notranslate"><span class="pre">DotFix</span></code>, <code class="docutils literal notranslate"><span class="pre">LengthFix</span></code> and <code class="docutils literal notranslate"><span class="pre">HashFix</span></code>, but the compiler never emits them:
+<code class="docutils literal notranslate"><span class="pre">smoothstep(fixed…)</span></code> and <code class="docutils literal notranslate"><span class="pre">hash(…)</span></code> always go through float.</p></li>
+</ul>
+<p><strong>The tested prompt change.</strong> <code class="docutils literal notranslate"><span class="pre">tools/fx_agent_eval/perf_addendum.txt</span></code> is 24
+lines appended to the in-app prompt. It has the measured per-op cost table, six
+rules (hoist; cache LED-invariant geometry in a buffer; fixed-point phases in
+turns; no <code class="docutils literal notranslate"><span class="pre">pow</span></code>/<code class="docutils literal notranslate"><span class="pre">exp</span></code> per LED; <code class="docutils literal notranslate"><span class="pre">fixed()</span></code> around literals; no per-LED loops) and
+one compiled fast example. On the same 15 prompts with Opus it cut the median
+measured cost by <strong>30%</strong> (paired geometric mean 0.74×). The number that fit
+33 ms went from 4 to 7 (10 of 15 with the JIT), and float transcendentals per
+LED fell from 0.93 to 0. Feeding the linter’s warnings back for one revision
+round (<code class="docutils literal notranslate"><span class="pre">app_lint</span></code>) helped less: 0.89× median.</p>
+</section>
+<section id="your-library-45-agent-written-effects-splanc-library-json">
+<h3>Your library: 45 agent-written effects (<code class="docutils literal notranslate"><span class="pre">splanc_library.json</span></code>)<a class="headerlink" href="#your-library-45-agent-written-effects-splanc-library-json" title="Link to this heading">¶</a></h3>
+<p>Every effect was measured on the synthetic sign at 500 LEDs and the synthetic
+cylinder at 250 LEDs. The raw library isn’t committed; only these derived
+numbers and four rewrites are. The VM numbers below exclude the ~0.6 k-cycle
+firmware framing, so on the device each ms column is about 1.9 ms (sign) or
+0.9 ms (cylinder) higher.</p>
+<p><img alt="library" src="docs/design/img/fx-perf/q2-user-library.png" /></p>
+<p><strong>Why the 500-LED sign versions run “a fair bit” worse than the 250-LED lamp
+ones.</strong> It isn’t the geometry. Each effect costs the same per LED on both
+fixtures, within 1–4%. The sign-targeted effects are, if anything, cheaper per
+LED: a median of 15.5 k cycles against 19.5 k for the lamp ones. Three things
+combine:</p>
+<ol class="arabic simple">
+<li><p>Twice the LEDs gives exactly twice the frame time.</p></li>
+<li><p>The frame budget is a cliff. The lamp effects run a median of 31 ms on 250
+LEDs, under the 33 ms frame. Their sign siblings run 49 ms on 500 LEDs. 24
+of the 35 sign deployments exceed 33 ms against 5 of 19 lamp ones, so on
+the sign the autoscaler drops to its 25 fps rung or parks the effect, and
+the motion looks visibly worse. A 2× cost reads as much more than 2×.</p></li>
+<li><p>The firmware’s ~600 cycles per LED of framing and the longer transmit both
+double as well.</p></li>
+</ol>
+<p>The per-effect cost drivers are listed in full in the appendix; the worst ones
+are:</p>
+<ul class="simple">
+<li><p><strong>Rainbow overload #2</strong> (103 ms on the sign): <strong>five <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> per LED</strong>
+(~1.4 k cycles each), 3 hashes, 2 float sines, a per-LED <code class="docutils literal notranslate"><span class="pre">sqrt</span></code> of an
+LED-invariant radius, and 42 float ops.</p></li>
+<li><p><strong>Metaballs, 3 variants</strong> (86–87 ms): 5 float divides and 2 <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> per
+LED, plus a per-LED <code class="docutils literal notranslate"><span class="pre">exp</span></code> and <code class="docutils literal notranslate"><span class="pre">smoothstep</span></code>.</p></li>
+<li><p><strong>Rainforest</strong> (80 ms): five float sines, each with its time phase rebuilt
+per LED (24% of its cycles are hoistable), plus a per-LED <code class="docutils literal notranslate"><span class="pre">exp</span></code> whose value
+depends only on time.</p></li>
+<li><p><strong>The ten fire-* effects</strong> (28–68 ms): the helix family runs an <code class="docutils literal notranslate"><span class="pre">atan2</span></code> of
+<code class="docutils literal notranslate"><span class="pre">led.pos</span></code> per LED per frame (17–34% of cycles are LED-invariant) plus a float
+<code class="docutils literal notranslate"><span class="pre">fract</span></code>/<code class="docutils literal notranslate"><span class="pre">floor</span></code> value-noise hash. The flow family uses 2–3 float sines.</p></li>
+<li><p><strong>Handwriting</strong> and <strong>Pass the ball</strong>: a 28-way <code class="docutils literal notranslate"><span class="pre">if</span></code> ladder in a <code class="docutils literal notranslate"><span class="pre">rank()</span></code>
+helper, run per LED. #328’s memo pass doesn’t reach into user functions.</p></li>
+<li><p><strong>Call and response</strong>: 4 <code class="docutils literal notranslate"><span class="pre">exp</span></code> per LED.</p></li>
+</ul>
+<p>Only 5 of the 45 use any fixed type (Rainy afternoon, your hand-optimised
+rain, plus Windy meadow, Snowfall, Fog bank and Aurora).
+All 5 are among the 7 cheapest (15–23 ms on the sign).</p>
+<p><strong>Against the old estimates.</strong> The stored estimates are 1.1–7.2 ms. Paired with
+the measurement on the same fixture, they are <strong>6–36× low</strong> (median 14×). The
+fire-helix effects were all estimated at 1.1 ms on the lamp and measure
+31–35 ms there (29–32×).</p>
+<p><strong>Hand-optimised rewrites</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench/optimized/</span></code>; look checked
+with <code class="docutils literal notranslate"><span class="pre">fx_diff</span></code> over 60 frames):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>original</p></th>
+<th class="head text-right"><p>rewrite (VM)</p></th>
+<th class="head text-right"><p>rewrite (VM+JIT)</p></th>
+<th class="head text-right"><p>speedup</p></th>
+<th class="head"><p>look difference</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Rainbow overload #2, sign 500</p></td>
+<td class="text-right"><p>102.1 ms</p></td>
+<td class="text-right"><p>75.0 ms</p></td>
+<td class="text-right"><p>71.5 ms</p></td>
+<td class="text-right"><p>1.36× / 1.43×</p></td>
+<td><p>32-step hue table: mean 4.3/255, max 44</p></td>
+</tr>
+<tr class="row-odd"><td><p>Metaballs (sign), 500</p></td>
+<td class="text-right"><p>85.1 ms</p></td>
+<td class="text-right"><p>62.6 ms</p></td>
+<td class="text-right"><p>62.6 ms</p></td>
+<td class="text-right"><p>1.36×</p></td>
+<td><p>16-step colour ramps, rational rim: mean 4.8/255</p></td>
+</tr>
+<tr class="row-even"><td><p>Rainforest, sign 500</p></td>
+<td class="text-right"><p>79.4 ms</p></td>
+<td class="text-right"><p>52.7 ms</p></td>
+<td class="text-right"><p><strong>36.0 ms</strong></p></td>
+<td class="text-right"><p>1.51× / <strong>2.21×</strong></p></td>
+<td><p>none (mean 0.01/255)</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-helix-moving, lamp 250</p></td>
+<td class="text-right"><p>34.6 ms</p></td>
+<td class="text-right"><p>21.0 ms</p></td>
+<td class="text-right"><p>17.5 ms</p></td>
+<td class="text-right"><p>1.65× / 1.98×</p></td>
+<td><p>same flame, different random field</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The techniques were: fixed-point LUT sines in turns; time phases folded into
+<code class="docutils literal notranslate"><span class="pre">state</span></code> once per frame; hue and colour-ramp tables baked once instead of
+<code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> per LED; LED-invariant <code class="docutils literal notranslate"><span class="pre">atan2</span></code> and <code class="docutils literal notranslate"><span class="pre">sqrt</span></code> cached in a buffer;
+a random table instead of a float hash. That is about 1.5× under the VM,
+because the op count stays the same: rainforest went from 154 to 133 ops/LED,
+fire-helix from 101 to 116. The same rewrites gain up to 2.2× once the JIT can
+take the fixed-point blocks. The native q16 twins of comparable effects are
+7–22× faster. Hand-tuning source code is not how the engine gets fast.</p>
+</section>
+<section id="prompt-and-tooling-recommendations-q2">
+<h3>Prompt and tooling recommendations (Q2)<a class="headerlink" href="#prompt-and-tooling-recommendations-q2" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Fix the false or contradictory statements in both prompts.</strong> In the skill:
+“sin/cos cheap LUTs”, “hash cheap”, all-float examples. In the in-app prompt:
+the “float-only” list and “JIT ~2×”. Add the measured cost table from
+<code class="docutils literal notranslate"><span class="pre">perf_addendum.txt</span></code> to both. That addendum measured −30% on its own.</p></li>
+<li><p><strong>Give the skill path fixed-point examples.</strong> At least the addendum’s
+rotating rainbow, and a fixed-point noise and plasma.</p></li>
+<li><p><strong>Close the estimate loop with the corrected cost model (#328).</strong> Today
+<code class="docutils literal notranslate"><span class="pre">estimate_effect</span></code> says a 60 ms effect costs 0.4 ms, so the “iterate with the
+estimate” workflow can’t work. Return the top 3 lint findings from
+<code class="docutils literal notranslate"><span class="pre">analyze.py</span></code>’s rules with the estimate (cheap, and it tells the model what to
+change).</p></li>
+<li><p><strong>Make the cheap form the easy form in the compiler.</strong> Warn on a float
+literal inside fixed maths (29 hits). Wire <code class="docutils literal notranslate"><span class="pre">SmoothstepFix</span></code>, <code class="docutils literal notranslate"><span class="pre">HashFix</span></code>,
+<code class="docutils literal notranslate"><span class="pre">DotFix</span></code> and <code class="docutils literal notranslate"><span class="pre">LengthFix</span></code>. Treat <code class="docutils literal notranslate"><span class="pre">fixed</span> <span class="pre">x</span> <span class="pre">*</span> <span class="pre">0.6</span></code> as fixed by default behind a
+lint (#328 lists this follow-up).</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="q3-estimator-accuracy-and-the-dashboard-numbers">
+<h2>Q3 — estimator accuracy and the dashboard numbers<a class="headerlink" href="#q3-estimator-accuracy-and-the-dashboard-numbers" title="Link to this heading">¶</a></h2>
+<p>The comparison is predicted frame cycles (update + shade, without the
+estimator’s modelled show term) against measured frame cycles. Bench
+measurements get the +600 cycles/LED firmware framing; fx_bench goldens are
+already firmware numbers. 286 programs: 72 fx_bench, 8 validation, 26 study
+effect × LED-count pairs, 90 user-library × fixture pairs, 90 agent programs.</p>
+<p><img alt="estimator" src="docs/design/img/fx-perf/q3-estimator.png" /></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>estimator</p></th>
+<th class="head text-right"><p>programs</p></th>
+<th class="head text-right"><p>median predicted ÷ measured</p></th>
+<th class="head text-right"><p>p10</p></th>
+<th class="head text-right"><p>p90</p></th>
+<th class="head text-right"><p>worst</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>main (what the agent and app use today)</p></td>
+<td class="text-right"><p>196</p></td>
+<td class="text-right"><p><strong>0.050</strong></p></td>
+<td class="text-right"><p>0.004</p></td>
+<td class="text-right"><p>0.098</p></td>
+<td class="text-right"><p>0.003</p></td>
+</tr>
+<tr class="row-odd"><td><p>main, agent set</p></td>
+<td class="text-right"><p>90</p></td>
+<td class="text-right"><p><strong>0.006</strong></p></td>
+<td class="text-right"><p>0.002</p></td>
+<td class="text-right"><p>0.057</p></td>
+<td class="text-right"><p>0.001</p></td>
+</tr>
+<tr class="row-even"><td><p>PR #328</p></td>
+<td class="text-right"><p>196</p></td>
+<td class="text-right"><p>1.000</p></td>
+<td class="text-right"><p>0.593</p></td>
+<td class="text-right"><p>1.041</p></td>
+<td class="text-right"><p>0.289 / 4.65</p></td>
+</tr>
+<tr class="row-odd"><td><p>PR #328, agent set (<code class="docutils literal notranslate"><span class="pre">--no-memo</span></code>)</p></td>
+<td class="text-right"><p>90</p></td>
+<td class="text-right"><p>1.010</p></td>
+<td class="text-right"><p>0.875</p></td>
+<td class="text-right"><p>1.084</p></td>
+<td class="text-right"><p>0.716 / 1.98</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Why main is 20–1,000× low.</strong></p>
+<ul class="simple">
+<li><p>The default table (<code class="docutils literal notranslate"><span class="pre">costTableStore.ts</span> <span class="pre">DEFAULT_COSTS</span></code>) prices
+<code class="docutils literal notranslate"><span class="pre">PushConst</span></code>/<code class="docutils literal notranslate"><span class="pre">LoadLocal</span></code> at 2–3 cycles, <code class="docutils literal notranslate"><span class="pre">Add</span></code> at 12 and <code class="docutils literal notranslate"><span class="pre">UnMath:sin</span></code> at 65.
+It has no dispatch term and <code class="docutils literal notranslate"><span class="pre">shade_fixed</span> <span class="pre">=</span> <span class="pre">60</span></code>. The device costs 54–88 per
+op, ~110, ~580, and ~1,800 per LED (the invocation).</p></li>
+<li><p>The walker (<code class="docutils literal notranslate"><span class="pre">costModel.ts</span> <span class="pre">walkEntry</span></code>) knows opcodes only up to <code class="docutils literal notranslate"><span class="pre">ExpFix</span></code> (69).
+On the first byte above that (<code class="docutils literal notranslate"><span class="pre">AbsI</span></code>, <code class="docutils literal notranslate"><span class="pre">ClampI</span></code>, <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code>, <code class="docutils literal notranslate"><span class="pre">TeeLocal</span></code>,
+<code class="docutils literal notranslate"><span class="pre">IncLocalI</span></code>, <code class="docutils literal notranslate"><span class="pre">BrCmpI</span></code>, …) it <strong>stops the walk</strong>. The optimizer emits those
+superinstructions in almost every program, and every fixed-point program
+uses the fixed ops. That is why every fire-helix effect estimates
+<strong>0.003×</strong> (it reads <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code> almost immediately) and why the agent
+programs estimate a median of 0.006×.</p></li>
+</ul>
+<p><strong>#328’s remaining errors, and why.</strong></p>
+<ul class="simple">
+<li><p><strong>Under-estimates</strong> (worst 0.29×):</p>
+<ul>
+<li><p>Call and response 0.29×, and Handwriting and Pass the ball 0.42–0.46×.
+These are <code class="docutils literal notranslate"><span class="pre">if</span></code> ladders and user-function <code class="docutils literal notranslate"><span class="pre">rank()</span></code> chains. The walker
+prices a forward branch at the midpoint of its two arms and walks a
+structured <code class="docutils literal notranslate"><span class="pre">if</span></code> once, but a 28-way ladder executes ~14 compares per LED
+on average.</p></li>
+<li><p>texture 0.41×. <code class="docutils literal notranslate"><span class="pre">SampleTex</span></code> is priced like a cheap op; the bilinear float
+sample measured ~3,800 cycles.</p></li>
+</ul>
+</li>
+<li><p><strong>Over-estimates</strong>:</p>
+<ul>
+<li><p>rain 1.67×. Its cloud branch runs for 1/16 of the LEDs per frame
+(<code class="docutils literal notranslate"><span class="pre">mod(i,</span> <span class="pre">16)</span> <span class="pre">==</span> <span class="pre">slot</span></code>), but the walker prices it as half of all LEDs.</p></li>
+<li><p>lavalamp 4.6× against its golden. The estimator is right here: the golden
+was measured with all uniforms at 0 (see Method).</p></li>
+</ul>
+</li>
+<li><p>Fixes: a per-op cost for <code class="docutils literal notranslate"><span class="pre">SampleTex</span></code>/<code class="docutils literal notranslate"><span class="pre">PaintTex</span></code>/<code class="docutils literal notranslate"><span class="pre">LoadBuf</span></code> (~1–4 k); a
+probability hint (or dynamic profiling in the preview, which the estimator
+already accepts as <code class="docutils literal notranslate"><span class="pre">dynamicShadeHist</span></code>) for data-dependent branches; and walk
+user functions at each call site.</p></li>
+</ul>
+<section id="reading-the-fx-bench-numbers-negm-1-57-m-cycles">
+<h3>Reading the fx_bench numbers (“negM ≈ 1.57 M cycles”)<a class="headerlink" href="#reading-the-fx-bench-numbers-negm-1-57-m-cycles" title="Link to this heading">¶</a></h3>
+<p>How <code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/fx_bench.py</span></code> produces each value:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">compile_fx</span></code> compiles each calibration program with <code class="docutils literal notranslate"><span class="pre">--no-opt</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_linear_map</span></code> submits an N-LED linear map, where N comes from the program’s
+“Intended LED count” header: 128 for the <code class="docutils literal notranslate"><span class="pre">*M</span></code> programs, 16 and 256 for
+<code class="docutils literal notranslate"><span class="pre">sweep16</span></code>/<code class="docutils literal notranslate"><span class="pre">sweep256</span></code>, 200 for lavalamp.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">set_perf</span> <span class="pre">FULL</span></code> is poll-only. The harness waits and reads a <code class="docutils literal notranslate"><span class="pre">PerfReport</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">stable_cycles()</span></code> takes <strong><code class="docutils literal notranslate"><span class="pre">frameCyclesMin</span></code></strong>, the minimum over the window of
+<code class="docutils literal notranslate"><span class="pre">perf_frame_c</span></code> in <code class="docutils literal notranslate"><span class="pre">main.cpp</span></code>: <code class="docutils literal notranslate"><span class="pre">c_frame_end</span> <span class="pre">−</span> <span class="pre">c_frame_start</span></code> around
+<code class="docutils literal notranslate"><span class="pre">lm_fx_update</span></code> + the whole shade loop (<code class="docutils literal notranslate"><span class="pre">lm_map_led</span></code> + <code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code> +
+<code class="docutils literal notranslate"><span class="pre">cc_apply</span></code> per LED), <strong>excluding</strong> the LED transmit.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">show</span></code> is the <strong>mean</strong> of <code class="docutils literal notranslate"><span class="pre">show_c</span></code>, the cycles inside the transmit call.</p></li>
+<li><p>The CI log prints <code class="docutils literal notranslate"><span class="pre">&quot;&lt;label&gt;:</span> <span class="pre">frame=X</span> <span class="pre">show=Y</span> <span class="pre">&#64;</span> <span class="pre">N</span> <span class="pre">LEDs&quot;</span></code>. <code class="docutils literal notranslate"><span class="pre">ingest_fx_bench.py</span></code>
+parses that line into the Grafana dataset as <code class="docutils literal notranslate"><span class="pre">cycles</span></code> with <code class="docutils literal notranslate"><span class="pre">metric</span> <span class="pre">∈</span> <span class="pre">{frame,</span> <span class="pre">show}</span></code> and <code class="docutils literal notranslate"><span class="pre">leds</span> <span class="pre">=</span> <span class="pre">N</span></code>.</p></li>
+</ul>
+<p>So <strong>negM = 1.57 M is the CPU cycles to render one frame of 128 LEDs</strong> (9.8 ms
+at 160 MHz). It is not a per-op cost, not a loop of M iterations, and not one
+LED. <code class="docutils literal notranslate"><span class="pre">negM</span></code> is “Neg ×32”: each LED runs <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">=</span> <span class="pre">(-(a))</span></code> 32 times, which is
+<code class="docutils literal notranslate"><span class="pre">LoadLocal,</span> <span class="pre">Neg,</span> <span class="pre">StoreLocal</span></code> = 96 opcodes, about 117 with the prologue. That
+gives:</p>
+<ul class="simple">
+<li><p>1.57 M / 128 = <strong>12.3 k cycles per LED</strong>, of which ≈2.3–2.45 k is the
+<code class="docutils literal notranslate"><span class="pre">empty</span></code> floor (VM invocation + firmware framing);</p></li>
+<li><p>≈10 k for the 32 statements, i.e. <strong>≈310 cycles per <code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">=</span> <span class="pre">-a</span></code></strong>, or
+<strong>≈100 cycles per opcode</strong>.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">x2M</span></code> programs repeat their operation 64 times; <code class="docutils literal notranslate"><span class="pre">(frame(x2M)</span> <span class="pre">−</span> <span class="pre">frame(xM))</span> <span class="pre">/</span> <span class="pre">(128</span> <span class="pre">×</span> <span class="pre">32)</span></code> is the cost of one extra statement with the floor cancelled.</p>
+<p><strong>Dashboard changes in this PR</strong> (<code class="docutils literal notranslate"><span class="pre">pi/hitl/observability/fxbench/gen_dashboards.py</span></code>,
+regenerated <code class="docutils literal notranslate"><span class="pre">dashboards/fxbench-{drift,distribution,overview}.json</span></code>):</p>
+<ul class="simple">
+<li><p>every panel carries this definition as its description;</p></li>
+<li><p>a “What these numbers are” text panel sits at the top of each dashboard;</p></li>
+<li><p>titles now say “CPU cycles per frame (all LEDs)”;</p></li>
+<li><p>the time-series y-axis is labelled “CPU cycles / frame (update + shade × LEDs)”;</p></li>
+<li><p>the sample tables gain a derived <strong>cycles/LED</strong> column (Grafana
+<code class="docutils literal notranslate"><span class="pre">calculateField</span></code>, cycles ÷ leds).</p></li>
+</ul>
+<p>The data pipeline is unchanged.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="q4-architecture">
+<h2>Q4 — architecture<a class="headerlink" href="#q4-architecture" title="Link to this heading">¶</a></h2>
+<section id="prototypes-measured">
+<h3>Prototypes measured<a class="headerlink" href="#prototypes-measured" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect (500-LED helix)</p></th>
+<th class="head text-right"><p>main cyc/LED</p></th>
+<th class="head text-right"><p>PR #328</p></th>
+<th class="head text-right"><p>P2: invocation fix</p></th>
+<th class="head text-right"><p>P2 + IRAM <code class="docutils literal notranslate"><span class="pre">run()</span></code> (P3)</p></th>
+<th class="head text-right"><p>P1 = P2 + fast soft-float</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid</p></td>
+<td class="text-right"><p>2,328</p></td>
+<td class="text-right"><p>−18.7%</p></td>
+<td class="text-right"><p><strong>−41.0%</strong></p></td>
+<td class="text-right"><p>−41.1%</p></td>
+<td class="text-right"><p>−41.4%</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>5,484</p></td>
+<td class="text-right"><p>−12.3%</p></td>
+<td class="text-right"><p>−15.0%</p></td>
+<td class="text-right"><p>−15.7%</p></td>
+<td class="text-right"><p>−11.5%</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>7,643</p></td>
+<td class="text-right"><p>−16.9%</p></td>
+<td class="text-right"><p>−11.5%</p></td>
+<td class="text-right"><p>−12.3%</p></td>
+<td class="text-right"><p>−5.7%</p></td>
+</tr>
+<tr class="row-odd"><td><p>texture</p></td>
+<td class="text-right"><p>6,140</p></td>
+<td class="text-right"><p>+0.8%</p></td>
+<td class="text-right"><p>−16.0%</p></td>
+<td class="text-right"><p>−16.3%</p></td>
+<td class="text-right"><p>−16.1%</p></td>
+</tr>
+<tr class="row-even"><td><p>rain (yours)</p></td>
+<td class="text-right"><p>7,284</p></td>
+<td class="text-right"><p>−3.5%</p></td>
+<td class="text-right"><p>−16.4%</p></td>
+<td class="text-right"><p>−17.1%</p></td>
+<td class="text-right"><p>−16.6%</p></td>
+</tr>
+<tr class="row-odd"><td><p>pulses</p></td>
+<td class="text-right"><p>8,768</p></td>
+<td class="text-right"><p>−28.9%</p></td>
+<td class="text-right"><p>−9.9%</p></td>
+<td class="text-right"><p>−10.1%</p></td>
+<td class="text-right"><p>−4.4%</p></td>
+</tr>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>8,274</p></td>
+<td class="text-right"><p>−21.8%</p></td>
+<td class="text-right"><p>−9.2%</p></td>
+<td class="text-right"><p>−9.7%</p></td>
+<td class="text-right"><p>−7.6%</p></td>
+</tr>
+<tr class="row-odd"><td><p>flood</p></td>
+<td class="text-right"><p>10,820</p></td>
+<td class="text-right"><p>−8.4%</p></td>
+<td class="text-right"><p>−8.9%</p></td>
+<td class="text-right"><p>−9.1%</p></td>
+<td class="text-right"><p>−6.8%</p></td>
+</tr>
+<tr class="row-even"><td><p>cylinder</p></td>
+<td class="text-right"><p>10,529</p></td>
+<td class="text-right"><p><strong>−41.3%</strong></p></td>
+<td class="text-right"><p>−7.4%</p></td>
+<td class="text-right"><p>−8.2%</p></td>
+<td class="text-right"><p>−6.6%</p></td>
+</tr>
+<tr class="row-odd"><td><p>plasma</p></td>
+<td class="text-right"><p>15,854</p></td>
+<td class="text-right"><p>−6.6%</p></td>
+<td class="text-right"><p>−7.5%</p></td>
+<td class="text-right"><p>−7.8%</p></td>
+<td class="text-right"><p>−3.6%</p></td>
+</tr>
+<tr class="row-even"><td><p>noise</p></td>
+<td class="text-right"><p>22,196</p></td>
+<td class="text-right"><p>−3.7%</p></td>
+<td class="text-right"><p>−6.1%</p></td>
+<td class="text-right"><p>−6.4%</p></td>
+<td class="text-right"><p>+3.6%</p></td>
+</tr>
+<tr class="row-odd"><td><p>particles</p></td>
+<td class="text-right"><p>28,384</p></td>
+<td class="text-right"><p>−4.4%</p></td>
+<td class="text-right"><p>−5.2%</p></td>
+<td class="text-right"><p>−4.9%</p></td>
+<td class="text-right"><p>+1.0%</p></td>
+</tr>
+<tr class="row-even"><td><p>rain_naive</p></td>
+<td class="text-right"><p>35,701</p></td>
+<td class="text-right"><p>−28.0%</p></td>
+<td class="text-right"><p>−4.6%</p></td>
+<td class="text-right"><p>−5.1%</p></td>
+<td class="text-right"><p>−0.3%</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>your library, sign 500 (median)</strong></p></td>
+<td class="text-right"><p></p></td>
+<td class="text-right"><p><strong>−15.4%</strong></p></td>
+<td class="text-right"><p><strong>−6.0%</strong> (best −21%)</p></td>
+<td class="text-right"><p>−0.5% more</p></td>
+<td class="text-right"><p>−1.3%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>What the prototypes are:</p>
+<ul class="simple">
+<li><p><strong>P2, VM invocation overhead.</strong> <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code> gets an out-of-line <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>, so
+its soft-float can’t be hoisted into <code class="docutils literal notranslate"><span class="pre">run()</span></code>’s prologue, and an integer RGB
+epilogue <code class="docutils literal notranslate"><span class="pre">unit_u8()</span></code>. The epilogue is bit-exact with
+<code class="docutils literal notranslate"><span class="pre">(clamp01(x)</span> <span class="pre">*</span> <span class="pre">255.0)</span> <span class="pre">as</span> <span class="pre">u8</span></code>: it is tested on every f32 bit pattern in
+[0, 1.5] plus specials, and the fx_vm, compiler and optimizer differential
+suites pass. An empty invocation drops from <strong>1,790 to 1,031 cycles</strong>. P2
+is draft PR #339; the fx_bench goldens move (empty −54%, sweep256
+−45%), so it needs a golden regeneration on a rig.</p></li>
+<li><p><strong>P3, the interpreter in IRAM</strong> (<code class="docutils literal notranslate"><span class="pre">#[link_section</span> <span class="pre">=</span> <span class="pre">&quot;.iram1&quot;]</span></code> on the 37 KB
+<code class="docutils literal notranslate"><span class="pre">run()</span></code>) gains <strong>&lt;1%</strong>. The flash I-cache is not the bottleneck.</p></li>
+<li><p><strong>P1, P2 plus a bit-exact fast <code class="docutils literal notranslate"><span class="pre">fadd</span></code>/<code class="docutils literal notranslate"><span class="pre">fmul</span></code></strong> in the Add/Sub/Mul/Scale/Mix
+arms is <em>worse</em> than P2 alone: the C6’s ROM soft-float already takes ~55
+cycles. Don’t pursue this.</p></li>
+<li><p><strong>PR #328</strong> (memoization and hoisting) is orthogonal to P2. Its rows include
+2–5% from #328 being based on an older <code class="docutils literal notranslate"><span class="pre">main</span></code> (its addM is −5% with no memo
+change).</p></li>
+</ul>
+</section>
+<section id="opportunities">
+<h3>Opportunities<a class="headerlink" href="#opportunities" title="Link to this heading">¶</a></h3>
+<p>The gains below are measured, or estimated from Q1’s terms where marked “est.”:</p>
+<ol class="arabic simple">
+<li><p><strong>VM invocation overhead (P2)</strong>: −760 cycles per LED on every effect. For a
+cheap effect that is −40%; for a typical one −5 to −16%. About 60 lines,
+bit-exact. <strong>Do first.</strong></p></li>
+<li><p><strong>Cache the Q16 context mirrors and uv at map load</strong> instead of per LED per
+frame: −1.1 to −1.5 k cycles per LED for every fixed-context program (rain
+−20%) and −330 for every uv reader (est.). It is firmware-only, and the
+struct comment already describes this design.</p></li>
+<li><p><strong>Register-style superinstructions.</strong> Use opcodes that read operands from
+locals and constants and write a local directly (<code class="docutils literal notranslate"><span class="pre">AddLL</span></code>, <code class="docutils literal notranslate"><span class="pre">MulFixLC</span></code>,
+<code class="docutils literal notranslate"><span class="pre">SinFixL</span></code>, <code class="docutils literal notranslate"><span class="pre">LoadCtxFixL</span></code>, …), driven by real opcode traces. That removes
+most of the 60–65% plumbing ops. Est. 1.5–2× on interpretation, which is
+−30 to −45% on heavy effects. The cost is moderate: the compiler’s <code class="docutils literal notranslate"><span class="pre">opt.rs</span></code>
+already has the fusion framework and the ~7 coupled edit sites per opcode
+are documented.</p></li>
+<li><p><strong>Leaner dispatch.</strong> Hoist the budget, counter and stack high-water work
+out of the per-op path: count per basic block, and only on the counted
+path. Drop the <code class="docutils literal notranslate"><span class="pre">Op::from_u8</span></code> range check behind a verified-at-load
+bytecode; elide bounds checks on verified stack depth. Est. 54 → ~25 cycles
+per op (−15 to −25%). A threaded <code class="docutils literal notranslate"><span class="pre">match</span></code> doesn’t exist in Rust, but a
+table-driven <code class="docutils literal notranslate"><span class="pre">fn</span></code> pointer per op plus tail calls is not reliably faster on
+RV32; measure before committing to it.</p></li>
+<li><p><strong>Faster maths helpers.</strong> Do the float paths at bit level: <code class="docutils literal notranslate"><span class="pre">floorf</span></code>/<code class="docutils literal notranslate"><span class="pre">fractf</span></code>
+without f32↔int round trips (217/269 → ~30), a <code class="docutils literal notranslate"><span class="pre">sinf</span></code> phase built from the
+mantissa and exponent (482 → ~120), a table <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> (1,371 → ~200). Fix
+<code class="docutils literal notranslate"><span class="pre">logf</span></code>. Wire the existing <code class="docutils literal notranslate"><span class="pre">*Fix</span></code> opcodes into the compiler. Est. −10 to −25%
+on float effects.</p></li>
+<li><p><strong>JIT expansion.</strong> Lift the 64-constant and 1 KB-code limits (rain is
+excluded today). Add the fixed ISA (<code class="docutils literal notranslate"><span class="pre">SinFix</span></code>, <code class="docutils literal notranslate"><span class="pre">ClampI</span></code>, <code class="docutils literal notranslate"><span class="pre">MinI</span></code>/<code class="docutils literal notranslate"><span class="pre">MaxI</span></code>,
+<code class="docutils literal notranslate"><span class="pre">AbsI</span></code>, <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code>, <code class="docutils literal notranslate"><span class="pre">LoadState</span></code>, <code class="docutils literal notranslate"><span class="pre">BrCmpI</span></code> branches inside a block), then
+calls to the soft-float helpers. Est. up to 2× on fixed-point effects (the
+rainforest rewrite got 2.2× with today’s JIT once its code was fixed-point).
+Float effects gain little until the JIT emits soft-float calls with a real
+register allocator.</p></li>
+<li><p><strong>AOT native effects</strong> (see the next section). 3–20× on top of an optimised
+VM (Q1: VM ÷ q16 is 7–70× today). This is the only route to 2048 LEDs at 30
+fps for non-trivial effects.</p></li>
+</ol>
+</section>
+<section id="a-native-aot-path-feasibility">
+<h3>A native AOT path: feasibility<a class="headerlink" href="#a-native-aot-path-feasibility" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><strong>What runs.</strong> The compiler emits position-independent RV32IMC (C6, C3) or
+Thumb-2 (ARMv8-M) for <code class="docutils literal notranslate"><span class="pre">shade()</span></code> and <code class="docutils literal notranslate"><span class="pre">update()</span></code>. It can do this for a whole
+effect, or for hot functions with VM fallback. Calls go only to a fixed,
+versioned helper table passed in a register (soft-float, LUTs, hash,
+buffer/texture accessors).</p></li>
+<li><p><strong>Size.</strong> The native study effects compile to roughly 0.5–4 KB each. The JIT
+region today is 2 KB. A 16–32 KB region fits easily in the bench image, but
+on the netstack firmware it competes with TLS heap (FUG-71/133). Use a fixed
+IRAM/PMP region sized from <code class="docutils literal notranslate"><span class="pre">board_caps</span></code>, or execute from a flash partition
+through the cache. The P3 measurement shows execution from flash is not the
+bottleneck.</p></li>
+<li><p><strong>Trust.</strong> This is executable code arriving over the network, so the loader
+must verify an <strong>Ed25519 signature over the code segment</strong> before mapping
+it, with the same key chain as OTA images. The device never runs unsigned
+native code; unsigned effects keep the VM.</p></li>
+<li><p><strong>Sandboxing</strong>, even for signed code:</p>
+<ul class="simple">
+<li><p>(a) memory: all loads and stores go through a base register into the
+effect’s arena, masked or bounds-checked by the code generator (<code class="docutils literal notranslate"><span class="pre">and</span></code> with
+a power-of-two mask is 1 cycle), with a PMP region limiting write access to
+the arena and stack;</p></li>
+<li><p>(b) control flow: no indirect jumps except returns and the helper table,
+checked by a simple loader-side verifier of the instruction stream, much as
+the JIT emits only known encodings;</p></li>
+<li><p>(c) time: a per-frame cycle budget checked at loop back-edges (the VM’s
+deadline flag) plus the existing wall-time watchdog.</p></li>
+</ul>
+</li>
+<li><p><strong>Static installations</strong> (no network trust problem) can build effects into
+the firmware image and skip all of the above.</p></li>
+<li><p><strong>Incremental plan.</strong></p>
+<ol class="arabic simple">
+<li><p>Lower the VM’s verified bytecode to RV32 on the host, in a
+<code class="docutils literal notranslate"><span class="pre">fx_compiler</span> <span class="pre">--aot</span></code>, as straight-line per-block code that reuses <code class="docutils literal notranslate"><span class="pre">fx_jit</span></code>’s
+encoder and emulator-based differential tests. Run it unsigned on the
+bench image only.</p></li>
+<li><p>Extend the helper table and buffers, and run the differential test
+against the VM.</p></li>
+<li><p>Sign it, and add a loader on the device, gated by board capability.</p></li>
+<li><p>Add a Thumb backend for future boards.</p></li>
+</ol>
+<p>Expected speedups come from Q1: native-f32 is 2–5× faster than today’s VM,
+and native-q16 7–70×.</p>
+</li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="prioritised-recommendations">
+<h2>Prioritised recommendations<a class="headerlink" href="#prioritised-recommendations" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>change</p></th>
+<th class="head"><p>measured or estimated gain</p></th>
+<th class="head"><p>effort</p></th>
+<th class="head"><p>where</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>R1</p></td>
+<td><p>Fix <code class="docutils literal notranslate"><span class="pre">clamp(vecN,</span> <span class="pre">scalar,</span> <span class="pre">scalar)</span></code> codegen</p></td>
+<td><p>9 of 90 agent programs stop hanging the device</p></td>
+<td><p>S (done)</p></td>
+<td><p>#338</p></td>
+</tr>
+<tr class="row-odd"><td><p>R2</p></td>
+<td><p>Land #328 (memo + refit estimator + walker ≥ 70)</p></td>
+<td><p>estimator median 0.05 → 1.0; −15% median on the library</p></td>
+<td><p>(exists)</p></td>
+<td><p>#328 (needs a rebase on main)</p></td>
+</tr>
+<tr class="row-even"><td><p>R3</p></td>
+<td><p>VM never panics on stack underflow (saturate + <code class="docutils literal notranslate"><span class="pre">Outcome::Budget</span></code>); firmware panic handler reboots instead of <code class="docutils literal notranslate"><span class="pre">loop</span> <span class="pre">{}</span></code></p></td>
+<td><p>robustness</p></td>
+<td><p>S</p></td>
+<td><p>fx_vm, ffi.rs</p></td>
+</tr>
+<tr class="row-odd"><td><p>R4</p></td>
+<td><p>P2: out-of-line <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code> + integer RGB epilogue</p></td>
+<td><p>−760 cyc/LED: −41% solid, −16% rain, −6% library median</p></td>
+<td><p>S (draft #339)</p></td>
+<td><p>fx_vm + goldens</p></td>
+</tr>
+<tr class="row-even"><td><p>R5</p></td>
+<td><p>Cache Q16 / uv per-LED mirrors at map load</p></td>
+<td><p>−1.1–1.5 k cyc/LED on fixed-context effects (rain −20%), −330 on uv readers</p></td>
+<td><p>S</p></td>
+<td><p>ffi.rs</p></td>
+</tr>
+<tr class="row-odd"><td><p>R6</p></td>
+<td><p>Prompt fixes + cost table + fixed-point examples (both paths)</p></td>
+<td><p>−30% measured on the app path; skill path est. more (it never uses fixed point)</p></td>
+<td><p>S</p></td>
+<td><p>system-prompt.ts, agent/skill</p></td>
+</tr>
+<tr class="row-even"><td><p>R7</p></td>
+<td><p>fx_bench applies manifest defaults (and the firmware on load)</p></td>
+<td><p>a realistic lavalamp golden (5.5× today)</p></td>
+<td><p>S</p></td>
+<td><p>fx_bench.py, ffi.rs</p></td>
+</tr>
+<tr class="row-odd"><td><p>R8</p></td>
+<td><p>Register superinstructions from opcode traces</p></td>
+<td><p>est. −30 to −45% on heavy effects</p></td>
+<td><p>M</p></td>
+<td><p>fx_compiler opt.rs, fx_vm, fx_jit</p></td>
+</tr>
+<tr class="row-even"><td><p>R9</p></td>
+<td><p>Leaner dispatch (per-block budget, verified bytecode, no bounds checks)</p></td>
+<td><p>est. −15 to −25%</p></td>
+<td><p>M</p></td>
+<td><p>fx_vm</p></td>
+</tr>
+<tr class="row-odd"><td><p>R10</p></td>
+<td><p>Bit-level float maths helpers + wire <code class="docutils literal notranslate"><span class="pre">*Fix</span></code> ops + fix <code class="docutils literal notranslate"><span class="pre">logf</span></code></p></td>
+<td><p>est. −10 to −25% on float effects; correct <code class="docutils literal notranslate"><span class="pre">pow</span></code>/<code class="docutils literal notranslate"><span class="pre">log</span></code></p></td>
+<td><p>M</p></td>
+<td><p>fx_vm, fx_compiler</p></td>
+</tr>
+<tr class="row-even"><td><p>R11</p></td>
+<td><p>JIT: no const/code caps, fixed ISA, intra-block branches</p></td>
+<td><p>up to 2× on fixed-point effects</p></td>
+<td><p>M</p></td>
+<td><p>fx_jit, ffi.rs</p></td>
+</tr>
+<tr class="row-odd"><td><p>R12</p></td>
+<td><p>Estimator follow-ups: <code class="docutils literal notranslate"><span class="pre">SampleTex</span></code>/buffer costs, branch probabilities, user functions</p></td>
+<td><p>p10 0.59 → est. ~0.85</p></td>
+<td><p>S–M</p></td>
+<td><p>costModel.ts</p></td>
+</tr>
+<tr class="row-even"><td><p>R13</p></td>
+<td><p>Signed native AOT effects</p></td>
+<td><p>3–20× over the optimised VM</p></td>
+<td><p>L</p></td>
+<td><p>compiler + loader + OTA keys</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Not worth doing: moving the interpreter to IRAM (&lt;1%), a faster soft-float
+<code class="docutils literal notranslate"><span class="pre">fadd</span></code>/<code class="docutils literal notranslate"><span class="pre">fmul</span></code> (the ROM’s is already ~55 cycles), or more hand-optimisation
+guidance beyond R6 (the VM caps the gain at ~1.5×).</p>
+</section>
+<section id="what-is-not-verified">
+<h2>What is not verified<a class="headerlink" href="#what-is-not-verified" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Agent effects were measured on the bench, not through
+<code class="docutils literal notranslate"><span class="pre">fx_bench_netstack</span></code>.</strong> The bench reproduces fx_bench within ±2% plus a
+constant ~600 cycles/LED of firmware framing (validated on 8 programs). The
+framing term is an average from <code class="docutils literal notranslate"><span class="pre">empty</span></code>/<code class="docutils literal notranslate"><span class="pre">sweep256</span></code>. It differs by effect
+(colour correction is per LED; <code class="docutils literal notranslate"><span class="pre">lm_map_led</span></code> reads the stored 9-byte position).</p></li>
+<li><p><strong>Both fixtures are synthesized.</strong> The sign is a crude stroke font with our
+own segment numbering, so the library’s hard-coded <code class="docutils literal notranslate"><span class="pre">led.seg</span></code> tables (e.g.
+Handwriting’s <code class="docutils literal notranslate"><span class="pre">rank()</span></code>) take different branches than on FugWidget. Per-LED
+cost is geometry-independent within 1–4% here, but a real map with unmapped
+LEDs (<code class="docutils literal notranslate"><span class="pre">seg</span> <span class="pre">&lt;</span> <span class="pre">0</span></code> returns early) would be cheaper.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">rain_naive</span></code> is a reconstruction</strong>, not the real first draft.</p></li>
+<li><p><strong>Two natives are not exact twins.</strong> sparkle’s q16 twin computes <code class="docutils literal notranslate"><span class="pre">pow</span></code>
+exactly and differs from the VM’s inaccurate <code class="docutils literal notranslate"><span class="pre">powf</span></code>. The fire-helix rewrite
+uses a different random field.</p></li>
+<li><p><strong>The #328 numbers are confounded.</strong> They come from #328’s branch as it is
+(based on an older main), so about 2–5% of its delta is base drift.</p></li>
+<li><p><strong>P2, P3 and P1 are prototypes</strong>, measured on the bench and not on the
+netstack firmware. P2’s golden shifts are predicted from the bench, not from
+an fx_bench run.</p></li>
+<li><p><strong>The “est.” gains in Q4</strong> (superinstructions, dispatch, maths helpers, JIT,
+AOT) are derived from the measured cost terms, not from implementations.</p></li>
+<li><p><strong>No OpenAI model was evaluated</strong> (no key).</p></li>
+</ul>
+</section>
+<section id="reproduce">
+<h2>Reproduce<a class="headerlink" href="#reproduce" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># C6 bench image (study + agent + valid groups; drop the user&#39;s .fx into</span>
+<span class="c1"># firmware/fx_perf_bench/user/ locally to include them — gitignored)</span>
+bazel<span class="w"> </span>build<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/fx_perf_bench:fx_perf_bench_flashbundle
+python3<span class="w"> </span>tools/fx_perf/run_bench.py<span class="w"> </span>--bundle<span class="w"> </span>bazel-bin/firmware/fx_perf_bench/fx_perf_bench_flashbundle.tar<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--out<span class="w"> </span>runs/v1.log<span class="w"> </span>--seconds<span class="w"> </span><span class="m">420</span><span class="w"> </span>--server<span class="w"> </span>http://hitl-rig-3:8087
+python3<span class="w"> </span>tools/fx_perf/parse_bench.py<span class="w"> </span>runs/v1.log<span class="w"> </span>runs/v1.json
+<span class="c1"># host checks: natives are bit-identical to the VM; look-diff two effects</span>
+bazel<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//firmware/fx_perf_bench:native_vs_vm_test
+bazel<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span>opt<span class="w"> </span>//firmware/fx_perf_bench:fx_diff<span class="w"> </span>--<span class="w"> </span>--fixture<span class="w"> </span>sign<span class="w"> </span>--leds<span class="w"> </span><span class="m">500</span><span class="w"> </span>a.fx<span class="w"> </span>b.fx
+<span class="c1"># estimator vs measured (node &gt;= 22; costModel.ts from any branch)</span>
+python3<span class="w"> </span>tools/fx_perf/estimator_eval.py<span class="w"> </span>--bench<span class="w"> </span>runs/v1.json<span class="w"> </span>--est-src<span class="w"> </span>&lt;dir&gt;<span class="w"> </span>--fx-compile<span class="w"> </span>&lt;fx_compile&gt;<span class="w"> </span>--src<span class="w"> </span><span class="nv">name</span><span class="o">=</span>path.fx<span class="w"> </span>...<span class="w"> </span>--out<span class="w"> </span>est.json
+<span class="c1"># agent authoring eval (claude CLI; see tools/fx_agent_eval/README.md)</span>
+python3<span class="w"> </span>tools/fx_agent_eval/gen.py<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>python3<span class="w"> </span>tools/fx_agent_eval/analyze.py
+<span class="c1"># tables + charts in this doc</span>
+python3<span class="w"> </span>tools/fx_perf/report.py<span class="w"> </span>--runs<span class="w"> </span>runs<span class="w"> </span>--est<span class="w"> </span>est<span class="w"> </span>--img<span class="w"> </span>docs/design/img/fx-perf<span class="w"> </span>--md<span class="w"> </span>/tmp/report.md
+</pre></div>
+</div>
+</section>
+<section id="appendix-per-effect-cost-drivers-in-the-user-library">
+<h2>Appendix: per-effect cost drivers in the user library<a class="headerlink" href="#appendix-per-effect-cost-drivers-in-the-user-library" title="Link to this heading">¶</a></h2>
+<p>These come from static analysis (<code class="docutils literal notranslate"><span class="pre">analyze.py</span></code>), ordered by measured cost on the
+sign. “hoistable %” is per-frame-invariant work in <code class="docutils literal notranslate"><span class="pre">shade()</span></code>; “LED-invariant %”
+is work that could be cached per LED.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>sign &#64;500 ms</p></th>
+<th class="head"><p>per-LED float heavy builtins</p></th>
+<th class="head text-right"><p>float ops/LED</p></th>
+<th class="head text-right"><p>hoistable %</p></th>
+<th class="head text-right"><p>LED-invariant %</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Rainbow overload (sign) #2</p></td>
+<td class="text-right"><p>103.0</p></td>
+<td><p>hsv2rgb×5, hash×3, sin×2, sqrt</p></td>
+<td class="text-right"><p>42</p></td>
+<td class="text-right"><p>11</p></td>
+<td class="text-right"><p>20</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainbow overload (cylindrical)</p></td>
+<td class="text-right"><p>95.9</p></td>
+<td><p>hsv2rgb×5, hash×3, sin×2, sqrt</p></td>
+<td class="text-right"><p>50</p></td>
+<td class="text-right"><p>12</p></td>
+<td class="text-right"><p>22</p></td>
+</tr>
+<tr class="row-even"><td><p>Metaballs 3D (cylindrical)</p></td>
+<td class="text-right"><p>87.3</p></td>
+<td><p>hsv2rgb×2, smoothstep, exp</p></td>
+<td class="text-right"><p>55</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>0</p></td>
+</tr>
+<tr class="row-odd"><td><p>Metaballs, precessing (sign)</p></td>
+<td class="text-right"><p>86.1</p></td>
+<td><p>hsv2rgb×2, smoothstep, exp</p></td>
+<td class="text-right"><p>51</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+</tr>
+<tr class="row-even"><td><p>Metaballs (sign)</p></td>
+<td class="text-right"><p>85.9</p></td>
+<td><p>hsv2rgb×2, smoothstep, exp</p></td>
+<td class="text-right"><p>51</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainforest</p></td>
+<td class="text-right"><p>80.0</p></td>
+<td><p>sin×5, smoothstep, hash, exp</p></td>
+<td class="text-right"><p>57</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p>14</p></td>
+</tr>
+<tr class="row-even"><td><p>Fireworks 3D (cylindrical)</p></td>
+<td class="text-right"><p>79.3</p></td>
+<td><p>sqrt×3, exp×3, hash</p></td>
+<td class="text-right"><p>50</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rain on the letters</p></td>
+<td class="text-right"><p>72.3</p></td>
+<td><p>smoothstep×4, hash</p></td>
+<td class="text-right"><p>35</p></td>
+<td class="text-right"><p>18</p></td>
+<td class="text-right"><p>20</p></td>
+</tr>
+<tr class="row-even"><td><p>Fireworks (sign)</p></td>
+<td class="text-right"><p>72.2</p></td>
+<td><p>sqrt×3, exp×3, hash</p></td>
+<td class="text-right"><p>41</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>2</p></td>
+</tr>
+<tr class="row-odd"><td><p>Call and response</p></td>
+<td class="text-right"><p>69.4</p></td>
+<td><p>exp×4</p></td>
+<td class="text-right"><p>33</p></td>
+<td class="text-right"><p>10</p></td>
+<td class="text-right"><p>8</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-moving</p></td>
+<td class="text-right"><p>67.5</p></td>
+<td><p>atan2</p></td>
+<td class="text-right"><p>21</p></td>
+<td class="text-right"><p>4</p></td>
+<td class="text-right"><p>17</p></td>
+</tr>
+<tr class="row-odd"><td><p>Snow settling</p></td>
+<td class="text-right"><p>67.2</p></td>
+<td><p>smoothstep×3, hash×2</p></td>
+<td class="text-right"><p>28</p></td>
+<td class="text-right"><p>34</p></td>
+<td class="text-right"><p>14</p></td>
+</tr>
+<tr class="row-even"><td><p>Stars and stripes</p></td>
+<td class="text-right"><p>66.3</p></td>
+<td><p>sin×3, hash, sqrt, exp</p></td>
+<td class="text-right"><p>40</p></td>
+<td class="text-right"><p>6</p></td>
+<td class="text-right"><p>10</p></td>
+</tr>
+<tr class="row-odd"><td><p>Handwriting (+ drifting ink)</p></td>
+<td class="text-right"><p>64.8</p></td>
+<td><p>smoothstep×2, sin (+ 28-way if ladder)</p></td>
+<td class="text-right"><p>21</p></td>
+<td class="text-right"><p>30</p></td>
+<td class="text-right"><p>4</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-flowing / -active / -noise / -4x / -motion</p></td>
+<td class="text-right"><p>60.6–63.9</p></td>
+<td><p>atan2 (+ sqrt)</p></td>
+<td class="text-right"><p>15–21</p></td>
+<td class="text-right"><p>0–4</p></td>
+<td class="text-right"><p>18–34</p></td>
+</tr>
+<tr class="row-odd"><td><p>Gaudy rainbow (cylindrical)</p></td>
+<td class="text-right"><p>61.1</p></td>
+<td><p>hsv2rgb×2, sqrt, sin, hash</p></td>
+<td class="text-right"><p>32</p></td>
+<td class="text-right"><p>9</p></td>
+<td class="text-right"><p>32</p></td>
+</tr>
+<tr class="row-even"><td><p>Pass the ball</p></td>
+<td class="text-right"><p>58.9</p></td>
+<td><p>smoothstep×2 (+ if ladder)</p></td>
+<td class="text-right"><p>14</p></td>
+<td class="text-right"><p>25</p></td>
+<td class="text-right"><p>5</p></td>
+</tr>
+<tr class="row-odd"><td><p>Liberty pole</p></td>
+<td class="text-right"><p>55.7</p></td>
+<td><p>hash, sqrt, exp</p></td>
+<td class="text-right"><p>29</p></td>
+<td class="text-right"><p>11</p></td>
+<td class="text-right"><p>12</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-flow-v2</p></td>
+<td class="text-right"><p>53.2</p></td>
+<td><p>— (float value-noise hash)</p></td>
+<td class="text-right"><p>18</p></td>
+<td class="text-right"><p>2</p></td>
+<td class="text-right"><p>15</p></td>
+</tr>
+<tr class="row-odd"><td><p>Bug zapper with fly (both)</p></td>
+<td class="text-right"><p>47.6–49.8</p></td>
+<td><p>smoothstep×2, hash, sqrt</p></td>
+<td class="text-right"><p>21–24</p></td>
+<td class="text-right"><p>14–15</p></td>
+<td class="text-right"><p>2</p></td>
+</tr>
+<tr class="row-even"><td><p>Gaudy rainbow (sign)</p></td>
+<td class="text-right"><p>49.3</p></td>
+<td><p>hsv2rgb×2, sin, hash</p></td>
+<td class="text-right"><p>22</p></td>
+<td class="text-right"><p>12</p></td>
+<td class="text-right"><p>13</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainbow overload (sign)</p></td>
+<td class="text-right"><p>47.5</p></td>
+<td><p>hash, hsv2rgb</p></td>
+<td class="text-right"><p>27</p></td>
+<td class="text-right"><p>4</p></td>
+<td class="text-right"><p>36</p></td>
+</tr>
+<tr class="row-even"><td><p>Neon ignite</p></td>
+<td class="text-right"><p>46.5</p></td>
+<td><p>hash×3, smoothstep</p></td>
+<td class="text-right"><p>17</p></td>
+<td class="text-right"><p>13</p></td>
+<td class="text-right"><p>23</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-folded</p></td>
+<td class="text-right"><p>46.3</p></td>
+<td><p>—</p></td>
+<td class="text-right"><p>18</p></td>
+<td class="text-right"><p>6</p></td>
+<td class="text-right"><p>35</p></td>
+</tr>
+<tr class="row-even"><td><p>Front porch evening</p></td>
+<td class="text-right"><p>42.7</p></td>
+<td><p>hash×3, smoothstep×2</p></td>
+<td class="text-right"><p>26</p></td>
+<td class="text-right"><p>17</p></td>
+<td class="text-right"><p>33</p></td>
+</tr>
+<tr class="row-odd"><td><p>Partly cloudy</p></td>
+<td class="text-right"><p>39.8</p></td>
+<td><p>sin×2, smoothstep</p></td>
+<td class="text-right"><p>21</p></td>
+<td class="text-right"><p>26</p></td>
+<td class="text-right"><p>10</p></td>
+</tr>
+<tr class="row-even"><td><p>Letter wave</p></td>
+<td class="text-right"><p>39.7</p></td>
+<td><p>smoothstep</p></td>
+<td class="text-right"><p>8</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>40</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-variable / -varied / -warp / -4x / -natural</p></td>
+<td class="text-right"><p>28.0–32.7</p></td>
+<td><p>sin×2–3 (+ sqrt)</p></td>
+<td class="text-right"><p>17–21</p></td>
+<td class="text-right"><p>8–25</p></td>
+<td class="text-right"><p>15–22</p></td>
+</tr>
+<tr class="row-even"><td><p>Rainy afternoon (your hand-opt. rain)</p></td>
+<td class="text-right"><p>22.6</p></td>
+<td><p>— (fixed)</p></td>
+<td class="text-right"><p>3</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>6</p></td>
+</tr>
+<tr class="row-odd"><td><p>Windy meadow</p></td>
+<td class="text-right"><p>21.0</p></td>
+<td><p>— (fixed)</p></td>
+<td class="text-right"><p>8</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>8</p></td>
+</tr>
+<tr class="row-even"><td><p>Bug zapper</p></td>
+<td class="text-right"><p>20.2</p></td>
+<td><p>hash</p></td>
+<td class="text-right"><p>10</p></td>
+<td class="text-right"><p>33</p></td>
+<td class="text-right"><p>6</p></td>
+</tr>
+<tr class="row-odd"><td><p>Snowfall</p></td>
+<td class="text-right"><p>19.9</p></td>
+<td><p>— (fixed)</p></td>
+<td class="text-right"><p>4</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>46</p></td>
+</tr>
+<tr class="row-even"><td><p>Aurora</p></td>
+<td class="text-right"><p>17.0</p></td>
+<td><p>— (fixed)</p></td>
+<td class="text-right"><p>7</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>8</p></td>
+</tr>
+<tr class="row-odd"><td><p>Fog bank</p></td>
+<td class="text-right"><p>15.4</p></td>
+<td><p>— (fixed)</p></td>
+<td class="text-right"><p>3</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>13</p></td>
+</tr>
+<tr class="row-even"><td><p>Sunrise cycle</p></td>
+<td class="text-right"><p>15.3</p></td>
+<td><p>—</p></td>
+<td class="text-right"><p>5</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>31</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Per-effect measured numbers for both fixtures, the old estimates and #328’s
+change:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head"><p>written for</p></th>
+<th class="head text-right"><p>sign &#64;500 ms</p></th>
+<th class="head text-right"><p>cylinder &#64;250 ms</p></th>
+<th class="head text-right"><p>cyc/LED sign</p></th>
+<th class="head text-right"><p>cyc/LED cyl</p></th>
+<th class="head text-right"><p>ops/LED</p></th>
+<th class="head text-right"><p>old estimate ms (fixture)</p></th>
+<th class="head text-right"><p>measured ÷ estimate</p></th>
+<th class="head text-right"><p>#328 Δ sign</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Rainbow overload (sign) #2</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>103.0</p></td>
+<td class="text-right"><p>51.4</p></td>
+<td class="text-right"><p>32,949</p></td>
+<td class="text-right"><p>32,870</p></td>
+<td class="text-right"><p>178</p></td>
+<td class="text-right"><p>4.69 (s)</p></td>
+<td class="text-right"><p>22×</p></td>
+<td class="text-right"><p>−27%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainbow overload (cylindrical)</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>95.9</p></td>
+<td class="text-right"><p>48.9</p></td>
+<td class="text-right"><p>30,675</p></td>
+<td class="text-right"><p>31,312</p></td>
+<td class="text-right"><p>159</p></td>
+<td class="text-right"><p>3.49 (c)</p></td>
+<td class="text-right"><p>14×</p></td>
+<td class="text-right"><p>−22%</p></td>
+</tr>
+<tr class="row-even"><td><p>Metaballs 3D (cylindrical)</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>87.3</p></td>
+<td class="text-right"><p>43.9</p></td>
+<td class="text-right"><p>27,930</p></td>
+<td class="text-right"><p>28,091</p></td>
+<td class="text-right"><p>179</p></td>
+<td class="text-right"><p>3.09 (c)</p></td>
+<td class="text-right"><p>14×</p></td>
+<td class="text-right"><p>−3%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Metaballs, precessing (sign)</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>86.1</p></td>
+<td class="text-right"><p>43.2</p></td>
+<td class="text-right"><p>27,548</p></td>
+<td class="text-right"><p>27,627</p></td>
+<td class="text-right"><p>170</p></td>
+<td class="text-right"><p>3.91 (s)</p></td>
+<td class="text-right"><p>22×</p></td>
+<td class="text-right"><p>−4%</p></td>
+</tr>
+<tr class="row-even"><td><p>Metaballs (sign)</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>85.9</p></td>
+<td class="text-right"><p>43.1</p></td>
+<td class="text-right"><p>27,484</p></td>
+<td class="text-right"><p>27,574</p></td>
+<td class="text-right"><p>170</p></td>
+<td class="text-right"><p>3.92 (s)</p></td>
+<td class="text-right"><p>22×</p></td>
+<td class="text-right"><p>−4%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainforest</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>80.0</p></td>
+<td class="text-right"><p>40.1</p></td>
+<td class="text-right"><p>25,588</p></td>
+<td class="text-right"><p>25,645</p></td>
+<td class="text-right"><p>154</p></td>
+<td class="text-right"><p>7.18 (s)</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>−31%</p></td>
+</tr>
+<tr class="row-even"><td><p>Fireworks 3D (cylindrical)</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>79.3</p></td>
+<td class="text-right"><p>40.1</p></td>
+<td class="text-right"><p>25,366</p></td>
+<td class="text-right"><p>25,669</p></td>
+<td class="text-right"><p>154</p></td>
+<td class="text-right"><p>3.91 (c)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−4%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rain on the letters</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>72.3</p></td>
+<td class="text-right"><p>36.7</p></td>
+<td class="text-right"><p>23,134</p></td>
+<td class="text-right"><p>23,505</p></td>
+<td class="text-right"><p>139</p></td>
+<td class="text-right"><p>1.99 (s)</p></td>
+<td class="text-right"><p>36×</p></td>
+<td class="text-right"><p>−29%</p></td>
+</tr>
+<tr class="row-even"><td><p>Fireworks (sign)</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>72.2</p></td>
+<td class="text-right"><p>36.3</p></td>
+<td class="text-right"><p>23,089</p></td>
+<td class="text-right"><p>23,209</p></td>
+<td class="text-right"><p>131</p></td>
+<td class="text-right"><p>4.53 (s)</p></td>
+<td class="text-right"><p>16×</p></td>
+<td class="text-right"><p>−4%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Call and response</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>69.4</p></td>
+<td class="text-right"><p>34.9</p></td>
+<td class="text-right"><p>22,206</p></td>
+<td class="text-right"><p>22,363</p></td>
+<td class="text-right"><p>147</p></td>
+<td class="text-right"><p>2.39 (s)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−16%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-moving</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>67.5</p></td>
+<td class="text-right"><p>34.8</p></td>
+<td class="text-right"><p>21,592</p></td>
+<td class="text-right"><p>22,242</p></td>
+<td class="text-right"><p>101</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>32×</p></td>
+<td class="text-right"><p>−8%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Snow settling</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>67.2</p></td>
+<td class="text-right"><p>34.2</p></td>
+<td class="text-right"><p>21,500</p></td>
+<td class="text-right"><p>21,901</p></td>
+<td class="text-right"><p>139</p></td>
+<td class="text-right"><p>3.66 (s)</p></td>
+<td class="text-right"><p>18×</p></td>
+<td class="text-right"><p>−31%</p></td>
+</tr>
+<tr class="row-even"><td><p>Stars and stripes</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>66.3</p></td>
+<td class="text-right"><p>33.7</p></td>
+<td class="text-right"><p>21,225</p></td>
+<td class="text-right"><p>21,546</p></td>
+<td class="text-right"><p>131</p></td>
+<td class="text-right"><p>2.02 (s)</p></td>
+<td class="text-right"><p>33×</p></td>
+<td class="text-right"><p>−9%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Handwriting</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>64.8</p></td>
+<td class="text-right"><p>32.7</p></td>
+<td class="text-right"><p>20,750</p></td>
+<td class="text-right"><p>20,944</p></td>
+<td class="text-right"><p>137</p></td>
+<td class="text-right"><p>2.19 (s)</p></td>
+<td class="text-right"><p>30×</p></td>
+<td class="text-right"><p>−14%</p></td>
+</tr>
+<tr class="row-even"><td><p>Handwriting, drifting ink</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>64.8</p></td>
+<td class="text-right"><p>32.7</p></td>
+<td class="text-right"><p>20,737</p></td>
+<td class="text-right"><p>20,910</p></td>
+<td class="text-right"><p>137</p></td>
+<td class="text-right"><p>2.2 (s)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−13%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-helix-flowing</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>63.9</p></td>
+<td class="text-right"><p>33.2</p></td>
+<td class="text-right"><p>20,462</p></td>
+<td class="text-right"><p>21,277</p></td>
+<td class="text-right"><p>92</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>30×</p></td>
+<td class="text-right"><p>−7%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-active</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>62.3</p></td>
+<td class="text-right"><p>32.3</p></td>
+<td class="text-right"><p>19,923</p></td>
+<td class="text-right"><p>20,661</p></td>
+<td class="text-right"><p>90</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−7%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-helix-noise</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>62.0</p></td>
+<td class="text-right"><p>32.0</p></td>
+<td class="text-right"><p>19,841</p></td>
+<td class="text-right"><p>20,465</p></td>
+<td class="text-right"><p>101</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−9%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-4x</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>61.4</p></td>
+<td class="text-right"><p>31.7</p></td>
+<td class="text-right"><p>19,664</p></td>
+<td class="text-right"><p>20,316</p></td>
+<td class="text-right"><p>88</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−7%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Gaudy rainbow (cylindrical)</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>61.1</p></td>
+<td class="text-right"><p>31.4</p></td>
+<td class="text-right"><p>19,550</p></td>
+<td class="text-right"><p>20,081</p></td>
+<td class="text-right"><p>107</p></td>
+<td class="text-right"><p>2.93 (c)</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>−24%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-helix-motion</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>60.6</p></td>
+<td class="text-right"><p>31.4</p></td>
+<td class="text-right"><p>19,404</p></td>
+<td class="text-right"><p>20,111</p></td>
+<td class="text-right"><p>86</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>29×</p></td>
+<td class="text-right"><p>−6%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Pass the ball</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>58.9</p></td>
+<td class="text-right"><p>27.3</p></td>
+<td class="text-right"><p>18,841</p></td>
+<td class="text-right"><p>17,452</p></td>
+<td class="text-right"><p>114</p></td>
+<td class="text-right"><p>1.99 (s)</p></td>
+<td class="text-right"><p>30×</p></td>
+<td class="text-right"><p>−18%</p></td>
+</tr>
+<tr class="row-even"><td><p>Liberty pole</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>55.7</p></td>
+<td class="text-right"><p>28.1</p></td>
+<td class="text-right"><p>17,834</p></td>
+<td class="text-right"><p>17,968</p></td>
+<td class="text-right"><p>116</p></td>
+<td class="text-right"><p>2.73 (c)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−19%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-v2</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>53.2</p></td>
+<td class="text-right"><p>26.6</p></td>
+<td class="text-right"><p>17,037</p></td>
+<td class="text-right"><p>17,030</p></td>
+<td class="text-right"><p>87</p></td>
+<td class="text-right"><p>1.95 (s)</p></td>
+<td class="text-right"><p>27×</p></td>
+<td class="text-right"><p>−10%</p></td>
+</tr>
+<tr class="row-even"><td><p>Bug zapper with fly (cylindrical)</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>49.8</p></td>
+<td class="text-right"><p>25.1</p></td>
+<td class="text-right"><p>15,945</p></td>
+<td class="text-right"><p>16,037</p></td>
+<td class="text-right"><p>95</p></td>
+<td class="text-right"><p>2.55 (c)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−15%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Gaudy rainbow (sign)</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>49.3</p></td>
+<td class="text-right"><p>24.7</p></td>
+<td class="text-right"><p>15,764</p></td>
+<td class="text-right"><p>15,818</p></td>
+<td class="text-right"><p>79</p></td>
+<td class="text-right"><p>3.35 (s)</p></td>
+<td class="text-right"><p>15×</p></td>
+<td class="text-right"><p>−20%</p></td>
+</tr>
+<tr class="row-even"><td><p>Bug zapper with fly</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>47.6</p></td>
+<td class="text-right"><p>23.9</p></td>
+<td class="text-right"><p>15,230</p></td>
+<td class="text-right"><p>15,314</p></td>
+<td class="text-right"><p>86</p></td>
+<td class="text-right"><p>2.46 (c)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−15%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Rainbow overload (sign)</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>47.5</p></td>
+<td class="text-right"><p>23.6</p></td>
+<td class="text-right"><p>15,200</p></td>
+<td class="text-right"><p>15,094</p></td>
+<td class="text-right"><p>96</p></td>
+<td class="text-right"><p>2.09 (s)</p></td>
+<td class="text-right"><p>23×</p></td>
+<td class="text-right"><p>−19%</p></td>
+</tr>
+<tr class="row-even"><td><p>Neon ignite</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>46.5</p></td>
+<td class="text-right"><p>23.4</p></td>
+<td class="text-right"><p>14,894</p></td>
+<td class="text-right"><p>14,987</p></td>
+<td class="text-right"><p>95</p></td>
+<td class="text-right"><p>3.26 (s)</p></td>
+<td class="text-right"><p>14×</p></td>
+<td class="text-right"><p>−26%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-folded</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>46.3</p></td>
+<td class="text-right"><p>23.5</p></td>
+<td class="text-right"><p>14,826</p></td>
+<td class="text-right"><p>15,030</p></td>
+<td class="text-right"><p>80</p></td>
+<td class="text-right"><p>1.95 (s)</p></td>
+<td class="text-right"><p>24×</p></td>
+<td class="text-right"><p>−20%</p></td>
+</tr>
+<tr class="row-even"><td><p>Front porch evening</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>42.7</p></td>
+<td class="text-right"><p>21.5</p></td>
+<td class="text-right"><p>13,672</p></td>
+<td class="text-right"><p>13,784</p></td>
+<td class="text-right"><p>83</p></td>
+<td class="text-right"><p>3.49 (s)</p></td>
+<td class="text-right"><p>12×</p></td>
+<td class="text-right"><p>−45%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Partly cloudy</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>39.8</p></td>
+<td class="text-right"><p>19.9</p></td>
+<td class="text-right"><p>12,751</p></td>
+<td class="text-right"><p>12,750</p></td>
+<td class="text-right"><p>68</p></td>
+<td class="text-right"><p>4.17 (s)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−29%</p></td>
+</tr>
+<tr class="row-even"><td><p>Letter wave</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>39.7</p></td>
+<td class="text-right"><p>21.1</p></td>
+<td class="text-right"><p>12,716</p></td>
+<td class="text-right"><p>13,499</p></td>
+<td class="text-right"><p>79</p></td>
+<td class="text-right"><p>2.42 (s)</p></td>
+<td class="text-right"><p>16×</p></td>
+<td class="text-right"><p>−25%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-variable</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>32.7</p></td>
+<td class="text-right"><p>16.4</p></td>
+<td class="text-right"><p>10,461</p></td>
+<td class="text-right"><p>10,490</p></td>
+<td class="text-right"><p>61</p></td>
+<td class="text-right"><p>3.57 (s)</p></td>
+<td class="text-right"><p>9×</p></td>
+<td class="text-right"><p>−35%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-flow-varied</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>30.8</p></td>
+<td class="text-right"><p>15.6</p></td>
+<td class="text-right"><p>9,860</p></td>
+<td class="text-right"><p>9,958</p></td>
+<td class="text-right"><p>54</p></td>
+<td class="text-right"><p>3.5 (s)</p></td>
+<td class="text-right"><p>9×</p></td>
+<td class="text-right"><p>−31%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-warp</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>28.1</p></td>
+<td class="text-right"><p>14.1</p></td>
+<td class="text-right"><p>8,997</p></td>
+<td class="text-right"><p>9,035</p></td>
+<td class="text-right"><p>52</p></td>
+<td class="text-right"><p>3.04 (s)</p></td>
+<td class="text-right"><p>9×</p></td>
+<td class="text-right"><p>−19%</p></td>
+</tr>
+<tr class="row-even"><td><p>fire-flow-4x</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>28.0</p></td>
+<td class="text-right"><p>14.1</p></td>
+<td class="text-right"><p>8,969</p></td>
+<td class="text-right"><p>9,003</p></td>
+<td class="text-right"><p>49</p></td>
+<td class="text-right"><p>3.4 (s)</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>−32%</p></td>
+</tr>
+<tr class="row-odd"><td><p>fire-flow-natural</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>28.0</p></td>
+<td class="text-right"><p>14.0</p></td>
+<td class="text-right"><p>8,961</p></td>
+<td class="text-right"><p>8,983</p></td>
+<td class="text-right"><p>49</p></td>
+<td class="text-right"><p>3.4 (s)</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>−32%</p></td>
+</tr>
+<tr class="row-even"><td><p>Rainy afternoon</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>22.6</p></td>
+<td class="text-right"><p>12.0</p></td>
+<td class="text-right"><p>7,217</p></td>
+<td class="text-right"><p>7,693</p></td>
+<td class="text-right"><p>36</p></td>
+<td class="text-right"><p>1.1 (c)</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>−3%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Windy meadow</p></td>
+<td><p>both</p></td>
+<td class="text-right"><p>21.0</p></td>
+<td class="text-right"><p>10.9</p></td>
+<td class="text-right"><p>6,724</p></td>
+<td class="text-right"><p>6,948</p></td>
+<td class="text-right"><p>31</p></td>
+<td class="text-right"><p>1.94 (s)</p></td>
+<td class="text-right"><p>11×</p></td>
+<td class="text-right"><p>−2%</p></td>
+</tr>
+<tr class="row-even"><td><p>Bug zapper</p></td>
+<td><p>cyl</p></td>
+<td class="text-right"><p>20.2</p></td>
+<td class="text-right"><p>10.1</p></td>
+<td class="text-right"><p>6,455</p></td>
+<td class="text-right"><p>6,487</p></td>
+<td class="text-right"><p>34</p></td>
+<td class="text-right"><p>1.65 (c)</p></td>
+<td class="text-right"><p>6×</p></td>
+<td class="text-right"><p>−24%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Snowfall</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>19.9</p></td>
+<td class="text-right"><p>10.8</p></td>
+<td class="text-right"><p>6,378</p></td>
+<td class="text-right"><p>6,906</p></td>
+<td class="text-right"><p>28</p></td>
+<td class="text-right"><p>1.94 (s)</p></td>
+<td class="text-right"><p>10×</p></td>
+<td class="text-right"><p>−3%</p></td>
+</tr>
+<tr class="row-even"><td><p>Aurora</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>17.0</p></td>
+<td class="text-right"><p>8.6</p></td>
+<td class="text-right"><p>5,437</p></td>
+<td class="text-right"><p>5,495</p></td>
+<td class="text-right"><p>21</p></td>
+<td class="text-right"><p>1.94 (s)</p></td>
+<td class="text-right"><p>9×</p></td>
+<td class="text-right"><p>+0%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Fog bank</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>15.4</p></td>
+<td class="text-right"><p>7.8</p></td>
+<td class="text-right"><p>4,914</p></td>
+<td class="text-right"><p>5,018</p></td>
+<td class="text-right"><p>17</p></td>
+<td class="text-right"><p>1.94 (s)</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>+2%</p></td>
+</tr>
+<tr class="row-even"><td><p>Sunrise cycle</p></td>
+<td><p>sign</p></td>
+<td class="text-right"><p>15.3</p></td>
+<td class="text-right"><p>7.8</p></td>
+<td class="text-right"><p>4,903</p></td>
+<td class="text-right"><p>4,971</p></td>
+<td class="text-right"><p>21</p></td>
+<td class="text-right"><p>2.03 (s)</p></td>
+<td class="text-right"><p>8×</p></td>
+<td class="text-right"><p>−12%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">FX engine performance study (ESP32-C6)</a><ul>
+<li><a class="reference internal" href="#method">Method</a></li>
+<li><a class="reference internal" href="#q1-the-native-ceiling">Q1 — the native ceiling</a></li>
+<li><a class="reference internal" href="#q2-agent-authoring-quality">Q2 — agent authoring quality</a><ul>
+<li><a class="reference internal" href="#the-generated-set-tools-fx-agent-eval">The generated set (<code class="docutils literal notranslate"><span class="pre">tools/fx_agent_eval</span></code>)</a></li>
+<li><a class="reference internal" href="#your-library-45-agent-written-effects-splanc-library-json">Your library: 45 agent-written effects (<code class="docutils literal notranslate"><span class="pre">splanc_library.json</span></code>)</a></li>
+<li><a class="reference internal" href="#prompt-and-tooling-recommendations-q2">Prompt and tooling recommendations (Q2)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#q3-estimator-accuracy-and-the-dashboard-numbers">Q3 — estimator accuracy and the dashboard numbers</a><ul>
+<li><a class="reference internal" href="#reading-the-fx-bench-numbers-negm-1-57-m-cycles">Reading the fx_bench numbers (“negM ≈ 1.57 M cycles”)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#q4-architecture">Q4 — architecture</a><ul>
+<li><a class="reference internal" href="#prototypes-measured">Prototypes measured</a></li>
+<li><a class="reference internal" href="#opportunities">Opportunities</a></li>
+<li><a class="reference internal" href="#a-native-aot-path-feasibility">A native AOT path: feasibility</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#prioritised-recommendations">Prioritised recommendations</a></li>
+<li><a class="reference internal" href="#what-is-not-verified">What is not verified</a></li>
+<li><a class="reference internal" href="#reproduce">Reproduce</a></li>
+<li><a class="reference internal" href="#appendix-per-effect-cost-drivers-in-the-user-library">Appendix: per-effect cost drivers in the user library</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
