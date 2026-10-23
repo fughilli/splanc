@@ -25,6 +25,7 @@ import { EffectLibrary, LIBRARY_INSTRUCTIONS, deployNoteText, slugEffectId } fro
 import { deployPerf, deploySucceeded } from "../relay/src/mcpLibrary";
 import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
 import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
+import { findingsToLines, perfFindings } from "../../web/src/effects/perfFindings";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
 import { renderPng, preview, type CompileOutcome } from "./fxhost";
@@ -648,7 +649,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Compile effect source with the compiler matching each selected player's firmware (one compile per distinct " +
-        "firmware). Returns diagnostics, the uniform manifest and the bytecode size. Touches nothing on the device.",
+        "firmware). Returns diagnostics, perf warnings (it compiles but does something slow, e.g. a float literal in " +
+        "fixed maths — fix them), the uniform manifest and the bytecode size. Touches nothing on the device.",
       inputSchema: { source: z.string(), effect_id: z.string().optional(), players },
     },
     ({ source, effect_id, players: sel }) =>
@@ -658,6 +660,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           return {
             ok: c.ok,
             diagnostics: c.diagnostics,
+            ...(c.warnings.length ? { warnings: c.warnings } : {}),
             uniforms: c.uniforms,
             bytecode_bytes: c.bytecodeBytes,
             textures: c.textures,
@@ -673,9 +676,11 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "OFFLINE frame-cost estimate (the cost model; instant, touches nothing on the device) of effect source on " +
-        "each selected player: estimated frame ms and fraction of the frame budget at that player's LED count, plus " +
-        "the hottest opcodes. Iterate with this, then confirm with deploy_effect + measure_effect (the real numbers; " +
-        "the estimate models the interpreter and is uncalibrated).",
+        "each selected player: estimated frame ms and fraction of the frame budget at that player's LED count, the " +
+        "hottest opcodes, and `findings`: the top cost findings — what to change and about how many cycles per LED " +
+        "each saves (apply them first). Iterate with this, then confirm with deploy_effect + measure_effect (the " +
+        "real numbers; the model is fitted to the C6 interpreter but can read low on branchy, buffer or texture " +
+        "effects).",
       inputSchema: { source: z.string(), players },
     },
     ({ source, players: sel }) =>
@@ -691,13 +696,16 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           const d = estimateAcrossDevices(c.fxb, [
             { key: p.id, label: p.name, table: defaultCostTable(), ledCount: leds, calibrated: false },
           ]).devices[0]!;
+          const findings = costFindings(c, source, leds);
           return {
             leds,
             estimate_ms: +d.estimate.totalMs.toFixed(2),
             band_ms: [+d.estimate.errorBand.lowMs.toFixed(2), +d.estimate.errorBand.highMs.toFixed(2)],
             budget_used: Number.isFinite(d.budget.fraction) ? +d.budget.fraction.toFixed(2) : null,
             hot_opcodes: d.estimate.hotOpcodes.slice(0, 6).map((h) => `${h.op} ${Math.round(h.fraction * 100)}%`),
-            model: "uncalibrated default (wide error)",
+            ...(findings.length ? { findings } : {}),
+            ...(c.warnings.length ? { warnings: c.warnings.map((w) => `line ${w.line}: ${w.msg}`) } : {}),
+            model: "C6 default table, fitted on the HITL bench (±15%; reads low on branchy/buffer/texture effects)",
           };
         });
         return ok(shape(out, sel !== undefined));
@@ -831,14 +839,16 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
               leds: b.result!.leds,
               estimate_ms: +b.result!.est.estimate.totalMs.toFixed(2),
               budget_used: Number.isFinite(b.result!.est.budget.fraction) ? +b.result!.est.budget.fraction.toFixed(2) : null,
-              model: "uncalibrated default (wide error; measure_effect after deploying)",
+              model: "C6 default table (±15%; measure_effect after deploying)",
             },
           ]),
         );
         if (over.length && !force) {
+          const b = over[0]!.result!;
           throw new ToolError(
             `nothing deployed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-              `(${JSON.stringify(estimates)}). Simplify it, or pass force=true to deploy anyway.`,
+              `(${JSON.stringify(estimates)}). Simplify it, or pass force=true to deploy anyway.` +
+              findingsText(costFindings(b.c, source, b.leds)),
           );
         }
         const compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
@@ -1236,6 +1246,22 @@ async function previewRoom(
 
 // -- crossfade -----------------------------------------------------------------------------
 
+/** The top cost findings (what to change, cycles/LED saved) for a compiled
+ * effect at a player's LED count — estimate_effect's `findings` and the
+ * over-budget refusals. */
+function costFindings(c: CompileOutcome, source: string, leds: number): string[] {
+  const table = defaultCostTable();
+  try {
+    return findingsToLines(perfFindings(c.fxb, { table, source, warnings: c.warnings }), leds, table.cpuHz);
+  } catch {
+    return []; // an analysis bug must never break an estimate or a deploy
+  }
+}
+
+function findingsText(fs: string[]): string {
+  return fs.length ? `\nBiggest savings:\n${fs.map((f) => `- ${f}`).join("\n")}` : "";
+}
+
 interface CrossfadeArgs {
   effect_id: string;
   source?: string | undefined;
@@ -1299,7 +1325,8 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
     if (over.length && !a.force) {
       throw new ToolError(
         `nothing changed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.`,
+          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.` +
+          findingsText(costFindings(over[0]!.result!.c, source, over[0]!.result!.leds)),
       );
     }
     compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));

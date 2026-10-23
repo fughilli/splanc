@@ -409,10 +409,14 @@ test("a fleet estimate names every device's budget share and flags the one that 
   );
   assert.match(
     text,
-    /- Stage \(esp32c3 @ 80 MHz, 512 LEDs, uncalibrated \(default model — wide error\)\): [0-9.]+ ms, \d+% of FX budget \[red\] ← binding/,
+    /- Stage \(esp32c3 @ 80 MHz, 512 LEDs, default model \(fitted on a bench C6, ±15%\)\): [0-9.]+ ms, \d+% of FX budget \[red\] ← binding/,
   );
   assert.match(text, /Hottest opcodes on the binding device \(Stage\): BinMath:pow \(\d+%\)/);
   assert.match(text, /Optimize for the binding device first/);
+  // Given the program, the report ends with what to change on the binding device.
+  const withFindings = describeFleet(fleet, { bytecode: fxb });
+  assert.match(withFindings, /Top cost findings on Stage \(apply these first\):\n- pow\(\) ×60 per LED depends only on led\.\*/);
+  assert.match(withFindings, /saves up to ~[\d,]+ cycles\/LED \(~[\d.]+ ms at 512 LEDs\)/);
 
   // Shrink the expensive target until everything fits: the report says so.
   const ok = describeFleet(estimateAcrossDevices(fxb, [targets[0]!, { ...targets[1]!, ledCount: 8 }]));

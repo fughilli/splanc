@@ -89,15 +89,15 @@ export const CONTEXTS: {
  */
 export const BUILTINS: { sig: string; doc: string }[] = [
   // unary math (UN_MATH)
-  { sig: "sin(x)", doc: "sine of x (radians)" },
-  { sig: "cos(x)", doc: "cosine of x (radians)" },
-  { sig: "tan(x)", doc: "tangent of x (radians)" },
+  { sig: "sin(x)", doc: "sine of x (radians); on a fixed arg the angle is in TURNS (1.0 = full circle) and it is an integer LUT, ~4x cheaper" },
+  { sig: "cos(x)", doc: "cosine of x (radians); on a fixed arg: TURNS, integer LUT" },
+  { sig: "tan(x)", doc: "tangent of x (radians); on a fixed arg: TURNS" },
   { sig: "abs(x)", doc: "absolute value" },
   { sig: "floor(x)", doc: "largest integer <= x" },
   { sig: "ceil(x)", doc: "smallest integer >= x" },
   { sig: "fract(x)", doc: "fractional part, x - floor(x)" },
   { sig: "sqrt(x)", doc: "square root" },
-  { sig: "exp(x)", doc: "e raised to the power x" },
+  { sig: "exp(x)", doc: "e raised to the power x (a fixed arg is an integer LUT covering only -2..0.69)" },
   { sig: "log(x)", doc: "natural logarithm" },
   { sig: "sign(x)", doc: "-1, 0, or 1 by the sign of x" },
   // binary math (BIN_MATH) — component-wise, equal widths
@@ -106,7 +106,7 @@ export const BUILTINS: { sig: string; doc: string }[] = [
   { sig: "pow(x, y)", doc: "x raised to the power y" },
   { sig: "mod(x, y)", doc: "modulo (x - y*floor(x/y))" },
   { sig: "step(edge, x)", doc: "0 if x < edge, else 1" },
-  { sig: "atan2(y, x)", doc: "angle of the vector (x, y) in radians" },
+  { sig: "atan2(y, x)", doc: "angle of the vector (x, y) in radians; with two args of the same fixed type: in TURNS (-0.5..0.5), integer path" },
   // ternary
   { sig: "clamp(x, lo, hi)", doc: "constrain x to the range [lo, hi]" },
   { sig: "mix(a, b, t)", doc: "linear interpolation a*(1-t) + b*t (t scalar)" },
@@ -118,8 +118,8 @@ export const BUILTINS: { sig: string; doc: string }[] = [
   { sig: "cross(a, b)", doc: "cross product of two vec3s" },
   { sig: "normalize(v)", doc: "v scaled to unit length" },
   // hashing / color
-  { sig: "hash(x)", doc: "deterministic float hash in [0,1); accepts a float or a vec3" },
-  { sig: "hsv2rgb(h, s, v)", doc: "HSV to linear RGB (vec3); also accepts a single vec3" },
+  { sig: "hash(x)", doc: "deterministic float hash in [0,1); accepts a float or a vec3 (always float maths)" },
+  { sig: "hsv2rgb(h, s, v)", doc: "HSV to linear RGB (vec3), hue 0..1; also accepts a single vec3. Three args of the same fixed type take the integer path (return that colour directly from shade())" },
   { sig: "palette0(t)", doc: "sample built-in palette 0 at t (vec3)" },
   { sig: "palette1(t)", doc: "sample built-in palette 1 at t (vec3)" },
   { sig: "palette2(t)", doc: "sample built-in palette 2 at t (vec3)" },
@@ -142,9 +142,9 @@ export const BUILTINS: { sig: string; doc: string }[] = [
 export const TYPES: { name: string; doc: string }[] = [
   { name: "float", doc: "32-bit floating point (the default numeric type)" },
   { name: "int", doc: "native 32-bit integer — fast, no soft-float" },
-  { name: "fixed", doc: "Q16.16 fixed-point number" },
-  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — accelerated integer sin/cos/exp (angle in turns), no soft-float" },
-  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — accelerated integer sin/cos/exp (angle in turns), no soft-float" },
+  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); wrap literals: x * fixed(0.5)" },
+  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2" },
+  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8)" },
   { name: "bool", doc: "boolean (true/false)" },
   { name: "vec2", doc: "2-component vector (x, y)" },
   { name: "vec3", doc: "3-component vector (x, y, z / r, g, b)" },

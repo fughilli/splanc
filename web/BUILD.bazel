@@ -76,6 +76,11 @@ copy_to_bin(
         "src/effects/budget.ts",
         "src/effects/costModel.ts",
         "src/effects/multiDevice.ts",
+        "src/effects/perfFindings.ts",  # estimate_effect's cost findings
+        # The in-app AI prompt + its language tables (agent tests compile and
+        # budget-check the prompt's examples).
+        "src/effects/ai/system-prompt.ts",
+        "src/effects/editor/lang-spec.ts",
         "src/fx/preview.ts",
         "src/gen/ledmapper_pb.ts",
         "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)

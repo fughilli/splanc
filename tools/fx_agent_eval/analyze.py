@@ -200,6 +200,8 @@ PLUMBING = {
     "RET_RGB8",
     "RET_RGB_FIX",
     "JIT_CALL",
+    "LOAD_LED_CACHE",
+    "STORE_LED_CACHE",
 }
 NON_COMPUTE = PLUMBING  # LOAD_CTX_FIX is an int/fixed op (it converts in firmware)
 
@@ -506,6 +508,12 @@ class Prog:
             return 2, 0
         if n == "I2C_READ":
             return 1, 1
+        # per-LED memo bracket (fx_compiler memo.rs): a steady-state hit pushes
+        # the cached words and jumps past the memoized body.
+        if n == "LOAD_LED_CACHE":
+            return 0, k
+        if n == "STORE_LED_CACHE":
+            return k, k
         raise ValueError(f"unknown op {n}")
 
     # --- abstract interpretation ---------------------------------------
@@ -596,6 +604,9 @@ class Prog:
                 cond[pc] = J(cond.get(pc, C), Jall(args))
                 succ = [self.next_pc(i), o["target"]]
                 out = []
+            elif n == "LOAD_LED_CACHE":
+                out = [L] * pushes
+                succ = [o["target"]]
             elif n == "JMP":
                 succ = [o["target"]]
                 out = []
@@ -759,8 +770,15 @@ class Prog:
                     "body_ops": 0,
                 }
             )
+        cached = set()  # memoized bodies: skipped on a steady-state cache hit
         for i in self.region(entry):
             o = self.ops[i]
+            if o["op"] == "LOAD_LED_CACHE":
+                cached |= {x["pc"] for x in self.ops if o["pc"] < x["pc"] < o["target"]}
+        for i in self.region(entry):
+            o = self.ops[i]
+            if o["pc"] in cached:
+                continue
             m = mult
             for h, b, t, _ in lps:
                 if h <= o["pc"] <= b:

@@ -153,6 +153,14 @@ effect:
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;
    using the fixture's shape: `geometry.md`; starting points: `examples/`).
+   Write it cheap from the start: the player has no FPU, every opcode costs
+   ~70 cycles of dispatch, and a float `sin` ~570, `pow` ~1,800, `hsv2rgb`
+   ~1,300, against ~8,000 cycles per LED per frame at 500 LEDs. Do per-LED maths
+   in `fixed` (`fixed()` around every literal), keep phases as `state fixed` in
+   turns advanced in `update()`, and use `sin`/`cos`/`hsv2rgb` on fixed
+   arguments (integer paths). The cost table and rules are under
+   "Performance" in `effect-language.md`; `rainbow_spin.fx`, `plasma_fixed.fx`
+   and `noise_field.fx` show the patterns.
 2. `compile_effect {source}` — fix every diagnostic; check the uniform list. Each
    player compiles with the compiler matching ITS firmware (the hub fetches that
    firmware's bundle when it differs from its own).
@@ -163,7 +171,8 @@ effect:
    room frame, plus per-fixture stats.
 4. `deploy_effect {effect_id, source, description, tags}` — estimates each player's frame cost
    first and deploys nowhere if any would overrun (`force: true` overrides;
-   the estimate is uncalibrated, so still measure), then uploads and activates
+   the estimate is fitted to the C6 but can read low on branchy, buffer or
+   texture effects, so still measure), then uploads and activates
    everywhere. A player holds one effect at a time; the hub remembers the
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
@@ -172,8 +181,10 @@ effect:
    one it can't run even at 25 fps (`aborted: true`). Over budget → it rolls back;
    simplify (see "Performance" in `effect-language.md`) and repeat from 2.
    Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
-   nothing), then deploy + `measure_effect` to confirm — when they disagree, trust
-   the measurement.
+   nothing). It returns the frame estimate and the top cost `findings` — what to
+   change and about how many cycles per LED each saves; apply them first. Then
+   deploy + `measure_effect` to confirm — when they disagree, trust the
+   measurement.
 6. Report what you changed and which uniforms the user can now tweak.
 
 `rollback_effect` restores whatever ran before your last deploy;

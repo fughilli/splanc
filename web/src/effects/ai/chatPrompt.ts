@@ -63,7 +63,8 @@ export const PERF_TOOLS = [
       "device fleet (real hardware economics), and get back each device's frame " +
       "time, fraction of the FX budget used (with a green/yellow/red band: ≤70% " +
       "green, >70% yellow, >90% red), which device BINDS the design, and the " +
-      "hottest opcodes to cut. Call this after set_script when performance matters " +
+      "hottest opcodes, plus the top cost findings (what to change and the cycles " +
+      "each saves). Call this after set_script when performance matters " +
       "(the user asked to hit a framerate, fit a budget, or optimize), to check " +
       "your change actually fits before finishing. Estimates use the latest " +
       "compiled program, so set_script first.",
@@ -168,10 +169,10 @@ You are now in an interactive chat with the user inside the effect editor. You c
 - Answer questions about the current effect program.
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
-- When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, and the hottest opcodes. Optimize for the binding device first, then re-estimate to confirm it fits.
+- When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, the hottest opcodes, and the top cost findings (what to change, with the cycles each would save). Optimize for the binding device first, then re-estimate to confirm it fits.
 - OPTIMIZE requests ("make this faster", "fit 60fps", "reduce RAM", "optimize this program") are a MEASURED, MULTI-TURN loop — never a one-shot guess:
   1. estimate_performance on the current script to get a BASELINE (frame time, % of budget on the binding device, phase split update-vs-shade, and the hottest opcodes). State it briefly.
-  2. Form ONE hypothesis from that data. Typical wins, in order of impact: move per-LED / loop-invariant work from shade() into update(); replace soft-float in hot per-LED math with int/fixed/fixed16 (fixed16/fixed8 sin/cos/exp are LUT-based, no soft-float); replace sin/pow/exp/sqrt with step/mix/polynomial approximations; narrow buffer/texture storage to : fixed8 / : fixed16 to cut RAM.
+  2. Form ONE hypothesis from that data. Typical wins, in order of impact: move per-LED / loop-invariant work from shade() into update(); apply the estimate's top cost findings; replace soft-float in hot per-LED math with fixed (fixed() around every literal; sin/cos of a fixed phase in TURNS is an integer LUT); replace pow/exp/smoothstep/length with multiplies, clamp ramps and squared distances; cut the op count (every op pays ~70 cycles of dispatch); narrow buffer/texture storage to : fixed8 / : fixed16 to cut RAM.
   3. Apply that ONE change with set_script (keep every uniform/behaviour the user cares about).
   4. re-estimate. Keep the change only if it improved AND still compiles (and, if visuals could shift, capture_preview to confirm it still looks right); otherwise revert and try the next hypothesis.
   5. Repeat until it fits the budget or stops improving (diminishing returns / a few rounds).
