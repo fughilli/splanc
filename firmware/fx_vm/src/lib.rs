@@ -4231,7 +4231,23 @@ fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
 /// firmware that writes them (player_app fxdbg.rs) and the host replay that reads
 /// them (bin/wasm_lib.rs `FxReplay`). Little-endian throughout.
 pub mod dbg {
-    use super::{Frame, Led};
+    use super::{Frame, Led, Program};
+
+    /// Bytes of LED `idx`'s element in every per-LED buffer, as (arena offset,
+    /// length) — what one shade() of that LED normally writes (`trail[led.idx]`).
+    /// The debugger saves + restores them around a re-run, so re-running a LED
+    /// (to read its locals, or to compare the JIT with the interpreter) neither
+    /// perturbs the paused state nor sees its own previous write.
+    pub fn led_elem_ranges(prog: &Program, led_count: usize, idx: usize, mut f: impl FnMut(usize, usize)) {
+        for i in 0..prog.n_buffers as usize {
+            let Some(d) = prog.buf_desc(i) else { continue };
+            if d.kind != 0 || idx >= led_count {
+                continue;
+            }
+            let eb = d.elem_bytes();
+            f(prog.buf_base(i, led_count) + idx * eb, eb);
+        }
+    }
 
     /// FX_FRAME_V1: the 31 words of a shade() [`Frame`].
     pub const FRAME_CTX_BYTES: usize = 124;

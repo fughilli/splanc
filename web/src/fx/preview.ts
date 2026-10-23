@@ -33,6 +33,16 @@ export interface FxDiagnostic {
   msg: string;
 }
 
+/** A named VM slot range (the compiler's FX-debugger symbol table). */
+export interface FxSymbol {
+  name: string;
+  kind: "state" | "local" | "param" | "buffer";
+  /** The function of a local / param ("" for state). */
+  func: string;
+  slot: number;
+  width: number;
+}
+
 export interface FxCompiled {
   ok: boolean;
   bytecode: Uint8Array;
@@ -41,6 +51,8 @@ export interface FxCompiled {
   /** Non-fatal lints (e.g. a rate uniform multiplying `time` in a phase); each
    * msg starts "warning: ". Undefined from compiler bundles that predate them. */
   warnings?: FxDiagnostic[] | undefined;
+  /** Absent from compiler builds that predate the FX debugger. */
+  symbols?: FxSymbol[];
 }
 
 interface CompilerResult {
@@ -50,6 +62,7 @@ interface CompilerResult {
   readonly diagnostics: string;
   /** JSON warnings (absent in compiler bundles that predate them). */
   readonly warnings?: string;
+  readonly symbols?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -138,6 +151,7 @@ export interface CompileScriptOptions {
 export async function compileScript(src: string, opts: CompileScriptOptions = {}): Promise<FxCompiled> {
   const mod = await loadCompiler();
   const r = opts.memo === false && mod.fx_compile_no_memo ? mod.fx_compile_no_memo(src) : mod.fx_compile(src);
+  const syms = r.ok ? r.symbols : undefined;
   return {
     ok: r.ok,
     bytecode: r.bytecode,
@@ -146,6 +160,7 @@ export async function compileScript(src: string, opts: CompileScriptOptions = {}
     // undefined (not []) from a compiler bundle that predates warnings, so a
     // host can tell "no lints" from "this compiler can't lint" (agent/src/fxhost.ts).
     warnings: r.warnings === undefined ? undefined : (JSON.parse(r.warnings) as FxDiagnostic[]),
+    ...(typeof syms === "string" ? { symbols: JSON.parse(syms) as FxSymbol[] } : {}),
   };
 }
 

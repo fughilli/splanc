@@ -678,6 +678,40 @@ unsafe fn write_window(
     }
 }
 
+/// One LED's per-LED buffer elements, saved around a debugger re-run (see
+/// ledmapper_fx_vm::dbg::led_elem_ranges): a re-run then neither perturbs the
+/// paused state nor reads its own write. Bounded (stack): an effect with more
+/// than SAVE_CAP bytes of per-LED buffers has the excess left as re-run.
+const SAVE_CAP: usize = 128;
+struct LedSave {
+    bytes: [u8; SAVE_CAP],
+}
+
+/// Walk deck `p`'s bytes for LED `idx` (in led_elem_ranges order, capped).
+unsafe fn led_elems(p: *const DeckState, idx: usize, mut f: impl FnMut(&mut u8, usize)) {
+    let Ok(prog) = Program::parse(&(*p).bytes[..(*p).len]) else { return };
+    let arena = &mut (&mut *addr_of_mut!(FX_ARENA))[(*p).arena_off..(*p).arena_off + (*p).arena_len];
+    let mut n = 0;
+    dbg::led_elem_ranges(&prog, FX_F_LEDS as usize, idx, |o, l| {
+        for b in arena.iter_mut().skip(o).take(l) {
+            if n < SAVE_CAP {
+                f(b, n);
+                n += 1;
+            }
+        }
+    });
+}
+
+unsafe fn led_save(p: *const DeckState, idx: usize) -> LedSave {
+    let mut s = LedSave { bytes: [0; SAVE_CAP] };
+    led_elems(p, idx, |b, k| s.bytes[k] = *b);
+    s
+}
+
+unsafe fn led_restore(p: *const DeckState, idx: usize, s: &LedSave) {
+    led_elems(p, idx, |b, k| *b = s.bytes[k]);
+}
+
 /// The blended effect colour of LED `i` before the LUT / brightness, recomputed
 /// at the paused frame (the render loop's lm_fx_shade, so a cancelled shade or a
 /// missing map entry is black exactly as rendered).
@@ -685,9 +719,16 @@ unsafe fn raw_rgb(i: usize) -> [u8; 3] {
     let mut xyz = [0.0f32; 3];
     let mut id = 0u32;
     let mut rgb = [0u8; 3];
-    if lm_map_led(i as u32, &mut id, xyz.as_mut_ptr())
-        && super::lm_fx_shade(i as u32, xyz[0], xyz[1], xyz[2], rgb.as_mut_ptr())
-    {
+    if !lm_map_led(i as u32, &mut id, xyz.as_mut_ptr()) {
+        return [0; 3];
+    }
+    let decks = [deck(DECK_A_IDX), deck(super::DECK_B_IDX)];
+    let saved = decks.map(|p| p.filter(|&p| (*p).loaded()).map(|p| (p, led_save(p, i))));
+    let ok = super::lm_fx_shade(i as u32, xyz[0], xyz[1], xyz[2], rgb.as_mut_ptr());
+    for (p, s) in saved.iter().flatten() {
+        led_restore(*p, i, s);
+    }
+    if ok {
         rgb
     } else {
         [0; 3]
@@ -730,8 +771,11 @@ pub(crate) unsafe fn handle_debug_led(frame: &[u8], now_ms: i64, out: *mut u8, c
         0 => MAX_LOCALS,
         n => n.min(MAX_LOCALS),
     };
-    // 1) The normal path (JIT included): the colour this deck rendered.
+    // 1) The normal path (JIT included): the colour this deck rendered. Each
+    // re-run starts from the LED's paused buffer elements, and leaves them so.
+    let saved = led_save(p, i);
     let jit_rgb = fx_shade_one(p, i as u32, xyz[0], xyz[1], xyz[2]);
+    led_restore(p, i, &saved);
     // The Led that run used (the deck's per-LED scratch), for the record.
     let led: FxLed = (*p).shade_led.unwrap_or_default();
     // 2) The interpreter, JIT patches undone, zeroed scratch: locals to compare.
@@ -750,6 +794,7 @@ pub(crate) unsafe fn handle_debug_led(frame: &[u8], now_ms: i64, out: *mut u8, c
         Ok(prog) => vm.run_shade_counted(&prog, &f, &led, &fx_budget()),
         Err(_) => ((0, 0, 0), ledmapper_fx_vm::Outcome::Ok, Default::default()),
     };
+    led_restore(p, i, &saved);
     let mut rec = [0u8; LED_CTX_BYTES];
     dbg::encode_led(Some(&led), i < fx_cap() && led_mapped(i), &mut rec);
     let output = if i < frame_leds() {

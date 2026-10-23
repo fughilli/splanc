@@ -7,7 +7,7 @@
 //! buffers BIT-EXACTLY, and one LED's re-run locals match the host's.
 //! One test: the FFI state is process-global.
 
-use ledmapper_fx_vm::{Frame, Led, Program, Vm, MAX_LOCALS, MAX_STATE, MAX_UNIFORM_SLOTS};
+use ledmapper_fx_vm::{dbg, Frame, Led, Program, Vm, MAX_LOCALS, MAX_STATE, MAX_UNIFORM_SLOTS};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_fx_active, lm_fx_shade, lm_fx_update, lm_fxdbg_bind_output, lm_fxdbg_hold, lm_fxdbg_paused,
@@ -532,7 +532,7 @@ fn fx_debugger() {
         out,
         raw,
         state,
-        arena,
+        mut arena,
         mut vm,
     } = replay(&a, &after, &None, 255);
     assert_eq!(out, after.output, "host replay == device output");
@@ -564,18 +564,31 @@ fn fx_debugger() {
         );
         assert_eq!(dbg.r#locals.len(), MAX_LOCALS);
         assert_eq!(&dbg.r#output[..], &after.output[led_i * 3..led_i * 3 + 3]);
-        // Host: the same two runs (the normal one, then the zeroed interpreted one).
+        // Host: the same two runs (the normal one, then the zeroed interpreted
+        // one), each from the LED's paused buffer elements, restored after.
         let led = led_from(&dbg.r#led_context, led_i as u32).unwrap();
+        let mut saved = Vec::new();
+        dbg::led_elem_ranges(&prog, LEDS, led_i, |o, l| saved.push((o, arena[o..o + l].to_vec())));
+        let restore = |arena: &mut Vec<u8>| {
+            for (o, b) in &saved {
+                arena[*o..*o + b.len()].copy_from_slice(b);
+            }
+        };
         let (r1, g1, b1) = vm.run_shade(&prog, &f, &led);
         assert_eq!(&dbg.r#rgb_jit[..], &[r1, g1, b1]);
+        restore(&mut arena);
         vm.clear_scratch();
         let (r2, g2, b2) = vm.run_shade(&prog, &f, &led);
+        restore(&mut arena);
         assert_eq!(&dbg.r#rgb[..], &[r2, g2, b2]);
+        assert_eq!(&dbg.r#rgb[..], &dbg.r#rgb_jit[..], "both runs see the same buffers");
         let host: Vec<u32> = vm.locals().iter().map(|v| v.to_bits()).collect();
         let dev: Vec<u32> = dbg.r#locals.iter().map(|v| v.to_bits()).collect();
         assert_eq!(dev, host, "LED {led_i} locals");
         assert!(dbg.r#instructions > 0);
     }
+    // The re-runs left the paused state as it was.
+    assert_eq!(section(SECTION_ARENA, 0, 512), after.arena, "debug_fx_led restores the LED's buffers");
 
     // -- steps at a fixed dt; output stage with a LUT + brightness ------------------
     let mut lut = Box::new([[0u8; 256]; 3]);
